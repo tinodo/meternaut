@@ -60,9 +60,34 @@ LIMIT_INVESTIGATE_TOKENS = 600_000
 
 # SCOPE_SUBSCRIPTIONS is required unless SCOPE_ALL_SUBSCRIPTIONS is on (load below): the template always sets it, as the fallback.
 REQUIRED = (SCOPE_SUBSCRIPTIONS, MODEL_DETECTIVE, MODEL_SKEPTIC, AIGATEWAY_HOST, MAX_CASES_PER_RUN, CASES_CONTROL_QUEUE_NAME)
+
+# The Study (cases/study.py): the Scholar reads Microsoft's documentation about the kinds of resource that the estate has, once a week. It is off until STUDY is on, it needs the Foundry project
+# like the investigation, and it stops when the switch `all` or the switch `investigation` is pulled. Its limits are ceilings too: a setting can lower them and never raise them.
+STUDY = "STUDY"
+STUDY_MAX_TYPES = "STUDY_MAX_TYPES"
+STUDY_MAX_PAGES = "STUDY_MAX_PAGES"
+STUDY_MAX_SECONDS = "STUDY_MAX_SECONDS"
+STUDY_MAX_TOKENS = "STUDY_MAX_TOKENS"
+DEFAULT_STUDY_TYPES = 4
+LIMIT_STUDY_TYPES = 8
+DEFAULT_STUDY_PAGES = 8
+LIMIT_STUDY_PAGES = 16
+DEFAULT_STUDY_SECONDS = 300
+LIMIT_STUDY_SECONDS = 600
+# The tokens that the Scholar may use in one run before the harness stops it: a brake against a loop in a model. A run of 24 tool calls that reads pages of about 3,500 characters uses about 300,000
+# tokens (a model reads everything said so far again at every step, so the use grows with the square of the calls); the brake is a third more, written before a real run measured it.
+DEFAULT_STUDY_TOKENS = 400_000
+LIMIT_STUDY_TOKENS = 800_000
+
+# The hold of the learning (cases/learning.py, hold): a proposal that past requests like it rarely saw approved goes to a person as a finding that needs one. It is off until LEARNING_HOLD is on,
+# because the first run of tools/learning-check.py missed its thresholds (docs/proposals/15-learning.md): what is not shown to help is not switched on. The lessons, the line of the decision
+# brief and the tools that recall are not behind it: they count and they decide nothing.
+LEARNING_HOLD = "LEARNING_HOLD"
+
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
-            INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS)}
+            INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS),
+            STUDY_MAX_TYPES: str(DEFAULT_STUDY_TYPES), STUDY_MAX_PAGES: str(DEFAULT_STUDY_PAGES), STUDY_MAX_SECONDS: str(DEFAULT_STUDY_SECONDS), STUDY_MAX_TOKENS: str(DEFAULT_STUDY_TOKENS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 # The name of a model of the Detective and the Skeptic: an alias of the AI Gateway, which has the name of the model deployment of the agents' own Foundry resource, and so do the agents.
@@ -101,6 +126,16 @@ class Settings:
     investigate_max_tokens: int = LIMIT_INVESTIGATE_TOKENS
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
+    # The quota ids of the subscriptions of the run, as the one list of subscriptions of the run gave them (scope.py): not a setting of the environment, the run fills them in its copy.
+    quota_ids: tuple[str, ...] = ()
+    # The Study (cases/study.py). Off unless STUDY is on; the limits are the ceilings of the Scholar's run.
+    study: bool = False
+    study_max_types: int = DEFAULT_STUDY_TYPES
+    study_max_pages: int = DEFAULT_STUDY_PAGES
+    study_max_seconds: int = DEFAULT_STUDY_SECONDS
+    study_max_tokens: int = DEFAULT_STUDY_TOKENS
+    # The hold of the learning (cases/learning.py, hold). Off unless LEARNING_HOLD is on.
+    learning_hold: bool = False
 
 
 def _integer(env: Mapping[str, str], name: str, low: int, high: int, default: str, problems: list[str]) -> int:
@@ -153,6 +188,20 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
     }
 
 
+def _study(env: Mapping[str, str], endpoint: object, problems: list[str]) -> dict:
+    """The optional settings of the Study, as the keyword arguments of Settings. It is off unless STUDY is on, and on needs the Foundry project like the investigation."""
+    study = _switch(env, STUDY, False, problems)
+    if study and not endpoint:
+        problems.append(f"{STUDY} is on and {FOUNDRY_PROJECT_ENDPOINT} is not set")
+    return {
+        "study": study,
+        "study_max_types": _integer(env, STUDY_MAX_TYPES, 1, LIMIT_STUDY_TYPES, OPTIONAL[STUDY_MAX_TYPES], problems),
+        "study_max_pages": _integer(env, STUDY_MAX_PAGES, 1, LIMIT_STUDY_PAGES, OPTIONAL[STUDY_MAX_PAGES], problems),
+        "study_max_seconds": _integer(env, STUDY_MAX_SECONDS, 30, LIMIT_STUDY_SECONDS, OPTIONAL[STUDY_MAX_SECONDS], problems),
+        "study_max_tokens": _integer(env, STUDY_MAX_TOKENS, 10_000, LIMIT_STUDY_TOKENS, OPTIONAL[STUDY_MAX_TOKENS], problems),
+    }
+
+
 def load(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     problems: list[str] = []
@@ -179,6 +228,8 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
     max_completion = _integer(env, MAX_COMPLETION_TOKENS, 100, LIMIT_COMPLETION_TOKENS, OPTIONAL[MAX_COMPLETION_TOKENS], problems)
     deadline = _integer(env, RUN_DEADLINE_SECONDS, 60, LIMIT_DEADLINE_SECONDS, OPTIONAL[RUN_DEADLINE_SECONDS], problems)
     investigation = _investigation(env, problems)
+    study = _study(env, investigation["foundry_endpoint"], problems)
+    learning_hold = _switch(env, LEARNING_HOLD, False, problems)
     if problems:
         raise ConfigError("; ".join(problems))
     return Settings(
@@ -193,4 +244,6 @@ def load(env: Mapping[str, str] | None = None) -> Settings:
         ai_gateway_host=gateway_host,
         all_subscriptions=all_subscriptions,
         **investigation,
+        **study,
+        learning_hold=learning_hold,
     )

@@ -57,8 +57,8 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 19)
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 16 + ["POST"] * 3)
+        self.assertEqual(len(plain), 23, "nineteen, and the four reads of the capability profile (cases/capability.py)")
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 20 + ["POST"] * 3)
         for method, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
                             pattern.pattern)

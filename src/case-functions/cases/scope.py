@@ -13,7 +13,7 @@ Nothing here changes what a change may touch: plans and changes are keyed on the
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterable
 
 from .arm import Arm
@@ -39,6 +39,7 @@ class Scope:
     subscriptions: tuple[str, ...]
     source: str
     notes: tuple[str, ...] = ()
+    quotas: tuple[str, ...] = ()  # the quota ids of the subscriptions (subscriptionPolicies.quotaId of the list), which the capability profile reads a hint of the agreement from
 
 
 def _id_of(item: dict) -> str | None:
@@ -56,6 +57,18 @@ def readable(items: list[dict]) -> list[str]:
     return sorted(ids)
 
 
+def quota_ids(items: list[dict], subscriptions: tuple[str, ...]) -> tuple[str, ...]:
+    """The quota id of each of these subscriptions that the list gives one for (Learn, "Subscriptions - List": subscriptionPolicies.quotaId), one for each subscription."""
+    wanted = set(subscriptions)
+    found: dict[str, str] = {}
+    for item in items:
+        policies = item.get("subscriptionPolicies")
+        sub = _id_of(item)
+        if sub in wanted and isinstance(policies, dict) and isinstance(policies.get("quotaId"), str) and policies["quotaId"].strip():
+            found.setdefault(sub, policies["quotaId"].strip()[:60])
+    return tuple(found[sub] for sub in sorted(found))
+
+
 def resolve(arm: Arm, settings: Settings, keep: "str | Iterable[str] | None" = None, redact: Callable[[object], str] = str) -> Scope:
     """The subscriptions that a run reads, with the notes that the History carries. Raises ScopeError when there are none.
 
@@ -67,12 +80,14 @@ def resolve(arm: Arm, settings: Settings, keep: "str | Iterable[str] | None" = N
             raise ScopeError("no subscription is named: SCOPE_SUBSCRIPTIONS is empty and SCOPE_ALL_SUBSCRIPTIONS is off")
         return Scope(explicit, SOURCE_SETTING)
     try:
-        ids = readable(arm.subscriptions())
+        items = arm.subscriptions()
+        ids = readable(items)
     except (HttpError, IdentityError) as error:
         why = f"the list of the subscriptions that the identity can read could not be had ({redact(error)})"
     else:
         if ids:
-            return _cut(ids, keep)
+            scope = _cut(ids, keep)
+            return replace(scope, quotas=quota_ids(items, scope.subscriptions))
         why = "the identity can read no subscription that is enabled"
     if explicit:
         return Scope(explicit, SOURCE_FALLBACK, (f"{why}, so the {len(explicit)} subscription{'' if len(explicit) == 1 else 's'} of SCOPE_SUBSCRIPTIONS "

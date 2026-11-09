@@ -263,6 +263,9 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         closed = (brief.outcome.title or brief.state).lower()
         doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
     doc.paragraph(saving_line(brief.saving) + f" How sure: {brief.confidence.level.lower()}.")
+    for line in (brief.past, brief.access):
+        if line:
+            doc.paragraph(_data(line, 240))
     doc.facts(*_fact_rows(brief))
     doc.facts(*_decision_rows(brief))
     doc.button("Decide" if brief.state == "open" else "See the request", url)

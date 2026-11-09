@@ -257,10 +257,13 @@ class Clock:
 
 
 class TheSpecs(unittest.TestCase):
-    def test_there_are_sixteen_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
+    def test_there_are_nineteen_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
         specs = Toolbox(None, (), NOW, []).specs
+        # Nineteen since the learning: the last three (recall_lessons, recall_knowledge, recall_open_questions) read what Meternaut kept and make no call to Azure, except that the last
+        # reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
         self.assertEqual([s.name for s in specs], ["estate_overview", "list_resources", "metric_names", "metric_summary", "measure", "cost_lines", "advisor_items", "paid_features",
-                                                   "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history"])
+                                                   "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history",
+                                                   "recall_lessons", "recall_knowledge", "recall_open_questions"])
         for spec in specs:
             schema = spec.parameters
             self.assertEqual((schema["type"], schema["additionalProperties"]), ("object", False), spec.name)

@@ -1,8 +1,8 @@
 """The agent harness: what surrounds an agent run, in one place that a person can read.
 
 An agent is a model with instructions and tools. This module is everything that is not the agent: the lock that says what each agent may be, the brakes, the budgets, the guards on its
-tool calls and the telemetry. Nothing here is a model, and nothing in it can be talked out of a decision. It works for both agents of the investigation (cases/agents.py), and it is
-read as one list:
+tool calls and the telemetry. Nothing here is a model, and nothing in it can be talked out of a decision. It works for all three agents (cases/agents.py): the Investigator and the Skeptic
+of the investigation and the Scholar of the Study. It is read as one list:
 
 | Around the agent            | What it does                                                                                                                                          |
 |-----------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -21,8 +21,8 @@ read as one list:
 What none of it stops: a model that is misled into a proposal that code and a person then accept, a tool that behaves differently behind an unchanged schema and unchanged code (the
 lock holds the hash of the code that runs it, so that this is noticed when the code changes, not when the data does), and a person who approves what they should not.
 
-The harness is built by cases/run.py for the client of the Foundry project that the run makes, and cases/investigate.py uses it for both agents. A test that hands the run a client of its
-own hands it a harness too (or none).
+The harness is built by cases/run.py for the client of the Foundry project that the run makes, and cases/investigate.py uses it for the Investigator and the Skeptic (cases/study.py builds
+its own the same way and uses it for the Scholar). A test that hands the run a client of its own hands it a harness too (or none).
 """
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from . import alerts, drift_rules, lockfile, release, switches
+from .agents import SCHOLAR_NAME
 from .foundry import NO_TEXT, AgentRun, AgentSpec, FoundryError, ToolHandler, definition_of
 from .memory_store import stamp
 from .models import SwitchRecord
@@ -56,6 +57,7 @@ BY = "the agent harness"
 REPEAT_LIMIT = 2  # the same call (the same tool, the same arguments) may be made twice; the third is refused
 TRIP_LIMIT = 3  # refusals and guard failures in one run
 SKEPTIC_TOKENS = 100_000  # the Skeptic reads one input of at most 30,000 characters and answers once
+STUDY_TOKENS = 400_000  # the Scholar's brake when the settings give none: see DEFAULT_STUDY_TOKENS in config.py
 MAX_ARGUMENT_DEPTH = 8
 KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,31}")
 COMMIT = re.compile(r"[0-9a-f]{7,40}")
@@ -215,12 +217,16 @@ class Budget:
     skeptic_tokens: int = SKEPTIC_TOKENS
     repeat_limit: int = REPEAT_LIMIT
     trip_limit: int = TRIP_LIMIT
+    study_tokens: int = STUDY_TOKENS
 
     @classmethod
     def of(cls, settings: object) -> "Budget":
-        return cls(tool_calls=int(getattr(settings, "investigate_max_calls")), tokens=int(getattr(settings, "investigate_max_tokens")))
+        return cls(tool_calls=int(getattr(settings, "investigate_max_calls")), tokens=int(getattr(settings, "investigate_max_tokens")),
+                   study_tokens=int(getattr(settings, "study_max_tokens", STUDY_TOKENS)))
 
     def tokens_for(self, spec: AgentSpec) -> int:
+        if spec.name == SCHOLAR_NAME:
+            return self.study_tokens
         return self.tokens if spec.tools else self.skeptic_tokens
 
 
@@ -485,13 +491,23 @@ class Harness:
             self.brake.pull("refusals", f"{record.agent}: {record.refused} refused calls, {record.guard_failures} guard failures")
 
 
+def module_digest() -> str:
+    """One digest for the source of the modules that run the tools of the agents, in a fixed order: the tools of the toolbox, the tool of the Scholar and what the two tools that recall read
+    from (cases/toolbox.py, cases/library.py, cases/learning.py). A change to any of them is a change of the code that the lock holds."""
+    from . import learning, library, toolbox
+
+    parts = [lockfile.normalize_source(Path(module.__file__).read_text(encoding="utf-8")) for module in (toolbox, library, learning)]
+    return lockfile.source_digest("\n".join(parts))
+
+
 def code_digests() -> tuple[Mapping[str, str], str]:
-    """The digests of the code of the tools that this app has: of each tool's method and of the module of the tools. They are held against the lock before an agent is made ready."""
-    from . import toolbox
+    """The digests of the code of the tools that this app has: of each tool's method (the toolbox's and the Scholar's) and of the modules that run them. They are held against the lock before
+    an agent is made ready."""
+    from . import library, toolbox
 
     names = [tool.name for tool in toolbox.SPECS]
-    module = Path(toolbox.__file__).read_text(encoding="utf-8")
-    return lockfile.implementation_digests(toolbox.Toolbox, names), lockfile.source_digest(module)
+    implementations = {**lockfile.implementation_digests(toolbox.Toolbox, names), **lockfile.implementation_digests(library.Library, [library.NAME])}
+    return implementations, module_digest()
 
 
 def build(settings: object, foundry: object, extras: object | None, *, env: Mapping[str, str] | None = None, clock: Callable[[], dt.datetime], monotonic: Callable[[], float],

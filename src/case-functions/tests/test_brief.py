@@ -282,7 +282,7 @@ class TheConfidence(unittest.TestCase):
         self.assertEqual((confidence_of(None).level, confidence_of(None).because), ("Low", "No record of the review is stored."))
 
     def test_the_notes_that_code_wrote_among_the_objections_are_not_a_doubt_of_the_second_ai(self):
-        self.assertEqual(brief.CODE_NOTES, ("no measurement backs this finding", "the Investigator gave a confidence of"))
+        self.assertEqual(brief.CODE_NOTES, ("no measurement backs this finding", "the Investigator gave a confidence of", "past cases like this"))
         notes = ("no measurement backs this finding: the tools returned no number", "the Investigator gave a confidence of 0.5, under the 0.7 that a proposal needs")
         found = confidence_of(make_case(status="needs_human", objections=notes, steps=({"step": "skeptic", "ok": True},), models={"skeptic": "m"}))
         self.assertEqual(found.because, "The AI reviewers did not settle it; code read the facts itself.")

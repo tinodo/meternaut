@@ -380,8 +380,9 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(examined, ["27 of 72 have data every day: no waste seen"])
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
-    def test_the_instructions_stay_short_so_that_with_the_tools_the_definition_is_about_nine_thousand_characters(self):
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5000, "with the descriptions of the tools (about 3,900 characters) the definition stays near 9,000")
+    def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
+        # 5,400 since the learning: the Investigator is told in two sentences that two tools recall what was learned (it was 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5400)
 
     def test_the_instructions_name_nothing_that_the_first_real_run_found_or_missed(self):
         for text in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION):

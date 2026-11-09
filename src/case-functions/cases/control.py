@@ -18,8 +18,10 @@ from .events import History
 from .redact import Redactor
 from .roles import clean_text
 from .run import run_watch, utc_now
+from .study import run_study
 
 JOB = "watch"
+STUDY_JOB = "study"  # one Study now (cases/study.py), started by the same message: the job name and the request id, and nothing that chooses a scope, a model or a budget
 STALE_SECONDS = 900
 REQUEST_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -28,7 +30,7 @@ def refuse(reason: str, request_id: str | None, clock: Callable[[], dt.datetime]
     History(uuid.uuid4().hex, request_id, clock, Redactor()).emit("run.failed", reason=reason)
 
 
-def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Callable[..., object] = run_watch) -> bool:
+def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Callable[..., object] = run_watch, study: Callable[..., object] = run_study) -> bool:
     """Reads one control message and starts the run. Returns whether a run was started."""
     try:
         document = json.loads(message.get_body().decode("utf-8"))
@@ -39,7 +41,8 @@ def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Cal
     if not isinstance(request_id, str) or not REQUEST_ID.match(request_id):
         refuse("the control message has no valid request id", None, clock)
         return False
-    if document.get("job") != JOB:
+    job = document.get("job")
+    if job not in (JOB, STUDY_JOB):
         refuse(f"the control message names a job that the app does not know: {clean_text(document.get('job'), 40)}", request_id, clock)
         return False
     inserted = getattr(message, "insertion_time", None)
@@ -49,5 +52,5 @@ def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Cal
         if (clock() - inserted).total_seconds() > STALE_SECONDS:
             refuse("stale control message", request_id, clock)
             return False
-    run("control", request_id)
+    (study if job == STUDY_JOB else run)("control", request_id)
     return True

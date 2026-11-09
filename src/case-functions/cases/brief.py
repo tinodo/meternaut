@@ -28,7 +28,14 @@ SURE_ENOUGH = 0.7
 # A case that has this status was proposed, so its second AI agreed (decide.py gives the status proposed to nothing else, and a plan of a change is made for no other case).
 AGREED = ("proposed", "awaiting_ok", "approved", "running", "done", "failed", "verified")
 # What code wrote among the objections of a case (decide.py, investigate.py): they are notes of code and not the second AI's doubt.
-CODE_NOTES = ("no measurement backs this finding", "the Investigator gave a confidence of")
+CODE_NOTES = ("no measurement backs this finding", "the Investigator gave a confidence of", "past cases like this")
+# What the capability profile (cases/capability.py) says that the identity cannot see, as the one sentence of a brief that its advice rests on: said only when it changes what Meternaut can say.
+ACCESS_WORDS = {
+    "reservations-not-visible": "This estate's reservations are not visible with the current access, so no commitment advice.",
+    "savings-plans-not-visible": "This estate's savings plans are not visible with the current access, so no commitment advice.",
+    "commitments-not-visible": "This estate's reservations and savings plans are not visible with the current access, so no commitment advice.",
+    "savings-plans-not-offered": "Savings plans are not offered under this estate's agreement, so there is no savings plan advice.",
+}
 RESOURCE_GRAPH = "Azure Resource Graph"
 MONITOR = "Azure Monitor"
 CHECKED = "Azure, checked by code"
@@ -196,6 +203,10 @@ class Brief:
     models: tuple[str, ...]
     outcome: Outcome
     two_people: bool
+    # The one line about how past requests like this were answered ("Past cases like this: 3 of 4 approved; ..."), and, only when what the identity cannot see changes what can be said,
+    # one sentence about that. Both are written by code from the case's own record of them (CaseRecord.learned); empty when the case has none.
+    past: str = ""
+    access: str = ""
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -427,14 +438,41 @@ def _metrics(case: CaseRecord) -> dict:
     return metrics if isinstance(metrics, dict) else {}
 
 
+def past_line(digest: object) -> str:
+    """The one line of a brief about how past requests like this were answered: "Past cases like this: 3 of 4 approved; savings came in at 92 percent of the estimate." The digest is what
+    cases/learning.py keeps in `CaseRecord.learned["past"]`: n (the requests that a person answered), approved, `enough` (n is at least the smallest sample), ratio (what the cost lines
+    showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough it says that there is no history yet; for a case that has no record of its
+    past at all (it was found before there was one) there is no line."""
+    if not isinstance(digest, dict):
+        return ""
+    answered, approved = digest.get("n"), digest.get("approved")
+    whole = isinstance(answered, int) and isinstance(approved, int) and not isinstance(answered, bool) and not isinstance(approved, bool)
+    if digest.get("enough") is not True or not whole or not 0 <= approved <= answered:
+        return "Past cases like this: no history yet."
+    text = f"Past cases like this: {approved} of {answered} approved"
+    ratio = _figure(digest.get("ratio"))
+    if ratio is not None and ratio >= 0:
+        text += f"; savings came in at {round(ratio * 100)} percent of the estimate"
+    boomerangs = digest.get("boomerangs")
+    if isinstance(boomerangs, int) and not isinstance(boomerangs, bool) and boomerangs > 0:
+        text += f"; {boomerangs} {'was' if boomerangs == 1 else 'were'} undone within weeks"
+    return text + "."
+
+
+def _held_by_history(case: CaseRecord | None) -> bool:
+    """Whether what past requests like this showed held the proposal of this case back for a person (cases/learning.py): both AIs agreed, and a person has to decide."""
+    return case is not None and isinstance(case.learned, dict) and case.learned.get("held") == "history"
+
+
 def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Confidence:
     """How sure it is, by code, from the second AI's verdict, the checks that fired and the share of the numbers that the AI cited and that code re-checked.
 
     High: both AIs agree, no check fired, every cited number was re-checked, and the first AI was sure. Low: a check held it back, the second AI did not agree (or gave no
-    verdict), no number backs a finding of the investigation, or the first AI was not sure enough. Medium: the rest."""
+    verdict), no number backs a finding of the investigation, the first AI was not sure enough, or past requests like this were rarely approved. Medium: the rest."""
     if case is None:
         return Confidence("Low", "No record of the review is stored.")
-    agreed = _agreed(case, plan)
+    held = _held_by_history(case)
+    agreed = True if held else _agreed(case, plan)
     guards = [g for g in case.guards if isinstance(g, str)]
     investigated = case.detector == "investigation"
     metrics = _metrics(case)
@@ -471,7 +509,9 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
         pieces.append("code read the facts itself")
     if first is not None and first < SURE_ENOUGH:
         pieces.append("the first AI was not sure enough")
-    low = bool(guards) or agreed is False or (investigated and not metrics) or (first is not None and first < SURE_ENOUGH)
+    if held:
+        pieces.append("past requests like this were rarely approved, so a person has to decide")
+    low = bool(guards) or agreed is False or (investigated and not metrics) or (first is not None and first < SURE_ENOUGH) or held
     all_checked = not investigated or (bool(metrics) and (cited is None or cited == len(metrics)))
     if low:
         level = "Low"
@@ -775,7 +815,9 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         saving=_saving(case, plan, action, state), confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
         answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
-        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3")
+        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
+        past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
+        access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "")
 
 
 def order_key(brief: Brief) -> tuple:

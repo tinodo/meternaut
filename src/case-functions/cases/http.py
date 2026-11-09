@@ -4,7 +4,8 @@ A call is made only to a fixed list of addresses with a fixed method, every one 
 anything else is refused before it leaves the app, so a mistake in the code cannot become a write to Azure. Timeouts are set, and a failure that may pass is
 retried a bounded number of times. Two exceptions: the Foundry project of the app, where the app makes and reads its own agents and makes and deletes its own conversations
 (foundry_calls), and the AI Gateway, which every model call goes through and which has the one POST of a chat completion (ai_gateway_calls). No chat completion goes to the Foundry
-resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)).
+resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)). The Study (cases/study.py) has one list more, of public documentation pages that it reads with no
+token (docs_calls), on a client of its own.
 """
 from __future__ import annotations
 
@@ -102,6 +103,22 @@ def ai_gateway_calls(host: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     return (("POST", re.compile(re.escape(f"https://{host}{AI_GATEWAY_CHAT_PATH}"))),)
 
 
+# The public pages of Microsoft's documentation that the Study reads (cases/library.py), and nothing else of the internet: two hosts of pages, whose paths begin with the English folder
+# (an address of another language or of no language is answered by a redirect, which the client does not follow), and the Azure Retail Prices API. GET only, no token of any kind, and a
+# list of its own: the Watch's list (allowed_calls) holds none of them.
+DOCS_PAGES = {"learn.microsoft.com": "/en-us/", "azure.microsoft.com": "/en-us/"}
+PRICES_HOST = "prices.azure.com"
+PRICES_PATH = "/api/retail/prices"
+DOC_PATH = r"(?:(?!\.+(?:/|$))[A-Za-z0-9._~-]{1,100}/?){1,16}"
+
+
+def docs_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The calls of the Study to public documentation: a GET of a page under /en-us/ of the two hosts, and a GET of the price list. A path is plain words between slashes (no encoded
+    character, no folder that is only dots), and the query is checked by cases/library.py, which makes the call: this list sees the address without its query."""
+    pages = tuple(("GET", re.compile(re.escape(f"https://{host}{prefix}") + DOC_PATH)) for host, prefix in DOCS_PAGES.items())
+    return pages + (("GET", re.compile(re.escape(f"https://{PRICES_HOST}{PRICES_PATH}"))),)
+
+
 def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """(method, address without its query) of every call that the app may make. `foundry_endpoint` adds the calls of foundry_calls for that one project and `ai_gateway_host` the one
     call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
@@ -128,6 +145,12 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         ("GET", re.compile(arm + WORKSPACE + r"/providers/Microsoft\.SecurityInsights/alertRules", re.I)),
         ("GET", re.compile(arm + AI_ACCOUNT + "/deployments", re.I)),
         ("POST", re.compile(re.escape(f"https://{LOG_ANALYTICS_HOST}/v1/workspaces/") + GUID + "/query", re.I)),
+        # What the capability profile reads (cases/capability.py): the first page of the lists of billing accounts, reservation orders and savings plan orders that the identity may see, and
+        # one line of the price sheet of a subscription. Each address is the list itself, never one account or one order.
+        ("GET", re.compile(arm + r"/providers/Microsoft\.Billing/billingAccounts", re.I)),
+        ("GET", re.compile(arm + r"/providers/Microsoft\.Capacity/reservationOrders", re.I)),
+        ("GET", re.compile(arm + r"/providers/Microsoft\.BillingBenefits/savingsPlanOrders", re.I)),
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Consumption/pricesheets/default", re.I)),
         ("GET", re.compile(arm + r"/subscriptions", re.I)),
     )
     if foundry_endpoint is not None:

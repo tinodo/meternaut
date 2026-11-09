@@ -222,7 +222,8 @@ class WhatTheAppIs(unittest.TestCase):
             "cases.modelcalls, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
             "cases.runner, cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
             "cases.agents, cases.investigate, cases.plaintext, cases.lockfile, cases.release, cases.alerts, cases.harness, cases.drift_rules, cases.drift, cases.families.registry, "
-            "cases.families.words; "            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
+            "cases.families.words, cases.learning, cases.library, cases.study; "
+            "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]")
@@ -239,9 +240,9 @@ class WhatTheAppIs(unittest.TestCase):
                     with self.subTest(file=path.name, line=number):
                         self.assertNotRegex(line, r"(?i)\bclaims\b|\bchallenge\b|www-authenticate")
 
-    def test_the_five_functions_read_and_start_nothing_but_the_watch_the_drift_check_and_the_loop(self):
+    def test_the_six_functions_read_and_start_nothing_but_the_watch_the_drift_check_the_study_and_the_loop(self):
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))),
-                         ["cases-control", "console", "drift-daily", "runner-tick", "watch-daily"])
+                         ["cases-control", "console", "drift-daily", "runner-tick", "study-weekly", "watch-daily"])
 
 
 if __name__ == "__main__":

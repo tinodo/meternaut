@@ -16,8 +16,8 @@ from urllib.parse import quote
 
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord, StoreError, SwitchRecord,
-                     SWITCH_NAMES, TIME_FORMAT)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord,
+                     StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -28,7 +28,9 @@ PAGE = 1000
 
 RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS = (
     "mnruns", "mncases", "mnplans", "mndecisions", "mnactions", "mnswitches", "mnsettings", "mnnotes", "mnnonces", "mnmail")
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS)
+# What the system learns (docs/proposals/15-learning.md): the lessons of closed requests, the claims of the documentation and what the identity could see in each run.
+LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -61,6 +63,11 @@ def reverse_key(moment: dt.datetime) -> str:
 
 def _text(value: object) -> str:
     return "" if value is None else str(value)
+
+
+def type_key(resource_type: str) -> str:
+    """A resource type as a value that a key or a filter may hold: the slashes of microsoft.compute/disks become underscores (microsoft.compute_disks)."""
+    return resource_type.replace("/", "_")
 
 
 class TableStore:
@@ -345,3 +352,33 @@ class TableStore:
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         flt = f"PartitionKey eq '{self._quoted(oid)}' and RowKey ge '{self._quoted(compact(since))}'"
         return sorted(self._records(self._query(MAILS, flt, PAGE), MailRecord), key=lambda m: (m.sent_at, m.mail_id))
+
+    def lesson_put(self, lesson: LessonRecord) -> None:
+        self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)
+
+    def lessons_of(self, resource_type: str, limit: int = 500) -> list[LessonRecord]:
+        flt = f"PartitionKey eq 'l' and rtype eq '{self._quoted(type_key(resource_type))}'"
+        found = self._records(self._query(LESSONS, flt, PAGE), LessonRecord)
+        return sorted(found, key=lambda lesson: (lesson.closed_at, lesson.lesson_id), reverse=True)[:limit]
+
+    def lessons_recent(self, limit: int = 300) -> list[LessonRecord]:
+        found = self._records(self._query(LESSONS, "PartitionKey eq 'l'", PAGE), LessonRecord)
+        return sorted(found, key=lambda lesson: (lesson.updated_at, lesson.lesson_id), reverse=True)[:limit]
+
+    def claim_put(self, claim: ClaimRecord) -> None:
+        self._upsert(CLAIMS, "k", claim.claim_id, claim, rtype=self._quoted(type_key(claim.resource_type)), state=self._quoted(claim.state))
+
+    def claims_of(self, resource_type: str) -> list[ClaimRecord]:
+        flt = f"PartitionKey eq 'k' and rtype eq '{self._quoted(type_key(resource_type))}'"
+        return sorted(self._records(self._query(CLAIMS, flt, PAGE), ClaimRecord), key=lambda c: (c.read_at, c.claim_id), reverse=True)
+
+    def claims_recent(self, limit: int = 500) -> list[ClaimRecord]:
+        found = self._records(self._query(CLAIMS, "PartitionKey eq 'k'", PAGE), ClaimRecord)
+        return sorted(found, key=lambda c: (c.read_at, c.claim_id), reverse=True)[:limit]
+
+    def profile_put(self, profile: CapabilityRecord) -> None:
+        self._upsert(PROFILES, "p", f"{reverse_key(parse(profile.at))}_{profile.run_id}", profile)
+
+    def profile_latest(self) -> CapabilityRecord | None:
+        rows = self._query(PROFILES, "PartitionKey eq 'p'", 1)
+        return self._records(rows, CapabilityRecord)[0] if rows else None

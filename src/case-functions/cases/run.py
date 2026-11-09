@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import decide, detectors, evidence, guards, investigate, roles, wiring
+from . import decide, detectors, evidence, guards, investigate, learning, roles, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import is_fixture
@@ -102,7 +102,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
     models: dict[str, str | None] = {"detective": st.model_detective, "skeptic": None}
 
     def save(status: str, recommendation: str | None, confidence: float | None, saving: float | None, summary: str, objections: list[str], flags_on: list[str],
-             facts: dict) -> None:
+             facts: dict, skeptic: str = "none") -> None:
         """The case goes to the store, when there is one, and a plan is made when a person could approve a change for it. A store that fails never stops the run."""
         ex = s.extras
         if ex is None:
@@ -115,11 +115,12 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
                 resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=lead.detector, run_id=h.run_id, status=status,
                 recommendation=recommendation, confidence=confidence, saving_usd_month=saving, cost_usd_30d=lead.cost_usd_30d, summary=clean_text(summary, 600),
                 objections=tuple(clean_text(o, 300) for o in objections), guards=tuple(flags_on), models=dict(models), steps=tuple(steps), facts=facts,
-                first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1)
+                first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1, learned={"skeptic": skeptic})
             ex.store.case_put(record)
             if status in ("proposed", "needs_human"):
                 plan = ex.approvals.plan_for(record, lead, ex.approvers())
                 if plan is not None:
+                    record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                     h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                     ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
         except (StoreError, ValueError) as error:
@@ -183,7 +184,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
            monthlySavingUsd=_figure(outcome.monthly_saving_usd), summary=outcome.summary, objections=list(outcome.objections), guards=outcome.guards)
     models["skeptic"] = st.model_skeptic if skeptic else None
     save(outcome.status, outcome.recommendation, outcome.confidence, _figure(outcome.monthly_saving_usd), outcome.summary, list(outcome.objections), outcome.guards,
-         case["facts"])
+         case["facts"], skeptic.verdict if skeptic else "none")
     return outcome.status, used
 
 
@@ -258,7 +259,7 @@ def execute(s: Services, trigger: str) -> Summary:
     except scope_mod.ScopeError as error:
         scope, refusal = scope_mod.Scope((), "none"), clean_text(s.redact(error), 300)
     notes.extend(scope.notes)
-    st = replace(st, subscriptions=scope.subscriptions)
+    st = replace(st, subscriptions=scope.subscriptions, quota_ids=scope.quotas)
     s = replace(s, settings=st)
     # With many subscriptions the line carries their count and the first few ids, not all of them.
     h.emit("run.started", trigger=trigger, subscriptions=len(scope.subscriptions), scopes=[x[:8] for x in scope.subscriptions[:SCOPES_SHOWN]], scopeFrom=scope.source,

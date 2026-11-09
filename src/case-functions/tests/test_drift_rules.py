@@ -6,7 +6,7 @@ import copy
 import unittest
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import agents, config as cfg, drift_rules as rules, foundry, lockfile, toolbox
+from cases import agents, config as cfg, drift_rules as rules, foundry, library, lockfile, toolbox
 from cases.drift_rules import FAIL, PASS, UNKNOWN
 
 INVESTIGATOR, SKEPTIC = agents.INVESTIGATOR_NAME, agents.SKEPTIC_NAME
@@ -24,7 +24,7 @@ def healthy_definitions():
     names = {name: f"{entry['connection']}/{entry['model']}" for name, entry in current.agents.items()}
     settings = cfg.load({"SCOPE_SUBSCRIPTIONS": support.SUBSCRIPTION, "MODEL_DETECTIVE": "gpt-6-luna", "MODEL_SKEPTIC": "gpt-6.1-sol", "AIGATEWAY_HOST": HOST, "MAX_CASES_PER_RUN": "3",
                          "CASES_CONTROL_QUEUE_NAME": "cases-control", "FOUNDRY_MODEL_INVESTIGATOR": names[INVESTIGATOR], "FOUNDRY_MODEL_SKEPTIC": names[SKEPTIC]})
-    specs = (agents.investigator(settings, toolbox.SPECS), agents.skeptic(settings))
+    specs = (agents.investigator(settings, toolbox.SPECS), agents.skeptic(settings), agents.scholar(settings, (library.FETCH_DOC,)))  # the three agents that the lock names since the learning
     return {spec.name: foundry.definition_of(spec) for spec in specs}
 
 

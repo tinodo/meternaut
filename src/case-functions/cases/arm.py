@@ -34,6 +34,11 @@ DEPLOYMENTS_API = "2026-09-01"  # Learn, the template reference of Microsoft.Cog
 ACTIVITY_API = "2015-04-01"  # Learn, "Activity Logs - List"
 BENEFITS_API = "2026-06-01"  # Learn, "Benefit Recommendations - List"
 RESERVATIONS_API = "2024-08-01"  # Learn, "Reservation Recommendations - List" (Microsoft.Consumption)
+# The reads of the capability profile (cases/capability.py), each the first page of a list that holds only what the identity may see, or one read of the price sheet.
+BILLING_API = "2024-04-01"  # Learn, "Billing Accounts - List": the billing accounts that a user has access to, each with properties.agreementType
+CAPACITY_API = "2022-11-01"  # Learn, "Reservation Order - List": the reservation orders that the user has access to in the current tenant
+SAVINGS_PLAN_ORDERS_API = "2026-06-01"  # Learn, "Savings Plan Order - List"
+PRICE_SHEET_API = "2026-06-01"  # Learn, "Price Sheet - Get": the price sheet of a subscription, with $top to read one line of it
 # Cost Management throttles by the type of the client as well as by the tenant, and a call that names no client type shares the quota of every caller that does not either: in the pilot it got
 # HTTP 429 with a wait of 2 to 21 seconds while the same call with this header got 200. The header is described in Microsoft Q&A (learn.microsoft.com/answers/a/8268839) and by the owners
 # of the REST specifications (Azure/azure-rest-api-specs issue 24407), and not on a page of the REST reference.
@@ -525,3 +530,31 @@ class Arm:
         flt = quote("properties/scope eq 'Single'", safe="")
         url = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.Consumption/reservationRecommendations?api-version={RESERVATIONS_API}&$filter={flt}"
         return self._pages(subscription, url, "Microsoft.Consumption")
+
+    # -- the reads of the capability profile: what the identity can see, as the first page of each list ------------------------------------------------------------------------------------
+    def _first_page(self, url: str, service: str) -> list[dict]:
+        """The first page of a list at the tenant, as Azure gives it. The lists of the profile hold only what the identity may see, so the first page says whether anything is visible, and the
+        next page is never read."""
+        data = self.client.request("GET", url, headers=self._headers(), timeout=60, retries=1).json()
+        if not isinstance(data, dict) or not isinstance(data.get("value", []), list):
+            raise _bad(service)
+        return [item for item in data.get("value", []) if isinstance(item, dict)]
+
+    def billing_accounts(self) -> list[dict]:
+        """The billing accounts that the identity has access to (Learn, "Billing Accounts - List"), each with its agreement type in properties.agreementType."""
+        return self._first_page(f"{ARM}/providers/Microsoft.Billing/billingAccounts?api-version={BILLING_API}", "Microsoft.Billing")
+
+    def reservation_orders(self) -> list[dict]:
+        """The reservation orders that the identity has access to in the tenant (Learn, "Reservation Order - List")."""
+        return self._first_page(f"{ARM}/providers/Microsoft.Capacity/reservationOrders?api-version={CAPACITY_API}", "Microsoft.Capacity")
+
+    def savings_plan_orders(self) -> list[dict]:
+        """The savings plan orders that the identity has access to (Learn, "Savings Plan Order - List")."""
+        return self._first_page(f"{ARM}/providers/Microsoft.BillingBenefits/savingsPlanOrders?api-version={SAVINGS_PLAN_ORDERS_API}", "Microsoft.BillingBenefits")
+
+    def price_sheet(self, subscription: str) -> bool:
+        """Whether the price sheet of one subscription can be read (Learn, "Price Sheet - Get"): one line of it is asked for, and nothing of it is kept. Raises HttpError when it cannot."""
+        url = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.Consumption/pricesheets/default?api-version={PRICE_SHEET_API}&$top=1"
+        if not isinstance(self.client.request("GET", url, headers=self._headers(), timeout=60, retries=1).json(), dict):
+            raise _bad("Microsoft.Consumption")
+        return True

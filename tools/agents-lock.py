@@ -4,9 +4,10 @@
     python tools/agents-lock.py write [--out FILE]
     python tools/agents-lock.py check [--lock FILE]
 
-The lock holds, for each agent of the investigation, the model alias, the SHA-256 of its instructions and of the canonical schemas of its tools, and the options that are expected, and,
-for each tool, the SHA-256 of its schema and of the source of the code that runs it, and of the module of the tools. It holds no id, name or address of an estate: it is made of what this
-repository says (cases/agents.py, cases/toolbox.py, and the name of the AI Gateway connection and the models in tools/environment-params.py).
+The lock holds, for each agent of the project (the Investigator, the Skeptic and the Scholar), the model alias, the SHA-256 of its instructions and of the canonical schemas of its tools, and the
+options that are expected, and, for each tool, the SHA-256 of its schema and of the source of the code that runs it, and one SHA-256 of the modules of the tools (the toolbox, the library of the
+Scholar and the memory that the tools recall read). It holds no id, name or address of an estate: it is made of what this repository says (cases/agents.py, cases/toolbox.py,
+cases/library.py, cases/learning.py, and the name of the AI Gateway connection and the models in tools/environment-params.py).
 
 A changed definition is a release: the pull request that changes an instruction, a tool or a model changes the lock with it (`write`), and `check` fails, as a test in CI does, when
 they differ. At run time the harness (cases/harness.py) refuses an agent whose code or stored definition differs from the lock, and the drift check reads the same lock.
@@ -51,8 +52,12 @@ def load_params():
 
 
 def from_code() -> tuple[dict, dict, str, str | None]:
-    """The definitions that the code sends (by agent name), the digests of the code of the tools, the digest of the toolbox's module and the connection of the models (None for a direct route)."""
+    """The definitions that the code sends (by agent name), the digests of the code of the tools, the digest of the modules of the tools and the connection of the models (None for a direct
+    route). The digests are the ones that the harness holds the running code to (cases/harness.py): the tools of the toolbox and of the Scholar, and one digest for the toolbox, the library of
+    the Scholar and the memory that the tools recall read."""
     agents, foundry, lockfile, toolbox = load_app()
+    from cases import harness, library  # noqa: E402 (the app folder is on the path since load_app)
+
     params = load_params()
     connection = params.AIGATEWAY_CONNECTION_NAME if params.AGENTS_VIA_AI_GATEWAY else None
 
@@ -60,11 +65,10 @@ def from_code() -> tuple[dict, dict, str, str | None]:
         return f"{connection}/{model}" if connection else model
 
     settings = SimpleNamespace(foundry_model_investigator=named(params.AGENT_MODELS["foundryModelInvestigator"]), foundry_model_skeptic=named(params.AGENT_MODELS["foundryModelSkeptic"]))
-    specs = (agents.investigator(settings, toolbox.SPECS), agents.skeptic(settings))
+    specs = (agents.investigator(settings, toolbox.SPECS), agents.skeptic(settings), agents.scholar(settings, (library.FETCH_DOC,)))
     definitions = {spec.name: foundry.definition_of(spec) for spec in specs}
-    implementations = lockfile.implementation_digests(toolbox.Toolbox, [tool.name for tool in toolbox.SPECS])
-    module = lockfile.source_digest(Path(toolbox.__file__).read_text(encoding="utf-8"))
-    return definitions, implementations, module, connection
+    implementations, module = harness.code_digests()
+    return definitions, dict(implementations), module, connection
 
 
 def instructions_text() -> str:

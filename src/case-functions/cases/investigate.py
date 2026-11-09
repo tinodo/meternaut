@@ -25,7 +25,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, decide, guards, roles, wiring
+from . import agents, capability, decide, guards, learning, roles, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
@@ -34,7 +34,7 @@ from .guards import Guards
 from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
-from .models import CaseRecord, StoreError
+from .models import ADVISE, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
@@ -129,6 +129,7 @@ class Investigation:
     guarded: int = 0
     unmeasured: int = 0
     owners: object = None  # the OwnerReader of the run: one for all its cases, so that the reads of the Activity Log share one budget
+    profile: object = None  # the CapabilityRecord of the run (cases/capability.py): what the identity can see of the agreement and of the commitments
     # True when the harness did not let the agents run (a pulled switch, a lock that does not hold, a stored definition that differs) or stopped a run: the run of the Watch then opens no new
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
@@ -388,9 +389,13 @@ def _signature(facts: Mapping) -> tuple:
     return facts.get("basis"), facts.get("proposal"), tuple(sorted(metrics.items())) if isinstance(metrics, dict) else ()
 
 
-def _judged_lately(s: "Services", lead: Lead, facts: dict) -> bool:
+def _judged_lately(s: "Services", lead: Lead, facts: dict, open_questions: "learning.OpenQuestions | None" = None) -> bool:
     """A resource whose case was updated within the days of RECHECK_DAYS is not taken up again unless its evidence changed. A case that ended in an error, or
-    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time."""
+    whose steps did not all work, is taken up again at once. A case that a person has answered, or that the loop has taken on, is left alone for the whole time.
+
+    An open question (learning.OpenQuestions: a case that needs a person or is proposed, with no request to a person open or with a first AI that was not sure enough, that nobody
+    answered lately and that is not marked do-not-touch) is taken up again at once when the Investigator cites it again, whether its evidence changed or not: it comes back with the tools
+    until it is decision-ready or dropped, and a case that older code left with no request gets its request."""
     ex = s.extras
     if ex is None:
         return False
@@ -403,6 +408,8 @@ def _judged_lately(s: "Services", lead: Lead, facts: dict) -> bool:
     if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days):
         return False
     if old.status in ("proposed", "needs_human", "dropped"):
+        if open_questions is not None and open_questions.is_open(old):
+            return False
         return _signature(old.facts if isinstance(old.facts, dict) else {}) == _signature(facts)
     return True
 
@@ -550,8 +557,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     budget = max(1.0, float(st.investigate_max_seconds))
     deadline = began + budget
     s.client.deadline = deadline
+    built_here = toolbox is None
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
+        toolbox.memory = s.extras.store if s.extras is not None else None  # what the tools that recall read: the lessons, the claims and the open questions of the store of the loop
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
@@ -571,6 +580,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.held = isinstance(error, HarnessRefused)
         out.note = f"the agents could not be made ready ({_why(s, error)})"
         return out
+    if built_here:
+        # What the identity can see of the agreement and the commitments: read once for the run, only when the agents will run, kept for the run, and shown by `commitments` and by the brief
+        # of a finding about a commitment.
+        toolbox.profile = capability.keep(s.extras.store if s.extras is not None else None,
+                                          capability.probe(s.arm, st.subscriptions, st.quota_ids, contexts, h.run_id, s.clock()))
+    out.profile = getattr(toolbox, "profile", None)
     h.emit("investigation.started", investigator=investigator_ref, skeptic=skeptic_ref, modelInvestigator=st.foundry_model_investigator,
            modelSkeptic=st.foundry_model_skeptic, maxCalls=st.investigate_max_calls, maxSeconds=int(budget))
 
@@ -651,6 +666,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     locks: dict[str, list[str] | None] = {}
     room = MAX_CASES
     held: dict[str, int] = {}
+    open_questions = learning.OpenQuestions(s.extras.store, s.clock()) if s.extras is not None else None  # read once, when the first old case is looked at
     for finding in findings:
         if finding.reason is not None:
             continue
@@ -659,7 +675,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
-            if _judged_lately(s, lead, facts):
+            if _judged_lately(s, lead, facts, open_questions):
                 finding.recent += 1
             elif room <= 0:
                 finding.capped += 1
@@ -813,7 +829,16 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     h = s.history
     lead = item.lead
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
-    outcome = decide.decide(lead, Guards({}), detective, finding.verdict if item.shown else None, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
+    judged = finding.verdict if item.shown else None
+    outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
+    # What past requests like this showed may hold a proposal back for a person, and never makes a finding stronger (cases/learning.py). It does so only when LEARNING_HOLD is on: the first run of
+    # tools/learning-check.py missed its thresholds (docs/proposals/15-learning.md). The case is always an advise plan's: no change is made for it.
+    store = s.extras.store if s.extras is not None and s.settings.learning_hold else None
+    outcome, held = learning.hold(store, learning.type_word(lead.resource_type), ADVISE, detective.confidence, outcome)
+    learned = {"skeptic": judged.verdict if judged is not None else "none", **({"held": "history"} if held else {})}
+    access = capability.access_code(out.profile, finding.basis)
+    if access:
+        learned["access"] = access  # what the identity cannot see of the commitments, as the one sentence that the brief of a finding about a commitment carries
     if not item.metrics:
         out.unmeasured += 1
     h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=DETECTOR, resourceName=clean_text(lead.name, 120), resourceType=clean_text(lead.resource_type, 120),
@@ -841,11 +866,12 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd), cost_usd_30d=lead.cost_usd_30d,
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
-            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead))
+            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead), learned=learned)
         ex.store.case_put(record)
         if outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
+                record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
     except (StoreError, ValueError) as error:

@@ -10,7 +10,8 @@ renamed or removed, so no stored record has to be rewritten, and the tables keep
 
 The families of change added the same kind of thing: `PlanRecord.target` and `PlanRecord.digest` (a plan of before has no digest, so it cannot be approved: the Watch makes a new one),
 `DecisionRecord.plan_digest`, `ActionRecord.plan_digest` and `ActionRecord.operation`. The constant FAMILIES is gone: the families are in cases/families (their registry is
-cases/families/registry.py).
+cases/families/registry.py). The learning (docs/proposals/15-learning.md) added three new kinds of record, LessonRecord, ClaimRecord and CapabilityRecord, each with its own table, and no
+field of a record that was there before.
 """
 from __future__ import annotations
 
@@ -31,6 +32,15 @@ PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later")
 # Why a person declined, from a short list (the form of a decline offers exactly these; an empty reason is allowed).
 DECLINE_REASONS = ("still-needed", "figure-wrong", "handled", "other")
+# What a closed request can have taught (cases/learning.py): the last word of the person (a question and a "later" are the last word of a request that then expired), and what became of
+# the change that a person approved.
+LESSON_ANSWERS = ("approve", "decline", "not_mine", "ask", "later", "expired")
+LESSON_RESULTS = ("", "ran", "failed", "verified")
+# What Microsoft's documentation can say about a resource type, as the Scholar files it (cases/study.py): the kinds are a vocabulary for what a page says, not a list of what to find.
+# STUDIED marks a type that was read and gave none of them.
+CLAIM_KINDS = ("bills-while-idle", "scales-to-zero", "minimum-charge", "retires-on-date", "price-changes-on-date", "commitment-available", "sku-successor", "quota-limit", "other")
+STUDIED = "studied"
+CLAIM_STATES = ("fresh", "stale")
 ACTION_STATES = ("queued", "running", "done", "failed", "unknown", "verified", "withdrawn")
 SWITCH_NAMES = ("all", "changes", "messages", "investigation")
 NOTE_KINDS = ("note", "do_not_touch")
@@ -123,6 +133,10 @@ class CaseRecord(Record):
     #  "changedBy": who changed it last, "changedAt": when, "lookedUp": True once the tags and the Activity Log were read, even when they held nothing}.
     # A key that is not known is left out. The text is from the estate: pages and letters show it escaped, and nothing trusts it. An empty dict means "not looked up".
     owner: dict = field(default_factory=dict)
+    # What the lessons and the capability profile said when the case was found, as typed words and numbers, for a person to read and never for a model (cases/learning.py):
+    # {"skeptic": the second AI's verdict, "past": {"n", "approved", "ratio", "boomerangs"}: how past requests like this were answered, "held": "history" when what past requests
+    # showed held a proposal back, "access": a word of cases/capability.py when what the identity cannot see changes what can be said}. A key that is not known is left out.
+    learned: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -248,6 +262,65 @@ class MailRecord(Record):
 
 
 @dataclass(frozen=True)
+class LessonRecord(Record):
+    """What one closed request taught (docs/proposals/15-learning.md): typed values only, never a name and never a text of a person or of an estate. One lesson for each plan."""
+
+    lesson_id: str  # the id of the plan
+    resource_type: str  # as Azure names it, in lower case, or "other"
+    family: str  # one of FAMILIES, or ADVISE
+    detector: str = ""
+    basis: str = ""  # the basis of an investigation's finding (a word of a closed list), or empty
+    proposal: str = ""  # delete, change or investigate, or empty
+    signals: dict = field(default_factory=dict)  # a closed set of keys, each with a bucket: {"cost": "10-100", "usage": "none", ...}
+    confidence: float | None = None  # what the first AI said, as it said it
+    skeptic: str = ""  # agree, disagree, unsure, or none when the second AI gave no verdict
+    answer: str = "expired"  # one of LESSON_ANSWERS
+    reason: str = ""  # one of DECLINE_REASONS, or empty: only a decline has one
+    opened_at: str = ""
+    closed_at: str = ""
+    result: str = ""  # one of LESSON_RESULTS: what became of the change when the person approved one
+    predicted_usd_month: float | None = None
+    measured_usd_month: float | None = None  # what the cost lines showed some days after a change, when they could be read
+    measured_at: str = ""
+    boomerang: bool = False  # the change was undone within weeks (the Activity Log shows the resource made again)
+    boomerang_checked_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class ClaimRecord(Record):
+    """One statement of Microsoft's documentation about a resource type, with the page and a quote that code found on that page. `kind` is STUDIED for the mark that the Scholar looked and
+    the documentation gave nothing of the closed kinds: it keeps the same type from being studied again at once."""
+
+    claim_id: str
+    resource_type: str
+    kind: str  # one of CLAIM_KINDS, or STUDIED
+    url: str = ""
+    quote: str = ""  # at most 200 characters, copied from the page
+    read_at: str = ""
+    expires_at: str = ""
+    checked_at: str = ""
+    state: str = "fresh"  # one of CLAIM_STATES
+    recipe: str = "refetch-and-match"  # how it is checked again: the page is fetched again and the quote must still be on it
+
+
+@dataclass(frozen=True)
+class CapabilityRecord(Record):
+    """What the app's identity could see in one run, as words of a closed list (cases/capability.py). It holds no id, no name and no address of an estate."""
+
+    run_id: str
+    at: str
+    subscriptions: int = 0
+    cost: str = "unknown"  # visible, not visible with this access, unavailable or unknown
+    billing: str = "unknown"  # the billing accounts of the identity: the same four words
+    agreement: str = "unknown"  # what the billing accounts say: enterprise, customer, pay-as-you-go, partner, other, mixed (they differ) or unknown
+    hint: str = "unknown"  # what the quota ids of the subscriptions suggest, when the billing accounts say nothing: pay-as-you-go, enterprise-or-customer, partner, other, mixed or unknown
+    reservations: str = "unknown"
+    savings_plans: str = "unknown"
+    price_sheet: str = "unknown"
+
+
+@dataclass(frozen=True)
 class Principal:
     """The signed-in person, from the headers that the platform's sign-in adds. It is never read from a form or a link."""
 
@@ -335,6 +408,16 @@ class Store(Protocol):
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         """The messages to one person that were sent at or after `since` (a time in the TIME_FORMAT)."""
         ...
+    def lesson_put(self, lesson: LessonRecord) -> None: ...
+    def lessons_of(self, resource_type: str, limit: int = 500) -> list[LessonRecord]:
+        """The lessons of one resource type (any family), at most `limit`."""
+        ...
+    def lessons_recent(self, limit: int = 300) -> list[LessonRecord]: ...
+    def claim_put(self, claim: ClaimRecord) -> None: ...
+    def claims_of(self, resource_type: str) -> list[ClaimRecord]: ...
+    def claims_recent(self, limit: int = 500) -> list[ClaimRecord]: ...
+    def profile_put(self, profile: CapabilityRecord) -> None: ...
+    def profile_latest(self) -> CapabilityRecord | None: ...
 
 
 class Decider(Protocol):

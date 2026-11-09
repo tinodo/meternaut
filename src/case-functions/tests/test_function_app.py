@@ -11,13 +11,15 @@ except ImportError:
 
 TIMER = "watch-daily"
 DRIFT = "drift-daily"
+STUDY = "study-weekly"
 CONTROL = "cases-control"
 TICK = "runner-tick"
 CONSOLE = "console"
 SCHEDULE = "0 30 5 * * *"
 DRIFT_SCHEDULE = "0 10 5 * * *"
+STUDY_SCHEDULE = "0 30 4 * * 1"
 TICK_SCHEDULE = "0 * * * * *"
-NAMES = sorted([TIMER, DRIFT, CONTROL, TICK, CONSOLE])
+NAMES = sorted([TIMER, DRIFT, STUDY, CONTROL, TICK, CONSOLE])
 
 
 class FunctionAppSourceTests(unittest.TestCase):
@@ -29,13 +31,21 @@ class FunctionAppSourceTests(unittest.TestCase):
         cls.tree = ast.parse(cls.source)
         cls.functions = [node for node in cls.tree.body if isinstance(node, ast.FunctionDef)]
 
-    def test_the_app_has_the_five_functions_that_the_checker_and_the_template_name(self):
+    def test_the_app_has_the_six_functions_that_the_checker_and_the_template_name(self):
+        # Six since the learning: the Study has a timer of its own.
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', self.source)), NAMES)
-        self.assertEqual(len(self.functions), 5)
+        self.assertEqual(len(self.functions), 6)
 
     def test_the_timer_runs_daily_at_half_past_five_utc_and_not_at_startup(self):
         self.assertIn(f'TIMER_SCHEDULE = "{SCHEDULE}"', self.source)
         self.assertIn("schedule=TIMER_SCHEDULE, run_on_startup=False", self.source)
+
+    def test_the_study_runs_weekly_on_monday_at_half_past_four_utc_before_the_drift_check_and_the_watch_and_not_at_startup(self):
+        self.assertIn(f'STUDY_SCHEDULE = "{STUDY_SCHEDULE}"', self.source)
+        self.assertIn("schedule=STUDY_SCHEDULE, run_on_startup=False", self.source)
+        second, minute, hour, day, month, weekday = STUDY_SCHEDULE.split()
+        self.assertEqual((second, minute, hour, day, month, weekday), ("0", "30", "4", "*", "*", "1"), "NCRONTAB: second minute hour day month day-of-week, and 1 is Monday")
+        self.assertLess((int(hour), int(minute)), (int(DRIFT_SCHEDULE.split()[2]), int(DRIFT_SCHEDULE.split()[1])))
 
     def test_the_drift_check_runs_daily_at_ten_past_five_utc_twenty_minutes_before_the_watch_and_not_at_startup(self):
         self.assertIn(f'DRIFT_SCHEDULE = "{DRIFT_SCHEDULE}"', self.source)
@@ -86,7 +96,7 @@ class FunctionAppSourceTests(unittest.TestCase):
                 self.assertIsInstance(statement, (ast.Expr, ast.Return))
                 call = statement.value
                 self.assertIsInstance(call, ast.Call)
-                self.assertIn(call.func.value.id, {"run", "control", "loop", "console", "drift"})
+                self.assertIn(call.func.value.id, {"run", "control", "loop", "console", "drift", "study"})
 
 
 @unittest.skipIf(func is None, "azure-functions is not installed here; the CI runner installs it and indexes the app")
@@ -107,8 +117,12 @@ class FunctionAppIndexingTests(unittest.TestCase):
         self.assertEqual(len(bindings), 1 if name != CONSOLE else 2, "a trigger and no other binding (the web trigger has its output)")
         return {key: getattr(value, "value", value) for key, value in bindings[0].items()}
 
-    def test_the_app_has_exactly_the_five_functions(self):
+    def test_the_app_has_exactly_the_six_functions(self):
         self.assertEqual(sorted(function.get_function_name() for function in self.list), NAMES)
+
+    def test_the_study_is_a_weekly_timer_that_does_not_run_at_startup(self):
+        binding = self.binding(STUDY)
+        self.assertEqual((binding["type"], binding["schedule"], binding["runOnStartup"]), ("timerTrigger", STUDY_SCHEDULE, False))
 
     def test_the_timer_is_a_daily_timer_that_does_not_run_at_startup(self):
         binding = self.binding(TIMER)

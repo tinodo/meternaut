@@ -13,7 +13,7 @@ from pathlib import Path
 
 from support import APP_ROOT, REPO_ROOT
 
-from cases import agents, config as cfg, foundry, lockfile, toolbox
+from cases import agents, config as cfg, foundry, library, lockfile, toolbox
 from cases.lockfile import Facts, LockError
 
 NAME = "meternaut-example"
@@ -297,19 +297,21 @@ class TheRepositoryHoldsTheRuleThatTheCodeAndTheLockChangeTogether(unittest.Test
     def test_the_tool_agrees(self):
         self.assertEqual(self.tool.command_check(self.tool.LOCK), 0)
 
-    def test_the_lock_names_the_two_agents_the_models_of_the_settings_and_the_connection_of_the_environment(self):
-        self.assertEqual(sorted(self.lock.agents), [agents.INVESTIGATOR_NAME, agents.SKEPTIC_NAME])
+    def test_the_lock_names_the_three_agents_the_models_of_the_settings_and_the_connection_of_the_environment(self):
+        self.assertEqual(sorted(self.lock.agents), [agents.INVESTIGATOR_NAME, agents.SCHOLAR_NAME, agents.SKEPTIC_NAME])
         self.assertEqual((self.lock.agents[agents.INVESTIGATOR_NAME]["model"], self.lock.agents[agents.SKEPTIC_NAME]["model"]), (cfg.DEFAULT_MODEL_INVESTIGATOR, cfg.DEFAULT_MODEL_SKEPTIC))
+        self.assertEqual(self.lock.agents[agents.SCHOLAR_NAME]["model"], cfg.DEFAULT_MODEL_INVESTIGATOR, "the Scholar reads with the model of the Investigator, the one that takes function tools")
         self.assertEqual((self.params.AGENT_MODELS["foundryModelInvestigator"], self.params.AGENT_MODELS["foundryModelSkeptic"]), (cfg.DEFAULT_MODEL_INVESTIGATOR, cfg.DEFAULT_MODEL_SKEPTIC))
         self.assertTrue(self.params.AGENTS_VIA_AI_GATEWAY, "the lock says that the agents reach their models through the connection, and the environment says the same")
         self.assertEqual(self.lock.connection, self.params.AIGATEWAY_CONNECTION_NAME)
         for entry in self.lock.agents.values():
             self.assertEqual(entry["connection"], self.params.AIGATEWAY_CONNECTION_NAME, "no agent is locked to a direct route: that needs the owner's written exception")
 
-    def test_the_skeptic_has_no_tools_and_the_investigator_has_every_tool_of_the_toolbox_and_the_lock_lists_no_other(self):
+    def test_the_skeptic_has_no_tools_the_investigator_has_every_tool_of_the_toolbox_the_scholar_has_the_one_tool_that_reads_pages_and_the_lock_lists_no_other(self):
         self.assertEqual(self.lock.agents[agents.SKEPTIC_NAME]["tools"], [])
         self.assertEqual(self.lock.agents[agents.INVESTIGATOR_NAME]["tools"], sorted(tool.name for tool in toolbox.SPECS))
-        self.assertEqual(sorted(self.lock.tools), sorted(tool.name for tool in toolbox.SPECS))
+        self.assertEqual(self.lock.agents[agents.SCHOLAR_NAME]["tools"], [library.FETCH_DOC.name])
+        self.assertEqual(sorted(self.lock.tools), sorted([*(tool.name for tool in toolbox.SPECS), library.FETCH_DOC.name]))
 
     def test_no_agent_is_locked_with_a_guardrail_policy_because_agent_guardrails_do_not_apply_to_a_connected_model(self):
         # Learn, "Bring your own model to Foundry Agent Service" (read 2026-11-08): guardrails do not support connected models. The gateway's own content safety and the model deployment's filter stand
@@ -347,7 +349,7 @@ class TheLockTheInstructionsAndTheHarnessNameNoKindOfWaste(unittest.TestCase):
     KINDS = ("private endpoint", "privateendpoint", "storage account", "key vault", "cosmos", "redis", "kubernetes", "load balancer", "virtual machine", "managed disk", "public ip", "app service",
              "log analytics", "vpn gateway", "defender", "orphan", "unattach", "deallocat", "zero traffic", "no traffic")
     STATES = ("idle", "unused", "stopped", "threshold", "waste", "deleted", "bytes", "percentage")
-    SOURCES = ("harness.py", "lockfile.py", "drift.py", "drift_rules.py", "alerts.py", "release.py", "plaintext.py")
+    SOURCES = ("harness.py", "lockfile.py", "drift.py", "drift_rules.py", "alerts.py", "release.py", "plaintext.py", "study.py")
 
     def test_the_lock_names_no_kind_of_resource_no_state_of_waste_no_metric_and_no_resource_type(self):
         text = (APP_ROOT / "cases" / "agents.lock.json").read_text(encoding="utf-8").lower()
@@ -355,14 +357,22 @@ class TheLockTheInstructionsAndTheHarnessNameNoKindOfWaste(unittest.TestCase):
             self.assertNotIn(word, text, word)
         self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", text), [])
 
-    def test_the_instructions_of_both_agents_and_the_copy_of_the_red_team_name_no_kind_of_resource_and_no_resource_type(self):
+    def test_the_instructions_of_the_three_agents_and_the_copy_of_the_red_team_name_no_kind_of_resource_and_no_resource_type(self):
         text = (REPO_ROOT / "evaluation" / "investigator-instructions.txt").read_text(encoding="utf-8")
         self.assertEqual(text, agents.INVESTIGATOR_INSTRUCTIONS, "the red team's copy is the instructions of the code")
-        for what in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION, text):
+        for what in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.SCHOLAR_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION,
+                     agents.SCHOLAR_DESCRIPTION, text):
             lower = what.lower()
             for word in self.KINDS:
                 self.assertNotIn(word, lower, word)
             self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", lower), [])
+
+    def test_the_tool_of_the_scholar_names_no_kind_of_resource_and_no_state_of_waste_in_its_name_its_description_or_its_schema(self):
+        spec = library.FETCH_DOC
+        text = (spec.name.replace("_", " ") + "\n" + spec.description + "\n" + json.dumps(spec.parameters)).lower()
+        for word in self.KINDS + self.STATES:
+            self.assertNotIn(word, text, word)
+        self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", re.sub(r"https://[a-z.]+/en-us/", "", text)), [])
 
     def test_the_sources_of_the_harness_and_of_the_drift_check_name_no_state_of_waste_and_no_resource_type_of_an_estate(self):
         for name in self.SOURCES:
