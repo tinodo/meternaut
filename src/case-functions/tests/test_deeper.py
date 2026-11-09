@@ -96,6 +96,16 @@ class TheWorkspace(unittest.TestCase):
         self.assertEqual([book.name_of(label) for label in ("t1", "t2", "t3", "Heartbeat", "A_CL", "Nope", None, 5)], ["B_CL", "A_CL", None, "Heartbeat", None, None, None, None])
         self.assertEqual(book.known(), {"Heartbeat", "A_CL", "B_CL"})
 
+    def test_what_the_handles_stand_for_is_a_copy_of_the_book_and_holds_the_tables_that_were_labelled_only(self):
+        book = deeper.TableBook(deeper.table_index([{"name": "Heartbeat", "type": "Microsoft"}, {"name": "A_CL", "type": "CustomLog"}, {"name": "B_CL", "type": "CustomLog"}]))
+        self.assertEqual(book.handled(), {})
+        book.label("B_CL"), book.label("Heartbeat")
+        found = book.handled()
+        self.assertEqual(found, {"t1": "B_CL"})
+        found["t2"] = "changed"
+        self.assertEqual(book.handled(), {"t1": "B_CL"}, "a person's page cannot change what the tools show an agent")
+        self.assertIsNone(book.name_of("t2"))
+
 
 class TheUsage(unittest.TestCase):
     def test_the_query_is_made_here_from_a_number_of_days_and_nothing_else(self):

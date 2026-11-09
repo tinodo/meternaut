@@ -94,6 +94,31 @@ class TheVolume(Base):
         self.assertEqual(metrics["Billable GB t1"]["total"], 3)
         self.assertEqual(len(metrics), 4)
 
+    def test_the_whole_volume_is_kept_too_so_that_the_share_of_a_kind_of_data_can_be_worked_out_from_the_record(self):
+        handle = self.handle(WORKSPACE)
+        ask(self.box, "data_volume", handle=handle)
+        self.assertEqual(self.box.evidence[handle]["volume"], {"billable_gb": 5.02, "days": 30, "tables": 4})
+        ask(self.box, "data_volume", handle=handle, days=7)
+        self.assertEqual(self.box.evidence[handle]["volume"]["days"], 7, "the window that was asked for last, so that the numbers of a share cover the same days")
+
+    def test_a_volume_that_could_not_be_read_leaves_no_whole_volume_in_the_record(self):
+        self.estate.failures["query"] = 403
+        handle = self.handle(WORKSPACE)
+        ask(self.box, "data_volume", handle=handle)
+        self.assertNotIn("volume", self.box.evidence.get(handle, {}))
+
+    def test_what_a_handle_of_a_table_stands_for_is_there_for_a_person_and_in_no_answer_and_no_record_of_the_agent(self):
+        self.estate.tables += [table(HOSTILE, plan="Analytics", kind="CustomLog")]
+        self.estate.usage += [usage(9, HOSTILE, 500.0)]
+        handle = self.handle(WORKSPACE)
+        self.assertEqual(self.box.table_names(handle), {}, "nothing was shown yet")
+        answer = ask(self.box, "data_volume", handle=handle)
+        self.clean(answer)
+        self.clean(self.box.evidence[handle])
+        self.assertEqual(self.box.table_names(handle), {"t1": "AppLog_CL", "t2": HOSTILE}, "the largest first, as the answer lists them")
+        self.assertEqual(self.box.table_names("r99"), {})
+        self.assertEqual(self.box.table_names(self.handle(VM)), {})
+
     def test_a_second_ask_reads_nothing_again(self):
         handle = self.handle(WORKSPACE)
         first = ask(self.box, "data_volume", handle=handle)
@@ -296,6 +321,29 @@ class TheWriters(Base):
         answer = ask(self.box, "data_writers", handle=self.workspace, table="t1")
         self.assertEqual(answer["table"], {"table": "t1", "plan": "Basic", "writers": "not read for this plan"})
         self.assertEqual([c for c in self.estate.calls if c["body"] and "// meternaut:sources" in c["body"].get("query", "")], [])
+        self.assertNotIn("writers", self.box.evidence.get(self.workspace, {}))
+
+    def test_the_kinds_of_the_writers_that_the_answer_showed_are_kept_for_the_investigation_largest_first_and_at_most_three(self):
+        self.estate.sources = [{"ResourceId": MACHINE.lower(), "Bytes": 500_000_000, "Whole": 1_000_000_000},
+                               {"ResourceId": ident("Microsoft.Network/virtualNetworks", "vnet-x", sub=SUB2).lower(), "Bytes": 200_000_000, "Whole": 1_000_000_000},
+                               {"ResourceId": ident("Microsoft.KeyVault/vaults", "kv-x", sub=SUB2).lower(), "Bytes": 100_000_000, "Whole": 1_000_000_000},
+                               {"ResourceId": ident("Microsoft.Storage/storageAccounts", "st-x", sub=SUB2).lower(), "Bytes": 50_000_000, "Whole": 1_000_000_000},
+                               {"ResourceId": ident("Microsoft.Compute/virtualMachines", "vm-y", sub=SUB2).lower(), "Bytes": 40_000_000, "Whole": 1_000_000_000},
+                               {"ResourceId": "", "Bytes": 30_000_000, "Whole": 1_000_000_000}]
+        ask(self.box, "data_writers", handle=self.workspace, table="Heartbeat")
+        self.assertEqual(self.box.evidence[self.workspace]["writers"], {"Heartbeat": ["microsoft.compute/virtualmachines", "microsoft.network/virtualnetworks", "microsoft.keyvault/vaults"]})
+        self.clean(self.box.evidence[self.workspace])
+
+    def test_nothing_is_kept_of_the_writers_of_a_table_that_could_not_be_read_or_that_none_wrote_to(self):
+        self.estate.failures["sources"] = 403
+        ask(self.box, "data_writers", handle=self.workspace, table="Heartbeat")
+        self.assertNotIn("writers", self.box.evidence.get(self.workspace, {}))
+        self.estate.failures.clear()
+        self.estate.sources = []
+        box = toolbox(self.estate)
+        handle = ask(box, "list_resources", type=WORKSPACE)["rows"][0][0]
+        ask(box, "data_writers", handle=handle, table="Perf")
+        self.assertEqual(box.evidence.get(handle, {}).get("writers", {}).get("Perf", []), [])
 
     def test_a_table_that_the_workspace_does_not_list_is_a_bad_argument(self):
         for table_name in ("Nope", "t9"):

@@ -158,6 +158,10 @@ class TableBook:
     def known(self) -> set[str]:
         return set(self.index)
 
+    def handled(self) -> dict[str, str]:
+        """The table that each handle of this run stands for (t1 is the name of a table that the platform did not make). It is for the page of a person and never for an agent."""
+        return dict(self._names)
+
 
 # -- what a workspace records about the data written to it -----------------------------------------------------------------------------------------
 

@@ -45,6 +45,11 @@ What the investigation may rely on after a run (it reads these and changes none)
                                           A resource that measure or metric_summary could not read, or left out to fit the cap, has no entry and adds no total.
       "advisor"                           [{"savingUsdMonth": number or None (a number only when Advisor gives the currency USD), "annualSavings", "currency", "impact",
                                           "typeId", "term", "lookback", "reservedType", "sku"}], one for each Advisor item that an answer showed for h
+      "volume"                            {"billable_gb": the whole volume that was charged for, "days": the window, "tables": how many tables had data}: what data_volume read for a
+                                          resource that keeps records of the data written to it. `metrics` holds the first tables of it, as "Billable GB <table>"
+      "writers"                           {a kind of data as data_volume names it: [the resource types that wrote most of it on the last closed day, the largest first, at most
+                                          MAX_WRITER_KINDS]}: what data_writers showed for a kind of data
+  Toolbox.table_names(h)  what the table handles of h stand for in this run (t1 is the name of a table that the platform did not make), for the page of a person and never for an agent
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 """
 from __future__ import annotations
@@ -103,6 +108,7 @@ MAX_HISTORY = 90  # the closed days that cost_history looks back, at most
 DEFAULT_HISTORY = 30
 DEFAULT_TABLES = 20  # kinds of data in one answer of data_readers when the agent gives no limit
 MAX_SOURCES = 12  # the resources that data_writers shows for one kind of data
+MAX_WRITER_KINDS = 3  # the kinds of resource that the evidence keeps for the writers of one kind of data
 MAX_RULES = 20  # the collection rules that data_writers shows
 MAX_CHILDREN = 40  # the parts of one resource that children shows
 MAX_RESOURCES = 10  # the resources of a type that cost_history shows with their totals
@@ -858,6 +864,11 @@ class Toolbox:
     def specs(self) -> tuple[FunctionTool, ...]:
         """The function tools that the agent is defined with."""
         return SPECS
+
+    def table_names(self, handle: str) -> dict[str, str]:
+        """What the table handles of one resource stand for in this run (t1 is the name of a table that the platform did not make): for the page of a person, never for an agent."""
+        space = self._spaces.get(handle)
+        return space.tables.handled() if space is not None else {}
 
     def call(self, name: str, arguments: dict) -> str:
         """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
@@ -1764,6 +1775,7 @@ class Toolbox:
         answer: dict = {"handle": handle, "days": days, "settings": space.settings, "tables_listed": space.listing, **({"pricing": space.pricing} if space.pricing else {}), "volume": word}
         if word != "read":
             return answer
+        self.evidence.setdefault(handle, {})["volume"] = {"billable_gb": self._gb(total), "days": days, "tables": len(ranked)}  # the whole volume, of which the first tables are kept below
         free = sum(use.free_mb for use in ranked)
         extra = free > 0
         shown = ranked[offset:]
@@ -1949,6 +1961,9 @@ class Toolbox:
                     lists.append((rows, block["writers"], "rows"))
                     named.append((rows, owners))
         self._fit(answer, lists)
+        if table is not None and isinstance(block.get("writers"), dict):
+            kinds = list(dict.fromkeys(row[1] for row in block["writers"]["rows"] if row[1]))[:MAX_WRITER_KINDS]
+            self.evidence.setdefault(handle, {}).setdefault("writers", {})[block["table"]] = kinds  # the kinds of the writers that the answer showed, the largest writer first
         for rows, pairs in named:
             kept = {id(row) for row in rows}
             for row, owner in pairs:

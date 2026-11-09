@@ -381,8 +381,18 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 5,400 since the learning: the Investigator is told in two sentences that two tools recall what was learned (it was 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5400)
+        # 5,600 since the data that is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data (it was 5,400 since the
+        # learning: two sentences that say that two tools recall what was learned, and 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5600)
+
+    def test_the_investigator_is_told_to_cite_the_volume_and_the_readers_of_data_that_is_stored_and_not_read_and_that_a_source_it_could_not_read_is_unknown(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("For a finding about data that is stored and not read, cite for each kind of data that you name both its volume and its readers, as your tools measured them.",
+                         "Say that nothing reads it only where the tool that counts the readers says which sources it read: a source that could not be read is unknown, never none."):
+            self.assertIn(sentence, text)
+        self.assertLess(text.index("5. An absent measurement"), text.index("For a finding about data that is stored and not read"))
+        self.assertLess(text.index("For a finding about data that is stored and not read"), text.index("6. Quiet resources"))
+        self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no tool")
 
     def test_the_instructions_name_nothing_that_the_first_real_run_found_or_missed(self):
         for text in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS, agents.INVESTIGATOR_DESCRIPTION, agents.SKEPTIC_DESCRIPTION):
