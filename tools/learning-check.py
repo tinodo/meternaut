@@ -44,6 +44,7 @@ THRESHOLDS = ROOT / "evaluation" / "learning-thresholds.json"
 if str(APP) not in sys.path:
     sys.path.insert(0, str(APP))
 from cases import decide, learning, models  # noqa: E402 (after the path is set)
+from cases.families import registry  # noqa: E402
 from cases.memory_store import MemoryStore, stamp  # noqa: E402
 
 KEYS = ("id", "type", "family", "stated", "answer", "reason", "opened", "closed")
@@ -80,7 +81,7 @@ def check_row(row: object, number: int) -> dict:
     problems = [
         (not (isinstance(row["id"], str) and ID.fullmatch(row["id"])), "the id is lower-case letters, digits and hyphens"),
         (not (isinstance(kind, str) and kind != "other" and learning.type_word(kind) == kind), "the type is a resource type as Azure names it, in lower case"),
-        (row["family"] not in (*models.FAMILIES, models.ADVISE), "the family is one of the families of a plan"),
+        (row["family"] not in (*registry.names(), models.ADVISE), "the family is one of the families of a plan"),
         (not (_is_number(row["stated"]) and 0 <= row["stated"] <= 1), "the stated confidence is a number from 0 to 1"),
         (row["answer"] not in models.LESSON_ANSWERS, f"the answer is one of {', '.join(models.LESSON_ANSWERS)}"),
         (row["reason"] != "" and not (row["answer"] == "decline" and row["reason"] in models.DECLINE_REASONS), f"only a decline has a reason, one of {', '.join(models.DECLINE_REASONS)}"),

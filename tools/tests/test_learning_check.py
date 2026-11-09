@@ -24,6 +24,7 @@ sys.modules["learning_check"] = check
 spec.loader.exec_module(check)
 
 from cases import decide, learning, models  # noqa: E402
+from cases.families import registry  # noqa: E402
 
 DISKS = "microsoft.compute/disks"
 PLANS = "microsoft.web/serverfarms"
@@ -85,7 +86,8 @@ class TheReplaySet(unittest.TestCase):
     def test_a_decline_may_have_no_reason_and_every_reason_of_the_app_is_accepted(self):
         rows = [row("d-0", 0.8, "decline", 1, 2)] + [row(f"d-{n}", 0.8, "decline", 1, 2, reason) for n, reason in enumerate(models.DECLINE_REASONS, 1)]
         self.assertEqual(len(check.parse_rows(text_of(rows))), 1 + len(models.DECLINE_REASONS))
-        self.assertEqual(len(check.parse_rows(text_of([row(f"f-{n}", 0.8, "approve", 1, 2, family=family) for n, family in enumerate((*models.FAMILIES, models.ADVISE))]))), 3)
+        every = (*registry.names(), models.ADVISE)
+        self.assertEqual(len(check.parse_rows(text_of([row(f"f-{n}", 0.8, "approve", 1, 2, family=family) for n, family in enumerate(every)]))), len(every))
 
 
 class TheThresholdsFile(unittest.TestCase):
@@ -361,8 +363,8 @@ class TheTool(unittest.TestCase):
                 else:
                     library.add(node.module.split(".")[0])
         self.assertEqual(library, {"__future__", "argparse", "datetime", "json", "re", "sys", "dataclasses", "pathlib"})
-        self.assertEqual(app, {"cases.decide", "cases.learning", "cases.models", "cases.memory_store.MemoryStore", "cases.memory_store.stamp"},
-                         "the decision, the lessons and the records of the app and its store in memory: no gateway, no Foundry, no agent")
+        self.assertEqual(app, {"cases.decide", "cases.learning", "cases.models", "cases.memory_store.MemoryStore", "cases.memory_store.stamp", "cases.families.registry"},
+                         "the decision, the lessons, the names of the families and the records of the app and its store in memory: no gateway, no Foundry, no agent")
 
     def test_the_tool_names_the_files_that_it_reads_and_the_exit_codes_in_its_help(self):
         doc = check.__doc__
