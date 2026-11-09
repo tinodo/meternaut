@@ -12,10 +12,11 @@ from unittest import mock
 
 from support import NOW, RG, SUBSCRIPTION
 
-from cases import agents, investigate, learning, toolbox as tb
+from cases import agents, approvals, investigate, learning, models, toolbox as tb
 from cases.decide import PROPOSE_CONFIDENCE
 from cases.memory_store import MemoryStore, stamp
 from cases.models import CaseRecord, NoteRecord, PlanRecord, StoreError
+from cases.web import home
 
 from test_investigate import FakeFoundry, Harness, Moving, answer, finding, key_of, loop_for, resource
 from test_toolbox import (DISK, HOSTILE, MARKERS, SUB, SUB2, VM, VM1_METRIC, agent_facing_text, ask, big_estate, forbidden_in, hostile_estate, point, row, standard,
@@ -169,6 +170,40 @@ class WhichFindingsAreOpenQuestions(unittest.TestCase):
         with self.assertRaises(StoreError):
             learning.OpenQuestions(store, NOW).rows()
         self.assertFalse(learning.OpenQuestions(store, NOW).is_open(case(1)))
+
+
+class TheStartPageCountsWhatNoRequestWaitsFor(unittest.TestCase):
+    """The pages know the records and nothing of how they are read (test_web_packaging), so the start page counts the findings that are held back from the records. The count and
+    OpenQuestions must say the same of every state of a finding."""
+
+    def counts(self, store):
+        held = home.held_count(SimpleNamespace(store=store, now=NOW))
+        return held, len([found for found in learning.OpenQuestions(store, NOW).rows(1000) if found.request == "none"])
+
+    def test_the_constants_are_the_ones_of_the_investigation_and_of_the_quiet_days(self):
+        self.assertEqual((models.INVESTIGATION, models.ADVICE_QUIET_DAYS), (investigate.DETECTOR, approvals.ADVICE_QUIET_DAYS))
+        self.assertEqual((home.HELD_CASES, home.HELD_PLANS), (learning.OPEN_CASES, learning.OPEN_PLANS))
+
+    def test_the_count_and_the_open_questions_agree_on_every_state_of_a_finding(self):
+        scenes = (("no request", [case(1)], 1), ("a request waits for a case that was sure", [case(1, confidence=0.95), plan(1)], 0),
+                  ("a request waits for a case that was not sure", [case(1), plan(1)], 0), ("answered lately", [case(1), plan(1, state="declined", days=3)], 0),
+                  ("approved lately", [case(1), plan(1, state="consumed", days=3)], 0), ("not theirs lately", [case(1), plan(1, state="withdrawn", days=3)], 0),
+                  ("answered long ago", [case(1), plan(1, state="declined", days=40)], 1), ("the answer to a change", [case(1), plan(1, state="declined", days=3, family="delete-disk")], 1),
+                  ("a request that ran out", [case(1), plan(1, state="expired", days=3)], 1), ("proposed", [case(1, status="proposed", confidence=0.9)], 1),
+                  ("dropped", [case(1, status="dropped")], 0), ("expired", [case(1, status="expired")], 0), ("another detector", [case(1, detector="unattached-disk")], 0),
+                  ("three with no request and one with a request", [case(1), case(2), case(3), case(4), plan(4)], 3))
+        for name, records, expected in scenes:
+            with self.subTest(name):
+                store = stored(*records)
+                self.assertEqual(self.counts(store), (expected, expected))
+
+    def test_a_resource_marked_do_not_touch_is_not_held_until_the_note_ends(self):
+        note = NoteRecord(note_id="n1", oid=OID, kind="do_not_touch", text="Leave it.", scope_resource_id=f"{APP}/THING-1", created_at=stamp(NOW))
+        store = stored(case(1))
+        store.note_put(note)
+        self.assertEqual(self.counts(store), (0, 0))
+        store.note_put(replace(note, expires_at=stamp(NOW - dt.timedelta(days=1))))
+        self.assertEqual(self.counts(store), (1, 1))
 
 
 # -- the tool --------------------------------------------------------------------------------------------------------------------------------------------

@@ -4,10 +4,12 @@ import unittest
 from unittest import mock
 
 from support import APP_ROOT
-from test_web_support import (MAYA, NOW, OPS, OWNER, TINO, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
+from test_web_support import (MAYA, NOW, OPS, OWNER, TINO, VM, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.models import SettingsRecord
 from cases.web import core
+
+VM_ID = VM
 
 NAV_ALL = ["Decisions", "History", "Settings", "Operations"]
 HEADLINE = "Delete the unattached disk planted-disk-1 in group meternaut-test-rg"
@@ -107,6 +109,49 @@ class TheDecisionsPage(unittest.TestCase):
         everything = console.get("/", query={"all": "1"})
         self.assertEqual(len(waiting(everything)), 14)
         self.assertNotIn("more wait", everything.content)
+
+    def held(self, console: Console, count: int, **changes) -> None:
+        """`count` findings of the investigation that need a person and that no request waits for."""
+        for n in range(count):
+            fields = dict(case_id=f"case3{n:03d}", resource_id=f"{VM_ID}-{n}", resource_name=f"endpoint-{n}", plan_id=None)
+            fields.update(changes)
+            console.store.case_put(make_advice_case(**fields))
+
+    def test_findings_that_no_request_waits_for_are_counted_in_one_sentence_so_that_nothing_is_dropped_silently(self):
+        console = seeded()
+        self.assertNotIn("held back", console.get("/").content, "none is held")
+        self.held(console, 3)
+        reply = console.get("/")
+        self.assertIn("3 findings are held back: no measurement backs them yet, or the places for requests are full. The AIs look at them again at every search.", reply.content)
+        self.assertEqual(len(waiting(reply)), 1, "they are not rows: nobody has to decide them")
+        self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
+        self.assertIn("4 findings are held back", console.get("/").content)
+
+    def test_one_finding_is_said_in_the_singular_and_the_sentence_is_there_when_nothing_waits(self):
+        console = Console()
+        self.held(console, 1)
+        content = console.get("/").content
+        self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
+        self.assertIn("1 finding is held back: no measurement backs it yet, or the places for requests are full. The AIs look at it again at every search.", content)
+
+    def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
+        console = seeded()
+        self.held(console, 1, case_id="case3001", status="expired")
+        self.held(console, 1, case_id="case3002", resource_id=f"{VM_ID}-b", detector="orphan-managed-disk")
+        self.held(console, 1, case_id="case3003", resource_id=f"{VM_ID}-c", plan_id="plan3003")
+        console.store.plan_put(make_advice(plan_id="plan3003", case_id="case3003", resource_id=f"{VM_ID}-c"))
+        self.assertNotIn("held back", console.get("/").content)
+        self.held(console, 1, case_id="case3004", resource_id=f"{VM_ID}-d")
+        console.store.plan_put(make_advice(plan_id="plan3004", case_id="case3004", resource_id=f"{VM_ID}-d", state="declined", created_at=at(days=-2)))
+        self.assertNotIn("held back", console.get("/").content, "a person answered it lately: nobody is to be asked again")
+
+    def test_a_store_that_cannot_be_read_says_nothing_of_the_held_findings_and_the_page_is_there(self):
+        console = Console(store=FailingStore(fail={"cases_recent"}, clock=lambda: NOW))
+        console.seed()
+        reply = console.get("/")
+        self.assertEqual(reply.status, 200)
+        self.assertNotIn("held back", reply.content)
+        self.assertIn("Waiting for you (1)", reply.headings(2))
 
     def test_the_last_five_decisions_are_one_line_each_newest_first(self):
         console = seeded()

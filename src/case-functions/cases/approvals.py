@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from . import brief, switches
+from .decide import NO_MEASUREMENT
 from .detectors import Lead
 from .families import digest as plan_digest
 from .families import registry
@@ -20,14 +21,18 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVISE, DECLINE_REASONS, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
+from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval).
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
-# A finding that a person has answered is not put to them again for this long.
-ADVICE_QUIET_DAYS = 30
 ADVICE_STATUSES = ("proposed", "needs_human")
+# A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
+# concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at every search (cases/learning.py).
+ADVICE_MIN_USD = 50.0
+# And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
+# the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
+ADVICE_OPEN_MAX = 10
 # The recommendations that may lead to a plan of a change (the family that matches picks among them: cases/families).
 CHANGE_RECOMMENDATIONS = ("delete", "change")
 PAUSED_MESSAGE = brief.PAUSED_CHANGES
@@ -73,6 +78,16 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
     except StoreError:
         return "the store could not be read"
     return None
+
+
+def why_not_ask(case: CaseRecord) -> str | None:
+    """None when a finding gives a person something to decide with; otherwise the plain reason why not. Only a finding that no measurement backs (decide.NO_MEASUREMENT), that names no
+    saving and whose resource cost under ADVICE_MIN_USD in 30 days is held back: the AIs could not measure anything and nothing is at stake that a person can weigh."""
+    if NO_MEASUREMENT not in case.objections:
+        return None
+    if (case.saving_usd_month or 0) > 0 or (case.cost_usd_30d or 0) >= ADVICE_MIN_USD:
+        return None
+    return "no measurement backs the finding, it names no saving, and the resource cost little"
 
 
 def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings,
@@ -353,17 +368,24 @@ class Approvals:
 
         None when the case is not a finding for a person (its status is not proposed or needs_human), when nobody can answer, when a person marked the resource do-not-touch,
         when a plan for the resource is open already (the case is linked to it when it is the case's own), or when a person answered an advise plan for the resource lately.
+        None also when the finding is not worth a request (why_not_ask), or when it needs a person only because the AIs did not settle it and ADVICE_OPEN_MAX requests wait already:
+        the case is then an open question, and nothing is made for it until a place is free.
         The status of the case is left as it is while the plan is open: it still says what the AIs came to."""
         if case.status not in ADVICE_STATUSES or not approvers:
             return None
         try:
             if case.resource_id.lower() in self.store.do_not_touch():
                 return None
-            for plan in self.store.plans_open():
+            open_plans = self.store.plans_open()
+            for plan in open_plans:
                 if plan.resource_id.lower() == case.resource_id.lower():
                     if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
                         self.store.case_put(_with(case, plan_id=plan.plan_id))
                     return None
+            if why_not_ask(case) is not None:
+                return None
+            if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open") >= ADVICE_OPEN_MAX:
+                return None
             now = self.clock()
             quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
             for plan in self.store.plans_recent(200):

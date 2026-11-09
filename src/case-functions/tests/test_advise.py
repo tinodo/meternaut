@@ -12,7 +12,8 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief
-from cases.approvals import ADVICE_QUIET_DAYS, ANSWERS, Approvals, ApprovalSettings
+from cases.approvals import ADVICE_MIN_USD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, Approvals, ApprovalSettings, why_not_ask
+from cases.decide import NO_MEASUREMENT
 from cases.delegated import Delegation, SigninSettings
 from cases.detectors import Lead
 from cases.families import registry
@@ -20,6 +21,7 @@ from cases.families.calls import KINDS
 from cases.families.gates import ChangeScope
 from cases.families.words import SHOWN
 from cases.http import Client
+from cases.learning import OpenQuestions
 from cases.memory_store import MemoryStore, parse, stamp
 from cases.models import (ADVISE, CASE_CLOSED, CASE_STATUSES, DECISIONS, DECLINE_REASONS, ActionRecord, CaseRecord, DecisionRecord, NoteRecord, Principal,
                           SwitchRecord)
@@ -225,6 +227,98 @@ class MakingTheAdvice(Base):
             with self.subTest(name):
                 broken = FailingStore(fail=(name,), clock=self.clock)
                 self.assertIsNone(Approvals(broken, SETTINGS, self.clock).advise(self.case, NAMED))
+
+
+class TheWorthOfARequest(unittest.TestCase):
+    """A finding that gives a person nothing to decide with is no request, and no more than ADVICE_OPEN_MAX findings that the AIs did not settle wait at the same time. What is not
+    asked stays a case and an open question that the AIs look at again."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.store = MemoryStore(clock=self.clock)
+        self.approvals = Approvals(self.store, SETTINGS, self.clock)
+
+    def finding(self, n=0, **changes) -> CaseRecord:
+        """The finding of the live Watch that flooded the page: nothing measured, no saving, a resource of a few dollars."""
+        base = dict(case_id=f"case-w{n}", resource_id=f"{VM}-{n}", resource_name=f"endpoint-{n}", saving_usd_month=None, cost_usd_30d=7.17, objections=(NO_MEASUREMENT,),
+                    plan_id=None, confidence=0.55)
+        base.update(changes)
+        return make_advice_case(**base)
+
+    def settled_not(self, count: int, **changes) -> None:
+        for n in range(count):
+            self.assertIsNotNone(self.approvals.advise(self.finding(n, cost_usd_30d=80.0, objections=("It may be in use.",), **changes), NAMED))
+
+    def open_advice(self):
+        return [p for p in self.store.plans.values() if p.family == ADVISE and p.state == "open"]
+
+    def test_the_limits_are_the_ones_that_the_start_page_and_the_owner_know(self):
+        self.assertEqual((ADVICE_MIN_USD, ADVICE_OPEN_MAX), (50.0, 10))
+
+    def test_a_finding_that_nothing_backs_with_no_saving_and_a_cheap_resource_gets_no_request_and_stays_an_open_question(self):
+        case = self.finding()
+        self.assertIn("no measurement backs the finding", why_not_ask(case))
+        self.store.case_put(case)
+        self.assertIsNone(self.approvals.advise(case, NAMED))
+        self.assertEqual(self.store.plans, {})
+        kept = self.store.case_get(case.case_id)
+        self.assertEqual((kept.status, kept.plan_id), ("needs_human", None))
+        self.assertTrue(OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again by recall_open_questions")
+
+    def test_a_saving_or_a_costly_resource_or_a_measurement_makes_it_a_request(self):
+        for name, changes in (("a saving", dict(saving_usd_month=5.0)), ("a resource that cost enough", dict(cost_usd_30d=ADVICE_MIN_USD)),
+                              ("a measurement behind it", dict(objections=("It may be in use.",))), ("a finding that both AIs agree on", dict(status="proposed", objections=()))):
+            with self.subTest(name):
+                self.setUp()
+                case = self.finding(**changes)
+                self.assertIsNone(why_not_ask(case))
+                self.assertIsNotNone(self.approvals.advise(case, NAMED))
+
+    def test_the_edges_of_the_worth_are_exact(self):
+        for name, changes in (("just under the cost", dict(cost_usd_30d=ADVICE_MIN_USD - 0.01)), ("no cost known", dict(cost_usd_30d=None)), ("a saving of nothing", dict(saving_usd_month=0)),
+                              ("a negative saving", dict(saving_usd_month=-3.0))):
+            with self.subTest(name):
+                self.assertIsNotNone(why_not_ask(self.finding(**changes)))
+
+    def test_plan_for_holds_the_same_finding_back(self):
+        case = self.finding()
+        self.assertIsNone(self.approvals.plan_for(case, lead_of(case), NAMED))
+        self.assertEqual(self.store.plans, {})
+
+    def test_no_more_requests_wait_for_findings_that_the_ais_did_not_settle_than_the_places(self):
+        self.settled_not(ADVICE_OPEN_MAX)
+        late = self.finding(99, cost_usd_30d=80.0, objections=("It may be in use.",))
+        self.assertIsNone(self.approvals.advise(late, NAMED))
+        self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX)
+        self.assertTrue(OpenQuestions(self.store, NOW).is_open(late), "it waits as an open question for a free place")
+
+    def test_a_place_is_free_when_a_request_is_answered_or_over(self):
+        self.settled_not(ADVICE_OPEN_MAX)
+        for n, state in enumerate(("declined", "expired")):
+            with self.subTest(state):
+                late = self.finding(90 + n, cost_usd_30d=80.0, objections=("It may be in use.",))
+                self.assertIsNone(self.approvals.advise(late, NAMED), "no place is free")
+                self.store.plan_put(replace(self.open_advice()[0], state=state))
+                self.assertIsNotNone(self.approvals.advise(late, NAMED))
+                self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX)
+
+    def test_a_finding_that_both_ais_agree_on_is_not_held_by_the_places(self):
+        self.settled_not(ADVICE_OPEN_MAX)
+        agreed = self.finding(98, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9)
+        self.assertIsNotNone(self.approvals.advise(agreed, NAMED))
+        self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX + 1)
+
+    def test_the_plans_of_a_change_do_not_take_a_place(self):
+        item = planted_disk()
+        case = case_of(item)
+        self.store.case_put(case)
+        self.assertIsNotNone(self.approvals.create(case, item, NAMED))
+        self.settled_not(ADVICE_OPEN_MAX - 1)
+        self.assertIsNotNone(self.approvals.advise(self.finding(97, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED))
+
+    def test_a_store_that_cannot_be_read_still_means_no_plan_and_no_error(self):
+        broken = FailingStore(fail=("plans_open",), clock=self.clock)
+        self.assertIsNone(Approvals(broken, SETTINGS, self.clock).advise(self.finding(cost_usd_30d=80.0), NAMED))
 
 
 class ThePlanOfAFinding(Base):

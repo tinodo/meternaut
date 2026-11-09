@@ -6,16 +6,20 @@ next. The switches, the runs and what Meternaut can change in Azure are on the p
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from ..brief import Brief, ago_text, order_key, plan_headline, usd_text
-from ..models import DecisionRecord
+from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, DecisionRecord
 from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
-from .core import Ctx, Response, Safe, fmt, join, link_part
+from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .layout import block, notice, page, paragraph
 
 WAITING_SHOWN = 10
 WAITING_MAX = 100
 DECIDED_SHOWN = 5
 DECIDED_CONSIDERED = 12
+HELD_CASES = 300  # the cases of each status that are looked at for the findings that are held back (the same number as cases/learning.py reads)
+HELD_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as cases/learning.py reads)
 
 
 def _waiting_line(ctx: Ctx, brief: Brief, later: bool) -> Safe:
@@ -31,6 +35,29 @@ def _row(ctx: Ctx, brief: Brief, later: bool) -> Safe:
                headline=brief.headline, meta=_waiting_line(ctx, brief, later), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"))
 
 
+def held_count(ctx: Ctx) -> int:
+    """How many findings of the investigation are held back: a case that needs a person or is proposed, with no request waiting for its resource, that nobody answered lately and that
+    nobody marked do-not-touch. It is the set that cases/learning.OpenQuestions gives the Investigator as the questions with no request (a test pins that the two agree); the pages know
+    the records and nothing of how they are read, so the count is made here from the records."""
+    waiting = {p.resource_id.lower() for p in ctx.store.plans_open() if p.state == "open"}
+    quiet = stamp(ctx.now - dt.timedelta(days=ADVICE_QUIET_DAYS))
+    answered = {p.resource_id.lower() for p in ctx.store.plans_recent(HELD_PLANS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and p.created_at >= quiet}
+    left = waiting | answered | {key.lower() for key in ctx.store.do_not_touch()}
+    return sum(1 for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status)
+               if case.detector == INVESTIGATION and case.resource_id.lower() not in left)
+
+
+def _held(ctx: Ctx) -> Safe:
+    """One sentence for the findings that no request waits for: nothing measured backs them yet, or the places for requests are full (approvals.py). The AIs look at them again at every
+    search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says nothing here: the list above says so."""
+    held, _ = read(lambda: held_count(ctx), 0)
+    if held <= 0:
+        return Safe("")
+    many = held != 1
+    return paragraph(f"{held} finding{'s are' if many else ' is'} held back: no measurement backs {'them' if many else 'it'} yet, or the places for requests are full. "
+                     f"The AIs look at {'them' if many else 'it'} again at every search.")
+
+
 def _waiting(ctx: Ctx) -> Safe:
     plans, ok = read(lambda: ctx.store.plans_open(), [])
     if not ok:
@@ -41,12 +68,12 @@ def _waiting(ctx: Ctx) -> Safe:
     briefs = sorted(((brief_of(ctx, plan, cases.get(plan.case_id)), plan.plan_id in later_ids) for plan in mine), key=lambda item: (item[1], order_key(item[0])))
     heading = Safe(f"<h2>Waiting for you ({len(briefs)})</h2>")
     if not briefs:
-        return join([heading, paragraph(f"Nothing waits for you. The next search is {ctx.next_search()}.")])
+        return join([heading, paragraph(f"Nothing waits for you. The next search is {ctx.next_search()}."), _held(ctx)])
     every = ctx.request.query.get("all") == "1"
     shown = briefs[:WAITING_MAX if every else WAITING_SHOWN]
     rest = len(briefs) - len(shown)
     more = paragraph(fmt('{n} more wait. <a href="{href}">Show all</a>.', n=rest, href=ctx.url("/?all=1"))) if rest > 0 else Safe("")
-    return join([heading, fmt('<ol class="rows">{rows}</ol>', rows=join(_row(ctx, brief, later) for brief, later in shown)), more])
+    return join([heading, fmt('<ol class="rows">{rows}</ol>', rows=join(_row(ctx, brief, later) for brief, later in shown)), more, _held(ctx)])
 
 
 def _recently(ctx: Ctx) -> Safe:

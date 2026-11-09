@@ -55,6 +55,10 @@ MAX_SIGNIN_PATH = 2000
 # The family of a plan that asks a person whether a finding is worth acting on. It changes nothing in Azure and has no call in the runner's list: the answer is recorded and
 # nothing else happens. A finding about a resource that Meternaut may not change gets such a plan, so that the person can answer it.
 ADVISE = "advise"
+# A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
+ADVICE_QUIET_DAYS = 30
+# The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
+INVESTIGATION = "investigation"
 
 
 def _thaw(cls: type, data: dict) -> dict:

@@ -13,7 +13,7 @@ from unittest import mock
 
 from support import APP_ROOT, ENV, NOW, RG, SUBSCRIPTION, LogCapture, Ticker, fixed_clock
 
-from cases import agents, config as cfg, decide, investigate, loop_config, people as people_mod, roles, wiring
+from cases import agents, approvals, config as cfg, decide, investigate, loop_config, people as people_mod, roles, wiring
 from cases.approvals import Approvals
 from cases.detectors import Context
 from cases.events import History
@@ -1168,23 +1168,24 @@ class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.Te
     HANDLES = ["r1", "r2", "r3", "r4"]
 
     @staticmethod
-    def toolbox(totals: bool = True) -> FakeToolbox:
+    def toolbox(totals: bool = True, cost: float | None = None) -> FakeToolbox:
         """The evidence as the real toolbox records it: an absent measurement has a total of None, and `totals` lists every total that was recorded for it."""
         def block(total, days_with_data):
             measurement = {"total": total, "days": 30, "days_with_data": days_with_data}
             return {"metrics": {"MetricA": {**measurement, "totals": [total]} if totals else measurement}}
 
         absent, present = block(None, 0), block(12, 30)
-        return FakeToolbox([resource(n) for n in range(1, 7)], {"r1": absent, "r2": absent, "r3": absent, "r4": absent, "r5": present, "r6": present})
+        return FakeToolbox([resource(n, **({"cost_usd_30d": cost} if cost is not None else {})) for n in range(1, 7)],
+                           {"r1": absent, "r2": absent, "r3": absent, "r4": absent, "r5": present, "r6": present})
 
-    def run_with(self, totals: bool = True, **changes):
+    def run_with(self, totals: bool = True, cost: float | None = None, **changes):
         raw = finding(handles=self.HANDLES, basis="other", proposal="investigate", confidence=0.4, summary=self.SUMMARY, evidence=[])
         raw.update(changes)
-        h = Harness(FakeFoundry(answer(raw)), self.toolbox(totals), with_store=True)
+        h = Harness(FakeFoundry(answer(raw)), self.toolbox(totals, cost), with_store=True)
         h.go()
         return h
 
-    def test_the_finding_is_kept_and_each_resource_of_it_is_a_case_that_waits_for_a_person(self):
+    def test_the_finding_is_kept_and_each_resource_of_it_is_a_case_that_needs_a_person(self):
         h = self.run_with()
         (line,) = h.of("investigation.finding")
         self.assertEqual({key: line[key] for key in ("kept", "basis", "proposal", "confidence", "claimed", "handles", "unmeasured", "unproven", "verdict", "reason")},
@@ -1196,8 +1197,16 @@ class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.Te
                          {("needs_human", "investigate", 0.4, self.SUMMARY, (decide.NO_MEASUREMENT,))})
         self.assertEqual({(c.facts["basis"], c.facts["proposal"], tuple(c.facts["metrics"])) for c in cases}, {("other", "investigate", ())})
         self.assertEqual((h.result.cases, h.result.needs_human, h.result.proposed, h.result.unmeasured), (4, 4, 0, 4))
+
+    def test_no_request_is_made_for_resources_that_nothing_measured_that_name_no_saving_and_cost_little(self):
+        h = self.run_with()
+        self.assertEqual(h.store.plans_open(), [], "a person has nothing to decide with: the cases are open questions that the Investigator gets again")
+        self.assertEqual({c.plan_id for c in h.store.cases_recent()}, {None})
+
+    def test_each_resource_that_costs_enough_waits_for_a_person_and_the_person_can_answer_it(self):
+        h = self.run_with(cost=approvals.ADVICE_MIN_USD)
         self.assertEqual({p.family for p in h.store.plans_open()}, {"advise"})
-        self.assertEqual(len(h.store.plans_open()), 4, "each of the four cases waits for a person, and the person can answer it")
+        self.assertEqual(len(h.store.plans_open()), 4, "each of the four cases waits for a person")
 
     def test_the_same_finding_with_the_basis_no_usage_is_dropped_because_nothing_was_measured(self):
         for label, evidence in (("no entry", []), ("an entry with no total", [entry(handle, "MetricA", None) for handle in self.HANDLES]),
