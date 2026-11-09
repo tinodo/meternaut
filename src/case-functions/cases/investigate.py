@@ -790,7 +790,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
-            if old is not None and old.status == "expired" and any(lead.lead_id in _members_of(group) and group.case_id != old.case_id for group in groups):
+            if old is not None and old.status == "expired" and any(lead.lead_id in _members_of(group) and group.case_id != old.case_id and _recent(s, group, None, open_questions) for group in groups):
                 old = None  # its request was closed (or nobody answered) and a group stands for it: it goes back into the group
             if _recent(s, old, facts, open_questions):
                 finding.recent += 1

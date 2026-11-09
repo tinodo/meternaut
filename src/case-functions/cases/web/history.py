@@ -56,10 +56,17 @@ def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
     """The lines of the feed, each with its time: the decisions and the changes of the requests that the person is named in, then the findings of each day."""
     plans, ok = read(lambda: ctx.store.plans_recent(100), [])
     old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
-    mine = [p for p in plans if may_answer(ctx.principal, p) and p.created_at >= old][:PLANS_READ]  # type: ignore[arg-type]
+    quiet: dict[str, list[str]] = {}  # the advice that nobody answered, for each day: one line, not one for each, and none of them takes a place of the plans that are read
+    mine = []
+    for plan in plans:
+        if may_answer(ctx.principal, plan) and plan.created_at >= old:  # type: ignore[arg-type]
+            if plan.family == "advise" and effective_state(ctx, plan) == "expired":
+                quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
+            else:
+                mine.append(plan)
+    mine = mine[:PLANS_READ]
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(100), [])[0]}
     lines: list[tuple[str, Safe]] = []
-    quiet: dict[str, list[str]] = {}  # the advice that nobody answered, for each day: one line, not one for each
     for plan in mine:
         for decision in read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]:
             line = _decision_line(ctx, plan, decision)
@@ -68,10 +75,7 @@ def _events(ctx: Ctx, since: str) -> tuple[list[tuple[str, Safe]], bool]:
         if plan.family != "advise" and plan.plan_id in actions:
             lines += _action_lines(ctx, plan, actions[plan.plan_id])
         if effective_state(ctx, plan) == "expired":
-            if plan.family == "advise":
-                quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
-            else:
-                lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
+            lines.append((plan.expires_at, fmt("Nobody answered in time: {headline}.", headline=_headline(ctx, plan))))
     for found in quiet.values():
         lines.append((max(found), fmt("Closed with no answer: {n} request{s} to look at a finding.", n=len(found), s="" if len(found) == 1 else "s")))
     cases = read(lambda: ctx.store.cases_recent(1000), [])[0]

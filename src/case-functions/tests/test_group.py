@@ -389,6 +389,22 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
         (group,) = [case for case in extras.store.cases_recent() if GROUP_FACT in case.facts]
         self.assertEqual((moved.result.cases, group.facts[GROUP_FACT]["count"], group.runs_seen), (1, 8, 2), "all eight are the group again, and not the first one alone")
 
+    def test_a_group_that_is_not_judged_lately_does_not_take_back_the_members_whose_requests_were_closed_lately(self):
+        clock = Moving()
+        resources = endpoints(8, cost=lambda n: 100.0 + n)
+        first = watch(raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 0) for n in range(1, 9)]), resources, clock=clock,
+                      evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        extras = first.extras
+        clock.advance(days=20)
+        for member in resources[:-1]:
+            extras.store.case_put(CaseRecord(case_id=key_of(member), resource_id=member.resource_id, resource_name=member.name, resource_type=member.resource_type,
+                                             resource_group=member.resource_group, subscription_id=member.subscription_id, detector="investigation", run_id="r0", status="expired",
+                                             recommendation="investigate", confidence=0.4, summary="Closed lately.", updated_at=stamp(clock()), first_seen_at=stamp(clock())))
+        again = watch(raw_of(8, basis="low-usage", confidence=0.8, evidence=[entry(f"r{n}", "Traffic", 0) for n in range(1, 9)]), resources, clock=clock, extras=extras,
+                      evidence={f"r{n}": metrics(Traffic=0) for n in range(1, 9)})
+        (line,) = again.of("investigation.finding")
+        self.assertEqual((line["judgedLately"], line["handles"]), (7, 1), "the seven were closed lately and stay as they are, and the first one, whose group is old, is judged again")
+
     def test_the_resources_that_older_runs_made_a_case_of_one_by_one_stay_as_they_were(self):
         clock = Moving()
         first = watch(raw_of(5, confidence=0.8), endpoints(5, cost=lambda n: 100.0), clock=clock)

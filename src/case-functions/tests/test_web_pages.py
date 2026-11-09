@@ -437,6 +437,15 @@ class TheHistory(unittest.TestCase):
         self.assertIn(f"Change made: {HEADLINE}. Deleted. Azure no longer lists the resource.", feed["Mon 2 Nov"])
         self.assertIn(f"Tino approved: {HEADLINE}.", feed["Mon 2 Nov"])
 
+    def test_the_count_of_the_advice_that_nobody_answered_is_not_cut_and_does_not_take_the_places_of_the_other_plans(self):
+        store = self.console.store
+        for n in range(49):
+            store.case_put(make_advice_case(case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", resource_name=f"endpoint-k{n}", plan_id=f"plan6{n:03d}"))
+            store.plan_put(make_advice(plan_id=f"plan6{n:03d}", case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", state="expired", created_at=at(days=-1, hours=-1), expires_at=at(days=-1)))
+        feed = self.feed(self.console.get("/history"))
+        self.assertIn("Closed with no answer: 49 requests to look at a finding.", feed["Wed 4 Nov"])
+        self.assertIn(f"Tino declined: {HEADLINE}. Reason: it is already handled.", feed["Wed 4 Nov"], "the decisions of the other plans are still there")
+
     def test_a_line_that_names_a_request_links_to_its_page(self):
         self.assertIn("/ok/plan0001", self.reply.links())
         self.assertIn("/ok/plan0002", self.reply.links())
