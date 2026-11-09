@@ -195,13 +195,14 @@ class Policies(unittest.TestCase):
         self.assertIn("error: this command writes to Azure, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", err)
         self.assertEqual(azure.calls, [])
 
-    def test_a_process_that_only_says_that_github_actions_is_true_is_refused_and_the_refusal_says_nothing_of_what_it_lacks(self):
-        azure = Azure()
-        code, out, err = self.command(azure, actions=False, extra={"GITHUB_ACTIONS": "true"})
-        self.assertEqual((code, out), (2, ""))
-        self.assertIn("this call was not started by a run of the Hub", err)
-        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
-        self.assertEqual(azure.calls, [])
+    def test_a_process_that_says_that_github_actions_is_true_or_sets_all_that_a_github_runner_sets_is_refused_and_the_refusal_says_nothing_of_what_it_lacks(self):
+        for extra in ({"GITHUB_ACTIONS": "true"}, hubenv.RUNNER):
+            azure = Azure()
+            code, out, err = self.command(azure, actions=False, extra=extra)
+            self.assertEqual((code, out), (2, ""), extra)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
+            self.assertEqual(azure.calls, [])
 
     def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
         with tempfile.TemporaryDirectory() as folder:

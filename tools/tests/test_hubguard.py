@@ -1,11 +1,13 @@
-"""tools/hubguard.py: the one test that the tools which change Azure from the runner use to know that a run of the Hub started them.
+"""tools/hubguard.py: the one test that the tools which change Azure use to know that a run of the Hub started them.
 
-GITHUB_ACTIONS=true alone is refused. A real GitHub runner (its own variables) passes, and so does the proof of a run of tools/hub-local.py that is alive, found in the repository's own local folder
-and started when its lock says; a proof that is missing, stale, somebody else's or in another folder is refused. A refusal says nothing of what counts as a run: only a person who asks at a terminal
-is told. The tools that use it are held to it here; the tools that run inside the Operator's container are held to what they keep."""
+Only the proof file of a run of tools/hub-local.py counts: one that is alive, found in the repository's own local folder and started when its lock says. A proof that is missing, stale, somebody
+else's or in another folder is refused, and so is everything that a GitHub runner sets (GITHUB_ACTIONS=true and the rest): any process can set it, and since 2026-11-08 a GitHub run changes nothing
+in Azure (AGENTS.md rule 18). A refusal says nothing of what counts as a run: only a person who asks at a terminal is told. The tools that use it are held to it here; the tools that run inside the
+Operator's container are held to what they keep."""
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -35,55 +37,76 @@ def text(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-class TheRealRunner(unittest.TestCase):
-    def test_the_variables_of_a_github_runner_are_the_proof_of_one(self):
-        self.assertEqual(hg.what_is_missing(hubenv.inside()), "")
-        self.assertTrue(hg.started_by_the_hub(hubenv.inside()))
+class OnlyTheProofFileCounts(unittest.TestCase):
+    """Since 2026-11-08 no GitHub run changes Azure (AGENTS.md rule 18), so no GitHub runner is left to start these tools. What a runner sets proves nothing, and any process can set it."""
 
-    def test_github_actions_true_alone_is_refused_and_the_refusal_names_what_is_missing(self):
+    A_GITHUB_RUNNER = {**hubenv.RUNNER, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "a-bearer-of-the-tests", "GITHUB_RUN_NUMBER": "288", "GITHUB_ACTOR": "someone", "GITHUB_SHA": "0" * 40,
+                       "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW": "Hub", "GITHUB_EVENT_NAME": "workflow_dispatch", "RUNNER_OS": "Linux", "RUNNER_TEMP": "/home/runner/work/_temp", "CI": "true"}
+
+    def test_the_whole_environment_of_a_github_runner_is_refused_and_so_is_each_part_of_it(self):
+        for environ in (hubenv.RUNNER, self.A_GITHUB_RUNNER):
+            self.assertFalse(hg.started_by_the_hub(environ))
+            self.assertEqual(hg.refusal(environ), hg.REFUSAL)
+            self.assertIn("METERNAUT_HUB_PROOF is not set", hg.what_is_missing(environ))
+        for name in self.A_GITHUB_RUNNER:
+            with self.subTest(name):
+                self.assertFalse(hg.started_by_the_hub({name: self.A_GITHUB_RUNNER[name]}), "alone")
+                self.assertFalse(hg.started_by_the_hub({key: value for key, value in self.A_GITHUB_RUNNER.items() if key != name}), "all the others")
+
+    def test_every_set_of_the_four_variables_that_the_helper_used_to_ask_for_is_refused(self):
+        names = tuple(hubenv.RUNNER)
+        for size in range(len(names) + 1):
+            for chosen in itertools.combinations(names, size):
+                self.assertFalse(hg.started_by_the_hub({name: hubenv.RUNNER[name] for name in chosen}), chosen)
+
+    def test_github_actions_true_alone_is_refused_and_the_long_text_for_a_person_says_why(self):
         why = hg.what_is_missing({"GITHUB_ACTIONS": "true"})
         self.assertFalse(hg.started_by_the_hub({"GITHUB_ACTIONS": "true"}))
-        self.assertIn("GITHUB_ACTIONS=true alone is no proof", why)
-        for name in ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL", "METERNAUT_HUB_PROOF"):
-            self.assertIn(name, why)
+        self.assertIn("METERNAUT_HUB_PROOF is not set", why)
+        self.assertIn("only the proof file of a run of tools/hub-local.py counts", why)
+        self.assertIn("GITHUB_ACTIONS=true and what else a GitHub runner sets are no proof", why)
+        self.assertIn("AGENTS.md rule 18", why)
 
-    def test_each_variable_of_the_runner_is_needed_and_only_the_missing_ones_are_named(self):
-        for name in hg.RUNNER_VARIABLES:
-            with self.subTest(name):
-                environ = hubenv.inside()
-                del environ[name]
-                why = hg.what_is_missing(environ)
-                self.assertIn(f"({name} not set)", why)
-                environ[name] = ""
-                self.assertIn(f"({name} not set)", hg.what_is_missing(environ), "an empty value is not set")
-
-    def test_only_the_word_true_counts_for_github_actions(self):
-        for value in ("false", "True", "1", "yes", ""):
+    def test_the_value_of_github_actions_makes_no_difference_to_anything(self):
+        for value in ("true", "false", "True", "1", "yes", ""):
             with self.subTest(value):
-                why = hg.what_is_missing(hubenv.inside({"GITHUB_ACTIONS": value}))
-                self.assertIn("GITHUB_ACTIONS is not true and METERNAUT_HUB_PROOF is not set", why)
+                self.assertEqual(hg.what_is_missing({"GITHUB_ACTIONS": value}), hg.what_is_missing({}))
 
     def test_nothing_at_all_is_refused_in_plain_words(self):
-        self.assertEqual(hg.what_is_missing({}), "GITHUB_ACTIONS is not true and METERNAUT_HUB_PROOF is not set: neither a GitHub runner nor a run of tools/hub-local.py started this")
+        self.assertEqual(hg.what_is_missing({}), "METERNAUT_HUB_PROOF is not set: only the proof file of a run of tools/hub-local.py counts. GITHUB_ACTIONS=true and what else a GitHub runner sets are no proof: "
+                                                 "any process can set them, and a GitHub run changes nothing in Azure since 2026-11-08 (AGENTS.md rule 18)")
 
     def test_a_refusal_says_only_that_the_call_was_not_started_by_a_run_of_the_hub_and_nothing_that_could_be_copied(self):
         stale = self.stale_proof_environment()
-        for environ in ({}, {"GITHUB_ACTIONS": "true"}, {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1"}, {"METERNAUT_HUB_PROOF": "somewhere"}, stale):
+        for environ in ({}, {"GITHUB_ACTIONS": "true"}, hubenv.RUNNER, self.A_GITHUB_RUNNER, {"METERNAUT_HUB_PROOF": "somewhere"}, stale):
             self.assertEqual(hg.refusal(environ), hg.REFUSAL, environ)
         self.assertEqual(hg.REFUSAL, "this call was not started by a run of the Hub")
         self.assertIsNone(NOTHING_TO_COPY.search(hg.REFUSAL), hg.REFUSAL)
         self.assertEqual(hg.refusal(hubenv.inside()), "")
-        self.assertIn("GITHUB_RUN_ID", hg.what_is_missing({"GITHUB_ACTIONS": "true"}), "the long text exists, for a person who asks")
+        self.assertIn("METERNAUT_HUB_PROOF", hg.what_is_missing({"GITHUB_ACTIONS": "true"}), "the long text exists, for a person who asks")
 
     def stale_proof_environment(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         return hubenv.proof_environment(folder.name, pid=hubenv.dead_pid())
 
-    def test_the_runner_variables_are_the_ones_of_the_hub_workflow_and_its_job_may_ask_for_a_token(self):
-        workflow = text(".github/workflows/deploy-hub.yml")
-        self.assertRegex(workflow, r"(?m)^permissions:\n(?:  .*\n)*?  id-token: write\n", "every step of the Hub's job has the address of the token request, which hubguard.py asks for")
-        self.assertEqual(hg.RUNNER_VARIABLES, ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL"))
+    def test_the_helper_has_no_other_way_in_than_the_proof_file_and_reads_nothing_that_a_runner_sets(self):
+        source = text("tools/hubguard.py")
+        code = "\n".join(line for line in re.sub(r'""".*?"""', "", source, flags=re.S).splitlines() if not line.strip().startswith("#"))
+        self.assertFalse(hasattr(hg, "RUNNER_VARIABLES"), "the list of the variables of a runner is gone")
+        for word in ("RUNNER_VARIABLES", "GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL", 'get("GITHUB_ACTIONS")', "GITHUB_ACTIONS\") =="):
+            self.assertNotIn(word, code, word)
+        self.assertEqual(sorted(re.findall(r"env\.get\(([A-Z_]+)\)", code)), ["LOCAL_VARIABLE", "PROOF_VARIABLE"], "the variables that the test reads are the one that names the proof file and the one that names the local folder")
+        docstring = source.split('"""')[1]
+        self.assertIn("The proof file is the only way in", docstring)
+        self.assertIn("AGENTS.md rule 18", docstring)
+        self.assertIn("It can call az itself, read the proof file of a run that is alive and use it, or make a proof of its own", " ".join(docstring.split()))
+
+    def test_the_premise_of_the_one_way_in_is_the_rule_of_the_repository_and_the_workflow_is_not_the_one_that_gives_a_runner_a_proof(self):
+        rule = " ".join(text("AGENTS.md").split())
+        self.assertIn("a GitHub workflow run changes nothing in Azure any more", rule, "if rule 18 changes, so does this guard: the tools would have to know a GitHub runner again")
+        self.assertNotIn("hub-proof", text(".github/workflows/deploy-hub.yml"), "the workflow makes no proof: only tools/hub-local.py does")
+        self.assertNotIn("METERNAUT_HUB_PROOF", text(".github/workflows/deploy-hub.yml"))
 
 
 class TheProofOfARunOfTheLocalHub(unittest.TestCase):
@@ -226,14 +249,16 @@ class TheProofOfARunOfTheLocalHub(unittest.TestCase):
         self.assertEqual(self.why(proof), "", "a lock of an older run, which holds no start")
         self.assertIn("is not alive", self.why(proof, alive=lambda pid: False), "a number that is not alive is refused whatever the start says")
 
-    def test_a_proof_that_is_not_valid_is_not_rescued_by_github_actions_true(self):
+    def test_a_proof_that_is_not_valid_is_not_rescued_by_github_actions_true_or_by_a_whole_runner(self):
         proof = hubenv.make_proof(self.folder, pid=hubenv.dead_pid())
-        why = hg.what_is_missing(self.environment(proof, GITHUB_ACTIONS="true"))
-        self.assertIn("this proof is stale", why)
+        for extra in ({"GITHUB_ACTIONS": "true"}, OnlyTheProofFileCounts.A_GITHUB_RUNNER):
+            why = hg.what_is_missing(self.environment(proof, **extra))
+            self.assertIn("this proof is stale", why)
 
-    def test_a_proof_that_is_valid_is_not_spoiled_by_a_partial_runner_environment(self):
+    def test_a_proof_that_is_valid_is_not_spoiled_by_the_environment_of_a_runner_whether_it_is_partial_or_whole(self):
         proof = hubenv.make_proof(self.folder)
-        self.assertEqual(hg.what_is_missing(self.environment(proof, GITHUB_ACTIONS="true", GITHUB_RUN_ID="1")), "")
+        for extra in ({"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1"}, hubenv.RUNNER, OnlyTheProofFileCounts.A_GITHUB_RUNNER):
+            self.assertEqual(hg.what_is_missing(self.environment(proof, **extra)), "")
 
 
 class TheProcessTest(unittest.TestCase):
@@ -387,10 +412,10 @@ class TheCommandLine(unittest.TestCase):
     def environment(self, **extra):
         return {**hubenv.outside(os.environ), **extra}
 
-    def test_it_says_yes_for_a_runner_and_for_a_proof_and_to_anything_that_is_no_terminal_only_that_the_call_was_not_started_by_a_run_of_the_hub(self):
+    def test_it_says_yes_for_a_proof_and_to_anything_that_is_no_terminal_only_that_the_call_was_not_started_by_a_run_of_the_hub_whatever_a_runner_sets(self):
         code, out, err = self.run_it(self.environment(**hubenv.inside()))
-        self.assertEqual((code, out, err), (0, "yes: a run of the Hub started this process", ""))
-        for environ in ({}, {"GITHUB_ACTIONS": "true"}):
+        self.assertEqual((code, out, err), (0, "yes: a run of the Hub started this process", ""), "the real proof that the tests make for this process, which is alive")
+        for environ in ({}, {"GITHUB_ACTIONS": "true"}, hubenv.RUNNER, OnlyTheProofFileCounts.A_GITHUB_RUNNER):
             code, out, err = self.run_it(self.environment(**environ))
             self.assertEqual((code, out, err), (2, "no: this call was not started by a run of the Hub", ""), "a pipe is no terminal: nothing of what is missing")
         with tempfile.TemporaryDirectory() as folder:
@@ -398,15 +423,20 @@ class TheCommandLine(unittest.TestCase):
             self.assertEqual((code, out), (0, "yes: a run of the Hub started this process"), "the process that holds the lock is this one, and it is alive")
             code, out, _ = self.run_it(self.environment(**hubenv.proof_environment(folder, pid=hubenv.dead_pid())))
             self.assertEqual((code, out), (2, "no: this call was not started by a run of the Hub"))
+            code, out, _ = self.run_it(self.environment(**hubenv.proof_environment(folder), **hubenv.RUNNER))
+            self.assertEqual((code, out), (0, "yes: a run of the Hub started this process"), "a proof that is valid counts on a machine that is itself a runner")
 
     def test_the_main_function_tells_a_person_what_is_missing_and_anything_else_only_the_refusal(self):
         out = io.StringIO()
         self.assertEqual(hg.main(environ={}, out=out), 2)
         self.assertEqual(out.getvalue().strip(), "no: this call was not started by a run of the Hub")
         out = io.StringIO()
-        self.assertEqual(hg.main(environ={"GITHUB_ACTIONS": "true"}, out=out, person=True), 2)
-        self.assertTrue(out.getvalue().startswith("no: GITHUB_ACTIONS=true alone is no proof"), out.getvalue())
-        self.assertIn("GITHUB_REPOSITORY", out.getvalue())
+        self.assertEqual(hg.main(environ=hubenv.RUNNER, out=out), 2)
+        self.assertEqual(out.getvalue().strip(), "no: this call was not started by a run of the Hub", "not a person: a runner's environment gets the refusal and nothing else")
+        out = io.StringIO()
+        self.assertEqual(hg.main(environ=hubenv.RUNNER, out=out, person=True), 2)
+        self.assertTrue(out.getvalue().startswith("no: METERNAUT_HUB_PROOF is not set: only the proof file of a run of tools/hub-local.py counts."), out.getvalue())
+        self.assertIn("GITHUB_ACTIONS=true and what else a GitHub runner sets are no proof", out.getvalue())
         out = io.StringIO()
         self.assertEqual(hg.main(environ=hubenv.inside(), out=out, person=True), 0)
         self.assertEqual(out.getvalue().strip(), "yes: a run of the Hub started this process")

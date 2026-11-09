@@ -72,13 +72,14 @@ class Commands(unittest.TestCase):
         self.assertEqual(run(["create", *BASE], runner)[0], 2)
         self.assertEqual(runner.commands, [])
 
-    def test_create_refuses_a_process_that_only_says_that_github_actions_is_true_and_says_nothing_of_what_it_lacks(self):
-        runner = Runner()
-        code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra={"GITHUB_ACTIONS": "true"})
-        self.assertEqual(code, 2)
-        self.assertIn("this call was not started by a run of the Hub", err)
-        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
-        self.assertEqual(runner.commands, [])
+    def test_create_refuses_a_process_that_says_that_github_actions_is_true_and_one_that_sets_all_that_a_github_runner_sets_and_says_nothing_of_what_they_lack(self):
+        for extra in ({"GITHUB_ACTIONS": "true"}, hubenv.RUNNER):
+            runner = Runner()
+            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=extra)
+            self.assertEqual(code, 2, extra)
+            self.assertIn("this call was not started by a run of the Hub", err)
+            self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
+            self.assertEqual(runner.commands, [], extra)
 
     def test_create_goes_with_the_proof_of_a_run_of_tools_hub_local_that_is_alive_and_not_with_a_stale_one_or_one_of_another_folder(self):
         with tempfile.TemporaryDirectory() as folder:

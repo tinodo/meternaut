@@ -1,15 +1,19 @@
 """The environment of a run of the Hub, for the tests of the tools that only a run of the Hub may start (tools/hubguard.py).
 
-A tool of that kind refuses unless GitHub's own variables of a runner are all there, or a proof file of a run of tools/hub-local.py is. GITHUB_ACTIONS=true alone is refused, so a test that
-wants the tool to run takes its environment from here, and a test that wants a refusal takes it from outside(): the machine that runs the tests may itself be a GitHub runner, which has the
-variables, so the refusal clears them all."""
+Only the proof file of a run of tools/hub-local.py counts: a file in a local folder, a lock there whose process is alive and started when the lock says, and the two variables that name them. What a
+GitHub runner sets (RUNNER, here only to be refused) is no proof. So a test that wants a tool to run takes its environment from inside(): a REAL proof, made once for this process in a local folder of
+its own, of a run that is alive (this process). The guard is neither patched nor weakened. A test that wants a refusal takes its environment from outside(), or makes the proof that it needs with
+make_proof() and proof_environment(): a stale one, one of another run, one in another folder."""
+import atexit
 import contextlib
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -17,17 +21,28 @@ _spec = importlib.util.spec_from_file_location("hubguard_of_the_test_helper", Pa
 guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 
+# What a GitHub runner sets, and what the guard used to take as the proof of one. It proves nothing now: a test that wants a refusal uses it.
 RUNNER = {"GITHUB_ACTIONS": "true", "GITHUB_RUN_ID": "1234567890", "GITHUB_REPOSITORY": "someone/some-repository", "ACTIONS_ID_TOKEN_REQUEST_URL": "https://actions.example.invalid/token"}
 NAMES = (*RUNNER, "METERNAUT_HUB_PROOF", "METERNAUT_LOCAL")
+_OWN: dict = {}
+
+
+def own_proof() -> dict:
+    """The two variables of the proof of a run that is alive for as long as this process is (it is that run): made in a local folder of its own the first time it is asked for, deleted when the process ends."""
+    if not _OWN:
+        folder = Path(tempfile.mkdtemp(prefix="hubenv-"))
+        atexit.register(shutil.rmtree, str(folder), ignore_errors=True)
+        _OWN.update(proof_environment(folder))
+    return dict(_OWN)
 
 
 def inside(extra=None) -> dict:
-    """A new environment of a run of the Hub: what a real runner sets, and what the caller adds."""
-    return {**RUNNER, **(extra or {})}
+    """A new environment of a run of the Hub: the real proof of this process's own run, and what the caller adds."""
+    return {**own_proof(), **(extra or {})}
 
 
 def outside(environ=None) -> dict:
-    """The same environment without any of the variables that say 'a run of the Hub': for the tests of a refusal."""
+    """The same environment without any of the variables that say 'a run of the Hub', and without those that a GitHub runner sets: for the tests of a refusal."""
     return {key: value for key, value in (environ or {}).items() if key not in NAMES}
 
 
