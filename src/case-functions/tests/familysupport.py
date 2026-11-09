@@ -161,9 +161,19 @@ class Arm:
         self.bodies.append(json.loads(data.decode("utf-8")) if data else None)
         key = urlsplit(url).path.lower()
         answer = self.answer(method, key, self.bodies[-1])
+        if method == "GET" and "$expand=instanceView" not in url and answer[0] == 200:
+            answer = self.without_instance_view(answer)  # Azure shows a machine's power state only when the read asks for its instance view
         if self.hold_after is not None:
             self.hold_after(method, key)
         return answer
+
+    @staticmethod
+    def without_instance_view(answer):
+        status, headers, body = answer
+        found = json.loads(body)
+        if isinstance(found, dict) and isinstance(found.get("properties"), dict):
+            found["properties"].pop("instanceView", None)
+        return status, headers, json.dumps(found).encode()
 
     def answer(self, method: str, key: str, body):
         if "/providers/microsoft.authorization/locks" in key:

@@ -19,7 +19,7 @@ from ..roles import clean_text
 from . import calls
 from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, skeptic_sentence
 from .gates import Gates
-from .machine import has_size_properties, power_of, provisioning_of, read_vm, region_of, size_of
+from .machine import INSTANCE_VIEW, has_size_properties, power_of, provisioning_of, read_vm, region_of, size_of
 from .words import SIZE_NAME
 
 STOPPABLE = ("running", "stopped")
@@ -56,6 +56,7 @@ class StopVm(Family):
     recommendations = ("delete",)  # the machine is unused: the closest change that Meternaut makes to it is to stop it; it never deletes a machine
     detectors = ("stopped-vm",)
     reads_to_plan = True
+    read_query = INSTANCE_VIEW
 
     def facts(self, env: Env, lead: object, located: Located) -> dict:
         try:
@@ -137,6 +138,7 @@ class ResizeVm(Family):
     kinds = (calls.VIRTUAL_MACHINE,)
     recommendations = ("change",)
     reads_to_plan = True
+    read_query = INSTANCE_VIEW
 
     def facts(self, env: Env, lead: object, located: Located) -> dict:
         try:

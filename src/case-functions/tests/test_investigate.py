@@ -1926,6 +1926,14 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
         self.clock.advance(hours=1)
         self.assertEqual(self.again().result.cases, 1)
 
+    def test_a_case_whose_change_failed_or_was_stopped_is_taken_up_again_at_once_and_one_that_is_done_is_not(self):
+        from dataclasses import replace as replaced
+        for status, taken in (("failed", 1), ("done", 0)):
+            with self.subTest(status):
+                self.store.case_put(replaced(self.store.case_get(key_of(resource(1))), status=status))
+                self.clock.advance(hours=1)
+                self.assertEqual(self.again().result.cases, taken)
+
     def test_a_case_that_the_skeptic_did_not_judge_is_taken_up_again_at_once(self):
         clock = Moving()
         extras = loop_for(clock)

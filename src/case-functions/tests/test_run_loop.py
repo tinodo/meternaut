@@ -221,6 +221,19 @@ class WhatTheLoopDoesNotRepeat(unittest.TestCase):
         (again,) = self.store.cases_recent()
         self.assertEqual((again.status, again.runs_seen), ("proposed", 2))
 
+    def test_a_case_whose_change_failed_or_was_stopped_is_taken_up_again_and_asked_about_again(self):
+        from dataclasses import replace
+        estate = estate_with()
+        watch(estate, self.extras, self.clock)
+        (case,) = self.store.cases_recent()
+        (plan,) = self.store.plans_open()
+        self.store.plan_put(replace(plan, state="failed"))
+        self.store.case_put(replace(case, status="failed"))
+        self.clock.advance(hours=1)
+        watch(estate, self.extras, self.clock)
+        (again,) = self.store.cases_recent()
+        self.assertEqual((again.status, again.runs_seen, len(self.store.plans_open())), ("awaiting_ok", 2, 1), "nothing was changed, the request is closed: the next Watch asks again")
+
 
 class WhenTheStoreFails(unittest.TestCase):
     def test_a_store_that_fails_never_stops_the_run_and_the_history_says_so(self):

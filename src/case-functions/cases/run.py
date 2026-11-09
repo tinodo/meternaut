@@ -224,7 +224,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
 
 
 def _recently_judged(s: Services, lead: Lead) -> bool:
-    """A lead whose case was judged within the last days (and did not end in an error) is not taken up again: the slot goes to a lead that was not judged."""
+    """A lead whose case was judged within the last days (and did not end in an error or a failed change) is not taken up again: the slot goes to a lead that was not judged."""
     ex = s.extras
     if ex is None:
         return False
@@ -232,7 +232,7 @@ def _recently_judged(s: Services, lead: Lead) -> bool:
         old = ex.store.case_get(f"k{lead.lead_id}")
     except StoreError:
         return False
-    if old is None or old.status == "error" or not old.updated_at:
+    if old is None or old.status in ("error", "failed") or not old.updated_at:
         return False
     age = s.clock() - dt.datetime.strptime(old.updated_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
     return age < dt.timedelta(days=ex.settings.recheck_days)

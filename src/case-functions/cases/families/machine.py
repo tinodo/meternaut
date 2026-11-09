@@ -19,6 +19,9 @@ POWER = re.compile(r"[a-z]{3,20}")
 BILLED = ("running", "starting", "stopping", "stopped")
 
 
+INSTANCE_VIEW = "$expand=instanceView"
+
+
 def locate_machine(gates: Gates, resource_id: str) -> Located:
     """The machine of an id, in a scope. Raises Stop when the id is not a virtual machine in a resource group of Meternaut's own."""
     return locate(resource_id, gates, (calls.VIRTUAL_MACHINE,))
@@ -26,7 +29,7 @@ def locate_machine(gates: Gates, resource_id: str) -> Located:
 
 def read_vm(env: Env, located: Located) -> dict | None:
     """The machine with its instance view (Learn, Virtual Machines - Get, `$expand=instanceView`): its power state is in the instance view's statuses."""
-    return read_resource(env, located, query="$expand=instanceView")
+    return read_resource(env, located, query=INSTANCE_VIEW)
 
 
 def _properties(vm: dict) -> dict:

@@ -82,10 +82,9 @@ MODEL_TROUBLE = re.compile(r"\bmodel_error\b|reasoning[_ ]effort|function[_ ]too
 KEY_DEPRECATED = re.compile(r"\bdeprecated\b.*\bagent_reference\b")
 # The effort that a definition asks the model to reason with: the service knows the words (none, minimal, low, medium, high, xhigh, max), this app only keeps to one plain word.
 EFFORT = re.compile(r"[a-z]{1,16}")
-# The model of an agent may be named `<connection>/<model>`: it is then called through a connection of the project, which for this project is the AI Gateway (docs/proposals/08-ai-gateway.md, step 2).
-# A call of a run that such a model fails is explained in fixed words that a person can act on (FoundryError.route), and only when the service's own status and words say that the failure is about the
-# route: a call that the service refuses for another reason keeps its own words and gets no explanation. What the Agent Service says when the gateway refuses it is not known (nothing of this has run), so the
-# cause is found from the HTTP status of the answer and from words in the code and the message of the error, and an answer that none of them fits is left as it was.
+# The model of an agent may be named `<connection>/<model>`: it is then called through a connection of the project, here the AI Gateway (docs/proposals/08-ai-gateway.md, step 2).
+# A failed call of a run that such a model makes is explained in fixed words (FoundryError.route) only when the status and the words of the service say that the failure is about the route;
+# any other refusal keeps its own words.
 ROUTE_PURPOSES = frozenset({"response", "function output", "create agent", "new version"})
 CONNECTION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 ROUTE_CODE = re.compile(r"[A-Za-z0-9._-]{1,24}")

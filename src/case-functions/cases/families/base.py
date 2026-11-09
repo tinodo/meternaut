@@ -171,6 +171,7 @@ class Family:
     deletes: bool = False  # the change removes the resource: a resource that is not there is the aim, not a fault
     reads_to_plan: bool = False  # a plan needs facts that code reads from Azure first (a delete of an unattached disk or address needs none: the lead says it)
     does: str = "delete the resource"  # what the change does, for the words of a refusal: "Azure refused to delete the resource ..."
+    read_query: str = ""  # asked for with the re-check's read (a machine's power state is in its instance view)
 
     @property
     def called(self) -> str:
@@ -250,7 +251,7 @@ class Family:
 
     def read(self, env: Env, located: Located, suffix: str = "", query: str = "") -> dict | None:
         """The resource as Azure shows it now; None when Azure says that it does not exist. Raises Stop when the person may not read it or it cannot be read."""
-        return read_resource(env, located, suffix, query)
+        return read_resource(env, located, suffix, query or self.read_query)
 
     def locked(self, env: Env, located: Located) -> bool:
         for scope in (located.path, f"/subscriptions/{located.scope.subscription}/resourceGroups/{located.scope.group}"):

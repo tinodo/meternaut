@@ -417,7 +417,7 @@ def _earlier(s: "Services", lead: Lead) -> CaseRecord | None:
 def _recent(s: "Services", old: CaseRecord | None, facts: dict | None, open_questions: "learning.OpenQuestions | None" = None) -> bool:
     """Whether the earlier case of a resource (None: there is none) keeps the resource from being taken up again now: see _judged_lately. `facts` None: the evidence is not compared."""
     ex = s.extras
-    if ex is None or old is None or old.status == "error" or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
+    if ex is None or old is None or old.status in ("error", "failed") or not old.updated_at or any(isinstance(x, dict) and x.get("ok") is False for x in old.steps):
         return False
     if s.clock() - parse(old.updated_at) >= dt.timedelta(days=ex.settings.recheck_days) - RECHECK_SLACK:
         return False
