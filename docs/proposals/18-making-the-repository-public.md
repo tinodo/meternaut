@@ -1,0 +1,69 @@
+# Making the repository public: what was checked, found and done — a decision record
+
+**Status: ordered by the owner on 2026-11-10 and done the same day.** The repository is public, under a history that was read for secrets and rewritten once. The earlier history is a private archive. What is guarded, what was found and what is not proved are on this page.
+
+## The owner's words
+
+"You can continue. I also want you to make the GitHub project PUBLIC. That way, it doesn't cost build minutes. Make sure that can be done safely; check for credentials, branch control, etc. I want the project to be public. Continue your work, make the project securely public and continue using GitHub after that."
+
+Until then the rule was his order of 2026-10-31 that the repository stays closed until he says to switch it ([AGENTS.md](../../AGENTS.md), rules 1 and 37).
+
+## What was decided, and why the old repository was not simply switched
+
+A repository that is switched from private to public shows everything it has ever held: every branch, every commit on every branch, the pull-request refs, the texts of the pull requests and their comments, and the logs of the workflow runs. GitHub does not let an owner erase the pull-request refs or the run logs of a repository that exists (they go only with the repository), and the history held things that must not be public (below). So the history was copied, scrubbed and published as a **new** repository, and the old one was renamed and kept private:
+
+- **This repository**, `tinodo/meternaut`: the branch `main` and the 17 tags (the editions of the documents), with the same graph of 481 commits, the same files and the same dates. Only text that must not be public was replaced, in file contents, commit messages and the author lines; every commit has a new id ([the table of old and new ids](../history/commit-ids-before-2026-11-10.md)). The last commit of the old history and the commit that stands for it here have the same files; they differ only in the text that the rules replace (54 files).
+- **The archive**, `tinodo/meternaut-archive` (private, Actions off): the old history as it was, the 42 branches, the 109 pull requests (three of them open), the 469 workflow runs and the pre-publication reports. It is the owner's, and nothing is deleted from it.
+
+## How it was checked
+
+1. **Every blob of every ref** of the old repository (the branches, the 17 tags and the pull-request refs; about 6,500 objects, 3,657 of them text), every commit message and tag message, the names of all files that ever existed, and the text of the 109 pull requests with their comments and reviews were read by a scanner written for it (standard library only): private keys, GitHub, AWS and Slack tokens, JSON Web Tokens, bearer tokens, connection strings, storage and Service Bus keys, signed addresses, URLs with a password, high-entropy strings, e-mail addresses, IP addresses, host names, GUIDs, resource-group names, personal names and internal words. **No real credential was found:** every hit was a short invented value of a test.
+2. **Every GUID** (2,055 different ones) was sorted: public (built-in roles, first-party applications, Azure meter ids), invented (patterned), and the rest, which were read one by one. The identifiers of the owner's live Azure estate (the subscriptions, the tenant, every resource, role assignment, identity and application, read through Azure Resource Graph and the directory) were looked up in every revision.
+3. **Names**: of the owner's other projects ([AGENTS.md](../../AGENTS.md) rule 31), of the owner's estate, and an internal program name of his employer.
+4. **An independent review**: an agent that had not written any of it read the candidate history with the rules of a security review, and its verdict was *safe after the listed fixes*. Its findings, and the ones that the owner-side checks added, are in the next section.
+5. **The result was checked again** after the fixes: the new history has the same graph (481 commits, 134 merges, 17 tags) and its last commit holds exactly the scrubbed files of the old one; no revision matches any of the patterns above (counted over every blob, every message and every author line, also with the pieces of strings that are joined in code put together); the scanner finds the same categories as before and none of the replaced ones.
+
+## What was found, and what was done
+
+| What was found | What was done |
+|---|---|
+| The suffix of the deployed names and the object id of a retired identity, in two versions of the changelog (in the history only) | Replaced in every revision |
+| Two guard tests spelled what they guard against: pieces of a project's name, and three octets of an internal address | The word lists are now in two git-ignored files of the owner (`local/other-projects.txt`, `local/estate-patterns.txt`); the tests that read them are skipped in a clone without them; the older versions of both tests are replaced by the last version in the whole history |
+| The object id of a real identity, a constant in three tests (found by the cross-check with the live estate) | Replaced by an invented id; the sixteen identifiers of the estate are kept only as SHA-256 hashes, in a test that fails any file that holds one |
+| The owner's work e-mail address: in the author line of 375 commits, in two sample footers and a hint of a test | Every author, committer and tagger line holds the owner's GitHub no-reply address; the samples are invented |
+| The names of other projects of the owner in the files and messages of 2026-11-03 to 2026-11-07 | Replaced by a neutral phrase in the whole history; a test (rule 31) keeps them out |
+| Internal addresses of the landing zone's DNS (two) | Replaced by invented addresses in the whole history |
+| Quoted expletives in [AGENTS.md](../../AGENTS.md) rule 25 (in 36 versions) | Masked; the two mild words that the owner accepted stay; a test fails any other |
+| An internal program name of the owner's employer, and the tenant's governance initiative named after it | The program name is removed and the initiative is called "the tenant's governance initiative" everywhere |
+| The owner's local paths (53 files, 580 lines, almost all in the raw reports of reviews) and the path of an agent's session folder | Replaced by `<repo>`, `<repos>`, `<session>` and similar |
+| Links to the old repository's address | Pointed at this repository |
+| The logs and step summaries of a public repository are readable by anyone, and the Hub and the drift check write values of the estate into them | `deploy-hub.yml` and `drift.yml` are disabled in the Actions settings; no variable and no secret was copied to this repository |
+| A federated credential that trusts a run on `main` of the repository, with *Contributor* in the project's group | Not recreated for this repository. The existing one trusts the immutable ids of the old repository, so it cannot be used from here; [AGENTS.md](../../AGENTS.md) rule 18 already retires it |
+| [`tools/hub-local.py`](../../tools/hub-local.py) runs the steps of the Hub with the owner's own sign-in: a change of a stranger that was merged unread could run on his machine | CODEOWNERS names him for `.github/`, `environment/`, `operator/` and `tools/`; [rule 37](../../AGENTS.md) (e) says that such a change is read in full before it is merged, and that a commit he has not read is never run with the tool |
+| The npm packages of the card renderer had ranges and no lock file; Dependabot did not watch them | Pinned to exact versions, and Dependabot watches them (a lock file made here would hold the addresses of the feed of this machine) |
+| Two copies of the Azure Retail Prices data under a licence that says "MIT" | [`NOTICE`](../../NOTICE) says that the data is Microsoft's and not covered by it |
+
+## How the new repository is guarded
+
+| Setting | Value |
+|---|---|
+| Content pushed | `main` and the 17 tags, and nothing else (read back with `git ls-remote` before the repository was switched) |
+| Rulesets | `main`: no deletion, no force push, a pull request is required (no approval is demanded: there is one maintainer), the check `checks` has to pass, merge commit or squash (no rebase: the documents quote commit ids). Tags: no deletion and no move. No one may bypass them |
+| Actions | Only GitHub's own actions may run, and every action has to be pinned to a full commit; the token of a run is read-only; a workflow cannot approve a pull request; a run from a fork waits for the owner's approval, for every outside contributor, and gets no secret; logs and artifacts are kept 30 days |
+| Workflows | `checks.yml` runs on every pull request and every push to `main`; `deploy-hub.yml` and `drift.yml` are disabled |
+| Secrets and variables | None |
+| Security features | Secret scanning with push protection, Dependabot alerts and security updates (and the version updates of [`dependabot.yml`](../../.github/dependabot.yml): pip, npm and the actions), code scanning (CodeQL, default setup: Python and the workflows), private vulnerability reporting ([SECURITY.md](../../SECURITY.md)) |
+| Features | Issues on; the wiki, projects, discussions and Pages are off. The branch of a merged pull request is deleted. No collaborator, deploy key or webhook |
+| Azure | No federated credential trusts this repository; the Hub runs on the owner's machine |
+
+## What is left to the owner, and what is not proved
+
+- **The employer.** The copyright holder in [`LICENSE`](../../LICENSE) is the owner personally, and nothing in the repository shows that his employer has approved the publication of a project about Azure under his name, or of its name and its text. The owner decides whether a review (an open-source office) is needed; no agent can say.
+- **What the documents still say about the tenant.** The changelog and the proposals describe how the owner's tenant governs resources (a tag that opts out of the automatic changes of its Modify policies, a policy waiver on one subscription, the right *Reader* at the root of the tenant's groups). The tag is discussed in public repositories of Microsoft's field teams, and none of it is a secret or an identifier, but it is the owner's estate. He may want it reworded; the rules that rewrote the history can do that again.
+- **A search by patterns is not a proof.** A secret in a form that no pattern knows would not have been found. The second net is GitHub's secret scanning with push protection, which is on, and the hashes of the estate's identifiers that a test checks on every change.
+- **The archive** is private and holds everything that was removed. It has the old identity's credential, which trusts it, and Actions are off in it. A person removes the credential and the identity when the owner says ([rule 18](../../AGENTS.md)).
+- **The first run of the checks on GitHub** had not run since 2026-11-08, on the owner's machine only; the changelog says how it ended.
+
+## Sources
+
+Read on 2026-11-10, GitHub Docs: [*Secure use reference*](https://docs.github.com/en/actions/reference/security/secure-use) (Actions), [*Approving workflow runs from forks*](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks), [*About rulesets*](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets), [*Push protection*](https://docs.github.com/en/code-security/concepts/secret-security/push-protection), [*Configuring private vulnerability reporting for a repository*](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) and [*REST API endpoints for GitHub Actions permissions*](https://docs.github.com/en/rest/actions/permissions).
