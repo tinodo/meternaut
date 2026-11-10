@@ -41,11 +41,11 @@ This document tests the **experience layer**: the cards, pages, letters and repo
 
 ```text
 cd tools/render-cards
-npm install
+npm install --ignore-scripts
 node validate-cards.cjs
 ```
 
-It needs Node 20 or later and three MIT-licensed packages, among them Microsoft's `adaptivecards` and `adaptivecards-templating`. Each template is expanded with its sample data, parsed as schema 1.5, validated and saved as light-theme HTML renderings at desktop and 360 px width, with ticked boxes and chosen options written in so they show the defaults. It fails on any finding or unexpanded `${...}`. A clean run ends `all 17 cards parse, validate and expand`. `node screenshot-cards.cjs` then redraws the pictures in `docs/img` from those renderings (Node 22 or later and an installed Microsoft Edge or Chrome, no further package).
+It needs Node 20 or later and three MIT-licensed packages, among them Microsoft's `adaptivecards` and `adaptivecards-templating`, pinned to exact versions; `--ignore-scripts` keeps what they depend on from running install scripts (no lock file is committed: one made on the maintainer's machine would name its package feed). Each template is expanded with its sample data, parsed as schema 1.5, validated and saved as light-theme HTML renderings at desktop and 360 px width, with ticked boxes and chosen options written in so they show the defaults. It fails on any finding or unexpanded `${...}`. A clean run ends `all 17 cards parse, validate and expand`. `node screenshot-cards.cjs` then redraws the pictures in `docs/img` from those renderings (Node 22 or later and an installed Microsoft Edge or Chrome, no further package).
 
 The plan adds dark and high-contrast snapshots, so a change in look shows in the pull request, and a C# check that `AdaptiveCards.Templating` ([Learn](https://learn.microsoft.com/adaptive-cards/templating/sdk)) expands every template to identical output.
 

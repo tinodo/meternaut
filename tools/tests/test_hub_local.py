@@ -97,7 +97,7 @@ def tearDownModule():
 
 def make_args(action="what-if", **flags):
     args = argparse.Namespace(action=action, minutes=None, public_ai_gateway_requested=False, public_teams_bot_requested=False, plant_public_ip=False, plant_vm=False, evals_command=None,
-                              evals_judge=None, redteam_mode=None, yes=False, allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
+                              evals_judge=None, redteam_mode=None, yes=False, reviewed=None, allow_dirty=False, dry_run=False, workflow=None, init=False, from_github=False)
     args.__dict__.update(flags)
     return args
 
@@ -798,6 +798,8 @@ class RunnerCase(unittest.TestCase):
         self.local.mkdir()
         (self.local / hub.CONFIG_NAME).write_text(CONFIG_TEXT, encoding="utf-8")
         (self.local / hub.STATE_NAME).write_text('{"lastRun": 287}', encoding="utf-8")
+        if self.auto_review:
+            (self.local / hub.REVIEWED_NAME).write_text(self.head() + "\n", encoding="utf-8")
         self.az = FakeAz(self.base)
         self.workflow_path = self.base / "wf.yml"
         self.write_workflow(mini(CHECKOUT, python_step(), LOGIN, HELLO, ALWAYS))
@@ -818,6 +820,11 @@ class RunnerCase(unittest.TestCase):
         out = io.StringIO()
         code = hub.main([*argv, "--workflow", str(self.workflow_path)], environ=env, out=out, deps=deps or self.deps())
         return code, out.getvalue()
+
+    auto_review = True   # a run of the tests starts as if a person had read this commit; TheReviewOfWhatRuns starts as if none was read
+
+    def head(self):
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, capture_output=True, text=True).stdout.strip()
 
     def records(self, suffix=".md"):
         folder = self.local / "records"
@@ -1430,6 +1437,209 @@ class TheProofOfARunOfTheHub(RunnerCase):
         self.assertFalse((self.local / hub.TEMP_NAME).exists())
 
 
+@unittest.skipIf(BASH is None, "no Git bash on this machine")
+class TheReviewOfWhatRuns(RunnerCase):
+    """The steps run the tools of this checkout with the owner's own sign-in, and the repository is public: every run is held until a person has said that what changed, but the documents, since the
+    commit that was last read was read (the reviews of the public repository, 2026-11-10: the first found that this control was only a rule of process, the second that a first version of the gate was
+    got round by a path in another case, by code outside four folders, by an action that only reads, and by a record that a merge could write)."""
+
+    auto_review = False
+
+    def commit(self, name, text="x\n"):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        git("add", "-A", cwd=self.root)
+        git("commit", "-q", "-m", f"change {name}", cwd=self.root)
+
+    def stamp(self):
+        path = self.local / hub.REVIEWED_NAME
+        return path.read_text(encoding="utf-8").strip() if path.exists() else None
+
+    def read(self, *extra):
+        """A run that the person has read the head for."""
+        return self.go("plant", "--yes", "--reviewed", self.head()[:12], *extra)
+
+    def test_a_run_is_refused_when_no_commit_is_recorded_as_read_and_nothing_is_run(self):
+        code, text = self.go("plant", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("no commit is recorded as one whose changes a person has read", text)
+        self.assertIn("run again with --reviewed and the first 12 characters of the commit that the plan names", text)
+        self.assertIn(f"commit         {self.head()[:12]}", text)
+        self.assertIsNone(self.stamp())
+        self.assertEqual(self.state(), 287, "no run number was used")
+
+    def test_an_action_that_only_reads_is_held_too_because_it_runs_the_tools_with_the_owners_session(self):
+        code, text = self.go("what-if", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("no commit is recorded as one whose changes a person has read", text)
+        code, text = self.go("what-if", "--reviewed", self.head()[:12])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.stamp(), self.head())
+
+    def test_the_word_of_a_person_lets_it_run_and_records_the_commit_as_read(self):
+        code, text = self.read()
+        self.assertEqual(code, 0, text)
+        self.assertIn("a person read the changes and said so", text)
+        self.assertEqual(self.stamp(), self.head())
+
+    def test_a_dry_run_never_records_a_commit_as_read(self):
+        code, text = self.read("--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertIsNone(self.stamp())
+        code, text = self.go("plant", "--yes", "--dry-run")
+        self.assertEqual(code, 0, text)
+        self.assertIn("a real run would be refused", text)
+
+    def test_a_short_or_wrong_word_is_no_word(self):
+        for said in ("0" * 12, self.head()[:8]):
+            code, text = self.go("plant", "--yes", "--reviewed", said, deps=self.never_az())
+            self.assertEqual(code, 2, f"{said}: {text}")
+            self.assertIsNone(self.stamp())
+
+    def test_an_upper_case_word_is_the_same_word(self):
+        code, text = self.go("plant", "--yes", "--reviewed", self.head()[:12].upper())
+        self.assertEqual(code, 0, text)
+
+    def test_nothing_but_documents_changed_needs_no_word(self):
+        self.assertEqual(self.read()[0], 0)
+        self.assertEqual(self.go("plant", "--yes")[0], 0, "the same commit")
+        for name in ("docs/page.md", "Docs/Other.html", "README.md", "CHANGELOG.md", "SECURITY.md", "LICENSE", "NOTICE"):
+            self.commit(name, text=f"{name}\n")
+        code, text = self.go("plant", "--yes")
+        self.assertEqual(code, 0, text)
+        self.assertIn("nothing but documents has changed since", text)
+
+    def test_a_change_of_code_anywhere_is_refused_with_its_path_named_until_a_person_says_that_it_was_read(self):
+        self.assertEqual(self.read()[0], 0)
+        for name in ("tools/helper.py", "operator/run.sh", "src/app/code.py", "environment/main.bicep", "setup.cfg", ".github/workflows/x.yml", ".gitattributes"):
+            self.commit(name)
+        self.commit("docs/page.md")
+        code, text = self.go("plant", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        for name in ("tools/helper.py", "operator/run.sh", "src/app/code.py", "environment/main.bicep", "setup.cfg", ".github/workflows/x.yml", ".gitattributes"):
+            self.assertIn(name, text)
+        self.assertNotIn("docs/page.md", text)
+        self.assertIn("git diff --no-ext-diff --text", text)
+        code, text = self.read()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.stamp(), self.head())
+
+    def test_a_path_in_another_case_is_code_too_and_a_document_in_any_case_is_a_document(self):
+        self.assertEqual(self.read()[0], 0)
+        self.commit("Tools/json.py")
+        code, text = self.go("plant", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("Tools/json.py", text)
+        self.assertEqual(self.read()[0], 0)
+        self.commit("DOCS/Page.MD")
+        self.assertEqual(self.go("plant", "--yes")[0], 0)
+
+    def test_the_name_of_a_path_with_characters_that_git_quotes_is_read_as_it_is(self):
+        self.assertEqual(self.read()[0], 0)
+        self.commit("tools/café ü.py")
+        code, text = self.go("plant", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("tools/café ü.py", text)
+        self.assertNotIn("\\303", text)
+        self.assertEqual(self.read()[0], 0)
+
+    def test_a_path_that_moves_out_of_a_folder_is_named_with_both_names(self):
+        self.assertEqual(self.read()[0], 0)
+        self.commit("tools/helper.py")
+        self.assertEqual(self.read()[0], 0)
+        (self.root / "docs").mkdir(exist_ok=True)
+        git("mv", "tools/helper.py", "docs/helper.txt", cwd=self.root)
+        git("commit", "-q", "-m", "move it out", cwd=self.root)
+        code, text = self.go("plant", "--yes", deps=self.never_az())
+        self.assertEqual(code, 2, "the old path is gone: that is a change of code: " + text)
+        self.assertIn("tools/helper.py", text)
+
+    def test_a_path_that_is_changed_and_not_committed_is_never_recorded_as_read(self):
+        first = self.head()
+        self.assertEqual(self.read()[0], 0)
+        self.commit("tools/helper.py")
+        (self.root / "tools" / "new.py").write_text("print(1)\n", encoding="utf-8")
+        code, text = self.go("what-if", "--reviewed", self.head()[:12])
+        self.assertEqual(code, 0, text)
+        self.assertIn("changed and not committed, and run as they are: tools/new.py", text)
+        self.assertEqual(self.stamp(), first, "the run held a change that is not in the commit, so the commit is not recorded as read")
+        (self.root / "tools" / "new.py").unlink()
+        code, text = self.go("what-if", "--reviewed", self.head()[:12])
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.stamp(), self.head())
+
+    def test_the_rules_of_the_agents_are_code_and_not_documents(self):
+        self.assertEqual(self.read()[0], 0)
+        for name in ("AGENTS.md", ".github/copilot-instructions.md", "x/SKILL.md"):
+            self.commit(name)
+            code, text = self.go("what-if", deps=self.never_az())
+            self.assertEqual(code, 2, f"{name}: {text}")
+            self.assertIn(name, text)
+            self.assertEqual(self.read()[0], 0)
+
+    def test_a_file_that_is_named_like_the_recorded_commit_does_not_stop_the_list_of_changes(self):
+        self.assertEqual(self.read()[0], 0)
+        self.commit(self.head())
+        code, text = self.go("what-if", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertNotIn("could not compare", text)
+        self.assertIn("these paths changed", text)
+
+    def test_a_commit_that_holds_a_symbolic_link_or_a_submodule_is_refused(self):
+        self.assertEqual(self.read()[0], 0)
+        blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=self.root, input="../docs/x.md", capture_output=True, text=True).stdout.strip()
+        git("update-index", "--add", "--cacheinfo", f"120000,{blob},docs/link.md", cwd=self.root)
+        git("commit", "-q", "-m", "a link", cwd=self.root)
+        git("checkout", "-q", "--", ".", cwd=self.root)
+        code, text = self.go("what-if", "--reviewed", self.head()[:12], deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("holds a symbolic link or a submodule (docs/link.md)", text)
+
+    def test_a_file_named_like_a_module_of_the_standard_library_does_not_run_before_the_gate(self):
+        tools = self.base / "copy" / "tools"
+        tools.mkdir(parents=True)
+        for name in ("hub-local.py", "hubguard.py"):
+            shutil.copy(ROOT / "tools" / name, tools / name)
+        marker = self.base / "ran-first.txt"
+        (tools / "argparse.py").write_text(f"open({str(marker)!r}, 'w').write('x')\nraise SystemExit(3)\n", encoding="utf-8")
+        done = subprocess.run([sys.executable, str(tools / "hub-local.py"), "--help"], capture_output=True, text=True, cwd=str(self.base))
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertFalse(marker.exists(), "the file in the folder of the script ran before the tool checked anything")
+
+    def test_a_record_that_git_tracks_counts_for_nothing(self):
+        self.assertEqual(self.read()[0], 0)
+        git("add", "-f", "local/" + hub.REVIEWED_NAME, cwd=self.root)
+        git("commit", "-q", "-m", "a record that came with a merge", cwd=self.root)
+        code, text = self.go("what-if", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("is tracked by git, so a merge could have written it", text)
+        self.assertIn("no commit is recorded as one whose changes a person has read", text, "and what it said is not believed")
+
+    def test_a_record_that_is_not_a_commit_is_no_record(self):
+        for text in ("", "not a commit\n", "0" * 10 + "\n", "zz" * 20 + "\n"):
+            (self.local / hub.REVIEWED_NAME).write_text(text, encoding="utf-8")
+            code, said = self.go("what-if", deps=self.never_az())
+            self.assertEqual(code, 2, said)
+            self.assertIn("no commit is recorded as one whose changes a person has read", said)
+
+    def test_a_record_of_a_commit_that_is_not_in_this_checkout_means_that_git_cannot_compare(self):
+        (self.local / hub.REVIEWED_NAME).write_text("1" * 40 + "\n", encoding="utf-8")
+        code, text = self.go("what-if", deps=self.never_az())
+        self.assertEqual(code, 2, text)
+        self.assertIn("git could not compare this checkout with 111111111111", text)
+
+    def test_the_helpers_read_what_git_says(self):
+        self.assertEqual(hub.names_of("tools/a.py\0docs/b.md\0"), ["tools/a.py", "docs/b.md"])
+        self.assertEqual(hub.porcelain_paths(" M tools/a b.py\0?? src/new.py\0R  tools/new.py\0tools/old.py\0A  docs/x.md\0"),
+                         ["tools/a b.py", "src/new.py", "tools/new.py", "tools/old.py", "docs/x.md"])
+        for code in (".github/workflows/a.yml", "tools/a.py", "Tools/a.py", "environment/a.json", "src/a.py", "operator/a.sh", "operators/a.sh", "toolsbox/a.py", "setup.cfg", ".gitattributes", "docs2/a.py",
+                     "a/docs/b.py", "AGENTS.md", "agents.md", "tools/README.MD", ".github/copilot-instructions.md", "x/SKILL.md", "docs\\evil.py", "docs/..\\tools/x.py", "Dockerfile"):
+            self.assertTrue(hub.is_protected(code), code)
+        for document in ("docs/a.md", "DOCS/a/b.png", "README.md", "readme.MD", "CHANGELOG.md", "LICENSE", "License", "NOTICE", ".gitignore", "SECURITY.md"):
+            self.assertFalse(hub.is_protected(document), document)
+
+
 class TheGuards(RunnerCase):
     def test_an_action_that_changes_azure_needs_yes_and_without_it_the_plan_is_printed_and_nothing_runs(self):
         code, text = self.go("plant", deps=self.never_az())
@@ -2017,12 +2227,14 @@ class TheLocalFolder(unittest.TestCase):
         workflow.write_text(mini(CHECKOUT, LOGIN, HELLO), encoding="utf-8", newline="\n")
         az = FakeAz(self.base)
         out = io.StringIO()
-        code = hub.main(["what-if", "--workflow", str(workflow)], environ=dict(os.environ, FAKE_AZ_LOG=str(az.step_log)), out=out,
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, capture_output=True, text=True).stdout.strip()
+        code = hub.main(["what-if", "--reviewed", head[:12], "--workflow", str(workflow)], environ=dict(os.environ, FAKE_AZ_LOG=str(az.step_log)), out=out,
                         deps=hub.Deps(root=worktree, az=lambda: az, bash=lambda: BASH, sleep=lambda seconds: None))
         self.assertEqual(code, 0, out.getvalue())
         self.assertTrue(list((main / "local" / "records").glob("hub-local-what-if-*.md")))
         self.assertFalse((worktree / "local" / "records").exists(), "nothing is written to the worktree's own local/ folder")
         self.assertFalse((main / "local" / hub.LOCK_NAME).exists())
+        self.assertEqual((main / "local" / hub.REVIEWED_NAME).read_text(encoding="utf-8").strip(), head, "the person's word is kept next to the configuration, in the main tree's local/ folder")
 
 
 class TheInit(unittest.TestCase):
@@ -2376,7 +2588,7 @@ class NothingReachesGitHubButTheOptionalInitRead(unittest.TestCase):
 
     def test_git_is_only_read(self):
         used = set(re.findall(r'(?:git|self\.deps\.git|deps\.git)\(\["([a-z-]+)"', self.code))
-        self.assertEqual(used, {"status", "ls-files", "check-ignore"})
+        self.assertEqual(used, {"status", "ls-files", "check-ignore", "diff", "ls-tree"})
         helper = re.sub(r'""".*?"""', "", (ROOT / "tools" / "hubguard.py").read_text(encoding="utf-8"), flags=re.S)
         self.assertEqual(set(re.findall(r'(?:git|run_git)\(\["([a-z-]+)"', helper)), {"rev-parse"}, "the helper that finds the local folder (for this tool and for the tools that look for the proof) asks git one thing")
         for word in ("push", "fetch", "pull", "clone", "commit", "checkout", "reset", "worktree", "remote", "merge", "rebase", "stash"):
