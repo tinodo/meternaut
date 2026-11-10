@@ -1032,7 +1032,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
 
     def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
-        self.assertEqual(headings[11:13], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the entry of 2026-11-09, the entry of the whole-estate Watch deployed, the entry of the web page, the entry of the build of the estate-wide Watch and the six entries of the AI Gateway and of the undo of the API Management changes (test_estate_watch_deployed.py, test_estate_watch_docs.py, test_aigateway_deployed.py, test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
+        self.assertEqual(headings[12:14], [self.CHANGELOG_HEADING, self.OLDER_HEADING], "the entry of 2026-11-10, the entry of 2026-11-09, the entry of the whole-estate Watch deployed, the entry of the web page, the entry of the build of the estate-wide Watch and the six entries of the AI Gateway and of the undo of the API Management changes (test_estate_watch_deployed.py, test_estate_watch_docs.py, test_aigateway_deployed.py, test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py) are above this one, and the entry below it is untouched")
         positions = [self.entry.index(lead) for lead in ("**What the owner said.**", "**What is built.**", "**Where Learn says something other than the plan assumed.**", "**What was checked.**", "**Not checked.**",
                                                          "**What a person has to do, in order.**")]
         self.assertEqual(positions, sorted(positions))
@@ -1207,7 +1207,7 @@ class TheDocumentsOfTheWebPageOnThePrivateNetwork(unittest.TestCase):
 
     def test_the_changelog_entry_is_the_second_and_short_and_says_what_was_decided_what_changed_and_what_was_not_checked(self):
         headings = re.findall(r"(?m)^## (.+)$", self.changelog)
-        self.assertEqual(headings[3], self.CHANGELOG_HEADING, "the fourth entry, below the one of 2026-11-09, the one of the day's runs and the one of the whole-estate Watch that is deployed (test_estate_watch_deployed.py): the pins of the older entries (test_estate_watch_docs.py, "
+        self.assertEqual(headings[4], self.CHANGELOG_HEADING, "the fifth entry, below the one of 2026-11-10 (the repository is public), the one of 2026-11-09, the one of the day's runs and the one of the whole-estate Watch that is deployed (test_estate_watch_deployed.py): the pins of the older entries (test_estate_watch_docs.py, "
                                                               "test_aigateway_deployed.py, test_aigateway_docs.py, test_aigateway_agents_docs.py, test_aigateway_subnet_first.py, and the class above) count from it")
         lines = [line for line in self.changelog.split(f"## {self.CHANGELOG_HEADING}\n", 1)[1].split("\n## ", 1)[0].split("\n")]
         while lines and not lines[-1].strip():
