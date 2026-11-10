@@ -1571,7 +1571,7 @@ class TheReviewOfWhatRuns(RunnerCase):
 
     def test_the_rules_of_the_agents_are_code_and_not_documents(self):
         self.assertEqual(self.read()[0], 0)
-        for name in ("AGENTS.md", ".github/copilot-instructions.md", "x/SKILL.md"):
+        for name in ("AGENTS.md", ".github/copilot-instructions.md", "x/SKILL.md", "docs/QWEN.md", "docs/.cursorrules"):
             self.commit(name)
             code, text = self.go("what-if", deps=self.never_az())
             self.assertEqual(code, 2, f"{name}: {text}")
@@ -1658,9 +1658,12 @@ class TheReviewOfWhatRuns(RunnerCase):
                          ["tools/a b.py", "src/new.py", "tools/new.py", "tools/old.py", "docs/x.md"])
         for code in (".github/workflows/a.yml", "tools/a.py", "Tools/a.py", "environment/a.json", "src/a.py", "operator/a.sh", "operators/a.sh", "toolsbox/a.py", "setup.cfg", ".gitattributes", "docs2/a.py",
                      "a/docs/b.py", "AGENTS.md", "agents.md", "tools/README.MD", ".github/copilot-instructions.md", "x/SKILL.md", "docs\\evil.py", "docs/..\\tools/x.py", "Dockerfile",
-                     "docs/AGENTS.md", "docs/x/SKILL.md", "docs/.github/copilot-instructions.md", "docs/a.prompt.md", "docs/b.AGENT.md", "docs/CLAUDE.md", "docs/x.instructions.md"):
+                     "docs/AGENTS.md", "docs/x/SKILL.md", "docs/.github/copilot-instructions.md", "docs/a.prompt.md", "docs/b.AGENT.md", "docs/CLAUDE.md", "docs/x.instructions.md",
+                     "docs/AGENT.md", "docs/QWEN.md", "docs/a/Gemini.md", "docs/x.mdc", "docs/.cursorrules", "docs/.clinerules", "docs/.claude/x.md", "docs/a/.windsurfrules", "docs/a/.hidden/b.md",
+                     "docs/.gitignore", ".cursorrules", "a/.gitignore"):
             self.assertTrue(hub.is_protected(code), code)
-        for document in ("docs/a.md", "DOCS/a/b.png", "README.md", "readme.MD", "CHANGELOG.md", "LICENSE", "License", "NOTICE", ".gitignore", "SECURITY.md"):
+        for document in ("docs/a.md", "DOCS/a/b.png", "README.md", "readme.MD", "CHANGELOG.md", "LICENSE", "License", "NOTICE", ".gitignore", "SECURITY.md",
+                         "docs/design/cost/prices-snapshot.json", "docs/ui/meternaut-ui.css", "docs/proposals/16-the-hub-on-the-owners-machine.md", "docs/a.b.c.md"):
             self.assertFalse(hub.is_protected(document), document)
 
 

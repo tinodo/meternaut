@@ -146,9 +146,10 @@ REVIEWED_NAME = "hub-local.reviewed"
 # every other file that ends in .md: AGENTS.md and the like are the rules that the owner's agents follow.
 INERT_PREFIXES = ("docs/",)
 INERT_FILES = ("readme.md", "changelog.md", "security.md", "license", "notice", ".gitignore")
-# The files that an agent obeys count as code in any folder, docs/ too (these are the names of the tools that read them; a name that is not listed here is not known).
-AGENT_FILES = ("agents.md", "claude.md", "gemini.md", "copilot-instructions.md", "skill.md")
-AGENT_SUFFIXES = (".agent.md", ".prompt.md", ".instructions.md", ".chatmode.md")
+# The files that an agent obeys count as code in any folder, docs/ too, and so does every path with a segment that starts with a dot (.cursorrules, .clinerules, .claude/, .github/: the tools keep
+# their rules there). The names are the ones that the tools read by name; a name that is not listed here is not known, so the name of a new tool belongs in the list.
+AGENT_FILES = ("agents.md", "agent.md", "claude.md", "gemini.md", "qwen.md", "copilot-instructions.md", "skill.md")
+AGENT_SUFFIXES = (".agent.md", ".prompt.md", ".instructions.md", ".chatmode.md", ".mdc")
 LOCK_NAME = guard.LOCK_NAME
 RECORDS_NAME = "records"
 TEMP_NAME = guard.TEMP_NAME
@@ -1151,7 +1152,7 @@ def write_reviewed(local: Path, commit: str) -> None:
 
 def is_protected(path: str) -> bool:
     """Whether a step can run, import or ship the path, or an agent obeys it. Everything counts, in any spelling of the case (a checkout on Windows or macOS writes Tools/x.py over tools/x.py), except
-    the folder docs/ and a few plain files of the root; a name with a backslash in it is code."""
+    the folder docs/ and a few plain files of the root; a name with a backslash in it is code, and so is a name that an agent obeys and a path with a segment that starts with a dot."""
     if "\\" in path:
         return True
     low = path.casefold()
@@ -1162,7 +1163,11 @@ def is_protected(path: str) -> bool:
     name = low.rsplit("/", 1)[-1]
     if name in AGENT_FILES or name.endswith(AGENT_SUFFIXES):
         return True
-    return not (low.startswith(INERT_PREFIXES) or low in INERT_FILES)
+    if low in INERT_FILES:
+        return False
+    if any(segment.startswith(".") for segment in low.split("/")):
+        return True
+    return not low.startswith(INERT_PREFIXES)
 
 
 def names_of(raw: str) -> list:
