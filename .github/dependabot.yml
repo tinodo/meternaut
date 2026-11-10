@@ -1,4 +1,4 @@
-# Keeps the pins of the function apps' libraries and the pinned commits of the actions current, and opens a pull request for
+# Keeps the pins of the function apps' libraries, of the card renderer's npm packages and the pinned commits of the actions current, and opens a pull request for
 # each update (and for each security advisory). The checks run on every one of them. Nothing is merged without the owner's word.
 version: 2
 updates:
@@ -9,6 +9,11 @@ updates:
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /tools/render-cards
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

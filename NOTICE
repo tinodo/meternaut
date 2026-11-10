@@ -1,0 +1,10 @@
+Meternaut
+Copyright (c) 2026 Tino Donderwinkel. MIT licence: see LICENSE.
+
+Material in this repository that is not the project's own
+
+- The files named prices-snapshot.json are snapshots of the Azure Retail Prices API (https://prices.azure.com/api/retail/prices), which Microsoft publishes. The prices and meter ids in them
+  are Microsoft's data. They are kept here as a copy, to compute the cost model of the design, and the MIT licence of this project does not cover them. Fetch a fresh copy with
+  tools/fetch-prices.py before relying on a price.
+- Product and service names (Azure, Microsoft Foundry, Microsoft Entra, Microsoft Teams, Microsoft Defender, GitHub and others) are trademarks of their owners. This repository is not an
+  official product of any of them.

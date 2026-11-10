@@ -1,0 +1,7 @@
+# The maintainer owns everything. A change to the workflows, the templates or the tools that change Azure
+# is reviewed by him: the ruleset of main asks for a pull request, and GitHub asks for his review of these paths.
+*             @tinodo
+/.github/     @tinodo
+/environment/ @tinodo
+/operator/    @tinodo
+/tools/       @tinodo
