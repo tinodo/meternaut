@@ -1607,6 +1607,29 @@ class TheReviewOfWhatRuns(RunnerCase):
         self.assertEqual(done.returncode, 0, done.stderr[-400:])
         self.assertFalse(marker.exists(), "the file in the folder of the script ran before the tool checked anything")
 
+    def test_a_compiled_file_that_a_pull_request_planted_does_not_run_instead_of_the_source(self):
+        import importlib.util
+        import py_compile
+        tools = self.base / "copy2" / "tools"
+        tools.mkdir(parents=True)
+        for name in ("hub-local.py", "hubguard.py"):
+            shutil.copy(ROOT / "tools" / name, tools / name)
+        marker = self.base / "ran-from-the-pyc.txt"
+        decoy = self.base / "decoy.py"
+        decoy.write_text(f"open({str(marker)!r}, 'w').write('x')\n", encoding="utf-8")
+        compiled = Path(importlib.util.cache_from_source(str(tools / "hubguard.py")))
+        compiled.parent.mkdir(parents=True, exist_ok=True)
+        py_compile.compile(str(decoy), cfile=str(compiled), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        done = subprocess.run([sys.executable, str(tools / "hub-local.py"), "--help"], capture_output=True, text=True, cwd=str(self.base))
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertFalse(marker.exists(), "the compiled file next to the source ran instead of the source, before the tool checked anything")
+
+    def test_the_top_of_the_tool_closes_the_ways_in_before_its_first_import_of_anything_else(self):
+        top = SOURCE.split("\nimport argparse\n", 1)[0]
+        for needle in ('if __name__ == "__main__":', "sys.path[:] =", 'os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"', "sys.pycache_prefix =", "atexit.register(shutil.rmtree"):
+            self.assertIn(needle, top, needle)
+        self.assertLess(top.index("sys.path[:] ="), top.index("import tempfile"), "the folder of the script is off the path before the first import of a module that is not built in")
+
     def test_a_record_that_git_tracks_counts_for_nothing(self):
         self.assertEqual(self.read()[0], 0)
         git("add", "-f", "local/" + hub.REVIEWED_NAME, cwd=self.root)
@@ -1634,7 +1657,8 @@ class TheReviewOfWhatRuns(RunnerCase):
         self.assertEqual(hub.porcelain_paths(" M tools/a b.py\0?? src/new.py\0R  tools/new.py\0tools/old.py\0A  docs/x.md\0"),
                          ["tools/a b.py", "src/new.py", "tools/new.py", "tools/old.py", "docs/x.md"])
         for code in (".github/workflows/a.yml", "tools/a.py", "Tools/a.py", "environment/a.json", "src/a.py", "operator/a.sh", "operators/a.sh", "toolsbox/a.py", "setup.cfg", ".gitattributes", "docs2/a.py",
-                     "a/docs/b.py", "AGENTS.md", "agents.md", "tools/README.MD", ".github/copilot-instructions.md", "x/SKILL.md", "docs\\evil.py", "docs/..\\tools/x.py", "Dockerfile"):
+                     "a/docs/b.py", "AGENTS.md", "agents.md", "tools/README.MD", ".github/copilot-instructions.md", "x/SKILL.md", "docs\\evil.py", "docs/..\\tools/x.py", "Dockerfile",
+                     "docs/AGENTS.md", "docs/x/SKILL.md", "docs/.github/copilot-instructions.md", "docs/a.prompt.md", "docs/b.AGENT.md", "docs/CLAUDE.md", "docs/x.instructions.md"):
             self.assertTrue(hub.is_protected(code), code)
         for document in ("docs/a.md", "DOCS/a/b.png", "README.md", "readme.MD", "CHANGELOG.md", "LICENSE", "License", "NOTICE", ".gitignore", "SECURITY.md"):
             self.assertFalse(hub.is_protected(document), document)

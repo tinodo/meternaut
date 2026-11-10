@@ -26,12 +26,14 @@ The review of what runs (the repository is public, AGENTS.md rule 37 (e)): the s
 and was merged unread would run with his rights. So every run, one that only reads too, is refused when any path but the folder docs/ and a few plain files of the root (README.md, CHANGELOG.md,
 SECURITY.md, LICENSE, NOTICE and .gitignore) differs from the commit that a person last read (the commit in the git-ignored local/hub-local.reviewed), or when none is recorded, until the run is
 started again with --reviewed and the first 12 characters of this checkout's commit. AGENTS.md and every other file that ends in .md count as code: they are the rules that the owner's agents
-follow. The case of a path does not matter, a path with a backslash is code, a commit that holds a symbolic link or a submodule is refused, and a path that is changed and not committed is never
+follow; so do the files that an agent obeys (AGENTS.md, CLAUDE.md, GEMINI.md, copilot-instructions.md, SKILL.md, *.agent.md, *.prompt.md, *.instructions.md, *.chatmode.md) in any folder, docs/ too.
+The case of a path does not matter, a path with a backslash is code, a commit that holds a symbolic link or a submodule is refused, and a path that is changed and not committed is never
 recorded as read (an action that changes Azure needs a clean tree anyway). The refusal lists the paths and names the git diff to read. --reviewed is the person's word that the diff was read:
 it is recorded, and the next run that finds nothing but documents changed needs nothing. A record that git tracks, or does not ignore, counts for nothing. It is a tripwire for a change that nobody
-read, and not a lock: this file and hubguard.py, which it loads, run before any gate can look at them (so their diff is the first thing to read; the folder of this script is taken off the path,
-so that a new file named like a module of the standard library does not run first), whoever gives the word may not have read anything, and whoever holds the owner's session can run az
-without this tool.
+read, and not a lock: this file and hubguard.py, which it loads, run before any gate can look at them (so their diff is the first thing to read; the top of this file closes three ways in that a
+pull request could use to run something earlier: the folder of this script is taken off the path, so that a new tools/argparse.py does not run first; the search of the current folder for a program
+such as git is switched off on Windows; and the compiled files of the run go to a folder that is made for it, so that a compiled file in tools/__pycache__ is not run instead of a source),
+whoever gives the word may not have read anything, and whoever holds the owner's session can run az without this tool.
 
 Where it keeps its files: the git-ignored local/ folder of the repository's MAIN working tree (the parent of `git rev-parse --git-common-dir`), so that every worktree finds the same
 configuration, run counter, lock and records; the environment variable METERNAUT_LOCAL names another folder.
@@ -71,10 +73,23 @@ import os
 import sys
 
 if __name__ == "__main__":
-    # `python tools/hub-local.py` puts the folder of this script first on the path, so a file that a pull request adds there and names like a module of the standard library (tools/argparse.py)
-    # would run before anything is checked. The folder is taken off the path before anything else is imported; the neighbours of this script are loaded by their path.
+    # What runs before the first check, and what a pull request could put there. Run as a script, this tool first closes three ways in:
+    # * `python tools/hub-local.py` puts the folder of this script first on the path, so a file that a pull request adds there and names like a module of the standard library (tools/argparse.py)
+    #   would run before anything is checked: the folder is taken off the path, and the neighbours of this script are loaded by their path;
+    # * Windows looks for a program that is named without a folder (git) in the folder that the tool is started from before it looks anywhere else, so a git.exe in the root of the repository
+    #   would run first: the search of the current folder is switched off;
+    # * a compiled file that a pull request added next to a source (tools/__pycache__/hubguard.cpython-313.pyc) is run instead of the source: the compiled files of this run go to a folder
+    #   that is made for the run and deleted at its end.
     _here = os.path.dirname(os.path.realpath(__file__))
     sys.path[:] = [_entry for _entry in sys.path if _entry not in ("", ".") and os.path.realpath(_entry) != _here]
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    import atexit
+    import shutil
+    import tempfile
+
+    _pycache = tempfile.mkdtemp(prefix="hub-local-pyc-")
+    sys.pycache_prefix = _pycache
+    atexit.register(shutil.rmtree, _pycache, True)
 
 import argparse
 import dataclasses
@@ -131,6 +146,9 @@ REVIEWED_NAME = "hub-local.reviewed"
 # every other file that ends in .md: AGENTS.md and the like are the rules that the owner's agents follow.
 INERT_PREFIXES = ("docs/",)
 INERT_FILES = ("readme.md", "changelog.md", "security.md", "license", "notice", ".gitignore")
+# The files that an agent obeys count as code in any folder, docs/ too (these are the names of the tools that read them; a name that is not listed here is not known).
+AGENT_FILES = ("agents.md", "claude.md", "gemini.md", "copilot-instructions.md", "skill.md")
+AGENT_SUFFIXES = (".agent.md", ".prompt.md", ".instructions.md", ".chatmode.md")
 LOCK_NAME = guard.LOCK_NAME
 RECORDS_NAME = "records"
 TEMP_NAME = guard.TEMP_NAME
@@ -1141,6 +1159,9 @@ def is_protected(path: str) -> bool:
         low = low[2:]
     if not low:
         return False
+    name = low.rsplit("/", 1)[-1]
+    if name in AGENT_FILES or name.endswith(AGENT_SUFFIXES):
+        return True
     return not (low.startswith(INERT_PREFIXES) or low in INERT_FILES)
 
 
