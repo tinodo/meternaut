@@ -249,7 +249,7 @@ class TheRecordOfStep2(unittest.TestCase):
 
     def test_the_part_of_the_record_that_is_about_step_2_holds_no_key_no_address_of_the_owner_and_no_guid(self):
         section = step_2_of_the_record()
-        self.assertNotRegex(section.lower(), r"another-project|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        self.assertNotRegex(section.lower(), r"gb" + r"slab|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
         for word in ("api-key", "listSecrets", "primaryKey", "connection string", "bearer"):
             self.assertNotIn(word.lower(), section.lower(), word)
 
