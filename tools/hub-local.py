@@ -3,7 +3,7 @@
 
     python tools/hub-local.py <action> [--minutes N] [--public-ai-gateway-requested] [--public-teams-bot-requested] [--plant-public-ip] [--plant-vm] [--evals-command C] [--evals-judge J]
                                        [--redteam-mode M]
-                                       [--yes] [--allow-dirty] [--dry-run] [--workflow PATH]
+                                       [--yes] [--reviewed COMMIT] [--allow-dirty] [--dry-run] [--workflow PATH]
     python tools/hub-local.py --init [--from-github]
 
 Why this exists: since 2026-11-08 every change to Azure is made from the owner's machine, with his own az session, by a tool of this repository, after a what-if and with a record (AGENTS.md
@@ -21,6 +21,17 @@ like a tripwire; it is not a lock. It does not stop a process that holds the own
 The steps still get GITHUB_ACTIONS=true and METERNAUT_HUB_LOCAL=1: the workflow passes the first on to the Operator's container, whose tools (aigateway-check.py, check-helpers.py,
 aisec-helpers.py) have no run lock to compare with and keep the old test. The guards that matter here are this tool's own: the owner's az session, the action's options, --yes for an action that
 changes Azure, a clean working tree, one run at a time, and a configuration file that git ignores.
+
+The review of what runs (the repository is public, AGENTS.md rule 37 (e)): the steps run the tools of this checkout with the owner's own sign-in, and a change of them that came from somebody else
+and was merged unread would run with his rights. So every run, one that only reads too, is refused when any path but the folder docs/ and a few plain files of the root (README.md, CHANGELOG.md,
+SECURITY.md, LICENSE, NOTICE and .gitignore) differs from the commit that a person last read (the commit in the git-ignored local/hub-local.reviewed), or when none is recorded, until the run is
+started again with --reviewed and the first 12 characters of this checkout's commit. AGENTS.md and every other file that ends in .md count as code: they are the rules that the owner's agents
+follow. The case of a path does not matter, a path with a backslash is code, a commit that holds a symbolic link or a submodule is refused, and a path that is changed and not committed is never
+recorded as read (an action that changes Azure needs a clean tree anyway). The refusal lists the paths and names the git diff to read. --reviewed is the person's word that the diff was read:
+it is recorded, and the next run that finds nothing but documents changed needs nothing. A record that git tracks, or does not ignore, counts for nothing. It is a tripwire for a change that nobody
+read, and not a lock: this file and hubguard.py, which it loads, run before any gate can look at them (so their diff is the first thing to read; the folder of this script is taken off the path,
+so that a new file named like a module of the standard library does not run first), whoever gives the word may not have read anything, and whoever holds the owner's session can run az
+without this tool.
 
 Where it keeps its files: the git-ignored local/ folder of the repository's MAIN working tree (the parent of `git rev-parse --git-common-dir`), so that every worktree finds the same
 configuration, run counter, lock and records; the environment variable METERNAUT_LOCAL names another folder.
@@ -55,6 +66,15 @@ Azure CLI is run through its own python.exe and not through az.cmd, because cmd.
 The exit code: 0 passed (or a dry run), 1 a step failed, 2 refused or the workflow could not be planned: nothing was run.
 """
 from __future__ import annotations
+
+import os
+import sys
+
+if __name__ == "__main__":
+    # `python tools/hub-local.py` puts the folder of this script first on the path, so a file that a pull request adds there and names like a module of the standard library (tools/argparse.py)
+    # would run before anything is checked. The folder is taken off the path before anything else is imported; the neighbours of this script are loaded by their path.
+    _here = os.path.dirname(os.path.realpath(__file__))
+    sys.path[:] = [_entry for _entry in sys.path if _entry not in ("", ".") and os.path.realpath(_entry) != _here]
 
 import argparse
 import dataclasses
@@ -106,6 +126,11 @@ LOCAL_REF = "refs/heads/main"
 
 CONFIG_NAME = "hub-local.env"
 STATE_NAME = "hub-local.state.json"
+REVIEWED_NAME = "hub-local.reviewed"
+# What no step runs, imports or ships, and no agent obeys: the folder docs/ and a few plain files of the root. Every other path counts as code, compared without regard to the case, and so does
+# every other file that ends in .md: AGENTS.md and the like are the rules that the owner's agents follow.
+INERT_PREFIXES = ("docs/",)
+INERT_FILES = ("readme.md", "changelog.md", "security.md", "license", "notice", ".gitignore")
 LOCK_NAME = guard.LOCK_NAME
 RECORDS_NAME = "records"
 TEMP_NAME = guard.TEMP_NAME
@@ -1090,6 +1115,56 @@ def save_state(local: Path, state: dict) -> None:
     os.replace(temporary, path)
 
 
+def read_reviewed(local: Path) -> str:
+    """The commit whose changes a person last read (local/hub-local.reviewed), or an empty text."""
+    try:
+        text = (local / REVIEWED_NAME).read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return ""
+    return text if re.fullmatch(r"[0-9a-f]{40,64}", text) else ""
+
+
+def write_reviewed(local: Path, commit: str) -> None:
+    path = local / REVIEWED_NAME
+    temporary = path.with_name(path.name + ".new")
+    temporary.write_text(commit + "\n", encoding="utf-8", newline="\n")
+    os.replace(temporary, path)
+
+
+def is_protected(path: str) -> bool:
+    """Whether a step can run, import or ship the path, or an agent obeys it. Everything counts, in any spelling of the case (a checkout on Windows or macOS writes Tools/x.py over tools/x.py), except
+    the folder docs/ and a few plain files of the root; a name with a backslash in it is code."""
+    if "\\" in path:
+        return True
+    low = path.casefold()
+    if low.startswith("./"):
+        low = low[2:]
+    if not low:
+        return False
+    return not (low.startswith(INERT_PREFIXES) or low in INERT_FILES)
+
+
+def names_of(raw: str) -> list:
+    """The names in git output that is separated by NUL (-z): never quoted, whatever the characters."""
+    return [name for name in raw.split("\0") if name]
+
+
+def porcelain_paths(raw: str) -> list:
+    """The paths in `git status --porcelain=v1 -z`: the new and the old path of a rename or a copy are both named."""
+    fields = raw.split("\0")
+    paths, index = [], 0
+    while index < len(fields):
+        entry = fields[index]
+        index += 1
+        if len(entry) < 4 or entry[2] != " ":
+            continue
+        paths.append(entry[3:])
+        if ("R" in entry[:2] or "C" in entry[:2]) and index < len(fields):
+            paths.append(fields[index])
+            index += 1
+    return paths
+
+
 process_alive = guard.process_alive
 
 
@@ -1713,6 +1788,7 @@ class Hub:
         self.values: dict = {}
         self.head = ""
         self.dirty: list = []
+        self.review_note = ""
         self.steps_started = False
         self.records: list = []
         self.summary: list = []
@@ -1748,6 +1824,58 @@ class Hub:
     def say(self, text: str) -> None:
         (self.console or Console(self.out)).emit(text)
 
+    def review_gate(self, local: Path, head: str) -> tuple:
+        """(the refusals, a line for the plan, whether the commit is to be recorded as read). Every run is held, one that only reads too: the steps run the tools of this checkout with the owner's own
+        sign-in, and a change of them that came from somebody else and was merged unread would run with his rights (AGENTS.md rule 37 (e)). What counts is every path but the documents, compared
+        without regard to the case. The gate is a tripwire for a change that nobody read: a change to this file, and to hubguard.py, which it loads, runs before any gate can look at it."""
+        refusals: list = []
+        reviewed_file = local / REVIEWED_NAME
+        reviewed = read_reviewed(local)
+        if reviewed_file.exists():
+            where = git_tracking([reviewed_file], self.deps.git)
+            if where in ("tracked", "not-ignored"):
+                refusals.append(f"{reviewed_file} is {'tracked' if where == 'tracked' else 'not ignored'} by git, so a merge could have written it: it is a person's word that a commit was read, and it is "
+                                "that only while it stays out of git")
+                reviewed = ""
+        code, out, _ = self.deps.git(["ls-tree", "-r", "-z", head], self.root)
+        if code != 0:
+            refusals.append("git could not list the files of this commit")
+        else:
+            links = [name for meta, _, name in (entry.partition("\t") for entry in names_of(out)) if meta.split(" ", 1)[0] in ("120000", "160000")]
+            if links:
+                refusals.append(f"this commit holds a symbolic link or a submodule ({', '.join(links[:6])}): the gate cannot judge what it points to, so nothing runs until a person takes it out")
+        changed: Optional[list] = []
+        if reviewed != head:
+            changed = None
+            if reviewed:
+                code, out, _ = self.deps.git(["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", reviewed, head, "--"], self.root)
+                if code == 0:
+                    changed = [name for name in names_of(out) if is_protected(name)]
+        code, out, _ = self.deps.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], self.root)
+        uncommitted = sorted({name for name in porcelain_paths(out) if is_protected(name)}) if code == 0 else ["(git could not say what is not committed)"]
+        said = (getattr(self.args, "reviewed", None) or "").strip().lower()
+        read = len(said) >= 12 and head.startswith(said)
+        note, record = "", False
+        if changed is not None and not changed:
+            note = f"nothing but documents has changed since {reviewed[:12]}, the commit that a person last read"
+        elif read:
+            note, record = f"a person read the changes and said so with --reviewed {said[:12]}", True
+        else:
+            if changed is None:
+                what = (f"git could not compare this checkout with {reviewed[:12]}, the commit that a person last read" if reviewed
+                        else "no commit is recorded as one whose changes a person has read")
+            else:
+                shown = ", ".join(changed[:12]) + (f" and {len(changed) - 12} more" if len(changed) > 12 else "")
+                what = f"since {reviewed[:12]}, the commit that a person last read, these paths changed: {shown}"
+            refusals.append(f"{what}. The steps run the tools of this checkout with the owner's own sign-in, and a change that comes from somebody else is read in full before it runs (AGENTS.md rule 37 (e)): "
+                            f"read `git diff --no-ext-diff --text {reviewed[:12] or '<an earlier commit>'} {head[:12]}` (only the folder docs/ and a few plain files of the root need no reading), and when it is fine "
+                            "run again with --reviewed and the first 12 characters of the commit that the plan names")
+        if uncommitted:
+            record = False   # what is not committed is not the commit that was read
+            if note:
+                note += "; these paths are changed and not committed, and run as they are: " + ", ".join(uncommitted[:12]) + (f" and {len(uncommitted) - 12} more" if len(uncommitted) > 12 else "")
+        return refusals, note, record
+
     # ---- the plan and the guards ---------------------------------------------------------------------------------------------------------------------------------------------------------
     def go(self) -> int:
         args, deps = self.args, self.deps
@@ -1780,6 +1908,8 @@ class Hub:
             refusals.append("the Teams bot's messaging endpoint is public by necessity: the action teams needs --public-teams-bot-requested, which only the owner's written request allows")
         if writes and dirty and not args.allow_dirty:
             refusals.append(f"the working tree is not clean ({len(dirty)} paths): commit or stash first, or pass --allow-dirty")
+        gate, self.review_note, record_review = self.review_gate(local, head)
+        refusals.extend(gate)
         console = Console(self.out)
         self.print_plan(console, workflow, plan, local, values, head, dirty, run_number, writes, state)
         if plan.problems:
@@ -1798,6 +1928,8 @@ class Hub:
             for refusal in refusals:
                 console.emit(f"  - {refusal}")
             return 2
+        if record_review:
+            write_reviewed(local, head)
         return self.run(workflow, plan, ctx, values, local, state, writes, head, dirty, run_number, run_id, rt)
 
     def print_plan(self, console: Console, workflow: Workflow, plan: Plan, local: Path, values: dict, head: str, dirty: list, run_number: int, writes: bool, state: dict) -> None:
@@ -1810,6 +1942,8 @@ class Hub:
         if inputs:
             console.emit(f"  inputs         {inputs}")
         console.emit(f"  commit         {head[:12]}, working tree {'clean' if not dirty else f'NOT clean ({len(dirty)} paths)'}")
+        if self.review_note:
+            console.emit(f"  review         {self.review_note}")
         console.emit(f"  local folder   {local}")
         console.emit(f"  configuration  {len(values)} names, {len(empty)} empty" + (f" ({', '.join(empty)})" if empty else ""))
         console.emit(f"  run number     {run_number}" + (" (taken by this run)" if writes else " (a read-only action does not use up a number)"))
@@ -2372,6 +2506,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evals-judge", help="only with foundry-evals and --evals-command run: the workflow's input evals_judge (none, connection or auto; the workflow's default when not given)")
     parser.add_argument("--redteam-mode", help="only with foundry-redteam: the workflow's input redteam_mode (auto, cloud or dataset; the workflow's default when not given)")
     parser.add_argument("--yes", action="store_true", help="run an action that changes Azure (without it the plan is printed and nothing runs)")
+    parser.add_argument("--reviewed", metavar="COMMIT", help="when anything but the documents differs from the commit that a person last read: the first 12 characters of this checkout's commit, to say "
+                        "that the diff was read (it is recorded in local/hub-local.reviewed)")
     parser.add_argument("--allow-dirty", action="store_true", help="run an action that changes Azure from a working tree that has uncommitted changes")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and run nothing: no az session is needed")
     parser.add_argument("--workflow", help="the workflow file (default: .github/workflows/deploy-hub.yml of this checkout)")
