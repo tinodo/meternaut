@@ -369,7 +369,8 @@ class TheUseChart(unittest.TestCase):
     def test_the_quiet_figure_is_a_caption_and_a_reason_and_no_drawing(self):
         self.assertEqual(str(figures.use_quiet(VM, "A reason.")), '<figure class="chart"><figcaption>CPU use per day <span>no use figures yet</span></figcaption><p class="m">A reason.</p></figure>')
         self.assertIn("<span>not drawn</span>", str(figures.use_quiet(PE, figures.USE_MANY, "not drawn")))
-        self.assertEqual(figures.USE_LATER, "Azure Monitor shows use a few hours after it happens. The next search reads it, and the chart fills in once 20 of the last 30 days have a value.")
+        self.assertEqual(figures.USE_LATER, "Azure Monitor shows use a few hours after it happens. The next search reads it. A chart is drawn once 20 of the last 30 days have a value: "
+                                            "a new resource, a stopped machine and a resource that does not offer this metric have fewer.")
         self.assertEqual(figures.USE_MANY, "Use is not drawn for a finding about many resources.")
 
 
