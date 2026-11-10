@@ -372,12 +372,20 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(len(re.findall(r'href="', letter.html)), 1)
 
     def test_the_weekly_letter_with_several_decisions_keeps_one_line_for_each_and_the_figure(self):
-        other = (dataclasses.replace(self.plan, plan_id="plan-two", case_id="case-two"), dataclasses.replace(self.case, case_id="case-two"))
+        other = (dataclasses.replace(self.plan, plan_id="plan-two", case_id="case-two"), dataclasses.replace(self.case, case_id="case-two", recommendation="investigate"))
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case), other], CONTACTS)
-        self.assertEqual(sum(1 for line in letter.text.splitlines() if line.startswith("- ")), 2)
-        self.assertEqual(letter.text.count("Consider changing the Log Analytics workspace ws-demo: $859 a year, Scenario."), 2)
+        self.assertEqual([line for line in letter.text.splitlines() if line.startswith("- ")],
+                         ["- Consider changing the Log Analytics workspace ws-demo: $859 a year, Scenario.", "- Review the Log Analytics workspace ws-demo: $859 a year, Scenario."])
         self.assertNotIn("Options:", letter.text)
         self.assertLessEqual(word_count(letter), MOST_WORDS["digest"])
+
+    def test_findings_of_one_kind_are_one_line_of_the_weekly_letter_as_they_are_one_row_of_the_page(self):
+        other = (dataclasses.replace(self.plan, plan_id="plan-two", case_id="case-two"), dataclasses.replace(self.case, case_id="case-two"))
+        letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case), other], CONTACTS)
+        self.assertEqual(letter.subject, "[Meternaut] 1 decision waits for you")
+        self.assertEqual([line for line in letter.text.splitlines() if line.startswith("- ")], ["- 2 Log Analytics workspaces in 1 resource group: $1,718 a year, Scenario."])
+        self.assertEqual(re.findall(r'href="([^"]*)"', letter.html), [f"{BASE}/"], "a row that holds several requests opens on the page: it has no request page of its own")
+        self.assertNotIn("Options:", letter.text)
 
     def test_the_decision_letter_stays_within_the_words_of_a_letter_and_has_what_it_rests_on(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)

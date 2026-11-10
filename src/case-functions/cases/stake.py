@@ -11,9 +11,12 @@ Nothing here reads a clock, a store or the network. A letter and a card say neit
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Sequence
 
 from .brief import Brief
-from .web.figures import RISKS, a_year, dollars, figure_of, title_of
+from .models import CaseRecord
+from .web.figures import RISKS, Figure, a_year, dollars, figure_of, title_of
+from .web.home import Row, unit_title, units_of
 
 MONEY = "Money is in US dollars, and a year is twelve times the month."  # the page says it in the same words, once under its figure
 
@@ -48,20 +51,42 @@ class Stake:
         return MONEY if self.year else ""
 
 
-def stake_of(brief: Brief) -> Stake:
-    """The figure of a request as its page shows it: a saving when the brief has one (with its level and its basis), else what the finding costs in 30 days (the most that a change could
-    save, which nothing has measured), else nothing, and why. A finding's own reason for having no saving takes the place of the general one. The cost is the brief's own (`Brief.cost`),
-    the number that the page reads with `cost_of`: a test holds the two to each other."""
-    figure = figure_of([brief.saving], [brief.cost])
-    note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
+def stake_of_figure(figure: Figure, note: str | None = None) -> Stake:
+    """The figure of the page (a request's, or a row's that stands for several) in words: its year, its month, its label and its basis, or what is known when there is no figure."""
+    note = figure.note if note is None else note
     if figure.monthly is None:
         return Stake(figure.state, "", figure.label, "", "", note)
     return Stake(figure.state, figure.level, figure.label, f"{a_year(figure.monthly)} a year", dollars(figure.monthly), note, figure.monthly)
 
 
+def stake_of(brief: Brief) -> Stake:
+    """The figure of a request as its page shows it: a saving when the brief has one (with its level and its basis), else what the finding costs in 30 days (the most that a change could
+    save, which nothing has measured), else nothing, and why. A finding's own reason for having no saving takes the place of the general one. The cost is the brief's own (`Brief.cost`),
+    the number that the page reads with `cost_of`: a test holds the two to each other."""
+    figure = figure_of([brief.saving], [brief.cost])
+    return stake_of_figure(figure, figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none)
+
+
 def title_text(brief: Brief) -> str:
     """The title of the request as its page has it ("Review the disk x", "Delete the unattached disk x"), as plain text: the place is not in it."""
     return title_of(brief)[1]
+
+
+@dataclass(frozen=True)
+class Decision:
+    """One row of the Decisions page as a letter lists it: the title and the figure that the page has for it, and the request when the row stands for one request. A row for findings of
+    one kind about several resources has no request of its own: it opens on the page."""
+
+    title: str
+    stake: Stake
+    brief: Brief | None
+
+
+def decisions_of(waiting: Sequence[tuple[Brief, CaseRecord | None, bool]]) -> list[Decision]:
+    """The rows that the Decisions page shows for these requests (each a brief, its case and whether the person put it off), in its order: what is at stake first, what a person put off last.
+    The code of the page groups and ranks them, so a letter counts what the page counts and never lists the same kind of finding once for each resource."""
+    units = units_of([Row(brief, case, later) for brief, case, later in waiting])
+    return [Decision(unit_title(unit), stake_of_figure(unit.figure), unit.first.brief if len(unit.members) == 1 else None) for unit in units]
 
 
 def place_of(brief: Brief) -> str:

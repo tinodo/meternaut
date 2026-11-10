@@ -124,6 +124,17 @@ def _ranked(units: Sequence[Unit], sort: str) -> list[Unit]:
     return sorted(units, key=key)
 
 
+def units_of(rows: Sequence[Row]) -> list[Unit]:
+    """The rows of this page for these requests, in the order of its default sort (what is at stake first). The weekly letter lists them with this same code, so that the letter and the
+    page count the same decisions and never show the same kind of finding twice."""
+    return _ranked(_units(rows), "impact")
+
+
+def unit_title(unit: Unit) -> str:
+    """The title of a row as plain text (the markup is the page's)."""
+    return _title(unit)[1]
+
+
 def _title(unit: Unit) -> tuple[Safe, str]:
     """The title of a row as markup and as plain text: how many of what and where when it stands for many, else the headline without its place (the line under it says the place), with
     the name of the resource in code type."""

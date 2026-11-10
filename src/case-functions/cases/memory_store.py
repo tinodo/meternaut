@@ -54,6 +54,14 @@ class MemoryStore:
     def case_put(self, case: CaseRecord) -> None:
         self.cases[case.case_id] = case
 
+    def case_update(self, case_id: str, change: Callable[[CaseRecord], CaseRecord | None]) -> bool:
+        case = self.cases.get(case_id)
+        changed = None if case is None else change(case)
+        if changed is None:
+            return False
+        self.case_put(changed)
+        return True
+
     def plans_open(self) -> list[PlanRecord]:
         return sorted((p for p in self.plans.values() if p.state in ("open", "approved")), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 

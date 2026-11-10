@@ -24,6 +24,7 @@ from .mail import Mailer, mail_calls
 from .memory_store import parse
 from .models import ADVISE, ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
 from .people import People, Person
+from .web.common import may_answer
 
 LOG = logging.getLogger("meternaut.notify")
 EPOCH = "2000-01-01T00:00:00Z"
@@ -120,8 +121,11 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 settings_of = store.settings_get(person.oid)
                 if now.isoweekday() != settings_of.desk_day or already(person, "digest", since=(now - dt.timedelta(days=6)).strftime("%Y-%m-%dT%H:%M:%SZ")):
                     continue
-                mine = [(plan, store.case_get(plan.case_id)) for plan in store.plans_open() if plan.state == "open" and person.oid.lower() in {a.lower() for a in plan.approvers}]
-                letter = letters.digest_letter(person, base, now, mine, contacts())
+                principal = people.principal(person.oid)
+                # The requests that the Decisions page shows this person: the ones that they may answer (the page's own rule), and the ones that they put off are marked, as the page marks them.
+                mine = [(plan, store.case_get(plan.case_id)) for plan in store.plans_open() if plan.state == "open" and principal is not None and may_answer(principal, plan)]
+                later = {d.plan_id for d in store.decisions_by(person.oid, 200) if d.decision == "later"}
+                letter = letters.digest_letter(person, base, now, mine, contacts(), later)
                 if letter is not None:  # the summary is sent only when something waits for this person
                     mailer.send(person, letter, "digest")
         safely("the weekly desk", work)

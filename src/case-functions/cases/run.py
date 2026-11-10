@@ -325,9 +325,7 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                 continue
             series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)]
             try:
-                kept = ex.store.case_get(case_id)  # read again just before the write: a person may have answered since
-                if kept is not None:
-                    ex.store.case_put(replace(kept, cost_series=series, cost_series_end=last.isoformat()))
+                ex.store.case_update(case_id, lambda kept: replace(kept, cost_series=series, cost_series_end=last.isoformat()))  # only these two fields, on the case as it is stored now
                 done += 1
             except StoreError as error:
                 why = why or clean_text(s.redact(error), 200)
@@ -400,9 +398,7 @@ def _read_use(s: Services, ex: "wiring.Extras", say: Callable[[str], None]) -> N
             continue
         try:
             for case in cases:
-                kept = ex.store.case_get(case.case_id)  # read again just before the write: a person may have answered since
-                if kept is not None:
-                    ex.store.case_put(replace(kept, use_series=series, use_series_end=last.isoformat(), use_kind=kind.kind))
+                ex.store.case_update(case.case_id, lambda kept: replace(kept, use_series=series, use_series_end=last.isoformat(), use_kind=kind.kind))  # only these fields, on the case as it is stored now
         except StoreError as error:
             why = why or clean_text(s.redact(error), 200)
             failed += len(cases)

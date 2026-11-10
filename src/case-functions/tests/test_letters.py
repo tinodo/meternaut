@@ -491,6 +491,8 @@ class Digest(unittest.TestCase):
         self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, closed))
         past = [(dataclasses.replace(plan, expires_at="2026-11-05T10:00:00Z"), case) for plan, case in waiting(2)]
         self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, past), "a request past its time does not wait")
+        unreadable = [(dataclasses.replace(plan, expires_at="soon"), case) for plan, case in waiting(2)]
+        self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, unreadable), "a time that cannot be read is over, as the page counts it")
 
     def test_it_lists_the_requests_that_wait_one_line_each_with_the_title_and_the_figure_a_year_and_its_level_the_largest_first(self):
         letter = self.digest(3)

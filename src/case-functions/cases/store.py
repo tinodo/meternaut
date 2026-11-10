@@ -25,6 +25,7 @@ MAX_DATA = 30000
 MAX_NONCE_DATA = 4000
 MAX_PAGES = 10
 PAGE = 1000
+UPDATE_TRIES = 4  # how often a case is read again when another step changed it between the read and the write (store.case_update)
 
 RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS = (
     "mnruns", "mncases", "mnplans", "mndecisions", "mnactions", "mnswitches", "mnsettings", "mnnotes", "mnnonces", "mnmail")
@@ -217,6 +218,31 @@ class TableStore:
 
     def case_put(self, case: CaseRecord) -> None:
         self._upsert(CASES, "c", case.case_id, case, status=case.status, updatedAt=case.updated_at)
+
+    def case_update(self, case_id: str, change: Callable[[CaseRecord], CaseRecord | None]) -> bool:
+        """A write that does not overwrite a change that was made after the read: the service is given the ETag of what was read (Update Entity, `If-Match`), and answers 412 when the case has
+        changed since. The case is read again then, `change` is given the newer record, and its result is written the same way, a few times before it gives up."""
+        address = self._address(CASES, "c", case_id)
+        for _ in range(UPDATE_TRIES):
+            row, etag = self._get(CASES, "c", case_id)
+            if row is None:
+                return False
+            changed = change(self._records([row], CaseRecord)[0])
+            if changed is None:
+                return False
+            if not etag:
+                raise StoreError("the service gave no ETag for the case, so that nothing can be written over a change that it did not see")
+            entity = self._entity("c", case_id, changed, status=changed.status, updatedAt=changed.updated_at)
+            try:
+                self._call("PUT", address, body=entity, headers={"Prefer": "return-no-content", "If-Match": etag})
+            except StoreError as error:
+                if self._status(error) == 412:
+                    continue
+                if self._status(error) == 404:
+                    return False
+                raise
+            return True
+        raise StoreError("the case was changed by another step every time that it was read", 412)
 
     def plans_open(self) -> list[PlanRecord]:
         rows = self._query(PLANS, "PartitionKey eq 'p' and (state eq 'open' or state eq 'approved')", PAGE)

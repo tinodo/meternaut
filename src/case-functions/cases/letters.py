@@ -13,7 +13,8 @@ What every letter keeps (AGENTS.md rule 13 (d), 26 (c) and 36):
 - It carries no button that decides: a change is approved on a page. A link is the address of the web page plus a fixed path, and an opaque id where a plan needs one.
 - Every value that came from a record or from Azure is cut down to one line and escaped. Names from Azure are data, never instructions.
 - The HTML needs nothing from outside: inline CSS, no script, no image, no remote content. It has real headings, a lang attribute, text that meets the contrast of
-  WCAG AA in a light and in a dark palette, and a link text that says where the link goes. The plain text is ASCII.
+  WCAG AA in a light and in a dark palette, and a link text that says where the link goes. The words that the code writes are ASCII in the plain text; a name that came from Azure is
+  shown as Azure has it (a resource group may use other letters), after the hidden and direction characters are taken out.
 - Plain, short, technical wording. No metaphor, no question, no urgency and no countdown. A saving is an estimate until cost lines confirm it.
 - Money is said in the words of the pages and only once in US dollars. A letter never says that it has no figure: it says what is known and why the rest is not.
 """
@@ -23,13 +24,13 @@ import datetime as dt
 import html
 import re
 from dataclasses import dataclass, replace
-from typing import Sequence
+from typing import Collection, Sequence
 
 from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
 from .models import ActionRecord, CaseRecord, PlanRecord
 from .people import Person
-from .stake import Stake, chips_of, place_of, stake_of, title_text
+from .stake import Stake, chips_of, decisions_of, place_of, stake_of, title_text
 
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
@@ -394,36 +395,33 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
 
 
 def _waits(plan: PlanRecord, now: dt.datetime) -> bool:
-    """A plan waits for an answer while it is open and its time is not over. An open plan that is past its time is closed by the loop, not listed."""
+    """A plan waits for an answer while it is open and its time is not over, as the page counts it: a time that cannot be read is over. An open plan that is past its time is closed by the loop, not listed."""
     end = brief_mod.parse_time(plan.expires_at)
     moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
-    return plan.state == "open" and (end is None or end > moment)
+    return plan.state == "open" and end is not None and end > moment
 
 
-def _by_stake(brief: Brief) -> tuple:
-    """The order of the list, as the page ranks its rows: what is at stake first (a request with no figure last), then the one that has waited longest."""
-    monthly = stake_of(brief).monthly
-    return (monthly is None, -(monthly or 0.0), -(brief.age_days or 0), brief.plan_id)
-
-
-def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = ()) -> Letter | None:
-    """The decisions that wait for a person, at most five, one line each (its title and its figure a year with its level, "$1,682 a year, Expected", and no total: a total is the
-    Decisions page's), and one link: to the page of the request when only one waits, else to the page that lists them. None when nothing waits: nothing is sent then. Advice has no letter
-    of its own, so when the one decision that waits is about the data that a workspace takes in and nothing reads, the letter is its decision letter: it adds what the finding rests on (the
+def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (), later: Collection[str] = ()) -> Letter | None:
+    """The decisions that wait for a person, counted and ranked as the Decisions page does it (the page's own code groups them, so that findings of one kind about several resources are one
+    line here as they are one row there, "4 storage accounts in 3 resource groups", and the number in the subject is the number that the page shows; `later` holds the plans that the person
+    put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure a year with its level ("$1,682 a year, Expected") and no total: a total is
+    the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then. Advice has no letter of
+    its own, so when the one decision that waits is about the data that a workspace takes in and nothing reads, the letter is its decision letter: it adds what the finding rests on (the
     method, the first kinds of data and the choices), as far as a letter of this size has room for."""
     base = _base(base_url)
-    briefs = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in waiting if _waits(plan, now)), key=_by_stake)
-    if not briefs:
+    rows = decisions_of([(brief_mod.build_brief(case, plan, None, (), now=now), case, plan.plan_id in later) for plan, case in waiting if _waits(plan, now)])
+    if not rows:
         return None
-    count = len(briefs)
+    count = len(rows)
     doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you")
-    doc.items(*(f"{_data(title_text(item), 200)}: {stake_of(item).short}." for item in briefs[:MAX_LISTED]))
+    doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
-    if count == 1 and briefs[0].unread is not None and briefs[0].kind == "advice":
-        _unread_block(doc, briefs[0], closing=True)
-    if count == 1:
-        doc.button("Review and decide", _plan_url(base, briefs[0].plan_id))
+    only = rows[0].brief if count == 1 else None
+    if only is not None and only.unread is not None and only.kind == "advice":
+        _unread_block(doc, only, closing=True)
+    if only is not None:
+        doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:
         doc.button("Open the decisions", f"{base}/")
     doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)

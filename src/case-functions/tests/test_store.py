@@ -10,7 +10,7 @@ from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 from cases.http import Client
 from cases.memory_store import MemoryStore, stamp
 from cases.models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, StoreError, SwitchRecord)
-from cases.store import MAX_DATA, MAX_NONCE_DATA, RESOURCE, TableStore, table_calls
+from cases.store import MAX_DATA, MAX_NONCE_DATA, RESOURCE, UPDATE_TRIES, TableStore, table_calls
 
 ACCOUNT = "stexample"
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
@@ -192,6 +192,16 @@ class StoreContract:
         self.assertEqual((got.objections, got.guards, got.models, got.steps), (("a", "b"), ("locked",), {"detective": "m"}, ({"step": "x", "ok": True},)))
         self.assertIsNone(self.store.case_get("missing"))
         self.assertEqual(len(self.store.cases_recent(limit=1)), 1)
+
+    def test_a_case_is_updated_from_what_is_stored_and_the_answer_says_whether_it_was_written(self):
+        self.store.case_put(case("k1", "proposed", "2026-11-05T08:00:00Z", summary="first"))
+        self.assertTrue(self.store.case_update("k1", lambda kept: replace(kept, cost_series=[1.0] * 30, cost_series_end="2026-11-04")))
+        got = self.store.case_get("k1")
+        self.assertEqual((got.cost_series, got.cost_series_end, got.status, got.summary), ([1.0] * 30, "2026-11-04", "proposed", "first"), "the rest of the case is as it was")
+        self.assertFalse(self.store.case_update("k1", lambda kept: None), "nothing to change: nothing written")
+        self.assertEqual(self.store.case_get("k1"), got)
+        self.assertFalse(self.store.case_update("missing", lambda kept: replace(kept, status="done")), "a case that is gone is not made again")
+        self.assertIsNone(self.store.case_get("missing"))
 
     def test_plans_open_holds_the_open_and_approved_ones(self):
         self.store.plan_put(plan("p1", "open", "2026-11-05T08:00:00Z"))
@@ -402,6 +412,62 @@ class TableStoreOnItsOwn(unittest.TestCase):
         creations = [c for c in self.service.calls if c[1].endswith("/Tables")]
         self.assertEqual(len(creations), 1)
         self.assertEqual(list(self.service.tables), ["mncases"])
+
+    def test_an_update_writes_with_the_etag_of_what_it_read_and_a_change_made_in_between_is_not_written_over(self):
+        self.store.case_put(case("k1", "awaiting_ok"))
+        seen = []
+
+        def change(kept):
+            seen.append(kept.status)
+            if len(seen) == 1:  # another step answers the request between the read and the write of this one
+                self.store.case_put(replace(kept, status="running"))
+            return replace(kept, cost_series=[2.0] * 30, cost_series_end="2026-11-04")
+
+        self.assertTrue(self.store.case_update("k1", change))
+        self.assertEqual(seen, ["awaiting_ok", "running"], "the second try is made on the case that the other step wrote")
+        got = self.store.case_get("k1")
+        self.assertEqual((got.status, got.cost_series, got.cost_series_end), ("running", [2.0] * 30, "2026-11-04"), "what the other step wrote is kept, and so is what this one added")
+        writes = [h for (method, _), h in zip(self.service.calls, self.service.headers) if method == "PUT"]
+        self.assertEqual([bool(h.get("If-Match")) and h["If-Match"] != "*" for h in writes][-2:], [True, True], "both writes of the update name the version that they were made from")
+
+    def test_an_update_gives_up_when_the_case_keeps_changing_and_writes_nothing_of_its_own(self):
+        self.store.case_put(case("k1", "awaiting_ok"))
+        tries = []
+
+        def change(kept):
+            tries.append(kept.status)
+            self.store.case_put(replace(kept, status=f"s{len(tries)}"))
+            return replace(kept, cost_series=[3.0] * 30)
+
+        with self.assertRaises(StoreError) as caught:
+            self.store.case_update("k1", change)
+        self.assertEqual(caught.exception.status, 412)
+        self.assertEqual(len(tries), UPDATE_TRIES)
+        self.assertIsNone(self.store.case_get("k1").cost_series)
+
+    def test_an_update_of_a_case_that_was_deleted_in_between_writes_nothing_and_says_so(self):
+        self.store.case_put(case("k1"))
+
+        def change(kept):
+            del self.service.tables["mncases"][("c", "k1")]
+            return replace(kept, cost_series=[1.0] * 30)
+
+        self.assertFalse(self.store.case_update("k1", change))
+        self.assertIsNone(self.store.case_get("k1"))
+
+    def test_an_update_never_writes_without_the_version_that_it_read(self):
+        self.store.case_put(case("k1"))
+        original = self.service.transport
+
+        def without_etag(method, url, headers, data, timeout):
+            status, answer_headers, body = original(method, url, headers, data, timeout)
+            return status, {k: v for k, v in answer_headers.items() if k != "etag"}, body
+
+        client = Client(table_calls(ACCOUNT), lambda text: text, transport=without_etag, sleep=lambda s: None, monotonic=lambda: 0.0)
+        store = TableStore(client, lambda r: "token-value", ACCOUNT, clock=self.clock)
+        with self.assertRaises(StoreError):
+            store.case_update("k1", lambda kept: replace(kept, cost_series=[1.0] * 30))
+        self.assertIsNone(self.store.case_get("k1").cost_series)
 
     def test_a_read_never_makes_a_table_and_a_table_that_is_not_there_has_no_rows(self):
         self.assertEqual(self.store.cases_recent(), [])
