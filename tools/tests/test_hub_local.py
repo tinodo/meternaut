@@ -1383,6 +1383,7 @@ class TheProofOfARunOfTheHub(RunnerCase):
         self.assertIn("GITHUB_ACTIONS is true in this step", after)
         self.assertIn("exit=2", after, "the proof is looked for in the repository's own local folder, and the helper that sits in another repository finds another folder: the proof of this run is not in it")
 
+    @unittest.skipUnless(os.name == "nt", "how Windows delivers an interrupt to a step (the owner's machine); this scenario is not pinned on other systems")
     def test_the_proof_is_deleted_at_the_end_of_a_run_that_passed_failed_or_was_interrupted_and_counts_for_nothing_after_it(self):
         keep = block("Keep the path", f'echo "$METERNAUT_HUB_PROOF" > "{self.at}/path.txt"')
         scenarios = {"passed": mini(CHECKOUT, LOGIN, keep, ALWAYS), "failed": mini(CHECKOUT, LOGIN, keep, block("Fails", "exit 3"), ALWAYS),
@@ -2143,6 +2144,7 @@ class TheShims(unittest.TestCase):
         texts = {"az": hub.az_shim(self.az.argv), "python3": hub.python_shim(sys.executable)}
         for name in shim_names:
             (shim / name).write_text(texts[name], encoding="utf-8", newline="\n")
+            (shim / name).chmod(0o755)
         (self.base / "t.sh").write_text(script, encoding="utf-8", newline="\n")
         env = dict(os.environ, PATH=shim.as_posix() + os.pathsep + os.environ["PATH"], FAKE_AZ_LOG=str(self.az.step_log), MSYS_NO_PATHCONV="1", MSYS2_ARG_CONV_EXCL="*")
         return subprocess.run([BASH, "--noprofile", "--norc", "-eo", "pipefail", (self.base / "t.sh").as_posix()], capture_output=True, text=True, env=env, encoding="utf-8")
@@ -2162,7 +2164,7 @@ class TheShims(unittest.TestCase):
         done = self.bash('python3 -c "import sys; print(sys.version_info[0], sys.executable)"')
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(done.stdout.split()[0], str(sys.version_info[0]))
-        self.assertEqual(os.path.normcase(done.stdout.split(" ", 1)[1].strip()), os.path.normcase(sys.executable))
+        self.assertEqual(os.path.normcase(os.path.realpath(done.stdout.split(" ", 1)[1].strip())), os.path.normcase(os.path.realpath(sys.executable)))
 
     def test_the_hook_makes_az_in_a_subprocess_the_clis_own_python_and_refuses_what_changes_the_session(self):
         hook = self.base / "hook"
@@ -2205,6 +2207,7 @@ class TheShims(unittest.TestCase):
         self.assertEqual(hub.posix_absolute(Path("C:/Users/someone/repo/local/rt/1/cases.zip")), "/c/Users/someone/repo/local/rt/1/cases.zip")
         self.assertEqual(hub.posix(Path("C:\\Users\\someone\\x")), "C:/Users/someone/x")
 
+    @unittest.skipUnless(os.name == "nt", "the form of Git's bash on Windows: on other systems the bash is the system's own")
     @unittest.skipIf(BASH is None, "no Git bash on this machine")
     def test_the_bash_that_is_found_is_the_one_of_git_and_not_the_launcher_of_wsl(self):
         self.assertTrue(hub.is_git_bash(BASH))
@@ -2315,6 +2318,7 @@ class TheProcessRunner(unittest.TestCase):
         self.assertIn("... still running after", self.out.getvalue())
         self.assertIn("done", self.out.getvalue())
 
+    @unittest.skipUnless(os.name == "nt", "how Windows delivers an interrupt to a step: on other systems the interrupt is passed on at once, and the step does not run on to its end")
     def test_ctrl_c_gives_the_command_time_to_clean_up_and_then_ends_it(self):
         class Interrupting(hub.Console):
             """Stands in for a Ctrl+C that arrives in the main thread, on the second look of the wait loop at the console."""
