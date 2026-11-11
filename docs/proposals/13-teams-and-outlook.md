@@ -1,6 +1,6 @@
 # Teams and Outlook: a card in Teams, a letter in Outlook — a decision record
 
-**Status: built, not deployed, and not run in Teams or in Azure.** The app puts each card on a private queue; a Power Automate flow, described in [proposal 19](19-teams-cards-through-power-automate.md), reads the queue and posts the card. Whether a card reaches a person is not proven until the first card arrives, and the app cannot tell whether one did. Microsoft facts below name their page and were read on 2026-11-11.
+**Status: deployed, and run on 2026-11-11: a test card and three real requests reached the owner's Teams chat.** The app puts each card on a private queue; a Power Automate flow, described in [proposal 19](19-teams-cards-through-power-automate.md), reads the queue and posts the card. The app cannot tell whether a card arrived (the flow's run history says: `tools/powerplatform.py flow-runs`). Microsoft facts below name their page and were read on 2026-11-11.
 
 ## What a person sees
 

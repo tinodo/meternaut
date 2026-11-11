@@ -463,8 +463,8 @@ def _marked(s: "Services") -> set[str] | None:
         return set()
     try:
         return {key.lower() for key in s.extras.store.do_not_touch()}
-    except StoreError:
-        LOG.warning("investigate: the do-not-touch marks could not be read")
+    except StoreError as error:
+        LOG.warning("investigate: the do-not-touch marks could not be read: %s", s.redact(str(error)))
         return None
 
 

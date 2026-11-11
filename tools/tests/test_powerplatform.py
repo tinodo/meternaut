@@ -4,12 +4,14 @@ No test here calls Azure or Power Platform, and no test can say that the real se
 environments with its linked policy, one environment's detail) and on the reference repository's and Microsoft's own scripts for the calls that change something, which have never been sent by this tool.
 What the tests do pin: what the tool sends and to whom, that nothing that changes something is sent without --apply, that a token is never printed and never goes to another host, what each check
 before a link stops on, and that every name that the tool shares with a template is the template's."""
+import copy
 import importlib.util
 import io
 import json
 import re
 import sys
 import unittest
+import urllib.parse
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest import mock
@@ -33,12 +35,15 @@ NETWORK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Netw
 BAP = "https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform"
 BAP_TOKEN = "bap-token-0123456789"
 ARM_TOKEN = "arm-token-9876543210"
+FLOW_TOKEN = "flow-token-1122334455"
+TENANT = "dddddddd-1111-2222-3333-444444444444"
+ACCOUNT = "stmeternautexample"
 OPERATION = f"{BAP}/operations/op-1"
 REGIONAL_OPERATION = "https://unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/op-1"
 
 
 def environment(env_id=ENV, name="cards", location="sweden", region="swedencentral", sku="Developer", managed="Standard", state="Succeeded", management="Ready", policy=None, instance="https://org.invalid/"):
-    properties = {"displayName": name, "environmentSku": sku, "azureRegion": region, "provisioningState": state, "states": {"management": {"id": management}},
+    properties = {"displayName": name, "environmentSku": sku, "azureRegion": region, "provisioningState": state, "states": {"management": {"id": management}}, "tenantId": TENANT,
                   "governanceConfiguration": {"protectionLevel": managed}, "linkedEnvironmentMetadata": {"instanceUrl": instance} if instance else {}}
     if policy:
         properties["enterprisePolicies"] = {"VNets": {"id": policy, "linkStatus": "Linked"}}
@@ -63,6 +68,12 @@ class World:
         self.reads_before_ready = 2
         self.creating = None
         self.link_takes_effect = True
+        self.connections = {}
+        self.consents = []
+        self.flows = {}
+        self.runs = {}
+        self.run_outcome = ("Succeeded", [])
+        self.flow_counter = 0
         self.__dict__.update(changes)
 
     # the Azure CLI
@@ -70,7 +81,7 @@ class World:
         assert args[:2] == ["account", "get-access-token"] and "--resource" in args, args
         audience = args[args.index("--resource") + 1]
         self.audiences.append(audience)
-        return 0, (BAP_TOKEN if "powerapps" in audience else ARM_TOKEN) + "\n", ""
+        return 0, (BAP_TOKEN if "powerapps" in audience else FLOW_TOKEN if "flow.microsoft" in audience else ARM_TOKEN) + "\n", ""
 
     def sleep(self, seconds):
         self.now += seconds
@@ -84,12 +95,73 @@ class World:
         self.calls.append((method, url, payload))
         token = headers["Authorization"].removeprefix("Bearer ")
         host = url.split("/")[2]
-        platform = host == "api.bap.microsoft.com" or host.endswith(".api.bap.microsoft.com")
-        assert token == (BAP_TOKEN if platform else ARM_TOKEN), "a token goes to its own host only"
+        platform = host in ("api.bap.microsoft.com", "api.powerapps.com") or host.endswith(".api.bap.microsoft.com")
+        assert token == (FLOW_TOKEN if host == "api.flow.microsoft.com" else BAP_TOKEN if platform else ARM_TOKEN), "a token goes to its own host only"
         path = url.split("?")[0]
         if host == "management.azure.com":
             return self.arm(method, path)
+        if host == "api.powerapps.com":
+            return self.apps(method, path, url, payload)
+        if host == "api.flow.microsoft.com":
+            return self.flow_service(method, urllib.parse.urlsplit(url).path, payload)
         return self.bap(method, path.replace(host, "api.bap.microsoft.com", 1), payload)
+
+    def apps(self, method, path, url, payload):
+        assert f"environment%20eq%20%27{ENV}%27" in url, "the connections are asked for in one environment"
+        if method == "GET" and path.endswith("/providers/Microsoft.PowerApps/connections"):
+            return 200, {}, json.dumps({"value": list(self.connections.values())}).encode()
+        found = re.fullmatch(r".*/apis/(shared_[a-z]+)/connections/([0-9a-f]{32})(/getConsentLink)?", path)
+        if not found:
+            return 500, {}, b"the fake has no such route: " + path.encode()
+        api, name, consent = found.groups()
+        if method == "PUT":
+            self.connections[name] = {"name": name, "properties": {"apiId": f"/providers/Microsoft.PowerApps/apis/{api}", "statuses": [{"status": "Error", "error": {"code": "Unauthenticated"}}], "request": payload}}
+            return 200, {}, json.dumps(self.connections[name]).encode()
+        if method == "POST" and consent:
+            self.consents.append((api, name, payload))
+            return 200, {}, json.dumps({"consentLink": f"https://sweden-001.consent.azure-apihub.net/login?data={name}", "redirectUrl": payload["redirectUrl"]}).encode()
+        return 500, {}, b"the fake has no such call: " + method.encode() + b" " + path.encode()
+
+    def flow_service(self, method, path, payload):
+        root = f"/providers/Microsoft.ProcessSimple/environments/{ENV}/flows"
+        assert path.startswith(root), "the flows are asked for in one environment"
+        tail = path.removeprefix(root)
+        if tail == "" and method == "GET":
+            return 200, {}, json.dumps({"value": list(self.flows.values())}).encode()
+        if tail == "" and method == "POST":
+            self.flow_counter += 1
+            flow_id = f"00000000-0000-0000-0000-{self.flow_counter:012d}"
+            self.flows[flow_id] = {"name": flow_id, "properties": {**payload["properties"], "flowSuspensionReason": "None"}}
+            return 200, {}, json.dumps(self.flows[flow_id]).encode()
+        found = re.fullmatch(r"/([0-9a-f-]{36})(?:/(triggers/manual/run|runs|runs/[0-9A-Za-z]+))?", tail)
+        if not found or found.group(1) not in self.flows:
+            return 404, {}, b'{"error": {"code": "NotFound", "message": "no such flow"}}'
+        flow_id, rest = found.groups()
+        if rest is None and method == "PATCH":
+            self.flows[flow_id]["properties"].update(payload["properties"])
+            return 200, {}, json.dumps(self.flows[flow_id]).encode()
+        if rest is None and method == "DELETE":
+            del self.flows[flow_id]
+            return 200, {}, b""
+        if rest == "triggers/manual/run" and method == "POST":
+            self.add_run(flow_id, *self.run_outcome)
+            return 200, {}, b""
+        if rest == "runs" and method == "GET":
+            return 200, {}, json.dumps({"value": [{k: v for k, v in r.items() if k != "codes"} for r in self.runs.get(flow_id, [])]}).encode()
+        if rest and rest.startswith("runs/") and method == "GET":
+            run = next(r for r in self.runs[flow_id] if r["name"] == rest.removeprefix("runs/"))
+            return 200, {}, json.dumps({"properties": {"actions": {f"action{i}": {"status": "Failed", "code": code} for i, code in enumerate(run["codes"], 1)}}}).encode()
+        return 500, {}, b"the fake has no such call: " + method.encode() + b" " + path.encode()
+
+    def add_run(self, flow_id, status, codes=()):
+        runs = self.runs.setdefault(flow_id, [])
+        runs.append({"name": f"run{len(runs) + 1}", "properties": {"startTime": f"2026-11-11T19:{len(runs):02d}:00Z", "status": status, "code": ""}, "codes": list(codes)})
+
+    def sign_in(self, *apis):
+        """The connections that a person has made and signed in, as the connections endpoint lists them."""
+        for api in apis:
+            name = "%032x" % (len(self.connections) + 1)
+            self.connections[name] = {"name": name, "properties": {"apiId": f"/providers/Microsoft.PowerApps/apis/{api}", "statuses": [{"status": "Connected"}]}}
 
     def bap(self, method, path, payload):
         admin = "/scopes/admin/" in path
@@ -462,7 +534,9 @@ class Steps(unittest.TestCase):
         self.assertEqual(world.calls, [])
         self.assertEqual(world.audiences, [], "not even a token is asked for")
         numbers = [int(n) for n in re.findall(r"(?m)^\s{1,2}(\d{1,2})\. ", out)]
-        self.assertEqual(numbers, list(range(1, 15)))
+        self.assertEqual(numbers, list(range(1, 19)))
+        for words in ("connections --environment", "flow --environment", "test-card --environment", "flow-runs --environment", "You are not permitted to make flows in this environment"):
+            self.assertIn(words, out)
         queue = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Storage/storageAccounts/stexample/queueServices/default/queues/teams-cards"
         self.assertIn(f'az role assignment create --assignee-object-id 22222222-3333-4444-5555-666666666666 --assignee-principal-type User --role "Storage Queue Data Message Processor" --scope {queue}', out)
         self.assertIn(f"--role Reader --scope {POLICY}", out)
@@ -491,6 +565,187 @@ class Steps(unittest.TestCase):
         self.assertEqual(sorted(message), ["card", "id", "title", "to", "v"])
         self.assertEqual(message["v"], 1)
         self.assertEqual(message["card"]["type"], "AdaptiveCard")
+
+
+class TheConnectionsAndTheFlow(unittest.TestCase):
+    """What a person does when the maker portal refuses them (a B2B guest of the tenant): the same calls, made by the tool."""
+    ARGS = ["--environment", ENV]
+
+    def test_the_dry_run_of_connections_says_what_is_missing_and_changes_nothing(self):
+        world = World()
+        code, out, err = world.run(["connections", *self.ARGS])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("--  Azure Queues (Microsoft Entra ID Integrated): not made", out)
+        self.assertIn("--  Microsoft Teams: not made", out)
+        self.assertIn("This was a dry run.", out)
+        self.assertEqual((world.changes(), world.connections), ([], {}))
+
+    def test_apply_makes_each_missing_connection_with_the_entra_sign_in_for_the_queue_and_gives_both_addresses_and_the_guest_hint(self):
+        world = World()
+        code, out, err = world.run(["connections", *self.ARGS, "--apply", "--yes"])
+        self.assertEqual((code, err), (0, ""))
+        made = {c["properties"]["apiId"].rsplit("/", 1)[-1]: c["properties"]["request"]["properties"] for c in world.connections.values()}
+        self.assertEqual(sorted(made), ["shared_azurequeues", "shared_teams"])
+        self.assertEqual(made["shared_azurequeues"]["connectionParametersSet"], {"name": "tokenBasedAuth", "values": {}})
+        self.assertEqual(made["shared_teams"]["connectionParameters"], {})
+        for properties in made.values():
+            self.assertEqual(properties["environment"], {"id": f"/providers/Microsoft.PowerApps/environments/{ENV}", "name": ENV})
+        self.assertEqual(sorted(api for api, _, _ in world.consents), ["shared_azurequeues", "shared_teams"])
+        self.assertTrue(all(payload == {"redirectUrl": pp.CONSENT_RETURN} for _, _, payload in world.consents))
+        self.assertEqual(out.count("https://sweden-001.consent.azure-apihub.net/login?data="), 2)
+        self.assertIn("#EXT#", out)
+        self.assertIn("/common/", out)
+        self.assertIn(TENANT, out)
+
+    def test_a_connection_that_is_made_and_not_signed_in_gets_a_new_address_and_no_second_connection(self):
+        world = World()
+        world.run(["connections", *self.ARGS, "--apply", "--yes"])
+        made = sorted(world.connections)
+        code, out, _ = world.run(["connections", *self.ARGS, "--apply", "--yes"])
+        self.assertEqual((code, sorted(world.connections)), (0, made))
+        self.assertIn("made, and not signed in", out)
+        self.assertEqual(len(world.consents), 4)
+        world.connections = {}
+        world.sign_in("shared_azurequeues", "shared_teams")
+        code, out, _ = world.run(["connections", *self.ARGS])
+        self.assertIn("Both are connected.", out)
+
+    def test_the_flow_needs_both_connections_connected_and_says_what_to_run(self):
+        world = World()
+        world.sign_in("shared_teams")
+        code, _, err = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT])
+        self.assertEqual(code, 1)
+        self.assertIn("Azure Queues", err)
+        self.assertIn("run `connections --apply`", err)
+
+    def test_the_flow_is_made_from_the_definition_of_the_solution_with_the_two_values_and_the_two_connections(self):
+        world = World()
+        world.sign_in("shared_azurequeues", "shared_teams")
+        code, out, err = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
+        self.assertEqual((code, err), (0, ""))
+        (flow,) = world.flows.values()
+        properties = flow["properties"]
+        self.assertEqual((properties["displayName"], properties["state"]), (pp.FLOW_NAME, "Started"))
+        names = {c["properties"]["apiId"].rsplit("/", 1)[-1]: c["name"] for c in world.connections.values()}
+        self.assertEqual({k: (v["connectionName"], v["source"], v["id"]) for k, v in properties["connectionReferences"].items()},
+                         {api: (names[api], "Embedded", f"/providers/Microsoft.PowerApps/apis/{api}") for api in ("shared_azurequeues", "shared_teams")})
+        self.assertEqual({k: v["tier"] for k, v in properties["connectionReferences"].items()}, {"shared_azurequeues": "Premium", "shared_teams": "Standard"})
+        expected = copy.deepcopy(pp.flow_definition())
+        expected["parameters"][pp.ENDPOINT_PARAMETER]["defaultValue"] = f"https://{ACCOUNT}.queue.core.windows.net/"
+        expected["parameters"][pp.QUEUE_PARAMETER]["defaultValue"] = "teams-cards"
+        self.assertEqual(properties["definition"], expected)
+        used = {action["inputs"]["host"]["connectionName"] for action in properties["definition"]["actions"].values() if "host" in action.get("inputs", {})}
+        self.assertLessEqual(used, set(properties["connectionReferences"]))
+
+    def test_a_second_run_updates_the_flow_and_two_flows_of_the_name_are_left_alone(self):
+        world = World()
+        world.sign_in("shared_azurequeues", "shared_teams")
+        world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
+        code, out, _ = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
+        self.assertEqual((code, len(world.flows)), (0, 1))
+        self.assertIn("is updated", out)
+        self.assertEqual([m for m, _ in world.changes()], ["POST", "PATCH"])
+        world.flows["00000000-0000-0000-0000-999999999999"] = {"name": "00000000-0000-0000-0000-999999999999", "properties": {"displayName": pp.FLOW_NAME}}
+        before = list(world.changes())
+        code, _, err = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn("changes none of them on a guess", err)
+        self.assertEqual(world.changes(), before)
+
+    def test_the_dry_run_of_the_flow_changes_nothing(self):
+        world = World()
+        world.sign_in("shared_azurequeues", "shared_teams")
+        code, out, _ = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT])
+        self.assertEqual((code, world.changes(), world.flows), (0, [], {}))
+        self.assertIn("This was a dry run.", out)
+
+    def test_flow_runs_lists_the_newest_first_and_names_the_action_that_failed(self):
+        world = World()
+        world.sign_in("shared_azurequeues", "shared_teams")
+        world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
+        (flow_id,) = world.flows
+        world.add_run(flow_id, "Succeeded")
+        world.add_run(flow_id, "Failed", ["ActionFailed", "Forbidden"])
+        world.add_run(flow_id, "Succeeded")
+        code, out, _ = world.run(["flow-runs", *self.ARGS, "--last", "2"])
+        self.assertEqual(code, 1)
+        lines = [line.strip() for line in out.splitlines() if line.startswith("  2026")]
+        self.assertEqual([line.split()[1] for line in lines], ["Succeeded", "Failed"])
+        self.assertIn("action2: Forbidden", out)
+        code, out, _ = world.run(["flow-runs", *self.ARGS, "--last", "1"])
+        self.assertEqual(code, 0)
+
+    def test_flow_runs_without_a_flow_says_to_run_flow(self):
+        code, _, err = World().run(["flow-runs", *self.ARGS])
+        self.assertEqual(code, 1)
+        self.assertIn("run `flow` first", err)
+
+    def test_test_card_makes_a_flow_runs_it_says_where_the_card_is_and_deletes_the_flow(self):
+        world = World()
+        world.sign_in("shared_azurequeues")
+        code, out, err = world.run(["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "someone@example.com", "--apply", "--yes"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(world.flows, {})
+        made = [p for m, u, p in world.calls if m == "POST" and u.split("?")[0].endswith("/flows")]
+        self.assertEqual(len(made), 1)
+        action = made[0]["properties"]["definition"]["actions"]["Put_a_message_on_a_queue_(V2)"]["inputs"]
+        message = json.loads(action["parameters"]["message"])
+        self.assertEqual((message["v"], message["to"], message["card"]["type"]), (1, "someone@example.com", "AdaptiveCard"))
+        self.assertEqual((action["host"]["operationId"], action["parameters"]["queueName"], action["parameters"]["storageAccountName"]), ("PutMessage_V2", "teams-cards", f"https://{ACCOUNT}.queue.core.windows.net/"))
+        self.assertIn("The card is on the queue teams-cards", out)
+        self.assertIn("The test flow is deleted.", out)
+
+    def test_a_test_card_that_the_queue_refuses_names_the_role_and_the_flow_is_deleted_all_the_same(self):
+        world = World(run_outcome=("Failed", ["Forbidden"]))
+        world.sign_in("shared_azurequeues")
+        code, out, _ = world.run(["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "someone@example.com", "--apply", "--yes"])
+        self.assertEqual((code, world.flows), (1, {}))
+        self.assertIn("Storage Queue Data Message Sender", out)
+        world = World(run_outcome=("Running", []))
+        world.sign_in("shared_azurequeues")
+        code, out, _ = world.run(["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "someone@example.com", "--apply", "--yes"])
+        self.assertEqual((code, world.flows), (1, {}))
+        self.assertIn("did not end in two minutes", out)
+
+    def test_the_dry_run_of_the_test_card_changes_nothing(self):
+        world = World()
+        world.sign_in("shared_azurequeues")
+        code, _, _ = world.run(["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "someone@example.com"])
+        self.assertEqual((code, world.changes()), (0, []))
+
+    def test_a_bad_storage_account_queue_mail_address_or_count_is_refused_before_anything_is_asked(self):
+        for argv, words in ((["flow", *self.ARGS, "--storage-account", "Not_Valid"], "--storage-account is a storage account name"),
+                            (["flow", *self.ARGS, "--storage-account", ACCOUNT, "--queue", "Bad_Queue"], "--queue is a queue name"),
+                            (["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "not a mail"], "--to is a mail address"),
+                            (["flow-runs", *self.ARGS, "--last", "0"], "--last is a number from 1 to 20")):
+            world = World()
+            code, _, err = world.run(argv)
+            self.assertEqual(code, 1, argv)
+            self.assertIn(words, err)
+            self.assertEqual((world.calls, world.audiences), ([], []), argv)
+
+    def test_the_two_new_hosts_take_their_own_token_and_only_the_calls_that_are_written_for_them(self):
+        world = World()
+        client = pp.Client(pp.Tokens(world.runner, pp.Hider()), world.transport, lambda s: None)
+        query = f"api-version=2016-11-01&$filter=environment%20eq%20%27{ENV}%27"
+        connection = f"https://api.powerapps.com/providers/Microsoft.PowerApps/apis/shared_teams/connections/{'a' * 32}"
+        flows = f"https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/{ENV}/flows"
+        for method, url in (("DELETE", f"{connection}?{query}"), ("PUT", f"{flows}?api-version=2016-11-01"), ("GET", "https://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/scopes/admin/environments/x/flows?api-version=2016-11-01"),
+                            ("POST", f"https://api.powerapps.com/providers/Microsoft.PowerApps/apis/shared_office365/connections/{'a' * 32}?{query}"),
+                            ("PUT", f"https://api.powerapps.com/providers/Microsoft.PowerApps/apis/shared_teams/connections/short?{query}"),
+                            ("GET", f"http://api.flow.microsoft.com/providers/Microsoft.ProcessSimple/environments/{ENV}/flows?api-version=2016-11-01"),
+                            ("GET", f"https://api.flow.microsoft.com.evil.example/providers/Microsoft.ProcessSimple/environments/{ENV}/flows?api-version=2016-11-01"),
+                            ("DELETE", f"{flows}?api-version=2016-11-01"), ("GET", f"{flows}/{ENV}/runs/x/y?api-version=2016-11-01")):
+            with self.assertRaises(pp.Problem, msg=f"{method} {url}"):
+                client.send(method, url, {})
+        self.assertEqual((world.calls, world.audiences), ([], []))
+
+    def test_the_names_that_the_tool_gives_the_flow_are_the_ones_of_the_packed_solution(self):
+        parameters = pp.flow_definition()["parameters"]
+        self.assertIn(pp.ENDPOINT_PARAMETER, parameters)
+        self.assertIn(pp.QUEUE_PARAMETER, parameters)
+        self.assertEqual(sorted(pp.flow_definition()["triggers"]), ["When_there_are_messages_in_a_queue_(V2)"])
+        self.assertEqual(pp.QUEUE_NAME, "teams-cards")
 
 
 class TheTokensAndTheCalls(unittest.TestCase):
