@@ -289,7 +289,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
     ACTIONS = re.findall(r"^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1), re.M)
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
-        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "operator", "operator-probe",
+        self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run", "page-latency", "plant", "loop-check", "powerplatform", "operator", "operator-probe",
                                         "aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check", "agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
         for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
             self.assertNotIn(retired, self.ACTIONS)
