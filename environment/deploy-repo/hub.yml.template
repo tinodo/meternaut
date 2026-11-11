@@ -1,0 +1,129 @@
+name: Hub
+
+# The only workflow of the deploy repository (environment/deploy-repo/README.md in the public repository). It calls the Hub of the public repository, which is pinned below to one full commit. Everything that
+# belongs to the owner's estate is here, in this private repository: its variables, its three secrets, the OpenID Connect credential that trusts it, the logs of the runs and the minutes. The public repository
+# holds none of them.
+#
+# Which code deploys is decided by the commit after the @ below, and by nothing else: changing it is a commit of the owner in this repository. Pin a commit of main of the public repository whose checks have
+# passed; the Hub asks GitHub and refuses any other. Replace the whole placeholder with the full commit, and never with a branch or a tag: they move.
+#
+# The workflow starts by hand only, for the owner's account, on main. An agent starts it only on the owner's plain words (AGENTS.md rule 18 of the public repository): what-if reads and changes nothing, and every
+# other action needs his yes first. The inputs are those of the Hub: the same names, and the same options.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What the Hub does. what-if reads and changes nothing; every other action needs the owner's plain yes first. Each action is described in the input of this name in .github/workflows/deploy-hub.yml of the public repository."
+        type: choice
+        required: true
+        default: what-if
+        options:
+          - what-if
+          - model-side
+          - base
+          - retire-old
+          - retire-event-hubs
+          - foundry
+          - cases
+          - cases-run
+          - page-latency
+          - plant
+          - loop-check
+          - operator
+          - operator-probe
+          - aigateway
+          - aigateway-check
+          - governance
+          - gateway-telemetry
+          - drift-check
+          - agents-drift
+          - foundry-evals
+          - foundry-redteam
+          - agent365-check
+          - teams
+      minutes:
+        description: "Only with page-latency: how many minutes the measurement takes, from 1 to 20."
+        type: string
+        required: false
+        default: "20"
+      public_ai_gateway_requested:
+        description: "Only with aigateway: set it only when the owner has asked in writing for a public AI Gateway."
+        type: boolean
+        required: false
+        default: false
+      public_teams_bot_requested:
+        description: "Only with teams: set it only when the owner has asked in writing for a public Teams bot."
+        type: boolean
+        required: false
+        default: false
+      plant_public_ip:
+        description: "Only with plant: also plant an unassigned public IP address."
+        type: boolean
+        required: false
+        default: false
+      plant_vm:
+        description: "Only with plant: also plant a virtual machine that nothing uses."
+        type: boolean
+        required: false
+        default: false
+      evals_command:
+        description: "Only with foundry-evals: probe, run, rule or rule-apply."
+        type: choice
+        required: false
+        default: probe
+        options:
+          - probe
+          - run
+          - rule
+          - rule-apply
+      evals_judge:
+        description: "Only with foundry-evals and evals_command run: none, connection or auto."
+        type: choice
+        required: false
+        default: none
+        options:
+          - none
+          - connection
+          - auto
+      redteam_mode:
+        description: "Only with foundry-redteam: auto, cloud or dataset."
+        type: choice
+        required: false
+        default: auto
+        options:
+          - auto
+          - cloud
+          - dataset
+
+permissions:
+  contents: read
+
+jobs:
+  hub:
+    if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'
+    # One run of the Hub at a time in this repository. The Hub's own group is named hub: give this one another name, so that the call and the called workflow never share a group.
+    concurrency:
+      group: deploy-repository-hub
+      cancel-in-progress: false
+    # What the called job may hold: it can only be given less than this. id-token is for the sign-in to Azure, actions is for the read of whether CI passed, and nothing here writes.
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    uses: tinodo/meternaut/.github/workflows/deploy-hub.yml@<FULL-40-CHARACTER-COMMIT-OF-THE-PUBLIC-REPOSITORY>
+    with:
+      action: ${{ inputs.action }}
+      minutes: ${{ inputs.minutes }}
+      public_ai_gateway_requested: ${{ inputs.public_ai_gateway_requested }}
+      public_teams_bot_requested: ${{ inputs.public_teams_bot_requested }}
+      plant_public_ip: ${{ inputs.plant_public_ip }}
+      plant_vm: ${{ inputs.plant_vm }}
+      evals_command: ${{ inputs.evals_command }}
+      evals_judge: ${{ inputs.evals_judge }}
+      redteam_mode: ${{ inputs.redteam_mode }}
+    # Each secret by name, and never `secrets: inherit`: the Hub reads these three and nothing else of this repository.
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

@@ -10,7 +10,9 @@ Those lines are the heartbeat of the check: a day without them is itself an aler
 control is in drift_rules.py (the list of the controls, their layers and what each one holds is `drift_rules.CONTROLS`); this module gathers what the rules need.
 
 A FAIL of a control that guards the agents pulls the switch `investigation` and sends one letter to the owner, through the harness's Brake (harness.py): no other switch is ever pulled,
-and a person releases it. An UNKNOWN never pulls it. The check never runs inside an agent run, never calls a model, and never changes anything but that one switch.
+and a person releases it. An UNKNOWN never pulls it. The check never runs inside an agent run, never calls a model, and changes nothing but that one switch and its own result: it keeps the
+result as the latest check of the app (`CheckRecord`), which the Operations page shows. A person with the role ops can start the same check at the console (`web/ops.py`, at most once in
+CHECK_GAP_MINUTES for everybody, the timer's check counting too): it is `run_check("console")`, with the same reads, the same rules and the same lines.
 
 What it cannot do, said plainly: a compromised app can hide its own drift (it is the one that reads and the one that reports). The independent check of the control plane and the alert
 rules of Azure Monitor beside it, which an app cannot talk out of reporting, exist for that reason, and the check from inside the network (tools/agents-drift.py) reads the same project
@@ -30,7 +32,7 @@ from .foundry import Foundry, FoundryError, definition_of
 from .http import FOUNDRY_AGENT_NAME, FOUNDRY_ENDPOINT, Client, Refused, default_transport
 from .identity import Identity
 from .memory_store import stamp, utc_now
-from .models import SWITCH_NAMES
+from .models import CHECK_TRIGGERS, SWITCH_NAMES, CheckRecord
 from .plaintext import plain
 from .redact import Redactor
 
@@ -334,12 +336,31 @@ def write(findings: list[rules.Finding], read_at: str, redact: Callable[[str], s
             LOG.error("a line of the drift check could not be written")
 
 
+def _keep(context: Context | None, trigger: str, by: str, started: str, report: Report, clock: Callable[[], object]) -> None:
+    """Keeps the result as the latest check of the app, so that the Operations page shows it (the timer's and a person's alike). A store that cannot be written leaves the page as it was: the
+    telemetry has a line for every control either way."""
+    store = getattr(getattr(context, "extras", None), "store", None)
+    if store is None:
+        return
+    try:
+        store.check_put(CheckRecord(started_at=started, trigger=trigger if trigger in CHECK_TRIGGERS else "timer", by=plain(by, 60), finished_at=stamp(clock()),  # type: ignore[arg-type]
+                                    tripped=report.tripped, results=tuple({"control": item.control, "layer": item.layer, "state": item.state, "detail": item.detail}
+                                                                          for item in report.findings)))
+    except Exception as error:  # noqa: BLE001 (the result is a convenience for the page; the check has done its work)
+        LOG.warning("the result of the drift check could not be kept (%s)", type(error).__name__)
+
+
 def run_check(trigger: str = "timer", env: Mapping[str, str] | None = None, *, transport=default_transport, sleep: Callable[[float], None] = time.sleep,
-              monotonic: Callable[[], float] = time.monotonic, clock: Callable[[], object] = utc_now, fetch=None, foundry: object | None = None, extras: object = NOT_GIVEN) -> Report | None:
+              monotonic: Callable[[], float] = time.monotonic, clock: Callable[[], object] = utc_now, fetch=None, foundry: object | None = None, extras: object = NOT_GIVEN,
+              by: str = "", started_at: str = "") -> Report | None:
     """One check. It never raises: it writes a line for every control (UNKNOWN for what it could not judge), and when a control that guards the agents FAILs it pulls the switch
-    investigation and sends one letter. `foundry` and `extras` are for a caller that has them already (a test); without them they are made from the settings of the app."""
+    investigation and sends one letter. `foundry` and `extras` are for a caller that has them already (a test); without them they are made from the settings of the app.
+
+    The result is kept as the latest check of the app (CheckRecord): `trigger` is "timer" or "console" (a person's check, named by `by`), and `started_at` is the time that the caller
+    claimed for it, when it claimed one (the console does, so that two people cannot start two checks within the gap)."""
     env = os.environ if env is None else env
     redact = Redactor()
+    started = started_at or stamp(clock())  # type: ignore[arg-type]
     try:
         context = prepare(env, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, foundry=foundry, extras=extras)  # type: ignore[arg-type]
         findings = evaluate(context)
@@ -356,4 +377,6 @@ def run_check(trigger: str = "timer", env: Mapping[str, str] | None = None, *, t
         store = getattr(context.extras, "store", None) if context is not None else None
         alert = getattr(context.extras, "on_alert", None) if context is not None else None
         tripped = harness.Brake(store, alert, clock, redact).pull("drift", ", ".join(asked))  # type: ignore[arg-type]
-    return Report(tuple(findings), read_at, tripped, asked)
+    report = Report(tuple(findings), read_at, tripped, asked)
+    _keep(context, trigger, by, started, report, clock)
+    return report

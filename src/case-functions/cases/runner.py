@@ -113,7 +113,7 @@ class TickResult:
 
 
 def _env(s: RunnerServices, correlation: str = "") -> Env:
-    return Env(Azure(s.client, s.token, correlation), s.settings.gates, s.store.do_not_touch)
+    return Env(Azure(s.client, s.token, correlation), s.settings.gates, s.store.do_not_touch, s.clock)
 
 
 def _finish(s: RunnerServices, action: ActionRecord, plan: PlanRecord, *, state: str, result: str, plan_state: str, case_status: str, **changes) -> ActionRecord:

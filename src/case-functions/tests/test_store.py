@@ -9,7 +9,7 @@ from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 
 from cases.http import Client
 from cases.memory_store import MemoryStore, stamp
-from cases.models import (ActionRecord, CaseRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, StoreError, SwitchRecord)
+from cases.models import (ActionRecord, CaseRecord, CheckRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, StoreError, SwitchRecord)
 from cases.store import MAX_DATA, MAX_NONCE_DATA, RESOURCE, UPDATE_TRIES, TableStore, table_calls
 
 ACCOUNT = "stexample"
@@ -172,6 +172,20 @@ class StoreContract:
     def setUp(self):
         self.clock = Clock()
         self.store = self.make()
+
+    def test_the_latest_drift_check_is_one_row_that_a_later_check_replaces_and_a_claim_is_written_over_the_check_that_the_caller_saw_and_over_no_other(self):
+        self.assertIsNone(self.store.check_latest())
+        first = CheckRecord(started_at="2026-11-05T05:10:00Z", trigger="timer", finished_at="2026-11-05T05:10:30Z", tripped=True,
+                            results=({"control": "A-LOCK", "layer": "L2", "state": "FAIL", "detail": "x"},))
+        second, third = (CheckRecord(started_at=f"2026-11-05T0{n}:00:00Z", trigger="console", by="Tino") for n in (9, 8))
+        self.assertFalse(self.store.check_claim(second, "2026-11-05T05:10:00Z"), "there is no check, and the caller saw one")
+        self.assertTrue(self.store.check_claim(first, ""))
+        self.assertEqual(self.store.check_latest(), first)
+        self.assertFalse(self.store.check_claim(second, ""), "somebody claimed since the caller looked")
+        self.assertTrue(self.store.check_claim(second, first.started_at))
+        self.assertFalse(self.store.check_claim(third, first.started_at))
+        self.store.check_put(third)
+        self.assertEqual(self.store.check_latest(), third)
 
     def test_runs_come_newest_first_and_a_later_put_of_the_same_run_replaces_it(self):
         self.store.run_put(RunRecord(run_id="a", trigger="timer", started_at="2026-11-04T05:30:00Z"))
@@ -456,6 +470,36 @@ class TableStoreOnItsOwn(unittest.TestCase):
         self.assertEqual((got.status, got.cost_series, got.cost_series_end), ("running", [2.0] * 30, "2026-11-04"), "what the other step wrote is kept, and so is what this one added")
         writes = [h for (method, _), h in zip(self.service.calls, self.service.headers) if method == "PUT"]
         self.assertEqual([bool(h.get("If-Match")) and h["If-Match"] != "*" for h in writes][-2:], [True, True], "both writes of the update name the version that they were made from")
+
+    def test_a_claim_of_a_check_is_written_over_the_version_that_it_read_and_never_over_one_that_another_person_wrote_in_between(self):
+        first = CheckRecord(started_at="2026-11-05T05:10:00Z", trigger="timer", finished_at="2026-11-05T05:10:30Z")
+        self.store.check_put(first)
+        real_get = self.store._get
+
+        def raced(table, pk, rk):
+            found = real_get(table, pk, rk)
+            self.store.check_put(CheckRecord(started_at="2026-11-05T09:00:01Z", trigger="console", by="Otto"))  # another person claims after this read
+            return found
+
+        self.store._get = raced
+        self.assertFalse(self.store.check_claim(CheckRecord(started_at="2026-11-05T09:00:00Z", trigger="console", by="Tino"), first.started_at))
+        self.store._get = real_get
+        self.assertEqual(self.store.check_latest().by, "Otto")
+        writes = [h for (method, url), h in zip(self.service.calls, self.service.headers) if method == "PUT" and "mnchecks" in url]
+        self.assertTrue(writes[-1].get("If-Match") not in (None, "*"), "the claim named the version that it read")
+
+    def test_a_first_claim_is_an_insert_and_the_second_of_two_people_who_ask_at_the_same_moment_loses(self):
+        real_get = self.store._get
+
+        def raced(table, pk, rk):
+            found = real_get(table, pk, rk)
+            self.store.check_put(CheckRecord(started_at="2026-11-05T09:00:01Z", trigger="console", by="Otto"))
+            return found
+
+        self.store._get = raced
+        self.assertFalse(self.store.check_claim(CheckRecord(started_at="2026-11-05T09:00:00Z", trigger="console", by="Tino"), ""))
+        self.store._get = real_get
+        self.assertEqual(self.store.check_latest().by, "Otto")
 
     def test_an_update_gives_up_when_the_case_keeps_changing_and_writes_nothing_of_its_own(self):
         self.store.case_put(case("k1", "awaiting_ok"))

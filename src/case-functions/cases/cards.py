@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import cardcheck
-from .brief import OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain
+from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain
 from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -160,6 +160,20 @@ def _unread(brief: Brief) -> list[dict]:
     return blocks
 
 
+def _gateways(brief: Brief) -> list[dict]:
+    """What a finding about point-to-site gateways says, in the room that a card has: what was found in one or two sentences, what was not counted when something was, and the choices in one
+    line. The page has what these gateways are and the whole of each choice."""
+    found = brief.gateways
+    if found is None:
+        return []
+    blocks = [_block("gateways", f"**Gateways.** {md(found.sentence, 300)}")]
+    if found.caveat:
+        blocks.append(_block("gateways-caveat", md(found.caveat, 120), isSubtle=True))
+    if brief.options:
+        blocks.append(_block("options", md(GATEWAYS_SHORT, 200)))
+    return blocks
+
+
 def _undo(brief: Brief) -> dict:
     """Whether it can be undone: one bold line when it cannot, and nothing decorative."""
     if not brief.undo.reversible:
@@ -259,7 +273,7 @@ def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
     if notice:
         body.append(_block("notice", md(notice, 240), weight="Bolder"))
     body += [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-             *_facts(brief), *_unread(brief), *_decision_lines(brief), *_answer_parts(brief, ctx)]
+             *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *_answer_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 

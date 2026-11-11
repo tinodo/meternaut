@@ -536,5 +536,163 @@ class TheBoomerang(unittest.TestCase):
         self.assertEqual(len(arm.calls), learning.SYNC_READS)
 
 
+def other_resource(n: int) -> str:
+    return f"{RID}-{n}"
+
+
+class AChangeOfMind(unittest.TestCase):
+    """A person who answered the same finding the other way later has the last word: the older answer no longer counts for the calibration, and so the hold follows."""
+
+    def answers(self, *items):
+        """(subject, answer, reason, day) as the entries that superseded_ids takes: the lesson ids are x0, x1, ... in the order given."""
+        return [(subject, lesson(answer, reason, lesson_id=f"x{n}", closed_at=f"2026-11-{day:02d}T09:00:00Z")) for n, (subject, answer, reason, day) in enumerate(items)]
+
+    def test_an_older_answer_that_the_newest_contradicts_is_released_and_one_that_it_agrees_with_is_kept(self):
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "decline", "still-needed", 1), ("r", "approve", "", 2))), {"x0"})
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "approve", "", 1), ("r", "decline", "figure-wrong", 2))), {"x0"}, "the other way round too")
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "decline", "still-needed", 1), ("r", "decline", "still-needed", 2))), set(), "the same answer twice: both are kept")
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "decline", "still-needed", 1), ("r", "approve", "", 2), ("r", "decline", "still-needed", 3))), {"x1"},
+                         "a person who changed their mind and then changed it back: the newest says decline, so the approval is released and the first decline stands")
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "decline", "still-needed", 1), ("r", "decline", "figure-wrong", 2), ("r", "approve", "", 3))), {"x0", "x1"})
+
+    def test_it_makes_no_difference_in_which_order_the_answers_are_given_and_only_the_newest_decides(self):
+        entries = self.answers(("r", "decline", "still-needed", 1), ("r", "approve", "", 2), ("r", "decline", "still-needed", 3))
+        self.assertEqual(learning.superseded_ids(reversed(entries)), learning.superseded_ids(entries))
+        self.assertEqual(learning.superseded_ids(self.answers(("r", "approve", "", 5), ("r", "decline", "still-needed", 4))), {"x1"}, "the decline is the older answer, whatever came first in the list")
+
+    def test_what_says_nothing_about_the_finding_takes_no_part_and_one_resource_does_not_touch_another(self):
+        entries = self.answers(("r", "decline", "still-needed", 1), ("r", "decline", "handled", 2), ("r", "not_mine", "", 3), ("r", "expired", "", 4))
+        self.assertEqual(learning.superseded_ids(entries), set(), "the answers that follow say nothing, so the decline stands")
+        entries = self.answers(("a", "decline", "still-needed", 1), ("b", "approve", "", 2), ("a", "decline", "still-needed", 3), ("b", "decline", "still-needed", 4))
+        self.assertEqual(learning.superseded_ids(entries), {"x1"})
+        self.assertEqual(learning.superseded_ids(self.answers(("", "decline", "still-needed", 1), ("", "approve", "", 2))), set(), "a lesson with no subject is never released")
+
+    def test_a_released_answer_is_no_label_and_the_counts_of_the_past_still_count_it(self):
+        old = lesson("decline", "still-needed", superseded=True)
+        self.assertEqual((learning.label_of(old), learning.answer_label(old)), (None, False))
+        self.assertEqual(learning.past_of([old, lesson("approve")], DISKS, "advise").answered, 2, "what people answered is history, and history is not rewritten")
+        self.assertIsNone(learning.calibrated_confidence(0.9, [old] * 5), "five answers that were released are no history")
+        asked = learning.recall([old] * 5 + [lesson("approve") for _ in range(5)], DISKS)
+        self.assertEqual(asked["bands"], [{"stated_confidence": "0.85 and up", "labelled": 5, "approved_share": 1.0}], "what the Investigator may ask counts what the hold counts")
+
+    def put(self, store, name, state, kind, day, n, reason=""):
+        store.plan_put(plan(f"{name}{n}", state, resource_id=other_resource(n), created_at=f"2026-10-{day:02d}T09:00:00Z"))
+        store.decision_put(decision(kind, at=f"2026-10-{day:02d}T10:00:00Z", reason=reason, plan_id=f"{name}{n}"))
+
+    def proposal(self):
+        return Decision("proposed", "delete", 0.9, "s", (), [], 12.0)
+
+    def test_a_hold_that_old_declines_caused_is_released_when_the_same_resources_are_approved_later_and_kept_when_they_are_declined_again(self):
+        for later, held in (("approve", False), ("decline", True)):
+            with self.subTest(later=later):
+                store = MemoryStore(clock=lambda: NOW)
+                store.case_put(case())
+                for n in range(6):
+                    self.put(store, "d", "declined", "decline", 2, n, "still-needed")
+                learning.sync(store, NOW)
+                self.assertTrue(learning.hold(store, DISKS, "advise", 0.9, self.proposal())[1], "six declines in the band: a person has to decide")
+                for n in range(6):
+                    self.put(store, "e", "consumed" if later == "approve" else "declined", later, 20, n, "still-needed" if later == "decline" else "")
+                learning.sync(store, NOW + dt.timedelta(minutes=5))
+                flagged = sorted(x.lesson_id for x in store.lessons_recent() if x.superseded)
+                self.assertEqual(flagged, [f"d{n}" for n in range(6)] if later == "approve" else [])
+                self.assertEqual(learning.hold(store, DISKS, "advise", 0.9, self.proposal())[1], held)
+
+    def test_without_the_same_resource_nothing_is_released_so_other_requests_do_not_change_the_hold(self):
+        store = MemoryStore(clock=lambda: NOW)
+        store.case_put(case())
+        for n in range(6):
+            self.put(store, "d", "declined", "decline", 2, n, "still-needed")
+            self.put(store, "e", "consumed", "approve", 20, n + 10)
+        learning.sync(store, NOW)
+        self.assertEqual([x for x in store.lessons_recent() if x.superseded], [])
+        self.assertEqual(learning.calibrated_confidence(0.9, store.lessons_of(DISKS)).rate, 0.5)
+
+    def test_a_sweep_that_changes_nothing_writes_nothing_and_the_flag_follows_even_later_answers(self):
+        store = MemoryStore(clock=lambda: NOW)
+        store.case_put(case())
+        self.put(store, "d", "declined", "decline", 2, 1, "still-needed")
+        self.put(store, "e", "consumed", "approve", 10, 1)
+        self.assertEqual(learning.sync(store, NOW), 3, "two lessons, and the older one released")
+        self.assertEqual(learning.sync(store, NOW + dt.timedelta(minutes=5)), 0)
+        self.assertEqual({x.lesson_id: x.superseded for x in store.lessons_recent()}, {"d1": True, "e1": False})
+        self.put(store, "f", "declined", "decline", 20, 1, "figure-wrong")
+        self.assertEqual(learning.sync(store, NOW + dt.timedelta(minutes=10)), 3, "the newest lesson, the approval that it releases, and the first decline, which counts again")
+        self.assertEqual({x.lesson_id: x.superseded for x in store.lessons_recent()}, {"d1": False, "e1": True, "f1": False})
+
+    def test_a_lesson_that_is_made_again_keeps_the_flag_that_the_sweep_gave_it(self):
+        previous = lesson("decline", "still-needed", lesson_id="p1", superseded=True)
+        again = learning.lesson_of(plan(state="declined"), case(), [decision("decline", reason="still-needed")], None, NOW, previous)
+        self.assertTrue(again.superseded)
+        self.assertFalse(learning.lesson_of(plan(state="declined"), case(), [decision("decline", reason="still-needed")], None, NOW).superseded)
+
+
+class TheRowsOfTheReplay(unittest.TestCase):
+    """The lessons as the rows of tools/learning-check.py: what a person downloads from the Operations page and replays against the thresholds that were written first."""
+
+    def setUp(self):
+        self.store = MemoryStore(clock=lambda: NOW)
+        self.store.case_put(case())
+
+    def put(self, plan_id, answer="approve", day=2, hour=10, resource=None, reason="", opened="2026-10-01T09:00:00Z", family="advise", **extra):
+        self.store.plan_put(plan(plan_id, "consumed", family=family, resource_id=resource or RID, created_at=opened))
+        self.store.lesson_put(learning.LessonRecord(lesson_id=plan_id, resource_type=extra.pop("resource_type", DISKS), family=family, confidence=extra.pop("confidence", 0.9),
+                                                    answer=answer, reason=reason, opened_at=opened, closed_at=f"2026-10-{day:02d}T{hour:02d}:00:00Z", updated_at=f"2026-10-{day:02d}T{hour:02d}:30:00Z",
+                                                    **extra))
+
+    def test_a_row_has_the_keys_of_the_tool_in_the_order_of_closing_with_days_counted_from_the_first_request_and_a_number_for_an_id(self):
+        self.put("secret-plan-b", "decline", day=9, reason="still-needed", opened="2026-10-03T09:00:00Z", resource=other_resource(2))
+        self.put("secret-plan-a", "approve", day=5)
+        rows = learning.replay_rows(self.store)
+        self.assertEqual(rows, [
+            {"id": "l001", "type": DISKS, "family": "advise", "stated": 0.9, "answer": "approve", "reason": "", "opened": 0, "closed": 4, "subject": "s1"},
+            {"id": "l002", "type": DISKS, "family": "advise", "stated": 0.9, "answer": "decline", "reason": "still-needed", "opened": 2, "closed": 8, "subject": "s2"}])
+        self.assertNotIn("secret-plan", learning.replay_text(self.store))
+
+    def test_nothing_that_names_a_resource_a_person_or_an_estate_is_in_the_file(self):
+        self.put("p1")
+        self.put("p2", "decline", reason="handled", resource=other_resource(7), day=6)
+        text = learning.replay_text(self.store)
+        self.assertEqual(len(text.splitlines()), 2)
+        self.assertTrue(text.endswith("\n"))
+        for private in ("11111111-2222", "rg-app", "d1", "Pat Example", OID, "p1", "p2", "subscriptions"):
+            self.assertNotIn(private, text)
+        self.assertEqual([json.loads(line)["reason"] for line in text.splitlines()], ["", "handled"])
+
+    def test_a_request_answered_in_the_day_it_opened_closes_the_next_day_and_a_reason_stays_only_with_a_decline_that_has_one(self):
+        self.put("p1", "approve", day=1, hour=17, reason="still-needed")
+        self.put("p2", "decline", day=1, hour=18, reason="a text that is not on the list", resource=other_resource(2))
+        rows = learning.replay_rows(self.store)
+        self.assertEqual([(row["opened"], row["closed"], row["reason"]) for row in rows], [(0, 1, ""), (0, 1, "")])
+
+    def test_what_the_tool_would_refuse_is_left_out(self):
+        self.put("p1")
+        self.put("n", confidence=None, resource=other_resource(1))
+        self.put("o", resource_type="other", resource=other_resource(2))
+        self.put("t", resource_type="not a type", resource=other_resource(3))
+        self.put("f", family="a-family-that-is-not-one", resource=other_resource(4))
+        self.put("c", confidence=1.5, resource=other_resource(5))
+        self.put("b", resource=other_resource(6), opened="not a time")
+        self.assertEqual([row["id"] for row in learning.replay_rows(self.store)], ["l001"])
+        self.assertEqual(learning.replay_rows(MemoryStore()), [])
+        self.assertEqual(learning.replay_text(MemoryStore()), "")
+
+    def test_the_requests_about_one_resource_and_one_family_share_a_subject_and_an_answer_that_says_nothing_has_none(self):
+        self.put("p1", "decline", reason="still-needed", day=2)
+        self.put("p2", "approve", day=6)
+        self.put("p3", "approve", day=7, family="delete-disk")
+        self.put("p4", "expired", day=8, resource=other_resource(2))
+        self.put("p5", "decline", reason="handled", day=9, resource=other_resource(3))
+        subjects = {row["id"]: row.get("subject") for row in learning.replay_rows(self.store)}
+        self.assertEqual(subjects, {"l001": "s1", "l002": "s1", "l003": "s2", "l004": None, "l005": None})
+
+    def test_the_newest_requests_are_exported_and_a_plan_that_is_gone_leaves_its_row_without_a_subject(self):
+        for n in range(5):
+            self.put(f"p{n}", day=2 + n, resource=other_resource(n))
+        self.assertEqual(len(learning.replay_rows(self.store, 3)), 3)
+        del self.store.plans["p4"]
+        self.assertNotIn("subject", learning.replay_rows(self.store)[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

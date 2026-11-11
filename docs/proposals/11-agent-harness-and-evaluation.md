@@ -97,7 +97,9 @@ A model misled into a wrong proposal that code and a person then accept. A tool 
 
 **Not verified:** the shape that the data plane gives for agents and connections of this project (the parsers are tolerant: a shape they do not know is UNKNOWN, never a trip); that the Foundry User role allows `GET /connections`; which route of the evaluations API the project answers (`probe` says); whether cloud evaluations run on a Foundry resource without public network access (Learn, *Configure virtual network support for evaluation*, 2026-09-25: it needs network injection, and a run can stay In progress, which the tools print as UNKNOWN); the regions of the cloud red team; the portal tab of a red team run.
 
-**Not built:** a read of the control queue (it needs a queue right: rule 24), an on-demand drift check and a tool that sets sponsors.
+**Not built:** a read of the control queue (it needs a queue right: rule 24) and a tool that sets sponsors.
+
+**Check now (built 2026-11-11 with fakes, not run in Azure).** A person with the role ops can start the in-app check from the Operations page: the same reads, rules and lines as the timer's, in the request of the console. At most one check begins in 15 minutes for everybody, and the timer's check counts: two people who ask at the same moment start one (the claim is written with the ETag that was read). The latest check, the timer's or a person's, is kept in the table `mnchecks` (one row: who started it, when, and a row for each control) and the page shows what it found, the controls that need a look first. Like the timer's check it reads Azure and the project with GET only, and the only things that it can write are that row and, when a control that guards the agents fails, the switch `investigation` and one letter. Not known: how long the check takes inside a request of the console, and whether a request may last that long.
 
 ## Statuses and sources
 

@@ -1,7 +1,7 @@
 """Everything that Meternaut may do to Azure, as the code holds it (cases/families/calls.py), pinned call by call.
 
-A person who wants to know what an approval can do to an estate reads WRITES: these tests say that it is ten calls, each with the api-version that the REST reference of the call shows
-(Microsoft Learn, read on 2026-11-08), that no write is among the reads, and that a client made from the lists refuses everything else before anything is sent.
+A person who wants to know what an approval can do to an estate reads WRITES: these tests say that it is eleven calls, each with the api-version that the REST reference of the call shows
+(Microsoft Learn, read on 2026-11-08, and for the gateway on 2026-11-11), that no write is among the reads, and that a client made from the lists refuses everything else before anything is sent.
 """
 import unittest
 
@@ -33,7 +33,7 @@ def refused(client: Client, method: str, url: str) -> bool:
 
 
 class TheWrites(unittest.TestCase):
-    def test_there_are_exactly_ten_and_each_has_the_api_version_that_learn_shows_for_it(self):
+    def test_there_are_exactly_eleven_and_each_has_the_api_version_that_learn_shows_for_it(self):
         found = [(call.method, f"{call.kind.provider}/{call.kind.collection}{call.suffix}", call.kind.api) for call in calls.WRITES]
         self.assertEqual(found, [
             ("DELETE", "Microsoft.Compute/disks", "2024-03-02"),
@@ -46,13 +46,15 @@ class TheWrites(unittest.TestCase):
             ("DELETE", "Microsoft.Network/natGateways", "2026-01-01"),
             ("DELETE", "Microsoft.Network/loadBalancers", "2026-01-01"),
             ("DELETE", "Microsoft.Network/privateEndpoints", "2026-01-01"),
+            ("PUT", "Microsoft.Network/p2svpnGateways", "2026-01-01"),
         ])
 
-    def test_no_virtual_machine_and_no_scale_set_is_ever_deleted_and_no_write_is_a_put(self):
-        self.assertEqual({call.method for call in calls.WRITES}, {"DELETE", "POST", "PATCH"})
+    def test_no_virtual_machine_and_no_scale_set_is_ever_deleted_and_the_one_put_is_the_gateway_that_azure_changes_in_no_other_way(self):
+        self.assertEqual({call.method for call in calls.WRITES}, {"DELETE", "POST", "PATCH", "PUT"})
         self.assertEqual([call for call in calls.WRITES if call.kind == calls.VIRTUAL_MACHINE and call.method == "DELETE"], [])
         self.assertEqual([call for call in calls.WRITES if "virtualMachineScaleSets" in call.kind.collection], [])
         self.assertEqual([call for call in calls.WRITES if call.method == "POST"], [calls.DEALLOCATE], "the one POST is the deallocate of a machine")
+        self.assertEqual([call for call in calls.WRITES if call.method == "PUT"], [calls.Call("PUT", calls.P2S_GATEWAY)], "the one PUT states a whole gateway, which Azure changes in no other way")
 
     def test_the_deletes_are_the_closed_list_of_what_a_family_names(self):
         self.assertEqual([call.kind.type for call in calls.DELETES], ["microsoft.compute/disks", "microsoft.network/publicipaddresses", "microsoft.compute/snapshots",
@@ -69,7 +71,8 @@ class TheWrites(unittest.TestCase):
 
     def test_a_family_can_only_pick_a_call_of_the_list(self):
         for method, kind, suffix in (("DELETE", calls.VIRTUAL_MACHINE, ""), ("PATCH", calls.PUBLIC_IP, ""), ("POST", calls.DISK, "/deallocate"), ("PATCH", calls.SNAPSHOT, ""),
-                                     ("PUT", calls.DISK, ""), ("DELETE", calls.DISK_TIER, "")):
+                                     ("PUT", calls.DISK, ""), ("DELETE", calls.DISK_TIER, ""), ("PATCH", calls.P2S_GATEWAY, ""), ("DELETE", calls.P2S_GATEWAY, ""),
+                                     ("PUT", calls.VIRTUAL_MACHINE, ""), ("PUT", calls.P2S_GATEWAY, calls.METRICS)):
             with self.subTest(method=method, kind=kind.collection, suffix=suffix):
                 with self.assertRaises(LookupError):
                     calls.write_for(method, kind, suffix)
@@ -103,6 +106,8 @@ class TheReads(unittest.TestCase):
         self.assertEqual(found["Microsoft.Compute/virtualMachines/vmSizes"], "2026-04-01")
         self.assertEqual(found["Microsoft.Compute/snapshots"], "2026-03-02")
         self.assertEqual(found["Microsoft.Network/networkInterfaces"], "2026-01-01")
+        self.assertEqual(found["Microsoft.Network/p2svpnGateways"], "2026-01-01")
+        self.assertEqual(calls.METRICS_API, "2023-10-01")
         self.assertEqual(calls.LOCKS_API, "2016-09-01")
 
 
@@ -133,6 +138,9 @@ class TheListsOfTheClients(unittest.TestCase):
         for method, tail in (("DELETE", "Microsoft.Compute/virtualMachines/planted-vm-1"), ("DELETE", "Microsoft.Storage/storageAccounts/plantedsa1"),
                              ("PUT", "Microsoft.Compute/disks/planted-disk-1"), ("PUT", "Microsoft.Compute/virtualMachines/planted-vm-1"),
                              ("PATCH", "Microsoft.Network/publicIPAddresses/planted-ip-1"), ("PATCH", "Microsoft.Compute/snapshots/planted-snapshot-1"),
+                             ("PATCH", "Microsoft.Network/p2svpnGateways/planted-p2s-1"), ("DELETE", "Microsoft.Network/p2svpnGateways/planted-p2s-1"),
+                             ("POST", "Microsoft.Network/p2svpnGateways/planted-p2s-1/reset"), ("PUT", "Microsoft.Network/virtualHubs/hub-1"),
+                             ("PUT", "Microsoft.Network/p2svpnGateways/planted-p2s-1/providers/Microsoft.Insights/metrics"),
                              ("POST", "Microsoft.Compute/virtualMachines/planted-vm-1/start"), ("POST", "Microsoft.Compute/virtualMachines/planted-vm-1/powerOff"),
                              ("POST", "Microsoft.Compute/virtualMachines/planted-vm-1/restart"), ("POST", "Microsoft.Compute/virtualMachines/planted-vm-1/redeploy"),
                              ("POST", "Microsoft.Compute/virtualMachines/planted-vm-1/runCommand"), ("POST", "Microsoft.Compute/disks/planted-disk-1/deallocate"),
@@ -156,6 +164,16 @@ class TheListsOfTheClients(unittest.TestCase):
                 self.assertFalse(self.allowed(self.timer, call.method, call.url(SCOPE, "planted-x-1")))
         self.assertTrue(self.allowed(self.timer, "GET", f"{PATH}/Microsoft.Compute/virtualMachines/planted-vm-1"))
         self.assertTrue(self.allowed(self.timer, "GET", f"{PATH}/Microsoft.Compute/virtualMachines/planted-vm-1/vmSizes"))
+
+    def test_the_connection_count_of_a_gateway_is_read_by_both_clients_in_the_scope_and_no_other_metric_is(self):
+        metrics = f"{PATH}/Microsoft.Network/p2svpnGateways/planted-p2s-1/providers/Microsoft.Insights/metrics"
+        for client in (self.change, self.timer):
+            self.assertTrue(self.allowed(client, "GET", metrics))
+            self.assertFalse(self.allowed(client, "GET", metrics.replace(SUB, OTHER_SUB)))
+            self.assertFalse(self.allowed(client, "GET", metrics.replace(GROUP, "rg-of-somebody-else")))
+            self.assertFalse(self.allowed(client, "GET", metrics.replace("p2svpnGateways", "virtualMachines")), "the metrics of a machine are not read by a family")
+            self.assertFalse(self.allowed(client, "GET", metrics.replace("/metrics", "/diagnosticSettings")))
+            self.assertFalse(self.allowed(client, "POST", metrics))
 
     def test_the_status_of_an_operation_is_read_by_the_client_of_a_change_only_and_only_in_the_subscription_and_the_two_providers(self):
         status = f"https://management.azure.com/subscriptions/{SUB}/providers/Microsoft.Compute/locations/swedencentral/operations/op-1"

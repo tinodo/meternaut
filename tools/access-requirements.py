@@ -5,6 +5,7 @@
     python tools/access-requirements.py check [places] [--only R1,R4]
     python tools/access-requirements.py grant [places] [--only R1,R4] [--apply] [--yes]
     python tools/access-requirements.py retire [places] [--only W1,W2] [--apply] [--yes]
+    python tools/access-requirements.py offboard [places] [--only R1,R4] [--apply] [--yes]
 
 Meternaut holds no write right: every grant in the file only reads, and a change to Azure is made with the token of the person who approved it
 (docs/proposals/03-access-and-onboarding.md). The deployment workflow's identity may change only the project's own resource group and must not get a
@@ -47,6 +48,12 @@ retire    Removes what the file lists under "retired". It reads first: for each 
           for the user-assigned identity that the item names and, when it has alsoHeldBy, for the system-assigned identity of the app that --usage-site names (read from the app, and never changed).
           The tool finds the assignments by the object id of the identity, so it must run while the identity exists:
           Azure keeps the assignments of a deleted identity, shows them as "Identity not found", and the tool cannot tell whose they were. So run it for W9 before the Hub action retire-old deletes the usage app.
+offboard  The reverse of grant (docs/proposals/03-access-and-onboarding.md, I11): removes exactly what grant makes, and nothing else. For each grant of the file, each holder of its identity and each place it
+          looks for the assignment of that role to that identity at exactly that place, and prints the commands that would remove it. It never removes an identity, a custom role or an assignment of anybody
+          else, and it leaves alone the same role held at a place above (a management group): that was made by somebody else, or for something else, and the line says 'left alone'. An identity that does not exist
+          holds nothing. A dry run unless --apply, which runs the commands with the rights of the person who is signed in to the Azure CLI after asking (--yes does not), reads again and says what is still held;
+          it refuses --apply in GitHub Actions like grant. A custom role that the file defines (there is none today) is not removed: the line says so. Exit 0 when nothing is left to take away, 1 when something
+          is (also after a dry run). Run it for a customer whose estate is no longer watched; the Hub's own identity and the project's own resource group are not touched.
 
 The places come from options or from the settings that the workflow uses: --project-subscription (ENV_SUBSCRIPTION_ID) and --project-group
 (ENV_RESOURCE_GROUP), where the identities and the apps are; --cases-site (ACCESS_CASES_SITE), the name of the cases app in that group (func-meternaut-cases-*;
@@ -858,6 +865,76 @@ def report_retired(found: list[Left], identities: dict[str, str | None], places:
     return done == len(found)
 
 
+# ---- what the onboarding granted, taken away -----------------------------------------------------------------------------------------------------
+
+GRANTED_STATES = {"there": "still there", "gone": "gone", "above": "left alone", "no-identity": "no identity"}
+
+
+class Granted:
+    """One grant of the file, held by one holder at one place: the assignments of it at exactly that place, which `grant` made, or why there are none."""
+
+    def __init__(self, grant: dict, scope: str, holder: str, state: str, assigned: list[dict] | None = None, detail: str = "") -> None:
+        self.grant, self.scope, self.holder, self.state, self.assigned, self.detail = grant, scope, holder, state, assigned or [], detail
+
+
+def same_place(a: str, b: str) -> bool:
+    return a.rstrip("/").lower() == b.rstrip("/").lower()
+
+
+def find_granted(az: Az, manifest: dict, places: Places, only: str | None = None) -> list[Granted]:
+    """For each grant of the file, each holder of its identity and each place, the assignment of that role to that identity at exactly that place: what `grant` makes and nothing else.
+
+    The same role held at a place above (a management group) was made by somebody else, or for something else: it is reported and left alone. An assignment below the place is not looked at.
+    An identity that does not exist holds nothing. Nothing is written."""
+    found: list[Granted] = []
+    roles: dict[str, tuple] = {}
+    for grant in selected(manifest, only):
+        identity = manifest["identities"][grant["identity"]]
+        for holder in identity["holders"]:
+            principal, label, missing = holder_principal(az, places, identity, holder)
+            for scope in scopes_for(grant["place"], places, az):
+                if principal is None:
+                    found.append(Granted(grant, scope, label, "no-identity", detail=missing))
+                    continue
+                name = grant["role"]
+                if name not in roles:
+                    roles[name] = role_state(az, name, manifest["roles"][name], places)
+                role_id = roles[name][0]
+                if role_id is None:
+                    found.append(Granted(grant, scope, label, "gone", detail="the custom role does not exist, so nothing holds it"))
+                    continue
+                same_role = [a for a in assignments(az, principal, scope) if role_of(a) == role_id.lower()]
+                here = [recognised(a, scope, role_id) for a in same_role if same_place(scope_of(a), scope)]
+                above = [a for a in same_role if not same_place(scope_of(a), scope) and covers(scope_of(a), scope)]
+                if here:
+                    found.append(Granted(grant, scope, label, "there", here))
+                elif above:
+                    found.append(Granted(grant, scope, label, "above", detail=f"held at {scope_of(above[0])}, a place above, which this tool does not take away"))
+                else:
+                    found.append(Granted(grant, scope, label, "gone"))
+    return found
+
+
+def describe_granted(item: Granted) -> str:
+    line = f"  {GRANTED_STATES[item.state]:<13}{item.grant['id']}  {item.holder}  {item.grant['role']}  at {item.scope}"
+    return line + (f"\n               {item.detail}" if item.detail else "")
+
+
+def offboard_plan(found: list[Granted]) -> list[Removal]:
+    return [Removal("unassign", g.grant["role"], g.scope, a["id"]) for g in found if g.state == "there" for a in g.assigned]
+
+
+def apply_offboarding(az: Az, steps: list[Removal], out) -> None:
+    for step in steps:
+        code, _, err = az.run("role", "assignment", "delete", "--ids", step.target)
+        if code == 0:
+            out(f"  removed {step.role} at {step.scope} (assignment {step.target})")
+        elif NOT_THERE.search(err or ""):
+            out(f"  {step.role} at {step.scope} was gone already")
+        else:
+            raise Problem(f"{step.role} at {step.scope} could not be removed: {first_line(err)}")
+
+
 # ---- the commands --------------------------------------------------------------------------------------------------------------------------------
 
 def command_check(args, az: Az, manifest: dict, places: Places, out) -> int:
@@ -926,6 +1003,43 @@ def command_retire(args, az: Az, manifest: dict, places: Places, out, sleep, ask
     return 0 if report_retired(found, identities, places, out) else 1
 
 
+def command_offboard(args, az: Az, manifest: dict, places: Places, out, sleep, ask, env) -> int:
+    if args.apply and env.get("GITHUB_ACTIONS") == "true":
+        raise Problem("a person with the right to assign roles runs this, never a pipeline: the workflow's identity must not hold that right (AGENTS.md rule 18)")
+    who = signed_in(az)
+    out(f"Signed in as {who}.")
+    found = find_granted(az, manifest, places, args.only)
+    for item in found:
+        out(describe_granted(item))
+    custom = sorted({g.grant["role"] for g in found if manifest["roles"][g.grant["role"]]["kind"] == "custom"})
+    if custom:
+        out(f"The custom role(s) {', '.join(custom)} are not removed by this command: a person removes a role definition when no assignment of it remains.")
+    steps = offboard_plan(found)
+    if not steps:
+        out("Nothing to take away.")
+        return 0
+    out(f"{len(steps)} assignment(s) would be removed, and nothing else (no identity, no role, no assignment of anybody else, none at a place above):")
+    for step in steps:
+        out(f"  {show_removal(step)}")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to remove them.")
+        return 1
+    if not args.yes:
+        answer = ask(f"Remove these {len(steps)} assignment(s) as {who}? Type yes: ")
+        if answer is None:
+            raise Problem("--apply needs --yes when there is no terminal to ask in")
+        if answer.strip().lower() != "yes":
+            raise Problem("nothing was changed")
+    apply_offboarding(az, steps, out)
+    out("Checking again:")
+    again = find_granted(az, manifest, places, args.only)
+    left = [g for g in again if g.state == "there"]
+    for item in again:
+        out(describe_granted(item))
+    out(f"{len(again) - len(left)} of {len(again)} gone or not held.")
+    return 0 if not left else 1
+
+
 def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep, ask=None) -> int:
     env = os.environ if env is None else env
     ask = ask or (lambda prompt: input(prompt) if sys.stdin.isatty() else None)
@@ -935,7 +1049,8 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
     table.add_argument("--retired", action="store_true", help="print the table of the retired grants instead")
     table.add_argument("--tenant", action="store_true", help="print the table of the reads at the tenant or a billing scope instead (a person gives them; this tool does not check them)")
     for name, text in (("check", "read only: which requirements are present"), ("grant", "dry run; with --apply, make what is missing"),
-                       ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)")):
+                       ("retire", "dry run; with --apply, remove what an earlier version granted (the list retired)"),
+                       ("offboard", "dry run; with --apply, remove exactly the assignments that grant makes (the grants of the file, at their places)")):
         sub = commands.add_parser(name, help=text)
         sub.add_argument("--only", help="comma separated ids, for example R1,R4 (retire: W1,W2)")
         sub.add_argument("--project-subscription")
@@ -961,6 +1076,8 @@ def main(argv=None, az: Az | None = None, env=None, out=print, sleep=time.sleep,
             return command_check(args, az, manifest, places, out)
         if args.command == "retire":
             return command_retire(args, az, manifest, places, out, sleep, ask, env)
+        if args.command == "offboard":
+            return command_offboard(args, az, manifest, places, out, sleep, ask, env)
         return command_grant(args, az, manifest, places, out, sleep, ask, env)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)

@@ -8,12 +8,13 @@ from __future__ import annotations
 from .base import Family
 from .disk import ChangeDiskTier, DeleteDisk
 from .gates import ChangeScope
+from .gateway import ScaleVpnGateway
 from .idle import DeleteIdleResource
 from .public_ip import DeletePublicIp
 from .vm import ResizeVm, StopVm
 from .words import SHOWN
 
-REGISTRY: tuple[Family, ...] = (DeleteDisk(), DeletePublicIp(), StopVm(), ResizeVm(), ChangeDiskTier(), DeleteIdleResource())
+REGISTRY: tuple[Family, ...] = (DeleteDisk(), DeletePublicIp(), StopVm(), ResizeVm(), ChangeDiskTier(), DeleteIdleResource(), ScaleVpnGateway())
 BY_NAME = {family.name: family for family in REGISTRY}
 # The older detectors lead to a family by their own name; they stay only for waste that Meternaut plants itself (AGENTS.md rule 30 (c)).
 DETECTOR_FAMILY = {detector: family.name for family in REGISTRY for detector in family.detectors}

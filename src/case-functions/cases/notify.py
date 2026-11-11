@@ -1,10 +1,12 @@
-"""Tells the people: the letter about a plan that needs an answer, the letter about a change that ran, the first contact and the weekly summary.
+"""Tells the people: the letter about a plan that needs an answer, the letter about a change that ran, failed or stayed unknown, the first contact and the weekly summary.
 
 The hooks are given to the loop when a sender is set. They never raise: a letter that cannot be sent is a line in the log and a record in the store, and the
 loop goes on. A letter goes to a person on the list of people and to nobody else (mail.py checks that again), and the same letter is not sent twice. A letter
 that was held or failed is offered again by the timer (every call of a hook sends a letter only when it is due): after 15 minutes, at most 12 times. Exchange
 can take up to two hours to apply a new right to send, so the first letters of a new mailbox are tried more than once. A finding that only asks a person whether it
-is worth acting on (an advise plan) gets no letter of its own: it waits on the page and in the weekly summary, which is sent only when something waits.
+is worth acting on (an advise plan) gets no letter of its own: it waits on the page and in the weekly summary, which is sent only when something waits. A change whose result stays unknown
+gets one letter of its own kind (`unsure`) once the result has been unknown for UNKNOWN_HOURS, and no card: it goes to a person who chose Teams as well, and a later letter about what
+came of the change is still sent.
 
 A person who chose Teams (the setting `channel`) gets the card first (the bot app sends it: cases/offers.py) and the letter follows only when no card was sent in the first twenty minutes, so
 that a person whose app is not installed, or whose card could not be sent, still hears about a request. A card and a letter for one request never both go: each looks at the other's record.
@@ -36,6 +38,7 @@ RETRY_MINUTES = 15  # a letter that was not sent is offered again after this lon
 MAX_TRIES = 12  # and given up after this many tries: the record of each try says why, and the console shows the plan whatever happened to the letter
 TEAMS_FIRST_MINUTES = 20  # the card of a person who chose Teams has this long to go before the letter does
 WAITING_DAYS = 7  # a letter that quiet hours held back is looked for this long
+UNKNOWN_HOURS = 2  # a result that is not known is told after it has stayed so this long: most are known within minutes, by the checks that follow a change
 
 
 def build_mailer(settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep,
@@ -132,9 +135,14 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
         def work() -> None:
             if plan is None or case is None:
                 return
-            kinds = ("notice", "verified") if action.state == "verified" else ("notice",)
             now = clock()
             since = action.finished_at or action.queued_at
+            if action.state == "unknown":
+                if now - parse(since) < dt.timedelta(hours=UNKNOWN_HOURS):
+                    return
+                kinds = ("unsure",)  # its own kind: the letter that says what happened when the result is known later is still due
+            else:
+                kinds = ("notice", "verified") if action.state == "verified" else ("notice",)
             for oid in plan.approvers:
                 person = people.by_oid(oid)
                 if person is None or not person.mail or quiet_now(person):

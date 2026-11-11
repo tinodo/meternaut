@@ -121,12 +121,24 @@ def _unread(brief: Brief) -> Safe:
     return join(block(part) for part in parts)
 
 
+def _gateways(brief: Brief) -> Safe:
+    """What a finding about point-to-site gateways says, in the words of code: what these gateways are, then what was found in figures, and what was not counted."""
+    found = brief.gateways
+    if found is None:
+        return Safe("")
+    parts: list[object] = [Safe("<h3>The gateways</h3>"), paragraph(found.what), paragraph(found.sentence)]
+    if found.note:
+        parts.append(paragraph(found.note, "muted"))
+    return join(block(part) for part in parts)
+
+
 def _measured(brief: Brief) -> Safe:
-    """What code read from the estate: each fact with its value and the place that it was read, and the data that nothing reads when the finding is about a workspace."""
+    """What code read from the estate: each fact with its value and the place that it was read, the data that nothing reads when the finding is about a workspace, and what the gateways are
+    when it is about those."""
     rows = [[fact.label, fact.value, fmt('<span class="muted">{source}</span>', source=fact.source)] for fact in brief.facts]
     parts: list[object] = [Safe("<h2>What was measured</h2>"),
                            table("measured", "What was measured, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)
-                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief)]
+                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief), _gateways(brief)]
     return join(block(part) for part in parts)
 
 

@@ -1,9 +1,12 @@
+import dataclasses
+import datetime as dt
 import unittest
+from unittest import mock
 
 from test_web_pages import INVESTIGATED
 from test_web_support import ACTS_ON, MAYA, NOW, OPS, OWNER, STRANGER, TINO, Console, FailingStore, at, make_case, make_run, snapshot
 
-from cases.models import StoreError, SwitchRecord, TwoPeopleRule
+from cases.models import CheckRecord, StoreError, SwitchRecord, TwoPeopleRule
 from cases.people import People, Person
 
 APPROVE = "Approve and sign in to Azure"
@@ -27,7 +30,8 @@ class TheOperationsPage(unittest.TestCase):
     def test_it_holds_the_switches_the_latest_runs_and_what_meternaut_may_change(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), ["Operations"])
-        self.assertEqual(self.reply.headings(2), ["The four switches", "When a change needs two people", "Latest runs", "What Meternaut can change in Azure"])
+        self.assertEqual(self.reply.headings(2), ["The four switches", "When a change needs two people", "Latest runs", "The drift check", "What people answered before",
+                                                  "What Meternaut can change in Azure"])
         self.assertEqual([r["Switch"] for r in self.reply.table("switches").rows], ["Everything", "Changes", "All messages", "The investigation"])
         self.assertEqual([r["State"] for r in self.reply.table("switches").rows], ["Running", "Running", "Running", "Running"])
         self.assertEqual([r["What it stops"] for r in self.reply.table("switches").rows], [
@@ -501,6 +505,160 @@ class TheTwoPeopleRulePage(unittest.TestCase):
         reply = unread.get("/ops/two-people")
         self.assertEqual(reply.status, 200)
         self.assertIn("I cannot read the rule now, so what is shown is the starting rule: off. Nothing has changed.", reply.content)
+
+
+class FakeCheck:
+    """What the console starts: it keeps what it was asked and, as cases/drift.py does, keeps its result as the latest check."""
+
+    def __init__(self, console, results=None, tripped=False, silent=False):
+        self.console, self.tripped, self.silent, self.calls = console, tripped, silent, []
+        self.results = results if results is not None else (
+            {"control": "A-LOCK", "layer": "L2", "state": "PASS", "detail": "the code of 3 agents and 9 tools equals the lock"},
+            {"control": "A-CONNECTIONS", "layer": "L1", "state": "FAIL", "detail": "the connection to the gateway uses a key"},
+            {"control": "A-TRACING", "layer": "L2", "state": "UNKNOWN", "detail": "the project could not be read (HTTP 403)"})
+
+    def __call__(self, by, started_at):
+        self.calls.append((by, started_at))
+        if not self.silent:  # a check that never reports leaves the claim as it was
+            self.console.store.check_put(CheckRecord(started_at=started_at, trigger="console", by=by, finished_at=started_at, tripped=self.tripped, results=self.results))
+
+
+def check_console(**kwargs):
+    console = Console()
+    console.fake = FakeCheck(console, **kwargs)
+    console.services = dataclasses.replace(console.services, drift=console.fake)
+    return console
+
+
+def start(console, oid=TINO):
+    """Opens the page and presses the button, as a person does."""
+    return console.submit(console.get("/ops", oid=oid).form("/ops/drift", has_button="Check now"), oid=oid)
+
+
+class TheDriftCheckAtTheConsole(unittest.TestCase):
+    def test_a_person_with_the_role_ops_starts_it_and_the_page_shows_what_it_found_the_ones_that_need_a_look_first(self):
+        console = check_console()
+        self.assertIn("No check is recorded yet.", console.get("/ops").content)
+        reply = start(console)
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(console.fake.calls, [("Tino", "2026-11-05T09:00:00Z")])
+        self.assertIn("The check ran", [p.text() for p in reply.root.find_all("p", class_="notice-title")])
+        self.assertIn("Latest check: Thu 5 Nov 2026 09:00 UTC (10:00 CET), started by Tino. 1 pass, 1 fail and 1 cannot be told.", reply.content)
+        rows = reply.table("drift").rows
+        self.assertEqual([(r["Control"], r["Result"]) for r in rows], [("A-CONNECTIONS", "Fail"), ("A-TRACING", "Cannot be told"), ("A-LOCK", "Pass")])
+        self.assertEqual(rows[1]["What it found"], "the project could not be read (HTTP 403)")
+        self.assertNotIn("paused the investigation", reply.content)
+
+    def test_two_checks_are_never_less_than_fifteen_minutes_apart_whoever_asks_and_the_timers_check_counts(self):
+        console = check_console()
+        start(console)
+        console.now += dt.timedelta(minutes=14)
+        self.assertNotIn("Check now", console.get("/ops").content)
+        self.assertIn("The next check can start Thu 5 Nov 2026 09:15 UTC (10:15 CET). At most one check starts in 15 minutes, whoever asks.", console.get("/ops").content)
+        token = console.store.nonce_new(OPS, "drift")
+        reply = console.post("/ops/drift", {"nonce": token}, oid=OPS)
+        self.assertEqual(reply.status, 429)
+        self.assertIn("A check began Thu 5 Nov 2026 09:00 UTC (10:00 CET). The next one can start Thu 5 Nov 2026 09:15 UTC (10:15 CET).", reply.content)
+        self.assertIn("Nothing was started.", reply.content)
+        self.assertEqual(len(console.fake.calls), 1)
+        console.now += dt.timedelta(minutes=1)
+        self.assertEqual(start(console, OPS).status, 200, "exactly fifteen minutes later is allowed")
+        self.assertEqual(console.fake.calls[-1], ("Otto", "2026-11-05T09:15:00Z"))
+        timer = check_console()
+        timer.store.check_put(CheckRecord(started_at=at(minutes=-5), trigger="timer", finished_at=at(minutes=-4), results=()))
+        self.assertEqual(timer.post("/ops/drift", {"nonce": timer.store.nonce_new(TINO, "drift")}).status, 429)
+        self.assertEqual(timer.fake.calls, [])
+
+    def test_two_people_who_ask_at_the_same_moment_start_one_check(self):
+        console = check_console()
+        console.store.check_put(CheckRecord(started_at=at(minutes=-1), trigger="console", by="Otto"))
+        newer = console.store.check
+        with mock.patch.object(console.store, "check_latest", side_effect=[None, newer]):  # the first read was made before the other person's claim
+            reply = console.post("/ops/drift", {"nonce": console.store.nonce_new(TINO, "drift")})
+        self.assertEqual(reply.status, 429)
+        self.assertEqual((console.fake.calls, console.store.check), ([], newer), "the claim of the other person stands and nothing runs")
+
+    def test_a_claim_is_kept_before_the_check_runs_so_that_a_check_that_never_reports_still_holds_the_gap(self):
+        console = check_console(silent=True)
+        reply = start(console)
+        self.assertIn("A check began Thu 5 Nov 2026 09:00 UTC (10:00 CET) by Tino and has not reported.", reply.content)
+        self.assertEqual(console.store.check, CheckRecord(started_at="2026-11-05T09:00:00Z", trigger="console", by="Tino"))
+        self.assertEqual(console.post("/ops/drift", {"nonce": console.store.nonce_new(TINO, "drift")}).status, 429)
+
+    def test_the_timers_check_is_shown_like_a_persons_and_a_check_that_paused_the_investigation_says_so(self):
+        console = check_console()
+        console.store.check_put(CheckRecord(started_at=at(hours=-4), trigger="timer", finished_at=at(hours=-4), tripped=True, results=(
+            {"control": "A-RELEASE", "layer": "L2", "state": "FAIL", "detail": "the files that run are not the files that were released"},)))
+        reply = console.get("/ops")
+        self.assertIn("Latest check: Thu 5 Nov 2026 05:00 UTC (06:00 CET), started by the timer. 0 pass, 1 fail and 0 cannot be told.", reply.content)
+        self.assertIn("This check paused the investigation", [p.text() for p in reply.root.find_all("p", class_="notice-title")])
+        self.assertIn("/ops/pause", reply.links())
+        self.assertTrue(reply.form("/ops/drift", has_button="Check now"), "four hours later a person may check again")
+
+    def test_the_form_needs_its_own_token_and_the_role_ops_and_a_refusal_starts_nothing(self):
+        console = check_console()
+        form = console.get("/ops").form("/ops/drift", has_button="Check now")
+        for fields, oid, status in (({}, TINO, 403), ({"nonce": "not-a-token"}, TINO, 403), (form.fields, MAYA, 403), (form.fields, OWNER, 403), (form.fields, STRANGER, 403)):
+            with self.subTest(oid=oid, fields=fields):
+                self.assertEqual(console.post("/ops/drift", fields, oid=oid).status, status)
+        self.assertEqual((console.fake.calls, console.store.check), ([], None))
+        self.assertTrue(console.store.nonce_use(form.fields["nonce"], TINO, "drift"), "the refusals did not use up the token")
+        self.assertEqual(console.post("/ops/drift", {"nonce": console.store.nonce_new(TINO, "pause")}).status, 403, "a token of another form is no token")
+        self.assertEqual(console.get("/ops/drift").status, 405, "a page that starts something is a POST")
+
+    def test_a_console_that_cannot_run_the_check_says_so_and_the_page_still_shows_the_latest_one(self):
+        console = Console()
+        reply = console.get("/ops")
+        self.assertIn("This console cannot start a check.", reply.content)
+        self.assertNotIn("/ops/drift", [f.action for f in reply.forms()])
+        refused = console.post("/ops/drift", {"nonce": console.store.nonce_new(TINO, "drift")})
+        self.assertEqual(refused.status, 503)
+        self.assertIn("Nothing was started.", refused.content)
+
+    def test_a_latest_check_that_cannot_be_read_is_said_and_the_rest_of_the_page_shows(self):
+        console = Console(store=FailingStore(fail={"check_latest"}, clock=lambda: NOW))
+        reply = console.get("/ops")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("The check cannot be read", [p.text() for p in reply.root.find_all("p", class_="notice-title")])
+        self.assertIn("The four switches", reply.headings(2))
+
+    def test_starting_it_writes_nothing_but_the_check_and_its_token(self):
+        console = check_console()
+        console.seed()
+        before = snapshot(console.store)
+        start(console)
+        self.assertEqual(snapshot(console.store), before)
+
+
+class ThePastAnswers(unittest.TestCase):
+    def make(self):
+        console = Console(lessons=lambda: "{}\n")
+        return console
+
+    def test_the_file_is_a_post_of_the_role_ops_with_a_token_and_changes_nothing(self):
+        console = self.make()
+        console.seed()
+        form = console.get("/ops").form("/ops/answers", has_button="Download the answers")
+        before = snapshot(console.store)
+        reply = console.submit(form)
+        self.assertEqual((reply.status, reply.text), (200, "{}\n"))
+        self.assertEqual(reply.headers["Content-Disposition"], 'attachment; filename="meternaut-answers.jsonl"')
+        self.assertTrue(reply.headers["Content-Type"].startswith("text/plain"))
+        self.assertEqual(snapshot(console.store), before)
+        for fields, oid in (({}, TINO), (form.fields, TINO), (form.fields, MAYA), (form.fields, STRANGER)):
+            with self.subTest(oid=oid, fields=fields):
+                self.assertEqual(console.post("/ops/answers", fields, oid=oid).status, 403)
+
+    def test_a_console_that_cannot_make_it_says_so(self):
+        console = Console()
+        self.assertIn("This console cannot make the file.", console.get("/ops").content)
+        self.assertEqual(console.post("/ops/answers", {"nonce": console.store.nonce_new(TINO, "answers")}).status, 503)
+
+    def test_the_page_says_what_the_file_holds_and_leaves_out_the_words_of_the_design(self):
+        text = self.make().get("/ops").content
+        self.assertIn("It holds no name of a person and no name of a resource.", text)
+        for word in ("lesson", "Lesson"):
+            self.assertNotIn(word, text)
 
 
 if __name__ == "__main__":

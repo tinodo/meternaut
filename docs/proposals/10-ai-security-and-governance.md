@@ -26,7 +26,7 @@ Each row: what it is, where a person sees it, which check watches it (the ids of
 | Token, request and cost limits per caller; content safety at Medium on each model | AI Gateway portal, the gateway's workspace; the gateway in the Azure portal | I-gateway-policies, I-gateway-models | A prompt that stays under the limits and the severity | Service: preview. Ran in Azure 2026-11-07 |
 | Access list per caller, [one entry for each identity](../../environment/aigateway/contracts.json) | The workbook, panel Callers; the alert rule for a call outside the list | I-gateway-roles | The role covers every alias, so the aliases are what a caller is meant to call, not what Azure enforces | Hand-made pattern; the service has no such object |
 | Telemetry exporter to the project's Application Insights, `payloadCapture` written as false | The workbook; the workspace tables OTelSpans and OTelLogs | I-telemetry | Nothing: it records. It sends no prompt and no answer, and the service redacts nothing if capture is ever turned on, so no parameter can turn it on | Service and OpenTelemetry ingestion: preview |
-| Eight alert rules and one action group (e-mail to the budget's addresses) | Monitor, Alerts, rules `alert-meternaut-ai-*` | I-alerts | They tell 15 to 60 minutes after the fact. Their e-mail holds the rule's name, a count and a link, never a line of telemetry or a word of the estate | General availability |
+| Nine alert rules and one action group (e-mail to the budget's addresses) | Monitor, Alerts, rules `alert-meternaut-ai-*` | I-alerts | They tell 15 to 60 minutes after the fact. Their e-mail holds the rule's name, a count and a link, never a line of telemetry or a word of the estate | General availability |
 | The workbook *Meternaut AI security* | Monitor, Workbooks | I-alerts | A person has to open it | General availability |
 | Guardrail `meternaut-agents`, on every model deployment, with sixteen filters named one by one, each blocking: hate, sexual, violence and self-harm from the severity Medium, profanity, protected material and the Prompt Shields | Foundry portal, Guardrails; the deployments | I-guardrail, I-deployments | Agent-level guardrails, which Microsoft does not offer for models behind a gateway; an attack below what the filters detect | Deployment filter: generally available |
 | The Foundry resource: no public access, no key, network rules deny, an identity | Foundry resource, Networking | I-foundry-flags | A person with the right to change it | General availability |
@@ -61,14 +61,14 @@ Read from the Azure Retail Prices API on 2026-11-08, in euro, for Sweden Central
 
 | Part | Price | A month |
 |---|---|---|
-| Eight log alert rules, each evaluated every 15 minutes or less often | 0.4489 each | 3.59 (seven without the rule for the access list: 3.14) |
+| Nine log alert rules, each evaluated every 15 minutes or less often | 0.4489 each | 4.04 (eight without the rule for the access list: 3.59) |
 | The workbook, the action group's e-mail, the policy assignments | No meter | 0 |
 | Gateway telemetry and the Foundry setting where the landing zone made none, into the workspace | First 5 GB a month free, then 2.6841 a GB. A few hundred megabytes at this volume | 0 |
 | Retention of the two gateway tables, capped at 30 days, nothing archived | 31 days are included | 0 |
 | Metrics of the OpenTelemetry ingestion into the managed Azure Monitor workspace | 0.1436 for ten million samples | Cents |
 | The drift check: a runner (about two minutes of GitHub Actions) and the app's daily timer | | Cents |
 
-About 3.6 euro a month, and the alert rules are the whole of it. The budget of the group warns at 80 percent. Microsoft Agent 365 licences are the tenant's own (a trial of 25).
+About 4.0 euro a month, and the alert rules are the whole of it. The budget of the group warns at 80 percent. Microsoft Agent 365 licences are the tenant's own (a trial of 25).
 
 ## What is not built, and who can close it
 

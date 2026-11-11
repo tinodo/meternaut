@@ -4,7 +4,7 @@ import logging
 import unittest
 
 from cases import loop_config, notify, people as people_mod
-from cases.memory_store import MemoryStore
+from cases.memory_store import MemoryStore, stamp
 from cases.models import SettingsRecord, SwitchRecord
 
 from test_letters import make_action, make_case, make_plan, make_run
@@ -200,6 +200,32 @@ class AboutAChange(unittest.TestCase):
         self.f.on_action(make_action(state="done"), self.plan, self.case)
         self.f.on_action(make_action(state="verified"), self.plan, self.case)
         self.assertEqual(self.f.graph.to(), ["tino@example.com", "tino@example.com"])
+
+    def unknown(self, hours: float):
+        """An action whose result became unknown `hours` before now."""
+        return make_action(state="unknown", finished_at=stamp(self.f.clock.now - dt.timedelta(hours=hours)), result="Azure accepted the change and has not shown its end.", verification={})
+
+    def test_a_result_that_is_not_known_is_told_only_when_it_has_stayed_so_and_then_once(self):
+        self.f.on_action(self.unknown(notify.UNKNOWN_HOURS - 0.1), self.plan, self.case)
+        self.assertEqual((self.f.graph.sent, self.f.store.mails), ([], []), "most results are known within minutes: nothing is said yet, and nothing is written")
+        self.f.on_action(self.unknown(notify.UNKNOWN_HOURS), self.plan, self.case)
+        self.assertEqual(self.f.records(), [("unsure", "sent", self.plan.plan_id)])
+        self.assertEqual(self.f.graph.subjects(), ["[Meternaut] The result of a change to Azure is not known"])
+        self.assertIn("its result is not known", self.f.graph.sent[0][1]["body"]["content"])
+        self.f.on_action(self.unknown(notify.UNKNOWN_HOURS + 1), self.plan, self.case)
+        self.assertEqual(len(self.f.graph.sent), 1, "one letter for one result that is not known")
+
+    def test_the_result_is_still_told_when_it_is_known_later_because_the_letter_before_was_of_its_own_kind(self):
+        self.f.on_action(self.unknown(3), self.plan, self.case)
+        self.f.on_action(make_action(state="done"), self.plan, self.case)
+        self.assertEqual(sorted(k for k, _, _ in self.f.records()), ["notice", "unsure"])
+        self.assertEqual(self.f.graph.subjects(), ["[Meternaut] The result of a change to Azure is not known", "[Meternaut] A change to Azure has run"])
+
+    def test_the_letter_about_a_result_that_is_not_known_is_never_held_by_the_weekly_budget_and_goes_to_approvers_only(self):
+        self.f.store.settings_put(SettingsRecord(oid=TINO, weekly_budget=0))
+        self.f.on_action(self.unknown(3), plan(approvers=(TINO, STRANGER, NO_MAIL)), self.case)
+        self.assertEqual(self.f.graph.to(), ["tino@example.com"])
+        self.assertEqual((self.f.records(STRANGER), self.f.records(NO_MAIL)), ([], []))
 
 
 class AboutTheWeeklyDesk(unittest.TestCase):

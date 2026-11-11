@@ -92,12 +92,12 @@ class TheAlertRules(unittest.TestCase):
 
     def test_one_rule_for_each_signal_and_each_is_evaluated_every_15_minutes_or_less_often(self):
         rules = self.rules()
-        self.assertEqual([r[0] for r in rules], ["refusals", "client-errors", "server-errors", "near-limit", "outside-access-list", "harness-trips", "drift-fail", "drift-heartbeat"])
+        self.assertEqual([r[0] for r in rules], ["refusals", "client-errors", "server-errors", "near-limit", "outside-access-list", "harness-trips", "drift-fail", "drift-heartbeat", "timer-round-failed"])
         for name, _, _, severity, frequency, window, _, _, query, _ in rules:
             self.assertIn(frequency, ("PT15M", "PT30M", "PT1H"), f"{name}: the cheapest kind of log alert rule is evaluated every 15 minutes or less often (docs/proposals/10-ai-security-and-governance.md has the prices)")
             self.assertIn(severity, ("1", "2"))
             self.assertIn(window, ("PT15M", "PT30M", "PT1H", "P2D"))
-        self.assertEqual(len(ALERTS), 8, "one query for each rule, and no query that no rule uses")
+        self.assertEqual(len(ALERTS), 9, "one query for each rule, and no query that no rule uses")
 
     def test_every_query_file_is_loaded_by_exactly_one_rule_and_every_placeholder_is_filled_by_the_template(self):
         loaded = re.findall(r"loadTextContent\('alerts/([a-z-]+)\.kql'\)", CODE)
@@ -149,6 +149,39 @@ class TheAlertRules(unittest.TestCase):
             self.assertIn("meternaut_event ", query, f"{name}: the History lines of the app are `meternaut_event {{json}}` with a type")
         self.assertIn("Message startswith 'harness.trip'", ALERTS["harness-trips"])
         self.assertIn("Message startswith 'drift.fail'", ALERTS["drift-fail"])
+
+    def test_a_failed_timer_round_is_read_from_the_error_lines_that_the_app_logs_and_from_the_hosts_failed_invocations_of_its_timer_functions(self):
+        app = ROOT / "src" / "case-functions"
+        entry = (app / "function_app.py").read_text(encoding="utf-8")
+        timers = re.findall(r'@app\.function_name\(name="([a-z-]+)"\)\n@app\.timer_trigger', entry)
+        self.assertEqual(timers, ["watch-daily", "drift-daily", "study-weekly", "runner-tick"])
+        query = re.sub(r"(?m)^//.*$", "", ALERTS["timer-round-failed"])
+        self.assertIn("dynamic([" + ", ".join(f"'{name}'" for name in timers) + "])", query, "a timer function that the app gains has to be in the rule, and one that it loses has to leave it")
+        self.assertIn("| where Success == false", query)
+        # the words that the app logs when a round fails, and the level that it logs them at: the rule is only as good as these lines
+        lines = {
+            "run.py": ('LOG.error(redact(f"the run failed: ', 'history.emit("run.failed"'),
+            "drift.py": ('LOG.error(redact(f"the drift check failed: ',),
+            "loop.py": ('LOG.error(redact(f"the tick failed: ',),
+            "study.py": ('LOG.error(redact(f"the Study failed: ', 'LOG.warning("the Study failed: %s"'),
+        }
+        for file, wanted in lines.items():
+            text = (app / "cases" / file).read_text(encoding="utf-8")
+            for words in wanted:
+                self.assertIn(words, text, f"{file}: {words}")
+        for prefix in ("the run failed", "the drift check failed", "the tick failed"):
+            self.assertIn(f"Message startswith '{prefix}'", query, prefix)
+        self.assertIn("(Message startswith 'the Study failed' and SeverityLevel >= 3)", query, "the Study logs the same words at the level Warning for one source that failed and goes on: only the error is a failed round")
+        self.assertIn("""Message contains '"type":"run.failed"'""", query)
+
+    def test_a_failed_round_is_an_event_that_is_told_every_time_hourly_and_the_drift_check_wants_the_rule_to_exist(self):
+        rule = re.search(r"(?s)name: 'timer-round-failed'.*?create: true", CODE).group(0)
+        for line in ("severity: 2", "frequency: 'PT1H'", "window: 'PT1H'", "operator: 'GreaterThan'", "threshold: 0", "query: timerRoundFailedQuery"):
+            self.assertIn(line, rule, line)
+        self.assertIn("var statefulRules = [\n  'drift-heartbeat'\n]", CODE, "an event does not close itself: a failed round is not a silence that goes on")
+        self.assertIn("var timerRoundFailedQuery = loadTextContent('alerts/timer-round-failed.kql')", CODE)
+        tool = (ROOT / "tools" / "drift-check.py").read_text(encoding="utf-8")
+        self.assertRegex(tool, r'(?m)^ALERT_RULES = \(.*"timer-round-failed"\)$', "the check of the alert rules wants this one too, so that a drift check says when it is not made yet")
 
 
 class TheTablesAndTheWorkbook(unittest.TestCase):

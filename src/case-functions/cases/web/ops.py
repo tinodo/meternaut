@@ -5,21 +5,25 @@ This is where the tables that the start page and History do not carry now live: 
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 from ..brief import kinds as change_kinds
-from ..models import SWITCH_NAMES, SwitchRecord, TwoPeopleRule
+from ..models import CHECK_GAP_MINUTES, SWITCH_NAMES, CheckRecord, SwitchRecord, TwoPeopleRule
 from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
-from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, stamp
+from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, parse_time, stamp, utc
 from .figures import chip, dollars
-from .layout import (block, button, checks, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, table)
+from .layout import (TEXT, block, button, checks, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, respond, table)
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
 PAUSE_WHY = "your role ops lets you stop work at four levels"
 OPS_WHY = "your role ops lets you see how Meternaut is running"
 TWO_PEOPLE_WHY = "your role lets you see when a change needs two people, and the role owner lets you change it"
 AMOUNT = re.compile(r"\d{1,7}(?:\.\d{1,2})?")
+DRIFT_WHY = "your role ops lets you start the check of the AI agents"
+RESULTS = {"PASS": ("Pass", "low", "circle"), "FAIL": ("Fail", "high", "diamond"), "UNKNOWN": ("Cannot be told", "mid", "triangle")}  # what a control found: a word and a shape, never a colour alone
+BACK = ("/ops", "Back to Operations")
 RUN_HEADERS = ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Findings of the run"]
 LATEST_RUNS = ["Started", "Trigger", "Result", "Findings", "Proposed", "Needs a person", "Errors"]
 RUNS_SHOWN = 20
@@ -62,10 +66,14 @@ def _tiles(ctx: Ctx, runs: list, runs_ok: bool) -> Safe:
     return kpis(switches, latest, kpi("Next search", ctx.next_search(), "", "The search runs every day."), label="How Meternaut is running")
 
 
-def hub(ctx: Ctx) -> Response:
+def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
     runs, ok = read(lambda: ctx.store.runs_recent(5), [])
     parts: list[object] = [
         head("Operations", "For the platform team: the switches, the latest runs and what Meternaut may change in Azure."),
+    ]
+    if banner is not None:
+        parts.append(banner)
+    parts += [
         _tiles(ctx, runs, ok),
         Safe("<h2>The four switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
         Safe("<h2>When a change needs two people</h2>"), paragraph(rule_text(read(lambda: ctx.store.rule_get(), TwoPeopleRule())[0])),
@@ -80,11 +88,108 @@ def hub(ctx: Ctx) -> Response:
         parts.append(table("latest-runs", "The five latest runs, newest first", LATEST_RUNS,
                            [[nowrap(ctx.when(r.started_at)), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
     parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")),
+              Safe("<h2>The drift check</h2>"), *_drift_section(ctx),
+              Safe("<h2>What people answered before</h2>"), *_answers_section(ctx),
               Safe("<h2>What Meternaut can change in Azure</h2>"),
               paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
                             "with their own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
               paragraph(link(ctx.url("/ops/permissions"), "The standing permissions"))]
     return page(ctx, "Operations", join(block(p) for p in parts), current="/ops", why=OPS_WHY)
+
+
+def _next_check(latest: CheckRecord | None, now: dt.datetime) -> dt.datetime | None:
+    """When the next check may start at the console, or None when one may start now: CHECK_GAP_MINUTES after the latest check began, whoever started it."""
+    began = parse_time(latest.started_at) if latest is not None else None
+    due = None if began is None else began + dt.timedelta(minutes=CHECK_GAP_MINUTES)
+    return due if due is not None and due > utc(now) else None
+
+
+def _started_by(latest: CheckRecord) -> str:
+    return f"by {latest.by}" if latest.trigger == "console" and latest.by else "by the timer" if latest.trigger == "timer" else "at the console"
+
+
+def _drift_result(ctx: Ctx, latest: CheckRecord) -> list[object]:
+    """What the latest check found: when and by whom, how many controls came out each way, whether it paused the investigation, and one row for each control with the ones that need a
+    look first. A check that has not reported says so."""
+    if not latest.finished_at:
+        return [paragraph(fmt("A check began {when} {by} and has not reported. If it does not report, the log of the app says why.", when=ctx.when(latest.started_at), by=_started_by(latest)))]
+    rows = [item for item in latest.results if isinstance(item, dict)]
+    states = [str(item.get("state", "")) for item in rows]
+    parts: list[object] = [paragraph(fmt("Latest check: {when}, started {by}. {passed} pass, {failed} fail and {unknown} cannot be told.", when=ctx.when(latest.started_at), by=_started_by(latest),
+                                        passed=states.count("PASS"), failed=states.count("FAIL"), unknown=states.count("UNKNOWN")))]
+    if latest.tripped:
+        parts.append(notice("warning", "This check paused the investigation", "A control that guards the AI agents failed. A person resumes the investigation on the page of the switches.",
+                            paragraph(link(ctx.url("/ops/pause"), "Pause or resume work"))))
+    order = {"FAIL": 0, "UNKNOWN": 1, "PASS": 2}
+    shown = sorted(rows, key=lambda item: order.get(str(item.get("state", "")), 3))
+    parts.append(table("drift", "What each control of the latest check found, the ones that need a look first", ["Control", "Result", "What it found"],
+                       [[item.get("control", ""), chip(*RESULTS.get(str(item.get("state", "")), ("Cannot be told", "mid", "triangle"))), item.get("detail", "")] for item in shown],
+                       row_header=True))
+    return parts
+
+
+def _drift_section(ctx: Ctx) -> list[object]:
+    parts: list[object] = [paragraph("Every day Meternaut checks that its AI agents, their tools and its settings are still what the code says. The check reads and changes nothing in Azure. "
+                                     "When a control that guards the agents fails, it pauses the investigation until a person resumes it.")]
+    latest, ok = read(lambda: ctx.store.check_latest(), None)
+    if not ok:
+        return parts + [notice("error", "The check cannot be read", "I cannot read the latest check now. Nothing has changed.")]
+    parts += _drift_result(ctx, latest) if latest is not None else [paragraph("No check is recorded yet.")]
+    due = _next_check(latest, ctx.now)
+    if ctx.services.drift is None:
+        parts.append(paragraph("This console cannot start a check."))
+    elif due is not None:
+        parts.append(paragraph(fmt("The next check can start {when}. At most one check starts in {gap} minutes, whoever asks.", when=ctx.when(stamp(due)), gap=CHECK_GAP_MINUTES)))
+    else:
+        parts.append(form(ctx.url("/ops/drift"), hidden("nonce", ctx.nonce("drift")), fmt('<div class="acts">{b}</div>', b=button("Check now"))))
+    return parts
+
+
+def _too_soon(ctx: Ctx, latest: CheckRecord | None, due: dt.datetime | None) -> Response:
+    when = ctx.when(latest.started_at) if latest is not None else "a moment ago"
+    until = ctx.when(stamp(due)) if due is not None else "in a few minutes"
+    return message_page(ctx, 429, "A check began a moment ago", paragraph(fmt("A check began {when}. The next one can start {until}.", when=when, until=until)),
+                        f"At most one check starts in {CHECK_GAP_MINUTES} minutes, whoever asks. Nothing was started.", back=BACK, why=DRIFT_WHY)
+
+
+def drift_run(ctx: Ctx) -> Response:
+    """Starts the drift check of the app now (cases/drift.py), for a person with the role ops: the form's token is used up, the check is claimed in the store (so that two people who ask at
+    the same moment start one), the check runs as the timer's does, and the Operations page shows what it found. At most one check begins in CHECK_GAP_MINUTES, the timer's included."""
+    if not ctx.store.nonce_use(ctx.request.form.get("nonce", ""), ctx.principal.oid, "drift"):  # type: ignore[union-attr]
+        return message_page(ctx, 403, "This form cannot be used", "The form is out of date, was used already or has no token. No check was started.",
+                            "Open the page again and use the form there.", back=BACK, why=DRIFT_WHY)
+    run = ctx.services.drift
+    if run is None:
+        return message_page(ctx, 503, "The check cannot be started here", "This console is not set up to run the check. Nothing was started.", back=BACK, why=DRIFT_WHY)
+    latest = ctx.store.check_latest()
+    due = _next_check(latest, ctx.now)
+    if due is not None:
+        return _too_soon(ctx, latest, due)
+    claim = CheckRecord(started_at=stamp(ctx.now), trigger="console", by=ctx.principal.name)  # type: ignore[union-attr]
+    if not ctx.store.check_claim(claim, latest.started_at if latest is not None else ""):
+        newer = ctx.store.check_latest()
+        return _too_soon(ctx, newer, _next_check(newer, ctx.now))
+    run(claim.by, claim.started_at)
+    return hub(ctx, banner=notice("success", "The check ran", f"Started by {claim.by}. What it found is below."))
+
+
+def _answers_section(ctx: Ctx) -> list[object]:
+    parts: list[object] = [paragraph("A developer can replay what people answered before against the thresholds that were written first, with the learning check. The file has one row for each "
+                                     "closed request: the kind of resource, the kind of request, how sure the first AI was and the answer. It holds no name of a person and no name of a resource.")]
+    if ctx.services.lessons is None:
+        return parts + [paragraph("This console cannot make the file.")]
+    return parts + [form(ctx.url("/ops/answers"), hidden("nonce", ctx.nonce("answers")), fmt('<div class="acts">{b}</div>', b=button("Download the answers")))]
+
+
+def answers_export(ctx: Ctx) -> Response:
+    """The past answers as the rows of the learning check, in JSON lines (cases/learning.py, replay_rows): typed values only, and nothing is changed."""
+    if not ctx.store.nonce_use(ctx.request.form.get("nonce", ""), ctx.principal.oid, "answers"):  # type: ignore[union-attr]
+        return message_page(ctx, 403, "This form cannot be used", "The form is out of date, was used already or has no token. No file was made.",
+                            "Open the page again and use the form there.", back=BACK, why=OPS_WHY)
+    make = ctx.services.lessons
+    if make is None:
+        return message_page(ctx, 503, "The file cannot be made here", "This console is not set up to make it. Nothing was changed.", back=BACK, why=OPS_WHY)
+    return respond(200, make(), content_type=TEXT, headers={"Content-Disposition": 'attachment; filename="meternaut-answers.jsonl"'})
 
 
 def _runs_table(ctx: Ctx, runs: list, selected: str) -> Safe:

@@ -14,7 +14,7 @@ import uuid
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import delegated, loop_config, people as people_mod, runner, web, wiring
+from . import delegated, drift, learning, loop_config, people as people_mod, runner, web, wiring
 from .approvals import Approvals
 from .events import History
 from .families import registry
@@ -64,8 +64,13 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
     delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit)
     # The models that wrote anything on a page: the older roles, and the agents of the investigation when it is on (each name once).
     written_by = (watch.model_detective, watch.model_skeptic) + ((watch.foundry_model_investigator, watch.foundry_model_skeptic) if watch.investigate else ())
+
+    def drift_now(by: str, started_at: str) -> object:
+        # The timer's check, started by a person: the same reads, rules and lines (cases/drift.py), with the time that the console claimed for it.
+        return drift.run_check("console", env, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, by=by, started_at=started_at)
+
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=tuple(dict.fromkeys(written_by)))
+                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store))
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":
