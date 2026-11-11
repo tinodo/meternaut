@@ -13,6 +13,9 @@ name: Hub
 # It does not run the tests again (the owner's quota of GitHub Actions minutes is limited: AGENTS.md rule 35). The unit tests, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI
 # (checks.yml), when a commit is pushed to main, and the first step of every run here asks GitHub, read only, whether CI passed for exactly this commit and stops the run, whatever its action, when it did not.
 # What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
+# It can also be CALLED (on: workflow_call) by the one workflow of a private deploy repository (environment/deploy-repo/README.md). The logs, the variables, the secrets, the OpenID Connect credential and the minutes of
+# a run are then that repository's, and this public repository holds none of them. In a called run the `github` context is the caller's, so the files of this workflow (the tools, the templates, the app) are checked out
+# from the `job` context (job.workflow_repository at job.workflow_sha), and the commit that CI has to have passed for is that one too: tools/workflow-lint.py fails a step that reads the caller's commit or repository.
 
 on:
   workflow_dispatch:
@@ -99,6 +102,65 @@ on:
           - auto
           - cloud
           - dataset
+  # Called by the workflow of a private deploy repository (environment/deploy-repo/README.md): that repository's variables, secrets, OpenID Connect credential, logs and minutes are used, and this repository
+  # holds none. The inputs are those of workflow_dispatch above, with the same names. A call has no input of the type choice, so the first steps of the job refuse a value that the Hub does not know. The caller
+  # passes the three secrets by name and never `secrets: inherit`, and the variables that the job reads (`vars`) are those of the caller's repository, not of this one.
+  workflow_call:
+    inputs:
+      action:
+        description: "The same as the input action above. A value that the Hub does not know is refused by the first steps of the job."
+        type: string
+        required: true
+      minutes:
+        description: "The same as the input minutes above."
+        type: string
+        required: false
+        default: "20"
+      public_ai_gateway_requested:
+        description: "The same as the input of this name above: set only on the owner's written request."
+        type: boolean
+        required: false
+        default: false
+      public_teams_bot_requested:
+        description: "The same as the input of this name above: set only on the owner's written request."
+        type: boolean
+        required: false
+        default: false
+      plant_public_ip:
+        description: "The same as the input of this name above."
+        type: boolean
+        required: false
+        default: false
+      plant_vm:
+        description: "The same as the input of this name above."
+        type: boolean
+        required: false
+        default: false
+      evals_command:
+        description: "The same as the input of this name above: probe, run, rule or rule-apply."
+        type: string
+        required: false
+        default: probe
+      evals_judge:
+        description: "The same as the input of this name above: none, connection or auto."
+        type: string
+        required: false
+        default: none
+      redteam_mode:
+        description: "The same as the input of this name above: auto, cloud or dataset."
+        type: string
+        required: false
+        default: auto
+    secrets:
+      AZURE_CLIENT_ID:
+        description: "The client id of the deploy identity. It is not a password: azure/login signs in with it by OpenID Connect."
+        required: true
+      AZURE_TENANT_ID:
+        description: "The id of the tenant."
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        description: "The id of the subscription that holds the project's resource groups."
+        required: true
 
 permissions:
   contents: read
@@ -159,31 +221,102 @@ jobs:
           fi
           echo "The input public_ai_gateway_requested is set: the owner has asked in writing for a public AI Gateway."
 
+      - name: Mask the identifiers of the estate in this run's log
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          # What a run prints is its log, and the runner also prints the `env:` block at the head of every step. GitHub masks the three secrets by itself, and it does not mask a variable (the resource group, the address
+          # ranges, the DNS servers, the owner's addresses, the console's host name and its people), nor a secret that Azure writes in another case. This step asks the runner to mask each of them, as it is and in lower
+          # and upper case, from the next step on. It is the second line: the logs of the deploy repository are private, and the first step that runs prints its own head before this one has run. A value of fewer than four
+          # characters is not masked, so that the log stays readable. Nothing is printed here but the mask commands, and a value is never shown. The region and the budget are not identifiers and are left alone.
+          mask() {
+            local value="${1//$'\r'/}"
+            [ "${#value}" -ge 4 ] || return 0
+            value="${value//\%/%25}"
+            echo "::add-mask::$value"
+            echo "::add-mask::${value,,}"
+            echo "::add-mask::${value^^}"
+          }
+          for value in "$ENV_SUBSCRIPTION_ID" "$AZURE_TENANT_ID" "$AZURE_CLIENT_ID" "$ENV_RESOURCE_GROUP" "$ENV_VNET_PREFIX" "$ENV_PE_SUBNET_PREFIX" "$ENV_OWNER" "$CONSOLE_APP_CLIENT_ID" "$CONSOLE_HOST_NAME" "$MAIL_SENDER"; do
+            mask "$value"
+          done
+          for list in "$ENV_DNS_SERVERS" "$ENV_ALERT_EMAILS" "$CONSOLE_PEOPLE"; do
+            mask "$list"
+            read -ra items <<< "$(printf '%s' "$list" | tr ',\n\r\t' '    ')"
+            for item in "${items[@]}"; do
+              mask "$item"
+            done
+          done
+
+      - name: Refuse a value that the Hub does not know
+        env:
+          EVALS_COMMAND: ${{ inputs.evals_command }}
+          EVALS_JUDGE: ${{ inputs.evals_judge }}
+          REDTEAM_MODE: ${{ inputs.redteam_mode }}
+        run: |
+          # GitHub holds a workflow that is started by hand to the options of an input of the type choice. A workflow that is called passes plain strings, because a call has no type choice, so the Hub holds each of them to its
+          # options itself, before anything is checked out, read or signed in to: an action that is misspelt would otherwise run every step that does not name it and look as if it had worked. The lists are those of the
+          # inputs of workflow_dispatch above, and a test fails when they differ. The value is not printed: it came from the caller.
+          refuse() {
+            echo "::error::The Hub does not know the value that was given for the input $1. Its options are those of the input of that name in the workflow. Nothing was changed."
+            exit 1
+          }
+          case "$ACTION" in
+            what-if | model-side | base | retire-old | retire-event-hubs | foundry | cases | cases-run | page-latency | plant | loop-check | operator | operator-probe | aigateway | aigateway-check | governance | gateway-telemetry | drift-check | agents-drift | foundry-evals | foundry-redteam | agent365-check | teams) ;;
+            *) refuse action ;;
+          esac
+          case "$EVALS_COMMAND" in
+            probe | run | rule | rule-apply) ;;
+            *) refuse evals_command ;;
+          esac
+          case "$EVALS_JUDGE" in
+            none | connection | auto) ;;
+            *) refuse evals_judge ;;
+          esac
+          case "$REDTEAM_MODE" in
+            auto | cloud | dataset) ;;
+            *) refuse redteam_mode ;;
+          esac
+          echo "Every value that was given is one that the Hub knows."
+
       - name: The checks of CI have passed for this commit
         env:
           GH_TOKEN: ${{ github.token }}
+          HUB_SOURCE_REPOSITORY: ${{ job.workflow_repository }}
+          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # This run does not repeat the tests. The unit tests of the tools and of the app, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI (checks.yml), when a commit is pushed
           # to main: about five of the eight minutes that a run of this workflow took on average were those tests, and the owner's minutes of GitHub Actions are limited (AGENTS.md rule 35). What is asked here instead takes seconds,
           # and it is asked of every action, the ones that only read as well: has the workflow checks.yml a completed, successful run for exactly this commit, started by a push to main? A run for a pull request, for another
           # commit, one that is still going and one that failed do not count, and nothing else of GitHub is looked at. It is a read of the list of runs with the run's own token (the permission actions: read); nothing is started or changed.
-          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA"; then
-            echo "::error::The commit of this run is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
+          # This commit is the one of this workflow's own file: the commit that a call pins in the deploy repository (environment/deploy-repo/README.md) and, for a run started in this repository, the run's own commit. In a
+          # called run the `github` context is the caller's, so GITHUB_SHA and GITHUB_REPOSITORY would name the deploy repository, whose checks are not these. The list of the runs of a public repository can be read with any token.
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$HUB_SOURCE_SHA"; then
+            echo "::error::The commit of the code that this run deploys is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
             exit 1
           fi
-          if ! passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
-            echo "::error::GitHub did not say whether the checks of CI passed for commit $GITHUB_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read."
+          if ! grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' <<< "$HUB_SOURCE_REPOSITORY"; then
+            echo "::error::The repository of the code that this run deploys is not a name of the form owner/repository, so the checks of CI cannot be looked up. Nothing was changed."
+            exit 1
+          fi
+          if ! passed=$(gh api "repos/$HUB_SOURCE_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$HUB_SOURCE_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
+            echo "::error::GitHub did not say whether the checks of CI passed for commit $HUB_SOURCE_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read, or the repository of the code could not be read."
             exit 1
           fi
           if ! grep -Eq '^[0-9]+$' <<< "$passed" || [ "$passed" -lt 1 ]; then
-            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $GITHUB_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). Nothing was changed."
+            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $HUB_SOURCE_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). A call pins a commit of main whose checks have passed: pin another. Nothing was changed."
             exit 1
           fi
-          echo "The checks of CI (checks.yml) have passed for commit $GITHUB_SHA, so this run does not repeat them."
+          echo "The checks of CI (checks.yml) have passed for commit $HUB_SOURCE_SHA, so this run does not repeat them."
 
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # This workflow's own repository at its own commit. A plain checkout is the repository that started the run, which for a call is the deploy repository: the tools, the templates and the app that the steps below run would be
+          # whatever that repository holds. The pin of the call is what says which code deploys, and this is what makes the run use it.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - name: Refuse the Teams bot unless the owner asked for a public endpoint in writing and the switch is on
@@ -294,13 +427,16 @@ jobs:
       - name: Work out which release the cases app is given, the commit and the digest of its own files
         id: release
         if: inputs.action == 'cases' || inputs.action == 'what-if'
+        env:
+          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # The release that this run deploys (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): the git commit that the run was made from, and the digest of the app's own files at that commit
           # (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, which is one of them, and a zip file would change with every run). The template
           # gives them to the app as the settings BUILD_COMMIT and PACKAGE_SHA256, and a later step writes them as tags of the app once the code has been published and the app answers, which is what a reader of the
           # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure. The preview (what-if) works it out too, so that it shows the two settings of the app changing to this
-          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them).
-          commit="$GITHUB_SHA"
+          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them). The commit is the one of this workflow's file, which is the code
+          # that was checked out (the commit that a call pins), and not the caller's own commit.
+          commit="$HUB_SOURCE_SHA"
           if ! grep -Eq '^[0-9a-f]{40}$' <<< "$commit"; then
             echo "::error::The commit of this run is not a git commit id, so the release cannot be recorded. Nothing was changed."
             exit 1
@@ -2437,6 +2573,7 @@ jobs:
         timeout-minutes: 30
         env:
           CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}
+          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # The control-plane half of the drift check of the AI security (tools/drift-check.py; docs/design/07-safeguards-and-drift.md: the check never rests on an app that it watches). It reads Azure Resource Manager with the
           # deploy identity, and nothing else: GET requests, and the two queries that need a POST (Azure Resource Graph for the policy compliance, and Application Insights for the lines that the app's own check logged). It says PASS,
@@ -2452,7 +2589,7 @@ jobs:
           if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
           if [ -n "${DRIFT_ACCEPTED_DENY:-}" ]; then flags+=(--accepted-deny "$DRIFT_ACCEPTED_DENY"); fi
           python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
-            --access-list environment/aigateway/contracts.json --commit "$GITHUB_SHA" --app-dir src/case-functions --cases-public-access "$CASES_PUBLIC_ACCESS" \
+            --access-list environment/aigateway/contracts.json --commit "$HUB_SOURCE_SHA" --app-dir src/case-functions --cases-public-access "$CASES_PUBLIC_ACCESS" \
             --json "$RUNNER_TEMP/drift.json" --summary "$GITHUB_STEP_SUMMARY" "${flags[@]}"
 
       - name: Find the Operator, which runs the AI security checks from inside the network

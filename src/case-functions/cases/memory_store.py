@@ -5,7 +5,7 @@ import datetime as dt
 import secrets
 from typing import Callable
 
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord,
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord,
                      SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
 
 
@@ -37,6 +37,7 @@ class MemoryStore:
         self.lessons: dict[str, LessonRecord] = {}
         self.claims: dict[str, ClaimRecord] = {}
         self.profiles: list[CapabilityRecord] = []
+        self.check: CheckRecord | None = None
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
         return sorted(self.runs.values(), key=lambda r: (r.started_at, r.run_id), reverse=True)[:limit]
@@ -192,3 +193,15 @@ class MemoryStore:
 
     def profile_latest(self) -> CapabilityRecord | None:
         return max(self.profiles, key=lambda p: (p.at, p.run_id), default=None)
+
+    def check_latest(self) -> CheckRecord | None:
+        return self.check
+
+    def check_put(self, check: CheckRecord) -> None:
+        self.check = check
+
+    def check_claim(self, check: CheckRecord, after: str) -> bool:
+        if (self.check.started_at if self.check is not None else "") != after:
+            return False
+        self.check = check
+        return True

@@ -43,9 +43,7 @@ jobs:
           echo "$VALUE"
 """
 
-GOOD_DEPLOY = f"""
-name: Hub
-on:
+DEPLOY_ON = """on:
   workflow_dispatch:
     inputs:
       action:
@@ -53,7 +51,16 @@ on:
         options:
           - what-if
           - deploy
-permissions:
+  workflow_call:
+    inputs:
+      action:
+        type: string
+        required: true
+"""
+
+GOOD_DEPLOY = f"""
+name: Hub
+{DEPLOY_ON}permissions:
   contents: read
   id-token: write
 concurrency:
@@ -69,6 +76,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@{SHA} # v7.0.1
         with:
+          repository: ${{{{ job.workflow_repository }}}}
+          ref: ${{{{ job.workflow_sha }}}}
           persist-credentials: false
       - name: Sign in
         uses: azure/login@{LOGIN} # v3.1.0
@@ -226,10 +235,46 @@ class Lint(unittest.TestCase):
         self.assertEqual(self.lint(GOOD_DRIFT.replace("jobs:", "# the deploy identity is secrets.AZURE_CLIENT_ID, which this workflow never names in its code\njobs:"), "drift.yml"), [], "a comment may say so")
         self.assertFinding(self.lint(GOOD_DRIFT.replace('echo "$ACTION"', 'echo "${{ github.event.head_commit.message }}"'), "drift.yml"), "expression inside a run script")
 
-    def test_the_deploy_workflow_starts_by_hand_alone(self):
-        for trigger in ("on:\n  workflow_dispatch:\n  push:\n    branches: [main]", "on: [workflow_dispatch, push]", "on: push", "on:\n  schedule:\n    - cron: '0 3 * * *'"):
-            problems = self.lint(GOOD_DEPLOY.replace("on:\n  workflow_dispatch:\n    inputs:\n      action:\n        type: choice\n        options:\n          - what-if\n          - deploy", trigger), "deploy-hub.yml")
-            self.assertFinding(problems, "workflow_dispatch` alone")
+    def test_the_deploy_workflow_starts_by_hand_and_by_a_call_and_by_nothing_else(self):
+        self.assertEqual(self.lint(GOOD_DEPLOY, "deploy-hub.yml"), [])
+        for trigger in ("on:\n  workflow_dispatch:\n  workflow_call:\n  push:\n    branches: [main]\n", "on: [workflow_dispatch, workflow_call, push]", "on: push", "on:\n  schedule:\n    - cron: '0 3 * * *'\n",
+                        "on:\n  workflow_dispatch:\n", "on:\n  workflow_call:\n", "on: workflow_dispatch", "on:\n  workflow_dispatch:\n  workflow_call:\n  schedule:\n    - cron: '0 3 * * *'\n"):
+            problems = self.lint(GOOD_DEPLOY.replace(DEPLOY_ON, trigger), "deploy-hub.yml")
+            self.assertFinding(problems, "`workflow_dispatch` (by hand) and `workflow_call`")
+        self.assertEqual(self.lint(GOOD_DEPLOY.replace(DEPLOY_ON, "on: [workflow_call, workflow_dispatch]\n"), "deploy-hub.yml"), [], "the order does not matter")
+
+    def test_a_checkout_of_the_hub_is_the_workflows_own_repository_at_its_own_commit_because_a_plain_one_is_the_callers(self):
+        own = "          repository: ${{ job.workflow_repository }}\n          ref: ${{ job.workflow_sha }}\n"
+        self.assertIn(own, GOOD_DEPLOY)
+        for what, text in {
+            "no repository and no ref": GOOD_DEPLOY.replace(own, ""),
+            "no ref": GOOD_DEPLOY.replace("          ref: ${{ job.workflow_sha }}\n", ""),
+            "no repository": GOOD_DEPLOY.replace("          repository: ${{ job.workflow_repository }}\n", ""),
+            "the caller's commit": GOOD_DEPLOY.replace("ref: ${{ job.workflow_sha }}", "ref: ${{ github.sha }}"),
+            "the caller's repository": GOOD_DEPLOY.replace("repository: ${{ job.workflow_repository }}", "repository: ${{ github.repository }}"),
+            "another repository": GOOD_DEPLOY.replace("repository: ${{ job.workflow_repository }}", "repository: someone/else"),
+            "the repository twice": GOOD_DEPLOY.replace(own, own + "          repository: someone/else\n"),
+            "the commit twice": GOOD_DEPLOY.replace(own, own + "          ref: main\n"),
+            "only in a comment": GOOD_DEPLOY.replace(own, "          # repository: ${{ job.workflow_repository }}\n          # ref: ${{ job.workflow_sha }}\n"),
+        }.items():
+            with self.subTest(what):
+                self.assertFinding(self.lint(text, "deploy-hub.yml"), "without `repository: ${{ job.workflow_repository }}` and `ref: ${{ job.workflow_sha }}`")
+        # only the Hub is called, so only its checkout is held to this; the other workflows run in their own repository
+        self.assertEqual(self.lint(GOOD_DRIFT, "drift.yml"), [])
+        self.assertEqual(self.lint(GOOD_CHECKS), [])
+
+    def test_the_hub_never_reads_the_callers_commit_or_repository_and_a_comment_may_say_so(self):
+        for name in ("GITHUB_SHA", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_SHA", "GITHUB_WORKFLOW_REF", "${{ github.sha }}", "${{ github.repository }}", "${{ github.workflow_sha }}", "${{ github.workflow_ref }}"):
+            with self.subTest(name):
+                in_a_script = GOOD_DEPLOY.replace('run: echo "$ACTION"', f'run: echo "{name}"')
+                self.assertFinding(self.lint(in_a_script, "deploy-hub.yml"), "is the caller's when this workflow is called")
+                in_the_environment = GOOD_DEPLOY.replace("      ACTION: ${{ inputs.action }}\n", f"      ACTION: ${{{{ inputs.action }}}}\n      COMMIT: {name}\n")
+                self.assertFinding(self.lint(in_the_environment, "deploy-hub.yml"), "is the caller's when this workflow is called")
+        for fine in ("# GITHUB_SHA is the caller's", "# ${{ github.sha }} too"):
+            self.assertEqual(self.lint(GOOD_DEPLOY.replace("    steps:\n", f"    steps:\n      {fine}\n"), "deploy-hub.yml"), [], fine)
+        self.assertEqual(self.lint(GOOD_DEPLOY.replace('run: echo "$ACTION"', 'run: echo "$GITHUB_RUN_ID $GITHUB_RUN_NUMBER"'), "deploy-hub.yml"), [], "the run's own numbers are the caller's and unique there: they are meant")
+        # the workflows that are not called read their own commit from the plain context
+        self.assertEqual(self.lint(GOOD_DRIFT.replace('run: echo "$ACTION"', 'run: echo "$GITHUB_SHA"'), "drift.yml"), [])
 
     def test_the_deploy_workflow_runs_only_for_the_owner_on_main_and_never_twice_at_once(self):
         self.assertFinding(self.lint(GOOD_DEPLOY.replace("github.actor == 'tinodo' && ", ""), "deploy-hub.yml"), "only for the owner")
@@ -306,7 +351,7 @@ class Lint(unittest.TestCase):
         jobs = document["jobs"]
         self.assertEqual(len(jobs), 1)
         self.assertEqual(next(iter(jobs.values()))["if"], wl.OWNER_GUARD)
-        self.assertEqual(list(document.get("on", document.get(True))), ["workflow_dispatch"])  # YAML 1.1 reads the key `on` as true
+        self.assertEqual(sorted(document.get("on", document.get(True))), ["workflow_call", "workflow_dispatch"])  # YAML 1.1 reads the key `on` as true
         self.assertIn("concurrency", document)
 
     def test_a_script_that_goes_on_over_several_lines_is_read_to_its_end(self):

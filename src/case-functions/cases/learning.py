@@ -15,7 +15,11 @@ What is made of the lessons, all of it by code and all of it explainable:
   as a finding that needs one. Learning only ever makes a finding weaker: a calibrated confidence above the stated one changes nothing. The Watch calls `hold` only when LEARNING_HOLD is on,
   and it is off: the first run of tools/learning-check.py missed two of its thresholds (docs/proposals/15-learning.md), and what is not shown to help is not switched on.
 * `sync` is the sweep that the timer of the loop runs: it writes the lesson of every plan that has ended, adds the measured saving when the verifier has read the cost lines, and, for a
-  change that was made on a resource that Meternaut did not plant, looks in the Activity Log for the resource made again (a boomerang).
+  change that was made on a resource that Meternaut did not plant, looks in the Activity Log for the resource made again (a boomerang). It then weighs the answers about one resource against
+  each other (`superseded_ids`): when a person answered the same finding the other way later, the older answer is released and no longer counts for the calibration, so that the hold follows
+  a change of mind; an older answer that the newer one agrees with is kept.
+* `replay_rows` turns the lessons into the rows of tools/learning-check.py, so that the check can be made on real requests (the console gives them as a file); nothing in a row names a
+  person or a resource.
 * `OpenQuestions` says which earlier findings are still open questions: the case of the investigation is `needs_human` or `proposed`, and either no request to a person is open for the resource
   or the first AI was not sure enough, and no person answered lately or marked the resource do-not-touch. The Investigator gets them through the tool `recall_open_questions`, as a typed row
   for each (the resource, how often it was seen, for how long, how sure the last judgement was), and the Watch takes such a resource up again at once when the Investigator cites it again
@@ -27,6 +31,7 @@ updated memory held back 7 of the 9 proposals that people declined as wrong, and
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import math
 import re
@@ -214,7 +219,8 @@ def lesson_of(plan: PlanRecord, case: CaseRecord | None, decisions: Sequence, ac
         predicted_usd_month=round(predicted, 2) if predicted is not None else None,
         measured_usd_month=measured if measured is not None else (previous.measured_usd_month if previous else None),
         measured_at=previous.measured_at if previous and previous.measured_at else (stamp(now) if measured is not None else ""),
-        boomerang=bool(previous and previous.boomerang), boomerang_checked_at=previous.boomerang_checked_at if previous else "", updated_at=stamp(now))
+        boomerang=bool(previous and previous.boomerang), boomerang_checked_at=previous.boomerang_checked_at if previous else "", updated_at=stamp(now),
+        superseded=bool(previous and previous.superseded))  # a later answer's doing, which `sync` weighs again after every sweep
 
 
 def _same(a: LessonRecord, b: LessonRecord | None) -> bool:
@@ -288,13 +294,37 @@ def band_of(confidence: object) -> int | None:
     return next(index for index, (low, high) in enumerate(BANDS) if low <= value < high)
 
 
-def label_of(lesson: LessonRecord) -> bool | None:
-    """Whether a closed request says that the finding was right (approved) or wrong (declined as still needed, or with a wrong figure); None for everything else."""
+def answer_label(lesson: LessonRecord) -> bool | None:
+    """Whether a closed request says that the finding was right (approved) or wrong (declined as still needed, or with a wrong figure); None for everything else. What the person
+    answered, whatever came after."""
     if lesson.answer == "approve":
         return True
     if lesson.answer == "decline" and lesson.reason in WRONG_REASONS:
         return False
     return None
+
+
+def label_of(lesson: LessonRecord) -> bool | None:
+    """What a closed request says for the calibration: its answer's label, unless a later answer about the same resource contradicts it (`superseded`): a person who changed their mind
+    has the last word, and what they said before no longer counts."""
+    return None if lesson.superseded else answer_label(lesson)
+
+
+def superseded_ids(entries: Iterable[tuple[str, LessonRecord]]) -> set[str]:
+    """The lessons that a later answer contradicts: for each subject (a resource and the family of its request, which the caller names: a lesson has no resource of its own), the answers
+    are put in the order in which they closed, and the newest says what the person thinks now. An older answer that says the opposite is released, an older answer that says the
+    same is kept. Only answers that say whether the finding was right take part, and a lesson with no subject is never released."""
+    groups: dict[str, list[tuple[str, str, bool]]] = {}
+    for subject, lesson in entries:
+        label = answer_label(lesson)
+        if subject and label is not None:
+            groups.setdefault(subject, []).append((lesson.closed_at, lesson.lesson_id, label))
+    released: set[str] = set()
+    for found in groups.values():
+        found.sort()
+        newest = found[-1][2]
+        released.update(lesson_id for _, lesson_id, label in found[:-1] if label != newest)
+    return released
 
 
 def calibrated_confidence(stated: object, lessons: Iterable[LessonRecord]) -> Calibrated | None:
@@ -396,6 +426,68 @@ def recall(lessons: Iterable[LessonRecord], resource_type: str) -> dict:
     return answer
 
 
+# -- the replay of real requests ----------------------------------------------------------------------------------------------------------------------
+
+REPLAY_ROWS = 400  # the most rows that tools/learning-check.py takes in one file (its MAX_ROWS): the newest lessons are the ones that are exported
+REPLAY_MAX_DAY = 3650  # and the most days that it takes between the first request and the last answer
+
+
+def replay_rows(store: Store, limit: int = REPLAY_ROWS) -> list[dict]:
+    """The closed requests as the rows that `tools/learning-check.py` replays (its `--cases` file), so that the check can be made on real requests. It only reads the store.
+
+    A row is `id, type, family, stated, answer, reason, opened, closed` as the tool defines them: the days are counted from the first request that is exported, and a request that was
+    answered in the day that it opened closed the next day (an answer is never taken to come earlier than it did, so that it teaches no judgement that came before it). Every id is a
+    number of this file, and `subject` is another: the requests about one resource and one family share it, so that the replay can weigh a later answer against an earlier one (superseded_ids);
+    it names no resource. A lesson that the tool would refuse (no stated confidence, a type that is not one, a family that is not known, a time that cannot be read or is too far away) is
+    left out, and the rows are in the order in which the requests closed. Nothing of a person or of an estate is in them."""
+    from .families import registry  # imported here, as `recall` does: the registry loads the families
+
+    families = {*registry.names(), ADVISE}
+    usable: list[tuple[LessonRecord, dt.datetime, dt.datetime]] = []
+    for lesson in store.lessons_recent(limit):
+        stated = _number(lesson.confidence)
+        if stated is None or not 0.0 <= stated <= 1.0 or lesson.resource_type == "other" or type_word(lesson.resource_type) != lesson.resource_type or lesson.family not in families:
+            continue
+        try:
+            usable.append((lesson, parse(lesson.opened_at), parse(lesson.closed_at)))
+        except ValueError:
+            continue
+    if not usable:
+        return []
+    start = min(opened for _, opened, _ in usable).date()
+    subjects: dict[str, str] = {}
+    rows: list[dict] = []
+    for lesson, opened, closed in sorted(usable, key=lambda item: (item[2], item[0].lesson_id)):
+        first = (opened.date() - start).days
+        last = max((closed.date() - start).days, first + 1)
+        if last > REPLAY_MAX_DAY:
+            continue
+        row: dict = {"id": f"l{len(rows) + 1:03d}", "type": lesson.resource_type, "family": lesson.family, "stated": float(lesson.confidence), "answer": lesson.answer,  # type: ignore[arg-type]
+                     "reason": lesson.reason if lesson.answer == "decline" and lesson.reason in DECLINE_REASONS else "", "opened": first, "closed": last}
+        key = _subject_of(store, lesson)
+        if key:
+            row["subject"] = subjects.setdefault(key, f"s{len(subjects) + 1}")
+        rows.append(row)
+    return rows
+
+
+def _subject_of(store: Store, lesson: LessonRecord) -> str:
+    """What the answers about one resource have in common: the resource and the family of the plan. Only an answer that says whether the finding was right has one, and a plan that is gone
+    or cannot be read has none."""
+    if answer_label(lesson) is None:
+        return ""
+    try:
+        plan = store.plan_get(lesson.lesson_id)
+    except StoreError:
+        return ""
+    return f"{plan.resource_id.lower()}|{plan.family}" if plan is not None and plan.resource_id else ""
+
+
+def replay_text(store: Store, limit: int = REPLAY_ROWS) -> str:
+    """The rows of replay_rows as JSON lines, one row on each line: the file that `tools/learning-check.py --real --cases FILE` reads."""
+    return "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in replay_rows(store, limit))
+
+
 # -- the sweep ----------------------------------------------------------------------------------------------------------------------------------------
 
 def _boomerang(arm: object, plan: PlanRecord, action: ActionRecord, now: dt.datetime) -> bool | None:
@@ -429,13 +521,29 @@ def _complete(plan: PlanRecord, old: LessonRecord | None, now: dt.datetime) -> b
     return old.result == "verified" and bool(old.measured_at) and not _watched(plan, old, now)
 
 
+def _weigh(store: Store, plans: Sequence[PlanRecord], known: dict[str, LessonRecord], now: dt.datetime) -> int:
+    """Weighs the answers about the same resource against each other (superseded_ids) and keeps what changed: a lesson that a later answer contradicts is released, and one that no
+    later answer contradicts any more (an even later answer says the same again) counts again. Only the plans that the sweep looks at take part. Returns how many lessons changed."""
+    entries = [(f"{plan.resource_id.lower()}|{plan.family}", known[plan.plan_id]) for plan in plans if plan.resource_id and plan.plan_id in known]
+    released = superseded_ids(entries)
+    changed = 0
+    for _, lesson in entries:
+        flag = lesson.lesson_id in released
+        if lesson.superseded != flag:
+            store.lesson_put(replace(lesson, superseded=flag, updated_at=stamp(now)))
+            changed += 1
+    return changed
+
+
 def sync(store: Store, now: dt.datetime, *, arm: object | None = None, limit: int = SYNC_PLANS) -> int:
-    """Writes the lesson of every plan that has ended and has none, and brings the lessons that are not complete up to date (the measured saving, the look for a boomerang). Returns how
-    many lessons were written or changed. It never raises: a store that fails ends the sweep, and the next one goes on."""
+    """Writes the lesson of every plan that has ended and has none, and brings the lessons that are not complete up to date (the measured saving, the look for a boomerang), then weighs the
+    answers about one resource against each other (a person who changed their mind has the last word: `_weigh`). Returns how many lessons were written or changed. It never raises: a
+    store that fails ends the sweep, and the next one goes on."""
     written = reads = 0
     try:
         known = {lesson.lesson_id: lesson for lesson in store.lessons_recent(SYNC_LESSONS)}
-        for plan in store.plans_recent(limit):
+        plans = store.plans_recent(limit)
+        for plan in plans:
             old = known.get(plan.plan_id)
             if plan.state not in CLOSED or _complete(plan, old, now):
                 continue
@@ -451,7 +559,9 @@ def sync(store: Store, now: dt.datetime, *, arm: object | None = None, limit: in
                     lesson = replace(lesson, boomerang=found, boomerang_checked_at=stamp(now))
             if not _same(lesson, old):
                 store.lesson_put(lesson)
+                known[plan.plan_id] = lesson
                 written += 1
+        written += _weigh(store, plans, known, now)
     except StoreError as error:
         LOG.warning("learning: the lessons could not be brought up to date (%s)", type(error).__name__)
     except Exception as error:  # noqa: BLE001 (a sweep of the timer never stops the timer)

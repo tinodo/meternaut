@@ -11,12 +11,13 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
      part of the script. A value reaches a script through `env:` and is read as a shell variable.
   4. Each workflow sets `permissions:`; nothing is granted `write` except `id-token` in deploy-hub.yml and drift.yml.
   5. No workflow runs on `pull_request_target`, `workflow_run` or `issue_comment`.
-  6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml runs on `workflow_dispatch`
-     alone, with exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
-     `continue-on-error: true`. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
+  6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml runs on `workflow_dispatch` (by hand) and `workflow_call` (called by the one workflow of
+     the owner's private deploy repository: environment/deploy-repo/README.md) and on nothing else, with exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
+     `continue-on-error: true`. In a called run the `github` context is the caller's, so deploy-hub.yml never reads the commit or the repository from it (`github.sha`, `GITHUB_SHA`, `github.repository`,
+     `GITHUB_REPOSITORY` and their kin: the code's own commit and repository are `job.workflow_sha` and `job.workflow_repository`), and every `actions/checkout` of it names those two, so that the tools and
+     the templates that the steps run are this workflow's and never the caller's. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
      runs on `workflow_dispatch` alone for now, and may run on a timer (`schedule`) once the constant DRIFT_ON_A_TIMER is
-     set to True, which is done in the change that adds the timer after the read-only identity exists (environment/BOOTSTRAP.md,
-     step G4): until then a `schedule:` is refused. It has exactly one job whose `if:` is exactly the main-and-(owner-or-timer)
+     set to True, which is done in the change that adds the timer after the read-only identity exists (environment/BOOTSTRAP.md, step G4): until then a `schedule:` is refused. It has exactly one job whose `if:` is exactly the main-and-(owner-or-timer)
      guard, a `concurrency` group, no `continue-on-error: true`, and it never signs in with the deploy identity: the
      read-only identity is another one, with a role that cannot change anything.
 
@@ -43,6 +44,12 @@ STEP_START = re.compile(r"^(\s*)- (?:name|uses|run|id|if|env|with|shell|working-
 FORBIDDEN_EVENTS = {"pull_request_target", "workflow_run", "issue_comment"}
 ALLOWED_WRITES = {DEPLOY: {"id-token"}, DRIFT: {"id-token"}}
 OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
+# The Hub starts by hand in its own repository and is called by the one workflow of the private deploy repository, which itself starts by hand: nothing else may start it.
+DEPLOY_TRIGGERS = {"workflow_dispatch", "workflow_call"}
+# In a called run the `github` context, and the variables made from it, are the caller's: its commit and its repository, not the code's own. The code's own are `job.workflow_sha` and `job.workflow_repository`.
+CALLER_CONTEXT = re.compile(r"\bGITHUB_(?:SHA|REPOSITORY|WORKFLOW_SHA|WORKFLOW_REF)\b|\bgithub\.(?:sha|repository|workflow_sha|workflow_ref)\b")
+OWN_REPOSITORY = re.compile(r"^\s*repository:\s*\$\{\{\s*job\.workflow_repository\s*\}\}\s*$", re.M)
+OWN_COMMIT = re.compile(r"^\s*ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}\s*$", re.M)
 # The check that can only read may run on a timer, and a timer has no person behind it: the guard asks for main, and then for the owner or the timer. The identity that it signs in with has a federated
 # credential for the main branch alone and a role that cannot change anything, so a run elsewhere could not sign in, and a run that does sign in could change nothing.
 DRIFT_GUARD = "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')"
@@ -266,6 +273,11 @@ def lint_file(path: Path) -> list[str]:
         text = "\n".join(block)
         if re.search(r"uses:\s*actions/checkout@", text) and not re.search(r"persist-credentials:\s*false\b", text):
             add(first + 1, "actions/checkout without `persist-credentials: false`")
+        if name == DEPLOY and re.search(r"uses:\s*actions/checkout@", text) and not (
+                len(OWN_REPOSITORY.findall(text)) == 1 and len(re.findall(r"(?m)^\s*repository:", text)) == 1
+                and len(OWN_COMMIT.findall(text)) == 1 and len(re.findall(r"(?m)^\s*ref:", text)) == 1):
+            add(first + 1, "actions/checkout of the Hub without `repository: ${{ job.workflow_repository }}` and `ref: ${{ job.workflow_sha }}`, each once: a plain checkout is the repository that started the run, "
+                           "which for a call is the caller's, so the tools and the templates that the steps run would be the caller's and not this workflow's")
         for number, script in script_lines(block, first):
             if "${{" in script:
                 add(number, "a `${{ }}` expression inside a run script; pass the value through `env:` and read it as a shell variable")
@@ -288,8 +300,8 @@ def lint_file(path: Path) -> list[str]:
             add(number, f"signs in to Azure; only {DEPLOY} and {DRIFT} may")
     else:
         guard = GUARDS[name]
-        if name == DEPLOY and triggers != {"workflow_dispatch"}:
-            add(1, f"must run on `workflow_dispatch` alone, not on {sorted(triggers) or 'nothing'}")
+        if name == DEPLOY and triggers != DEPLOY_TRIGGERS:
+            add(1, f"must run on `workflow_dispatch` (by hand) and `workflow_call` (the deploy repository's workflow calls it) and on nothing else, not on {sorted(triggers) or 'nothing'}")
         if name == DRIFT and not ({"workflow_dispatch"} <= triggers <= ({"workflow_dispatch", "schedule"} if DRIFT_ON_A_TIMER else {"workflow_dispatch"})):
             if DRIFT_ON_A_TIMER:
                 add(1, f"must run on `workflow_dispatch`, and may run on a timer (`schedule`), and on nothing else, not on {sorted(triggers) or 'nothing'}")
@@ -311,6 +323,9 @@ def lint_file(path: Path) -> list[str]:
         for i, line in enumerate(lines):
             if re.match(r"^\s*continue-on-error:\s*true\b", code(line)):
                 add(i + 1, "`continue-on-error: true` would let a failed step pass")
+            if name == DEPLOY and CALLER_CONTEXT.search(code(line)):
+                add(i + 1, f"`{CALLER_CONTEXT.search(code(line)).group()}` is the caller's when this workflow is called, so it would name the deploy repository's commit or repository and not this code's own; "
+                           "use `job.workflow_sha` and `job.workflow_repository` (through the step's `env:`)")
             if name == DRIFT and DEPLOY_IDENTITY in code(line):
                 add(i + 1, f"`{DEPLOY_IDENTITY}` is the deploy identity, which can change Azure: the read-only check signs in with an identity of its own, whose role cannot change anything (environment/BOOTSTRAP.md, step G4)")
         if not azure_login:

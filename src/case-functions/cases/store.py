@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord,
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord,
                      StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
 
 RESOURCE = "https://storage.azure.com/"
@@ -31,7 +31,9 @@ RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS
     "mnruns", "mncases", "mnplans", "mndecisions", "mnactions", "mnswitches", "mnsettings", "mnnotes", "mnnonces", "mnmail")
 # What the system learns (docs/proposals/15-learning.md): the lessons of closed requests, the claims of the documentation and what the identity could see in each run.
 LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES)
+# The latest drift check of the app (cases/drift.py): one row.
+CHECKS = "mnchecks"
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -408,3 +410,28 @@ class TableStore:
     def profile_latest(self) -> CapabilityRecord | None:
         rows = self._query(PROFILES, "PartitionKey eq 'p'", 1)
         return self._records(rows, CapabilityRecord)[0] if rows else None
+
+    def check_latest(self) -> CheckRecord | None:
+        row, _ = self._get(CHECKS, "d", "latest")
+        return None if row is None else self._records([row], CheckRecord)[0]
+
+    def check_put(self, check: CheckRecord) -> None:
+        self._upsert(CHECKS, "d", "latest", check)
+
+    def check_claim(self, check: CheckRecord, after: str) -> bool:
+        """The write is made only over the check that the caller saw: a row that is not there is made with Insert Entity (409 when another caller made it first), and a row that is there is
+        replaced with the ETag that was read (`If-Match`, 412 when another caller replaced it)."""
+        row, etag = self._get(CHECKS, "d", "latest")
+        if (self._records([row], CheckRecord)[0].started_at if row is not None else "") != after:
+            return False
+        if row is None:
+            return self._insert(CHECKS, "d", "latest", check)
+        if not etag:
+            raise StoreError("the service gave no ETag for the check, so that nothing can be written over a check that it did not see")
+        try:
+            self._call("PUT", self._address(CHECKS, "d", "latest"), body=self._entity("d", "latest", check), headers={"Prefer": "return-no-content", "If-Match": etag})
+        except StoreError as error:
+            if self._status(error) in (404, 412):
+                return False
+            raise
+        return True

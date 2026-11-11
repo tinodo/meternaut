@@ -236,8 +236,9 @@ class TheRecordOfStep2(unittest.TestCase):
                       "**What stays open.**", "The gateway's own log is off, so the route is read from the model names and the answers and is not seen from the gateway's side.",
                       "The GPT-6 pair cannot run the tool loop on the Chat Completions route, so they serve the judges and the Skeptic agent only. The Responses route is \"coming soon\" for the AI Gateway tier (Learn).",
                       "What effort gpt-5.5 used when it called tools is not read: none is sent.",
-                      "**Next step, not built.** The Investigator's reads of the ten subscriptions take about 45 seconds a call, so its time for tool calls (220 seconds, a share of the 420 that an investigation may take) is used up after 5 calls. "
-                      "Faster reads (more workers, or one Resource Graph query for the listings) are the next improvement.",
+                      "- **Faster reads.** In run 4 the Investigator's reads of the ten subscriptions took about 45 seconds a call, so its time for tool calls (220 seconds, a share of the 420 that an investigation may take) was used up after 5 calls. "
+                      "After run 4 the tools asked Resource Graph once for all the subscriptions of the run and read the cost of four subscriptions at a time",
+                      "a listing that Resource Graph refuses with an error or a limit is asked again one subscription at a time, and a subscription that cannot be read is named in the answer. The read that still takes the time is the cost of each subscription, which Resource Graph does not hold.",
                       "**The way back** stays as it was: the switch set to False and a run of `foundry` and `cases`", "the owner decides"):
             self.assertIn(words, part, words)
         for old in ("has not been run", "built and not run yet", "If gpt-5.5 refuses too", "**Not known:**"):

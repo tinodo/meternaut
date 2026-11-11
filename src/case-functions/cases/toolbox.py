@@ -856,6 +856,7 @@ class Toolbox:
         self._without: set[str] = set()  # the types of which a read found no resource in any subscription, so that a later call does not look again
         self._reads: dict[tuple[str, str, int], dict[str, str]] = {}  # (type, metric, days) -> handle -> how its measurement counts: every resource whose numbers were shown
         self._missing: set[str] = set()  # ids that Resource Graph did not return
+        self._unlisted: set[str] = set()  # the subscriptions whose resources Resource Graph could not give in this run: no listing asks for them again, and every answer that lists names them
         self._spaces: dict[str, _Space] = {}  # handle -> what is known of its settings and tables
         self._volumes: dict[tuple[str, int], tuple[list, float, str]] = {}  # (handle, days) -> the tables by volume, the billable MB, and the word that says whether it was read
         self._kept: dict[tuple, object] = {}  # what the deeper reads of the run have read, by what they asked for: a read is made once in a run, whether it worked or not
@@ -1211,14 +1212,51 @@ class Toolbox:
         except READ_ERRORS as error:
             self.notes.append(f"the resources of some ids could not be read ({str(error)[:200]})")
 
+    def _graph(self, query: str) -> tuple[list[dict], list[str]]:
+        """The rows of one query of Resource Graph over the subscriptions of the list that no earlier listing of this run gave up on, and the subscriptions that could not be read now.
+
+        Resource Graph is asked once for all of them, and for no subscription that is not on the list: one query costs less of the quota than one for each (Learn, "Guidance for throttled
+        requests in Azure Resource Graph"). When it answers an error or a limit (an HTTP status from 400 up: the client has waited for a limit already), the subscriptions are asked one at a time,
+        in the order of the list, so that one that is denied or fails does not take the others with it: it is a note and is returned, and the answers that follow name it. A limit that holds for
+        the first of them holds for all (the quota is the identity's), so the others are not asked. When none can be read, the error of the first question is raised."""
+        subs = [sub for sub in self.subscriptions if sub not in self._unlisted]
+        if not subs:
+            raise HttpError(0, "no subscription could be listed in this run")
+        try:
+            return self.arm.graph_many(subs, query), []
+        except HttpError as error:
+            if len(subs) < 2 or not 400 <= error.status < 600:
+                raise
+            first = error
+        rows: list[dict] = []
+        failed: list[str] = []
+        for index, sub in enumerate(subs):
+            try:
+                rows += self.arm.graph_many([sub], query)
+            except HttpError as error:
+                if not 400 <= error.status < 600:
+                    raise
+                self._note(sub, "the resources", error)
+                failed.append(sub)
+                if error.status == 429:
+                    failed += subs[index + 1:]
+                    self.notes.append("the limit of Resource Graph holds, so the other subscriptions were not asked")
+                    break
+        if len(failed) == len(subs):
+            raise first
+        return rows, failed
+
     def _load_type(self, kind: str) -> None:
-        """The resources of one type in every subscription, from one query of Resource Graph for all of them. A subscription that has none has an empty list."""
-        if all((sub, kind) in self._by_type for sub in self.subscriptions):
+        """The resources of one type in every subscription, from one query of Resource Graph for all of them (`_graph`). A subscription that has none has an empty list, and one that could not be
+        read has no list: it is in `_unlisted`."""
+        if all((sub, kind) in self._by_type or sub in self._unlisted for sub in self.subscriptions):
             return
-        found: dict[str, list[str]] = {sub: [] for sub in self.subscriptions}
-        for row in self.arm.graph_many(list(self.subscriptions), TYPE_RESOURCES.format(type=kind)):
+        rows, failed = self._graph(TYPE_RESOURCES.format(type=kind))
+        self._unlisted.update(failed)
+        found: dict[str, list[str]] = {sub: [] for sub in self.subscriptions if sub not in self._unlisted}
+        for row in rows:
             owner = self._owner_of(row)
-            entry = self._ingest(row, owner) if owner else None
+            entry = self._ingest(row, owner) if owner in found else None
             if entry is not None and entry.sub == owner and entry.key not in found[owner]:
                 found[owner].append(entry.key)
         for sub, keys in found.items():
@@ -1228,14 +1266,16 @@ class Toolbox:
         return [self._entries[key] for sub in self.subscriptions if subs is None or sub in set(subs) for key in self._by_type.get((sub, kind), [])]
 
     def _load_counts(self) -> None:
-        """The number of resources of each type in every subscription, from one query of Resource Graph for all of them."""
-        if all(sub in self._counts for sub in self.subscriptions):
+        """The number of resources of each type in every subscription, from one query of Resource Graph for all of them (`_graph`)."""
+        if all(sub in self._counts or sub in self._unlisted for sub in self.subscriptions):
             return
-        found: dict[str, tuple[int, dict[str, int]]] = {sub: (0, {}) for sub in self.subscriptions}
-        for row in self.arm.graph_many(list(self.subscriptions), TYPE_COUNTS):
+        rows, failed = self._graph(TYPE_COUNTS)
+        self._unlisted.update(failed)
+        found: dict[str, tuple[int, dict[str, int]]] = {sub: (0, {}) for sub in self.subscriptions if sub not in self._unlisted}
+        for row in rows:
             owner = self._owner_of(row)
             number = row.get("n")
-            if owner is None or isinstance(number, bool) or not isinstance(number, int) or number < 0:
+            if owner not in found or isinstance(number, bool) or not isinstance(number, int) or number < 0:
                 continue
             total, counts = found[owner]
             kind = type_word(str(row.get("type") or "").lower())
@@ -1255,10 +1295,10 @@ class Toolbox:
             for sub in self.subscriptions:
                 self._note(sub, "the resources", error)
             return {"error": "unavailable"}
-        self._prefetch_costs(self.subscriptions)
+        self._prefetch_costs([sub for sub in self.subscriptions if sub not in self._unlisted])
         blocks: list[dict] = []
         for sub in self.subscriptions:
-            if sub in self._skipped:
+            if sub in self._skipped or sub in self._unlisted:
                 continue
             block: dict = {"subscription": self._label(sub)}
             total, counts = self._counts[sub]
@@ -1279,7 +1319,10 @@ class Toolbox:
             if len(kinds) > TOP_TYPES:
                 block["types_not_shown"] = len(kinds) - TOP_TYPES
             blocks.append(block)
-        answer = {"window_days": MAX_DAYS, "subscriptions": blocks, **self._unread()}
+        said: dict = {}
+        if self._unlisted:
+            self._listing(said, "unavailable", [sub for sub in self.subscriptions if sub in self._unlisted])  # the subscriptions that Resource Graph could not list: not "none"
+        answer = {"window_days": MAX_DAYS, "subscriptions": blocks, **said, **self._unread()}
         if len(blocks) > MAX_BLOCKS:
             # An estate with many subscriptions: the dearest are shown, and the count of the others says that there are more.
             blocks.sort(key=lambda block: (-(block.get("cost30d") or 0.0), len(block["subscription"]), block["subscription"]))
@@ -1299,8 +1342,9 @@ class Toolbox:
         return answer
 
     def _listed(self, kind: str, order: str) -> tuple[list[_Entry], list[str]]:
-        """The resources of one type in the order of a listing, and the subscriptions whose resources could not be read (none: one read of Resource Graph covers every subscription, and a
-        read that fails is raised). The cost lines of the subscriptions that have such a resource are read at the same time, `read_workers` of them at once."""
+        """The resources of one type in the order of a listing, and the subscriptions whose resources could not be read (`_graph`: one read of Resource Graph covers every subscription, and the
+        ones that it could not give are named, never counted as having none). The cost lines of the subscriptions that have such a resource are read at the same time, `read_workers` of them
+        at once."""
         self._load_type(kind)
         entries = self._entries_of(kind)
         self._prefetch_costs(sorted({entry.sub for entry in entries}, key=list(self.subscriptions).index))
@@ -1310,7 +1354,7 @@ class Toolbox:
             return 0.0 if total is None else total
 
         entries.sort(key=(lambda entry: (-entry.size, -cost(entry), entry.key)) if order == "count" else (lambda entry: (-cost(entry), entry.key)))
-        return entries, []
+        return entries, [sub for sub in self.subscriptions if sub in self._unlisted]
 
     def _tool_list_resources(self, args: dict) -> dict:
         kind, order, limit, offset = args["type"], args["order_by"] or "cost", args["limit"] or DEFAULT_LISTED, args["offset"] or 0
@@ -1339,16 +1383,20 @@ class Toolbox:
         return answer
 
     def _one_of_type(self, kind: str) -> tuple[str | None, bool]:
-        """The id of one resource of the type, from a list that was read before or else from one read of Resource Graph for every subscription, and whether the search was complete (it
-        always is: there is one read, and a failed read is raised)."""
+        """The id of one resource of the type, from a list that was read before or else from one read of Resource Graph for every subscription (`_graph`), and whether the search was complete:
+        it is not when none was found and a subscription could not be read, so that nothing is remembered about the type and a later call looks again."""
         for sub in self.subscriptions:
             if self._by_type.get((sub, kind)):
                 return self._entries[self._by_type[(sub, kind)][0]].resource.resource_id, True
         if kind in self._without or all((sub, kind) in self._by_type for sub in self.subscriptions):
             return None, True
-        for row in self.arm.graph_many(list(self.subscriptions), ONE_OF_TYPE.format(type=kind)):
-            if str(row.get("id") or "").lower().startswith("/subscriptions/"):
+        rows, failed = self._graph(ONE_OF_TYPE.format(type=kind))
+        self._unlisted.update(failed)
+        for row in rows:
+            if str(row.get("id") or "").lower().startswith("/subscriptions/") and self._owner_of(row) is not None:
                 return str(row["id"]), True
+        if self._unlisted:
+            return None, False
         self._without.add(kind)
         return None, True
 
@@ -2122,6 +2170,8 @@ class Toolbox:
         today = self._today()
         start, end = today - dt.timedelta(days=days), today - dt.timedelta(days=1)
         amortized = basis == "amortized"
+        subs: list[str]
+        unlisted: list[str] = []
         if handle is not None:
             entry = self._entry(handle)
             if entry.part_of is not None:
@@ -2129,6 +2179,7 @@ class Toolbox:
             subs, where, scope = [entry.sub], ("ResourceId", (entry.resource.resource_id,)), entry.key
         else:
             self._load_type(kind)
+            unlisted = [sub for sub in self.subscriptions if sub in self._unlisted]
             subs = sorted({item.sub for item in self._entries_of(kind)}, key=list(self.subscriptions).index)
             where, scope = ("ResourceType", (kind,)), kind
 
@@ -2161,8 +2212,8 @@ class Toolbox:
                 per_resource[resource] = per_resource.get(resource, 0.0) + amount
         total, with_cost = _money(sum(daily)), [amount for amount in daily if amount > 0]
         said: dict = {}
-        if failed:
-            self._listing(said, "unavailable", failed)
+        if failed or unlisted:
+            self._listing(said, "unavailable", failed + [sub for sub in unlisted if sub not in failed])
         said.update(self._unread())
         answer: dict = {**({"handle": handle} if handle is not None else {"type": kind}), "basis": basis, "days": days, "from": start.isoformat(), "to": end.isoformat(),
                         "total": total, "days_with_cost": len(with_cost), "daily": [_cents(_money(amount)) for amount in daily], **said}

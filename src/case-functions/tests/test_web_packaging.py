@@ -89,7 +89,7 @@ class ThePackage(unittest.TestCase):
         self.assertEqual(sorted(web.__all__), ["Request", "Response", "Services", "handle", "parse_request"])
         for name in web.__all__:
             self.assertTrue(hasattr(web, name))
-        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "delegate", "people", "now", "host", "acts_on", "models", "base"])
+        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "delegate", "people", "now", "host", "acts_on", "models", "base", "drift", "lessons"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Request)], ["method", "path", "query", "headers", "form", "body", "problem"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Response)], ["status", "headers", "body"])
 
@@ -139,12 +139,12 @@ class ThePackage(unittest.TestCase):
             ("GET", "/"), ("GET", "/ok/<id>"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"), ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
             ("GET", "/history"), ("GET", "/me/decisions"), ("GET", "/me/activity"), ("GET", "/me/settings"), ("POST", "/me/settings"), ("POST", "/me/settings/export"),
             ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops"), ("GET", "/ops/runs"),
-            ("GET", "/ops/permissions"), ("GET", "/ops/pause"), ("POST", "/ops/pause")})
+            ("GET", "/ops/permissions"), ("GET", "/ops/pause"), ("POST", "/ops/pause"), ("POST", "/ops/drift"), ("POST", "/ops/answers")})
         self.assertNotIn(("POST", "/ok/<id>/withdraw"), shown, "an approval cannot be cancelled: the change is made right after the sign-in")
         self.assertEqual({method for method, *_ in router.ROUTES}, {"GET", "POST"}, "a page that shows something is a GET and a change is a POST")
         needs = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)): tuple(roles) for method, pattern, _, roles in router.ROUTES if roles}
         self.assertEqual(needs, {("GET", "/ops"): ("ops",), ("GET", "/ops/runs"): ("ops",), ("GET", "/ops/permissions"): ("ops", "owner"), ("GET", "/ops/pause"): ("ops",),
-                                 ("POST", "/ops/pause"): ("ops",)})
+                                 ("POST", "/ops/pause"): ("ops",), ("POST", "/ops/drift"): ("ops",), ("POST", "/ops/answers"): ("ops",)})
         self.assertNotIn(("GET", "/arm/return"), needs, "any listed person may come back from the sign-in: the delegate checks that the sign-in was started by this person")
 
 
