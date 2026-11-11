@@ -2069,5 +2069,122 @@ class RetireTheUsageApp(unittest.TestCase):
         self.assertEqual(fake.writes(), [])
 
 
+class Offboard(unittest.TestCase):
+    """The reverse of grant: exactly the assignments that grant makes, at exactly their places, and nothing else (docs/proposals/03-access-and-onboarding.md, I11)."""
+
+    def go(self, extra, fake, **options):
+        return run(["offboard", *PLACES, *extra], fake, **options)
+
+    def held(self, fake):
+        return {(x["principal"], x["role_id"], x["scope"]) for x in fake.assignments}
+
+    def test_a_dry_run_names_every_assignment_that_grant_made_and_removes_none(self):
+        fake = FakeAz(old=False)
+        before = list(fake.assignments)
+        code, out, _, _ = self.go([], fake)
+        self.assertEqual(code, 1, "something is left to take away")
+        self.assertIn("dry run", out)
+        self.assertEqual(fake.writes(), [])
+        self.assertEqual(fake.assignments, before)
+        self.assertEqual(len(before), 4)
+        self.assertEqual(sorted(re.findall(r"az role assignment delete --ids (\S+)", out)), sorted(x["id"] for x in before))
+        self.assertIn("4 assignment(s) would be removed, and nothing else", out)
+
+    def test_apply_removes_exactly_those_and_what_grant_did_not_make_stays(self):
+        fake = FakeAz(old=False)
+        reader, monitoring, cost = BUILTIN["Reader"], BUILTIN["Monitoring Reader"], BUILTIN["Cost Management Reader"]
+        below = f"{ESTATE}/resourceGroups/rg-below"
+        others = {("somebody-else", reader, ESTATE), (NEW_CASES, reader, below), (NEW_CASES, monitoring, ESTATE), ("somebody-else", cost, MANAGEMENT_GROUP), (OLD_CASES, reader, ESTATE)}
+        for principal, role, scope in others:
+            fake.grant(principal, role, scope)
+        code, out, _, _ = self.go(["--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.held(fake), others, "another identity's assignment of the same role (the old user-assigned identity of the app too: `retire` is for that), the same identity's assignment below the place "
+                                                  "or of another role, and a management group's all stay")
+        self.assertEqual(len(re.findall(r"^  removed ", out, re.M)), 4)
+        self.assertEqual([c[:3] for c in fake.writes()], [["role", "assignment", "delete"]] * 4, "it deletes assignments and writes nothing else")
+        self.assertIn("4 of 4 gone or not held.", out)
+
+    def test_it_never_removes_an_identity_or_a_role(self):
+        fake = FakeAz()
+        roles, identities = dict(fake.roles), dict(fake.identities)
+        self.go(["--apply", "--yes"], fake)
+        self.assertEqual((fake.roles, fake.identities), (roles, identities))
+        for call in fake.calls:
+            self.assertNotEqual(call[:3], ["role", "definition", "delete"])
+            self.assertNotIn(call[:2], (["identity", "delete"], ["functionapp", "delete"]))
+
+    def test_the_same_role_held_only_at_a_place_above_is_left_alone_and_nothing_is_removed_for_it(self):
+        fake = FakeAz(granted=False)
+        fake.grant(NEW_CASES, BUILTIN["Cost Management Reader"], MANAGEMENT_GROUP)
+        code, out, _, _ = self.go(["--only", "R2"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"left alone\s+R2\s+.*Cost Management Reader\s+at /subscriptions/")
+        self.assertIn("a place above, which this tool does not take away", out)
+        self.assertIn("Nothing to take away.", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_an_identity_that_does_not_exist_holds_nothing_and_the_others_are_still_offboarded(self):
+        fake = FakeAz(old=False)
+        fake.sites = {CASES_SITE: NEW_CASES}
+        code, out, _, _ = self.go(["--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertIn("no identity", out)
+        self.assertEqual(self.held(fake), {(NEW_USAGE, BUILTIN["Monitoring Reader"], INSIGHTS), (NEW_USAGE, USAGE_READER_ID, WORKSPACE)},
+                         "what only a system-assigned identity holds cannot be read while its app is not there, so it stays and the line says why")
+
+    def test_only_limits_it_to_the_grants_named(self):
+        fake = FakeAz(old=False)
+        code, out, _, _ = self.go(["--only", "R1", "--apply", "--yes"], fake)
+        self.assertEqual(code, 0, out)
+        self.assertEqual({x["principal"] for x in fake.assignments if x["role_id"] == BUILTIN["Reader"]}, set())
+        self.assertEqual(len(fake.assignments), 3)
+        code, _, err, _ = self.go(["--only", "R99"], FakeAz(old=False))
+        self.assertEqual(code, 1)
+        self.assertIn("R99", err)
+
+    def test_a_second_run_finds_nothing_and_a_removal_that_azure_did_not_make_is_not_called_gone(self):
+        again = FakeAz(old=False)
+        self.go(["--apply", "--yes"], again)
+        code, out, _, _ = self.go([], again)
+        self.assertEqual((code, again.assignments), (0, []))
+        self.assertIn("Nothing to take away.", out)
+        stubborn = FakeAz(old=False)
+        stubborn.stubborn = {stubborn.assignments[0]["id"]}
+        code, out, _, _ = self.go(["--apply", "--yes"], stubborn)
+        self.assertEqual(code, 1, "it reads again after it writes, and one assignment is still there")
+        self.assertIn("still there", out.split("Checking again:")[1])
+        self.assertIn("3 of 4 gone or not held.", out)
+
+    def test_it_asks_first_and_a_pipeline_may_not_apply_but_a_dry_run_is_allowed(self):
+        fake, asked = FakeAz(old=False), []
+        code, out, _, _ = self.go(["--apply"], fake, answers=("yes",), asked=asked)
+        self.assertEqual(code, 0)
+        self.assertIn("operator@example.com", asked[0])
+        fake = FakeAz(old=False)
+        code, _, err, _ = self.go(["--apply"], fake, answers=("no",))
+        self.assertEqual((code, fake.writes()), (1, []))
+        self.assertIn("nothing was changed", err)
+        code, _, err, _ = self.go(["--apply"], FakeAz(old=False), answers=())
+        self.assertEqual(code, 1)
+        self.assertIn("needs --yes", err)
+        fake = FakeAz(old=False)
+        code, _, err, _ = self.go(["--apply", "--yes"], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, fake.calls), (1, []))
+        self.assertIn("never a pipeline", err)
+        code, out, _, _ = self.go([], fake, env={"GITHUB_ACTIONS": "true"})
+        self.assertIn("dry run", out)
+        self.assertEqual(fake.writes(), [])
+
+    def test_the_file_of_the_repository_offboards_what_it_grants_and_the_tool_says_what_it_does_in_its_own_words(self):
+        fake = FakeAz(old=False)
+        fake.sites = {CASES_SITE: NEW_CASES}
+        code, out, _, _ = run(["offboard", *PLACES, "--only", "R1,R2"], fake, real=True)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(len(re.findall(r"az role assignment delete --ids ", out)), 2)
+        self.assertIn("offboard", ar.__doc__)
+        self.assertIn("never removes an identity, a custom role or an assignment of anybody", re.sub(r"\s+", " ", ar.__doc__))
+
+
 if __name__ == "__main__":
     unittest.main()

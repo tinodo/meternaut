@@ -87,7 +87,7 @@ ENTRA_AUTH_TYPES = ("ProjectManagedIdentity", "AAD", "ManagedIdentity")
 # The policies of environment/governance/main.bicep (names of the assignments at the project's group) and the rules that it makes (a test holds this list to the template).
 OUR_ASSIGNMENTS = ("meternaut-approved-models", "meternaut-model-eligibility")
 OPTIONAL_ASSIGNMENTS = ("meternaut-guardrail-audit", "meternaut-cmk-audit")
-ALERT_RULES = ("refusals", "client-errors", "server-errors", "near-limit", "harness-trips", "drift-fail", "drift-heartbeat")
+ALERT_RULES = ("refusals", "client-errors", "server-errors", "near-limit", "harness-trips", "drift-fail", "drift-heartbeat", "timer-round-failed")
 ALERT_RULE_OF_ACCESS_LIST = "outside-access-list"
 ACTION_GROUP = "ag-meternaut-ai-security"
 WORKBOOK_NAME = "Meternaut AI security"
@@ -1274,7 +1274,7 @@ def parse(argv) -> argparse.Namespace:
     parser.add_argument("--models", default="environment/models.json")
     parser.add_argument("--policies", default="environment/aigateway/policies.json")
     parser.add_argument("--access-list", default="environment/aigateway/contracts.json")
-    parser.add_argument("--commit", default="", help="the commit of main that the cases app is compared with (GITHUB_SHA)")
+    parser.add_argument("--commit", default="", help="the commit of main that the cases app is compared with (the Hub passes the commit of its own code, drift.yml GITHUB_SHA)")
     parser.add_argument("--app-dir", default="", help="the app's folder at that commit (src/case-functions), for the digest of its own files")
     parser.add_argument("--accepted-exemptions", default=None, help="the policy exemptions that the owner knows of, as assignment/exemption, comma separated (the repository variable DRIFT_ACCEPTED_EXEMPTIONS); unset: not judged")
     parser.add_argument("--accepted-deny", default=None, help="the non-compliant Deny policies that the owner knows of, as assignment/reference/type, comma separated (DRIFT_ACCEPTED_DENY); unset: not judged")
