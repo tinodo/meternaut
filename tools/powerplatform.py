@@ -91,6 +91,8 @@ DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 RESOURCE_GROUP_RE = re.compile(r"^[A-Za-z0-9._()-]{1,90}$")
 POLICY_RE = re.compile(r"^[A-Za-z0-9._-]{1,90}$")
 BAP_PATH = r"/providers/Microsoft\.BusinessAppPlatform"
+# The platform names the operation of a 202 on its regional host (unitedstates.api.bap.microsoft.com, seen on 2026-11-11), which is the same service and takes the same token: https, at most one label in front, no user, no port.
+BAP_HOST_RE = re.compile(r"^(?:[a-z0-9-]+\.)?api\.bap\.microsoft\.com$")
 # (method, a pattern of the whole address): everything that this tool may send. Azure Resource Manager is only ever read.
 CALLS = (
     ("GET", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/(?:scopes/admin/)?environments(?:\?[^#]*)?$")),
@@ -98,7 +100,7 @@ CALLS = (
     ("POST", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/environments\?api-version={ENVIRONMENTS_API}$")),
     ("POST", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/environments/{GUID}/governanceConfiguration\?api-version={ENVIRONMENTS_API}$")),
     ("POST", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/environments/{GUID}/enterprisePolicies/NetworkInjection/(?:link|unlink)\?api-version={LINK_API}$")),
-    ("GET", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/[^#]*$")),   # the operation that a 202 names: it is always on the same host
+    ("GET", re.compile(rf"^https://(?:[a-z0-9-]+\.)?api\.bap\.microsoft\.com{BAP_PATH}/[^#]*$")),   # the operation that a 202 names: on the host of the platform or on its regional host
     ("GET", re.compile(rf"^{re.escape(ARM)}/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/[A-Za-z0-9._-]+\?api-version={POLICY_API}$")),
     ("GET", re.compile(rf"^{re.escape(ARM)}/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]+/providers/Microsoft\.Network/virtualNetworks/[A-Za-z0-9._-]+/subnets/[A-Za-z0-9._-]+\?api-version={SUBNET_API}$")),
 )
@@ -106,6 +108,12 @@ TOKEN_SHAPES = (re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9
 HIDDEN = "[token hidden]"
 
 Http = Callable[[str, str, Mapping[str, str], "bytes | None"], "tuple[int, Mapping[str, str], bytes]"]
+
+
+def on_bap_host(url: str) -> bool:
+    """Whether an address is on the host of the Business Application Platform or on its regional host, over https, and nowhere else: the token goes nowhere else."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme == "https" and bool(BAP_HOST_RE.match(parts.netloc))
 
 
 class Problem(Exception):
@@ -213,11 +221,12 @@ class Client:
 
     def send(self, method: str, url: str, body: dict | None = None) -> Answer:
         host = urllib.parse.urlsplit(url).netloc
-        if url.split("?", 1)[0].count("://") != 1 or host not in (urllib.parse.urlsplit(BAP).netloc, urllib.parse.urlsplit(ARM).netloc):
+        platform = on_bap_host(url)
+        if url.split("?", 1)[0].count("://") != 1 or not (platform or host == urllib.parse.urlsplit(ARM).netloc):
             raise Problem(f"{host or url} is not a host that this tool talks to: the token goes nowhere else")
         if not any(m == method and p.match(url) for m, p in CALLS):
             raise Problem(f"{method} {url.split('?', 1)[0]} is not one of the calls that this tool sends")
-        audience = BAP_AUDIENCE if host == urllib.parse.urlsplit(BAP).netloc else ARM_AUDIENCE
+        audience = BAP_AUDIENCE if platform else ARM_AUDIENCE
         headers = {"Authorization": f"Bearer {self.tokens(audience)}", "Accept": "application/json"}
         data = None
         if body is not None:
@@ -427,8 +436,8 @@ def command_status(args: argparse.Namespace, client: Client, out: Callable[[str]
 # ---- waiting for an operation --------------------------------------------------------------------------------------------------------------------
 
 def wait_for_operation(client: Client, url: str, label: str, out: Callable[[str], None], timeout: float, clock: Callable[[], float]) -> dict:
-    """Polls the operation that a 202 named, until it ends. The address has to be on the BAP host: the token goes nowhere else."""
-    if not url.startswith(BAP + "/"):
+    """Polls the operation that a 202 named, until it ends. The address has to be on the BAP host or its regional host: the token goes nowhere else."""
+    if not on_bap_host(url):
         raise Problem(f"the operation of {label} is at {urllib.parse.urlsplit(url).netloc or url}, which is not the Business Application Platform: it is not followed")
     deadline = clock() + timeout
     last = ""
@@ -637,7 +646,10 @@ def command_link(args: argparse.Namespace, client: Client, out: Callable[[str], 
         raise Problem(f"the {verb} did not start: {message_of(answer)}")
     location = answer.header("operation-location")
     if location:
-        wait_for_operation(client, location, f"the {verb}", out, WAIT_SECONDS, clock)
+        try:
+            wait_for_operation(client, location, f"the {verb}", out, WAIT_SECONDS, clock)
+        except Problem as problem:
+            raise Problem(f"{str(problem).rstrip('.')}. The {verb} itself was accepted: run `status`, which says what the environment shows now") from problem
     else:
         out(f"  the {verb} was accepted with no operation to follow (HTTP {answer.status})")
     after = facts(read_environment(client, str(f["id"])))
@@ -721,10 +733,20 @@ def command_steps(args: argparse.Namespace, out: Callable[[str], None]) -> int:
 
 # ---- the command line ----------------------------------------------------------------------------------------------------------------------------
 
+def ask_on_terminal(prompt: str) -> "str | None":
+    """The answer of a person at a terminal, or None when there is nobody to ask (no terminal, or one that is closed)."""
+    if not sys.stdin.isatty():
+        return None
+    try:
+        return input(prompt)
+    except EOFError:
+        return None
+
+
 def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int, str, str]] = run_az, transport: Http = default_http, sleep: Callable[[float], None] = time.sleep,
          out: Callable[[str], None] = print, ask: Callable[[str], "str | None"] | None = None, env: Mapping[str, str] | None = None, clock: Callable[[], float] = time.monotonic) -> int:
     env = os.environ if env is None else env
-    ask = ask or (lambda prompt: input(prompt) if sys.stdin.isatty() else None)
+    ask = ask or ask_on_terminal
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
