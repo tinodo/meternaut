@@ -12,6 +12,7 @@ import sys
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("powerplatform_of_the_tests", ROOT / "tools" / "powerplatform.py")
@@ -33,6 +34,7 @@ BAP = "https://api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform"
 BAP_TOKEN = "bap-token-0123456789"
 ARM_TOKEN = "arm-token-9876543210"
 OPERATION = f"{BAP}/operations/op-1"
+REGIONAL_OPERATION = "https://unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/op-1"
 
 
 def environment(env_id=ENV, name="cards", location="sweden", region="swedencentral", sku="Developer", managed="Standard", state="Succeeded", management="Ready", policy=None, instance="https://org.invalid/"):
@@ -56,6 +58,7 @@ class World:
         self.policy = {"id": POLICY, "kind": "NetworkInjection", "location": "sweden", "properties": {"systemId": SYSTEM_ID, "networkInjection": {"virtualNetworks": [{"id": NETWORK, "subnet": {"name": "snet-powerplatform"}}]}}}
         self.subnet = {"properties": {"addressPrefix": "10.53.0.96/27", "delegations": [{"properties": {"serviceName": "Microsoft.PowerPlatform/enterprisePolicies"}}]}}
         self.operation_states = ["Running", "Succeeded"]
+        self.operation_url = OPERATION
         self.operation_error = None
         self.reads_before_ready = 2
         self.creating = None
@@ -81,11 +84,12 @@ class World:
         self.calls.append((method, url, payload))
         token = headers["Authorization"].removeprefix("Bearer ")
         host = url.split("/")[2]
-        assert token == (BAP_TOKEN if host == "api.bap.microsoft.com" else ARM_TOKEN), "a token goes to its own host only"
+        platform = host == "api.bap.microsoft.com" or host.endswith(".api.bap.microsoft.com")
+        assert token == (BAP_TOKEN if platform else ARM_TOKEN), "a token goes to its own host only"
         path = url.split("?")[0]
         if host == "management.azure.com":
             return self.arm(method, path)
-        return self.bap(method, path, payload)
+        return self.bap(method, path.replace(host, "api.bap.microsoft.com", 1), payload)
 
     def bap(self, method, path, payload):
         admin = "/scopes/admin/" in path
@@ -131,7 +135,7 @@ class World:
                     properties["enterprisePolicies"] = {"VNets": {"id": POLICY, "linkStatus": "Linked"}}
                 else:
                     properties.pop("enterprisePolicies", None)
-            return 202, {"operation-location": OPERATION, "Retry-After": "7"}, b""
+            return 202, {"operation-location": self.operation_url, "Retry-After": "7"}, b""
         return 500, {}, b"the fake has no such route: " + path.encode()
 
     def arm(self, method, path):
@@ -405,6 +409,21 @@ class Link(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("does not report the policy yet", out)
 
+    def test_the_operation_that_the_platform_names_on_its_regional_host_is_followed_with_the_platform_token(self):
+        world = World(operation_url=REGIONAL_OPERATION)
+        code, out, err = world.run([*LINK, "--apply", "--yes"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(("GET", REGIONAL_OPERATION, None), world.calls)
+        self.assertIn("the link: Succeeded", out)
+
+    def test_an_operation_that_is_not_followed_after_an_accepted_link_says_that_the_link_was_accepted(self):
+        world = World(operation_url="https://evil.example/providers/Microsoft.BusinessAppPlatform/operations/op-1")
+        code, _, err = world.run([*LINK, "--apply", "--yes"])
+        self.assertEqual(code, 1)
+        self.assertIn("is not the Business Application Platform", err)
+        self.assertIn("The link itself was accepted: run `status`", err)
+        self.assertEqual([u for _, u, _ in world.calls if "evil.example" in u], [])
+
     def test_a_policy_in_another_resource_group_than_the_one_named_is_not_taken_for_the_projects(self):
         world = World()
         world.environments[ENV] = environment(policy=OTHER_POLICY)
@@ -505,17 +524,41 @@ class TheTokensAndTheCalls(unittest.TestCase):
         client = pp.Client(pp.Tokens(World().runner, pp.Hider()), World().transport, lambda s: None)
         for method, url in (("POST", "https://management.azure.com/subscriptions/x"), ("DELETE", f"{BAP}/environments/{ENV}?api-version=2021-04-01"), ("GET", "https://evil.example/providers/Microsoft.BusinessAppPlatform/environments"),
                             ("PUT", f"https://management.azure.com{POLICY}?api-version=2020-10-30-preview"), ("GET", "https://graph.microsoft.com/v1.0/me"),
-                            ("POST", f"{BAP}/environments/{ENV}/enterprisePolicies/Encryption/link?api-version=2019-10-01")):
+                            ("POST", f"{BAP}/environments/{ENV}/enterprisePolicies/Encryption/link?api-version=2019-10-01"),
+                            ("POST", f"https://unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/environments/{ENV}/enterprisePolicies/NetworkInjection/link?api-version=2019-10-01"),
+                            ("DELETE", "https://unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/1")):
             with self.assertRaises(pp.Problem, msg=f"{method} {url}"):
                 client.send(method, url, {})
 
-    def test_the_address_of_an_operation_is_followed_only_on_the_platform_host(self):
-        world = World()
-        client = pp.Client(pp.Tokens(world.runner, pp.Hider()), world.transport, lambda s: None)
-        with self.assertRaises(pp.Problem) as caught:
-            pp.wait_for_operation(client, "https://evil.example/providers/Microsoft.BusinessAppPlatform/operations/1", "x", lambda s: None, 60, lambda: 0)
-        self.assertIn("is not the Business Application Platform", str(caught.exception))
-        self.assertEqual(world.audiences, [])
+    def test_the_address_of_an_operation_is_followed_only_on_the_platform_host_or_its_regional_host(self):
+        for url in ("https://evil.example/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://api.bap.microsoft.com.evil.example/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://evil.example/api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "http://unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://a.b.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://user@unitedstates.api.bap.microsoft.com/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://unitedstates.api.bap.microsoft.com:8443/providers/Microsoft.BusinessAppPlatform/operations/1",
+                    "https://unitedstates.api.bap.microsoft.com@evil.example/providers/Microsoft.BusinessAppPlatform/operations/1"):
+            world = World()
+            client = pp.Client(pp.Tokens(world.runner, pp.Hider()), world.transport, lambda s: None)
+            with self.assertRaises(pp.Problem, msg=url) as caught:
+                pp.wait_for_operation(client, url, "x", lambda s: None, 60, lambda: 0)
+            self.assertIn("is not the Business Application Platform", str(caught.exception), url)
+            self.assertEqual((world.audiences, world.calls), ([], []), url)
+
+    def test_a_terminal_that_is_closed_or_absent_is_nobody_to_ask(self):
+        class Terminal:
+            def __init__(self, tty):
+                self.tty = tty
+
+            def isatty(self):
+                return self.tty
+        with mock.patch.object(sys, "stdin", Terminal(False)):
+            self.assertIsNone(pp.ask_on_terminal("Link? "))
+        with mock.patch.object(sys, "stdin", Terminal(True)), mock.patch("builtins.input", side_effect=EOFError):
+            self.assertIsNone(pp.ask_on_terminal("Link? "))
+        with mock.patch.object(sys, "stdin", Terminal(True)), mock.patch("builtins.input", return_value="yes"):
+            self.assertEqual(pp.ask_on_terminal("Link? "), "yes")
 
     def test_nothing_that_changes_anything_is_sent_without_apply_whatever_the_command(self):
         for argv in (["status", "--environment", ENV, "--subscription", SUB, "--resource-group", GROUP], ["create-environment", "--name", "new one"], ["managed", "--environment", ENV], LINK,
