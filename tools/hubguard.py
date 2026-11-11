@@ -1,229 +1,48 @@
 #!/usr/bin/env python3
-"""Whether a run of the Hub started this process: the one test that the tools which change Azure share (standard library only).
+"""Whether a run of the Hub started this process: the one test that the tools which change Azure from the runner share (standard library only).
 
     python tools/hubguard.py        says yes or no; at a terminal it also says what is missing (the exit code is 0 for yes and 2 for no)
 
-Since 2026-11-08 the Hub is run by tools/hub-local.py on the owner's machine, and a GitHub workflow run changes nothing in Azure (AGENTS.md rule 18). Its tools (az-deploy.py create,
-retire-old.py, cases-move.py, aigateway-prep.py and operator-run.py) used to take GITHUB_ACTIONS=true as the proof that the Hub started them, and then the variables of a real GitHub runner (the run
-id, the repository and the address of an OpenID Connect token request). Any process on the machine can set all of them, and no GitHub run is left that needs them, so none counts any more: a stray
-call that copied them would skip every guard that only the local Hub has (--yes, a clean working tree, one run at a time, the record). The proof file is the only way in:
-
-  METERNAUT_HUB_PROOF names the proof file of a run of tools/hub-local.py that is alive. The run makes <local>/rt/<run>/hub-proof before its first step, with a random token in it, and
-  writes into its lock, <local>/hub-local.lock, its number, the SHA-256 of the token and the start time of its process. It deletes the file when it ends, after a failure and after Ctrl+C
-  too. <local> is the repository's own local/ folder, found the way that tools/hub-local.py finds it (the main working tree's local/, or the folder that METERNAUT_LOCAL names), and never
-  from the path that the caller gives: a file anywhere else is refused, whatever sits next to it. The proof counts while the process that holds the lock is alive and started when the lock
-  says (so a process number that was used again does not pass), the number in the lock is the number of the proof's folder, and the file holds the token.
+The Hub is the GitHub workflow .github/workflows/deploy-hub.yml (AGENTS.md rule 18). Its tools (az-deploy.py create, retire-old.py, cases-move.py, aigateway-prep.py and operator-run.py) used to take
+GITHUB_ACTIONS=true as the proof that the Hub started them, and any process on a machine can set that variable: a stray call would have changed Azure outside the workflow. A process was started by the Hub
+when it is on a real GitHub runner: GITHUB_ACTIONS is true, and the run id (GITHUB_RUN_ID), the repository (GITHUB_REPOSITORY) and the address of an OpenID Connect token request
+(ACTIONS_ID_TOKEN_REQUEST_URL) are set. The Hub's job has the permission id-token: write, so every one of its steps has the address.
 
 A refusal says only that the call was not started by a run of the Hub, so that a process that reads it learns nothing to copy. This command says more to a person at a terminal.
 
-What this stops: an accident, and a stray call (a script, a copied command line, a coding agent) that sets GITHUB_ACTIONS=true or what a GitHub runner sets, and nothing more. It is a tripwire and
-not a lock. What it does not stop: anything that holds the owner's machine and his az session. It can call az itself, read the proof file of a run that is alive and use it, or make a proof of its
-own. The tools that run inside the Operator's container group do not use this test: the container has no run lock to compare with, and the services that they reach are private.
+What this stops: an accident, and a stray call (a script, a copied command line, a coding agent) that sets GITHUB_ACTIONS=true and nothing more. It is a tripwire and not a lock: a process that sets all four
+variables passes. The lock is the workflow's own: it starts only by hand, as the owner's account, on main (tools/workflow-lint.py fails a change that would make it start any other way). The tools that run
+inside the Operator's container group do not use this test: the container is given GITHUB_ACTIONS=true and nothing else of the run, and the services that they reach are private.
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
 import os
-import subprocess
 import sys
-from pathlib import Path
 
-PROOF_VARIABLE = "METERNAUT_HUB_PROOF"
-LOCAL_VARIABLE = "METERNAUT_LOCAL"
-PROOF_NAME = "hub-proof"
-LOCK_NAME = "hub-local.lock"
-TEMP_NAME = "rt"
+RUNNER_VARIABLES = ("GITHUB_RUN_ID", "GITHUB_REPOSITORY", "ACTIONS_ID_TOKEN_REQUEST_URL")
 SCOPE_VARIABLES = ("ENV_SUBSCRIPTION_ID", "ENV_RESOURCE_GROUP")
-UNKNOWN = "unknown"
 # What a tool says when it refuses: nothing of what counts as a run of the Hub.
 REFUSAL = "this call was not started by a run of the Hub"
 
 
-def process_alive(pid) -> bool:
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-        return False
-    if pid == os.getpid():
-        return True
-    if os.name == "nt":
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if not handle:
-            return kernel32.GetLastError() == 5
-        try:
-            code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def linux_start(stat_text: str, boot_id: str) -> str:
-    """What /proc/<pid>/stat says of the start of a process (its 22nd field, in ticks since the machine booted), with the machine's boot id, so that the same number after a reboot is another start."""
-    after = stat_text[stat_text.rindex(")") + 2:].split()
-    return f"{boot_id.strip()}:{int(after[19])}"
-
-
-def started_on_windows(pid: int) -> str:
-    import ctypes
-    from ctypes import wintypes
-    pointer = ctypes.POINTER(wintypes.FILETIME)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.restype = wintypes.HANDLE
-    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-    kernel32.GetProcessTimes.restype = wintypes.BOOL
-    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, pointer, pointer, pointer, pointer)
-    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    handle = kernel32.OpenProcess(0x1000, False, pid)
-    if not handle:
-        return UNKNOWN
-    try:
-        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
-        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
-            return UNKNOWN
-        return str((created.dwHighDateTime << 32) | created.dwLowDateTime)
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def started_by_ps(pid: int) -> str:
-    done = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, env={**os.environ, "LC_ALL": "C", "LANG": "C"})
-    text = " ".join(done.stdout.split())
-    return text if done.returncode == 0 and text else UNKNOWN
-
-
-def process_started(pid) -> str:
-    """A text that names the moment when the process with this number started: the same text each time it is asked while the process lives, and another one for a process that is given the number
-    later. UNKNOWN when the platform does not say (the check that compares it is then no weaker than the one that asks only whether the number is alive)."""
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-        return UNKNOWN
-    try:
-        if os.name == "nt":
-            return started_on_windows(pid)
-        if sys.platform.startswith("linux"):
-            try:
-                return linux_start(Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace"), Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8"))
-            except (OSError, ValueError, IndexError):
-                pass
-        return started_by_ps(pid)
-    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
-        return UNKNOWN
-
-
-def run_git(args: list, cwd) -> tuple:
-    """(exit code, standard output, standard error) of one git command. Only reads are asked of it here and in tools/hub-local.py."""
-    try:
-        done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
-    except OSError as error:
-        return 127, "", str(error)
-    return done.returncode, done.stdout, done.stderr
-
-
-class NoLocalFolder(Exception):
-    """Git cannot say where the main working tree is, and METERNAUT_LOCAL names no folder."""
-
-
-def local_folder(environ=None, cwd=None, git=None) -> Path:
-    """The git-ignored local/ folder of the repository's MAIN working tree, or the folder that METERNAUT_LOCAL names (a blank value is no value).
-
-    A worktree has no local/ of its own: it is the parent of the common git directory that holds it, and every worktree finds the same configuration, counter, lock and records there. tools/hub-local.py
-    finds the folder with this function, and so do the tools that look for the proof of a run in it: from the repository that holds this file (cwd is the folder of this file when none is given)."""
+def what_is_missing(environ=None) -> str:
+    """'' when a run of the Hub started this process; else a sentence that says what is missing. Only a person who asks is told it (python tools/hubguard.py at a terminal): a tool refuses with REFUSAL."""
     env = os.environ if environ is None else environ
-    override = (env.get(LOCAL_VARIABLE) or "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    cwd = Path(cwd) if cwd is not None else Path(__file__).resolve().parent
-    git = git or run_git
-    code, out, _ = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
-    if code != 0:
-        code, out, _ = git(["rev-parse", "--git-common-dir"], cwd)
-    if code != 0 or not out.strip():
-        raise NoLocalFolder(f"git could not say where the main working tree of this repository is. Set {LOCAL_VARIABLE} to the folder that holds hub-local.env")
-    common = Path(out.strip())
-    if not common.is_absolute():
-        common = (cwd / common).resolve()
-    if common.name != ".git":
-        raise NoLocalFolder(f"the git directory {common} is not the .git folder of a working tree. Set {LOCAL_VARIABLE} to the folder that holds hub-local.env")
-    return common.parent / "local"
-
-
-def digest_of(token: str) -> str:
-    """What the lock of a run holds of its token: the lock is read in the open, so the token itself is not in it."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def proof_problem(proof: str, local, alive=process_alive, started=process_started) -> str:
-    """'' when the path is the proof file of a run that is alive, in the folder rt of the repository's own local folder; else what is wrong with it. Everything that is read is read from that folder:
-    nothing of what sits next to the file that the caller names counts."""
-    if local is None:
-        return f"the repository's own local folder cannot be found (git does not say where the main working tree is, and {LOCAL_VARIABLE} names no folder)"
-    try:
-        path = Path(proof).resolve(strict=True)
-        runs = (Path(local) / TEMP_NAME).resolve(strict=True)
-    except (OSError, RuntimeError, ValueError):
-        return f"{PROOF_VARIABLE} names no file that is there, or the folder {TEMP_NAME} of the repository's own local folder is not (a run of the Hub deletes its proof when it ends)"
-    try:
-        inside = path.name == PROOF_NAME and path.is_file() and path.parent.parent.samefile(runs)
-    except OSError:
-        inside = False
-    if not inside:
-        return f"{PROOF_VARIABLE} is not the proof file of a run in the repository's own local folder ({TEMP_NAME}/<run>/{PROOF_NAME})"
-    try:
-        held = json.loads((Path(local) / LOCK_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        held = None
-    if not isinstance(held, dict):
-        return f"no run lock {LOCK_NAME} is in the repository's own local folder: no run of the Hub is going on"
-    pid = held.get("pid")
-    if not alive(pid):
-        return f"the run that holds the lock {LOCK_NAME} (process {pid}) is not alive: this proof is stale"
-    since = held.get("processStart")
-    if isinstance(since, str) and since and since != UNKNOWN:
-        now = started(pid)
-        if now != UNKNOWN and now != since:
-            return f"the process {pid} did not start when the lock says: its number was used again, and this proof is stale"
-    if str(held.get("run")) != path.parent.name:
-        return "the proof is not the proof of the run that holds the lock"
-    try:
-        token = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return "the proof file cannot be read"
-    if not token or not hmac.compare_digest(digest_of(token).encode("ascii"), str(held.get("proof") or "").encode("utf-8", "replace")):
-        return "the proof file does not hold the token of the run that holds the lock"
+    if env.get("GITHUB_ACTIONS") != "true":
+        return "GITHUB_ACTIONS is not true: only a run of the Hub workflow on a GitHub runner started this"
+    unset = [name for name in RUNNER_VARIABLES if not env.get(name)]
+    if unset:
+        return f"GITHUB_ACTIONS=true alone is no proof: this is no GitHub runner ({', '.join(unset)} not set)"
     return ""
 
 
-def what_is_missing(environ=None, *, alive=process_alive, started=process_started, git=None) -> str:
-    """'' when a run of the Hub started this process; else a sentence that says what is missing. Only a person who asks is told it (python tools/hubguard.py at a terminal): a tool refuses with REFUSAL.
-    Only the proof file of a run of tools/hub-local.py counts. GITHUB_ACTIONS and what else a GitHub runner sets are not read: any process can set them, and since 2026-11-08 no GitHub run is left that
-    changes Azure (AGENTS.md rule 18)."""
-    env = os.environ if environ is None else environ
-    proof = env.get(PROOF_VARIABLE) or ""
-    if not proof:
-        return (f"{PROOF_VARIABLE} is not set: only the proof file of a run of tools/hub-local.py counts. GITHUB_ACTIONS=true and what else a GitHub runner sets are no proof: "
-                "any process can set them, and a GitHub run changes nothing in Azure since 2026-11-08 (AGENTS.md rule 18)")
-    try:
-        local = local_folder(env, None, git)
-    except NoLocalFolder:
-        local = None
-    return proof_problem(proof, local, alive, started)
+def started_by_the_hub(environ=None) -> bool:
+    return not what_is_missing(environ)
 
 
-def started_by_the_hub(environ=None, **injected) -> bool:
-    return not what_is_missing(environ, **injected)
-
-
-def refusal(environ=None, **injected) -> str:
+def refusal(environ=None) -> str:
     """'' when a run of the Hub started this process; else REFUSAL, which says nothing of what is missing, so that whoever reads it learns nothing to copy."""
-    return "" if started_by_the_hub(environ, **injected) else REFUSAL
+    return "" if started_by_the_hub(environ) else REFUSAL
 
 
 def other_scope(subscription: str, resource_group: str, environ=None) -> str:
