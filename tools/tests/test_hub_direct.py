@@ -54,6 +54,15 @@ def section(text, key, indent):
     return "\n".join(found)
 
 
+class TheLogOfAStep(unittest.TestCase):
+    def test_the_runner_consumes_the_mask_commands_and_prints_every_other_line_as_it_is(self):
+        printed = "first line\n::add-mask::a-value\n  ::add-mask::an-indented-one\n::warning::a-value is said here\n::error::so is a-value\nlast line without a newline"
+        self.assertEqual(ws.hubenv.as_logged(printed), "first line\n::warning::a-value is said here\n::error::so is a-value\nlast line without a newline",
+                         "a value that is said in any other line is in the log, so the tests that look for a value in the log still find it there")
+        self.assertEqual(ws.hubenv.as_logged("::add-mask::a\n::add-mask::A\n"), "", "a step that prints nothing but its masks shows nothing")
+        self.assertEqual(ws.hubenv.as_logged(""), "")
+
+
 class TheShapeOfTheHub(unittest.TestCase):
     def test_it_starts_by_hand_alone_and_is_not_called(self):
         on = section(HUB, "on", 0)
@@ -298,7 +307,7 @@ def script_of(text):
 FAKE_AZ_IDENTITIES = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  *"identity list"*) printf '%s\\t%s\\n' "$FAKE_USER_PRINCIPAL" "$FAKE_USER_CLIENT" ;;
+  *"/providers/Microsoft.ManagedIdentity/userAssignedIdentities?"*) printf '%s\\t%s\\n' "$FAKE_USER_PRINCIPAL" "$FAKE_USER_CLIENT" ;;
   *"resource list"*) printf '%s\\nNone\\n%s\\n\\n' "$FAKE_APP_PRINCIPAL" "$FAKE_GATEWAY_PRINCIPAL" ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
 esac
@@ -314,8 +323,8 @@ class TheIdentitiesOfTheProjectsGroupAreMaskedForTheWholeRun(unittest.TestCase):
     TITLE = "Mask the identities that exist in the project's resource group"
 
     def run_it(self, az=FAKE_AZ_IDENTITIES, **env):
-        return ws.run_step_script(self.TITLE, {"az": az}, {"ENV_RESOURCE_GROUP": "rg-example", "FAKE_USER_PRINCIPAL": USER_PRINCIPAL, "FAKE_USER_CLIENT": USER_CLIENT, "FAKE_APP_PRINCIPAL": APP_PRINCIPAL,
-                                                          "FAKE_GATEWAY_PRINCIPAL": GATEWAY_PRINCIPAL, **env})
+        return ws.run_step_script(self.TITLE, {"az": az}, {"ENV_SUBSCRIPTION_ID": "sub-example", "ENV_RESOURCE_GROUP": "rg-example", "FAKE_USER_PRINCIPAL": USER_PRINCIPAL, "FAKE_USER_CLIENT": USER_CLIENT,
+                                                          "FAKE_APP_PRINCIPAL": APP_PRINCIPAL, "FAKE_GATEWAY_PRINCIPAL": GATEWAY_PRINCIPAL, **env})
 
     def test_every_object_id_and_client_id_that_the_group_holds_is_masked_as_it_is_and_in_upper_case_and_nothing_else_is_printed_but_a_count(self):
         done, lines, _ = self.run_it()
@@ -327,8 +336,9 @@ class TheIdentitiesOfTheProjectsGroupAreMaskedForTheWholeRun(unittest.TestCase):
         self.assertEqual(len(masks), 8, "None and an empty answer are no identity")
         rest = [line for line in done.stdout.splitlines() if not line.startswith("::add-mask::")]
         self.assertEqual(rest, ["Masked 4 identity ids of resource group rg-example."])
-        self.assertEqual(lines, ['az identity list --resource-group rg-example --query [].[principalId, clientId] --output tsv',
-                                 'az resource list --resource-group rg-example --query [].identity.principalId --output tsv'], "two reads and nothing else: it changes nothing")
+        listing = ("az rest --method get --url https://management.azure.com/subscriptions/sub-example/resourceGroups/rg-example/providers/Microsoft.ManagedIdentity/userAssignedIdentities?api-version=2023-01-31 "
+                   "--query value[].[properties.principalId, properties.clientId] --output tsv")
+        self.assertEqual(lines, [listing, 'az resource list --resource-group rg-example --query [].identity.principalId --output tsv'], "two reads and nothing else: it changes nothing")
 
     def test_a_group_with_no_identity_masks_nothing_and_says_so(self):
         quiet = "#!/bin/bash\nexit 0\n"

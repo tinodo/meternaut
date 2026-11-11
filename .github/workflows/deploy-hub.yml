@@ -313,7 +313,9 @@ jobs:
           # The object id and the client id of an identity are in the text of Azure errors, in the output of a preview and in what a tool prints, and no secret equals them, so GitHub does not mask them, and this log is public.
           # The identities of the project's resource group are read once, here, and each id is masked for the rest of the run: the user-assigned identities (both ids) and the identity of every resource that has one of its own
           # (the apps, the Foundry resource, the AI Gateway). An identity that does not exist yet is masked by the step that reads it, the moment it is read. Nothing is changed, and nothing is printed but the mask commands and a count.
-          ids=$(az identity list --resource-group "$ENV_RESOURCE_GROUP" --query "[].[principalId, clientId]" --output tsv)
+          # The user-assigned identities are listed by their resource provider in the project's group (a group holds a handful, which one page of the list holds), and the identity of every other resource by the list of the group's resources.
+          url="https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities?api-version=2023-01-31"
+          ids=$(az rest --method get --url "$url" --query "value[].[properties.principalId, properties.clientId]" --output tsv)
           ids="$ids"$'\n'"$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "[].identity.principalId" --output tsv)"
           masked=0
           for id in $ids; do

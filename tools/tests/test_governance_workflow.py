@@ -487,7 +487,9 @@ fi
             self.assertIn(word, build, word)
         self.assertNotIn("--preview", build, "the files of this action are built for real: the identities are asked for, by name")
         self.assertEqual(out.splitlines(), ["governance_files=true", "governance_callers=3", "governance_callers_missing=", "gateway_telemetry=true"], "only the lines of the AI security reach the outputs")
-        self.assertNotIn(self.A, done.stdout, "no object id is printed")
+        for identity in (self.A, self.B, self.C):
+            self.assertIn(f"::add-mask::{identity}", done.stdout.splitlines(), "each object id is masked the moment it is read")
+            self.assertNotIn(identity, ws.hubenv.as_logged(done.stdout), "no object id is printed")
 
     def test_both_files_are_checked_against_the_templates_that_were_compiled(self):
         _, lines, _ = self.run_it()

@@ -357,10 +357,8 @@ class Workflow(unittest.TestCase):
             self.assertNotIn(gone, offered)
             self.assertNotIn(f"inputs.action == '{gone}'", self.text)
         for word in ("listSecrets", "primaryKey", "GATEWAY_SMOKE_KEY", "environment-smoke", "check_limits", "CHECK_LIMITS", "environment/gateway", "contract.json", "contract-policy", "contract_files",
-                     "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "Microsoft.ApiManagement/service", "--apim", "/loggers", "CONTRACT_"):
+                     "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "Microsoft.ApiManagement/service", "--apim", "/loggers", "identity list", "CONTRACT_"):
             self.assertNotIn(word, self.text, word)
-        self.assertEqual(self.text.count("identity list"), 1, "the one listing of identities is the step that masks the ids of the project's own group; no step looks for the identity of a gateway")
-        self.assertIn('az identity list --resource-group "$ENV_RESOURCE_GROUP"', self.text)
         self.assertNotRegex(self.text, r"(?<!ai)gateway-prep\.py", "the tool that read and changed the instance is gone (tools/aigateway-prep.py is the AI Gateway's own)")
         names = self.names()
         for old in ("Read the gateway and its Application Insights", "Make the gateway identity", "Work out the settings with the identity's principal", "Find the gateway identity",
@@ -1529,16 +1527,17 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_old_user_assigned_identity_of_the_cases_app_is_neither_looked_for_nor_removed_by_the_workflow_because_retire_needs_it_and_a_person_removes_it_and_the_workflow_names_the_usage_identity_nowhere(self):
         # tools/access-requirements.py retire finds the grants of an identity by its object id: Azure keeps the grants of a deleted identity as "Identity not found", and the tool cannot tell
         # whose they were. The deployment identity cannot see the grants outside the project's group, so the workflow cannot know that they are gone: it leaves the identities alone.
-        code = "\n".join(line for step in self.steps if "run:" in step and not step.startswith("name: Mask the identities that exist in the project's resource group") for line in step.split("run:", 1)[1].splitlines()
+        code = "\n".join(line for step in self.steps if "run:" in step for line in step.split("run:", 1)[1].splitlines()
                          if not line.strip().startswith("#") and "echo" not in line)
         for word in ("id-meternaut-cases", "id-meternaut-usage", "cases_identity_name", "usage_identity_name", "OLD_IDENTITY", "az identity delete", "az identity show"):
             self.assertNotIn(word, code, word)
         for line in code.splitlines():
             if "az identity" in line:
                 self.assertIn("IDENTITY_NAME", line.upper(), f"only the gateway's identity is looked up in the identity list: {line.strip()}")
-        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 3, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which two steps "
+        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 4, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which two steps "
                                                                                                      "only read, for its object id: the one that works out the settings of the AI security (it is one of the identities of the access list) and the one that works "
-                                                                                                     "out the settings of the Foundry file (the role of the Operator on the project), and nothing else")
+                                                                                                     "out the settings of the Foundry file (the role of the Operator on the project), and the one read of the list of the identities of the project's group, which "
+                                                                                                     "masks their ids and changes nothing (the step 'Mask the identities that exist in the project's resource group'), and nothing else")
         self.assertEqual(len(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{identity\}\?api-version=2023-01-31"', code)), 1, "the one that is the retired runner's")
         finished_cases = re.search(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", self.step("What was done")).group(1)
         for words in ("The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "

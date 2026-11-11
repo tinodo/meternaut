@@ -577,7 +577,7 @@ def report(items: list[Item], state: State, cfg: Config, out: Callable[[str], No
     done = sum(1 for i in items if i.state == "present")
     out(f"{done} of {len(items)} in order.")
     if state.app:
-        out(f"Client id of the app registration (the secret CONSOLE_APP_CLIENT_ID of the environment hub): {state.app['appId']}")
+        out(f"Client id of the app registration (a secret of the environment hub, CONSOLE_APP_CLIENT_ID): {state.app['appId']}")
     for line in guidance(items, state, cfg):
         out(line)
     return done == len(items)
@@ -753,7 +753,7 @@ def command_apply(args: argparse.Namespace, graph: Graph, cfg: Config, out: Call
         if all(i.state == "present" for i in items):
             out("Nothing to make.")
             if state.app:
-                out(f"Client id of the app registration (the secret CONSOLE_APP_CLIENT_ID of the environment hub): {state.app['appId']}")
+                out(f"Client id of the app registration (a secret of the environment hub, CONSOLE_APP_CLIENT_ID): {state.app['appId']}")
             return 0
         out("Nothing that this tool can make is missing.")
         for line in guidance(items, state, cfg):
