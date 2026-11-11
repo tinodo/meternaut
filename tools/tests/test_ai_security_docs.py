@@ -56,9 +56,9 @@ class TheProposal(unittest.TestCase):
 
     def test_the_cost_is_the_price_times_the_alert_rules_of_the_template_and_it_is_far_from_the_line_of_the_owner(self):
         rules = len(list((ROOT / "environment" / "governance" / "alerts").glob("*.kql")))
-        self.assertEqual(rules, 8)
-        for words in ("Eight log alert rules", f"{PRICE_OF_A_LOG_ALERT_RULE} each", f"{rules * PRICE_OF_A_LOG_ALERT_RULE:.2f}", f"{(rules - 1) * PRICE_OF_A_LOG_ALERT_RULE:.2f}",
-                      "About 3.6 euro a month", "50 euro a month at which the owner decides"):
+        self.assertEqual(rules, 9)
+        for words in ("Nine log alert rules", f"{PRICE_OF_A_LOG_ALERT_RULE} each", f"{rules * PRICE_OF_A_LOG_ALERT_RULE:.2f}", f"{(rules - 1) * PRICE_OF_A_LOG_ALERT_RULE:.2f}",
+                      "About 4.0 euro a month", "50 euro a month at which the owner decides"):
             self.assertIn(words, PROPOSAL, words)
         self.assertLess(rules * PRICE_OF_A_LOG_ALERT_RULE, 50)
 

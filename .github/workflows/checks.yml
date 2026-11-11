@@ -60,11 +60,11 @@ jobs:
           end
           trigger = doc.key?("on") ? doc["on"] : doc[true]
           events = trigger.is_a?(Hash) ? trigger.keys : Array(trigger)
-          problems << "it must run on workflow_dispatch alone, not on #{events.inspect}" unless events == ["workflow_dispatch"]
+          problems << "it must run on workflow_dispatch and workflow_call alone, not on #{events.inspect}" unless events.sort == ["workflow_call", "workflow_dispatch"]
           problems << "it has no concurrency group" unless doc["concurrency"]
           problems.each { |problem| puts "#{file}: #{problem}" }
           abort "#{file}: not guarded as the rules say" unless problems.empty?
-          puts "#{file}: one job, for the owner on main only, started by hand alone"
+          puts "#{file}: one job, for the owner on main only, started by hand or called by the deploy repository's workflow"
           RUBY
       - name: A real YAML parser agrees that the read-only drift workflow is guarded and never uses the deploy identity
         run: |

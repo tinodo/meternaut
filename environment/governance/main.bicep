@@ -24,7 +24,8 @@
 // The deploy identity needs the role Resource Policy Contributor at this resource group to write a policy assignment (Contributor cannot): a person gives it once (environment/BOOTSTRAP.md, tools/governance-setup.py), and
 // the action reads for it before it changes anything.
 //
-// The alert rules read the workspace log-meternaut: the traces of the cases app (the table AppTraces: the lines `harness.trip` and `drift.fail`, and the heartbeat of the app's own drift check, which the app logs)
+// The alert rules read the workspace log-meternaut: the traces of the cases app (the table AppTraces: the lines `harness.trip` and `drift.fail`, the heartbeat of the app's own drift check, which the app logs, and the
+// error lines of a timer round that failed, with the host's own failed invocations of the four timer functions in the table AppRequests)
 // and the AI Gateway's spans and logs (the tables OTelSpans and OTelLogs, which stay empty until the gateway's telemetry is on). One rule for each signal, every 15 minutes or longer, because a log alert rule that is
 // evaluated that rarely is the cheapest kind (docs/proposals/10-ai-security-and-governance.md has the prices). A rule's e-mail carries the rule's name, a count and a link, and never a line of the telemetry: the queries
 // return rows and nothing is shown of them in the message. The action group sends to the owner's addresses, ENV_ALERT_EMAILS, the same list as the budget.
@@ -292,6 +293,7 @@ var outsideAccessListQuery = replace(loadTextContent('alerts/outside-access-list
 var harnessTripsQuery = loadTextContent('alerts/harness-trips.kql')
 var driftFailQuery = loadTextContent('alerts/drift-fail.kql')
 var driftHeartbeatQuery = replace(loadTextContent('alerts/drift-heartbeat.kql'), '__HEARTBEAT_HOURS__', string(heartbeatHours))
+var timerRoundFailedQuery = loadTextContent('alerts/timer-round-failed.kql')
 
 // One rule for each signal, evaluated every 15 minutes or less often (the cheapest kind of log alert rule). The window is as long as the interval, so that a row is counted once; the heartbeat looks back two days
 // and counts a window of its own inside the query. Severity 1 is for what is a breach or a stopped control, 2 for what is a warning.
@@ -395,6 +397,18 @@ var rules = [
     operator: 'GreaterThan'
     threshold: 0
     query: driftHeartbeatQuery
+    create: true
+  }
+  {
+    name: 'timer-round-failed'
+    display: 'Cases app: a timer round failed'
+    text: 'A timer round of the cases app failed: the daily Watch, the daily drift check, the weekly Study or the one-minute tick logged an error line that says so, or the host marked its run as failed. Open the History in the console, or the traces of the app in Application Insights.'
+    severity: 2
+    frequency: 'PT1H'
+    window: 'PT1H'
+    operator: 'GreaterThan'
+    threshold: 0
+    query: timerRoundFailedQuery
     create: true
   }
 ]

@@ -63,16 +63,16 @@ class TheInput(unittest.TestCase):
         self.assertIn("(its frontend is public and cannot be made private)", gateway)
 
     def test_only_the_guard_reads_the_input(self):
-        self.assertEqual(WORKFLOW.count("public_ai_gateway_requested"), 6, "the header, the action's description, the input, the guard's environment and the guard's two texts: nothing else mentions it")
+        self.assertEqual(WORKFLOW.count("public_ai_gateway_requested"), 7, "the header, the action's description, the input, the same input of a call, the guard's environment and the guard's two texts: nothing else mentions it")
         users = [name for name, block in steps() if "inputs.public_ai_gateway_requested" in block]
         self.assertEqual(users, [GUARD])
 
 
 class TheGuardStep(unittest.TestCase):
-    def test_it_is_the_first_step_of_the_job_so_that_nothing_is_checked_out_read_or_signed_in_to_before_it(self):
+    def test_it_is_the_first_step_of_the_job_that_can_stop_a_run_so_that_nothing_is_checked_out_read_or_signed_in_to_before_it(self):
         names = [name for name, _ in steps()]
         self.assertEqual(names[0], GUARD)
-        self.assertEqual(names.index("Check out the repository"), 2, "after the refusal of the public gateway and the read of the checks of CI, which need no checkout")
+        self.assertEqual(names.index("Check out the repository"), 4, "after the refusal of the public gateway, the masks, the check of the values and the read of the checks of CI, which need no checkout")
         self.assertLess(names.index(GUARD), names.index("Sign in to Azure"))
         self.assertNotIn("uses:", guard(), "it runs a shell and nothing else: no action is downloaded for it")
 
