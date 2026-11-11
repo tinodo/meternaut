@@ -55,6 +55,7 @@ TYPE_WORDS = {
     "microsoft.network/natgateways": ("NAT gateway", "NAT gateway"),
     "microsoft.network/privateendpoints": ("Private endpoint", "private endpoint"),
     "microsoft.network/loadbalancers": ("Load balancer", "load balancer"),
+    "microsoft.network/p2svpngateways": ("Point-to-site gateway", "point-to-site gateway"),
     "microsoft.network/applicationgateways": ("Application gateway", "application gateway"),
     "microsoft.network/azurefirewalls": ("Firewall", "firewall"),
     "microsoft.web/serverfarms": ("App Service plan", "App Service plan"),
@@ -238,6 +239,22 @@ class Option:
 
 
 @dataclass(frozen=True)
+class Gateways:
+    """What a finding about point-to-site gateways says in plain words of code (cases/gateways.py works the digest out): what these gateways are, what was found in one or two sentences, up to two
+    rows of evidence (the scale units, and the most connections at one time), how many scale units would be taken away in all, how many gateways were counted of how many there are, and what was
+    not counted, in a sentence for the page and in a few words for a letter and a card."""
+
+    what: str
+    sentence: str
+    rows: tuple["Fact", ...]
+    fewer: int
+    counted: int
+    gateways: int
+    note: str = ""
+    caveat: str = ""
+
+
+@dataclass(frozen=True)
 class Group:
     """What a case stands for when its finding covers many resources and a person is asked about the finding, not about each resource: how many, what they cost together (None when no cost
     line was read), the type that they share ("other" when they differ), in how many resource groups they are (0 when that is not known), the names of the first few that follow the
@@ -288,6 +305,8 @@ class Brief:
     unread: Unread | None = None
     options: tuple[Option, ...] = ()
     group: Group | None = None
+    # The point-to-site gateways whose scale units nobody uses, for a finding about them (None for every other).
+    gateways: Gateways | None = None
     # What the finding costs in 30 days, from the cost lines (everything that it stands for when it is a group); None when no cost line was read. A request that has no saving shows this cost as
     # the most that a change could save. The letter and the card read it from here, because the card has no case at hand: it is the number that the pages read with cost_of (a test holds the two together).
     cost: float | None = None
@@ -829,14 +848,126 @@ def options_of(unread: Unread | None, figure: bool) -> tuple[Option, ...]:
     )
 
 
+# -- the point-to-site gateways whose scale units nobody uses --------------------------------------------------------------------------------------
+
+GATEWAYS = "gateways"  # the key of the digest in the facts of a case (cases/gateways.py)
+GATEWAYS_WHAT = ("A point-to-site gateway is the gateway that a virtual hub runs for its User VPN setting, so that people can connect to Azure from their own devices. Azure runs it inside the hub, which Microsoft "
+                 "manages, so what a person sets and sees is one number on the hub: its scale units. Azure charges for each unit by the hour whether anybody is connected or not, so a number that was set high once is easy to forget.")
+GATEWAYS_SHORT = "Options: scale them down to what their connections need, or keep them and say why."
+GATEWAYS_STEPS = ("In the Azure portal, open the virtual hub, go to its Point to site page, set Gateway scale units to the smaller number and confirm (the Edit virtual hub page has the same setting). "
+                  "With the Azure CLI, once for each gateway: az network p2s-vpn-gateway update --name <gateway> --resource-group <resource group> --scale-unit <scale units>. "
+                  "Azure says to plan for downtime when scale units change, and a hub update can take up to 30 minutes.")
+GATEWAYS_LOOK = ("In the Azure portal, open Monitor, then Metrics, choose the gateway and the metric P2S Connection Count, and look at the highest value of each day; "
+                 "az network p2s-vpn-gateway list shows the gateways and their scale units.")
+
+
+def _gateway_digest(case: CaseRecord | None) -> dict | None:
+    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
+    found = facts.get(GATEWAYS)
+    return found if isinstance(found, dict) else None
+
+
+def _plural_of(count: int, one: str, many: str | None = None) -> str:
+    return f"{number_text(count)} {one if count == 1 else (many or one + 's')}"
+
+
+def gateways_of(case: CaseRecord | None) -> Gateways | None:
+    """What a finding about point-to-site gateways says, from the digest in the facts of its case (cases/gateways.py), or None for a case that has none or whose digest is not as it should be. Every
+    number is checked again here: a digest that is not as it should be shows nothing and never something else."""
+    digest = _gateway_digest(case)
+    if digest is None:
+        return None
+    count, counted = _whole(digest.get("gateways")), digest.get("counted")
+    if not 1 <= count <= MAX_GROUP or isinstance(counted, bool) or not isinstance(counted, int) or not 0 <= counted <= count:
+        return None
+    one = count == 1
+    thing = "the gateway" if one else "these gateways"
+    if counted == 0:
+        sentence = f"Meternaut could not say how many scale units {thing} {'has' if one else 'have'} or whether anybody connected, because the tools did not record both."
+        return Gateways(GATEWAYS_WHAT, sentence, (), 0, 0, count, caveat=f"Not counted: {_plural_of(count, 'gateway')}.")
+    units, target, days, quiet = (_whole(digest.get(key)) for key in ("units", "target", "days", "quiet"))
+    peak = _figure(digest.get("peak"))
+    if units < counted or not counted <= target <= units or peak is None or peak < 0 or not days or quiet > counted:
+        return None
+    any_of = "the gateway" if counted == 1 else f"any of the {number_text(counted)} gateways"
+    span = (f"in the {days_text(days)} that Azure Monitor has a value for" if counted == 1
+            else f"in the days that Azure Monitor has a value for (at least {number_text(days)} for each)")
+    if peak == 0:
+        first = f"Nobody was connected to {any_of} {span}."
+    else:
+        first = f"The most connections at one time on {any_of} was {number_text(peak)} {span}." + (f" Nobody was connected to {number_text(quiet)} of them." if counted > 1 and quiet else "")
+    fewer = units - target
+    limit = _whole(digest.get("limit")) if counted == 1 else 0
+    if counted == 1:
+        have = f"It has {_plural_of(units, 'scale unit')}" + (f", which carry up to {number_text(limit)} connections at one time" if limit else "")
+    else:
+        have = f"They have {_plural_of(units, 'scale unit')} together"
+    if fewer:
+        second = f"{have}. The smallest size that still carries what {'it' if counted == 1 else 'each'} saw is {number_text(target)}{'' if counted == 1 else ' together'}, which is {number_text(fewer)} fewer."
+    else:
+        second = f"{have}. {'It is' if counted == 1 else 'Each is'} at the smallest size that carries what it saw already."
+    rows = (Fact("Scale units", f"{number_text(units)} in all" + ("" if counted == 1 else f", on {number_text(counted)} gateways"), RESOURCE_GRAPH),
+            Fact("Most connections at one time", f"{number_text(peak)} in the last {days_text(days)} with a value", MONITOR))
+    left = count - counted
+    note = f"{_plural_of(left, 'gateway')} of the {number_text(count)} {'is' if left == 1 else 'are'} not counted: the tools did not record the scale units or the connections." if left else ""
+    return Gateways(GATEWAYS_WHAT, f"{first} {second}", rows, fewer, counted, count, note, f"Not counted: {number_text(left)} of {number_text(count)} gateways." if left else "")
+
+
+def gateways_saving(case: CaseRecord | None) -> float | None:
+    """The saving of scaling the gateways down, in US dollars a month, when the digest of the case holds one that is whole: a number above 0 that is not more than the cost of the resource in the
+    last 30 days (for a group, of everything that it stands for). Code worked it out (cases/gateways.py); a model never writes it."""
+    digest = _gateway_digest(case)
+    figure = _figure(digest.get("savingUsd")) if digest is not None else None
+    cost = _figure(case.cost_usd_30d) if case is not None else None
+    if figure is None or figure <= 0 or cost is None or figure > cost + 0.005:
+        return None
+    return round(figure, 2)
+
+
+def _gateways_basis() -> str:
+    return "the cost of the gateways in the last 30 days, scaled by the share of their scale units that would be taken away (the price list was not read, so it is an estimate)"
+
+
+def _gateways_missing(case: CaseRecord | None) -> str:
+    """Why there is no figure for gateways whose record was not enough ("" for any other case)."""
+    found = gateways_of(case)
+    if found is None or found.counted:
+        return ""
+    return "The scale units or the connections of these gateways were not recorded, so no figure can be worked out for scaling them down."
+
+
+def gateway_options(found: Gateways | None) -> tuple[Option, ...]:
+    """What a person could do about gateways that carry more scale units than anybody uses, in two choices with the exact steps and what each puts at risk. The words are code's."""
+    if found is None:
+        return ()
+    these = "the gateway" if found.gateways == 1 else "the gateways"
+    keep = Option(f"Keep {these} as {'it is' if found.gateways == 1 else 'they are'}, and say why in your answer: for example a rollout that is still to come, or a gateway that is kept ready for a failure.",
+                  "the scale units keep billing by the hour, used or not.")
+    if found.counted and not found.fewer:
+        return (Option(f"Leave {these} as {'it is' if found.gateways == 1 else 'they are'}: {'it has' if found.gateways == 1 else 'each has'} the smallest size that carries the most connections that it saw.",
+                       "nothing more can be saved by scale units."),)
+    first = (f"Scale {these} down by {_plural_of(found.fewer, 'scale unit')} in all, each to the smallest size that carries the most connections that it saw. " if found.counted else
+             f"Look at the connections of {these} first. {GATEWAYS_LOOK} Then scale down the ones that nobody uses. ")
+    return (Option(first + GATEWAYS_STEPS, "users who are connected may be disconnected while it changes, and with fewer scale units a gateway carries fewer connections and less traffic."), keep)
+
+
+def scenario_saving(case: CaseRecord | None) -> float | None:
+    """The figure that code worked out for a finding that has an analysis (the data that nothing reads, or gateways that carry more scale units than anybody uses), or None."""
+    return unread_saving(case) if _digest(case) is not None else gateways_saving(case)
+
+
+def _analysed(case: CaseRecord | None) -> bool:
+    return _digest(case) is not None or _gateway_digest(case) is not None
+
+
 def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, state: str) -> Saving:
     figure = _figure(plan.saving_usd_month if plan is not None else (case.saving_usd_month if case is not None else None))
-    scenario = unread_saving(case)  # the figure that code worked out from the data that a workspace takes in and nothing reads: the case holds no figure of its own for a change
+    scenario = scenario_saving(case)  # the figure that code worked out from the analysis of the finding (data that nothing reads, gateways): the case holds no figure of its own for a change
     fam = shown(plan.family) if plan is not None else None
     own = _figure(case.saving_usd_month) if case is not None else None
     # A case that holds that analysis and no figure of its own is worth what the analysis says now, the same numbers as its rows: the figure of a request is the one that code took when it was made,
     # and a Watch that judged the case again while the request was open may have found the volume moved. That one stays in the plan as the record of what was asked.
-    current = fam is None and _digest(case) is not None and (own is None or own <= 0)
+    current = fam is None and _analysed(case) and (own is None or own <= 0)
     if current or (plan is None and (figure is None or figure <= 0)):
         figure = scenario
     waiting = None if current else (_figure(plan.waiting_costs_usd_day) if plan is not None else None)
@@ -866,15 +997,15 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         specific = False
         if fam is not None and fam.no_figure:
             why, specific = fam.no_figure, True
-        elif _unread_missing(case):
-            why, specific = _unread_missing(case), True
+        elif _unread_missing(case) or _gateways_missing(case):
+            why, specific = _unread_missing(case) or _gateways_missing(case), True
         return Saving(None, "", "", None, why, specific)
     if waiting is None:
         waiting = round(figure / 30, 2)
     if fam is not None and fam.saving_basis:
         return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
-        return Saving(round(figure, 2), "Scenario", _unread_basis(case), waiting, "")
+        return Saving(round(figure, 2), "Scenario", _unread_basis(case) if _digest(case) is not None else _gateways_basis(), waiting, "")
     advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
@@ -964,15 +1095,19 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
         return ()
     head: list[Fact] = []
     group = group_of(case)
+    found = gateways_of(case)
+    rows = list(found.rows) if found is not None else []
     cost = _figure(case.cost_usd_30d)
     if group is not None:
-        head += _group_facts(group, case)  # the cost of the case is what all of them cost: the row of the group says it
+        covered = _group_facts(group, case)
+        head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the rows of gateways come before the examples
     elif cost is not None:
         head.append(Fact("Cost, last 30 days", usd_text(cost), "Azure cost lines"))
     guards = [g for g in case.guards if isinstance(g, str)]
     if guards:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
-    head += [] if unread_of(case) is not None else _metric_facts(case)  # the rows of the data that nothing reads say it better than two measurements of it
+    head += rows if group is None else []
+    head += [] if unread_of(case) is not None or found is not None else _metric_facts(case)  # the rows of the data that nothing reads, and of gateways, say it better than two measurements of it
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
@@ -1129,6 +1264,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     age, _ = ago_text(now, found_at)
     saving = _saving(case, plan, action, state)
     unread = unread_of(case)
+    found = gateways_of(case)
     together = group_of(case)
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
@@ -1140,7 +1276,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
-        unread=unread, options=options_of(unread, saving.monthly is not None) if kind == "advice" else (), group=together,
+        unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None))
 
 

@@ -279,7 +279,7 @@ class MailRecord(Record):
 
     mail_id: str
     oid: str
-    kind: str  # first_contact, approval, notice, verified, digest
+    kind: str  # first_contact, approval, notice, verified, unsure, digest
     subject: str
     sent_at: str
     status: str  # sent, held, refused, failed

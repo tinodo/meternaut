@@ -15,6 +15,11 @@ from typing import Callable
 
 from ..models import PlanRecord
 
+# What a plan of a change of a gateway's scale units, and its re-check right before it acts, ask of the connection count: it is read for the last CONNECTION_DAYS closed days, it has to hold a
+# value for at least CONNECTION_MIN_DAYS of them (a count that was not recorded is not a count of nothing), and the most at one time in them has to be 0.
+CONNECTION_DAYS = 7
+CONNECTION_MIN_DAYS = 5
+MAX_SCALE_UNITS = 200  # Learn, "User VPN (point-to-site) concepts": the scale units of a gateway range from 1 to 200 (capacity.py has the table; this module imports nothing of the package but the records)
 # What a plan of a delete says that its re-check looks at: the words are those of the two families that were first, and a test holds them.
 RE_CHECK = ("the resource is still unattached or unassigned, still carries the tag that marks it as planted by Meternaut, is still in this resource group "
             "and has no management lock")
@@ -185,6 +190,28 @@ def change_disk_tier(plan: PlanRecord | None, rtype: str, name: str, group: str)
         undo=f"Change the disk back to {frm} in the Azure portal or with the Azure CLI. It keeps its data. The type can be changed twice a day.", reversible=True)
 
 
+def _scale_units(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_SCALE_UNITS else None
+
+
+def scale_vpn_gateway(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
+    target = _target(plan)
+    was, want = _scale_units(target.get("fromScaleUnit")), _scale_units(target.get("vpnGatewayScaleUnit"))
+    label = name or "this resource"
+    old, new = (f"{was} scale units" if was else "its scale units"), (f"{want} scale units" if want else "fewer scale units")
+    return Words(
+        headline=f"Scale the point-to-site gateway {label} down to {new}{_place(group)}",
+        change=(f"Changes the scale units of the point-to-site gateway {label} in resource group {group or 'this group'} from {old} to {new}. Users who are connected may be disconnected "
+                "while it changes. Nothing else changes."),
+        rechecked=(f"Right before it acts, Meternaut reads the gateway and its connection count again. It stops unless the gateway still has {old}, its last operation worked, nobody was "
+                   f"connected in the last {CONNECTION_DAYS} days, and it is still tagged as planted by Meternaut, still in this resource group and not locked."),
+        risk=("Azure says to plan for downtime when the scale units of a point-to-site gateway change: users who are connected may be disconnected while it changes, and with fewer scale units "
+              "the gateway carries fewer connections and less traffic."), level="medium",
+        undo=(f"Set the scale units back to {was or 'what they were'} on the Point to site page of the virtual hub in the Azure portal, or with az network p2s-vpn-gateway update --scale-unit. "
+              "That change takes minutes too."),
+        reversible=True)
+
+
 @dataclass(frozen=True)
 class Shown:
     """How one family shows itself to a person. `words` takes the plan (None for a case that has none yet), the type of the resource that the caller knows, the name and the group."""
@@ -214,6 +241,9 @@ SHOWN: dict[str, Shown] = {
         change_disk_tier, "change of tier", "microsoft.compute/disks",
         no_figure="The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure for this change."),
     "delete-idle-resource": Shown(deletes(""), "delete", cost_ends=True),
+    "scale-vpn-gateway": Shown(
+        scale_vpn_gateway, "scale-down", "microsoft.network/p2svpngateways", saving_level="Scenario",
+        saving_basis=("the cost lines of the last 30 days, scaled by the share of the gateway's scale units that is taken away (the price list was not read, so it is an estimate)")),
 }
 
 

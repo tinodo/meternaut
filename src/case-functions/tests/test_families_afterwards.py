@@ -209,6 +209,7 @@ class ScenarioA(unittest.TestCase):
                 self.assertTrue(family.cost_ends, f"{name} removes the resource")
         self.assertFalse(registry.get("resize-vm").cost_ends)
         self.assertFalse(registry.get("change-disk-tier").cost_ends)
+        self.assertFalse(registry.get("scale-vpn-gateway").cost_ends, "a gateway with fewer scale units still bills")
 
     def test_a_family_that_does_not_say_that_its_cost_ends_is_read_the_safe_way(self):
         self.assertFalse(Shown.__dataclass_fields__["cost_ends"].default)

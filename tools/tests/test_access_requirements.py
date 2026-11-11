@@ -670,6 +670,7 @@ class TheCallsOfTheApp(unittest.TestCase):
         "nat-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/natGateways" in p,
         "load-balancer-read": lambda m, p: m == "GET" and "Microsoft.Network/loadBalancers" in p,
         "private-endpoint-read": lambda m, p: m == "GET" and "Microsoft.Network/privateEndpoints" in p,
+        "p2s-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/p2svpnGateways/" in p and "Microsoft.Insights/metrics" not in p,  # its connection count is a read of "metrics-read"
         "compute-usage-read": lambda m, p: m == "GET" and "Microsoft.Compute/locations/" in p and p.endswith("/usages"),
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
         "price-sheet-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Consumption/pricesheets/default"),
@@ -725,7 +726,7 @@ class TheCallsOfTheApp(unittest.TestCase):
         self.assertEqual((r1["identity"], r1["role"]), ("cases", "Reader"), "the timer reads with the Watch's reader, and Reader holds every read")
         self.assertLessEqual(set(names), set(r1["calls"]), "the timer makes a read that R1 does not list")
         self.assertLessEqual({"disk-read", "public-ip-read", "vm-read", "vm-sizes-read", "snapshot-read", "network-interface-read", "nat-gateway-read", "load-balancer-read",
-                              "private-endpoint-read", "compute-usage-read"}, set(r1["calls"]))
+                              "private-endpoint-read", "p2s-gateway-read", "compute-usage-read", "metrics-read"}, set(r1["calls"]))
 
     def test_the_calls_in_the_file_are_the_calls_of_the_watch_and_of_the_timer_and_no_other(self):
         names = set(self.names_of(self.watch_calls(), "the Watch")) | set(self.names_of(self.timer_calls(), "the timer"))

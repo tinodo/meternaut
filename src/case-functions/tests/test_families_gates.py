@@ -22,6 +22,18 @@ from cases.models import NoteRecord
 
 GATES_SOURCE = (APP_ROOT / "cases" / "families" / "gates.py").read_text(encoding="utf-8")
 ANOTHER = "99999999-8888-4777-9666-555555555555"
+REAL_PLANTED = dict(PLANTED_NAMES)  # the list as the code holds it: the module below holds a gateway on it for the time of its tests, as if a planting existed
+
+
+def setUpModule():
+    global _planting
+    _planting = fs.as_if_gateways_were_planted()
+    _planting.start()
+
+
+def tearDownModule():
+    _planting.stop()
+
 
 # One good resource for each family of the registry: what the family changes, as a function that makes it, with the kind and the recommendation that lead to the family.
 SAMPLES = {
@@ -31,6 +43,7 @@ SAMPLES = {
     "resize-vm": ("vm", lambda **more: fs.vm(**more), "change", "investigation"),
     "change-disk-tier": ("disk", lambda **more: fs.disk(sku="Premium_LRS", **more), "change", "investigation"),
     "delete-idle-resource": ("nic", lambda **more: fs.simple("nic", **more), "delete", "investigation"),
+    "scale-vpn-gateway": ("p2s", lambda **more: fs.p2s(**more), "change", "investigation"),
 }
 
 
@@ -81,7 +94,7 @@ class TheOwnersSwitch(unittest.TestCase):
         # Reading more does not widen what may be changed (rule 29): the scopes come from the one setting, and the lists of calls are built from them and from nothing else.
         for scopes in ((), (ChangeScope(SUB, GROUP),), (ChangeScope(SUB, GROUP), ChangeScope(ANOTHER, "meternaut-two"))):
             wanted = len(scopes)
-            self.assertEqual(len(change_patterns(scopes)), len(read_patterns(scopes)) + wanted * 11, "each scope adds its reads, ten writes and the status of an operation")
+            self.assertEqual(len(change_patterns(scopes)), len(read_patterns(scopes)) + wanted * 12, "each scope adds its reads, eleven writes and the status of an operation")
 
 
 class TheScopes(unittest.TestCase):
@@ -127,8 +140,8 @@ class ThePlantedGate(unittest.TestCase):
                 self.assertFalse(has_tag(tags, "meternaut-planted"))
 
     def test_the_planted_list_holds_the_types_and_name_shapes_that_the_planting_makes(self):
-        self.assertEqual(sorted(PLANTED_NAMES), ["microsoft.compute/disks", "microsoft.compute/virtualmachines", "microsoft.network/networkinterfaces",
-                                                 "microsoft.network/publicipaddresses"])
+        self.assertEqual(sorted(REAL_PLANTED), ["microsoft.compute/disks", "microsoft.compute/virtualmachines", "microsoft.network/networkinterfaces",
+                                                "microsoft.network/publicipaddresses"])
         for kind, name in (("microsoft.compute/disks", "planted-disk-demo"), ("microsoft.compute/disks", "planted-osdisk-demo"), ("microsoft.network/publicipaddresses", "planted-ip-1"),
                            ("microsoft.compute/virtualmachines", "planted-vm-a1b2c3d4e5f6"), ("microsoft.network/networkinterfaces", "planted-nic-demo"),
                            ("Microsoft.Compute/Disks", "Planted-Disk-DEMO")):
@@ -285,6 +298,41 @@ class EveryFamilyIsHeldByTheGates(unittest.TestCase):
                         client.request("GET", url)
                 with self.assertRaises(Refused):
                     world.s.client.request("DELETE", url)
+
+
+class AGatewayIsNotPlantedSoItsFamilyIsInert(unittest.TestCase):
+    """No planting of a gateway exists and none may be added (AGENTS.md rule 15 (g): a virtual hub with its gateway costs about 450 US dollars a month). So with the planted list as the code
+    holds it, the family `scale-vpn-gateway` is held back by the planted gate for every resource, whatever its tag and its name: it does something only after the owner changes rule 26 (a)."""
+
+    TYPE = "microsoft.network/p2svpngateways"
+
+    @staticmethod
+    def real():
+        return mock.patch.dict("cases.families.gates.PLANTED_NAMES", REAL_PLANTED, clear=True)
+
+    def test_the_list_holds_no_gateway_and_the_template_that_plants_makes_none(self):
+        self.assertNotIn(self.TYPE, REAL_PLANTED)
+        template = (REPO_ROOT / "environment" / "cases" / "planted.bicep").read_text(encoding="utf-8").lower()
+        for word in ("p2svpngateways", "virtualhubs", "virtualwans"):
+            self.assertNotIn(word, template)
+
+    def test_a_gateway_with_the_tag_and_a_planted_name_gets_no_plan_and_nothing_is_even_read(self):
+        with self.real():
+            world = World()
+            resource = world.arm.add(fs.p2s())
+            self.assertIsNotNone(why_not_planted(resource["tags"], self.TYPE, resource["name"], "meternaut-planted"))
+            self.assertIsNone(world.plan(resource, "p2s", "change", 50.0))
+            self.assertEqual((world.store.plans_open(), world.arm.calls), ([], []))
+
+    def test_a_plan_that_was_made_while_the_gateway_was_on_the_list_is_stopped_by_the_recheck_and_writes_nothing(self):
+        world = World()
+        resource = world.arm.add(fs.p2s())
+        plan, _ = world.approved(resource, "p2s", "change", 50.0)
+        with self.real():
+            done = world.run(plan)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertIn("planted", done.action.result)
+        self.assertEqual(world.arm.writes(), [])
 
 
 class TheScopesOfTheApprovalSettings(unittest.TestCase):

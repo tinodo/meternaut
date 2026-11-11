@@ -86,6 +86,12 @@ class TheCardHasTheFirstGo(unittest.TestCase):
         self.f.on_action(make_action(state="verified", finished_at=LONG_AGO), plan(), make_case())
         self.assertEqual(self.kinds(), ["verified"], "the card of the check afterwards did not go, so its letter does")
 
+    def test_a_result_that_stays_unknown_has_no_card_so_its_letter_goes_to_a_person_who_chose_teams_when_it_is_due(self):
+        self.f.on_action(make_action(state="unknown", finished_at=LONG_AGO), plan(), make_case())
+        self.assertEqual(self.f.graph.sent, [], "it has not stayed unknown long enough")
+        self.f.on_action(make_action(state="unknown", finished_at=stamp(TUESDAY - dt.timedelta(hours=notify.UNKNOWN_HOURS))), plan(), make_case())
+        self.assertEqual(self.kinds(), ["unsure"])
+
 
 if __name__ == "__main__":
     unittest.main()

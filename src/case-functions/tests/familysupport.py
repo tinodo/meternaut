@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass, replace
 from typing import Callable
-from urllib.parse import urlsplit
+from unittest import mock
+from urllib.parse import parse_qs, urlsplit
 
 from support import APP_ROOT  # noqa: F401
 
@@ -47,9 +49,17 @@ KINDS = {
     "nat": ("Microsoft.Network", "natGateways", "microsoft.network/natgateways"),
     "lb": ("Microsoft.Network", "loadBalancers", "microsoft.network/loadbalancers"),
     "pe": ("Microsoft.Network", "privateEndpoints", "microsoft.network/privateendpoints"),
+    "p2s": ("Microsoft.Network", "p2svpnGateways", "microsoft.network/p2svpngateways"),
 }
 NAMES = {"disk": "planted-disk-1", "vm": "planted-vm-1", "snapshot": "planted-snapshot-1", "ip": "planted-ip-1", "nic": "planted-nic-1", "nat": "planted-nat-1", "lb": "planted-lb-1",
-         "pe": "planted-pe-1"}
+         "pe": "planted-pe-1", "p2s": "planted-p2s-1"}
+# The planted list holds no gateway and none may be added (AGENTS.md rule 15 (g): a virtual hub costs about 450 US dollars a month). A test module that exercises the family of gateways holds
+# this entry in place for the time of the module, as if a planting existed, and a test of its own says that the real list has none.
+GATEWAY_PLANTED = {"microsoft.network/p2svpngateways": re.compile(r"planted-p2s-[a-z0-9]{1,12}")}
+
+
+def as_if_gateways_were_planted():
+    return mock.patch.dict("cases.families.gates.PLANTED_NAMES", GATEWAY_PLANTED)
 
 
 def rid(kind: str, name: str | None = None, group: str = GROUP, subscription: str = SUB) -> str:
@@ -85,6 +95,23 @@ def disk(name: str = "planted-disk-1", sku: str = "Premium_LRS", state: str = "U
 
 def simple(kind: str, name: str | None = None, tags: dict | None = None, properties: dict | None = None, **more) -> dict:
     resource = {"id": rid(kind, name), "name": name or NAMES[kind], "location": REGION, "tags": dict(PLANTED if tags is None else tags), "properties": dict(properties or {})}
+    resource.update(more)
+    return resource
+
+
+def p2s(name: str = "planted-p2s-1", units: int = 12, provisioning: str = "Succeeded", tags: dict | None = None, **more) -> dict:
+    """A point-to-site gateway as Azure shows it (Learn, "P 2 s Vpn Gateways - Get"), with what Azure fills in itself and what a person set: a connection configuration, DNS servers, the hub."""
+    path = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network"
+    resource = {"id": rid("p2s", name), "name": name, "type": "Microsoft.Network/p2sVpnGateways", "etag": 'W/"11111111-2222-3333-4444-555555555555"', "location": REGION,
+                "tags": dict(PLANTED if tags is None else tags),
+                "properties": {"vpnGatewayScaleUnit": units, "provisioningState": provisioning, "isRoutingPreferenceInternet": False, "customDnsServers": ["10.0.0.4"],
+                               "virtualHub": {"id": f"{path}/virtualHubs/hub-1"}, "vpnServerConfiguration": {"id": f"{path}/vpnServerConfigurations/config-1"},
+                               "vpnClientConnectionHealth": {"vpnClientConnectionsCount": 0, "allocatedIpAddresses": [], "totalIngressBytesTransferred": 0, "totalEgressBytesTransferred": 0},
+                               "p2SConnectionConfigurations": [{"name": "default", "id": f"{path}/p2sVpnGateways/{name}/p2sConnectionConfigurations/default",
+                                                                "etag": 'W/"11111111-2222-3333-4444-666666666666"',
+                                                                "properties": {"enableInternetSecurity": False, "provisioningState": "Succeeded", "previousConfigurationPolicyGroupAssociations": [],
+                                                                               "vpnClientAddressPool": {"addressPrefixes": ["10.99.0.0/24"]},
+                                                                               "routingConfiguration": {"associatedRouteTable": {"id": f"{path}/virtualHubs/hub-1/hubRouteTables/default"}}}}]}}
     resource.update(more)
     return resource
 
@@ -136,6 +163,12 @@ class Arm:
         self.resize_never = False
         self.stop_never = False
         self.tier_never = False
+        self.units_never = False  # a PUT of a gateway that is accepted and never shows its effect
+        self.units_fail = False  # a PUT of a gateway whose operation ends as Failed
+        self.connections: dict[str, list[float | None]] = {}  # the daily highest connection count of a gateway, by its lower-case id: 7 days, None for a day with no value; default: 7 days of 0
+        self.metrics_status = 200
+        self.metrics_body: bytes | None = None  # an answer of another shape, for a test of it
+        self.url = ""
         self.hold_after: Callable[[str, str], None] | None = None  # called with (method, key) after each call, for a test that changes the estate while a change is made
 
     # -- the estate -----------------------------------------------------------------------------------------------------------------------------------
@@ -157,6 +190,7 @@ class Arm:
 
     def transport(self, method, url, headers, data, timeout):
         self.calls.append((method, url))
+        self.url = url
         self.headers.append(dict(headers))
         self.bodies.append(json.loads(data.decode("utf-8")) if data else None)
         key = urlsplit(url).path.lower()
@@ -183,6 +217,8 @@ class Arm:
             return 200, {}, json.dumps({"value": self.locks.get(scope, [])}).encode()
         if "/operations/" in key and "/locations/" in key:
             return self.operation(key)
+        if key.endswith("/providers/microsoft.insights/metrics"):
+            return self.metrics(key[:-len("/providers/microsoft.insights/metrics")])
         if key.endswith("/usages"):
             if self.usage_status >= 300:
                 return self.usage_status, {}, b'{"error":{"code":"AuthorizationFailed","message":"no right"}}'
@@ -211,6 +247,18 @@ class Arm:
         if key not in self.resources:
             return 404, {}, b'{"error":{"code":"ResourceNotFound","message":"gone"}}'
         return 200, {}, json.dumps(self.resources[key]).encode()
+
+    def metrics(self, key: str):
+        """The daily highest connection count of a gateway (Azure Monitor, Metrics - List) for the days of the timespan that was asked for, one bucket for each day from its start."""
+        if self.metrics_status >= 300:
+            return self.metrics_status, {}, b'{"error":{"code":"AuthorizationFailed","message":"no right to read the metrics"}}'
+        if self.metrics_body is not None:
+            return 200, {}, self.metrics_body
+        span = parse_qs(urlsplit(self.url).query).get("timespan", [""])[0]
+        first = dt.datetime.strptime(span.split("/")[0], "%Y-%m-%dT%H:%M:%SZ")
+        values = self.connections.get(key, [0.0] * 7)
+        data = [{"timeStamp": (first + dt.timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"), **({} if value is None else {"maximum": value})} for n, value in enumerate(values)]
+        return 200, {}, json.dumps({"value": [{"errorCode": "Success", "name": {"value": "P2SConnectionCount"}, "unit": "Count", "timeseries": [{"data": data}]}]}).encode()
 
     def operation(self, key: str):
         self.operation_looks += 1
@@ -265,6 +313,14 @@ class Arm:
             if not self.tier_never:
                 self.effects[key] = Effect(self.reads_before_effect, lambda found: self.set_provisioning(found, "Succeeded"))
             return self.started()
+        if method == "PUT" and "/p2svpngateways/" in key:
+            # A PUT states the whole gateway: what it does not state is gone. The stored gateway is what was sent, with what Azure fills in itself.
+            stated = {"id": resource["id"], "name": resource["name"], "type": resource["type"], "etag": resource["etag"], **body}
+            stated["properties"] = {**body["properties"], "provisioningState": "Updating"}
+            self.resources[base_key] = stated
+            if not self.units_never:
+                self.effects[key] = Effect(self.reads_before_effect, lambda found: self.set_provisioning(found, "Failed" if self.units_fail else "Succeeded"))
+            return self.started(201)
         return 405, {}, b"{}"
 
     @staticmethod

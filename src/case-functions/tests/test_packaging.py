@@ -22,7 +22,7 @@ KEY_WORDS = ("listSecrets", "primaryKey")
 # else (the test of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
 # a query result, a completion or a token. The references of the Teams bot are a table of the same kind as the store's: one entity written and deleted in the table `mnteams` of the
 # loop's storage account, on a list of calls of its own (references.py), and the bot's POSTs to the Bot Connector (connector.py) send a card or start a conversation and change nothing in Azure.
-WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "calls.py": {"DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
+WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "calls.py": {"PUT", "DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 
@@ -161,7 +161,7 @@ class WhatTheAppIs(unittest.TestCase):
         self.assertNotIn("table.core.windows.net", runner)
         self.assertNotIn("storage.azure.com", runner)
 
-    def test_the_families_name_ten_writes_in_one_module_and_each_is_on_its_own_kind_of_resource(self):
+    def test_the_families_name_eleven_writes_in_one_module_and_each_is_on_its_own_kind_of_resource(self):
         sys.path.insert(0, str(APP_ROOT))
         try:
             from cases.families import calls
@@ -169,7 +169,8 @@ class WhatTheAppIs(unittest.TestCase):
             sys.path.remove(str(APP_ROOT))
         self.assertEqual([(call.method, call.kind.collection, call.suffix) for call in calls.WRITES], [
             ("DELETE", "disks", ""), ("DELETE", "publicIPAddresses", ""), ("POST", "virtualMachines", "/deallocate"), ("PATCH", "virtualMachines", ""), ("PATCH", "disks", ""),
-            ("DELETE", "snapshots", ""), ("DELETE", "networkInterfaces", ""), ("DELETE", "natGateways", ""), ("DELETE", "loadBalancers", ""), ("DELETE", "privateEndpoints", "")])
+            ("DELETE", "snapshots", ""), ("DELETE", "networkInterfaces", ""), ("DELETE", "natGateways", ""), ("DELETE", "loadBalancers", ""), ("DELETE", "privateEndpoints", ""),
+            ("PUT", "p2svpnGateways", "")])
         runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r'"(?:DELETE|PATCH|PUT)"', runner), [], "the runner names no method of a write: the calls are the families'")
 

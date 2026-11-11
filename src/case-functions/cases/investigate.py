@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, capability, decide, guards, learning, roles, unread, wiring
+from . import agents, capability, decide, gateways, guards, learning, roles, unread, wiring
 from .approvals import is_fixture
 from .arm import scopes_of
 from .detectors import Context, Lead
@@ -788,6 +788,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             found_unread = _unread(toolbox, resource, costs[handle])
             if found_unread is not None:
                 facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
+            if (resource.resource_type or "").lower() == gateways.TYPE:
+                facts[gateways.KEY] = gateways.analyse(_block(toolbox.evidence, handle), costs[handle])  # a point-to-site gateway: its scale units, the most connections that it saw, and the scenario figure
             lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
@@ -995,7 +997,11 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     lead = item.lead
     if group:
         together = _together(group, finding.capped, finding.silenced)
-        lead = replace(lead, cost_usd_30d=together["costUsd30d"], facts={**{k: v for k, v in lead.facts.items() if k != unread.KEY}, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
+        kept = {k: v for k, v in lead.facts.items() if k not in (unread.KEY, gateways.KEY)}  # the analysis of one workspace, or of one gateway, is not the analysis of the group
+        if together["type"] == gateways.TYPE:
+            combined = gateways.combine(member.lead.facts.get(gateways.KEY) for member in group)
+            kept.update({gateways.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its gateways
+        lead = replace(lead, cost_usd_30d=together["costUsd30d"], facts={**kept, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
     judged = finding.verdict if item.shown else None
     outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
