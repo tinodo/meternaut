@@ -1504,13 +1504,18 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotRegex(script, r"--method (put|patch|post|delete)")
         self.assertEqual(self.text.count("console-check.py door"), 1)
 
-    def test_the_summary_of_cases_prints_the_system_assigned_principal_read_from_the_app_and_says_none_yet_when_there_is_none(self):
-        for title, site_variable, summary in (("The cases app lists its four functions", "SITE_ID", "Identity of the cases app (object id)"),):
+    def test_the_summary_of_cases_says_whether_the_app_has_an_identity_of_its_own_and_prints_no_object_id_because_the_summary_is_public(self):
+        for title, site_variable in (("The cases app lists its four functions", "SITE_ID"),):
             block = self.step(title)
             script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
             self.assertIn(f'system_principal=$(az rest --method get --url "https://management.azure.com${{{site_variable}}}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)', script, title)
-            self.assertIn("if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then system_principal=\"none yet\"; fi", script, title)
-            self.assertIn(summary, script, title)
+            self.assertIn("if grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then", script, title)
+            self.assertIn("printf '::add-mask::%s\\n::add-mask::%s\\n' \"$system_principal\" \"${system_principal^^}\"", script, "the object id is masked the moment it is read")
+            self.assertIn("The cases app has an identity of its own, a system-assigned one: $has_identity.", script, title)
+            self.assertNotIn("Identity of the cases app (object id)", script, title)
+            for line in script.splitlines():
+                if "echo" in line:
+                    self.assertNotIn("$system_principal", line, "the object id is printed nowhere: the summary of a public repository is public")
             self.assertIn("It is the app's own system-assigned identity.", script, title)
             self.assertRegex(script, r"This workflow gives (none of them|neither)", title)
             self.assertNotRegex(script, r"--method (put|patch|post|delete)", title)
@@ -1529,9 +1534,10 @@ class CasesWorkflow(unittest.TestCase):
         for line in code.splitlines():
             if "az identity" in line:
                 self.assertIn("IDENTITY_NAME", line.upper(), f"only the gateway's identity is looked up in the identity list: {line.strip()}")
-        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 3, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which two steps "
+        self.assertEqual(len(re.findall(r"Microsoft\.ManagedIdentity/userAssignedIdentities", code)), 4, "the retired runner identity, which is read and removed by one path, and the Operator's own identity, which two steps "
                                                                                                      "only read, for its object id: the one that works out the settings of the AI security (it is one of the identities of the access list) and the one that works "
-                                                                                                     "out the settings of the Foundry file (the role of the Operator on the project), and nothing else")
+                                                                                                     "out the settings of the Foundry file (the role of the Operator on the project), and the one read of the list of the identities of the project's group, which "
+                                                                                                     "masks their ids and changes nothing (the step 'Mask the identities that exist in the project's resource group'), and nothing else")
         self.assertEqual(len(re.findall(r'az rest --method delete --url "https://management\.azure\.com\$\{identity\}\?api-version=2023-01-31"', code)), 1, "the one that is the retired runner's")
         finished_cases = re.search(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", self.step("What was done")).group(1)
         for words in ("The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "
@@ -2631,7 +2637,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(self.text.count("uses: azure/login@"), 13, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the thirteen are the first, the two of the Teams bot's action, one before its publish and one before its read-back, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, and the one before the read-back of the AI security and the one before the read-back of the telemetry exporter)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
-        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30", "seconds": 2400,
+        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only", "seconds": 2400,
                                  "minutes": 50}}
         for title, want in expected.items():
             block, script = self.step(title), self.script(title)
@@ -2652,9 +2658,9 @@ class OperatorChecksWorkflow(unittest.TestCase):
                 self.assertNotIn(word, block, f"{title}: {word}")
 
     def test_the_arguments_of_the_runner_before_the_change_are_still_the_ones_that_the_tool_takes(self):
-        # cases-check.py run --storage-account --insights --minutes 30: the storage account replaces the namespace, and nothing else of the arguments changed
+        # cases-check.py run --storage-account --insights --minutes 30: the storage account replaces the namespace, and nothing else of the arguments changed; --counts-only (a public log) was added
         cases = text("tools/cases-check.py")
-        for option in ("--storage-account", "--insights", "--minutes", "--summary"):
+        for option in ("--storage-account", "--insights", "--minutes", "--summary", "--counts-only"):
             self.assertIn(f'run.add_argument("{option}"', cases)
         self.assertNotIn("--namespace", cases)
         self.assertNotIn("--no-send", cases, "the tool keeps its behaviour: it puts its message in the queue itself")

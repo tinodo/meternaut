@@ -336,7 +336,7 @@ def console_host_name(env) -> str:
 
 
 def console_parameters(env) -> dict:
-    """The console, the people and the mail of the cases app, from four optional variables. None of them is a secret: an app registration's client id,
+    """The console, the people and the mail of the cases app, from four optional values. They are secrets of the environment hub, so that GitHub masks them in the public log, and none is a credential: an app registration's client id,
     the people (directory object id, name, roles and address of each), the address of the shared mailbox and the host name that the console has on the platform's Application Gateway.
     Without a client id the sign-in is not set up and the console refuses every request. Without a host name the console is opened on the app's own name."""
     client = (env.get("CONSOLE_APP_CLIENT_ID") or "").strip()

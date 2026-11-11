@@ -15,7 +15,7 @@ models), L3 agent management (identities, owners), L4 the security foundation (p
 Rules that every control follows:
   - A thing that cannot be read with the rights of the identity that runs this is UNKNOWN, with the reason and the right that would read it. UNKNOWN is never PASS and is never hidden.
   - What is read is compared with what the repository says (environment/models.json, environment/aigateway/policies.json and contracts.json, the templates' names) and, where the repository cannot say it, with a
-    baseline that a person accepted and that lives in a repository variable and not in a file (a policy exemption that the owner knows of: --accepted-exemptions; a policy that is non-compliant with the effect
+    baseline that a person accepted and that lives in a secret of the environment hub and not in a file (a policy exemption that the owner knows of: --accepted-exemptions; a policy that is non-compliant with the effect
     Deny and that he knows of: --accepted-deny). With no baseline the control is UNKNOWN and prints what it found, so that he can accept it; it is never PASS.
   - A FAIL of a control whose breach means that the agents run outside what was designed is fail-closed: the run ends with exit code 1 and the summary says so. The app's own check pulls the switch of the investigation
     (only narrow: a person puts it back); this tool changes nothing, so it only fails the run and says it. Any other FAIL ends the run with exit code 1 as well, and says that it is not fail-closed.
@@ -759,7 +759,7 @@ def policy_assignments(ctx: Context) -> Outcome:
     optional = sorted(n for n in by_name if n in OPTIONAL_ASSIGNMENTS)
     held = f"The assignments {', '.join(OUR_ASSIGNMENTS)} are on the group with the effects of tools/environment-params.py" + (f", and {', '.join(optional)}" if optional else "")
     if accepted is None:
-        return unknown(f"{held}. No baseline of the policy exemptions was accepted, so the {len(found)} that exist cannot be judged: set the repository variable DRIFT_ACCEPTED_EXEMPTIONS to the list "
+        return unknown(f"{held}. No baseline of the policy exemptions was accepted, so the {len(found)} that exist cannot be judged: set the secret DRIFT_ACCEPTED_EXEMPTIONS of the environment hub to the list "
                        f"{', '.join(found) or '(none)'} when the owner knows them.")
     fresh = [key for key in found if key not in accepted]
     if fresh:
@@ -1276,7 +1276,7 @@ def parse(argv) -> argparse.Namespace:
     parser.add_argument("--access-list", default="environment/aigateway/contracts.json")
     parser.add_argument("--commit", default="", help="the commit of main that the cases app is compared with (the Hub passes the commit of its own code, drift.yml GITHUB_SHA)")
     parser.add_argument("--app-dir", default="", help="the app's folder at that commit (src/case-functions), for the digest of its own files")
-    parser.add_argument("--accepted-exemptions", default=None, help="the policy exemptions that the owner knows of, as assignment/exemption, comma separated (the repository variable DRIFT_ACCEPTED_EXEMPTIONS); unset: not judged")
+    parser.add_argument("--accepted-exemptions", default=None, help="the policy exemptions that the owner knows of, as assignment/exemption, comma separated (the secret DRIFT_ACCEPTED_EXEMPTIONS of the environment hub); unset: not judged")
     parser.add_argument("--accepted-deny", default=None, help="the non-compliant Deny policies that the owner knows of, as assignment/reference/type, comma separated (DRIFT_ACCEPTED_DENY); unset: not judged")
     parser.add_argument("--cases-public-access", default="", choices=("", "Enabled", "Disabled"), help="the public network access that the cases app is accepted to have (default: the constant of tools/environment-params.py)")
     parser.add_argument("--read-subscription", action="store_true", help="also read the Defender plan, which is set on the subscription (needs Reader there)")
