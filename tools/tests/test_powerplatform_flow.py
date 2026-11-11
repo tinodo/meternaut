@@ -64,6 +64,13 @@ def without_literals(expression):
     return re.sub(r"'(?:[^']|'')*'", "''", expression)
 
 
+class TheServiceLimits(unittest.TestCase):
+    def test_no_description_is_longer_than_the_256_characters_that_the_flow_service_takes(self):
+        # The service refused the first flow on 2026-11-11: ActionDescriptionTooLong, 'maximum 256 and actual 295' (the Dataverse import has the same limit).
+        for name, node in [*EVERY.items(), *DEFINITION["triggers"].items()]:
+            self.assertLessEqual(len(node.get("description", "")), 256, name)
+
+
 class TheFlowReadsTheQueueThroughTheConnector(unittest.TestCase):
     def test_the_trigger_is_the_v2_batch_trigger_of_azure_queues_with_the_parameters_that_the_connector_has(self):
         self.assertEqual(TRIGGER["type"], "OpenApiConnection")

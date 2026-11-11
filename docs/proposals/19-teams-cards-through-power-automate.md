@@ -1,6 +1,6 @@
 # Teams cards through Power Automate: no bot, no app registration, no public endpoint — a decision record
 
-**Status: decided by the owner on 2026-11-11; built, not deployed, and not run in Power Platform or in Teams.** The Azure part (a subnet, an enterprise policy and a queue) is in templates and compiles, and the Hub action `powerplatform` makes the subnet and the policy (it has not run). The flow is an unpacked Power Platform solution that has never been imported anywhere. The tool that makes and links the environment has only ever run its read-only command (`status`), against the owner's tenant on 2026-11-11. Whether a card reaches a person is not proven until the first card arrives in a chat. Every Microsoft fact below names its page and was read on 2026-11-11.
+**Status: decided by the owner on 2026-11-11, and run the same day: a test card and three real requests of the app reached his Teams chat through this path.** The subnet and the enterprise policy were made by the Hub action `powerplatform` on GitHub, the environment was linked with `tools/powerplatform.py`, and the two connections and the flow were made with the API commands of the same tool, because the maker portal refuses a person who is a guest of the tenant (the owner is one; see "When the maker portal refuses you"). The flow's import as a solution in the maker portal has never been done. What the run proved and what it did not is at the end. Every Microsoft fact below names its page and was read on 2026-11-11.
 
 ## The owner's words
 
@@ -102,7 +102,7 @@ The owner starts the Hub actions. The roles in Teams and in Power Platform may b
    az role assignment create --assignee-object-id <object id of the person> --assignee-principal-type User --role "Storage Queue Data Message Processor" --scope /subscriptions/<subscription id>/resourceGroups/<resource group>/providers/Microsoft.Storage/storageAccounts/<storage account>/queueServices/default/queues/teams-cards
    ```
 
-   The person's own object id is `az ad signed-in-user show --query id --output tsv`, run by that person; the account's name is `az storage account list --resource-group <resource group> --query "[].name" --output tsv`. The role reads, peeks and deletes messages ([built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/storage)). The connector wants a Microsoft Entra ID connection; guest accounts are not supported.
+   The person's own object id is `az ad signed-in-user show --query id --output tsv`, run by that person; the account's name is `az storage account list --resource-group <resource group> --query "[].name" --output tsv`. The role reads, peeks and deletes messages ([built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/storage)). The connector wants a Microsoft Entra ID connection, and its page says that guest accounts are not supported; a B2B guest's connection worked on 2026-11-11 all the same.
 5. If the Power Platform administrator who links the environment cannot read the policy, give that person Reader on it:
 
    ```
@@ -120,6 +120,8 @@ The owner starts the Hub actions. The roles in Teams and in Power Platform may b
 9. `python tools/powerplatform.py link --environment <environment name> --subscription <subscription id> --resource-group <resource group> --apply`. It checks first that the environment is in Sweden, is a type that supports virtual network support, is a Managed Environment and is not linked to another policy, and that the policy and its subnet look right. Then wait: connections can be unstable for up to 30 minutes after a link or an unlink.
 10. `python tools/powerplatform.py status --environment <environment name> --subscription <subscription id> --resource-group <resource group>` must say that the project's policy is linked.
 
+**When the maker portal refuses you** ("You are not permitted to make flows in this environment"). A person who is a guest (B2B) of the tenant that holds the subscription gets this in a new Dataverse environment, because every new environment refuses guests ([Learn](https://learn.microsoft.com/power-platform/admin/security/guest-access); the setting `restrictGuestUserAccess` is changed in the Power Platform admin center, which does not let a guest sign in at all: "You attempted to login as a guest user, which is not supported"). The owner of this project is such a guest, even as Global Administrator. The platform's own API takes the same token, so use steps 15 to 19 instead of 11 to 14: the connections and the flow are made without the portal, and nothing in Dataverse is needed.
+
 **In the maker portal, by the person of step 4**, who made the environment or has been made an administrator of it.
 
 11. `python tools/powerplatform-pack.py` makes `powerplatform/out/meternaut-cards.zip`, the same bytes every time. In the environment: Solutions, Import solution, that file.
@@ -127,7 +129,15 @@ The owner starts the Hub actions. The roles in Teams and in Power Platform may b
 13. Open the flow *Meternaut cards*, save it, and turn it on. It arrives switched off, and saving does not turn it on.
 14. Send the first card before the app does: a second flow in the same environment with a manual trigger and one *Put a message on a queue (V2)* action with the same connection, endpoint and queue, and a message in the format above. It needs the role *Storage Queue Data Message Sender* on the queue for the time of the test. The card should arrive in the person's chat within a few minutes, and the queue should be empty. If the first runs after the link are slow and fail once with a 404 from the connector's host, wait out the 30 minutes and run again before looking for another cause (the reference repository's experience, not proven here).
 
-**After a new version of the solution.** An import replaces the flow, and the replacement arrives switched off with no connection chosen: pick the two connections again (they are kept, no new sign-in), save, and turn it on, as in steps 12 and 13 ([the reference repository](https://github.com/tinodo/secure-request-classifier/blob/main/docs/deployment.md#what-a-redeployment-resets)).
+**After a new version of the solution.** An import replaces the flow, and the replacement arrives switched off with no connection chosen: pick the two connections again (they are kept, no new sign-in), save, and turn it on, as in steps 12 and 13 ([the reference repository](https://github.com/tinodo/secure-request-classifier/blob/main/docs/deployment.md#what-a-redeployment-resets)). With the tool, `flow --apply` updates the flow that is there and keeps it started.
+
+**Without the maker portal, by the person of step 4** (the way that was run on 2026-11-11; each command is a dry run until `--apply`):
+
+15. `python tools/powerplatform.py connections --environment <environment name> --apply` makes the two connections that are missing and prints the address at which the person signs in for each. Open each address in a browser, choose your own account, tick *I have verified this request and trust the source* and click *Allow access*. The addresses are good for about 15 minutes. If your sign-in name has `#EXT#` in it (you are a guest) and the Azure Queues sign-in page has `/common/` in its web address, put the tenant id in its place before you choose the account: otherwise the connection is made with the token of your home tenant, and the queue, which is in this tenant, refuses it. Run `connections` again: both must say *connected*.
+16. `python tools/powerplatform.py flow --environment <environment name> --storage-account <storage account> --apply` makes the flow *Meternaut cards* from the definition of the unpacked solution (the same one that the packer packs), with the two values and the two connections, and starts it. It is not a solution: it lives in the person's own flows.
+17. `python tools/powerplatform.py test-card --environment <environment name> --storage-account <storage account> --to <your mail address> --apply` makes a flow with a button, runs it once, deletes it, and says where the card is. It needs the role *Storage Queue Data Message Sender* on the queue for the time of the test (take it away after); without it the queue answers `AuthorizationPermissionMismatch` and the tool says which role is missing.
+18. `python tools/powerplatform.py flow-runs --environment <environment name>` lists the last runs of the flow and, for a failed one, the actions that failed. This is how the app's cards are followed, because the app cannot tell whether a card arrived.
+19. The card is in the chat of the person with the app *Workflows*. A guest finds it in the organisation of the tenant, not in the home organisation.
 
 The import by an API call (`ImportSolutionAsync`) is not written: its connection references and environment variable values go in as a collection of entities that the Web API reference gives no example of.
 
@@ -147,23 +157,25 @@ The import by an API call (`ImportSolutionAsync`) is not written: its connection
 
 ## What is proven, and what is not
 
-**Proven**, on 2026-11-11, with the owner's own sign-in and read-only calls:
+**Proven**, on 2026-11-11, with the owner's own sign-in (he is a guest of the lab tenant) and the Hub on GitHub:
 
-- The list of environments, and one environment's detail, answer in the shape that the tool reads (`status` ran against the tenant).
-- The definitions of the two connectors on the Power Apps API: the Azure Queues trigger `OnMessages_V2` and the action `DeleteMessage_V2` with their parameter names, and the Teams operation `PostCardToConversation` with the poster *Flow bot* and the place *Chat with Flow bot*.
+- The Hub action `powerplatform` ran on GitHub (OpenID Connect, no stored credential; the public log held none of the estate's identifiers): it made the subnet (a /27, delegated, with its own network security group) and the enterprise policy, the landing zone put its route table on the subnet within three minutes, and the read-back of both passed.
+- `tools/powerplatform.py link` linked the environment (it was *Linked* about three minutes later). The address of the operation that the platform names is on its regional host (`unitedstates.api.bap.microsoft.com`), which the tool's guard refused the first time; it is fixed and tested.
+- The maker portal refused the owner, and the platform's own API did not: the two connections (the Azure Queues one with *Microsoft Entra ID Integrated*, and the Teams one) were made and signed in with the commands `connections`, and the flow was made and started with `flow`. A first flow was refused with `ActionDescriptionTooLong` (an action description may have 256 characters; the solution's had 295), which is fixed in the solution too.
+- The flow reads the private queue through the delegated subnet. The storage account has no public access, and a request that arrived over any other path would have been refused by the network; the queue answered `AuthorizationPermissionMismatch` before the role was given, which is its own answer to a request that reached it, and the same request succeeded once the role had applied.
+- The flow posted the card as the Flow bot in the owner's chat with the app *Workflows*, in the organisation of the lab tenant, and then deleted the message. The Teams connector answered 201. The card was seen in Teams: first a test card, then three real requests that were waiting in the console and that the app put on the queue within two minutes of the owner choosing Teams (a finding about a subscription, a private endpoint at 7.20 euro a month, and an older planted disk), each with the button *Review and decide*.
+- The Azure Queues connection with Microsoft Entra ID worked for a B2B guest, although the connector's page says that guest accounts are not supported.
+- The tool's own commands ran against the live environment: `connections`, `flow` (the second time as an update), `flow-runs` and `test-card`.
 - The templates compile and pass the Bicep linter; the tests run the tool, the packer and the template checks against fakes.
 
-**Not proven.** None of this has run.
+**Not proven.**
 
-- The solution has never been imported. The flow's JSON follows the owner's reference repository and the shapes of the two connector definitions, not an export from the maker portal. The designer may mark an action or write the definition again.
-- The names of the Teams action's inputs (`recipient` and `messageBody`) come from the connector's own description, not from a run.
-- That the trigger reaches the queue from the delegated subnet. It depends on the landing zone's DNS resolving the account's name and on the landing zone's route table and firewall letting the containers out, which Learn says are the network's own policies.
-- That the subnet gets its route table on time, and that the delegation survives it.
-- That the *Workflows* app is allowed in the owner's tenant, and how the card looks in the chat.
-- That the licences of the owner cover a Managed Environment and a premium connector.
+- The solution has never been imported. The flow that runs was made by the API from the same definition, and it is not a solution: nothing here proves that the import in the maker portal works, and the designer may mark an action or write the definition again.
+- That a card reaches a person who is a member of the tenant. Only the owner, a guest, has been written to.
+- That the flow keeps running: the connections belong to a person, and a token that expires, an account that is disabled or a new sign-in rule stops it (see the limits). The first run of the flow after a long time is the thing to look at (`flow-runs`).
+- That the licences of the owner cover a Managed Environment and a premium connector beyond a developer environment. The flow ran in the developer environment of the owner, with no licence step.
 - That a flow which only looks at a queue keeps a developer environment alive.
-- That the maker portal's import asks for the two connections and the two variables as step 12 says, and that its designer works with a storage account that has no public access (the two values are typed in as environment variables, so the flow does not need the designer's lists). That a new developer environment can still be made and then turned managed after 15 November 2026.
-- The API version of the enterprise policy: the template uses `2020-10-30-preview`, the one that the Bicep reference and the Learn page list; Microsoft's own module deploys `2020-10-30`. If the preview version is refused, it is one word.
+- That the maker portal's import asks for the two connections and the two variables as step 12 says, and that its designer works with a storage account that has no public access. That a new developer environment can still be made and then turned managed after 15 November 2026.
 - The custom prefix of the solution's parts is `mtnaut`, not `meternaut`: a publisher prefix has 2 to 8 characters ([pac solution init](https://learn.microsoft.com/power-platform/developer/cli/reference/solution#pac-solution-init)).
 
 ## What replaced the bot

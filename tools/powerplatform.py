@@ -7,6 +7,10 @@
     python tools/powerplatform.py link --environment <name or id> --subscription <id> --resource-group <name> [--policy-name <name>] [--apply] [--yes]
     python tools/powerplatform.py unlink --environment <name or id> --subscription <id> --resource-group <name> [--policy-name <name>] [--apply] [--yes]
     python tools/powerplatform.py steps [--subscription <id>] [--resource-group <name>] [--storage-account <name>] [--environment <name>] [--person <object id>]
+    python tools/powerplatform.py connections --environment <name or id> [--apply] [--yes]
+    python tools/powerplatform.py flow --environment <name or id> --storage-account <name> [--queue <name>] [--apply] [--yes]
+    python tools/powerplatform.py flow-runs --environment <name or id> [--last <1 to 20>]
+    python tools/powerplatform.py test-card --environment <name or id> --storage-account <name> --to <mail address> [--queue <name>] [--apply] [--yes]
 
 Why. Teams cards reach people through a Power Automate flow that reads the Storage queue `teams-cards` over Power Platform virtual network support: the flow's Azure Queues connector runs in a subnet of the
 project's own virtual network (environment/powerplatform/main.bicep), so the storage account needs no public endpoint, and no key and no app registration is involved (docs/proposals/19-teams-cards-through-power-automate.md).
@@ -17,7 +21,7 @@ How it signs in, and what it will not do. It asks the Azure CLI of the person wh
 memory. No credential is stored, read from a file or taken from the command line, and a token is taken out of everything that is printed. The person needs the Power Platform Administrator role in Microsoft Entra,
 and Reader on the enterprise policy (docs/proposals/19-teams-cards-through-power-automate.md: the command that gives it). It never runs in a pipeline (AGENTS.md rules 18 and 24: its output names environments and policies of the
 estate, which a log must not hold, and the deploy identity holds no right in Power Platform), and it sends only the calls of CALLS below: a read of Azure Resource Manager is the only thing it does to Azure, and it
-changes nothing there. It deletes nothing.
+changes nothing there. It deletes nothing, except the one test flow that `test-card` made a moment before.
 
 status               Read only. Without --environment, the environments that the signed-in person sees (name, region, type, Managed Environment, state, linked policy). With one, what it takes to
                      link it: its region, type, Managed Environment setting and linked policy, the project's policy in Azure (kind, geography, virtual network, subnet, delegation), and whether they are linked.
@@ -34,19 +38,30 @@ unlink               The same, the other way: only the project's own policy is u
 steps                Prints, in order, every step that a person does by hand, with the commands: the Hub actions, the roles, the Teams admin center setting for the Workflows app, the environment, the link, the import of the solution, the two connections, the two environment
                      variables, turning the flow on, and the first card. It sends nothing. The import is left to the maker portal: the Dataverse call for it (ImportSolutionAsync) takes the
                      connection references and the values of the environment variables as a collection of entities that the Web API reference does not show an example of, so it is not written here.
+connections          For a person whom the maker portal refuses (a guest of the tenant: new Dataverse environments refuse guests, and the admin center does not take a guest at all), and for anyone who would rather not click. A dry run says
+                     which of the two connections of the flow (Azure Queues with Microsoft Entra ID, and Microsoft Teams) are connected, made and not signed in, or not made. With --apply it makes the ones that are not
+                     made, with the signed-in person's own token, and prints the address at which the person signs in to each (the platform's own consent page: the person ticks a box and allows). The addresses are good for
+                     about 15 minutes. It stores nothing, and the connections belong to the person.
+flow                 With the two connections connected: a dry run, or, with --apply, makes the flow `Meternaut cards` from the definition of the unpacked solution (the one that tools/powerplatform-pack.py packs) with the
+                     address of the queue and its name, started; a flow of that name that is there is updated, never made twice, and two of that name are left alone. It is not a solution: it is one of the person's own flows.
+flow-runs            Read only: the last runs of that flow and, for a failed one, the actions that failed. The app cannot tell whether a card arrived; this does.
+test-card            A dry run, or, with --apply, makes a flow with a button that puts one test card on the queue, runs it once, says where the card is, and deletes that flow (the only thing the tool ever deletes, and only
+                     the one it made a moment before). The signed-in person needs Storage Queue Data Message Sender on the queue while it runs: without it the queue answers `AuthorizationPermissionMismatch` and the tool says so.
 
-THIS HAS NEVER RUN AGAINST POWER PLATFORM. The calls follow the owner's reference repository (scripts/Set-PowerPlatformSubnetInjection.ps1, New-PowerPlatformEnvironment.ps1 and Resolve-PowerPlatformEnvironment.ps1) and
-Microsoft's own module (microsoft/PowerPlatform-EnterprisePolicies, Source/Common/EnvironmentOperations.ps1), and what the tool reads was checked against a live environment with a read only call
-(2026-11-11: the environment list, one environment's detail, and the definitions of two connectors). The tests run it against a fake of those calls and of nothing else. Enabling or disabling the delegation can leave
+On 2026-11-11 the commands status, create-environment, managed, link, connections, flow, flow-runs and test-card ran against the owner's tenant, and a card reached a Teams chat. The calls follow the owner's reference repository
+(scripts/Set-PowerPlatformSubnetInjection.ps1, New-PowerPlatformEnvironment.ps1 and Resolve-PowerPlatformEnvironment.ps1), Microsoft's own module (microsoft/PowerPlatform-EnterprisePolicies,
+Source/Common/EnvironmentOperations.ps1) and the calls that the maker portal makes. The tests run it against a fake of those calls and of nothing else. Enabling or disabling the delegation can leave
 connections unstable for up to 30 minutes (Learn): the tool says so before it links.
 """
 from __future__ import annotations
 
 import argparse
 import http.client
+import importlib.util
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -56,22 +71,37 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Mapping
 
 BAP = "https://api.bap.microsoft.com"
 BAP_AUDIENCE = "https://service.powerapps.com/"
+POWERAPPS = "https://api.powerapps.com"  # the connections of an environment; it takes the same token as the BAP
+FLOW = "https://api.flow.microsoft.com"  # the flows of an environment
+FLOW_AUDIENCE = "https://service.flow.microsoft.com/"
 ARM = "https://management.azure.com"
 ARM_AUDIENCE = "https://management.azure.com/"
 ENVIRONMENTS_API = "2021-04-01"   # list, read, create and the governance configuration of an environment (the reference's calls)
 LINK_API = "2019-10-01"           # link and unlink of an enterprise policy (Microsoft's module: EnvironmentOperations.ps1)
 POLICY_API = "2020-10-30-preview"  # the version of the enterprise policy that environment/powerplatform/main.bicep writes
 SUBNET_API = "2025-05-01"
+APPS_API = "2016-11-01"           # connections and flows (the version that the maker portal itself calls, 2026-11-11)
 # The project's own, as environment/powerplatform/main.bicep and tools/environment-params.py make them (a test holds the three together).
 DEFAULT_POLICY_NAME = "ep-meternaut-netinjection"
 GEOGRAPHY = "sweden"
 AZURE_REGION = "swedencentral"
 DELEGATION = "Microsoft.PowerPlatform/enterprisePolicies"
 QUEUE_NAME = "teams-cards"
+FLOW_NAME = "Meternaut cards"
+TEST_FLOW_NAME = "Meternaut test card (made by tools/powerplatform.py, deleted at once)"
+# The two connectors of the flow: (api name, what it is called, the connection parameter set of Microsoft Entra ID sign-in or None).
+CONNECTORS = (("shared_azurequeues", "Azure Queues (Microsoft Entra ID Integrated)", "tokenBasedAuth", "Premium"), ("shared_teams", "Microsoft Teams", None, "Standard"))
+ENDPOINT_PARAMETER = "Storage queue endpoint (mtnaut_StorageQueueEndpoint)"  # the two values of the flow, named as the packed solution names its environment variables
+QUEUE_PARAMETER = "Queue name (mtnaut_QueueName)"
+STORAGE_ACCOUNT_RE = re.compile(r"^[a-z0-9]{3,24}$")
+QUEUE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+MAIL_RE = re.compile(r"^[^@\s<>\"']{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}$")
+CONSENT_RETURN = "https://example.com/"  # where the browser lands after the person allows a connection: nothing is passed to it (seen on 2026-11-11), and IANA owns it
 SKUS_CREATED = ("Developer", "Sandbox")
 # The types of environment that virtual network support covers (Learn, "Supported environments"): not Trial, not Microsoft Dataverse for Teams.
 SKUS_SUPPORTED = ("Production", "Default", "Sandbox", "Developer")
@@ -93,6 +123,9 @@ POLICY_RE = re.compile(r"^[A-Za-z0-9._-]{1,90}$")
 BAP_PATH = r"/providers/Microsoft\.BusinessAppPlatform"
 # The platform names the operation of a 202 on its regional host (unitedstates.api.bap.microsoft.com, seen on 2026-11-11), which is the same service and takes the same token: https, at most one label in front, no user, no port.
 BAP_HOST_RE = re.compile(r"^(?:[a-z0-9-]+\.)?api\.bap\.microsoft\.com$")
+APPS_QUERY = rf"api-version={APPS_API}&\$filter=environment%20eq%20%27{GUID}%27"
+CONNECTION = rf"{re.escape(POWERAPPS)}/providers/Microsoft\.PowerApps/apis/shared_(?:azurequeues|teams)/connections/[0-9a-f]{{32}}"
+FLOWS = rf"{re.escape(FLOW)}/providers/Microsoft\.ProcessSimple/environments/{GUID}/flows"
 # (method, a pattern of the whole address): everything that this tool may send. Azure Resource Manager is only ever read.
 CALLS = (
     ("GET", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/(?:scopes/admin/)?environments(?:\?[^#]*)?$")),
@@ -101,6 +134,17 @@ CALLS = (
     ("POST", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/environments/{GUID}/governanceConfiguration\?api-version={ENVIRONMENTS_API}$")),
     ("POST", re.compile(rf"^{re.escape(BAP)}{BAP_PATH}/environments/{GUID}/enterprisePolicies/NetworkInjection/(?:link|unlink)\?api-version={LINK_API}$")),
     ("GET", re.compile(rf"^https://(?:[a-z0-9-]+\.)?api\.bap\.microsoft\.com{BAP_PATH}/[^#]*$")),   # the operation that a 202 names: on the host of the platform or on its regional host
+    ("GET", re.compile(rf"^{re.escape(POWERAPPS)}/providers/Microsoft\.PowerApps/connections\?{APPS_QUERY}$")),
+    ("GET", re.compile(rf"^{CONNECTION}\?{APPS_QUERY}$")),
+    ("PUT", re.compile(rf"^{CONNECTION}\?{APPS_QUERY}$")),
+    ("POST", re.compile(rf"^{CONNECTION}/getConsentLink\?{APPS_QUERY}$")),
+    ("GET", re.compile(rf"^{FLOWS}\?api-version={APPS_API}$")),
+    ("POST", re.compile(rf"^{FLOWS}\?api-version={APPS_API}$")),
+    ("PATCH", re.compile(rf"^{FLOWS}/{GUID}\?api-version={APPS_API}$")),
+    ("DELETE", re.compile(rf"^{FLOWS}/{GUID}\?api-version={APPS_API}$")),   # only the test flow that `test-card` made a moment before
+    ("POST", re.compile(rf"^{FLOWS}/{GUID}/triggers/manual/run\?api-version={APPS_API}$")),
+    ("GET", re.compile(rf"^{FLOWS}/{GUID}/runs\?api-version={APPS_API}$")),
+    ("GET", re.compile(rf"^{FLOWS}/{GUID}/runs/[0-9A-Za-z]+\?api-version={APPS_API}&\$expand=properties/actions$")),
     ("GET", re.compile(rf"^{re.escape(ARM)}/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]+/providers/Microsoft\.PowerPlatform/enterprisePolicies/[A-Za-z0-9._-]+\?api-version={POLICY_API}$")),
     ("GET", re.compile(rf"^{re.escape(ARM)}/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]+/providers/Microsoft\.Network/virtualNetworks/[A-Za-z0-9._-]+/subnets/[A-Za-z0-9._-]+\?api-version={SUBNET_API}$")),
 )
@@ -114,6 +158,20 @@ def on_bap_host(url: str) -> bool:
     """Whether an address is on the host of the Business Application Platform or on its regional host, over https, and nowhere else: the token goes nowhere else."""
     parts = urllib.parse.urlsplit(url)
     return parts.scheme == "https" and bool(BAP_HOST_RE.match(parts.netloc))
+
+
+def audience_of(url: str) -> str | None:
+    """The audience of the token that an address takes, or None when the address is not one of the four hosts that this tool talks to (https only)."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https":
+        return None
+    if on_bap_host(url) or parts.netloc == urllib.parse.urlsplit(POWERAPPS).netloc:
+        return BAP_AUDIENCE
+    if parts.netloc == urllib.parse.urlsplit(FLOW).netloc:
+        return FLOW_AUDIENCE
+    if parts.netloc == urllib.parse.urlsplit(ARM).netloc:
+        return ARM_AUDIENCE
+    return None
 
 
 class Problem(Exception):
@@ -221,12 +279,11 @@ class Client:
 
     def send(self, method: str, url: str, body: dict | None = None) -> Answer:
         host = urllib.parse.urlsplit(url).netloc
-        platform = on_bap_host(url)
-        if url.split("?", 1)[0].count("://") != 1 or not (platform or host == urllib.parse.urlsplit(ARM).netloc):
+        audience = audience_of(url)
+        if url.split("?", 1)[0].count("://") != 1 or audience is None:
             raise Problem(f"{host or url} is not a host that this tool talks to: the token goes nowhere else")
         if not any(m == method and p.match(url) for m, p in CALLS):
             raise Problem(f"{method} {url.split('?', 1)[0]} is not one of the calls that this tool sends")
-        audience = BAP_AUDIENCE if platform else ARM_AUDIENCE
         headers = {"Authorization": f"Bearer {self.tokens(audience)}", "Accept": "application/json"}
         data = None
         if body is not None:
@@ -320,6 +377,7 @@ def facts(environment: dict) -> dict[str, object]:
         "state": str(properties.get("provisioningState") or ""),
         "management": str(pick(properties, "states", "management", "id") or ""),
         "instance": str(metadata.get("instanceUrl") or ""),
+        "tenant": str(properties.get("tenantId") or ""),
         "policy": str(pick(linked, "id") or ""),
         "link_status": str(pick(linked, "linkStatus") or ""),
     }
@@ -664,6 +722,244 @@ def command_link(args: argparse.Namespace, client: Client, out: Callable[[str], 
     return 0 if linked else 1
 
 
+# ---- the connections and the flow, by the platform's own API ---------------------------------------------------------------------------------------
+
+# The maker portal refuses a person who is a guest of the tenant ("You are not permitted to make flows in this environment"): every new Dataverse environment refuses guests (Learn, "Control guest access to
+# Microsoft Power Platform environments"), and the owner of the project is a guest (B2B) of the lab tenant that holds the subscription. The same calls that the portal makes are open to such a person, and this is
+# how the two connections and the flow were made on 2026-11-11. Nothing is stored: the person's own token, the person's own connections, and the flow is the person's.
+
+def apps_query(environment_id: str) -> str:
+    return f"api-version={APPS_API}&$filter=" + urllib.parse.quote(f"environment eq '{environment_id}'", safe="")
+
+
+def connection_url(api: str, name: str, environment_id: str, tail: str = "") -> str:
+    return f"{POWERAPPS}/providers/Microsoft.PowerApps/apis/{api}/connections/{name}{tail}?{apps_query(environment_id)}"
+
+
+def flows_url(environment_id: str, tail: str = "") -> str:
+    return f"{FLOW}/providers/Microsoft.ProcessSimple/environments/{environment_id}/flows{tail}?api-version={APPS_API}"
+
+
+def list_connections(client: Client, environment_id: str) -> list[dict]:
+    answer = client.send("GET", f"{POWERAPPS}/providers/Microsoft.PowerApps/connections?{apps_query(environment_id)}")
+    if answer.status != 200 or not isinstance(answer.body, dict):
+        raise Problem(f"the connections could not be read: {message_of(answer)}")
+    return [c for c in answer.body.get("value") or [] if isinstance(c, dict)]
+
+
+def connector_of(connection: dict) -> str:
+    return str(pick(connection, "properties", "apiId") or "").rstrip("/").rsplit("/", 1)[-1]
+
+
+def connection_status(connection: dict) -> str:
+    statuses = pick(connection, "properties", "statuses")
+    first = statuses[0] if isinstance(statuses, list) and statuses and isinstance(statuses[0], dict) else {}
+    return str(first.get("status") or "")
+
+
+def connected_names(client: Client, environment_id: str, wanted: tuple[str, ...]) -> dict[str, str]:
+    """The name of a connection that is signed in, for each connector that is wanted, or a Problem that says which one is not and what to run."""
+    existing = list_connections(client, environment_id)
+    names: dict[str, str] = {}
+    for api in wanted:
+        found = next((c for c in existing if connector_of(c) == api and connection_status(c) == "Connected"), None)
+        label = next(label for a, label, _, _ in CONNECTORS if a == api)
+        if found is None:
+            raise Problem(f"the signed-in person has no connected connection for {label} in this environment: run `connections --apply` and open its sign-in address first")
+        names[api] = str(found.get("name"))
+    return names
+
+
+def command_connections(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"]) -> int:
+    f = facts(resolve_environment(client, args.environment))
+    out(f"The environment {f['name']} (id {f['id']}): the connections of the signed-in person for the flow {FLOW_NAME}.")
+    existing = list_connections(client, str(f["id"]))
+    todo: list[tuple[str, str, str, str | None]] = []
+    for api, label, parameter_set, _ in CONNECTORS:
+        mine = [c for c in existing if connector_of(c) == api]
+        if any(connection_status(c) == "Connected" for c in mine):
+            out(f"  ok  {label}: connected")
+            continue
+        waiting = mine[0] if mine else None
+        out(f"  --  {label}: " + ("made, and not signed in" if waiting else "not made"))
+        todo.append((api, label, str(waiting.get("name")) if waiting else "", parameter_set))
+    if not todo:
+        out("Both are connected. Next: `flow --storage-account <name> --apply`.")
+        return 0
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to make what is not made and to get the address at which the person signs in.")
+        return 0
+    confirm(args, "Make the connections that are missing and get their sign-in addresses?", ask)
+    environment = {"id": f"/providers/Microsoft.PowerApps/environments/{f['id']}", "name": f["id"]}
+    for api, label, name, parameter_set in todo:
+        if not name:
+            name = secrets.token_hex(16)
+            properties: dict = {"environment": environment}
+            properties["connectionParametersSet" if parameter_set else "connectionParameters"] = {"name": parameter_set, "values": {}} if parameter_set else {}
+            made = client.send("PUT", connection_url(api, name, str(f["id"])), {"properties": properties})
+            if made.status not in (200, 201):
+                raise Problem(f"the connection of {label} was not made: {message_of(made)}")
+            out(f"  made the connection of {label}")
+        answer = client.send("POST", connection_url(api, name, str(f["id"]), "/getConsentLink"), {"redirectUrl": CONSENT_RETURN})
+        link = str(pick(answer.body, "consentLink") or "") if answer.status == 200 else ""
+        if not link.startswith("https://"):
+            raise Problem(f"no sign-in address was given for {label}: {message_of(answer)}")
+        out(f"  Sign in for {label}: open this address in a browser, choose your own account, tick 'I have verified this request and trust the source' and click 'Allow access':")
+        out(f"    {link}")
+    out(f"The addresses are good for about 15 minutes. If your sign-in name has #EXT# in it (you are a guest of the tenant), and the sign-in page for Azure Queues has /common/ in its web address, put the tenant id "
+        f"{f['tenant'] or '<tenant id>'} in its place and press Enter before you choose your account: otherwise the connection is made with your home tenant's token, which the queue (in this tenant) refuses. "
+        "Then run `connections` again: it says connected.")
+    return 0
+
+
+def flow_definition() -> dict:
+    """The definition of the flow, from the unpacked solution through the packer (tools/powerplatform-pack.py reads the files: this tool reads none), so that there is one flow and not two."""
+    spec = importlib.util.spec_from_file_location("powerplatform_pack_of_the_tool", Path(__file__).with_name("powerplatform-pack.py"))
+    pack = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pack)
+    try:
+        parts = pack.collect(pack.DEFAULT_SOURCE)
+    except pack.Problem as problem:
+        raise Problem(str(problem)) from problem
+    flows = [name for name in parts if name.startswith("Workflows/") and name.endswith(".json")]
+    if len(flows) != 1:
+        raise Problem(f"the unpacked solution has {len(flows)} flows, and this tool makes the one")
+    return json.loads(parts[flows[0]])["properties"]["definition"]
+
+
+def flow_body(account: str, queue: str, names: Mapping[str, str]) -> dict:
+    definition = flow_definition()
+    for key, value in ((ENDPOINT_PARAMETER, f"https://{account}.queue.core.windows.net/"), (QUEUE_PARAMETER, queue)):
+        if key not in definition.get("parameters", {}):
+            raise Problem(f"the flow of the solution has no parameter {key!r}: the tool and the solution have drifted apart")
+        definition["parameters"][key]["defaultValue"] = value
+    references = {api: {"connectionName": names[api], "source": "Embedded", "id": f"/providers/Microsoft.PowerApps/apis/{api}", "tier": tier} for api, _, _, tier in CONNECTORS}
+    return {"properties": {"displayName": FLOW_NAME, "definition": definition, "state": "Started", "connectionReferences": references}}
+
+
+def find_flows(client: Client, environment_id: str, display_name: str) -> list[dict]:
+    answer = client.send("GET", flows_url(environment_id))
+    if answer.status != 200 or not isinstance(answer.body, dict):
+        raise Problem(f"the flows could not be read: {message_of(answer)}")
+    return [x for x in answer.body.get("value") or [] if isinstance(x, dict) and str(pick(x, "properties", "displayName") or "") == display_name]
+
+
+def command_flow(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"]) -> int:
+    f = facts(resolve_environment(client, args.environment))
+    names = connected_names(client, str(f["id"]), tuple(api for api, _, _, _ in CONNECTORS))
+    body = flow_body(args.storage_account, args.queue, names)
+    found = find_flows(client, str(f["id"]), FLOW_NAME)
+    if len(found) > 1:
+        raise Problem(f"{len(found)} flows in this environment are named {FLOW_NAME!r}: this tool changes none of them on a guess")
+    out(f"The environment {f['name']} (id {f['id']}): both connections are connected.")
+    out(f"Would {'update the definition and the connections of' if found else 'make'} the flow {FLOW_NAME}, started: it reads the queue {args.queue} of the storage account {args.storage_account} once a minute and posts each message as a Teams card.")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to do it.")
+        return 0
+    confirm(args, f"{'Update' if found else 'Make'} the flow {FLOW_NAME}?", ask)
+    if found:
+        answer = client.send("PATCH", flows_url(str(f["id"]), "/" + str(found[0].get("name"))), body)
+    else:
+        answer = client.send("POST", flows_url(str(f["id"])), body)
+    if answer.status not in (200, 201):
+        raise Problem(f"the flow was not {'updated' if found else 'made'}: {message_of(answer)}")
+    state = str(pick(answer.body, "properties", "state") or "no state")
+    suspended = str(pick(answer.body, "properties", "flowSuspensionReason") or "None")
+    out(f"The flow {FLOW_NAME} is {'updated' if found else 'made'}: {state}" + ("" if suspended == "None" else f", suspended: {suspended}") + ".")
+    out("Next: `test-card` puts one card on the queue, and `flow-runs` shows what the flow did with it.")
+    return 0 if suspended == "None" and state == "Started" else 1
+
+
+def command_flow_runs(args: argparse.Namespace, client: Client, out: Callable[[str], None]) -> int:
+    f = facts(resolve_environment(client, args.environment))
+    found = find_flows(client, str(f["id"]), FLOW_NAME)
+    if not found:
+        raise Problem(f"no flow named {FLOW_NAME!r} in this environment for this sign-in: run `flow` first")
+    name = str(found[0].get("name"))
+    out(f"The flow {FLOW_NAME} in {f['name']}: {pick(found[0], 'properties', 'state') or 'no state'}.")
+    answer = client.send("GET", flows_url(str(f["id"]), f"/{name}/runs"))
+    if answer.status != 200 or not isinstance(answer.body, dict):
+        raise Problem(f"the runs could not be read: {message_of(answer)}")
+    runs = sorted((r for r in answer.body.get("value") or [] if isinstance(r, dict)), key=lambda r: str(pick(r, "properties", "startTime") or ""), reverse=True)[: args.last]
+    if not runs:
+        out("It has not run yet: a run starts when a message is on the queue.")
+        return 0
+    failed = 0
+    for run in runs:
+        status = str(pick(run, "properties", "status") or "")
+        out(f"  {pick(run, 'properties', 'startTime') or 'no time'}  {status}  {pick(run, 'properties', 'code') or ''}".rstrip())
+        if status == "Failed":
+            failed += 1
+            detail = client.send("GET", f"{FLOW}/providers/Microsoft.ProcessSimple/environments/{f['id']}/flows/{name}/runs/{run.get('name')}?api-version={APPS_API}&$expand=properties/actions")
+            actions = pick(detail.body, "properties", "actions") if detail.status == 200 else None
+            for action, result in (actions or {}).items() if isinstance(actions, dict) else ():
+                if isinstance(result, dict) and result.get("status") == "Failed":
+                    out(f"      {action}: {result.get('code') or 'no code'}")
+    return 1 if failed else 0
+
+
+def test_flow_body(account: str, queue: str, to: str, queue_connection: str, card_id: str) -> dict:
+    message = {"v": 1, "id": card_id, "to": to, "title": "Meternaut test card",
+               "card": {"type": "AdaptiveCard", "version": "1.4", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "body": [{"type": "TextBlock", "text": "Meternaut test card", "weight": "Bolder", "size": "Large"},
+                                 {"type": "TextBlock", "wrap": True, "text": "This card went through the private queue and the flow Meternaut cards, which runs in the project's own network."}]}}
+    put = {"runAfter": {}, "type": "OpenApiConnection", "inputs": {
+        "host": {"connectionName": "shared_azurequeues", "operationId": "PutMessage_V2", "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"},
+        "parameters": {"storageAccountName": f"https://{account}.queue.core.windows.net/", "queueName": queue, "message": json.dumps(message)},
+        "authentication": "@parameters('$authentication')"}}
+    definition = {"$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#", "contentVersion": "1.0.0.0",
+                  "parameters": {"$connections": {"defaultValue": {}, "type": "Object"}, "$authentication": {"defaultValue": {}, "type": "SecureObject"}},
+                  "triggers": {"manual": {"type": "Request", "kind": "Button", "inputs": {"schema": {"type": "object", "properties": {}, "required": []}}}},
+                  "actions": {"Put_a_message_on_a_queue_(V2)": put}}
+    references = {"shared_azurequeues": {"connectionName": queue_connection, "source": "Embedded", "id": "/providers/Microsoft.PowerApps/apis/shared_azurequeues", "tier": "Premium"}}
+    return {"properties": {"displayName": TEST_FLOW_NAME, "definition": definition, "state": "Started", "connectionReferences": references}}
+
+
+def command_test_card(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"], clock: Callable[[], float]) -> int:
+    f = facts(resolve_environment(client, args.environment))
+    names = connected_names(client, str(f["id"]), ("shared_azurequeues",))
+    out(f"The environment {f['name']} (id {f['id']}): the queue connection is connected.")
+    out(f"Would make a flow with a button, run it once and delete it: it puts one card for {args.to} on the queue {args.queue}, which the flow {FLOW_NAME} then posts in Teams. "
+        f"The signed-in person needs {ROLE_MESSAGE_SENDER} on the queue for that, for as long as the test lasts.")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to do it.")
+        return 0
+    confirm(args, "Put a test card on the queue?", ask)
+    made = client.send("POST", flows_url(str(f["id"])), test_flow_body(args.storage_account, args.queue, args.to, names["shared_azurequeues"], "test-" + secrets.token_hex(4)))
+    if made.status not in (200, 201) or not GUID_RE.match(str(pick(made.body, "name") or "")):
+        raise Problem(f"the test flow was not made: {message_of(made)}")
+    flow_id = str(pick(made.body, "name"))
+    result = 1
+    try:
+        started = client.send("POST", flows_url(str(f["id"]), f"/{flow_id}/triggers/manual/run"), {})
+        if started.status not in (200, 202):
+            raise Problem(f"the test flow did not start: {message_of(started)}")
+        deadline = clock() + 120
+        status, latest = "", None
+        while clock() < deadline:
+            client.sleep(5)
+            runs = client.send("GET", flows_url(str(f["id"]), f"/{flow_id}/runs"))
+            listed = [r for r in (runs.body or {}).get("value") or [] if isinstance(r, dict)] if runs.status == 200 and isinstance(runs.body, dict) else []
+            latest = max(listed, key=lambda r: str(pick(r, "properties", "startTime") or ""), default=None)
+            status = str(pick(latest, "properties", "status") or "") if latest else ""
+            if status in ("Succeeded", "Failed", "Cancelled"):
+                break
+        if status == "Succeeded":
+            out(f"The card is on the queue {args.queue}. The flow {FLOW_NAME} picks it up within a minute: look at your chat with Workflows in Teams (in the tenant's organisation, when you are a guest), or run `flow-runs`.")
+            result = 0
+        elif status == "Failed" and latest:
+            detail = client.send("GET", f"{FLOW}/providers/Microsoft.ProcessSimple/environments/{f['id']}/flows/{flow_id}/runs/{latest.get('name')}?api-version={APPS_API}&$expand=properties/actions")
+            actions = pick(detail.body, "properties", "actions") if detail.status == 200 else None
+            codes = [str(r.get("code")) for r in actions.values() if isinstance(r, dict) and r.get("status") == "Failed"] if isinstance(actions, dict) else []
+            out(f"The test flow failed: {', '.join(codes) or 'no code'}." + (f" Forbidden here is the queue's own answer that the signed-in person has no {ROLE_MESSAGE_SENDER} on it yet (a role takes up to 10 minutes to apply)." if "Forbidden" in codes else ""))
+        else:
+            out(f"The test flow did not end in two minutes (last state: {status or 'none'}).")
+    finally:
+        removed = client.send("DELETE", flows_url(str(f["id"]), f"/{flow_id}"))
+        out("The test flow is deleted." if removed.status in (200, 204) else f"The test flow {flow_id} could not be deleted ({message_of(removed)}): delete it in the maker portal or with the flow API.")
+    return result
+
+
 # ---- the steps that a person does ----------------------------------------------------------------------------------------------------------------
 
 def steps_text(args: argparse.Namespace) -> list[str]:
@@ -718,6 +1014,12 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         " 14. The first card, before the app sends one: a second flow in the same environment, with a manual trigger and one action 'Put a message on a queue (V2)', the same connection, the same endpoint, the queue "
         f"{QUEUE_NAME} and, as the message, the JSON text {{\"v\":1,\"id\":\"test-1\",\"to\":\"<your mail address>\",\"title\":\"Test\",\"card\":{{\"type\":\"AdaptiveCard\",\"version\":\"1.4\",\"body\":[{{\"type\":\"TextBlock\",\"text\":\"Test card\"}}]}}}}. "
         "Run it. The card should be in your chat with the Workflows app within a few minutes, and the queue empty. Delete the test flow and take the Sender role away.",
+        "",
+        "When the maker portal says 'You are not permitted to make flows in this environment' (you are a guest of the tenant, and new Dataverse environments refuse guests), make steps 11 to 14 with this tool instead, as the same person:",
+        f" 15. python tools/powerplatform.py connections --environment {environment} --apply     (open each address that it prints, choose your own account, tick the box, click Allow access; for a guest, put the tenant id in place of /common/ in the Azure Queues sign-in page's address)",
+        f" 16. python tools/powerplatform.py flow --environment {environment} --storage-account {account} --apply",
+        f" 17. python tools/powerplatform.py test-card --environment {environment} --storage-account {account} --to <your mail address> --apply     (needs {ROLE_MESSAGE_SENDER} on the queue while it runs; take it away after)",
+        f" 18. python tools/powerplatform.py flow-runs --environment {environment}     (what the flow did with each card)",
         "",
         "After a new version of the solution: an import replaces the flow, and the replacement arrives switched off with no connection chosen. Pick the two connections again (they are kept, with no new sign-in), save, and turn it on, as in steps 12 and 13.",
         "If the first runs after the link are slow and fail once with a 404 from the connector's host, wait out the 30 minutes and run again before looking for another cause.",
@@ -779,6 +1081,20 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     steps.add_argument("--storage-account")
     steps.add_argument("--environment")
     steps.add_argument("--person", help="the object id of the person whose connection reads the queue")
+    connections = commands.add_parser("connections", help="the two connections of the flow: what is made and connected, and the address at which the person signs in")
+    common(connections, True, False, True)
+    flow = commands.add_parser("flow", help="a dry run; with --apply, make or update the flow Meternaut cards from the definition of the packed solution")
+    common(flow, True, False, True)
+    flow.add_argument("--storage-account", required=True, help="the name of the storage account that holds the queue (the output of `az storage account list` in the project's resource group)")
+    flow.add_argument("--queue", default=QUEUE_NAME, help="the queue that the cards are put on")
+    flow_runs = commands.add_parser("flow-runs", help="read only: the last runs of the flow and, for a failed one, the actions that failed")
+    common(flow_runs, True, False, False)
+    flow_runs.add_argument("--last", type=int, default=5, help="how many runs (1 to 20)")
+    test_card = commands.add_parser("test-card", help="a dry run; with --apply, put one test card on the queue by a flow that is made, run once and deleted")
+    common(test_card, True, False, True)
+    test_card.add_argument("--storage-account", required=True, help="the name of the storage account that holds the queue")
+    test_card.add_argument("--queue", default=QUEUE_NAME, help="the queue that the cards are put on")
+    test_card.add_argument("--to", required=True, help="the mail address of the person whose chat with Workflows gets the card")
     args = parser.parse_args(argv)
     hide = Hider()
     try:
@@ -786,10 +1102,14 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
             return command_steps(args, out)
         if env.get("GITHUB_ACTIONS") == "true":
             raise Problem("a person who administers Power Platform runs this, never a pipeline: its output names environments and policies of the estate, and the deploy identity holds no right in Power Platform (AGENTS.md rules 18 and 24)")
-        for field, pattern, text in (("subscription", GUID_RE, "a subscription id"), ("resource_group", RESOURCE_GROUP_RE, "a resource group name"), ("policy_name", POLICY_RE, "the name of an enterprise policy")):
+        for field, pattern, text in (("subscription", GUID_RE, "a subscription id"), ("resource_group", RESOURCE_GROUP_RE, "a resource group name"), ("policy_name", POLICY_RE, "the name of an enterprise policy"),
+                                     ("storage_account", STORAGE_ACCOUNT_RE, "a storage account name (3 to 24 lower case letters and digits)"), ("queue", QUEUE_RE, "a queue name (3 to 63 lower case letters, digits and hyphens)"),
+                                     ("to", MAIL_RE, "a mail address")):
             value = getattr(args, field, None)
             if value is not None and not pattern.match(value):
                 raise Problem(f"--{field.replace('_', '-')} is {text}")
+        if getattr(args, "last", None) is not None and not 1 <= args.last <= 20:
+            raise Problem("--last is a number from 1 to 20")
         if getattr(args, "name", None) is not None and not NAME_RE.match(args.name):
             raise Problem("--name is 2 to 63 letters, digits, spaces, dots, underscores and hyphens, and starts with a letter or a digit")
         if getattr(args, "domain_name", None) is not None and not DOMAIN_RE.match(args.domain_name):
@@ -799,6 +1119,14 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
             return command_status(args, client, out)
         if args.command == "create-environment":
             return command_create(args, client, out, ask, clock)
+        if args.command == "connections":
+            return command_connections(args, client, out, ask)
+        if args.command == "flow":
+            return command_flow(args, client, out, ask)
+        if args.command == "flow-runs":
+            return command_flow_runs(args, client, out)
+        if args.command == "test-card":
+            return command_test_card(args, client, out, ask, clock)
         if args.command in ("link", "unlink") and not (args.subscription and args.resource_group):
             raise Problem("--subscription and --resource-group name where the project's policy is (the variables ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP of the Hub)")
         if args.command == "managed":

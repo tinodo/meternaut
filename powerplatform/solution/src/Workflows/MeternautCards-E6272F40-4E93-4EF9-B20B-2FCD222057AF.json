@@ -273,7 +273,7 @@
             "operationMetadataId": "ebc9ce71-1ba2-4a80-a576-898274f50d98"
           },
           "type": "If",
-          "description": "Teams answered 400, 404 or 413 (Request Entity too large, a card of more than about 28 KB): the card or the recipient is wrong and will stay wrong, so the message is deleted. Any other failure (a timeout, 401, 403, 429, 5xx) leaves the message, which is tried again after the visibility timeout."
+          "description": "Teams answered 400, 404 or 413 (card over about 28 KB): the card or the recipient stays wrong, so the message is deleted. Any other failure (timeout, 401, 403, 429, 5xx) leaves the message, which is tried again after the visibility timeout."
         },
         "Terminate_card_not_posted": {
           "runAfter": {
