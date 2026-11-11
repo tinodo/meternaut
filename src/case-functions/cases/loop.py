@@ -38,6 +38,7 @@ def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Cal
             moment = action.finished_at or action.queued_at
             if action.state in ("done", "failed", "verified") and moment and parse(moment) >= since:
                 extras.on_action(action, extras.store.plan_get(action.plan_id), extras.store.case_get(action.case_id))
+        extras.on_tick()  # the weekly summary and the letter of a trip that a person's quiet hours held back, once the hours are over
     except Exception as error:  # noqa: BLE001 (the timer must go on)
         LOG.error(redact(f"the letters could not be offered: {type(error).__name__}"))
 

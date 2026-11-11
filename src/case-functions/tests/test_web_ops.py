@@ -3,7 +3,8 @@ import unittest
 from test_web_pages import INVESTIGATED
 from test_web_support import ACTS_ON, MAYA, NOW, OPS, OWNER, STRANGER, TINO, Console, FailingStore, at, make_case, make_run, snapshot
 
-from cases.models import StoreError, SwitchRecord
+from cases.models import StoreError, SwitchRecord, TwoPeopleRule
+from cases.people import People, Person
 
 APPROVE = "Approve and sign in to Azure"
 BUTTONS = ["Pause everything", "Pause changes", "Pause all messages", "Pause the investigation"]
@@ -26,7 +27,7 @@ class TheOperationsPage(unittest.TestCase):
     def test_it_holds_the_switches_the_latest_runs_and_what_meternaut_may_change(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), ["Operations"])
-        self.assertEqual(self.reply.headings(2), ["The four switches", "Latest runs", "What Meternaut can change in Azure"])
+        self.assertEqual(self.reply.headings(2), ["The four switches", "When a change needs two people", "Latest runs", "What Meternaut can change in Azure"])
         self.assertEqual([r["Switch"] for r in self.reply.table("switches").rows], ["Everything", "Changes", "All messages", "The investigation"])
         self.assertEqual([r["State"] for r in self.reply.table("switches").rows], ["Running", "Running", "Running", "Running"])
         self.assertEqual([r["What it stops"] for r in self.reply.table("switches").rows], [
@@ -36,7 +37,7 @@ class TheOperationsPage(unittest.TestCase):
         self.assertEqual((run["Trigger"], run["Result"], run["Findings"], run["Proposed"], run["Needs a person"], run["Errors"]), ("timer", "OK", "3", "3", "0", "0"))
         self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
                       f"with their own permissions. The code makes only this change: {ACTS_ON}.", self.reply.content)
-        self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/pause", "/ops/runs", "/ops/permissions"])
+        self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/pause", "/ops/two-people", "/ops/runs", "/ops/permissions"])
 
     def test_the_state_of_a_pulled_switch_is_in_words(self):
         self.console.store.switch_put(SwitchRecord("changes", True, "Otto", at(minutes=-5), "drill"))
@@ -406,6 +407,100 @@ class WhatThePullDoes(unittest.TestCase):
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Resume everything"))
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause all messages"))
         self.assertIn(APPROVE, console.get("/ok/plan0001").content)
+
+
+class TheTwoPeopleRulePage(unittest.TestCase):
+    """When a change needs two people: off until the owner turns it on; the owner changes it; the hub shows it."""
+    OFF = "Off. Every change needs one approver, who signs in to Azure and approves it."
+
+    def setUp(self):
+        self.console = Console()
+
+    def save(self, console=None, **fields):
+        console = console or self.console
+        return console.submit(console.get("/ops/two-people").form("/ops/two-people", has_button="Save the rule"), "Save the rule", **fields)
+
+    def test_it_is_off_until_the_owner_turns_it_on_and_says_so(self):
+        page = self.console.get("/ops/two-people")
+        self.assertEqual((page.status, page.headings(1)), (200, ["Changes that need two people"]))
+        self.assertIn(self.OFF, page.content)
+        self.assertIn("2 people have the role approver.", page.content)
+        self.assertEqual(self.console.store.rule_get(), TwoPeopleRule())
+        self.assertIn(self.OFF, self.console.get("/ops").content)
+
+    def test_ops_and_the_owner_see_it_and_only_the_owner_changes_it(self):
+        self.assertEqual([self.console.get("/ops/two-people", oid=who).status for who in (TINO, OWNER, OPS, MAYA, STRANGER)], [200, 200, 200, 403, 403])
+        self.assertTrue(self.console.get("/ops/two-people", oid=OWNER).form("/ops/two-people", has_button="Save the rule"))
+        seen = self.console.get("/ops/two-people", oid=OPS)
+        self.assertEqual(seen.forms(), [])
+        self.assertIn("Only the owner changes it.", seen.content)
+        token = self.console.get("/ops/two-people").form("/ops/two-people").fields["nonce"]
+        for who in (OPS, MAYA, STRANGER):
+            with self.subTest(who=who):
+                self.assertEqual(self.console.post("/ops/two-people", {"nonce": token, "min_usd": "100"}, oid=who).status, 403)
+        self.assertEqual(self.console.store.rule_get(), TwoPeopleRule())
+
+    def test_an_amount_and_kinds_are_saved_with_the_owners_name_and_the_time_and_shown_again(self):
+        reply = self.save(min_usd="150.5", families="resize-vm,stop-vm")
+        self.assertEqual(reply.status, 200)
+        self.assertEqual(self.console.store.rule_get(), TwoPeopleRule(min_usd_month=150.5, families=("stop-vm", "resize-vm"), by="Tino", at="2026-11-05T09:00:00Z"))
+        self.assertIn("On. A change needs two people when it saves at least $150.50 a month or it is one of these: stop a virtual machine", reply.content)
+        self.assertIn("One confirms the request, and another approves it and signs in to Azure.", reply.content)
+        self.assertIn("It was last changed by Tino on Thu 5 Nov 2026 09:00 UTC (10:00 CET).", reply.content)
+        self.assertEqual(reply.root.find("input", id="min_usd").attrs["value"], "150.5")
+        self.assertEqual([box.attrs["value"] for box in reply.root.find_all("input") if box.attrs.get("type") == "checkbox" and "checked" in box.attrs], ["stop-vm", "resize-vm"])
+        self.assertIn("On. A change needs two people when it saves at least $150.50 a month", self.console.get("/ops").content)
+
+    def test_an_amount_alone_or_kinds_alone_is_a_rule_and_neither_turns_it_off(self):
+        self.save(min_usd="20")
+        self.assertEqual((self.console.store.rule_get().min_usd_month, self.console.store.rule_get().families), (20.0, ()))
+        self.save(min_usd="", families="delete-disk")
+        self.assertEqual((self.console.store.rule_get().min_usd_month, self.console.store.rule_get().families), (None, ("delete-disk",)))
+        reply = self.save(min_usd="", families="")
+        self.assertFalse(self.console.store.rule_get().on)
+        self.assertIn(self.OFF, reply.content)
+
+    def test_an_amount_that_is_not_above_zero_and_a_kind_that_is_not_listed_are_refused_and_nothing_is_saved(self):
+        for amount in ("0", "-5", "abc", "1e3", "12.345", "99999999", "1,5", "0.00"):
+            with self.subTest(amount=amount):
+                reply = self.save(min_usd=amount)
+                self.assertEqual(reply.status, 400)
+                self.assertIn("Enter an amount above zero, with up to two decimals, or leave it empty.", reply.content)
+                self.assertEqual(reply.root.find("input", id="min_usd").attrs["value"], amount, "the text stays in the field")
+        for named in ("advise", "nonsense", "stop-vm,advise"):
+            with self.subTest(named=named):
+                reply = self.save(families=named)
+                self.assertEqual(reply.status, 400)
+                self.assertIn("Choose kinds of change from the list.", reply.content)
+        self.assertEqual(self.console.store.rule_get(), TwoPeopleRule())
+
+    def test_a_rule_is_refused_while_fewer_than_two_people_can_approve_and_off_is_always_allowed(self):
+        alone = Console(people=People((Person(TINO, "Tino", ("owner", "approver", "ops"), "tino@example.com"),)))
+        reply = self.save(alone, min_usd="100")
+        self.assertEqual(reply.status, 400)
+        self.assertIn("A rule that needs two people needs at least two people with the role approver, and 1 is listed. Nothing was saved.", reply.content)
+        self.assertEqual(alone.store.rule_get(), TwoPeopleRule())
+        alone.store.rule_put(TwoPeopleRule(min_usd_month=100.0))
+        self.assertEqual(self.save(alone, min_usd="").status, 200)
+        self.assertFalse(alone.store.rule_get().on)
+
+    def test_a_form_is_used_once_and_a_form_without_a_token_is_not_taken(self):
+        form = self.console.get("/ops/two-people").form("/ops/two-people", has_button="Save the rule")
+        self.assertEqual(self.console.submit(form, "Save the rule", min_usd="40").status, 200)
+        self.console.store.rule_put(TwoPeopleRule())
+        self.assertEqual(self.console.submit(form, "Save the rule", min_usd="40").status, 403)
+        self.assertEqual(self.console.post("/ops/two-people", {"min_usd": "40"}).status, 403)
+        self.assertFalse(self.console.store.rule_get().on)
+
+    def test_a_store_that_cannot_be_written_or_read_is_said_plainly(self):
+        broken = Console(store=FailingStore(fail=("rule_put",)))
+        reply = self.save(broken, min_usd="40")
+        self.assertEqual((reply.status, reply.headings(1)), (503, ["The rule was not saved"]))
+        self.assertIn("Nothing was changed.", reply.content)
+        unread = Console(store=FailingStore(fail=("rule_get",)))
+        reply = unread.get("/ops/two-people")
+        self.assertEqual(reply.status, 200)
+        self.assertIn("I cannot read the rule now, so what is shown is the starting rule: off. Nothing has changed.", reply.content)
 
 
 if __name__ == "__main__":

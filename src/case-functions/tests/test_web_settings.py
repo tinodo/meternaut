@@ -4,14 +4,15 @@ import unittest
 
 from test_web_support import (DISK, MAYA, NOW, OWNER, SUB, TINO, Console, FailingStore, at, make_action, make_decision, make_plan, make_run, snapshot)
 
+from cases import quiet
 from cases.models import TIME_FORMAT, NoteRecord, SettingsRecord, StoreError
-from cases.web.settings import CHANNEL_HINT, NOT_APPLIED, WEEKLY_BUDGET_HINT
+from cases.web.settings import CHANNEL_HINT, QUIET_HINT, WEEKLY_BUDGET_HINT, ZONE_HINT
 
 GOOD = {"channel": "desk", "language": "en", "timezone": "Europe/Berlin", "working_days": "1,2,3", "quiet_from": "20:00", "quiet_to": "07:30", "desk_day": "3",
         "weekly_budget": "5", "paused_until": "2026-12-01", "mutes": "digest, weekly-desk"}
 STORED = SettingsRecord(oid=TINO, channel="desk", language="en", timezone="Europe/Berlin", working_days=(1, 2, 3), quiet_from="20:00", quiet_to="07:30", desk_day=3,
                         weekly_budget=5, paused_until="2026-12-01T00:00:00Z", mutes=("digest", "weekly-desk"), updated_at="2026-11-05T09:00:00Z")
-OFFERED = {"channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"}  # what the page of the settings offers; the others are stored and not offered
+OFFERED = {"channel", "quiet_from", "quiet_to", "timezone", "weekly_budget", "paused_until"}  # what the page of the settings offers; the others are stored and not offered
 
 
 class TheSettingsPage(unittest.TestCase):
@@ -26,32 +27,30 @@ class TheSettingsPage(unittest.TestCase):
         root = self.page.root
         self.assertEqual([l.text() for l in root.find_all("legend")], ["Where I write to you first", "Quiet hours"])
         labels = {l.attrs["for"]: l.text() for l in root.find_all("label")}
-        for field_id, text in (("quiet_from", "No letters from"), ("quiet_to", "No letters until"), ("weekly_budget", "Other letters a week, at most"),
-                               ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"),
+        for field_id, text in (("quiet_from", "No messages from"), ("quiet_to", "No messages until"), ("timezone", "Time zone of these hours"),
+                               ("weekly_budget", "Other letters a week, at most"), ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"),
                                ("channel-teams", "Teams (a card first; a letter only if no card was sent within 20 minutes)"),
                                ("channel-desk", "Only the weekly summary")):
             self.assertEqual(labels[field_id], text)
-        for gone in ("language", "timezone", "working_days", "desk_day", "mutes"):
+        for gone in ("language", "working_days", "desk_day", "mutes"):
             self.assertIsNone(root.find(id=gone), f"{gone} is not offered on the page")
-        self.assertEqual(set(self.save_form().fields) - {"nonce"}, {"channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"})
+        self.assertEqual(set(self.save_form().fields) - {"nonce"}, OFFERED)
 
-    def test_one_line_says_what_is_stored_and_not_applied_yet_and_it_is_the_only_one(self):
-        line = self.page.root.find("div", id="not-applied")
-        self.assertEqual(line.text(), "Quiet hours are saved and not applied yet: a letter can arrive at any time.")
-        self.assertEqual(NOT_APPLIED, line.text())
-        content = self.page.content
-        self.assertEqual(content.lower().count("not applied"), 1, "the words are in one place only")
-        self.assertLess(content.index("not applied yet"), content.index("Where I write to you first"), "the line comes before the inputs that it is about")
-        for old in ("Stored. Not applied to approval requests yet.", "Stored. Not applied to messages yet.", "stored and not applied yet", "Teams first, working days"):
-            self.assertNotIn(old, content)
-        self.assertIsNone(self.page.root.find("fieldset", id="quiet-hours").find("p", class_="hint"), "no second note under the quiet hours")
+    def test_the_quiet_hours_say_what_they_do_in_one_place_inside_their_own_group(self):
+        group = self.page.root.find("fieldset", id="quiet-hours")
+        self.assertEqual(group.find("p", id="quiet-hours-hint").text(), QUIET_HINT)
+        self.assertEqual(group.find("p", id="timezone-hint").text(), ZONE_HINT)
+        self.assertEqual(self.page.content.count(QUIET_HINT), 1)
+        for old in ("not applied", "Not applied", "saved and not applied yet", "a letter can arrive at any time"):
+            self.assertNotIn(old, self.page.content)
+        self.assertIn("nothing I send is urgent", QUIET_HINT)
+        self.assertIn("no way around them", QUIET_HINT)
 
-    def test_the_line_is_also_on_the_page_that_shows_a_refusal(self):
+    def test_the_hint_is_also_on_the_page_that_shows_a_refusal(self):
         form = self.save_form()
         reply = self.console.post("/me/settings", {**form.fields, **GOOD, "weekly_budget": "11"})
         self.assertEqual(reply.status, 400)
-        self.assertEqual(reply.content.lower().count("not applied"), 1)
-        self.assertEqual(reply.root.find("div", id="not-applied").text(), NOT_APPLIED)
+        self.assertEqual(reply.content.count(QUIET_HINT), 1)
 
     def test_the_notes_under_the_inputs_say_what_the_sender_of_messages_does(self):
         root = self.page.root
@@ -64,14 +63,15 @@ class TheSettingsPage(unittest.TestCase):
         self.assertEqual(budget, WEEKLY_BUDGET_HINT)
         self.assertEqual(budget, "How many other letters a week. 0 means only the weekly summary. A request that waits for your answer and the first letter to you are never counted.")
 
-    def test_the_starting_values_are_those_of_the_record(self):
+    def test_the_starting_values_are_those_of_the_record_and_the_quiet_hours_are_none(self):
         fields = self.save_form().fields
-        self.assertEqual({k: v for k, v in fields.items() if k != "nonce"}, {"channel": "email", "quiet_from": "18:00", "quiet_to": "08:00", "weekly_budget": "3", "paused_until": ""})
+        self.assertEqual({k: v for k, v in fields.items() if k != "nonce"},
+                         {"channel": "email", "quiet_from": "", "quiet_to": "", "timezone": "Europe/Amsterdam", "weekly_budget": "3", "paused_until": ""})
 
     def test_the_stored_values_are_shown(self):
         self.console.store.settings_put(STORED)
         fields = self.save_form(self.console.get("/me/settings")).fields
-        for name in ("channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until"):
+        for name in ("channel", "quiet_from", "quiet_to", "timezone", "weekly_budget", "paused_until"):
             self.assertEqual(fields[name], GOOD[name], name)
 
     def test_the_time_inputs_and_the_number_and_the_date_have_their_limits_in_the_page_too(self):
@@ -126,9 +126,26 @@ class SavingSettings(unittest.TestCase):
     def test_the_boundaries_that_are_allowed(self):
         for changes in (dict(weekly_budget="0"), dict(weekly_budget="10"), dict(paused_until=""), dict(paused_until="2026-11-06"), dict(paused_until="2027-11-06"),
                         dict(mutes=""), dict(working_days="7"), dict(working_days="1,2,3,4,5,6,7"), dict(quiet_from="00:00", quiet_to="23:59"), dict(desk_day="1"),
-                        dict(desk_day="7"), dict(timezone="UTC"), dict(channel="email"), dict(channel="teams")):
+                        dict(desk_day="7"), dict(timezone="UTC"), dict(channel="email"), dict(channel="teams"), dict(quiet_from="", quiet_to="")):
             with self.subTest(changes=changes):
                 self.assertEqual(self.post(**changes).status, 200)
+
+    def test_no_quiet_hours_is_two_empty_times_and_it_is_stored_as_none(self):
+        self.assertEqual(self.post(quiet_from="", quiet_to="").status, 200)
+        stored = self.console.store.settings_get(TINO)
+        self.assertEqual((stored.quiet_from, stored.quiet_to), ("", ""))
+        self.assertEqual(quiet.window(stored), None)
+
+    def test_a_window_needs_both_times_and_two_different_ones_and_a_window_across_midnight_is_allowed(self):
+        for changes, field, message in ((dict(quiet_from="22:00", quiet_to=""), "quiet_to", "Enter both times, or leave both empty."),
+                                        (dict(quiet_from="", quiet_to="07:00"), "quiet_from", "Enter both times, or leave both empty."),
+                                        (dict(quiet_from="07:00", quiet_to="07:00"), "quiet_to", "The two times are the same. Choose two different times, or leave both empty.")):
+            with self.subTest(changes=changes):
+                reply = self.post(**changes)
+                self.assertEqual(reply.status, 400)
+                self.assertIn(message, reply.root.find("p", id=f"{field}-error").text())
+        self.assertEqual(self.post(quiet_from="22:00", quiet_to="07:00").status, 200)
+        self.assertEqual(quiet.window(self.console.store.settings_get(TINO)), (dt.time(22, 0), dt.time(7, 0)))
 
     def test_values_are_tidied_before_they_are_stored(self):
         self.post(working_days="5, 1,3", mutes="Digest  digest, Weekly-Desk", timezone="europe/berlin")
@@ -167,7 +184,7 @@ class SavingSettings(unittest.TestCase):
         reply = self.post(channel="sms", quiet_from="25:00", weekly_budget="99", timezone="Nowhere/Land")
         self.assertEqual(reply.status, 400)
         links = [a.attrs["href"] for a in reply.root.find("h2", id="problem-title").parent.find_all("a")]
-        self.assertEqual(sorted(links), ["#channel", "#channel", "#quiet_from", "#weekly_budget"])
+        self.assertEqual(sorted(links), ["#channel", "#quiet_from", "#timezone", "#weekly_budget"])
         fields = reply.form("/me/settings", has_button="Save settings").fields
         self.assertEqual((fields["quiet_from"], fields["weekly_budget"]), ("25:00", "99"))
         self.assertEqual(fields["quiet_to"], "07:30", "what was right is kept too")

@@ -332,20 +332,29 @@ class TheSettings(unittest.TestCase):
 
 
 class Flow(unittest.TestCase):
-    """The two steps of an approval over a real store, real approvals and the real change, with a fake token endpoint and a fake Resource Manager."""
+    """The two steps of an approval over a real store, real approvals and the real change, with a fake token endpoint and a fake Resource Manager.
+
+    `APPROVERS` are the people that the plan names, `RULE` is the rule of when a change needs two people (saved before the plan is made) and `SAVING` is the saving that the case holds."""
+
+    APPROVERS = (OID,)
+    RULE = None
+    SAVING = None
 
     def setUp(self):
         self.clock = Clock()
         self.store = MemoryStore(clock=self.clock)
+        if self.RULE is not None:
+            self.store.rule_put(self.RULE)
         self.azure = FakeAzure()
         self.approvals = Approvals(self.store, APPROVAL, self.clock)
         item = Lead(detector="orphan-managed-disk", resource_id=DISK, resource_type="microsoft.compute/disks", name="planted-disk-1", resource_group=GROUP,
                     subscription_id=SUB, location="swedencentral", tags={"meternaut-planted": "demo"}, managed_by="", facts={}, age_days=0)
         case = CaseRecord(case_id="k" + item.lead_id, resource_id=DISK, resource_name="planted-disk-1", resource_type=item.resource_type, resource_group=GROUP,
                           subscription_id=SUB, detector="orphan-managed-disk", run_id="r1", status="proposed", recommendation="delete", confidence=0.9,
-                          updated_at=stamp(NOW), first_seen_at=stamp(NOW))
+                          saving_usd_month=self.SAVING, cost_usd_30d=self.SAVING, updated_at=stamp(NOW), first_seen_at=stamp(NOW))
         self.store.case_put(case)
-        self.plan = self.approvals.create(case, item, (OID,))
+        self.item, self.case = item, case
+        self.plan = self.approvals.create(case, item, self.APPROVERS)
         self.events: list[tuple[str, dict]] = []
         self.redeemed: list[tuple[str, str]] = []
         self.redeemed_claims: list[str] = []

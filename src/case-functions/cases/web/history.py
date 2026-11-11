@@ -11,7 +11,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from ..brief import REASON_WORDS, plan_headline
-from ..models import ActionRecord, DecisionRecord, PlanRecord
+from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
 from .common import effective_state, may_answer, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip, short_title
@@ -23,10 +23,11 @@ PLANS_ASKED, ACTIONS_ASKED, CASES_ASKED = 100, 100, 1000  # what each read asks 
 MAX_DECISION_AGE = 15  # a request is answered within days of its making; an older plan has nothing to say in the last 30 days
 COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "done", "failed", "declined", "expired", "verified", "acknowledged")
 # What kind of line it is, as the chip says it: the word, the colour class and the shape (the guide: a chip is a word and a shape, never a colour alone).
-KINDS = {"approved": ("Approved", "info", "square"), "worth": ("Worth acting on", "info", "square"), "declined": ("Declined", "", "square"), "not-worth": ("Not worth it", "", "square"),
+KINDS = {"approved": ("Approved", "info", "square"), "confirmed": ("Confirmed", "info", "square"), "worth": ("Worth acting on", "info", "square"),
+         "declined": ("Declined", "", "square"), "not-worth": ("Not worth it", "", "square"),
          "not-mine": ("Not theirs", "", "square"), "made": ("Change made", "low", "circle"), "unchanged": ("Nothing changed", "", "square"), "failed": ("Change not made", "high", "diamond"),
          "checked": ("Checked", "low", "circle"), "expired": ("Expired", "", "square"), "closed": ("Closed", "", "square"), "search": ("Search", "info", "square")}
-DECISIONS = ("approved", "worth", "declined", "not-worth", "not-mine")
+DECISIONS = ("approved", "confirmed", "worth", "declined", "not-worth", "not-mine")
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,10 @@ def _decision_event(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> Eve
     if decision.decision == "not_mine":
         return Event(decision.at, "not-mine", _headline(ctx, plan), who)
     if decision.decision == "approve":
-        return Event(decision.at, "worth" if advice else "approved", _headline(ctx, plan), who)
+        second = not advice and plan.approval_class == TWO_PEOPLE_CLASS
+        return Event(decision.at, "worth" if advice else "approved", _headline(ctx, plan), fmt("{who} · the second of two people", who=who) if second else who)
+    if decision.decision == "confirm":
+        return Event(decision.at, "confirmed", _headline(ctx, plan), fmt("{who} · the first of two people", who=who))
     return None
 
 

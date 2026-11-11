@@ -370,6 +370,14 @@ class Approval(unittest.TestCase):
         self.assertIn("Risk, medium: If something still uses the disk, that use stops, and the data on it is lost for good.", text)
         self.assertIn("Review and decide: https://meternaut.example/ok/p1a2b3c4d5", text)  # what are my choices: the page
 
+    def test_a_change_that_needs_two_people_says_so_in_words_that_stay_true_and_one_for_one_person_does_not(self):
+        two = self.letter(plan=make_plan(approval_class="R3", approvers=("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"))).text
+        self.assertIn("It runs with your own permissions, after you sign in to Azure. Two people approve this: one confirms the request, then another approves it and signs in to Azure.", two)
+        self.assertNotIn("Two people", self.letter().text)
+        advice = self.letter(plan=make_plan(family="advise", approval_class="R3"), case=make_case(status="needs_human")).text
+        self.assertNotIn("Two people", advice, "advice changes nothing, so it never needs two people")
+        self.assertNotRegex(two, r"(?i)\burgent\b|\bhurry\b|!")
+
     def test_the_order_is_the_title_the_place_the_chips_the_figure_the_facts_the_button_and_the_footer(self):
         text = self.letter().text
         order = ["Delete the unattached disk disk-zq7-name\n", "Managed disk, resource group", "Medium risk, High confidence", "$494 a year", "Saves, Expected.", "Money is in US dollars",

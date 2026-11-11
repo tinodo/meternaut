@@ -17,7 +17,7 @@ from urllib.parse import quote
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
 from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord,
-                     StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
+                     StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -35,6 +35,9 @@ TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NON
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
+# The rule of when a change needs two people is one row of the settings table, in a partition of its own (a person's settings are in the partition "s"): no object id can reach it
+# (cases/twopeople.py).
+RULE_KEY = "rule-two-people"
 
 
 def table_calls(account: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -269,7 +272,7 @@ class TableStore:
 
     def decision_put(self, decision: DecisionRecord) -> bool:
         row, _ = self._get(DECISIONS, decision.plan_id, decision.approver_oid)
-        if row is not None and self._records([row], DecisionRecord)[0].decision not in ("ask", "later"):
+        if row is not None and not can_replace(self._records([row], DecisionRecord)[0].decision, decision.decision):
             return False
         if row is None:
             return self._insert(DECISIONS, decision.plan_id, decision.approver_oid, decision, approverOid=decision.approver_oid)
@@ -321,6 +324,13 @@ class TableStore:
 
     def settings_delete(self, oid: str) -> None:
         self._delete(SETTINGS, "s", oid)
+
+    def rule_get(self) -> TwoPeopleRule:
+        row, _ = self._get(SETTINGS, "r", RULE_KEY)
+        return TwoPeopleRule() if row is None else self._records([row], TwoPeopleRule)[0]
+
+    def rule_put(self, rule: TwoPeopleRule) -> None:
+        self._upsert(SETTINGS, "r", RULE_KEY, rule)
 
     def notes_of(self, oid: str) -> list[NoteRecord]:
         rows = self._query(NOTES, f"PartitionKey eq '{self._quoted(oid)}'", 200)

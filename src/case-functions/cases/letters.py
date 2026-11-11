@@ -292,10 +292,12 @@ def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False, tight: bool 
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each."""
+    """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each. A change that needs two people says so in the
+    same line, in words that stay true whatever has happened since the letter was written."""
     acts = " It runs with your own permissions, after you sign in to Azure." if brief.kind == "change" else ""
+    two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     return (("Owner", _data(brief.owner.text, 160)),
-            ("If you approve" if brief.kind == "change" else "If you answer", _data(brief.change, 200) + acts),
+            ("If you approve" if brief.kind == "change" else "If you answer", _data(brief.change, 200) + acts + two),
             ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
             (f"Risk, {brief.risk.level}", _data(brief.risk.text, 200)))
 

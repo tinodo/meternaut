@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..brief import Brief, build_brief
+from ..brief import Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
 from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
@@ -36,9 +36,14 @@ def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:
 
 def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False) -> Brief:
     """The brief of one request, as the signed-in person sees it. A switch that holds this kind of answer (a change is held by `all` and `changes`, advice by `all`) takes the
-    answer that it holds out of the brief."""
+    answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
-    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused)
+    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "")
+
+
+def decisions_for(ctx: Ctx, plan: PlanRecord) -> list[DecisionRecord]:
+    """What a page needs of the decisions of a plan to say where it stands: only a change that needs two people has anything to read, so no other plan costs a read."""
+    return read(lambda: ctx.store.decisions_of_plan(plan.plan_id), [])[0] if needs_two_people(plan) else []
 
 
 def switch_states(ctx: Ctx) -> list[tuple[str, SwitchRecord | None]]:

@@ -170,7 +170,8 @@ def _undo(brief: Brief) -> dict:
 def _decision_lines(brief: Brief) -> list[dict]:
     """What changes and with whose rights, whether it can be undone, what could go wrong and whose resource it is: one line each."""
     approving = brief.kind == "change"
-    change = md(brief.change, 300) + (" It runs with your own permissions, after you sign in to Azure." if approving else "") + (f" {TWO_PEOPLE}" if brief.two_people and approving else "")
+    two = (brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else "") if approving else ""
+    change = md(brief.change, 300) + (" It runs with your own permissions, after you sign in to Azure." if approving else "") + (f" {md(two, 320)}" if two else "")
     return [_block("change", f"**{'If you approve' if approving else 'If you answer'}:** {change}"), _undo(brief),
             _block("risk", f"**Risk, {md(brief.risk.level, 12)}:** {md(brief.risk.text, 240)}"), _block("owner", f"**Owner:** {md(brief.owner.text, 200)}")]
 
@@ -190,8 +191,8 @@ def _answer_parts(brief: Brief, ctx: CardContext) -> list[dict]:
     titles = TITLES[brief.kind]
     actions: list[dict] = []
     if brief.kind == "change":
-        # An approval that changes Azure is made on the page, where the person signs in to Azure: the link is the only way to it.
-        approving = "approve" in brief.answers
+        # An approval that changes Azure is made on the page, where the person signs in to Azure: the link is the only way to it. So is the confirmation of the first of two people.
+        approving = bool({"approve", "confirm"} & set(brief.answers))
         actions.append({"type": "Action.OpenUrl", "id": "page", "title": "Review and decide" if approving else "See the request", "url": ctx.page_url,
                         **({"style": "positive"} if approving else {})})
     else:
@@ -202,7 +203,7 @@ def _answer_parts(brief: Brief, ctx: CardContext) -> list[dict]:
     for verb in ("not_mine", "later"):
         if verb in brief.answers:
             actions.append({**_execute(brief, ctx, verb, titles[verb]), "id": verb})
-    held = [] if "approve" in brief.answers else [_block("paused", PAUSED_ADVICE if brief.kind == "advice" else PAUSED_CHANGES, weight="Bolder")]
+    held = [_block("paused", PAUSED_ADVICE if brief.kind == "advice" else PAUSED_CHANGES, weight="Bolder")] if brief.held else []
     parts: list[dict] = [*held, {"type": "ActionSet", "id": "decisions", "actions": actions}]
     if "ask" in brief.answers:
         parts.append({"type": "Input.Text", "id": "message", "label": "Ask or tell", "isMultiline": True, "maxLength": MAX_NOTE, "isRequired": True,

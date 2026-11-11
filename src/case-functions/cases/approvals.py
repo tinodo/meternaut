@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from . import brief, switches
+from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
 from .detectors import Lead
 from .families import digest as plan_digest
@@ -21,11 +21,13 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError)
+from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError,
+                     TwoPeopleRule)
 from .roles import clean_text
 
-# The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval).
-ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
+# The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
+# people on a change that needs two (cases/twopeople.py): it changes nothing and is taken on the page only.
+ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 ADVICE_STATUSES = ("proposed", "needs_human")
 # A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
 # concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py).
@@ -92,9 +94,10 @@ def why_not_ask(case: CaseRecord) -> str | None:
 
 
 def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings,
-               new_id: Callable[[], str] = lambda: uuid.uuid4().hex, family: Family | None = None, facts: dict | None = None) -> PlanRecord:
+               new_id: Callable[[], str] = lambda: uuid.uuid4().hex, family: Family | None = None, facts: dict | None = None, rule: TwoPeopleRule | None = None) -> PlanRecord:
     """The plan of a change, written by code: the family decides its text, its target and its preconditions from the lead's typed facts and the case's cost lines; the rest of the record
-    is the same for every family. The digest is made last, over every field (families/digest.py). Raises ValueError when the family has no plan for this resource."""
+    is the same for every family. The rule of when a change needs two people (`rule`, off when it is None) decides the approval class. The digest is made last, over every field
+    (families/digest.py). Raises ValueError when the family has no plan for this resource."""
     family = family or next(iter(registry.candidates(lead.detector, lead.resource_type, case.recommendation)), None)
     if family is None:
         raise ValueError("Meternaut has no change for this kind of resource")
@@ -111,7 +114,8 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
         plan_id=new_id(), case_id=case.case_id, family=family.name, resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120),
         resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, code="", title=planned.title, what_changes=planned.what_changes,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=planned.could_go_wrong, undo=planned.undo,
-        evidence_level=planned.evidence, approvers=approvers, created_at=stamp(now), expires_at=expires, state="open", approval_class="R2",
+        evidence_level=planned.evidence, approvers=approvers, created_at=stamp(now), expires_at=expires, state="open",
+        approval_class=twopeople.CLASS if rule is not None and twopeople.applies(rule, family.name, saving) else "R2",
         preconditions=planned.preconditions, target=planned.target))
 
 
@@ -168,15 +172,15 @@ class Approvals:
             return None, DecideResult(False, "expired", f"This request expired on {plan.expires_at} UTC. Nothing has changed.", plan)
         if plan.state != "open":
             return None, DecideResult(False, "refused_state", f"This request is {_words(plan.state)}. Nothing more can be recorded.", plan)
-        if decision == "approve" and switches.pulled(self.store, *(("all",) if advice else ("all", "changes"))):  # no change is made for advice, so only the full stop holds it
+        if decision in ("approve", "confirm") and switches.pulled(self.store, *(("all",) if advice else ("all", "changes"))):  # no change is made for advice, so only the full stop holds it
             return None, DecideResult(False, "refused_paused", PAUSED_ADVICE if advice else PAUSED_MESSAGE, plan)
         if (code or "").strip().upper() != plan.code:
             return None, DecideResult(False, "refused_code", "This request changed. Nothing is approved. A new message will bring the new request and its code.")
         return plan, None
 
     def decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str = "", reason: str = "") -> DecideResult:
-        """An answer that changes nothing in Azure: decline, a question, "not mine", "later", and the answer "worth acting on" of an advise plan (sent as approve). The
-        approval of a change is made at the person's sign-in to Azure (delegated.py)."""
+        """An answer that changes nothing in Azure: decline, a question, "not mine", "later", the confirmation that is the first of two people on a change that needs two, and the answer
+        "worth acting on" of an advise plan (sent as approve). The approval of a change is made at the person's sign-in to Azure (delegated.py)."""
         now = self.clock()
         try:
             return self._decide(principal, plan_id, decision, code, nonce, clean_text(note, 300), now, reason)
@@ -191,6 +195,8 @@ class Approvals:
         plan, refusal = self._gate(principal, plan_id, decision, code, now)
         if refusal is not None or plan is None:
             return refusal or DecideResult(False, "error", "")
+        if decision == "confirm":
+            return self._confirm(principal, plan, nonce, note, now)
         if not self.store.nonce_use(nonce, principal.oid, plan.plan_id):
             return DecideResult(False, "error", "This form is no longer valid. Open the link in the message again. Nothing is approved.", plan)
         record = DecisionRecord(plan_id=plan.plan_id, approver_oid=principal.oid, approver_name=clean_text(principal.name, 80), decision=decision,
@@ -216,17 +222,43 @@ class Approvals:
         self._set_case(plan.case_id, "needs_human")
         return DecideResult(True, "not_mine", "Recorded: this resource is not yours. Nothing is approved.", plan)
 
+    def _confirm(self, principal: Principal, plan: PlanRecord, nonce: str, note: str, now: dt.datetime) -> DecideResult:
+        """The first of two people on a change that needs two (cases/twopeople.py): records that this person confirms this exact plan, bound to its code and its digest. It changes nothing
+        in Azure and needs no sign-in to it: the change is made by a second person, who approves the plan with their own sign-in. Refused for a plan that needs one person only, for a plan
+        whose digest is not the one that its fields give, for a request that fewer than two people can approve, and for a plan that somebody confirmed already."""
+        if not twopeople.needs(plan):
+            return DecideResult(False, "refused_state", "This request does not need a second person, so there is nothing to confirm. Nothing was recorded.", plan)
+        problem = plan_digest.problem(plan, plan.digest)
+        if problem:
+            return DecideResult(False, "refused_code", plan_digest.refusal(problem), plan)
+        found = twopeople.standing(plan, self.store.decisions_of_plan(plan.plan_id), principal.oid)
+        if found.stage == "alone":
+            return DecideResult(False, "refused_state", twopeople.ALONE, plan)
+        if found.stage == "mine":
+            return DecideResult(False, "duplicate", "You confirmed this request already. Your confirmation stands.", plan)
+        if found.stage == "second":
+            return DecideResult(False, "refused_state", f"{found.by} confirmed this request already. A second person approves it now, so nothing more is needed here. Nothing was recorded.", plan)
+        if not self.store.nonce_use(nonce, principal.oid, plan.plan_id):
+            return DecideResult(False, "error", "This form is no longer valid. Open the link in the message again. Nothing is approved.", plan)
+        record = DecisionRecord(plan_id=plan.plan_id, approver_oid=principal.oid, approver_name=clean_text(principal.name, 80), decision="confirm", at=stamp(now), plan_code=plan.code,
+                                note=note, plan_digest=plan.digest)
+        if not self.store.decision_put(record):
+            return DecideResult(False, "duplicate", "You answered this request already. Your answer stands.", plan)
+        return DecideResult(True, "confirmed", "Recorded: you confirmed this request. It changes nothing. A second person has to approve it and sign in to Azure.", plan)
+
     def check_approve(self, principal: Principal, plan_id: str, code: str) -> tuple[PlanRecord | None, DecideResult | None]:
-        """The checks before an approval is recorded, without a one-time token: the person, the plan's state and expiry, the switches and the plan code."""
+        """The checks before an approval is recorded, without a one-time token: the person, the plan's state and expiry, the switches and the plan code, and for a change that needs two
+        people a confirmation of this exact plan by somebody else."""
         try:
-            return self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock()))
+            return self._second(*self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock())), principal)
         except StoreError:
             return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
 
     def check_form(self, principal: Principal, plan_id: str, code: str, nonce: str) -> tuple[PlanRecord | None, DecideResult | None]:
-        """The checks of the approve form, in the order of every other answer: the person, the plan, the switches, the plan code and then the one-time token."""
+        """The checks of the approve form, in the order of every other answer: the person, the plan, the switches, the plan code, for a change that needs two people the confirmation
+        of somebody else, and then the one-time token."""
         try:
-            plan, refusal = self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock()))
+            plan, refusal = self._second(*self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock())), principal)
             if refusal is not None or plan is None:
                 return None, refusal or DecideResult(False, "error", "")
             if not self.store.nonce_use(nonce, principal.oid, plan.plan_id):
@@ -234,6 +266,14 @@ class Approvals:
             return plan, None
         except StoreError:
             return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
+
+    def _second(self, plan: PlanRecord | None, refusal: DecideResult | None, principal: Principal) -> tuple[PlanRecord | None, DecideResult | None]:
+        """A change that needs two people is approved only by a person who did not confirm it, after a confirmation of this exact plan (cases/twopeople.py)."""
+        if plan is not None and refusal is None and twopeople.needs(plan):
+            text = twopeople.problem(plan, self.store.decisions_of_plan(plan.plan_id), principal.oid)
+            if text:
+                return None, DecideResult(False, "refused_state", text, plan)
+        return plan, refusal
 
     @staticmethod
     def _no_advice(plan: PlanRecord | None, refusal: DecideResult | None) -> tuple[PlanRecord | None, DecideResult | None]:
@@ -289,7 +329,8 @@ class Approvals:
         """Records the approval of a person who has signed in to Azure, and the action that the change is made under. The change itself is made by the caller.
 
         The action of a plan is claimed first, and once: of two approvers who answer at the same moment (or one person in two windows) only one records
-        an approval and makes the change, and the other records nothing."""
+        an approval and makes the change, and the other records nothing. A change that needs two people is refused here once more unless a confirmation of this exact plan by somebody
+        else is recorded: the one place where the approval is written does not rely on the checks before it."""
         now = self.clock()
         claimed = False
         problem = plan_digest.problem(plan, plan.digest)
@@ -304,6 +345,12 @@ class Approvals:
                 return DecideResult(False, "refused_state", "This request is being approved at this moment, by you in another window or by somebody else. "
                                                             "Nothing was changed by this answer.", plan), None
             claimed = True
+            if twopeople.needs(plan):
+                # The last look, after the claim: the confirmation of somebody else must be there for this exact plan right now (a person may have withdrawn theirs while this one signed in).
+                text = twopeople.problem(plan, self.store.decisions_of_plan(plan.plan_id), principal.oid)
+                if text:
+                    self.store.action_release(plan.plan_id)
+                    return DecideResult(False, "refused_state", text, plan), None
             record = DecisionRecord(plan_id=plan.plan_id, approver_oid=principal.oid, approver_name=clean_text(principal.name, 80), decision="approve",
                                     at=stamp(now), plan_code=plan.code, note=clean_text(note, 300), plan_digest=plan.digest)
             if not self.store.decision_put(record):
@@ -368,6 +415,7 @@ class Approvals:
         and the finding gets the advise plan instead."""
         if not approvers:
             return None
+        rule = self.store.rule_get()  # a store that cannot be read makes no plan now: the Watch tries again at its next run
         for family in registry.candidates(lead.detector, lead.resource_type, case.recommendation):
             if why_not(case, lead, self.settings, self.store, family) is not None:
                 continue
@@ -375,7 +423,7 @@ class Approvals:
             if facts is None:
                 continue
             try:
-                plan = build_plan(case, lead, approvers, self.clock(), self.settings, family=family, facts=facts)
+                plan = build_plan(case, lead, approvers, self.clock(), self.settings, family=family, facts=facts, rule=rule)
             except ValueError:
                 continue
             self.store.plan_put(plan)

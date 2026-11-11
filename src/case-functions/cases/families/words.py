@@ -198,23 +198,30 @@ class Shown:
     # The change ends the cost of the resource (a delete, a stop), so that cost lines which show none afterwards are the aim. A change that only lowers the cost (a resize, a change of tier)
     # leaves the resource billing: for it a missing cost line is a line that is not in yet, never "no cost", and a family has to say so to be read the other way.
     cost_ends: bool = False
+    summary: str = ""  # what the family does in one phrase, as the console says it ("delete an unattached managed disk"); the registry checks that it is the family's own
 
 
 SHOWN: dict[str, Shown] = {
-    "delete-disk": Shown(deletes("microsoft.compute/disks"), "delete", "microsoft.compute/disks", cost_ends=True),
-    "delete-public-ip": Shown(deletes("microsoft.network/publicipaddresses"), "delete", "microsoft.network/publicipaddresses", cost_ends=True),
+    "delete-disk": Shown(deletes("microsoft.compute/disks"), "delete", "microsoft.compute/disks", cost_ends=True, summary="delete an unattached managed disk"),
+    "delete-public-ip": Shown(deletes("microsoft.network/publicipaddresses"), "delete", "microsoft.network/publicipaddresses", cost_ends=True, summary="delete an unassigned public IP address"),
     "stop-vm": Shown(
-        stop_vm, "stop", "microsoft.compute/virtualmachines", cost_ends=True,
+        stop_vm, "stop", "microsoft.compute/virtualmachines", cost_ends=True, summary="stop a virtual machine and release its compute (deallocate it)",
         saving_basis="the cost lines of the machine in the last 30 days (its disks and public IP addresses keep billing and are not counted)"),
     "resize-vm": Shown(
-        resize_vm, "resize", "microsoft.compute/virtualmachines", saving_level="Scenario",
+        resize_vm, "resize", "microsoft.compute/virtualmachines", saving_level="Scenario", summary="resize a virtual machine to a smaller size of the same series",
         saving_basis=("the cost lines of the last 30 days, scaled by the share of the machine's processors that is left in the same size series (the price list was not read, "
                       "so it is an estimate)")),
     "change-disk-tier": Shown(
-        change_disk_tier, "change of tier", "microsoft.compute/disks",
+        change_disk_tier, "change of tier", "microsoft.compute/disks", summary="move a managed disk one tier down (Premium SSD to Standard SSD, Standard SSD to Standard HDD)",
         no_figure="The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure for this change."),
-    "delete-idle-resource": Shown(deletes(""), "delete", cost_ends=True),
+    "delete-idle-resource": Shown(deletes(""), "delete", cost_ends=True,
+                                  summary="delete a snapshot, a network interface, a NAT gateway, a load balancer or a private endpoint that nothing uses"),
 }
+
+
+def kinds() -> dict[str, str]:
+    """Every family of change with what it does in one phrase, in the order of the registry: for the page where the owner chooses which kinds of change need two people."""
+    return {name: found.summary for name, found in SHOWN.items()}
 
 
 def shown(family: str | None) -> Shown | None:

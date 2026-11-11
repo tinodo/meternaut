@@ -9,6 +9,8 @@ Before a card goes, in this order, and the first check that fails ends the try a
 1. the person is on the list of people and is named on the plan, and may answer it (the role approver; for advice, the owner too);
 2. held: the switch `messages` or `all` is pulled (a switch that cannot be read counts as pulled);
 3. held: the person paused messages (`SettingsRecord.paused_until` is in the future);
+3a. held: the person is inside their quiet hours (cases/quiet.py). The rounds look at the hours first and write nothing while they last, so that waiting uses up no try; the first round
+   after the hours sends what is still due, and the letter of the same request waits for twenty minutes after the hours ended (notify.py);
 4. held: the person's weekly budget is reached. Only the card of advice counts against it: an approval, a notice and a check are asked for or owed, as with the letters, and the weekly
    budget does not hold them; advice is not urgent, and one card for each finding would be a flood;
 5. failed: the person has no conversation with the bot that Meternaut knows of (references.py) and Teams will not start one (the app is not installed for the person, or the person
@@ -25,7 +27,7 @@ import logging
 import uuid
 from typing import Callable
 
-from . import cards, switches
+from . import cards, quiet, switches
 from .brief import build_brief, contact_text
 from .cards import CardContext, CardError
 from .connector import Connector
@@ -155,6 +157,8 @@ class Offers:
                 return "The date until which this person paused messages cannot be read."
             if until > now:
                 return f"This person paused messages until {settings.paused_until}."
+        if quiet.inside(settings, now):
+            return quiet.WAITING
         if kind not in FREE_KINDS:
             sent = [m for m in self.store.mails_since(person.oid, _week_start(now).strftime(TIME_FORMAT)) if m.status == "sent" and m.kind not in FREE_KINDS and m.kind not in BUDGET_FREE_KINDS]
             if len(sent) >= settings.weekly_budget:
@@ -171,6 +175,8 @@ class Offers:
         if not wants or principal is None or not may_answer(principal, plan) or not self._due(person, kind, plan.plan_id):  # type: ignore[arg-type]
             return 0
         now = self.clock()
+        if quiet.inside(settings, now):
+            return 0  # the person's quiet hours: nothing is tried and nothing is written, so that waiting uses up no try; the round after the hours sends it
         held = self._hold(person, settings, kind, now)  # type: ignore[arg-type]
         if held is not None:
             return self._record(person, kind, plan.plan_id, now, "held", held)  # type: ignore[arg-type]
@@ -178,7 +184,7 @@ class Offers:
         def card() -> dict:
             # The switches that hold the answer that approves: `all`, which is checked above, and `changes` for a change (the page and the brief say so in the same way).
             paused = plan.family != ADVISE and switches.pulled(self.store, "changes")
-            brief = build_brief(case, plan, None, self.store.decisions_of_plan(plan.plan_id), now=now, may_answer=True, changes_paused=paused)
+            brief = build_brief(case, plan, None, self.store.decisions_of_plan(plan.plan_id), now=now, may_answer=True, changes_paused=paused, viewer=person.oid)  # type: ignore[union-attr]
             nonce = self.store.nonce_new(person.oid, plan.plan_id, nonce_seconds(plan, now))  # type: ignore[union-attr]
             return cards.decision_card(brief, CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), nonce=nonce, contacts=contacts_of(self.people, person.oid)))  # type: ignore[union-attr]
         return self._deliver(person, kind, plan.plan_id, now, card)  # type: ignore[arg-type]
@@ -194,6 +200,8 @@ class Offers:
             if not self._due(person, kind, plan.plan_id):  # type: ignore[arg-type]
                 continue
             now = self.clock()
+            if quiet.inside(settings, now):
+                continue  # the person's quiet hours: nothing is tried and nothing is written
             held = self._hold(person, settings, kind, now)  # type: ignore[arg-type]
             if held is not None:
                 total += self._record(person, kind, plan.plan_id, now, "held", held)  # type: ignore[arg-type]

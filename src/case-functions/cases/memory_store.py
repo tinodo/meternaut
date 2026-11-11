@@ -6,7 +6,7 @@ import secrets
 from typing import Callable
 
 from .models import (ActionRecord, CapabilityRecord, CaseRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord,
-                     SwitchRecord, SWITCH_NAMES, TIME_FORMAT)
+                     SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 
 def utc_now() -> dt.datetime:
@@ -31,6 +31,7 @@ class MemoryStore:
         self.actions: dict[str, ActionRecord] = {}
         self.switch_records: dict[str, SwitchRecord] = {}
         self.settings: dict[str, SettingsRecord] = {}
+        self.rule = TwoPeopleRule()
         self.notes: dict[tuple[str, str], NoteRecord] = {}
         self.nonces: dict[str, tuple[str, str, dt.datetime, str]] = {}
         self.mails: list[MailRecord] = []
@@ -83,7 +84,7 @@ class MemoryStore:
     def decision_put(self, decision: DecisionRecord) -> bool:
         key = (decision.plan_id, decision.approver_oid)
         existing = self.decisions.get(key)
-        if existing is not None and existing.decision not in ("ask", "later"):
+        if existing is not None and not can_replace(existing.decision, decision.decision):
             return False
         self.decisions[key] = decision
         return True
@@ -129,6 +130,12 @@ class MemoryStore:
 
     def settings_delete(self, oid: str) -> None:
         self.settings.pop(oid, None)
+
+    def rule_get(self) -> TwoPeopleRule:
+        return self.rule
+
+    def rule_put(self, rule: TwoPeopleRule) -> None:
+        self.rule = rule
 
     def notes_of(self, oid: str) -> list[NoteRecord]:
         return sorted((n for (o, _), n in self.notes.items() if o == oid), key=lambda n: (n.created_at, n.note_id), reverse=True)

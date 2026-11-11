@@ -117,7 +117,7 @@ class TheVocabulary(unittest.TestCase):
         self.assertIn("acknowledged", CASE_STATUSES)
         self.assertIn("acknowledged", CASE_CLOSED)
         self.assertIn("later", DECISIONS)
-        self.assertEqual(ANSWERS, ("approve", "decline", "ask", "not_mine", "later"))
+        self.assertEqual(ANSWERS, ("approve", "decline", "ask", "not_mine", "later", "confirm"))
         self.assertEqual(set(ANSWERS), set(DECISIONS))
         self.assertEqual(ADVISE, "advise")
 
@@ -134,7 +134,7 @@ class TheVocabulary(unittest.TestCase):
         for decision in DECISIONS:
             self.assertIn(decision, words.DECISION)
         for kind in ("change", "advice"):
-            self.assertEqual(set(words.ANSWER_LABEL[kind]), set(ANSWERS))
+            self.assertEqual(set(words.ANSWER_LABEL[kind]), set(ANSWERS) - ({"confirm"} if kind == "advice" else set()), "advice changes nothing, so it has no second person")
 
 
 class MakingTheAdvice(Base):
@@ -530,6 +530,9 @@ class TheAnswers(Base):
         for decision in ANSWERS:
             with self.subTest(decision):
                 result = self.answer(BOTH, decision, note="x")
+                if decision == "confirm":  # advice changes nothing, so it has no second person: the answer is refused for that, whoever gave an answer before
+                    self.assertEqual((result.ok, result.kind), (False, "refused_state"))
+                    continue
                 self.assertEqual((result.ok, result.kind), (False, "duplicate"))
                 self.assertIn("Your answer stands", result.message)
         self.assertEqual([(d.decision, d.reason) for d in self.decisions()], [("decline", "handled")])

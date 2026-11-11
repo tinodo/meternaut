@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Callable, Sequence
 
-from . import switches
+from . import switches, twopeople
 from .approvals import Approvals, ApprovalSettings
 from .arm import Arm
 from .claims import claims_challenge
@@ -146,6 +146,8 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
                  if d.decision == "approve" and d.plan_code == plan.code and d.plan_digest == plan.digest and d.approver_oid in plan.approvers]
     if plan.state != "approved" or not decisions:
         return _failed(s, action, plan, "no approval by a named approver is recorded for this exact plan")
+    if twopeople.needs(plan) and not twopeople.satisfied(plan, s.store.decisions_of_plan(plan.plan_id)):
+        return _failed(s, action, plan, _stopped("this change needs two people, and no confirmation of this exact plan by somebody other than the approver is recorded"), kind="stopped")
     started = replace(action, state="running", started_at=stamp(s.clock()), result="")
     s.store.action_put(started)
     s.emit("action.started", planId=plan.plan_id, family=plan.family, correlationId=action.correlation_id)

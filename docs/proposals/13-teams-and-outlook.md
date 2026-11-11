@@ -41,6 +41,8 @@ The Bot Framework SDK is archived and unsupported since 2025-12-31 ([resources](
 
 Each tap goes through the decider that the page's form uses, and the card is replaced, in the response, by one that says what was recorded. A person who may not answer, a closed or expired request and a used one-time token each get one plain line, and nothing is recorded.
 
+A request that two people approve ([the loop](04-the-loop.md#going-through-the-requests-quiet-hours-and-two-people)) is no different here: the card says so in its "If you approve" line and its one link opens the page, where the first person confirms and the second approves. No tap confirms: a tap with the verb `confirm` is refused as unreadable and records nothing. Inside a person's quiet hours no card is sent. The round that offers cards writes nothing while the hours last, so waiting uses no try, and the card is offered after they end, with the hours checked again at that moment. A reply to a tap, a typed message or adding the app is an answer to the person's own action and is not held. Built and tested against fakes, not run in Azure.
+
 ## Costs
 
 The Azure Bot resource is the free tier (F0); the app is on Flex Consumption and scales to zero. Retail Prices API, `swedencentral`, read 2026-11-08: 0.000026 US dollars a GB-second after 100,000 free GB-seconds a month. The timer every minute is about 21,600 GB-seconds and 43,200 executions a month, inside the free grants, so an idle bot costs about 0. With no instance kept warm, the first tap after an idle time waits for a start and Teams may show it as failed; one always-ready 512 MB instance (`alwaysReadyInstances`) is about 5.2 dollars a month.

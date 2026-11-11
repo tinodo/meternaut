@@ -43,6 +43,8 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/ops/permissions", ops.permissions, ("ops", "owner")),
     ("POST", "/ops/pause", ops.pause_save, ("ops",)),
     ("GET", "/ops/pause", ops.pause_page, ("ops",)),
+    ("GET", "/ops/two-people", ops.two_people_page, ("ops", "owner")),
+    ("POST", "/ops/two-people", ops.two_people_save, ("owner",)),
 )
 COMPILED = tuple((method, re.compile(pattern), handler, roles) for method, pattern, handler, roles in ROUTES)
 # The one page that a GET changes something through (the return of the sign-in to Azure): a HEAD request (a prefetch, a link check) must not use it up.
