@@ -9,9 +9,9 @@ from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
 from cases.web import approval, layout
 
 APPROVE = "Approve and sign in to Azure"
-KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
+KINDS = ("declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
          "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
-SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
 # The pages that show text that an AI wrote, or a list of requests: their footer says that an AI wrote them. The others (the settings, the notes, Operations, the permissions and the
 # kill switch) hold no AI text and their footer has no such sentence.
 NOT_AI = ("GET /me/settings", "GET /me/notes", "GET /ops", "GET /ops/permissions", "GET /ops/pause", "settings with problems", "settings saved", "notes with problems",

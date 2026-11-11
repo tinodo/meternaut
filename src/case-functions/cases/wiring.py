@@ -30,6 +30,8 @@ class Extras:
     on_run: Callable[[RunRecord], None] = lambda run: None
     # The letter of a trip of the agent harness or of the drift check (cases/harness.py, cases/drift.py): given the code of the reason and a plain detail, it tells the owner once.
     on_alert: Callable[[str, str], None] = lambda code, detail: None
+    # What the timer calls every minute for the letters that a person's quiet hours held back and that nothing else offers again (cases/notify.waiting_hook). It never raises.
+    on_tick: Callable[[], None] = lambda: None
 
     def approvers(self) -> tuple[str, ...]:
         return tuple(p.oid for p in self.people.with_role("approver"))
@@ -58,8 +60,9 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
     reader = Azure(Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic), token)
     extras = Extras(settings, store, people, Approvals(store, approval_settings(settings), clock, reader=reader))
     if settings.mail_sender:
-        from .notify import alert_hook, hooks  # imported only when a sender is set
+        from .notify import alert_hook, hooks, waiting_hook  # imported only when a sender is set
         extras.on_plan, extras.on_action, extras.on_run = hooks(env, settings, store, people, token, redact, transport=transport, sleep=sleep,
                                                                 monotonic=monotonic, clock=clock)
         extras.on_alert = alert_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        extras.on_tick = waiting_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     return extras

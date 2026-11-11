@@ -43,6 +43,8 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/ops/permissions", ops.permissions, ("ops", "owner")),
     ("POST", "/ops/pause", ops.pause_save, ("ops",)),
     ("GET", "/ops/pause", ops.pause_page, ("ops",)),
+    ("GET", "/ops/two-people", ops.two_people_page, ("ops", "owner")),
+    ("POST", "/ops/two-people", ops.two_people_save, ("owner",)),
     ("POST", "/ops/drift", ops.drift_run, ("ops",)),
     ("POST", "/ops/answers", ops.answers_export, ("ops",)),
 )

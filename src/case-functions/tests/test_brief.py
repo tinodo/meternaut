@@ -832,9 +832,17 @@ class WhatTheModuleIs(unittest.TestCase):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)
             elif isinstance(node, ast.ImportFrom):
                 if node.level == 1:
-                    self.assertIn(node.module, ("models", "families.words"), "the words of the families are a module that holds no way to reach Azure (next test)")
+                    self.assertIn(node.module, ("models", "families.words", "twopeople"), "the words of the families and the stages of two people are modules that hold no way to reach Azure (next tests)")
                 else:
                     self.assertIn((node.module or "").split(".")[0], allowed)
+
+    def test_the_stages_of_a_request_that_needs_two_people_import_only_the_standard_library_and_the_records(self):
+        source = (Path(support.APP_ROOT) / "cases" / "twopeople.py").read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                self.assertLessEqual({a.name.split(".")[0] for a in node.names}, {"__future__", "dataclasses", "typing"})
+            elif isinstance(node, ast.ImportFrom):
+                self.assertTrue(node.level == 1 and node.module == "models" or node.level == 0 and node.module in ("__future__", "dataclasses", "typing"), (node.level, node.module))
 
     def test_the_words_of_the_families_import_only_the_standard_library_and_the_records_and_read_nothing(self):
         allowed = {"__future__", "re", "dataclasses", "typing"}

@@ -217,6 +217,47 @@ class TheDecisionCardOfAdvice(unittest.TestCase):
         self.assertEqual(len(self.ids["ask"]["actions"]), 1)
 
 
+class TheDecisionCardOfAChangeThatNeedsTwoPeople(unittest.TestCase):
+    """The card says that two people are needed and where the request stands for this person. It never confirms or approves: both are made on the page, which is the link."""
+    OTHER = "22222222-2222-2222-2222-222222222222"
+    DIGEST = "d" * 64
+
+    def card_of(self, viewer=OID, decisions=(), **plan):
+        brief = brief_of(plan=make_plan(approval_class="R3", approvers=(OID, self.OTHER), digest=self.DIGEST, **plan), decisions=decisions, viewer=viewer)
+        return brief, cards.decision_card(brief, ctx_for(brief))
+
+    def test_it_says_that_two_people_approve_it_and_each_card_says_where_it_stands_for_its_reader(self):
+        confirmed = DecisionRecord(PLAN_ID, self.OTHER, "Olga", "confirm", "2026-11-05T09:00:00Z", "7F3K92QD", plan_digest=self.DIGEST)
+        stale = DecisionRecord(PLAN_ID, self.OTHER, "Olga", "confirm", "2026-11-05T09:00:00Z", "7F3K92QD", plan_digest="e" * 64)
+        for label, viewer, decisions, words in (("first", OID, (), "Nobody has confirmed it yet."), ("mine", self.OTHER, (confirmed,), "You confirmed the request"),
+                                                ("second", OID, (confirmed,), "Olga confirmed the request"), ("stale", OID, (stale,), "that confirmation does not count any more")):
+            with self.subTest(label):
+                _, card = self.card_of(viewer, decisions)
+                text = by_id(card)["change"]["text"]
+                self.assertIn(words, text)
+                self.assertTrue(text.startswith("**If you approve:** "))
+                self.assertIn("Two people approve this.", text)
+                self.assertEqual(cardcheck.check(card), [])
+
+    def test_no_card_has_a_button_that_confirms_or_approves_and_the_link_is_the_way_to_both(self):
+        for viewer, decisions in ((OID, ()), (self.OTHER, ())):
+            _, card = self.card_of(viewer, decisions)
+            verbs = sorted(a["verb"] for a in actions_of(card) if a["type"] == "Action.Execute" and "verb" in a)
+            self.assertEqual(verbs, ["ask", "later", "not_mine"])
+            (page,) = [a for a in by_id(card)["decisions"]["actions"] if a["type"] == "Action.OpenUrl"]
+            self.assertEqual((page["title"], page["url"]), ("Review and decide", URL))
+
+    def test_a_request_that_nobody_can_approve_says_so_and_offers_only_the_page(self):
+        brief = brief_of(plan=make_plan(approval_class="R3", approvers=(OID,)), viewer=OID)
+        card = cards.decision_card(brief, ctx_for(brief))
+        self.assertIn("fewer than two people are listed as approvers", by_id(card)["change"]["text"])
+        (page,) = [a for a in by_id(card)["decisions"]["actions"] if a["type"] == "Action.OpenUrl"]
+        self.assertEqual(page["title"], "See the request")
+
+    def test_a_request_for_one_person_says_nothing_of_two(self):
+        self.assertNotIn("Two people", by_id(cards.decision_card(brief_of(), ctx_for(brief_of())))["change"]["text"])
+
+
 class TheFigureOnTheCard(unittest.TestCase):
     """The tile of the card says what the page says: the year, the label with the month, the basis or the reason, and once that money is in US dollars."""
 

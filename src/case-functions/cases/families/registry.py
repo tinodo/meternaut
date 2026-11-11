@@ -23,6 +23,9 @@ INVESTIGATION = "investigation"
 if len(BY_NAME) != len(REGISTRY) or set(BY_NAME) != set(SHOWN):
     # A family that nobody can read about is not offered to a person: this stops the app at its first import, long before a plan is made.
     raise RuntimeError("every family of the registry needs its words in families/words.py, and every entry there a family: " + ", ".join(sorted(set(BY_NAME) ^ set(SHOWN))))
+if any(family.summary != SHOWN[family.name].summary for family in REGISTRY):
+    # The pages that cannot import the registry (they reach no Azure code) say what a family does with the phrase in words.py: it has to be the family's own.
+    raise RuntimeError("the summary of every family in families/words.py must be the family's own: " + ", ".join(f.name for f in REGISTRY if f.summary != SHOWN[f.name].summary))
 
 
 def get(name: str | None) -> Family | None:

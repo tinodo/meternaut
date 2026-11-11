@@ -13,6 +13,8 @@ The families of change added the same kind of thing: `PlanRecord.target` and `Pl
 cases/families/registry.py). The learning (docs/proposals/15-learning.md) added three new kinds of record, LessonRecord, ClaimRecord and CapabilityRecord, each with its own table, and no
 field of a record that was there before. The daily cost of a request added `CaseRecord.cost_series` and `cost_series_end` (None: never read), and its daily use added `use_series`,
 `use_series_end` and `use_kind` (None: never read, or not a kind of resource that has one).
+The approvals and attention work (docs/proposals/04-the-loop.md) added the decision `confirm`, the record TwoPeopleRule (kept in the settings table, in a partition of its own) and no field of
+a record that was there before; it changed the default of `SettingsRecord.quiet_from` and `quiet_to` from a window to none, which a record that was stored keeps as it holds it.
 The drift check at the console added CheckRecord (its own table, one row) and `LessonRecord.superseded` (False: nothing contradicts the lesson).
 """
 from __future__ import annotations
@@ -31,7 +33,16 @@ CASE_OPEN = ("awaiting_ok", "approved", "running")
 CASE_CLOSED = ("done", "failed", "declined", "expired", "verified", "acknowledged")
 PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed")
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
-DECISIONS = ("approve", "decline", "ask", "not_mine", "later")
+DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
+# `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
+# makes no change and needs no sign-in to Azure. The change is made by the second person, who approves with their own sign-in.
+TWO_PEOPLE_CLASS = "R3"
+
+
+def can_replace(old: str, new: str) -> bool:
+    """Whether a person's new answer on a plan may take the place of the one they gave: a question and a "later" are replaced by any answer; a confirmation only by another confirmation (the
+    plan changed and it counts no more), a decline or "not mine", never by an approval: the person who confirmed is not the second person."""
+    return old in ("ask", "later") or (old == "confirm" and new in ("confirm", "decline", "not_mine"))
 # Why a person declined, from a short list (the form of a decline offers exactly these; an empty reason is allowed).
 DECLINE_REASONS = ("still-needed", "figure-wrong", "handled", "other")
 # What a closed request can have taught (cases/learning.py): the last word of the person (a question and a "later" are the last word of a request that then expired), and what became of
@@ -252,15 +263,32 @@ class SettingsRecord(Record):
     oid: str
     channel: str = "email"
     language: str = "en"
-    timezone: str = "Europe/Amsterdam"
+    timezone: str = "Europe/Amsterdam"  # the zone of the times that the pages show and of the quiet hours; a zone that is empty or that this machine does not know is UTC (cases/quiet.py)
     working_days: tuple[int, ...] = (1, 2, 3, 4, 5)  # 1 is Monday
-    quiet_from: str = "18:00"
-    quiet_to: str = "08:00"
+    # The quiet hours: nothing is sent to the person from `quiet_from` until `quiet_to`, by the clock of `timezone` (the window may cross midnight). Both empty: none, the default. A record that
+    # a person saved before the quiet hours were applied holds the window that the page showed then (18:00 to 08:00): it applies now, as the page says.
+    quiet_from: str = ""
+    quiet_to: str = ""
     desk_day: int = 2
     weekly_budget: int = 3
     paused_until: str | None = None
     mutes: tuple[str, ...] = ()
     updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class TwoPeopleRule(Record):
+    """When a change needs two people instead of one (cases/twopeople.py). Off when it names no amount and no family: that is the default. A plan that the rule covers when it is made is of the
+    approval class R3 for the rest of its life, whatever the rule says later. `by` and `at` are who changed the rule last, and when."""
+
+    min_usd_month: float | None = None  # a change whose saving is at least this many US dollars a month needs two people; None: no amount
+    families: tuple[str, ...] = ()  # the families of change that always need two people
+    by: str = ""
+    at: str = ""
+
+    @property
+    def on(self) -> bool:
+        return self.min_usd_month is not None or bool(self.families)
 
 
 @dataclass(frozen=True)
@@ -379,7 +407,8 @@ class Principal:
 @dataclass(frozen=True)
 class DecideResult:
     ok: bool
-    # Answers: declined, asked, not_mine, later, and acknowledged (an advise plan answered with "worth acting on": nothing changes in Azure). What a sign-in to Azure led to:
+    # Answers: declined, asked, not_mine, later, confirmed (the first of two people: the plan stays open for the second) and acknowledged (an advise plan answered with "worth acting on":
+    # nothing changes in Azure). What a sign-in to Azure led to:
     # ran, ran_unconfirmed, running (Azure accepted the change and is still making it: the timer reads the resource later), unchanged (nothing had to be changed: the resource was as the plan
     # wants when the runner looked, and nothing was written), stopped, azure_refused, failed, signin_failed, and step_up_failed
     # (the extra sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
@@ -418,7 +447,8 @@ class Store(Protocol):
     def decisions_of_plan(self, plan_id: str) -> list[DecisionRecord]: ...
     def decisions_by(self, oid: str, limit: int = 100) -> list[DecisionRecord]: ...
     def decision_put(self, decision: DecisionRecord) -> bool:
-        """Keeps one decision per approver and plan. Returns False, and changes nothing, when this approver has a decision of another kind than a question or a "later" already.
+        """Keeps one decision per approver and plan. Returns False, and changes nothing, when this approver has a decision of another kind than a question or a "later" already, and
+        than a confirmation that this answer may replace (can_replace).
 
         A question ("ask") and a "later" are not decisions: a later answer of the same approver replaces them."""
         ...
@@ -439,6 +469,10 @@ class Store(Protocol):
     def settings_get(self, oid: str) -> SettingsRecord: ...
     def settings_put(self, settings: SettingsRecord) -> None: ...
     def settings_delete(self, oid: str) -> None: ...
+    def rule_get(self) -> TwoPeopleRule:
+        """When a change needs two people: the rule that was saved, or the one that is off."""
+        ...
+    def rule_put(self, rule: TwoPeopleRule) -> None: ...
     def notes_of(self, oid: str) -> list[NoteRecord]: ...
     def note_put(self, note: NoteRecord) -> None: ...
     def note_delete(self, oid: str, note_id: str) -> None: ...

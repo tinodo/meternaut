@@ -17,8 +17,9 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-from .families.words import called_of, shown, type_of, words_of  # called_of is also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, GROUP_FACT, TIME_FORMAT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from .twopeople import confirmations, counts, needs, standing
+from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
+from .models import ADVISE, GROUP_FACT, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -103,7 +104,17 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
 # reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family.
 WHO_ACTS = ("You do, with your own Azure sign-in: you approve, you sign in to Azure, Azure checks your rights, and the change is made right then. "
             "Meternaut holds no right of its own to change anything.")
-TWO_PEOPLE = "Two people approve this, each on their own."
+TWO_PEOPLE = "Two people approve this: one confirms the request, then another approves it and signs in to Azure."
+# What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
+SECOND_WORDS = {
+    "first": ("Two people approve this. One of them confirms the request, which needs no sign-in to Azure, and then another approves it and signs in to Azure. "
+              "Nobody has confirmed it yet."),
+    "second": "Two people approve this. {name} confirmed the request {when}. You approve it now and sign in to Azure, and it runs with your own permissions.",
+    "mine": "Two people approve this. You confirmed the request {when}. A second person approves it and signs in to Azure.",
+    "stale": "Two people approve this. The request changed after {name} confirmed it {when}, so that confirmation does not count any more. It has to be confirmed again.",
+    "alone": ("Two people approve this, and fewer than two people are listed as approvers of it, so nobody can approve it. You can decline it, say that it is not yours, "
+              "or ask the people who are responsible for Meternaut to add a second approver."),
+}
 ADVICE_CHANGE = "Nothing changes in Azure. Your answer is recorded with your name."
 ADVICE_WHO = "Meternaut may not change this resource. If you act on it, you do it in Azure with your own rights."
 ADVICE_RISK = "If the finding is wrong, time goes to a resource that is needed. Nothing changes in Azure when you answer."
@@ -269,6 +280,16 @@ class Group:
 
 
 @dataclass(frozen=True)
+class Second:
+    """Where a request that needs two people stands for the person who reads it: `stage` is a stage of twopeople.standing (alone, first, second, mine or stale), `line` is the plain
+    sentence for it, `by` the name of the person who confirmed the plan ("" when nobody did)."""
+
+    stage: str
+    line: str
+    by: str = ""
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -310,6 +331,10 @@ class Brief:
     # What the finding costs in 30 days, from the cost lines (everything that it stands for when it is a group); None when no cost line was read. A request that has no saving shows this cost as
     # the most that a change could save. The letter and the card read it from here, because the card has no case at hand: it is the number that the pages read with cost_of (a test holds the two together).
     cost: float | None = None
+    # A switch holds the answer that approves (and the confirmation): the page and the card say so in words of their own instead of showing that answer.
+    held: bool = False
+    # A change that needs two people: where it stands for the reader (None for every other request).
+    second: Second | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -1144,15 +1169,39 @@ def _where(name: str, group: str, subscription: str, resource_id: str, rtype: st
     return Where(text_of(subscription, 40)[:8], text_of(group, 90), kind_words(rtype)[0], text_of(name, MAX_NAME), portal_url(resource_id))
 
 
-def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool) -> tuple[str, ...]:
+def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stage: str = "") -> tuple[str, ...]:
     """The answers that exist for this person right now: a person who may answer, and a request that is open. The answer that approves is missing while a switch holds it (the
-    caller says so in `changes_paused`: for a change the switches `all` and `changes`, for advice the switch `all`)."""
+    caller says so in `changes_paused`: for a change the switches `all` and `changes`, for advice the switch `all`). A change that needs two people (`stage`, see cases/twopeople.py)
+    offers the first person "confirm" in the place of "approve", the second person "approve", and a person who confirmed it only a decline or "not mine": a question or a "later" would
+    take the place of their confirmation."""
     if kind == "info" or state != "open" or not may_answer:
         return ()
     answers = ["approve", "decline", "not_mine", "ask", "later"]
+    if stage == "mine":
+        answers = ["decline", "not_mine"]
+    elif stage:
+        answers[0:1] = {"first": ["confirm"], "stale": ["confirm"], "second": ["approve"]}.get(stage, [])
     if changes_paused:
-        answers.remove("approve")
+        answers = [name for name in answers if name not in ("approve", "confirm")]
     return tuple(answers)
+
+
+def second_of(plan: PlanRecord, decisions: Sequence[DecisionRecord], viewer: str, now: dt.datetime) -> Second:
+    """Where a request that needs two people stands for `viewer` (an object id; empty for a letter, which knows no reader), in plain words."""
+    found = standing(plan, decisions, viewer)
+    name = text_of(found.by, 80) or "A person"
+    when = ago_text(now, found.at)[1] if found.at else ""
+    if found.stage == "second" and not viewer:
+        return Second(found.stage, f"{TWO_PEOPLE} {name} confirmed the request {when}.", name)
+    return Second(found.stage, SECOND_WORDS[found.stage].format(name=name, when=when), name if found.by else "")
+
+
+def _confirmed_line(plan: PlanRecord, decisions: Sequence[DecisionRecord]) -> tuple[str, ...]:
+    """The line that says who confirmed a plan first, for the record of a change that needed two people; nothing for any other."""
+    if not needs(plan):
+        return ()
+    good = [d for d in confirmations(plan, decisions) if counts(plan, d)]
+    return (f"Confirmed first by {text_of(good[0].approver_name, 80)}.",) if good else ()
 
 
 def _decisive(decisions: Sequence[DecisionRecord], *kinds: str) -> DecisionRecord | None:
@@ -1210,25 +1259,26 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     found = _decisive(decisions, "approve")
     who = text_of(found.approver_name, 80) if found else "A person"
     at = found.at if found else ""
+    first = _confirmed_line(plan, decisions)
     if advice:
         return Outcome("answered", "Worth acting on", (f"{who} said this is worth acting on.", "Nothing was changed in Azure."), "Worth acting on", who, at)
     if state == "approved":
         waiting = action is not None and action.state == "queued" and action.step_up
-        return Outcome("approved", "Approved", (f"Approved by {who}.", WAITING_FOR_THE_CHECK if waiting else "The change is being made now."), "Being made now", who, at)
+        return Outcome("approved", "Approved", (f"Approved by {who}.", *first, WAITING_FOR_THE_CHECK if waiting else "The change is being made now."), "Being made now", who, at)
     if action is None:
-        return Outcome("approved", "Approved", (f"Approved by {who}.",), "Approved", who, at)
+        return Outcome("approved", "Approved", (f"Approved by {who}.", *first), "Approved", who, at)
     check = action.verification if isinstance(action.verification, dict) else {}
     if action.no_change and action.state in ("done", "verified", "unknown") and state == "consumed":
         # The person approved, and when Meternaut looked the resource was as the plan wants (or gone): nothing was written, so no line says that it was made with anyone's rights.
-        return Outcome("unchanged", NOTHING_CHANGED, (f"Approved by {who}.", _nothing_changed(action.result)), NOTHING_CHANGED, who, action.finished_at or at)
+        return Outcome("unchanged", NOTHING_CHANGED, (f"Approved by {who}.", *first, _nothing_changed(action.result)), NOTHING_CHANGED, who, action.finished_at or at)
     if action.state == "verified":
-        return Outcome("verified", "Done and checked", (f"Approved by {who}, and made with their own Azure rights.", *(check_lines(check) or [text_of(action.result, 300)])),
+        return Outcome("verified", "Done and checked", (f"Approved by {who}, and made with their own Azure rights.", *first, *(check_lines(check) or [text_of(action.result, 300)])),
                        "Done and checked", who, action.finished_at or at)
     if action.state == "running":
-        return Outcome("running", "Running in Azure", (f"Approved by {who}, and sent to Azure with their own Azure rights.", text_of(action.result, 300) or RUNNING_IN_AZURE),
+        return Outcome("running", "Running in Azure", (f"Approved by {who}, and sent to Azure with their own Azure rights.", *first, text_of(action.result, 300) or RUNNING_IN_AZURE),
                        "Running in Azure", who, at)
     if action.state in ("done", "unknown") and state == "consumed":
-        lines = [f"Approved by {who}, and made with their own Azure rights.", text_of(action.result, 300), *check_lines(check, action.result or "")]
+        lines = [f"Approved by {who}, and made with their own Azure rights.", *first, text_of(action.result, 300), *check_lines(check, action.result or "")]
         return Outcome("done", "Done", tuple(line for line in lines if line), "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
     detail = text_of(action.error or action.result, 300) or "The change could not be finished."
     return Outcome("failed", "Not made", (detail,), "Not made", who, action.finished_at or at)
@@ -1237,9 +1287,10 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
 
 def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None = None, decisions: Sequence[DecisionRecord] = (), *, now: dt.datetime,
-                may_answer: bool = False, changes_paused: bool = False) -> Brief:
+                may_answer: bool = False, changes_paused: bool = False, viewer: str = "") -> Brief:
     """The brief of one case, with its plan and the action of the plan when there are any. `may_answer` says that the person who looks may answer the plan (the role and
-    the names are checked by the caller); `changes_paused` that a switch holds the changes. At least one of `case` and `plan` is given."""
+    the names are checked by the caller); `changes_paused` that a switch holds the changes; `viewer` is the object id of the person who looks, for a request that needs two people
+    (what that person may do depends on whether they confirmed it). At least one of `case` and `plan` is given."""
     now = _utc(now)
     name, group, subscription, resource_id, rtype = _subject(case, plan)
     family = plan.family if plan is not None else ""
@@ -1266,18 +1317,21 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     unread = unread_of(case)
     found = gateways_of(case)
     together = group_of(case)
+    second = second_of(plan, decisions, viewer, now) if kind == "change" and needs(plan) else None
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
         headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together),
         saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
-        answers=_answers(kind, state, may_answer, changes_paused), found_at=plain(found_at, 30), age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
-        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == "R3",
+        answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else ""), found_at=plain(found_at, 30), age_days=age,
+        expires_at=plain(plan.expires_at if plan is not None else "", 30),
+        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,
-        cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None))
+        cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
+        held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second)
 
 
 def order_key(brief: Brief) -> tuple:

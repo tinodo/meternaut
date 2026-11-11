@@ -1,7 +1,7 @@
 """Settings of the signed-in person: the page, the strict check of what is posted, the export and the deletion.
 
-The page offers four things and nothing else: where I write to the person first, the quiet hours, how many other letters a week, and a pause. What the form does not carry
-(language, time zone, working days, the day of the weekly summary, mutes) keeps the value that is stored, and is checked as strictly as before when a form does send it.
+The page offers four things and nothing else: where I write to the person first, the quiet hours (two times and the time zone they are read in), how many other letters a week, and a pause.
+What the form does not carry (language, working days, the day of the weekly summary, mutes) keeps the value that is stored, and is checked as strictly as before when a form does send it.
 The settings are stored with the directory object id and nothing else about the person. Deleting them deletes the person's notes too, and keeps the approval records,
 which hold only an object id and follow the retention of the organisation that runs Meternaut.
 """
@@ -17,7 +17,9 @@ from .common import read
 from .core import Ctx, Response, Safe, canonical_zone, fmt, join, stamp
 from .layout import (JSON, block, button, choices, details, error_summary, field, form, head, hidden, link, message_page, notice, page, panel, paragraph, respond)
 
-NOT_APPLIED = "Quiet hours are saved and not applied yet: a letter can arrive at any time."
+QUIET_HINT = ("Leave both times empty for no quiet hours. Inside them I send you nothing, no letter and no Teams card: what is due waits and is sent when they end, and nothing is lost. "
+              "There is no way around them, because nothing I send is urgent.")
+ZONE_HINT = "The clock that the two times follow: a name such as Europe/Amsterdam, or UTC."
 CHANNEL_HINT = "With only the weekly summary, no other letter is sent. A request that waits for your answer is on the Decisions page whatever you choose."
 WEEKLY_BUDGET_HINT = "How many other letters a week. 0 means only the weekly summary. A request that waits for your answer and the first letter to you are never counted."
 CHANNEL_WORDS = (("email", "E-mail"), ("teams", "Teams (a card first; a letter only if no card was sent within 20 minutes)"), ("desk", "Only the weekly summary"))
@@ -27,14 +29,15 @@ MUTE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 MAX_MUTES = 10
 MAX_BUDGET = 10
 MAX_PAUSE_DAYS = 366
-OFFERED = ("channel", "quiet_from", "quiet_to", "weekly_budget", "paused_until")  # the fields that the page offers; a problem with another one links to the first field
+OFFERED = ("channel", "quiet_from", "quiet_to", "timezone", "weekly_budget", "paused_until")  # the fields that the page offers; a problem with another one links to the first field
 
 
 def _values(record: SettingsRecord, now: dt.datetime) -> dict[str, str]:
     """The values of a stored record as the form shows them. A pause is shown as its date, and only while the date is still ahead."""
     match = re.match(r"\d{4}-\d{2}-\d{2}", record.paused_until or "")
     shown = match.group(0) if match and match.group(0) > now.date().isoformat() else ""
-    return {"channel": record.channel, "quiet_from": record.quiet_from, "quiet_to": record.quiet_to, "weekly_budget": str(record.weekly_budget), "paused_until": shown}
+    return {"channel": record.channel, "quiet_from": record.quiet_from, "quiet_to": record.quiet_to, "timezone": record.timezone, "weekly_budget": str(record.weekly_budget),
+            "paused_until": shown}
 
 
 def parse_settings(form_data: dict[str, str], oid: str, now: dt.datetime, base: SettingsRecord | None = None) -> tuple[SettingsRecord | None, dict[str, str]]:
@@ -74,8 +77,14 @@ def parse_settings(form_data: dict[str, str], oid: str, now: dt.datetime, base: 
         if not days and "working_days" not in errors:
             errors["working_days"] = "Choose at least one working day."
     for name, label in (("quiet_from", "Quiet hours start"), ("quiet_to", "Quiet hours end")):
-        if not HOURS.fullmatch(form_data.get(name, "")):
+        if form_data.get(name, "") and not HOURS.fullmatch(form_data[name]):
             errors[name] = f"{label} must be a time as HH:MM, from 00:00 to 23:59."
+    start, end = form_data.get("quiet_from", ""), form_data.get("quiet_to", "")
+    if not errors.keys() & {"quiet_from", "quiet_to"}:
+        if bool(start) != bool(end):
+            errors["quiet_to" if start else "quiet_from"] = "Enter both times, or leave both empty."
+        elif start and start == end:
+            errors["quiet_to"] = "The two times are the same. Choose two different times, or leave both empty."
     if "desk_day" in form_data:
         desk = form_data["desk_day"]
         if desk not in {"1", "2", "3", "4", "5", "6", "7"}:
@@ -106,8 +115,8 @@ def parse_settings(form_data: dict[str, str], oid: str, now: dt.datetime, base: 
             errors["mutes"] = f"Use at most {MAX_MUTES} words."
     if errors:
         return None, errors
-    return SettingsRecord(oid=oid, channel=channel, language=language, timezone=zone, working_days=tuple(sorted(days)), quiet_from=form_data["quiet_from"],
-                          quiet_to=form_data["quiet_to"], desk_day=int(desk), weekly_budget=int(budget), paused_until=paused_until, mutes=tuple(mutes),
+    return SettingsRecord(oid=oid, channel=channel, language=language, timezone=zone, working_days=tuple(sorted(days)), quiet_from=start,
+                          quiet_to=end, desk_day=int(desk), weekly_budget=int(budget), paused_until=paused_until, mutes=tuple(mutes),
                           updated_at=stamp(now)), {}
 
 
@@ -116,9 +125,10 @@ def _form(ctx: Ctx, values: dict[str, str], errors: dict[str, str]) -> Safe:
     last = ctx.now.date() + dt.timedelta(days=MAX_PAUSE_DAYS)
     fields = join([
         choices("channel", "Where I write to you first", "channel", CHANNEL_WORDS, values.get("channel", ""), hint=CHANNEL_HINT, error=errors.get("channel", "")),
-        fmt('<fieldset id="quiet-hours"><legend>Quiet hours</legend>{start}{end}</fieldset>',
-            start=field("quiet_from", "quiet_from", "No letters from", values.get("quiet_from", ""), kind="time", error=errors.get("quiet_from", ""), required=True),
-            end=field("quiet_to", "quiet_to", "No letters until", values.get("quiet_to", ""), kind="time", error=errors.get("quiet_to", ""), required=True)),
+        fmt('<fieldset id="quiet-hours"><legend>Quiet hours</legend><p class="hint" id="quiet-hours-hint">{hint}</p>{start}{end}{zone}</fieldset>', hint=QUIET_HINT,
+            start=field("quiet_from", "quiet_from", "No messages from", values.get("quiet_from", ""), kind="time", error=errors.get("quiet_from", "")),
+            end=field("quiet_to", "quiet_to", "No messages until", values.get("quiet_to", ""), kind="time", error=errors.get("quiet_to", "")),
+            zone=field("timezone", "timezone", "Time zone of these hours", values.get("timezone", ""), hint=ZONE_HINT, error=errors.get("timezone", ""), maxlength=60, required=True)),
         field("weekly_budget", "weekly_budget", "Other letters a week, at most", values.get("weekly_budget", ""), kind="number", hint=WEEKLY_BUDGET_HINT,
               error=errors.get("weekly_budget", ""), required=True, attrs={"min": "0", "max": str(MAX_BUDGET), "step": "1", "inputmode": "numeric"}),
         field("paused_until", "paused_until", "Pause my letters until", values.get("paused_until", ""), kind="date", error=errors.get("paused_until", ""),
@@ -148,7 +158,7 @@ def settings_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dic
         parts.append(notice("warning", "Your settings cannot be read", "The values below are the starting values, not what you saved."))
     if errors:
         parts.append(error_summary([(key if key in OFFERED else "channel", message) for key, message in errors.items()]))
-    parts += [fmt('<div class="notice info" id="not-applied"><p>{text}</p></div>', text=NOT_APPLIED), panel("letters", "Your letters", _form(ctx, values, errors)), _your_data(ctx)]
+    parts += [panel("letters", "Your letters and cards", _form(ctx, values, errors)), _your_data(ctx)]
     return page(ctx, "Settings", join(block(p) for p in parts), current="/me/settings", status=status, why="these are the settings that belong to you")
 
 

@@ -13,9 +13,10 @@ import re
 from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, DecideResult, PlanRecord
 from . import brief_page
-from .common import brief_of, may_answer, read
+from .common import brief_of, decisions_for, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
+from .home import walk
 from .layout import SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
 
 REFUSED_ROLE = "I cannot take your OK on this request."
@@ -24,17 +25,20 @@ CHANGED = "This request changed. Nothing is approved. A new message will bring t
 # The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
 # first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
 SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
-STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowledged": 200, "ran": 200, "ran_unconfirmed": 200, "running": 200, "unchanged": 200, "stopped": 409,
-          "azure_refused": 403, "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403, "refused_paused": 409,
-          "expired": 410, "duplicate": 409, "error": 500}
+STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowledged": 200, "confirmed": 200, "ran": 200, "ran_unconfirmed": 200, "running": 200, "unchanged": 200,
+          "stopped": 409, "azure_refused": 403, "failed": 502, "signin_failed": 400, "step_up_failed": 400, "refused_code": 409, "refused_state": 409, "refused_role": 403,
+          "refused_paused": 409, "expired": 410, "duplicate": 409, "error": 500}
 WHY = "you answered a request on this page"
 CONFIRM_WHY = "you asked to approve a change that cannot be undone"
-ANSWERS = ("approve", "decline", "ask", "not_mine", "later")
+ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # What kind of news each result is, for the box that the page of the result puts its lines in: a change made is a success, an answer recorded or a change that was not needed is information, a
 # check that stopped a change, a sign-in that was not completed or an answer that cannot be taken now is a warning, and a refusal or a failure of Azure is an error.
 TONE = {"ran": "success", "ran_unconfirmed": "info", "running": "info", "unchanged": "info", "stopped": "warning", "azure_refused": "error", "failed": "error", "signin_failed": "warning",
-        "step_up_failed": "warning", "declined": "info", "asked": "info", "not_mine": "info", "later": "info", "acknowledged": "info", "refused_code": "warning", "refused_state": "warning",
-        "refused_paused": "warning", "expired": "warning", "duplicate": "info", "error": "error"}
+        "step_up_failed": "warning", "declined": "info", "asked": "info", "not_mine": "info", "later": "info", "acknowledged": "info", "confirmed": "info", "refused_code": "warning",
+        "refused_state": "warning", "refused_paused": "warning", "expired": "warning", "duplicate": "info", "error": "error"}
+# The results after which the person has nothing more to do with this request, so the page offers the next request that waits for them (docs/proposals/04-the-loop.md, "Review all").
+NEXT_AFTER = frozenset({"declined", "asked", "not_mine", "later", "acknowledged", "confirmed", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed",
+                        "step_up_failed", "expired"})
 
 
 def _base(ctx: Ctx, plan_id: str) -> str:
@@ -68,7 +72,8 @@ def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
 # -- the page ------------------------------------------------------------------------------------------------------------------------------------
 
 def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = None, errors: dict[str, str] | None = None, status: int = 200) -> Response:
-    """The page of a request, for a person who may answer it. The form appears only while the request is open; the approve button is left out while changes are paused."""
+    """The page of a request, for a person who may answer it. The form appears only while the request is open; the approve button is left out while changes are paused. A person who
+    comes from "Review all" (`?walk=1`) is told how many requests wait after this one."""
     values, errors = values or {}, errors or {}
     case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
     decisions, _ = read(lambda: ctx.store.decisions_of_plan(plan.plan_id), [])
@@ -76,7 +81,17 @@ def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = N
     brief = brief_of(ctx, plan, case, action=action, decisions=decisions, answerable=True)
     answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
-                             why="you are named as an approver of this request, and you have the role approver")
+                             why="you are named as an approver of this request, and you have the role approver", banner=_walking(ctx, plan))
+
+
+def _walking(ctx: Ctx, plan: PlanRecord) -> Safe | None:
+    """The line at the top of a request that was opened from "Review all": how many more wait after it. Nothing for a request that is not open."""
+    if ctx.request.query.get("walk") != "1" or plan.state != "open":
+        return None
+    left = len(walk(ctx, skip=plan.plan_id))
+    text = (f"You are going through your requests one by one. {left} more wait{'s' if left == 1 else ''} after this one, and the next opens when you have answered this one."
+            if left else "You are going through your requests one by one. This is the last one that waits for you.")
+    return notice("info", "", text)
 
 
 def approval_page(ctx: Ctx, plan_id: str) -> Response:
@@ -113,13 +128,28 @@ def _called(plan: PlanRecord | None) -> str:
     return called_of(plan.family if plan is not None else None)
 
 
+def _following(ctx: Ctx, plan_id: str | None) -> str:
+    """The id of the next request that waits for this person and that they have not answered, in the order of the Decisions page: empty when there is none or when it cannot be read."""
+    try:
+        ids = walk(ctx, skip=plan_id or "")
+    except Exception:  # noqa: BLE001 (the page of a result is shown without the next request)
+        return ""
+    return ids[0] if ids else ""
+
+
 def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     """Every kind of result as a plain page. A refusal says that nothing changed; a change says that it was made with the person's own permissions; an approval that found nothing to
     change says that nothing was changed."""
     kind = result.kind if result.kind in STATUS else "error"
     status = STATUS[kind]
     back = _back(ctx, plan_id)
-    show = lambda title, *lines, back_to=back: message_page(ctx, status, title, *lines, back=back_to, ai=True, why=WHY, kind=TONE.get(kind, "info"))  # noqa: E731
+    following = _following(ctx, plan_id) if kind in NEXT_AFTER else ""
+
+    def show(title, *lines, back_to=back):
+        if following:  # the person has more requests waiting: the next one is the main button, and the way back is a link under the words
+            lines, back_to = (*lines, paragraph(link(ctx.url(back_to[0]), back_to[1]))), (f"/ok/{link_part(following)}?walk=1", "Next request")
+        return message_page(ctx, status, title, *lines, back=back_to, ai=True, why=WHY, kind=TONE.get(kind, "info"))
+
     text = clean_line(result.message)[:400]
     history = paragraph(link(ctx.url("/history"), "See the history"))
     if kind == "ran":
@@ -154,6 +184,8 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("Declined", "Declined. Nothing has changed. The request is closed.", history)
     if kind == "acknowledged":
         return show("Recorded: worth acting on", "Recorded. Nothing was changed in Azure.", history)
+    if kind == "confirmed":
+        return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it and sign in to Azure, with their own permissions.", history)
     if kind == "asked":
         plan = _plan_of(ctx, result, plan_id)
         until = paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe("")
@@ -248,7 +280,7 @@ def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
     if decision == "approve" and plan.family != ADVISE:
         if form_data.get("confirm") != "yes":
             case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
-            brief = brief_of(ctx, plan, case, answerable=True)
+            brief = brief_of(ctx, plan, case, decisions=decisions_for(ctx, plan), answerable=True)
             if "approve" in brief.answers and not brief.undo.reversible:  # a request that cannot be approved now (paused, closed) is refused by `begin`, in its own words
                 return confirm_page(ctx, plan, brief, form_data.get("code", ""), nonce, note)
         return _begin(ctx, plan_id, nonce)

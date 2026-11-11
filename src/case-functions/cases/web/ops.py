@@ -8,16 +8,19 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-from ..models import CHECK_GAP_MINUTES, SWITCH_NAMES, CheckRecord, SwitchRecord
+from ..brief import kinds as change_kinds
+from ..models import CHECK_GAP_MINUTES, SWITCH_NAMES, CheckRecord, SwitchRecord, TwoPeopleRule
 from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
 from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, parse_time, stamp, utc
-from .figures import chip
-from .layout import (TEXT, block, button, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, respond, table)
+from .figures import chip, dollars
+from .layout import (TEXT, block, button, checks, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, respond, table)
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
 PAUSE_WHY = "your role ops lets you stop work at four levels"
 OPS_WHY = "your role ops lets you see how Meternaut is running"
+TWO_PEOPLE_WHY = "your role lets you see when a change needs two people, and the role owner lets you change it"
+AMOUNT = re.compile(r"\d{1,7}(?:\.\d{1,2})?")
 DRIFT_WHY = "your role ops lets you start the check of the AI agents"
 RESULTS = {"PASS": ("Pass", "low", "circle"), "FAIL": ("Fail", "high", "diamond"), "UNKNOWN": ("Cannot be told", "mid", "triangle")}  # what a control found: a word and a shape, never a colour alone
 BACK = ("/ops", "Back to Operations")
@@ -73,6 +76,8 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
     parts += [
         _tiles(ctx, runs, ok),
         Safe("<h2>The four switches</h2>"), _switches_table(ctx), paragraph(link(ctx.url("/ops/pause"), "Pause or resume work")),
+        Safe("<h2>When a change needs two people</h2>"), paragraph(rule_text(read(lambda: ctx.store.rule_get(), TwoPeopleRule())[0])),
+        paragraph(link(ctx.url("/ops/two-people"), "See or change when a change needs two people")),
         Safe("<h2>Latest runs</h2>"),
     ]
     if not ok:
@@ -298,3 +303,77 @@ def pause_save(ctx: Ctx) -> Response:
     label = words.SWITCH[name][0]
     banner = notice("success", "Paused" if action == "pause" else "Resumed", f"{label}: {'paused' if action == 'pause' else 'resumed'} by {ctx.principal.name}.")  # type: ignore[union-attr]
     return pause_page(ctx, banner=banner)
+
+
+# -- when a change needs two people -----------------------------------------------------------------------------------------------------------------
+
+def rule_text(rule: TwoPeopleRule) -> str:
+    """The rule in one sentence: off, or what makes a change need two people."""
+    if not rule.on:
+        return "Off. Every change needs one approver, who signs in to Azure and approves it."
+    summaries = change_kinds()
+    kinds = [summaries[name] for name in rule.families if name in summaries]
+    parts = ([f"it saves at least {dollars(rule.min_usd_month)} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
+    return f"On. A change needs two people when {' or '.join(parts)}. One confirms the request, and another approves it and signs in to Azure."
+
+
+def _approvers(ctx: Ctx) -> int:
+    return len(ctx.services.people.with_role("approver"))
+
+
+def two_people_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, str] | None = None, values: dict[str, str] | None = None, status: int = 200) -> Response:
+    """When a change needs two people: the rule as it is, who changed it last, and, for the owner, the form that changes it. It applies to the requests that are made after it is saved."""
+    errors = errors or {}
+    rule, ok = read(lambda: ctx.store.rule_get(), TwoPeopleRule())
+    owner = ctx.principal.has("owner")  # type: ignore[union-attr]
+    people = _approvers(ctx)
+    parts: list[object] = [head("Changes that need two people", "A change that is larger can need two people: one confirms the request, and another approves it and signs in to Azure. It is off until the owner turns it on.")]
+    if banner is not None:
+        parts.append(banner)
+    if errors:
+        parts.append(error_summary(list(errors.items())))
+    if not ok:
+        parts.append(notice("error", "The rule cannot be read", "I cannot read the rule now, so what is shown is the starting rule: off. Nothing has changed."))
+    who = fmt(" It was last changed by {by} on {when}.", by=rule.by, when=ctx.when(rule.at)) if rule.by and rule.at else Safe("")
+    parts.append(panel("rule-now", "How it is now", paragraph(fmt("{rule}{who}", rule=rule_text(rule), who=who)),
+                       paragraph(f"{people} {'person has' if people == 1 else 'people have'} the role approver. It applies to the requests that are made after it is saved: a request that is open keeps what it was made with.")))
+    if not owner:
+        parts.append(paragraph("Only the owner changes it."))
+    else:
+        values = values if values is not None else {"min_usd": f"{rule.min_usd_month:g}" if rule.min_usd_month is not None else "", "families": ",".join(rule.families)}
+        chosen = set(filter(None, values.get("families", "").split(",")))
+        boxes = [(name, summary, name in chosen) for name, summary in change_kinds().items()]
+        fields = [field("min_usd", "min_usd", "A change that saves at least this much a month, in US dollars", values.get("min_usd", ""), hint="Leave it empty for no amount. A change whose saving is not known is not covered by an amount: choose its kind below.",
+                        error=errors.get("min_usd", ""), maxlength=10, attrs={"inputmode": "decimal"}),
+                  checks("families", "Kinds of change that always need two people", "families", boxes, error=errors.get("families", ""))]
+        parts.append(panel("rule-change", "Change the rule", form(ctx.url("/ops/two-people"), hidden("nonce", ctx.nonce("two-people")), *fields,
+                                                                   fmt('<div class="acts">{b}</div>', b=button("Save the rule", kind="primary"))),
+                           paragraph("Leave the amount empty and choose no kind to turn it off. It needs at least two people with the role approver.")))
+    return page(ctx, "Changes that need two people", join(block(p) for p in parts), current="/ops", status=status, why=TWO_PEOPLE_WHY)
+
+
+def two_people_save(ctx: Ctx) -> Response:
+    """The owner saves the rule. The one-time token of the form is used up first; a rule that would need two people when fewer than two can approve is refused, and nothing is stored."""
+    form_data = ctx.request.form
+    if not ctx.store.nonce_use(form_data.get("nonce", ""), ctx.principal.oid, "two-people"):  # type: ignore[union-attr]
+        return message_page(ctx, 403, "This form cannot be used", "The form is out of date, was used already or has no token. Nothing was changed.",
+                            "Open the page again and use the form there.", back=("/ops/two-people", "Back to the rule"))
+    errors: dict[str, str] = {}
+    amount = form_data.get("min_usd", "").strip()
+    if amount and (not AMOUNT.fullmatch(amount) or float(amount) <= 0):
+        errors["min_usd"] = "Enter an amount above zero, with up to two decimals, or leave it empty."
+    named = [name for name in form_data.get("families", "").split(",") if name]
+    if any(name not in change_kinds() for name in named):
+        errors["families"] = "Choose kinds of change from the list."
+    families = tuple(name for name in change_kinds() if name in named)
+    rule = TwoPeopleRule(min_usd_month=float(amount) if amount and "min_usd" not in errors else None, families=families if "families" not in errors else (),
+                         by=ctx.principal.name, at=stamp(ctx.now))  # type: ignore[union-attr]
+    if not errors and rule.on and _approvers(ctx) < 2:
+        errors["min_usd"] = f"A rule that needs two people needs at least two people with the role approver, and {_approvers(ctx)} is listed. Nothing was saved."
+    if errors:
+        return two_people_page(ctx, errors=errors, values=dict(form_data), status=400)
+    try:
+        ctx.store.rule_put(rule)
+    except Exception:  # noqa: BLE001 (a rule that could not be written is said plainly)
+        return message_page(ctx, 503, "The rule was not saved", "The store did not take the change. Nothing was changed.", back=("/ops/two-people", "Back to the rule"))
+    return two_people_page(ctx, banner=notice("success", "Saved", rule_text(rule)))

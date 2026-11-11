@@ -71,12 +71,13 @@ GUARD = GUARD_WORDS
 
 # The answers of the form, by what each is called on the button, for each kind of request (a change in Azure, or advice that changes nothing).
 ANSWER_LABEL = {
-    "change": {"approve": "Approve and sign in to Azure", "decline": "Decline", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
+    "change": {"approve": "Approve and sign in to Azure", "confirm": "Confirm this request", "decline": "Decline", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
     "advice": {"approve": "Worth acting on", "decline": "Not worth it", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
 }
 # What each answer is called when it is listed afterwards.
 DECISION = {
     "approve": "Approved",
+    "confirm": "Confirmed the request",
     "decline": "Declined",
     "ask": "Asked or told something",
     "not_mine": "Said it is not theirs",

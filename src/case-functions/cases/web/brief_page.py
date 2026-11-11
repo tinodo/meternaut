@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, UNREAD, ago_text, Brief
+from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, Brief
 from ..models import GROUP_FACT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -88,8 +88,10 @@ def consequences(brief: Brief) -> list[tuple[str, object]]:
         rows.append(("Checked again", brief.rechecked))
     rows.append(("Undo", Safe("<strong>This cannot be undone.</strong>") if not brief.undo.reversible else brief.undo.how))
     rows.append(("What could go wrong", fmt("{text} Risk: {level}.", text=brief.risk.text, level=brief.risk.level)))
-    if brief.two_people:
-        rows.append(("Who approves", "Two people approve this, each on their own."))
+    if brief.second is not None:
+        rows.append(("Who approves", brief.second.line))
+    elif brief.two_people:
+        rows.append(("Who approves", TWO_PEOPLE))
     return rows
 
 
@@ -174,7 +176,8 @@ def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str]
     seconds = int((end - ctx.now).total_seconds()) if end else 0
     ttl = max(900, min(86400, seconds))
     labels = words.ANSWER_LABEL[brief.kind]
-    primary = [button(labels[name], name="decision", value=name, kind="primary" if name == "approve" else "secondary") for name in ("approve", "decline") if name in brief.answers]
+    primary = [button(labels[name], name="decision", value=name, kind="primary" if name in ("approve", "confirm") else "secondary")
+               for name in ("confirm", "approve", "decline") if name in brief.answers]
     other = [button(labels[name], name="decision", value=name, kind="subtle sm") for name in ("not_mine", "ask", "later") if name in brief.answers]
     fields = [
         textarea("note", "note", "A question, an objection or something to remember", values.get("note", ""),
@@ -183,7 +186,7 @@ def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str]
         select("reason", "reason", "Why decline, if you do", words.DECLINE_REASON, values.get("reason", ""), error=errors.get("reason", "")),
     ]
     rows = [fmt('<div class="acts{stack}">{b}</div>', stack=" stack" if row is primary else "", b=join(row)) for row in (primary, other) if row]
-    if "approve" in brief.answers:
+    if not brief.held:
         held = Safe("")
     elif brief.kind == "advice":
         held = notice("warning", "Meternaut is paused", PAUSED_ADVICE, "You can still say that it is not worth it, ask or tell, say that this is not yours, or decide later.")
@@ -193,15 +196,18 @@ def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str]
 
 
 def _own_answers(ctx: Ctx, decisions: list[DecisionRecord]) -> Safe:
-    """What this person said before, shown to them alone: a question that is still open, or "later"."""
+    """What this person said before, shown to them alone: a question that is still open, "later", or the confirmation of a plan that waits for a second person."""
     mine = [d for d in decisions if d.approver_oid.lower() == ctx.principal.oid]  # type: ignore[union-attr]
     asked = next((d for d in mine if d.decision == "ask" and d.note), None)
     later = any(d.decision == "later" for d in mine)
+    confirmed = next((d for d in mine if d.decision == "confirm"), None)
     parts: list[object] = []
     if asked is not None:
         parts.append(quoted("Your earlier question", asked.note))
     if later:
         parts.append(paragraph("You chose to decide later. Nothing has changed."))
+    if confirmed is not None:
+        parts.append(paragraph(fmt("You confirmed this request on {when}. Nothing has changed: a second person has to approve it.", when=ctx.when(confirmed.at))))
     return join(block(part) for part in parts)
 
 
@@ -284,11 +290,13 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
 # -- the whole page -------------------------------------------------------------------------------------------------------------------------------
 
 def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, decisions: list[DecisionRecord], answer: Safe | None,
-           errors: dict[str, str] | None = None, status: int = 200, why: str = "") -> Response:
-    """The page of a brief. `answer` is the form (or None): the caller makes it only for a person who may answer a request that is open. On a wide screen the answer stands beside what was
-    measured and why; on a narrow one it follows them."""
+           errors: dict[str, str] | None = None, status: int = 200, why: str = "", banner: Safe | None = None) -> Response:
+    """The page of a brief. `answer` is the form (or None): the caller makes it only for a person who may answer a request that is open. `banner` is one box under the title, for a person
+    who is going through their requests one by one. On a wide screen the answer stands beside what was measured and why; on a narrow one it follows them."""
     title, plain_title = title_of(brief)
     parts: list[object] = [_head(ctx, brief, title), _chips(brief)]
+    if banner is not None:
+        parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
     parts += [_outcome(ctx, brief), _decision(brief, case, ctx.now)]

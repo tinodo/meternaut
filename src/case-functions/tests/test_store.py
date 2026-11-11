@@ -241,6 +241,33 @@ class StoreContract:
         self.assertEqual([d.approver_oid for d in self.store.decisions_by(OID)], [OID])
         self.assertEqual(self.store.decisions_by(OID)[0].decision, "approve")
 
+    def test_a_confirmation_is_replaced_by_a_new_one_a_decline_or_not_mine_and_never_by_an_approval_or_a_question(self):
+        def decision(kind, minute):
+            return DecisionRecord(plan_id="p1", approver_oid=OID, approver_name="A", decision=kind, at=f"2026-11-05T09:{minute:02d}:00Z", plan_code="ABCD1234", plan_digest="d" * 64)
+        self.assertTrue(self.store.decision_put(decision("confirm", 0)))
+        for kind in ("approve", "ask", "later"):
+            self.assertFalse(self.store.decision_put(decision(kind, 5)), f"{kind} would take the place of the confirmation of the person who is the first of two")
+        self.assertEqual([d.decision for d in self.store.decisions_of_plan("p1")], ["confirm"])
+        self.assertTrue(self.store.decision_put(decision("confirm", 10)), "a confirmation of the plan as it is now takes the place of the one of the plan as it was")
+        self.assertTrue(self.store.decision_put(decision("not_mine", 15)))
+        self.assertFalse(self.store.decision_put(decision("confirm", 20)), "a final answer stays")
+        self.store.decision_put(replace(decision("confirm", 0), plan_id="p2"))
+        self.assertTrue(self.store.decision_put(replace(decision("decline", 5), plan_id="p2")))
+        self.assertEqual([(d.decision, d.at) for d in self.store.decisions_of_plan("p2")], [("decline", "2026-11-05T09:05:00Z")])
+
+    def test_the_rule_of_two_people_is_off_until_it_is_saved_and_is_kept_with_who_saved_it_and_when(self):
+        from cases.models import TwoPeopleRule
+        self.assertEqual(self.store.rule_get(), TwoPeopleRule())
+        self.assertFalse(self.store.rule_get().on)
+        rule = TwoPeopleRule(min_usd_month=250.5, families=("delete-disk", "stop-vm"), by="Tino", at="2026-11-05T09:00:00Z")
+        self.store.rule_put(rule)
+        self.assertEqual(self.store.rule_get(), rule)
+        self.assertTrue(self.store.rule_get().on)
+        self.store.rule_put(TwoPeopleRule(by="Tino", at="2026-11-05T10:00:00Z"))
+        self.assertEqual((self.store.rule_get().on, self.store.rule_get().by), (False, "Tino"))
+        self.assertEqual(self.store.settings_get(OID), SettingsRecord(oid=OID), "no person's settings changed")
+        self.assertEqual(self.store.settings_get("rule-two-people"), SettingsRecord(oid="rule-two-people"), "the rule is not the settings of a person")
+
     def test_a_later_is_replaced_by_the_next_answer_and_a_decline_keeps_its_reason(self):
         later = DecisionRecord(plan_id="p1", approver_oid=OID, approver_name="A", decision="later", at="2026-11-05T08:55:00Z", plan_code="ABCD1234")
         decline = DecisionRecord(plan_id="p1", approver_oid=OID, approver_name="A", decision="decline", at="2026-11-05T09:00:00Z", plan_code="ABCD1234", reason="handled")

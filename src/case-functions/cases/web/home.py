@@ -14,7 +14,7 @@ from typing import Mapping, Sequence
 
 from ..brief import Brief, ago_text, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import brief_of, cases_by_id, effective_state, is_expired, may_answer, read
+from .common import brief_of, cases_by_id, decisions_for, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (NO_LINES, READ_LATER, RISKS, WEAKEST_FIRST, WHEN_JUDGED, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_of, ids_known, risk_chip, series_of, spark, summed,
                       title_of, use_block)
@@ -161,6 +161,9 @@ def _chips(unit: Unit) -> Safe:
     elif len(unit.members) == 1:
         level = unit.first.brief.confidence.level
         chips.append(chip(f"{level} confidence", "info" if level == "High" else ""))
+    second = unit.first.brief.second if len(unit.members) == 1 else None
+    if second is not None:
+        chips.append(chip({"second": f"Confirmed by {second.by}", "mine": "You confirmed it", "stale": "Confirm it again"}.get(second.stage, "Needs two people"), "info"))
     if unit.later:
         chips.append(chip("You chose to decide later"))
     return join(chips)
@@ -302,7 +305,30 @@ def _open(ctx: Ctx) -> tuple[list[Row], bool]:
     mine = [p for p in plans if p.state == "open" and may_answer(ctx.principal, p) and not is_expired(ctx, p)]  # type: ignore[arg-type]
     later_ids = {d.plan_id for d in read(lambda: ctx.store.decisions_by(ctx.principal.oid, 200), [])[0] if d.decision == "later"}  # type: ignore[union-attr]
     cases = cases_by_id(ctx, {p.case_id for p in mine})
-    return [Row(brief_of(ctx, plan, cases.get(plan.case_id)), cases.get(plan.case_id), plan.plan_id in later_ids) for plan in mine], True
+    return [Row(brief_of(ctx, plan, cases.get(plan.case_id), decisions=decisions_for(ctx, plan)), cases.get(plan.case_id), plan.plan_id in later_ids) for plan in mine], True
+
+
+def walk_ids(ctx: Ctx, rows: Sequence[Row], skip: str = "") -> list[str]:
+    """The requests that this person has not answered yet, in the order of this page (what is at stake first), for going through them one after the other: the id of each request, not of
+    each row, so that a row that stands for several requests of one kind gives each its turn. A request on which the person has said anything (a question, "later", a confirmation) is
+    not in it, and neither is `skip`: the walk ends when nothing is left that they have not looked at."""
+    handled = {d.plan_id for d in read(lambda: ctx.store.decisions_by(ctx.principal.oid, 200), [])[0]}  # type: ignore[union-attr]
+    return [m.brief.plan_id for unit in _ranked(_units(rows), "impact") for m in unit.members if m.brief.plan_id not in handled and m.brief.plan_id != skip]
+
+
+def walk(ctx: Ctx, skip: str = "") -> list[str]:
+    """The ids that walk_ids gives for this person now; nothing when the requests cannot be read."""
+    rows, ok = _open(ctx)
+    return walk_ids(ctx, rows, skip) if ok else []
+
+
+def walk_start(ctx: Ctx, ids: Sequence[str]) -> Safe:
+    """The way into the walk through the requests, when there are at least two: one link to the first, which then leads to the next after each answer. It says that each request has its
+    own page and its own answer, and that no answer is given for several at once."""
+    if len(ids) < 2:
+        return Safe("")
+    return fmt('<p class="acts"><a class="btn sm" href="{href}">Go through the {n} requests one by one</a><span class="m"> Each has its own page and its own answer. After each answer the next one opens.</span></p>',
+               href=ctx.url(f"/ok/{link_part(ids[0])}?walk=1"), n=len(ids))
 
 
 def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, ActionRecord]) -> tuple[float, int]:
@@ -354,7 +380,7 @@ def home(ctx: Ctx) -> Response:
         rest = max(0, len(ready) - show) + max(0, len(look) - show)
         order = next(blurb for key, _, blurb in SORTS if key == sort)
         more = paragraph(fmt('{n} more wait. <a href="{href}">Show all</a>.', n=rest, href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
-        top = join([_head(ctx, units, sort), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
+        top = join([_head(ctx, units, sort), walk_start(ctx, walk_ids(ctx, rows)), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
                     _lane(ctx, "ready", "Ready to decide", f"A change in Azure that you may approve. {order}", ready, largest, show, True),
                     _lane(ctx, "look", "Worth a closer look", f"No change is proposed yet. A saving here is an estimate, and a cost is the most that a change could save. {order}", look, largest,
                           show, False),

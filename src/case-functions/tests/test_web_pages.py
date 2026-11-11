@@ -186,6 +186,22 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertEqual(chips(row), ["Medium risk", "High confidence", "You chose to decide later"])
         self.assertNotIn("You chose to decide later", chips(lane(reply, "ready").find("article")))
 
+    def test_a_request_that_needs_two_people_says_where_it_stands_for_this_person(self):
+        digest = "d" * 64
+
+        def chips_after(*decisions):
+            console = seeded()
+            console.store.plan_put(make_plan(approval_class="R3", approvers=(TINO, MAYA), digest=digest))
+            for decision in decisions:
+                console.store.decision_put(decision)
+            return chips(console.get("/").main.find("article", class_="focus"))
+
+        self.assertEqual(chips_after(), ["Medium risk", "High confidence", "Needs two people"])
+        theirs = make_decision(approver_oid=MAYA, approver_name="Maya", decision="confirm", plan_digest=digest)
+        self.assertEqual(chips_after(theirs)[-1], "Confirmed by Maya")
+        self.assertEqual(chips_after(make_decision(decision="confirm", plan_digest=digest))[-1], "You confirmed it")
+        self.assertEqual(chips_after(make_decision(approver_oid=MAYA, approver_name="Maya", decision="confirm", plan_digest="e" * 64))[-1], "Confirm it again")
+
     def test_a_request_of_advice_says_that_its_saving_is_a_scenario_when_azure_advisor_is_the_only_basis(self):
         console = seeded()
         console.store.case_put(make_advice_case())
@@ -948,6 +964,16 @@ class TheHistory(unittest.TestCase):
     def tiles_of(self, reply):
         (tiles,) = reply.main.find_all("ul", class_="kpis")
         return {li.find("p", class_="k").text(): (li.find("p", class_="v").text(), li.find("p", class_="n").text()) for li in tiles.find_all("li")}
+
+    def test_a_change_that_needed_two_people_shows_both_answers_and_says_which_came_first(self):
+        console = Console()
+        console.store.plan_put(make_plan(approval_class="R3", approvers=(TINO, MAYA), state="consumed", created_at=at(days=-1, hours=-3)))
+        console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya", decision="confirm", at=at(days=-1, hours=-2), plan_digest="d" * 64))
+        console.store.decision_put(make_decision(decision="approve", at=at(days=-1, hours=-1), plan_digest="d" * 64))
+        reply = console.get("/history")
+        (day,) = reply.headings(2)
+        self.assertEqual(self.feed(reply)[day], [("Approved", TITLE, "Tino · the second of two people"), ("Confirmed", TITLE, "Maya · the first of two people")])
+        self.assertEqual(self.tiles_of(reply)["Decisions"][0], "2")
 
     def test_a_count_that_rests_on_a_read_that_failed_is_a_dash_and_the_others_are_still_counted(self):
         exact = self.tiles_of(self.reply)

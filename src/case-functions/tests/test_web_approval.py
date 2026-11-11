@@ -4,6 +4,7 @@ import unittest
 from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
                               make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
+from cases.brief import SECOND_WORDS
 from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
@@ -214,9 +215,16 @@ class ThePage(unittest.TestCase):
         self.assertNotIn("MAYA-PRIVATE", reply.text)
         self.assertEqual(len(reply.forms()), 1, "a question is not a decision: the plan is still open")
 
-    def test_two_people_class_says_so(self):
+    def test_two_people_class_says_so_and_a_plan_that_only_one_person_can_approve_says_that_too(self):
+        self.console.store.plan_put(make_plan(approval_class="R3", approvers=(TINO, MAYA)))
+        reply = self.console.get("/ok/plan0001")
+        self.assertEqual(reply.facts()["Who approves"], SECOND_WORDS["first"])
+        self.assertTrue(reply.form("/ok/plan0001", has_button="Confirm this request"))
+        self.assertFalse(reply.form("/ok/plan0001", has_button="Confirm this request").has_button(APPROVE), "the first person confirms; the sign-in to Azure is the second person's")
         self.console.store.plan_put(make_plan(approval_class="R3"))
-        self.assertEqual(self.console.get("/ok/plan0001").facts()["Who approves"], "Two people approve this, each on their own.")
+        alone = self.console.get("/ok/plan0001")
+        self.assertEqual(alone.facts()["Who approves"], SECOND_WORDS["alone"])
+        self.assertEqual([label for _, _, label in alone.forms()[0].buttons], ["Decline", "This is not mine", "Ask or tell", "Decide later"])
 
     def test_time_is_in_utc_and_in_the_persons_own_zone(self):
         content = self.reply.content
@@ -508,6 +516,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "asked": (200, "Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet."),
     "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list."),
     "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
+    "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it and sign in to Azure, with their own permissions."),
     "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
     "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
                                         "Meternaut holds no right of its own to change Azure."),
@@ -531,7 +540,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
 }
 # The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
 SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
-SUCCESSES = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
+SUCCESSES = ("declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
 BACK_TO_THE_LIST = ("not_mine", "later", "refused_role")  # the pages whose back link goes to the decisions and not to the request
 
 
@@ -566,8 +575,8 @@ class EveryKindOfResult(unittest.TestCase):
         return [(a.attrs["href"], a.text()) for a in reply.main.find_all("a") if a.text().startswith("Back to")]
 
     def test_there_is_a_page_for_each_kind_of_result_and_for_no_other(self):
-        self.assertEqual(set(KINDS), {"declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed",
-                                      "signin_failed", "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
+        self.assertEqual(set(KINDS), {"declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused",
+                                      "failed", "signin_failed", "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error"})
         self.assertEqual(set(KINDS), set(approval.STATUS))
 
     def test_every_kind_has_a_plain_page_of_its_own_whichever_step_gives_it(self):

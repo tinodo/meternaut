@@ -19,6 +19,10 @@ Before a call the mailer checks, in this order, and the first check that fails e
 2. refused: the kind of letter or the subject is not valid.
 3. held: the switch `messages` or the switch `all` is pulled. A switch that cannot be read counts as pulled.
 4. held: the person paused messages (`SettingsRecord.paused_until` is in the future).
+4a. held: the person is inside their quiet hours (`SettingsRecord.quiet_from` to `quiet_to`, by the clock of their time zone: cases/quiet.py). Every kind of letter waits, an approval
+   letter and the letter of a trip included: nothing that Meternaut sends is urgent, so nothing goes around the hours. The callers that offer a letter again (notify.py) look at the hours first
+   and write nothing while they last, so that waiting uses up no try; the one that gets here records the hold once, with the words of quiet.WAITING, and the timer sends the letter
+   after the hours (notify.waiting_hook for the weekly summary and the letter of a trip; the rounds of notify.hooks for the others).
 5. held: the person's weekly budget (`SettingsRecord.weekly_budget`) is reached. It counts the messages of the person with the status sent since Monday
    00:00 UTC of the current ISO week. The kinds of BUDGET_FREE_KINDS (`approval`, `first_contact`, `notice`, `verified`, `unsure`, `digest`, `alert`) are not counted
    against the budget and are not held by it: they ask for an OK, introduce Meternaut once, tell a person the outcome of a decision of theirs (an
@@ -40,6 +44,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Callable
 
+from . import quiet
 from .http import Client, HttpError, Refused
 from .letters import Letter
 from .models import TIME_FORMAT, MailRecord, Store
@@ -145,6 +150,8 @@ class Mailer:
                     return MailResult("held", "The date until which this person paused messages cannot be read.")
                 if until > now:
                     return MailResult("held", f"This person paused messages until {settings.paused_until}.")
+            if quiet.inside(settings, now):
+                return MailResult("held", quiet.WAITING)
             if kind not in BUDGET_FREE_KINDS:
                 sent = [m for m in self.store.mails_since(listed.oid, _stamp(_week_start(now))) if m.status == "sent" and m.kind not in BUDGET_FREE_KINDS]
                 if len(sent) >= settings.weekly_budget:

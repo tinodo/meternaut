@@ -33,6 +33,11 @@ def switch_reason(code: str) -> str:
     return REASONS.get(code, ("An agent safeguard fired.", ""))[0]
 
 
+def code_of(reason: str) -> str | None:
+    """The code of a trip from the reason that the switch holds, or None for a switch that a person pulled: the letter of a trip that quiet hours held back is made again from it."""
+    return next((code for code, (text, _) in REASONS.items() if text == reason), None)
+
+
 def _when(moment: dt.datetime) -> str:
     moment = moment.replace(tzinfo=dt.timezone.utc) if moment.tzinfo is None else moment.astimezone(dt.timezone.utc)
     return moment.strftime("%A %d %B %Y, %H:%M UTC")

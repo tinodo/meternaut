@@ -274,7 +274,7 @@ def _brief(s: Services, principal: Principal, plan) -> brief_mod.Brief:
     action = read(lambda: s.store.action_get(plan.plan_id), None)
     answerable = may_answer(principal, plan)
     paused = answerable and plan.state == "open" and switches.pulled(s.store, *(("all",) if plan.family == ADVISE else ("all", "changes")))
-    return brief_mod.build_brief(case, plan, action, decisions, now=s.clock(), may_answer=answerable, changes_paused=paused)
+    return brief_mod.build_brief(case, plan, action, decisions, now=s.clock(), may_answer=answerable, changes_paused=paused, viewer=principal.oid)
 
 
 def _card_after(s: Services, principal: Principal, plan, notice: str) -> dict:

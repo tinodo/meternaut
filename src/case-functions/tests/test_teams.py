@@ -265,6 +265,16 @@ class TheAnswersOnACard(unittest.TestCase):
         self.assertIsNone(self.store.action_get(ts.PLAN_ID))
         self.assertIsNotNone(self.store.nonce_take(nonce_of(card), ts.MAYA, ts.PLAN_ID), "a refused answer uses no token")
 
+    def test_a_confirmation_never_comes_from_a_card_either(self):
+        self.world.open_plan(ts.change_plan(approval_class="R3"))
+        nonce = self.world.nonce()
+        for verb in ("confirm", "approve"):
+            body = self.world.answer(verb, nonce=nonce)
+            self.message(body, "I could not read this answer. Nothing was recorded." if verb == "confirm" else "An approval of a change is made on the page")
+        self.assertEqual(self.decisions(), [])
+        self.assertIsNone(self.store.action_get(ts.PLAN_ID))
+        self.assertIsNotNone(self.store.nonce_take(nonce, ts.MAYA, ts.PLAN_ID), "a refused tap uses no token")
+
     def test_a_token_works_once(self):
         self.world.open_plan()
         nonce = self.world.nonce()
