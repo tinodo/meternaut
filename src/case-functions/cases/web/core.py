@@ -66,7 +66,9 @@ class Services:
 
     `host` is the public host name (for the address that a page names). `acts_on` says in plain words the one change that the code makes, with the approver's own
     token. `delegate` takes an approval through the person's sign-in to Azure. `models` are the names of the AI models, for the AI line. `base` is the path in
-    front of the console, when the platform adds one (for example `/api`): links carry it and incoming paths lose it.
+    front of the console, when the platform adds one (for example `/api`): links carry it and incoming paths lose it. `drift` starts the drift check of the app now (cases/drift.py) for the person
+    whose name it is given, with the time that was claimed for the check, and `lessons` gives the past answers as the rows of the learning check (cases/learning.py) in JSON lines: both are
+    None where the console cannot do that, and the page then says so.
     """
 
     store: Store
@@ -78,6 +80,8 @@ class Services:
     acts_on: str
     models: tuple[str, ...] = ()
     base: str = ""
+    drift: "Callable[[str, str], object] | None" = None
+    lessons: "Callable[[], str] | None" = None
 
 
 class Safe(str):

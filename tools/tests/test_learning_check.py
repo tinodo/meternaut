@@ -25,6 +25,7 @@ spec.loader.exec_module(check)
 
 from cases import decide, learning, models  # noqa: E402
 from cases.families import registry  # noqa: E402
+from cases.memory_store import MemoryStore  # noqa: E402
 
 DISKS = "microsoft.compute/disks"
 PLANS = "microsoft.web/serverfarms"
@@ -371,6 +372,72 @@ class TheTool(unittest.TestCase):
         for words in ("evaluation/learning-cases.jsonl", "evaluation/learning-thresholds.json", "written before this tool, the replay set and the first run", "exits 0", "1 when one is missed",
                       "2 when a file cannot be read", "never calls a model", "AGENTS.md rule 14 (c)"):
             self.assertIn(words, doc)
+
+
+    def test_the_help_names_the_flag_of_the_real_requests(self):
+        self.assertIn("--real", check.__doc__)
+        self.assertIn("Download the answers", check.__doc__)
+
+
+class TheRealRequests(unittest.TestCase):
+    """The check on the closed requests of the app: the console's file is read by the same tool, with the same thresholds, and a later answer about the same resource has the last word."""
+
+    def lessons(self):
+        """A store in memory with the closed requests of one resource type: six resources declined as still needed, the same six approved later, and three requests of other resources."""
+        store = MemoryStore()
+        for n in range(6):
+            for name, state, answer, reason, day in (("d", "declined", "decline", "still-needed", 2), ("a", "consumed", "approve", "", 20)):
+                plan = models.PlanRecord(plan_id=f"{name}{n}", case_id="k1", family="advise", resource_id=f"/subscriptions/x/resourceGroups/g/providers/Microsoft.Compute/disks/r{n}",
+                                         resource_name="r", resource_group="g", subscription_id="x", code="C", title="t", what_changes="w", saving_usd_month=1.0, waiting_costs_usd_day=0.1,
+                                         could_go_wrong="x", undo="none", evidence_level="e", approvers=("o",), created_at=f"2026-10-{day - 1:02d}T09:00:00Z", expires_at="2026-11-30T09:00:00Z", state=state)
+                store.plan_put(plan)
+                store.lesson_put(models.LessonRecord(lesson_id=plan.plan_id, resource_type=DISKS, family="advise", confidence=0.9, answer=answer, reason=reason, opened_at=plan.created_at,
+                                                     closed_at=f"2026-10-{day:02d}T10:00:00Z", updated_at=f"2026-10-{day:02d}T10:00:00Z"))
+        return store
+
+    def test_a_file_that_the_console_gives_is_a_replay_set_that_the_tool_takes_and_it_says_that_the_requests_are_real(self):
+        store = self.lessons()
+        rows = check.parse_rows(learning.replay_text(store))
+        self.assertEqual(len(rows), 12)
+        self.assertEqual({item["subject"] for item in rows}, {f"s{n}" for n in range(1, 7)})
+        lines, _ = check.run(rows, thresholds(), "meternaut-answers.jsonl", "t.json", real=True)
+        self.assertIn("12 real closed requests of 1 type in meternaut-answers.jsonl", lines[0])
+        self.assertNotIn("invented", " ".join(lines))
+        lines, _ = check.run(rows, {**thresholds(), "notMeasured": [f"{check.REAL_REQUESTS}: the set is invented", "the second thing"]}, real=False)
+        self.assertIn("12 invented closed requests", lines[0])
+        self.assertIn(f"not measured: {check.REAL_REQUESTS}: the set is invented", lines)
+        lines, _ = check.run(rows, {**thresholds(), "notMeasured": [f"{check.REAL_REQUESTS}: the set is invented", "the second thing"]}, real=True)
+        self.assertNotIn(f"not measured: {check.REAL_REQUESTS}: the set is invented", lines)
+        self.assertIn("not measured: the second thing", lines)
+
+    def test_a_person_who_changed_their_mind_has_the_last_word_in_the_replay_and_only_where_the_rows_say_which_requests_are_about_one_resource(self):
+        rows = [{**row(f"d{n}", 0.9, "decline", n, n + 1, "still-needed"), "subject": f"s{n}"} for n in range(1, 7)]
+        rows += [{**row(f"a{n}", 0.9, "approve", 20 + n, 21 + n), "subject": f"s{n}"} for n in range(1, 7)]
+        rows.append(row("q1", 0.9, "approve", 60, 61))
+        with_subjects = {item.row["id"]: item for item in check.replay(rows)}
+        without = {item.row["id"]: item for item in check.replay([{key: value for key, value in item.items() if key != "subject"} for item in rows])}
+        self.assertEqual((with_subjects["q1"].updated, without["q1"].updated), ("proposed", "needs_human"))
+        self.assertEqual(without["q1"].calibrated.rate, 0.5)
+        self.assertEqual(with_subjects["q1"].calibrated.rate, 1.0)
+        self.assertEqual(check.replay(rows)[6].updated, "needs_human", "while the declines were all that was known, the proposal was held: a later answer is not known before it closes")
+        self.assertEqual(check.replay(rows)[-1].label, True)
+
+    def test_a_subject_is_a_word_like_an_id_and_nothing_else(self):
+        good = {**row("a-1", 0.8, "approve", 1, 4), "subject": "s12"}
+        self.assertEqual(check.parse_rows(text_of([good])), [good])
+        for bad in ("S 1", "", 5, None, "x" * 41, "/subscriptions/1"):
+            with self.subTest(bad=bad), self.assertRaises(check.Problem) as raised:
+                check.parse_rows(text_of([{**good, "subject": bad}]))
+            self.assertIn("subject", str(raised.exception))
+
+    def test_the_command_takes_the_flag_and_the_thresholds_stay_the_files_of_evaluation(self):
+        rows = [row(f"r{n}", 0.9, "approve", n, n + 1) for n in range(1, 9)]
+        thresholds_text = check.THRESHOLDS.read_text(encoding="utf-8")
+        out = io.StringIO()
+        with mock.patch.object(check, "read", lambda path: thresholds_text if path == check.THRESHOLDS else text_of(rows)), contextlib.redirect_stdout(out):
+            code = check.main(["--real", "--cases", "meternaut-answers.jsonl"])
+        self.assertIn("8 real closed requests", out.getvalue())
+        self.assertEqual(code, 1, "eight requests are too few to say anything, and what is not measured is a miss")
 
 
 if __name__ == "__main__":

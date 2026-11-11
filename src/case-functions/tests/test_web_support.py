@@ -443,7 +443,7 @@ class Reply:
 class Console:
     """The console with a store, a clock and people, and a way to send a request as a person."""
 
-    def __init__(self, decider=None, store=None, people=PEOPLE, base: str = "", models=MODELS, acts_on=ACTS_ON, host=HOST, delegate=None) -> None:
+    def __init__(self, decider=None, store=None, people=PEOPLE, base: str = "", models=MODELS, acts_on=ACTS_ON, host=HOST, delegate=None, drift=None, lessons=None) -> None:
         self.now = NOW
         self.store = store if store is not None else MemoryStore(clock=lambda: self.now)
         if decider == "loop":
@@ -451,7 +451,7 @@ class Console:
         self.decider = decider if decider is not None else ScriptedDecider()
         self.delegate = delegate if delegate is not None else ScriptedDelegate()
         self.services = Services(store=self.store, decider=self.decider, delegate=self.delegate, people=people, now=lambda: self.now, host=host, acts_on=acts_on,
-                                 models=models, base=base)
+                                 models=models, base=base, drift=drift, lessons=lessons)
         self.base = base
 
     def send(self, method: str, path: str, *, oid: str | None = TINO, form: dict | None = None, query: dict | None = None, headers: dict | None = None,

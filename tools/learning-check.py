@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """The learning check: does updated memory beat frozen memory? (standard library only; offline; it calls no model, no service and no network)
 
-    python tools/learning-check.py [--cases FILE] [--thresholds FILE]
+    python tools/learning-check.py [--cases FILE] [--thresholds FILE] [--real]
 
-It replays the invented closed requests of evaluation/learning-cases.jsonl in time order. A row is one finding that a person was asked to decide: the type of the resource, the family of the plan,
+It replays the invented closed requests of evaluation/learning-cases.jsonl in time order. With `--real` the file is the one that the console gives (Operations, "Download the answers": the same
+rows, made by cases/learning.py replay_rows from the real lessons, with a `subject` that the answers about one resource share), and the report says that the requests are real; the thresholds
+are the same ones, written first. A row is one finding that a person was asked to decide: the type of the resource, the family of the plan,
 the confidence that the first AI stated, the last word of the person (and the reason of a decline), the day on which the Watch judged it (`opened`) and the day on which the request closed
 (`closed`). Each row is decided twice:
 
@@ -33,7 +35,7 @@ import datetime as dt
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,9 +50,10 @@ from cases.families import registry  # noqa: E402
 from cases.memory_store import MemoryStore, stamp  # noqa: E402
 
 KEYS = ("id", "type", "family", "stated", "answer", "reason", "opened", "closed")
-OPTIONAL = ("note",)  # a sentence for the people who read the file: nothing reads it
+OPTIONAL = ("note", "subject")  # a sentence for the people who read the file: nothing reads it; and the number that the requests about one resource share (the console's export gives it)
 MAX_ROWS = 400
 MAX_DAY = 3650
+REAL_REQUESTS = "real closed requests"  # what the first item of `notMeasured` begins with: it is true of the invented set only
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 START = dt.datetime(2026, 1, 5, tzinfo=dt.timezone.utc)  # the day 0 of a replay: any day will do, the lessons only need an order
@@ -88,6 +91,7 @@ def check_row(row: object, number: int) -> dict:
         (not all(isinstance(row[key], int) and not isinstance(row[key], bool) for key in ("opened", "closed")), "opened and closed are whole numbers of days"),
         (all(isinstance(row[key], int) for key in ("opened", "closed")) and not 0 <= row["opened"] < row["closed"] <= MAX_DAY, f"a request closes after it opens, within {MAX_DAY} days"),
         ("note" in row and not (isinstance(row["note"], str) and len(row["note"]) <= 240), "a note is at most 240 characters"),
+        ("subject" in row and not (isinstance(row["subject"], str) and ID.fullmatch(row["subject"])), "the subject is lower-case letters, digits and hyphens"),
     ]
     for wrong, words in problems:
         if wrong:
@@ -178,14 +182,22 @@ def frozen_decision(row: dict) -> decide.Decision:
 
 def replay(rows: list[dict]) -> list[Judged]:
     """The requests in the order in which the Watch judged them (a tie goes by id). A lesson is in the store of a judgement only when its request closed on an earlier day: a request never
-    teaches the judgement of a request that opened before it closed, and never its own."""
+    teaches the judgement of a request that opened before it closed, and never its own. A row that has a `subject` (the console's export gives one to the requests about one resource)
+    is weighed against the later answers of its subject that were known at the judgement, as `learning.sync` does: a person who changed their mind has the last word."""
     ordered = sorted(rows, key=lambda row: (row["opened"], row["id"]))
     closing = sorted(rows, key=lambda row: (row["closed"], row["id"]))
+    subjects = {row["id"]: row["subject"] for row in rows if row.get("subject")}
     store, learned, judged = MemoryStore(), 0, []
     for row in ordered:
+        before = learned
         while learned < len(closing) and closing[learned]["closed"] < row["opened"]:
             store.lesson_put(lesson_of(closing[learned]))
             learned += 1
+        if subjects and learned > before:
+            known = store.lessons_recent(MAX_ROWS)
+            released = learning.superseded_ids((subjects.get(lesson.lesson_id, ""), lesson) for lesson in known)
+            for lesson in known:
+                store.lesson_put(replace(lesson, superseded=lesson.lesson_id in released))
         frozen = frozen_decision(row)
         updated, _ = learning.hold(store, row["type"], row["family"], row["stated"], frozen)
         known = [lesson for lesson in store.lessons_of(row["type"]) if lesson.family == row["family"]]
@@ -291,25 +303,26 @@ def table(judged: list[Judged]) -> list[str]:
     return ["  " + "  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in rows]
 
 
-def run(rows: list[dict], rules: dict, cases_name: str = CASES.name, thresholds_name: str = THRESHOLDS.name) -> tuple[list[str], int]:
-    """The lines of the report and the exit code."""
+def run(rows: list[dict], rules: dict, cases_name: str = CASES.name, thresholds_name: str = THRESHOLDS.name, real: bool = False) -> tuple[list[str], int]:
+    """The lines of the report and the exit code. `real` says that the rows are closed requests of the app, exported from the console, and not the invented set: the report then says so and
+    leaves out the line that says that real requests are not measured."""
     judged = replay(rows)
     numbers = measure(judged)
     results = verdicts(numbers, rules["thresholds"])
     graded = graded_part(judged)
     types = len({item.row["type"] for item in judged})
-    lines = [f"learning check: {numbers.rows} invented closed requests of {types} type{'' if types == 1 else 's'} in {cases_name}, replayed in time order (days {judged[0].row['opened']} to "
+    lines = [f"learning check: {numbers.rows} {'real' if real else 'invented'} closed requests of {types} type{'' if types == 1 else 's'} in {cases_name}, replayed in time order (days {judged[0].row['opened']} to "
              f"{max(item.row['closed'] for item in judged)}); graded: the later half, {numbers.graded} requests from day {graded[0].row['opened']}",
              f"thresholds: {thresholds_name}, written on {rules['date']}, before this tool, the replay set and the first run", ""]
     lines += [f"{'PASS' if verdict.passed else 'FAIL'}  {verdict.words}" for verdict in results]
     lines.append(f"{'PASS' if numbers.stronger == 0 else 'FAIL'}  rule: no hold made a finding stronger ({numbers.stronger} of {numbers.rows} requests)")
     lines += ["", "the graded part by type (graded; right/wrong; the decoys and the good proposals that updated memory held back):"] + table(judged) + [""]
-    lines += [f"not measured: {item}" for item in rules["notMeasured"]] + [""]
+    lines += [f"not measured: {item}" for item in rules["notMeasured"] if not (real and item.startswith(REAL_REQUESTS))] + [""]
     missed = [verdict.name for verdict in results if not verdict.passed] + (["neverStronger"] if numbers.stronger else [])
     if missed:
         lines.append(f"result: the claim of learning is withdrawn (missed: {', '.join(missed)}); docs/proposals/15-learning.md and the README say so (AGENTS.md rule 14 (c))")
     else:
-        lines.append("result: on these invented requests and these thresholds updated memory beats frozen memory; what is listed above as not measured is not claimed")
+        lines.append(f"result: on these {'real' if real else 'invented'} requests and these thresholds updated memory beats frozen memory; what is listed above as not measured is not claimed")
     return lines, 1 if missed else 0
 
 
@@ -317,13 +330,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cases", type=Path, default=CASES, help="the replay set (JSON lines)")
     parser.add_argument("--thresholds", type=Path, default=THRESHOLDS, help="the thresholds, written before the first run")
+    parser.add_argument("--real", action="store_true", help="the rows are real closed requests that the console exported (Operations, 'Download the answers'), not the invented set")
     args = parser.parse_args(argv)
     try:
         rows, rules = parse_rows(read(args.cases)), parse_thresholds(read(args.thresholds))
     except Problem as error:
         print(f"error: {error}", file=sys.stderr)
         return error.code
-    lines, code = run(rows, rules, args.cases.name, args.thresholds.name)
+    lines, code = run(rows, rules, args.cases.name, args.thresholds.name, args.real)
     print("\n".join(lines))
     return code
 
