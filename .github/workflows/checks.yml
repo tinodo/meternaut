@@ -57,14 +57,17 @@ jobs:
             condition = job["if"].to_s.strip.sub(/\A\$\{\{\s*(.*?)\s*\}\}\z/m, '\1')
             problems << "job #{name}: its if is not the owner-and-main guard" unless condition == guard
             problems << "job #{name}: continue-on-error is set" if job["continue-on-error"].to_s == "true"
+            problems << "job #{name}: it is not bound to the environment hub" unless job["environment"] == "hub"
+            problems << "job #{name}: it has outputs, and nothing is published as an output of the job" if job.key?("outputs")
           end
           trigger = doc.key?("on") ? doc["on"] : doc[true]
           events = trigger.is_a?(Hash) ? trigger.keys : Array(trigger)
-          problems << "it must run on workflow_dispatch and workflow_call alone, not on #{events.inspect}" unless events.sort == ["workflow_call", "workflow_dispatch"]
+          problems << "it must run on workflow_dispatch alone, not on #{events.inspect}" unless events == ["workflow_dispatch"]
           problems << "it has no concurrency group" unless doc["concurrency"]
+          problems << "its permissions must be contents: read, actions: read and id-token: write, and nothing else" unless doc["permissions"] == { "contents" => "read", "actions" => "read", "id-token" => "write" }
           problems.each { |problem| puts "#{file}: #{problem}" }
           abort "#{file}: not guarded as the rules say" unless problems.empty?
-          puts "#{file}: one job, for the owner on main only, started by hand or called by the deploy repository's workflow"
+          puts "#{file}: one job, for the owner on main only, bound to the environment hub, started by hand alone"
           RUBY
       - name: A real YAML parser agrees that the read-only drift workflow is guarded and never uses the deploy identity
         run: |

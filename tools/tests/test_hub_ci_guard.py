@@ -15,10 +15,7 @@ spec.loader.exec_module(ws)
 HUB = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
 TITLE = "The checks of CI have passed for this commit"
 MASKS = "Mask the identifiers of the estate in this run's log"
-VALUES = "Refuse a value that the Hub does not know"
 COMMIT = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
-# What a call looks like: the caller's own commit and repository are what GitHub puts in GITHUB_SHA and GITHUB_REPOSITORY; the code's own are what the `job` context gives.
-CALLER = {"GITHUB_SHA": "0f0e0d0c0b0a09080706050403020100ffeeddcc", "GITHUB_REPOSITORY": "owner/deploy-repository"}
 CALL = (f"gh api repos/owner/repository/actions/workflows/checks.yml/runs?head_sha={COMMIT}&event=push&branch=main&status=success&per_page=1 --jq .total_count")
 GH = """#!/bin/bash
 echo "gh $*" >> "$FAKE_LOG"
@@ -44,6 +41,11 @@ def code_of(block):
     return "\n".join(line for line in block.split("run:", 1)[1].splitlines() if not line.strip().startswith("#"))
 
 
+def code_of_step(block):
+    """The step without its comment lines (a step that has no script of its own, such as a checkout)."""
+    return "\n".join(line for line in block.splitlines() if not line.strip().startswith("#"))
+
+
 class TheHubDoesNotRepeatTheTests(unittest.TestCase):
     def test_no_step_of_the_hub_runs_a_unit_test_the_workflow_lint_or_the_lint_of_bicep(self):
         for block in steps_of(HUB):
@@ -53,9 +55,9 @@ class TheHubDoesNotRepeatTheTests(unittest.TestCase):
             for word in ("unittest", "workflow-lint", "bicep lint", "check-docs", "cardlint", "--selftest"):
                 self.assertNotIn(word, script, f"{word}: CI runs it once, for the commit that is pushed to main, and the Hub reads that it did ({block.splitlines()[0]})")
 
-    def test_the_step_is_the_fourth_of_the_job_after_the_refusal_of_the_public_gateway_the_masks_and_the_check_of_the_values_and_before_the_checkout_and_every_sign_in(self):
+    def test_the_step_is_the_third_of_the_job_after_the_refusal_of_the_public_gateway_and_the_masks_and_before_the_checkout_and_every_sign_in(self):
         names = names_of(HUB)
-        self.assertEqual(names[:4], ["Refuse the AI Gateway unless the owner asked for a public one in writing", MASKS, VALUES, TITLE])
+        self.assertEqual(names[:3], ["Refuse the AI Gateway unless the owner asked for a public one in writing", MASKS, TITLE])
         self.assertLess(names.index(TITLE), names.index("Check out the repository"), "it needs no checkout, so a commit that CI has not passed costs the seconds of this step and nothing else")
         self.assertLess(names.index(TITLE), names.index("Sign in to Azure"))
 
@@ -66,15 +68,17 @@ class TheHubDoesNotRepeatTheTests(unittest.TestCase):
         self.assertEqual(block.splitlines()[1], "        env:")
         self.assertIn("GH_TOKEN: ${{ github.token }}", block, "the run's own token, with the permissions of this workflow")
 
-    def test_the_commit_and_the_repository_are_the_codes_own_and_never_the_callers_because_the_github_context_of_a_called_run_is_the_callers(self):
+    def test_the_commit_and_the_repository_are_the_runs_own_because_the_hub_is_not_called_and_its_checkout_is_plain(self):
         block = guard_block()
-        self.assertIn("          HUB_SOURCE_REPOSITORY: ${{ job.workflow_repository }}\n", block)
-        self.assertIn("          HUB_SOURCE_SHA: ${{ job.workflow_sha }}\n", block)
+        self.assertNotIn("job.workflow", block, "the Hub is not called: what a called workflow sees of its own file is not used")
+        self.assertNotIn("HUB_SOURCE", block)
         script = code_of(block)
-        for caller in ("GITHUB_SHA", "GITHUB_REPOSITORY", "github.sha", "github.repository"):
-            self.assertNotIn(caller, script, f"{caller} is the deploy repository's when the Hub is called")
+        for own in ("$GITHUB_SHA", "$GITHUB_REPOSITORY"):
+            self.assertIn(own, script, f"{own} is the run's own: this repository at the commit that the checkout makes")
         checkout = [b for b in steps_of(HUB) if b.startswith("name: Check out the repository\n")][0]
-        self.assertIn("          repository: ${{ job.workflow_repository }}\n          ref: ${{ job.workflow_sha }}\n", checkout, "the commit that CI passed for is the commit that is checked out")
+        self.assertNotRegex(code_of_step(checkout), r"(?m)^\s*(repository|ref):", "a plain checkout: this repository at the run's commit, which is the commit that CI passed for")
+        self.assertEqual(HUB.count("job.workflow"), 0, "no step of the Hub reads the view of a called workflow")
+        self.assertEqual(HUB.count("HUB_SOURCE"), 0)
 
     def test_the_workflow_may_read_the_runs_of_actions_and_write_nothing_but_the_token_of_its_sign_in(self):
         lines = HUB.split("\njobs:\n", 1)[0].splitlines()
@@ -97,7 +101,7 @@ class TheHubDoesNotRepeatTheTests(unittest.TestCase):
 
     def test_what_it_asks_is_the_runs_of_checks_yml_for_exactly_this_commit_started_by_a_push_to_main_and_successful(self):
         script = code_of(guard_block())
-        for word in ("actions/workflows/checks.yml/runs", "head_sha=$HUB_SOURCE_SHA", "event=push", "branch=main", "status=success", "--jq '.total_count'", "$HUB_SOURCE_REPOSITORY"):
+        for word in ("actions/workflows/checks.yml/runs", "head_sha=$GITHUB_SHA", "event=push", "branch=main", "status=success", "--jq '.total_count'", "$GITHUB_REPOSITORY"):
             self.assertIn(word, script, word)
         self.assertTrue((ROOT / ".github" / "workflows" / "checks.yml").is_file(), "the workflow that the step looks for")
         checks = (ROOT / ".github" / "workflows" / "checks.yml").read_text(encoding="utf-8")
@@ -107,14 +111,12 @@ class TheHubDoesNotRepeatTheTests(unittest.TestCase):
 @unittest.skipIf(ws.BASH is None, "no bash on this machine")
 class TheStepRunWithBash(unittest.TestCase):
     def run_guard(self, answer="1", **env):
-        return ws.run_step_script(TITLE, {"gh": GH}, {**CALLER, "HUB_SOURCE_SHA": COMMIT, "HUB_SOURCE_REPOSITORY": "owner/repository", "FAKE_GH": answer, **env})
+        return ws.run_step_script(TITLE, {"gh": GH}, {"GITHUB_SHA": COMMIT, "GITHUB_REPOSITORY": "owner/repository", "FAKE_GH": answer, **env})
 
-    def test_a_call_asks_about_the_code_and_never_about_the_caller(self):
+    def test_the_run_asks_about_its_own_commit_and_repository(self):
         done, lines, _ = self.run_guard("1")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(lines, [CALL])
-        for caller in CALLER.values():
-            self.assertNotIn(caller, "\n".join(lines) + done.stdout + done.stderr)
 
     def test_a_successful_run_for_this_commit_lets_the_job_go_on_after_one_read(self):
         for answer in ("1", "2"):
@@ -154,19 +156,10 @@ class TheStepRunWithBash(unittest.TestCase):
     def test_a_commit_that_is_not_a_commit_id_is_refused_before_anything_is_asked(self):
         for sha in ("main", "", COMMIT[:39], COMMIT.upper(), COMMIT + "0", "../../runs"):
             with self.subTest(sha=sha):
-                done, lines, _ = self.run_guard("1", HUB_SOURCE_SHA=sha)
+                done, lines, _ = self.run_guard("1", GITHUB_SHA=sha)
                 self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
                 self.assertEqual(lines, [], "no call is made with what is not a commit id")
                 self.assertIn("is not a git commit id", done.stdout + done.stderr)
-
-    def test_a_repository_that_is_not_owner_slash_name_is_refused_before_anything_is_asked(self):
-        for repository in ("", "owner", "owner/", "/name", "owner/name/extra", "../../x", "owner/na me", "owner/name?x=1", "owner/name;rm"):
-            with self.subTest(repository=repository):
-                done, lines, _ = self.run_guard("1", HUB_SOURCE_REPOSITORY=repository)
-                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-                self.assertEqual(lines, [], "no call is made with what is not a repository name")
-                self.assertIn("not a name of the form owner/repository", done.stdout + done.stderr)
-                self.assertIn("Nothing was changed.", done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

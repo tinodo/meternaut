@@ -250,7 +250,8 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
                 self.assertEqual(lines.count(self.OPERATOR_CALL), 1, "read once, as a read, by its fixed name and with the version that the AI security's step reads it with")
                 self.assertEqual([line for line in lines if line.startswith("operator=")], ["operator=[unset]", f"operator=[{OPERATOR_PRINCIPAL}]"])
                 self.assertIn("The Operator's identity exists; its object id goes into the Foundry file (the Foundry User role on the project).", done.stdout)
-                self.assertNotIn(OPERATOR_PRINCIPAL, done.stdout + done.stderr, "an object id is handed to the builder and is not a line of the log")
+                self.assertNotIn(OPERATOR_PRINCIPAL, hubenv.as_logged(done.stdout) + done.stderr, "an object id is handed to the builder and is not a line of the log")
+                self.assertIn(f"::add-mask::{OPERATOR_PRINCIPAL}", done.stdout.splitlines(), "it is masked the moment it is read")
 
     def test_every_other_action_reads_nothing_of_the_operator_and_the_builder_gets_it_empty_so_that_a_refused_read_cannot_stop_it(self):
         for action in ("cases", "aigateway", "base", "operator", "governance", "agents-drift", "loop-check"):
@@ -901,11 +902,11 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
         done, calls = self.run_check(self.CASES)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         (argv,) = calls
-        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30", 2400))
+        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30 --counts-only", 2400))
         self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
         args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
         self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
-        self.assertEqual(plain["TOOL_ARGS"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30")
+        self.assertEqual(plain["TOOL_ARGS"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30 --counts-only")
         self.assertEqual(sorted(files), ["cases-check.py", "check-helpers.py", "run-tool.sh"], "cases-check.py loads check-helpers.py from its own folder")
         self.assertEqual(files["run-tool.sh"], (ROOT / "operator" / "run-tool.sh").read_bytes().replace(b"\r\n", b"\n"))
         self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (2400, "op-check-1234567890", 1.0, 1.5))
@@ -1114,6 +1115,10 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
     def environment_of(self, argv):
         return dict(argv[i + 1].split("=", 1) for i, word in enumerate(argv) if word == "--env")
 
+    def masked(self, done):
+        """The values that the step asked the runner to mask, in the order that it asked."""
+        return [line[len("::add-mask::"):] for line in done.stdout.splitlines() if line.startswith("::add-mask::")]
+
     def test_the_token_is_asked_for_with_the_audience_and_the_bearer_on_standard_input_and_only_the_one_call_of_the_tool_gets_it(self):
         done, calls, other = self.run_probe_step()
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
@@ -1175,7 +1180,7 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
             self.assertFalse([line for line in other if line.startswith("curl ")], "no request is made when the job has none")
             self.assertIn("token-in-env=", other, "the environment of the call holds an empty value, which the probe takes for no token")
             self.assertIn(f"::warning::The probe goes on without a token for the deploy identity: {self.NO_REQUEST}.", done.stdout)
-            self.assertNotIn("::add-mask::", done.stdout)
+            self.assertEqual(self.masked(done), [OPERATOR_CLIENT, OPERATOR_CLIENT.upper()], "there is no token to mask: the only masks are the two forms of the Operator's client id, which the step reads first")
 
     def test_a_request_that_fails_or_an_answer_without_the_token_is_said_in_a_few_words_and_never_stops_the_step(self):
         for curl, note in (("fail", "the request for the token failed (curl exit code 22)"), ("empty", "the answer to the request for the token held none"),
@@ -1186,7 +1191,7 @@ class TheProbeStepAsksForTheTokenOfTheDeployIdentity(unittest.TestCase):
             self.assertNotIn("--secure-env", argv, curl)
             self.assertEqual(self.environment_of(argv)["PROBE_TOKEN_NOTE"], note, curl)
             self.assertIn(f"::warning::The probe goes on without a token for the deploy identity: {note}.", done.stdout)
-            self.assertNotIn("::add-mask::", done.stdout)
+            self.assertEqual(self.masked(done), [OPERATOR_CLIENT, OPERATOR_CLIENT.upper()], "there is no token to mask: the only masks are the two forms of the Operator's client id, which the step reads first")
             self.assertNotIn(self.BEARER, done.stdout + done.stderr)
 
     def test_an_answer_that_is_a_printed_document_gives_the_token_too(self):

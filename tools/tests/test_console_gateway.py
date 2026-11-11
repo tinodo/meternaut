@@ -928,7 +928,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         self.assertNotIn("--proxied", steps[4], "the sign-in does not know the host yet, so its return address is not asked for")
         self.assertIn("python tools/entra-setup.py check", steps[5])
         self.assertIn("python tools/entra-setup.py apply", steps[5])
-        self.assertIn("gh variable set CONSOLE_HOST_NAME --repo $repo --body $console", steps[6])
+        self.assertIn("gh secret set CONSOLE_HOST_NAME --env hub --repo $repo --body $console", steps[6])
         code = "\n".join(line for line in record.split("\n") if not line.startswith("#"))
         for word in (r"\bdelete\b", r"\bupdate\b", r"\bpurge\b", r"az role", r"private-dns", r"dns zone", r"--force", r"az group", r"az resource", r"application-gateway stop", r"application-gateway start", r"restart",
                      r"--yes", r"az login", r"az account"):
@@ -1007,7 +1007,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         self.assertIn("None of it has run. The section lists what is not proven", not_checked)
         self.assertIn("Read on 2026-11-06 for phase 3 of the cases app:", self.page.split("\n## Sources", 1)[1])
         self.assertIn("People open them on the app's own name, or, once the app is closed, on the console's host name on the platform's Application Gateway", text("docs/proposals/04-the-loop.md"))
-        self.assertIn("That host name is the console's host name on the platform's Application Gateway when the repository variable `CONSOLE_HOST_NAME` is set, and the app's own name when it is not",
+        self.assertIn("That host name is the console's host name on the platform's Application Gateway when the secret `CONSOLE_HOST_NAME` of the environment `hub` is set, and the app's own name when it is not",
                       text("docs/proposals/05-run-as-the-approver.md"))
         readme = text("README.md")
         self.assertIn("(the cases app is to be closed, its web page reached on the private network and its front door checked from inside the network, which is built and not deployed; the gateway route that was built before is unused)", readme)
@@ -1023,7 +1023,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "**The hand steps.**", "Each object needs the owner's plain-word yes first ([rule 15 (b)](../AGENTS.md)). The steps are break-glass ([rule 18](../AGENTS.md)): the agent runs them with the owner's own Azure CLI session, "
                       "on his written word, and reports at once. The owner runs no script", "and a test keeps the two equal", "nothing of the owner's environment is written in this repository",
                       "2. Step 3: the health of the new pool must say Healthy.", "6. Only then, in a change of its own and on the owner's yes", "**Going back** is one constant and one run",
-                      "`gh variable delete CONSOLE_HOST_NAME --repo <owner>/<repository>`", "**What is not proven.** None of it has run."):
+                      "`gh secret delete CONSOLE_HOST_NAME --env hub --repo <owner>/<repository>`", "**What is not proven.** None of it has run."):
             self.assertIn(words, self.bootstrap_section, words)
         self.assertIn("A fourth, optional one, `CONSOLE_HOST_NAME`, is the host name of the console on the platform's Application Gateway", self.bootstrap)
         after = self.bootstrap.split("\n## After it")[1].split("\n## ")[0]
@@ -1225,17 +1225,17 @@ class TheWorkflowTellsTheSameStory(unittest.TestCase):
     """The variable that feeds the settings, and the summary of the workflow."""
 
     def test_the_variable_reaches_the_job_like_the_other_values_of_the_estate_and_is_never_written_in_the_repository(self):
-        self.assertIn("      CONSOLE_HOST_NAME: ${{ vars.CONSOLE_HOST_NAME }}\n", WORKFLOW)
+        self.assertIn("      CONSOLE_HOST_NAME: ${{ secrets.CONSOLE_HOST_NAME }}\n", WORKFLOW)
         job_env = re.search(r"(?ms)^    env:\n(.*?)^    steps:", WORKFLOW).group(1)
         for name in ("CONSOLE_APP_CLIENT_ID", "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER"):
-            self.assertIn(f"      {name}: ${{{{ vars.{name} }}}}\n", job_env, name)
-        self.assertNotIn("secrets.CONSOLE_HOST_NAME", WORKFLOW, "a host name is an address and no secret: it is a variable, like the client id of the app registration")
+            self.assertIn(f"      {name}: ${{{{ secrets.{name} }}}}\n", job_env, name)
+        self.assertNotIn("vars.CONSOLE_HOST_NAME", WORKFLOW, "the log of the Hub is public and a host name names the estate: since 2026-11-11 it is a secret of the environment hub, which GitHub masks")
         self.assertEqual(WORKFLOW.count("CONSOLE_HOST_NAME: "), 1)
 
     def test_the_summary_of_a_cases_run_says_which_address_was_knocked_at_and_that_the_health_check_ran_inside_the_network(self):
         (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", WORKFLOW)
         for words in ("the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint",
-                      "The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set",
+                      "The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set",
                       "(the check then also asks that the sign-in's return address names it), and on the app's own name when it is not",
                       "when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator "
                       "asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there)",

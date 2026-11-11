@@ -11,11 +11,13 @@ The rules, each of which a workflow file can break by accident and a reviewer ca
      part of the script. A value reaches a script through `env:` and is read as a shell variable.
   4. Each workflow sets `permissions:`; nothing is granted `write` except `id-token` in deploy-hub.yml and drift.yml.
   5. No workflow runs on `pull_request_target`, `workflow_run` or `issue_comment`.
-  6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml runs on `workflow_dispatch` (by hand) and `workflow_call` (called by the one workflow of
-     the owner's private deploy repository: environment/deploy-repo/README.md) and on nothing else, with exactly one job whose `if:` is exactly the owner-and-main guard, a `concurrency` group and no
-     `continue-on-error: true`. In a called run the `github` context is the caller's, so deploy-hub.yml never reads the commit or the repository from it (`github.sha`, `GITHUB_SHA`, `github.repository`,
-     `GITHUB_REPOSITORY` and their kin: the code's own commit and repository are `job.workflow_sha` and `job.workflow_repository`), and every `actions/checkout` of it names those two, so that the tools and
-     the templates that the steps run are this workflow's and never the caller's. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
+  6. Only deploy-hub.yml and drift.yml sign in to Azure (`azure/login`, `az login`). deploy-hub.yml, the Hub (AGENTS.md rule 18), runs in this repository, which is public, and starts by hand (`workflow_dispatch`)
+     and by nothing else: it is not called, and no pull request, push or timer starts it. It has exactly one job, whose `if:` is exactly the owner-and-main guard, which is bound to the GitHub environment
+     `hub` (`environment: hub`: the environment accepts a deployment from main alone, holds the identifiers of the estate as secrets, and is the subject that the federated credential of the deploy identity trusts), a `concurrency` group, no
+     `continue-on-error: true` and no `outputs:` (nothing is published as an output of the job: GitHub redacts an output that holds a secret). It needs `id-token: write` and signs in with `azure/login` pinned to a
+     full commit, and never with `az login`. The log of a public repository is public, and GitHub masks a secret and does not mask a variable, so it reads each identifier of the estate as a secret
+     of the environment (ESTATE_SECRETS) and none of them as a variable, and it reads no other secret. It is not a called workflow: no `workflow_call`, no `job.workflow_*` (the view of a called workflow of its own file), and its
+     `actions/checkout` names no repository and no ref, so that it is this repository at the run's commit. drift.yml, the check that can only read (docs/proposals/10-ai-security-and-governance.md),
      runs on `workflow_dispatch` alone for now, and may run on a timer (`schedule`) once the constant DRIFT_ON_A_TIMER is
      set to True, which is done in the change that adds the timer after the read-only identity exists (environment/BOOTSTRAP.md, step G4): until then a `schedule:` is refused. It has exactly one job whose `if:` is exactly the main-and-(owner-or-timer)
      guard, a `concurrency` group, no `continue-on-error: true`, and it never signs in with the deploy identity: the
@@ -44,12 +46,19 @@ STEP_START = re.compile(r"^(\s*)- (?:name|uses|run|id|if|env|with|shell|working-
 FORBIDDEN_EVENTS = {"pull_request_target", "workflow_run", "issue_comment"}
 ALLOWED_WRITES = {DEPLOY: {"id-token"}, DRIFT: {"id-token"}}
 OWNER_GUARD = "github.actor == 'tinodo' && github.ref == 'refs/heads/main'"
-# The Hub starts by hand in its own repository and is called by the one workflow of the private deploy repository, which itself starts by hand: nothing else may start it.
-DEPLOY_TRIGGERS = {"workflow_dispatch", "workflow_call"}
-# In a called run the `github` context, and the variables made from it, are the caller's: its commit and its repository, not the code's own. The code's own are `job.workflow_sha` and `job.workflow_repository`.
-CALLER_CONTEXT = re.compile(r"\bGITHUB_(?:SHA|REPOSITORY|WORKFLOW_SHA|WORKFLOW_REF)\b|\bgithub\.(?:sha|repository|workflow_sha|workflow_ref)\b")
-OWN_REPOSITORY = re.compile(r"^\s*repository:\s*\$\{\{\s*job\.workflow_repository\s*\}\}\s*$", re.M)
-OWN_COMMIT = re.compile(r"^\s*ref:\s*\$\{\{\s*job\.workflow_sha\s*\}\}\s*$", re.M)
+# The Hub starts by hand, in this repository, and by nothing else: no call (workflow_call), no pull request, no push, no timer.
+DEPLOY_TRIGGERS = {"workflow_dispatch"}
+# The GitHub environment that the Hub's job is bound to (environment/BOOTSTRAP.md): it accepts a deployment from main alone, holds the identifiers of the estate as secrets, and its subject is what the
+# federated credential of the deploy identity trusts.
+DEPLOY_ENVIRONMENT = "hub"
+# The identifiers of the owner's estate that the Hub reads. The log and the summary of a run of a public repository are public, GitHub masks a secret in both and does not mask a variable, so each is a secret of the
+# environment. None is a credential (an identifier, an address or a list of them), and the Hub reads no secret that is not in this list. ENV_SUBSCRIPTION_ID is the name that the job gives the subscription's secret.
+ESTATE_SECRETS = {"AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_ALERT_EMAILS", "CONSOLE_APP_CLIENT_ID",
+                  "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY"}
+NEVER_VARIABLES = ESTATE_SECRETS | {"ENV_SUBSCRIPTION_ID"}
+# What only a called workflow has: the `job` context's view of its own file's repository and commit. The Hub is not called, so its steps use the plain `github` context (github.sha, github.repository), which is this
+# repository at the run's commit.
+CALLED_CONTEXT = re.compile(r"\bjob\.workflow_\w+")
 # The check that can only read may run on a timer, and a timer has no person behind it: the guard asks for main, and then for the owner or the timer. The identity that it signs in with has a federated
 # credential for the main branch alone and a role that cannot change anything, so a run elsewhere could not sign in, and a run that does sign in could change nothing.
 DRIFT_GUARD = "github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.actor == 'tinodo')"
@@ -244,6 +253,24 @@ def job_conditions(body: list[str]) -> list[str]:
     return found
 
 
+def job_environments(body: list[str]) -> list[str]:
+    """The values of the job's own `environment:` (four spaces in), with quotes and a trailing comment taken off. A mapping (`environment:` with `name:` below it) has no value on its line, so it is returned as an empty string, which is no environment name."""
+    found = []
+    for line in body:
+        match = re.match(r"^ {4}environment:\s*(.*?)\s*$", code(line))
+        if match:
+            value = match.group(1)
+            if len(value) >= 2 and value[0] in "\"'" and value[-1] == value[0]:
+                value = value[1:-1]
+            found.append(value)
+    return found
+
+
+def job_outputs(body: list[str]) -> list[str]:
+    """The job's own `outputs:` (four spaces in): what the job would publish to other jobs and to a caller."""
+    return [line.strip() for line in body if re.match(r"^ {4}outputs:", code(line))]
+
+
 def lint_file(path: Path) -> list[str]:
     name = path.name
     text_of_file = path.read_text(encoding="utf-8")
@@ -273,11 +300,8 @@ def lint_file(path: Path) -> list[str]:
         text = "\n".join(block)
         if re.search(r"uses:\s*actions/checkout@", text) and not re.search(r"persist-credentials:\s*false\b", text):
             add(first + 1, "actions/checkout without `persist-credentials: false`")
-        if name == DEPLOY and re.search(r"uses:\s*actions/checkout@", text) and not (
-                len(OWN_REPOSITORY.findall(text)) == 1 and len(re.findall(r"(?m)^\s*repository:", text)) == 1
-                and len(OWN_COMMIT.findall(text)) == 1 and len(re.findall(r"(?m)^\s*ref:", text)) == 1):
-            add(first + 1, "actions/checkout of the Hub without `repository: ${{ job.workflow_repository }}` and `ref: ${{ job.workflow_sha }}`, each once: a plain checkout is the repository that started the run, "
-                           "which for a call is the caller's, so the tools and the templates that the steps run would be the caller's and not this workflow's")
+        if name == DEPLOY and re.search(r"uses:\s*actions/checkout@", text) and re.search(r"(?m)^\s*(?:repository|ref):", text):
+            add(first + 1, "actions/checkout of the Hub names a repository or a ref: the Hub is not called, so its checkout is this repository at the run's commit (the plain checkout), and nothing else")
         for number, script in script_lines(block, first):
             if "${{" in script:
                 add(number, "a `${{ }}` expression inside a run script; pass the value through `env:` and read it as a shell variable")
@@ -301,7 +325,7 @@ def lint_file(path: Path) -> list[str]:
     else:
         guard = GUARDS[name]
         if name == DEPLOY and triggers != DEPLOY_TRIGGERS:
-            add(1, f"must run on `workflow_dispatch` (by hand) and `workflow_call` (the deploy repository's workflow calls it) and on nothing else, not on {sorted(triggers) or 'nothing'}")
+            add(1, f"must start by hand (`workflow_dispatch`) and by nothing else: not by a call (`workflow_call`), a pull request, a push or a timer; it runs on {sorted(triggers) or 'nothing'}")
         if name == DRIFT and not ({"workflow_dispatch"} <= triggers <= ({"workflow_dispatch", "schedule"} if DRIFT_ON_A_TIMER else {"workflow_dispatch"})):
             if DRIFT_ON_A_TIMER:
                 add(1, f"must run on `workflow_dispatch`, and may run on a timer (`schedule`), and on nothing else, not on {sorted(triggers) or 'nothing'}")
@@ -318,14 +342,32 @@ def lint_file(path: Path) -> list[str]:
             if job_conditions(body) != [guard]:
                 who = "only for the owner and only on main" if name == DEPLOY else "only on main, started by the owner or by its timer"
                 add(1, f"job `{job}` must run {who}: its `if:` is exactly `{guard}`")
+            if name == DEPLOY:
+                if job_environments(body) != [DEPLOY_ENVIRONMENT]:
+                    add(1, f"job `{job}` must be bound to the GitHub environment `{DEPLOY_ENVIRONMENT}`, as `environment: {DEPLOY_ENVIRONMENT}` on one line of the job: the environment lets only main deploy and holds the identifiers of the estate as secrets, "
+                           "and the federated credential of the deploy identity trusts its subject")
+                if job_outputs(body):
+                    add(1, f"job `{job}` has `outputs:`: nothing is published as an output of the job, because GitHub redacts an output that holds a secret and the output would arrive empty")
         if not re.search(r"^concurrency:", text, re.M):
             add(1, "no `concurrency:` group: two runs could change the same resources at once" if name == DEPLOY else "no `concurrency:` group: two runs of the check could overlap")
+        if name == DEPLOY and not any(what == "id-token" for _, what in permission_writes(lines)):
+            add(1, "no `id-token: write`: the Hub signs in to Azure with OpenID Connect, and a run without that permission cannot")
+        if name == DEPLOY and not any(re.match(r"^\s*(?:- )?uses:\s*azure/login@[0-9a-f]{40}(?:\s|$)", line) for line in lines):
+            add(1, "no step `uses: azure/login@<full commit>`: the Hub signs in to Azure with azure/login, pinned to a full commit")
         for i, line in enumerate(lines):
             if re.match(r"^\s*continue-on-error:\s*true\b", code(line)):
                 add(i + 1, "`continue-on-error: true` would let a failed step pass")
-            if name == DEPLOY and CALLER_CONTEXT.search(code(line)):
-                add(i + 1, f"`{CALLER_CONTEXT.search(code(line)).group()}` is the caller's when this workflow is called, so it would name the deploy repository's commit or repository and not this code's own; "
-                           "use `job.workflow_sha` and `job.workflow_repository` (through the step's `env:`)")
+            if name == DEPLOY:
+                if CALLED_CONTEXT.search(code(line)):
+                    add(i + 1, f"`{CALLED_CONTEXT.search(code(line)).group()}` is what a called workflow sees of its own file: the Hub is not called, so its steps use the plain `github` context (github.sha, github.repository)")
+                if re.search(r"\baz login\b", code(line)):
+                    add(i + 1, "`az login`: the Hub signs in with azure/login (OpenID Connect) and with nothing else")
+                for variable in re.findall(r"\bvars\.([A-Za-z_]\w*)", code(line)):
+                    if variable in NEVER_VARIABLES:
+                        add(i + 1, f"`vars.{variable}`: an identifier of the estate is a secret of the environment, not a variable: GitHub masks a secret in a log that anyone can read and does not mask a variable")
+                for secret in re.findall(r"\bsecrets\.([A-Za-z_]\w*)", code(line)):
+                    if secret not in ESTATE_SECRETS:
+                        add(i + 1, f"`secrets.{secret}` is not one of the identifiers of the estate that the Hub reads (ESTATE_SECRETS in this tool): the Hub holds no credential, and a new identifier is added there in the same change")
             if name == DRIFT and DEPLOY_IDENTITY in code(line):
                 add(i + 1, f"`{DEPLOY_IDENTITY}` is the deploy identity, which can change Azure: the read-only check signs in with an identity of its own, whose role cannot change anything (environment/BOOTSTRAP.md, step G4)")
         if not azure_login:

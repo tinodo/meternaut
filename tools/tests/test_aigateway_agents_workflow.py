@@ -3,6 +3,7 @@ AGENTS_VIA_AI_GATEWAY is on, and that they read and say nothing more while it is
 
 The shell of each step is run with bash against stand-ins for the commands that it calls first on the PATH: the Azure CLI and python3 (which the steps call for the parameter builder and the tools). No
 test calls Azure."""
+import importlib.util
 import os
 import re
 import shutil
@@ -12,6 +13,10 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+
+_hubenv_spec = importlib.util.spec_from_file_location("hubenv_of_the_aigateway_agents_tests", Path(__file__).with_name("hubenv.py"))
+hubenv = importlib.util.module_from_spec(_hubenv_spec)
+_hubenv_spec.loader.exec_module(hubenv)
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -162,7 +167,8 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
                 self.assertEqual(self.builds(lines)[1], f"build preview=no host=[{HOST}] project=[]", "the host goes to the builder; cases does not look for the project's identity")
                 self.assertIn(f"aigateway_host={HOST}\n", out)
                 self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the cases file (and into the Foundry file while the switch is on).", done.stdout)
-                self.assertNotIn(HOST, done.stdout + done.stderr, "the host name is an output and is not printed")
+                self.assertNotIn(HOST, hubenv.as_logged(done.stdout) + done.stderr, "the host name is an output and is not printed")
+                self.assertIn(f"::add-mask::{HOST}", done.stdout.splitlines(), "it is masked the moment it is read")
                 self.assertEqual([line for line in lines if "--query identity.principalId" in line and "/projects/" in line], [])
 
     def test_a_gateway_that_is_not_there_stops_the_action_cases_at_once_and_nothing_is_built_after_it_whether_the_switch_is_on_or_off(self):
@@ -231,7 +237,8 @@ class TheSettingsStepReadsWhatTheSwitchNeedsAndNothingWhileItIsOff(unittest.Test
         self.assertIn(f"aigateway_host={HOST}\n", out)
         self.assertIn("foundry_project_principal=\n", out)
         self.assertIn(f"The service reports the host name of the AI Gateway {GATEWAY}; it goes into the cases file (and into the Foundry file while the switch is on).", done.stdout)
-        self.assertNotIn(HOST, done.stdout + done.stderr, "the host name is an output and is not printed")
+        self.assertNotIn(HOST, hubenv.as_logged(done.stdout) + done.stderr, "the host name is an output and is not printed")
+        self.assertIn(f"::add-mask::{HOST}", done.stdout.splitlines(), "it is masked the moment it is read")
         self.assertEqual([line for line in lines if "--query identity.principalId" in line and "/projects/" in line], [], "foundry does not read the project's identity")
 
     def test_aigateway_reads_the_object_id_of_the_projects_identity_and_hands_it_to_the_builder_and_reads_no_gateway(self):
