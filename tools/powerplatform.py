@@ -670,8 +670,8 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         "",
         "In the Hub (the Actions tab, the workflow Hub, which runs in the environment hub):",
         "  2. Start the action cases once more: it makes the queue teams-cards next to cases-control and gives the app its setting TEAMS_CARDS_QUEUE; the app's new code, which writes the cards, goes out in the same run.",
-        "  3. Start the action powerplatform: the subnet snet-powerplatform and the enterprise policy. It stops before it changes anything unless the parameter builder found room for the subnet and the resource provider is registered. "
-        "The deploy identity cannot register a provider: check once, and register it if it is not:",
+        "  3. Start the action powerplatform: the subnet snet-powerplatform and the enterprise policy. It stops before it changes anything, and says why, unless the resource provider is registered, the virtual network is there and the parameter builder found room for the subnet. "
+        "It waits up to 20 minutes for the landing zone's route table on the subnet and reads both back. The deploy identity cannot register a provider: check once, and register it if it is not:",
         "       az provider show --namespace Microsoft.PowerPlatform --query registrationState",
         "       az provider register --namespace Microsoft.PowerPlatform",
         "",
