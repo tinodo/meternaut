@@ -8,8 +8,8 @@ is worth acting on (an advise plan) gets no letter of its own: it waits on the p
 gets one letter of its own kind (`unsure`) once the result has been unknown for UNKNOWN_HOURS, and no card: it goes to a person who chose Teams as well, and a later letter about what
 came of the change is still sent.
 
-A person who chose Teams (the setting `channel`) gets the card first (the bot app sends it: cases/offers.py) and the letter follows only when no card was sent in the first twenty minutes, so
-that a person whose app is not installed, or whose card could not be sent, still hears about a request. A card and a letter for one request never both go: each looks at the other's record.
+A person who chose Teams (the setting `channel`) gets the card first (it goes on the queue `teams-cards`: cases/offers.py) and the letter follows only when no card was put on the queue in the first twenty minutes, so
+that a person whose card could not be queued still hears about a request. A card and a letter for one request never both go: each looks at the other's record.
 
 Quiet hours (cases/quiet.py): nothing is offered to a person inside their quiet hours. The rounds that offer a letter again look at the hours first and write nothing while they last, so that
 the wait uses up none of the twelve tries; the first round after the hours sends what is still due. A letter that nothing else offers again, the weekly summary and the letter of a trip, is

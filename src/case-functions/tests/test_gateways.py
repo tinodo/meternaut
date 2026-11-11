@@ -352,7 +352,7 @@ class WhatAPersonSees(unittest.TestCase):
             self.assertNotIn(gone, text.lower())
 
     def test_the_card_has_the_sentence_and_the_choices_in_one_line_and_passes_the_check_of_cards(self):
-        card = cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         texts = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertTrue(texts["gateways"].startswith("**Gateways.** Nobody was connected to any of the 7 gateways"))
         self.assertEqual(texts["options"], brief.GATEWAYS_SHORT)
@@ -365,7 +365,7 @@ class WhatAPersonSees(unittest.TestCase):
         case, plan = case_and_plan(watch(resources, evidence))
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
         self.assertIn("Not counted: 1 of 7 gateways.", letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS).text)
-        texts = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}", nonce="n" * 24)))}
+        texts = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))}
         self.assertEqual(texts["gateways-caveat"], "Not counted: 1 of 7 gateways.")
         self.assertIn("1 gateway of the 7 is not counted: the tools did not record the scale units or the connections.", page_of(case, plan)[1])
 

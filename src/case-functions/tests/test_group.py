@@ -664,7 +664,7 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         _, text = page_of(self.case, self.plan)
         self.assertIn("20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", text)
         self.assertIn("Examples", text)
-        card = json.dumps(cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24)))
+        card = json.dumps(cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}")))
         self.assertIn("and 10 more that the limit of one run left out", card)
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         self.assertIn("Covers: 20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", letter.text)
@@ -870,7 +870,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_card_has_the_title_the_figure_and_the_first_three_rows(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
-        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         text = json.dumps(card)
         found = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertEqual(found["headline"], "60 private endpoints in 14 resource groups")
@@ -932,7 +932,7 @@ class WhatAHostileEstateCanDo(unittest.TestCase):
         for letter in (digest, approval):
             self.assertLessEqual(max(len(line) for line in letter.text.splitlines() if not line.startswith("Review and decide:")), 500)
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
-        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         self.assertNotIn("<script>", json.dumps(card))
 
     def test_a_type_that_is_not_a_type_of_azure_is_other_and_the_group_is_called_resources(self):

@@ -407,7 +407,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_card_has_the_rows_and_the_choices_in_one_line_and_passes_the_check_of_cards(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
-        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         texts = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertIn("About 75 percent of what this workspace is billed for is data that nothing reads.", texts["unread"])
         self.assertEqual([texts[f"unread-{n}"] for n in (1, 2, 3)], ["AzureDiagnostics, 40.2 GB (34 percent)", "ContainerLogV2, 22 GB (19 percent)", "AppLog\\_CL, 13.7 GB (12 percent)"])
@@ -437,7 +437,7 @@ class WhenTheRecordIsNotEnough(unittest.TestCase):
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(plan, case)], CONTACTS)
         self.assertIn("- Consider changing the Log Analytics workspace ws-demo: costs $1,151 a year, saving not measured.\n", weekly.text)
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
-        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}"))
         texts = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertEqual((texts["value"], texts["saving-word"], texts["price-basis"]), ("$1,151 a year", "Costs, saving not measured. $95.90 a month.", why))
 
@@ -504,7 +504,7 @@ class WhatWasNotCounted(unittest.TestCase):
     def test_when_everything_was_counted_there_is_no_caveat_anywhere(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
         self.assertEqual((b.unread.note, b.unread.caveat), ("", ""))
-        card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24)))
+        card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}")))
         self.assertNotIn("unread-caveat", card)
         self.assertNotIn("Not counted", letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS).text)
 
@@ -561,7 +561,7 @@ class WhatWasNotCounted(unittest.TestCase):
         for label, change, caveat in self.VARIANTS:
             with self.subTest(label):
                 b = brief.build_brief(self.variant(**change), self.plan, now=WEB_NOW, may_answer=True)
-                card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+                card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
                 blocks = [block["id"] for block in card["body"] if block.get("type") == "TextBlock"]
                 texts = {block["id"]: block["text"] for block in card["body"] if block.get("type") == "TextBlock"}
                 self.assertEqual(texts["unread-caveat"], caveat)
@@ -631,7 +631,7 @@ class WhenTheVolumeMovesWhileTheRequestIsOpen(unittest.TestCase):
             self.assertNotIn("71.60", letter.text)
             self.assertNotIn("$859", letter.text)
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
-        text_of_card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}", nonce="n" * 24)))
+        text_of_card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))
         self.assertIn("$799 a year", text_of_card)
         self.assertIn("Saves, Scenario. $66.60 a month.", text_of_card)
         self.assertIn("about 69 percent", text_of_card)
@@ -718,7 +718,7 @@ class WhatATableNameCanDo(unittest.TestCase):
             self.assertIn("&lt;script&gt;", letter.html)
             self.assertLessEqual(max(len(line) for line in letter.text.splitlines() if not line.startswith("Decide:")), 400)
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
-        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", nonce="n" * 24))
+        card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         self.assertNotIn("<script>", json.dumps(card))
 
     def test_a_name_that_looks_like_a_link_or_a_heading_is_neither_on_the_page(self):

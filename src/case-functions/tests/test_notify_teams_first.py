@@ -1,14 +1,18 @@
 """The letter and the card of a person who chose Teams (cases/notify.py): the card goes first, and the letter follows only when no card was sent in the first twenty minutes.
 
-The cards themselves are the bot app's (cases/offers.py); here only the rule of the letters is held: what the letter looks at, and that it is the fallback in every case that cannot be read.
+The cards themselves are made and put on the queue by cases/offers.py; here only the rule of the letters is held: what the letter looks at, that it is the fallback in every case that cannot be
+read, and that a card that the queue did not take leaves the letter to go.
 """
 import datetime as dt
 import unittest
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import notify
+import cardsupport as cs
+from cases import notify, offers, teamsqueue
+from cases.http import Client
 from cases.memory_store import stamp
 from cases.models import MailRecord, SettingsRecord
+from cases.redact import Redactor
 from test_letters import make_action, make_case
 from test_notify import TINO, TUESDAY, Fixture, plan
 
@@ -91,6 +95,45 @@ class TheCardHasTheFirstGo(unittest.TestCase):
         self.assertEqual(self.f.graph.sent, [], "it has not stayed unknown long enough")
         self.f.on_action(make_action(state="unknown", finished_at=stamp(TUESDAY - dt.timedelta(hours=notify.UNKNOWN_HOURS))), plan(), make_case())
         self.assertEqual(self.kinds(), ["unsure"])
+
+
+class TheLetterIsTheFallbackOfACardThatTheQueueDidNotTake(unittest.TestCase):
+    """The round of cards (cases/offers.py) and the hooks of the letters (cases/notify.py) on one store: a failed put on the queue is a failed try, and the letter goes."""
+
+    def setUp(self):
+        self.f = Fixture()
+        self.f.store.settings_put(SettingsRecord(oid=TINO, channel="teams"))
+        self.fake = cs.FakeQueue()
+        client = Client(teamsqueue.queue_calls(cs.ACCOUNT, cs.QUEUE), Redactor(), transport=self.fake, sleep=lambda seconds: None)
+        queue = teamsqueue.CardQueue(client, lambda resource: cs.STORAGE_TOKEN, cs.ACCOUNT, cs.QUEUE, Redactor(), self.f.clock)
+        self.offers = offers.Offers(self.f.store, self.f.people, queue, "https://func.example.net", self.f.clock, Redactor())
+        self.request = plan(created_at=JUST_NOW, expires_at="2026-12-01T00:00:00Z")
+        self.f.store.plan_put(self.request)
+        self.f.store.case_put(make_case(case_id=self.request.case_id))
+
+    def letters(self):
+        return sorted(m.kind for m in self.f.store.mails if m.status == "sent" and not m.kind.endswith("-card"))
+
+    def test_a_put_that_failed_leaves_the_letter_to_go_after_the_twenty_minutes_and_not_before(self):
+        self.fake.replies = [403]
+        self.assertEqual(self.offers.run(), 1)
+        self.assertEqual([(m.kind, m.status) for m in self.f.store.mails], [("first-contact-card", "failed")])
+        self.f.on_plan(self.request, make_case(case_id=self.request.case_id))
+        self.assertEqual((self.letters(), self.f.graph.sent), ([], []), "the card has its twenty minutes")
+        self.f.clock.now += dt.timedelta(minutes=notify.TEAMS_FIRST_MINUTES - 1)
+        self.f.on_plan(self.request, make_case(case_id=self.request.case_id))
+        self.assertEqual(self.letters(), ["approval", "first_contact"], "no card was sent in twenty minutes, so the letter goes")
+        calls = len(self.fake.calls)
+        self.f.clock.now += dt.timedelta(hours=1)
+        self.assertEqual(self.offers.run(), 0, "a letter went for the request: no card follows it")
+        self.assertEqual(len(self.fake.calls), calls)
+
+    def test_a_card_that_was_put_on_the_queue_means_that_no_letter_follows(self):
+        self.assertEqual(self.offers.run(), 2)
+        self.assertEqual([(m.kind, m.status) for m in self.f.store.mails], [("first-contact-card", "sent"), ("approval-card", "sent")])
+        self.f.clock.now += dt.timedelta(hours=1)
+        self.f.on_plan(self.request, make_case(case_id=self.request.case_id))
+        self.assertEqual((self.letters(), self.f.graph.sent), ([], []), "the app cannot tell that the card arrived: the queue took it, which is what the letter looks at")
 
 
 if __name__ == "__main__":

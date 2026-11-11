@@ -24,8 +24,7 @@ params_spec.loader.exec_module(ep)
 HUB = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
 BOOTSTRAP = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8").replace("\r\n", "\n")
 MASKS = "Mask the identifiers of the estate in this run's log"
-THE_TEAMS_ACTION = "Deploy the Teams bot"
-PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT", "TEAMS_BOT_ENABLED"}
+PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT"}
 
 
 def code(text):
@@ -110,7 +109,7 @@ class TheShapeOfTheHub(unittest.TestCase):
             self.assertIn(f"      {name}: ${{{{ secrets.{name} }}}}\n", job_env, name)
         for name in ("ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT"):
             self.assertIn(f"      {name}: ${{{{ vars.{name} }}}}\n", job_env, name)
-        self.assertEqual(sorted(set(PLAIN_CONFIGURATION) - {"TEAMS_BOT_ENABLED"}), sorted(name for name in env if env[name] in PLAIN_CONFIGURATION))
+        self.assertEqual(sorted(PLAIN_CONFIGURATION), sorted(name for name in env if env[name] in PLAIN_CONFIGURATION))
 
     def test_the_sign_in_is_azure_login_pinned_to_a_commit_with_the_three_secrets_and_nothing_else(self):
         logins = re.findall(r"uses: (azure/login@\S+) # v[\d.]+\n        with:\n          client-id: (.+)\n          tenant-id: (.+)\n          subscription-id: (.+)\n", HUB)
@@ -126,9 +125,9 @@ class TheShapeOfTheHub(unittest.TestCase):
         self.assertFalse((ROOT / "tools" / "tests" / "test_deploy_repo.py").exists())
 
     def test_bootstrap_names_every_secret_and_every_variable_that_the_workflow_reads(self):
-        for name in sorted(wl.ESTATE_SECRETS | (PLAIN_CONFIGURATION - {"TEAMS_BOT_ENABLED"})):
+        for name in sorted(wl.ESTATE_SECRETS | PLAIN_CONFIGURATION):
             self.assertIn(f"`{name}`", BOOTSTRAP, f"{name} is read by the workflow, so the page that sets the environment up has to say so")
-        self.assertIn("`TEAMS_BOT_ENABLED`", BOOTSTRAP)
+        self.assertNotIn("TEAMS_BOT_ENABLED", BOOTSTRAP, "the Teams bot and its switch are gone: the cards go through a queue and a flow")
 
 
 EXAMPLE = {
@@ -271,14 +270,12 @@ class TheStepsThatReadAnIdentityFromAzureMaskItTheMomentTheyHaveRead(unittest.Te
                 self.assertTrue(lines, f"{title}: {variable} is not masked")
                 self.assertTrue(all("printf" in line for line in lines), "a mask is printed by the step itself and never inside a command substitution that would swallow it")
 
-    def test_no_step_that_reads_an_identity_from_azure_is_left_out_of_that_list_except_the_one_of_the_teams_bot_which_belongs_to_another_package(self):
+    def test_no_step_that_reads_an_identity_from_azure_is_left_out_of_that_list(self):
         reading = re.compile(r"properties\.clientId|identity\.principalId|properties\.principalId|--output identityClientId|cases-check\.py whoami|properties\.frontend\.defaultHostname")
         listed = set(read_sites())
         found = {title for title, text in steps() if reading.search(code(text))}
         self.assertEqual(sorted(found - listed), [], "a new read of an identity or a host has to mask it, and to be listed here")
         self.assertEqual(sorted(listed - found), [], "a step of the list that reads nothing of the kind is out of date")
-        teams = next(text for title, text in steps() if title == THE_TEAMS_ACTION)
-        self.assertIn("--output botClientId", teams, "the Teams bot's client id is printed by the Teams action; the package that handles the bot masks it")
 
     def test_a_mask_is_never_swallowed_by_a_command_substitution(self):
         for title, text in steps():

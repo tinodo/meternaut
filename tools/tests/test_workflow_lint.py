@@ -279,14 +279,14 @@ class Lint(unittest.TestCase):
             with self.subTest(name):
                 problems = self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ vars.ENV_RESOURCE_GROUP }}}}\n      X: ${{{{ vars.{name} }}}}\n"), "deploy-hub.yml")
                 self.assertFinding(problems, f"`vars.{name}`: an identifier of the estate is a secret of the environment")
-        for name in ("ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT", "TEAMS_BOT_ENABLED"):
+        for name in ("ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT"):
             self.assertNotIn(name, wl.NEVER_VARIABLES, f"{name} is plain configuration, which stays a variable")
             self.assertEqual(self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ vars.{name} }}}}\n"), "deploy-hub.yml"), [], name)
         self.assertEqual(wl.ESTATE_SECRETS, {"AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_ALERT_EMAILS",
                                              "CONSOLE_APP_CLIENT_ID", "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY"})
         for name in sorted(wl.ESTATE_SECRETS):
             self.assertEqual(self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ secrets.{name} }}}}\n"), "deploy-hub.yml"), [], name)
-        for stranger in ("GITHUB_TOKEN", "AZURE_CLIENT_SECRET", "GATEWAY_RESOURCE_ID", "SOME_PASSWORD", "TEAMS_BOT_ENABLED"):
+        for stranger in ("GITHUB_TOKEN", "AZURE_CLIENT_SECRET", "GATEWAY_RESOURCE_ID", "SOME_PASSWORD"):
             problems = self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ secrets.{stranger} }}}}\n"), "deploy-hub.yml")
             self.assertFinding(problems, f"`secrets.{stranger}` is not one of the identifiers of the estate that the Hub reads")
         self.assertEqual(self.lint(GOOD_DEPLOY.replace("jobs:", "# an identifier is secrets.ENV_OWNER and never vars.ENV_OWNER\njobs:"), "deploy-hub.yml"), [], "a comment may say so")

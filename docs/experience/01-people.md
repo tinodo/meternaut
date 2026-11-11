@@ -86,11 +86,11 @@ Some customers in select regions who sign up on the Azure website at pay-as-you-
 
 ### When Teams or step-up is missing
 
-**Channel reach** has two parts: whether the Teams app can be installed for a person, and whether the approval page can ask for step-up (a Microsoft Entra authentication context and, for purchases, a phishing-resistant sign-in; Entra ID P1 or P2, see the [platform register](13-platform-register.md)). Onboarding probes both ([J9](03-organisation-journeys.md)); the profile says what is missing.
+**Channel reach** has two parts: whether the Teams cards flow can reach a person, and whether the approval page can ask for step-up (a Microsoft Entra authentication context and, for purchases, a phishing-resistant sign-in; Entra ID P1 or P2, see the [platform register](13-platform-register.md)). Onboarding probes both ([J9](03-organisation-journeys.md)); the profile says what is missing.
 
 | Situation | The person gets | The system refuses |
 |---|---|---|
-| Teams cannot be installed for people here | First contact by e-mail; every decision on the approval page | Approval by e-mail reply, text or free text |
+| Teams cards cannot reach people here | First contact by e-mail; every decision on the approval page | Approval by e-mail reply, text or free text |
 | No authentication contexts | Small changes still work | Anything above a small change, with an explanation |
 | An approver has no phishing-resistant sign-in | The profile says so | A two-person purchase, with an explanation |
 

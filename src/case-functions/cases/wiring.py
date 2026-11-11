@@ -32,6 +32,9 @@ class Extras:
     on_alert: Callable[[str, str], None] = lambda code, detail: None
     # What the timer calls every minute for the letters that a person's quiet hours held back and that nothing else offers again (cases/notify.waiting_hook). It never raises.
     on_tick: Callable[[], None] = lambda: None
+    # What the timer calls every minute for the Teams cards that are due (cases/offers.cards_hook): it puts them on the private queue that a flow of Power Automate reads, and returns how many
+    # tries it made. It does nothing when no queue is set. It never raises.
+    on_cards: Callable[[], int] = lambda: 0
 
     def approvers(self) -> tuple[str, ...]:
         return tuple(p.oid for p in self.people.with_role("approver"))
@@ -65,4 +68,7 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
                                                                 monotonic=monotonic, clock=clock)
         extras.on_alert = alert_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         extras.on_tick = waiting_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+    if settings.cards_queue:
+        from .offers import cards_hook  # imported only when a queue is set: the cards are off without it
+        extras.on_cards = cards_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     return extras

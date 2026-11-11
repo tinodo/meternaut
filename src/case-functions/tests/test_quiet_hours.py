@@ -8,10 +8,9 @@ import unittest
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
-import teamssupport as ts
+import cardsupport as cs
 from cases import alerts, loop_config, notify, quiet
 from cases.models import MailRecord, SettingsRecord, SwitchRecord
-from cases.references import made
 from test_letters import make_action, make_case
 from test_mail import Fixture as MailFixture
 from test_notify import ENV, Fixture, TINO, plan
@@ -274,43 +273,52 @@ class TheLettersThatNothingElseOffersAgain(unittest.TestCase):
 
 class TheTeamsCardsWait(unittest.TestCase):
     def setUp(self):
-        self.world = ts.World()
-        self.fake = self.world.connector_fake
-        self.world.open_plan(ts.advice_plan(expires_at="2026-12-01T00:00:00Z"))
-        self.world.channel(ts.MAYA, "teams", quiet_from="22:00", quiet_to="07:00", timezone="UTC")
-        self.world.references.reference_put(made(ts.MAYA, ts.CONVERSATION, ts.SERVICE, "29:abc", ts.TENANT, ts.START))
+        self.world = cs.World()
+        self.fake = self.world.queue_fake
+        self.world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
+        self.world.channel(cs.MAYA, "teams", quiet_from="22:00", quiet_to="07:00", timezone="UTC")
+        self.world.introduce(cs.MAYA)
 
     def run_round(self) -> int:
-        return self.world.services.offers().run()
+        return self.world.run()
 
     def tries(self):
-        return [m for m in self.world.store.mails if m.oid == ts.MAYA]
+        return self.world.tries()
 
     def test_no_card_is_sent_or_written_inside_the_hours_and_one_goes_when_they_end(self):
-        for start, hours in ((ts.START.replace(hour=22, minute=0), 9),):
+        for start, hours in ((cs.START.replace(hour=22, minute=0), 9),):
             self.world.clock.now = start
             for _ in range(hours * 4):
                 self.assertEqual(self.run_round(), 0)
                 self.world.clock.advance(minutes=15)
         self.assertEqual((self.fake.calls, self.tries()), ([], []), "no try was made and none was written")
-        self.assertEqual(self.world.clock.now, ts.START.replace(day=ts.START.day + 1, hour=7, minute=0))
+        self.assertEqual(self.world.clock.now, cs.START.replace(day=cs.START.day + 1, hour=7, minute=0))
         self.assertEqual(self.run_round(), 1)
         self.assertEqual(self.run_round(), 0)
         self.assertEqual([(m.kind, m.status) for m in self.tries()], [("advice-card", "sent")])
         self.assertEqual(len(self.fake.cards()), 1)
 
     def test_a_person_who_changes_the_hours_while_a_card_waits_gets_it_at_the_next_round(self):
-        self.world.clock.now = ts.START.replace(hour=23)
+        self.world.clock.now = cs.START.replace(hour=23)
         self.assertEqual(self.run_round(), 0)
-        self.world.channel(ts.MAYA, "teams", quiet_from="", quiet_to="")
+        self.world.channel(cs.MAYA, "teams", quiet_from="", quiet_to="")
         self.assertEqual(self.run_round(), 1)
 
     def test_the_card_of_a_change_and_the_card_of_its_result_wait_in_the_same_way(self):
-        self.world.channel(ts.MAYA, "teams", quiet_from="22:00", quiet_to="07:00", timezone="UTC")
-        self.world.open_plan(ts.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
-        self.world.clock.now = ts.START.replace(hour=23)
+        self.world.channel(cs.MAYA, "teams", quiet_from="22:00", quiet_to="07:00", timezone="UTC")
+        self.world.open_plan(cs.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
+        self.world.clock.now = cs.START.replace(hour=23)
         self.assertEqual(self.run_round(), 0)
         self.assertEqual(self.tries(), [])
+
+    def test_the_introduction_waits_too(self):
+        self.world.store.mails[:] = []
+        self.world.clock.now = cs.START.replace(hour=23)
+        self.assertEqual(self.run_round(), 0)
+        self.assertEqual((self.fake.calls, self.world.store.mails), ([], []))
+        self.world.clock.now = cs.START.replace(day=cs.START.day + 1, hour=7)
+        self.assertEqual(self.run_round(), 2)
+        self.assertEqual([m.kind for m in self.world.store.mails], ["first-contact-card", "advice-card"])
 
 
 class TheLetterOfAPersonWhoChoseTeams(unittest.TestCase):

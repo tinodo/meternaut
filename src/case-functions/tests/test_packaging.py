@@ -20,9 +20,9 @@ KEY_WORDS = ("listSecrets", "primaryKey")
 # a PATCH and the deallocate of a machine, each on its own kind of resource, listed there and pinned below); the runner makes one of them, and only with the token that a person's sign-in
 # to Azure gave it: no identity of the app holds a right to change Azure. The Foundry client deletes the conversations that it made itself, in Meternaut's own Foundry project and nowhere
 # else (the test of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
-# a query result, a completion or a token. The references of the Teams bot are a table of the same kind as the store's: one entity written and deleted in the table `mnteams` of the
-# loop's storage account, on a list of calls of its own (references.py), and the bot's POSTs to the Bot Connector (connector.py) send a card or start a conversation and change nothing in Azure.
-WRITERS = {"store.py": {"PUT", "DELETE"}, "references.py": {"PUT", "DELETE"}, "calls.py": {"PUT", "DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
+# a query result, a completion or a token. The Teams cards are one POST of a message to a private Storage queue of the loop's storage account (teamsqueue.py), on a list of calls of its own: it
+# changes nothing in Azure, and it is read by a flow of Power Automate, not by this app.
+WRITERS = {"store.py": {"PUT", "DELETE"}, "calls.py": {"PUT", "DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
 
@@ -154,6 +154,16 @@ class WhatTheAppIs(unittest.TestCase):
                         continue
                     self.assertNotIn(word, source)
 
+    def test_the_card_queue_makes_one_call_a_post_of_a_message_to_a_queue_of_the_storage_account(self):
+        source = (APP_ROOT / "cases" / "teamsqueue.py").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"""\.request\(\s*["']([A-Z]+)["']""", source), ["POST"])
+        self.assertEqual(sorted(set(re.findall(r"https://[^\"'\s]+", source))),
+                         ["https://storage.azure.com/", "https://{account}.queue.core.windows.net/{queue}/messages", "https://{account}.queue.core.windows.net/{queue}/messages?messagettl={TTL_SECONDS}"],
+                         "the address of the token's resource, and the one address of the one call: no other host")
+        for name in ("bot", "connector", "references", "botauth", "teams"):
+            self.assertFalse((APP_ROOT / "cases" / f"{name}.py").exists(), f"there is no {name}.py: Meternaut has no bot in Teams")
+        self.assertFalse((APP_ROOT / "teams_function_app.py").exists())
+
     def test_the_store_never_talks_to_resource_manager_and_the_runner_never_to_the_table_service(self):
         store = (APP_ROOT / "cases" / "store.py").read_text(encoding="utf-8")
         runner = (APP_ROOT / "cases" / "runner.py").read_text(encoding="utf-8")
@@ -223,7 +233,7 @@ class WhatTheAppIs(unittest.TestCase):
             "cases.modelcalls, cases.foundry, cases.events, cases.run, cases.control, cases.redact, cases.models, cases.memory_store, cases.store, cases.approvals, cases.claims, "
             "cases.runner, cases.people, cases.switches, cases.wiring, cases.loop_config, cases.delegated, cases.console, cases.loop, cases.web, cases.mail, cases.letters, "
             "cases.agents, cases.investigate, cases.plaintext, cases.lockfile, cases.release, cases.alerts, cases.harness, cases.drift_rules, cases.drift, cases.families.registry, "
-            "cases.families.words, cases.learning, cases.library, cases.study; "
+            "cases.families.words, cases.learning, cases.library, cases.study, cases.cards, cases.cardcheck, cases.offers, cases.teamsqueue; "
             "print(sorted(name for name in sys.modules if name == 'azure' or name.startswith('azure.')))"
         )
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
