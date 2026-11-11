@@ -11,7 +11,8 @@ without loading the rest.
 - `azure`, `lro`: the calls with a token, and how a change that Azure carries out later is followed.
 - `digest`: the digest of a plan, which the approver's sign-in carries and the runner checks before it acts.
 - `words`: what a person reads of each family (the decision brief's fields).
-- `delete`, `disk`, `public_ip`, `vm`, `idle`, `machine`: the families themselves.
+- `capacity`: what a scale unit of a point-to-site gateway carries (Microsoft's table), read by the words, the family and the decision brief.
+- `delete`, `disk`, `public_ip`, `vm`, `idle`, `gateway`, `machine`: the families themselves.
 
 The table of the families, with their calls, their re-checks, their undo and their risk, is in docs/proposals/14-families-of-change.md. A change is made only on a resource inside the
 `CHANGE_SCOPES` that carries the planted tag and is on the planted list (gates), and only with the approver's own token.

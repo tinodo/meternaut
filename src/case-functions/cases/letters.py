@@ -291,6 +291,19 @@ def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False, tight: bool 
         doc.paragraph(_data(brief_mod.OPTIONS_SHORT + (f" {brief_mod.OPTIONS_END}" if closing else ""), 240))
 
 
+def _gateways_block(doc: "_Doc", brief: Brief) -> None:
+    """What a finding about point-to-site gateways adds to a letter, in the room that a letter has: what was found in one or two sentences, what was not counted when something was, and the
+    choices in one line. The page has what these gateways are, the whole of each choice and the whole sentence about what was not counted."""
+    found = brief.gateways
+    if found is None:
+        return
+    doc.paragraph(_data(found.sentence, 300))
+    if found.caveat:
+        doc.paragraph(_data(found.caveat, 120))
+    if brief.options:
+        doc.paragraph(_data(brief_mod.GATEWAYS_SHORT, 200))
+
+
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each."""
     acts = " It runs with your own permissions, after you sign in to Azure." if brief.kind == "change" else ""
@@ -329,6 +342,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
     about_data = brief.unread is not None and brief.kind == "advice"  # a finding about the data that a workspace takes in and nothing reads: the letter says what it rests on in its own lines
+    about_gateways = brief.gateways is not None and brief.kind == "advice"  # a finding about point-to-site gateways: the letter says what was found in a sentence
     about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its rows say how many, what they cost together and which, and the letter keeps to them
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(title_text(brief), 200))
@@ -337,13 +351,16 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
-    doc.figure(stake_of(brief), basis_shown=not about_data)
+    doc.figure(stake_of(brief), basis_shown=not (about_data or about_gateways))
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
     if about_data:
         _unread_block(doc, brief, tight=True)
         doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: the choices say what each puts at risk, and there is nothing to undo
+    elif about_gateways:
+        _gateways_block(doc, brief)
+        doc.facts(*_decision_rows(brief)[:2])  # the same two rows: the sentence has the evidence, and the choices say what each puts at risk
     elif about_group:
         rows = _fact_rows(brief)
         doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well

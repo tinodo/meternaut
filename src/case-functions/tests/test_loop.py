@@ -55,6 +55,34 @@ class TheLettersOfAnApprovalThatWaitsForTheExtraCheck(unittest.TestCase):
         self.assertEqual(self.offered, [("plan", "open")])
 
 
+class TheLettersOfAResultThatIsNotKnown(unittest.TestCase):
+    """A change whose result is not known (Azure accepted it and the resource does not show it) is offered to the hook of the letters like one that ran or failed, for the same three days.
+    The hook decides when its letter is due (test_notify)."""
+
+    def setUp(self):
+        self.store = MemoryStore(clock=lambda: NOW)
+        self.store.plan_put(make_plan(state="consumed"))
+        self.store.case_put(make_case(status="running", plan_id="plan0001"))
+        self.store.action_put(make_action(state="unknown", finished_at=at(hours=-3), result="Azure accepted the change and has not shown its end."))
+        self.offered = []
+        self.extras = SimpleNamespace(store=self.store, on_plan=lambda plan, case: None,
+                                      on_action=lambda action, plan, case: self.offered.append((action.state, plan.state)))
+
+    def remind(self, **later):
+        loop._remind(self.extras, lambda: NOW + dt.timedelta(**later), lambda text: text)
+
+    def test_it_is_offered_each_round_and_the_hook_sends_one_letter_only(self):
+        self.remind()
+        self.remind(minutes=1)
+        self.assertEqual(self.offered, [("unknown", "consumed")] * 2)
+
+    def test_it_is_not_offered_once_the_three_days_are_over(self):
+        self.remind(days=loop.LETTER_DAYS - 1, hours=20)
+        self.assertEqual(len(self.offered), 1)
+        self.remind(days=loop.LETTER_DAYS)
+        self.assertEqual(len(self.offered), 1, "the three days count from when it became unknown (here three hours before NOW)")
+
+
 class TheTimer(unittest.TestCase):
     def setUp(self):
         self.tables = FakeTables()

@@ -26,7 +26,8 @@ LETTER_DAYS = 3  # the letters about a change are offered again for this long af
 
 
 def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Callable[[str], str]) -> None:
-    """Offers the letters about every open plan and about the changes of the last days. A hook sends a letter only when it is due, so a letter that was sent
+    """Offers the letters about every open plan and about the changes of the last days (a result that is not known too: its hook holds the letter until the result has stayed so for a while).
+    A hook sends a letter only when it is due, so a letter that was sent
     is never sent again and one that was held or failed is tried again later. A letter that fails never undoes a change and never stops the round."""
     try:
         for plan in extras.store.plans_open():
@@ -36,7 +37,7 @@ def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Cal
         since = clock() - dt.timedelta(days=LETTER_DAYS)
         for action in extras.store.actions_recent(10):
             moment = action.finished_at or action.queued_at
-            if action.state in ("done", "failed", "verified") and moment and parse(moment) >= since:
+            if action.state in ("done", "failed", "verified", "unknown") and moment and parse(moment) >= since:
                 extras.on_action(action, extras.store.plan_get(action.plan_id), extras.store.case_get(action.case_id))
     except Exception as error:  # noqa: BLE001 (the timer must go on)
         LOG.error(redact(f"the letters could not be offered: {type(error).__name__}"))

@@ -857,10 +857,10 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-11, after the engine package (a fallback for the listings, the check now and the lessons that follow a change of mind)
-    # (331,719 bytes; it measured 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94
-    # files, and 302,601 with the 92 files before them), and the room that more sources may take before this test asks for a decision. The cap of the request is 480,000 bytes and 100,000 stay free (the test below).
-    SOURCES_ARCHIVE_MEASURED = 331_800
+    # What the archive of the sources of this repository measured on 2026-11-11, after the engine package and the point-to-site gateway family (341,242 bytes; 331,719 after the engine package alone,
+    # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the 92
+    # files before them), and the room that more sources may take before this test asks for a decision. The cap of the request is 480,000 bytes and 100,000 stay free (the test below).
+    SOURCES_ARCHIVE_MEASURED = 341_300
     SOURCES_ARCHIVE_MARGIN = 5_000
 
     def sources_archive(self, fresh=False):

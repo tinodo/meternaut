@@ -21,7 +21,7 @@ from cases.families import registry
 from cases.memory_store import parse, stamp
 from cases.models import PlanRecord
 from cases.runner import RunnerServices, change_calls
-from test_families_gates import SAMPLES, world_with
+from test_families_gates import SAMPLES, setUpModule, tearDownModule, world_with  # noqa: F401  (the module holds a gateway on the planted list for its tests, as test_families_gates does)
 from test_runner import challenge
 
 TENANT = "cccccccc-1111-4222-8333-444444444444"

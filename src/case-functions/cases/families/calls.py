@@ -1,6 +1,6 @@
 """Every call that a family of change makes to Azure Resource Manager, in one place.
 
-This is the one module of the families that names a method that writes. A person who wants to know everything that Meternaut can do to an estate reads `WRITES` below: ten calls,
+This is the one module of the families that names a method that writes. A person who wants to know everything that Meternaut can do to an estate reads `WRITES` below: eleven calls,
 each on one kind of resource, each in a resource group of `CHANGE_SCOPES` (gates.py), each made with the token of the person who approved it and no other (AGENTS.md rule 29).
 `READS` are what the checks before and after a change read. The lists that the HTTP client holds (`patterns`) are built from these two tuples and from nothing else, so a call that is not
 here cannot leave the app: the client refuses it before it is sent.
@@ -18,7 +18,7 @@ from .gates import ChangeScope
 
 ARM_HOST = "management.azure.com"
 ARM_RESOURCE = "https://management.azure.com/"
-GET, POST, PATCH, DELETE = "GET", "POST", "PATCH", "DELETE"
+GET, POST, PATCH, PUT, DELETE = "GET", "POST", "PATCH", "PUT", "DELETE"
 COMPUTE, NETWORK = "Microsoft.Compute", "Microsoft.Network"
 LOCKS_API = "2016-09-01"
 
@@ -31,6 +31,11 @@ NETWORK_API = "2026-01-01"
 # The first two families, unchanged: Disks - Delete 2024-03-02 and Public IP Addresses - Delete 2024-05-01.
 DISK_DELETE_API = "2024-03-02"
 PUBLIC_IP_API = "2024-05-01"
+# Learn, "P 2 s Vpn Gateways - Get" and "P 2 s Vpn Gateways - Create Or Update" (Virtual WAN REST reference, read on 2026-11-11): api-version 2026-01-01. A gateway's scale units are changed by
+# the PUT only: the one PATCH of the resource ("Update Tags") changes tags and nothing else.
+P2S_API = "2026-01-01"
+# Learn, "Metrics - List" (read on 2026-11-11): api-version 2023-10-01, `timespan` as start/end, `interval` as an ISO 8601 duration, `aggregation` a comma separated list.
+METRICS_API = "2023-10-01"
 
 # A name of one or two dots would walk up the address once a server reads it, so it is not a name.
 NAME = r"(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]{1,80}"
@@ -62,7 +67,8 @@ NETWORK_INTERFACE = Kind("microsoft.network/networkinterfaces", NETWORK, "networ
 NAT_GATEWAY = Kind("microsoft.network/natgateways", NETWORK, "natGateways", NETWORK_API)
 LOAD_BALANCER = Kind("microsoft.network/loadbalancers", NETWORK, "loadBalancers", NETWORK_API)
 PRIVATE_ENDPOINT = Kind("microsoft.network/privateendpoints", NETWORK, "privateEndpoints", NETWORK_API)
-KINDS = (DISK, DISK_TIER, PUBLIC_IP, VIRTUAL_MACHINE, SNAPSHOT, NETWORK_INTERFACE, NAT_GATEWAY, LOAD_BALANCER, PRIVATE_ENDPOINT)
+P2S_GATEWAY = Kind("microsoft.network/p2svpngateways", NETWORK, "p2svpnGateways", P2S_API)
+KINDS = (DISK, DISK_TIER, PUBLIC_IP, VIRTUAL_MACHINE, SNAPSHOT, NETWORK_INTERFACE, NAT_GATEWAY, LOAD_BALANCER, PRIVATE_ENDPOINT, P2S_GATEWAY)
 
 
 @dataclass(frozen=True)
@@ -78,8 +84,11 @@ class Call:
         return f"https://{ARM_HOST}{self.kind.path(scope, name)}{self.suffix}?api-version={self.kind.api}{extra}"
 
 
+# What follows the name of a resource in the address of its metrics (Learn, "Metrics - List"): the one read of a gateway that is not the gateway itself.
+METRICS = "/providers/Microsoft.Insights/metrics"
+
 # The reads: the resource itself, and what the checks of a family look at. No write.
-READS = tuple(Call(GET, kind) for kind in KINDS) + (Call(GET, VIRTUAL_MACHINE, "/vmSizes"),)
+READS = tuple(Call(GET, kind) for kind in KINDS) + (Call(GET, VIRTUAL_MACHINE, "/vmSizes"), Call(GET, P2S_GATEWAY, METRICS))
 
 # The one write of a machine that is not a PATCH: Learn, Virtual Machines - Deallocate. 200, or 202 with a Location header.
 DEALLOCATE = Call(POST, VIRTUAL_MACHINE, "/deallocate")
@@ -96,6 +105,7 @@ WRITES = (
     Call(DELETE, NAT_GATEWAY),
     Call(DELETE, LOAD_BALANCER),
     Call(DELETE, PRIVATE_ENDPOINT),
+    Call(PUT, P2S_GATEWAY),  # Learn: P 2 s Vpn Gateways - Create Or Update. The one PUT: the body is the gateway as it was read, with one number changed (gateway.py). 200, or 201 with Azure-AsyncOperation.
 )
 DELETES = tuple(call for call in WRITES if call.method == DELETE)
 

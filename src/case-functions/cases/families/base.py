@@ -18,6 +18,7 @@ The interface, in the order that a change goes through it:
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -44,11 +45,13 @@ class Unreadable(Exception):
 
 @dataclass(frozen=True)
 class Env:
-    """What a family works with: the calls (with a token), the places and the mark that a change may be made on, and the do-not-touch notes (a person's third gate)."""
+    """What a family works with: the calls (with a token), the places and the mark that a change may be made on, the do-not-touch notes (a person's third gate) and the clock (a family that
+    reads a measurement of the last days needs the day)."""
 
     azure: Azure
     gates: Gates
     do_not_touch: Callable[[], set[str]] = lambda: set()
+    clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc)
 
 
 @dataclass(frozen=True)
