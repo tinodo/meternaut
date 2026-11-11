@@ -8,11 +8,12 @@ import json
 import re
 import unicodedata
 import unittest
+from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 from cases import cardcheck, cards
 from cases.brief import Brief, build_brief
-from cases.cards import CardContext, CardError
+from cases.cards import CardContext, CardError, CardTooLarge
 from cases.models import ADVISE, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 
 NOW = dt.datetime(2026, 11, 5, 10, 18, 0, tzinfo=dt.timezone.utc)
@@ -21,7 +22,6 @@ OID = "11111111-1111-1111-1111-111111111111"
 NAME = "disk-zq7-name"
 GROUP = "rg-zq7-group"
 PLAN_ID = "p1a2b3c4d5"
-NONCE = "N0nce-0123456789abcdefghijklmnop"
 CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
 URL = f"{BASE}/ok/{PLAN_ID}"
 HOSTILE = ("[click](https://evil.example/x) **bold** _italic_ `code` # head > quote - item 1. one \u202e\u200bhidden\x00\nsecond line <at>Maya</at> www.evil.example "
@@ -61,7 +61,7 @@ def brief_of(plan=None, case=None, action=None, decisions=(), **kw) -> Brief:
 
 
 def ctx_for(brief: Brief, **changes) -> CardContext:
-    values = dict(page_url=f"{BASE}/ok/{brief.plan_id}", nonce=NONCE, contacts=CONTACTS)
+    values = dict(page_url=f"{BASE}/ok/{brief.plan_id}", contacts=CONTACTS)
     values.update(changes)
     return CardContext(**values)
 
@@ -81,7 +81,7 @@ def texts(card) -> list[str]:
     out: list[str] = []
     for node in walk(card):
         for key, value in node.items():
-            if key in ("text", "title", "value", "label", "placeholder", "errorMessage", "fallbackText", "tooltip") and isinstance(value, str):
+            if key in ("text", "title", "value", "fallbackText", "tooltip") and isinstance(value, str):
                 out.append(value)
     return out
 
@@ -100,15 +100,16 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.card = cards.decision_card(self.brief, ctx_for(self.brief))
         self.ids = by_id(self.card)
 
-    def test_it_passes_the_check_and_is_a_card_of_schema_1_5(self):
+    def test_it_passes_the_check_and_is_a_card_of_schema_1_4(self):
         self.assertEqual(cardcheck.check(self.card), [])
-        self.assertEqual((self.card["type"], self.card["version"], self.card["$schema"]), ("AdaptiveCard", "1.5", "http://adaptivecards.io/schemas/adaptive-card.json"))
+        self.assertEqual((self.card["type"], self.card["version"], self.card["$schema"]), ("AdaptiveCard", "1.4", "http://adaptivecards.io/schemas/adaptive-card.json"))
         self.assertEqual(self.card["msteams"], {"width": "Full"})
+        self.assertFalse(any("style" in node and node.get("type") == "TextBlock" for node in walk(self.card)), "the style heading came with 1.5, and the card says 1.4")
         json.dumps(self.card)
 
     def test_it_holds_what_a_person_needs_to_decide_and_nothing_else(self):
         self.assertEqual([n["id"] for n in self.card["body"] if "id" in n],
-                         ["header", "headline", "place", "chips", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "message", "ask", "ai-footer"])
+                         ["header", "headline", "place", "chips", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "ai-footer"])
         self.assertEqual(self.ids["headline"]["text"], "Delete the unattached disk disk-zq7-name", "the title of the page: the place is on the line under it")
         self.assertEqual(self.ids["place"]["text"], "Managed disk, resource group rg-zq7-group")
         self.assertEqual(self.ids["chips"]["text"], "Medium risk, High confidence, Cannot be undone", "the chips of the page as words")
@@ -129,38 +130,26 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.assertIn("alice@example.com", self.ids["owner"]["text"])
 
     def test_the_only_link_is_the_page_of_the_request_and_the_approval_is_made_there(self):
-        self.assertEqual({a["url"] for a in actions_of(self.card) if "url" in a}, {URL})
-        (page,) = [a for a in self.ids["decisions"]["actions"] if a["type"] == "Action.OpenUrl"]
-        self.assertEqual((page["title"], page["url"]), ("Review and decide", URL))
-        executes = [a for a in actions_of(self.card) if a["type"] == "Action.Execute" and "verb" in a]
-        self.assertEqual(sorted(a["verb"] for a in executes), ["ask", "later", "not_mine"])
-        self.assertNotIn("approve", [a["verb"] for a in executes], "no card approves a change in Azure")
-        self.assertNotIn("decline", [a["verb"] for a in executes])
-        self.assertFalse(any(a["type"] in ("Action.Submit", "Action.Http", "Action.ShowCard", "Action.ToggleVisibility") for a in actions_of(self.card)))
+        (page,) = actions_of(self.card)
+        self.assertEqual((page["type"], page["title"], page["url"], page["style"]), ("Action.OpenUrl", "Review and decide", URL, "positive"))
+        self.assertEqual(self.ids["decisions"]["actions"], [page])
         urls = re.findall(r"https?://\S+", " ".join(texts(self.card)))
         self.assertEqual({u.rstrip(".") for u in urls}, {URL}, "the address is in the text of the fallback and nowhere else")
 
-    def test_every_action_carries_the_id_the_code_and_the_one_time_token_and_says_whether_it_takes_input(self):
-        for action in actions_of(self.card):
-            if action["type"] != "Action.Execute" or "verb" not in action:
-                continue
-            self.assertEqual(action["data"], {"requestId": PLAN_ID, "planCode": "7F3K92QD", "nonce": NONCE}, action["verb"])
-            self.assertEqual(action["associatedInputs"], "auto" if action["verb"] == "ask" else "none", action["verb"])
-            self.assertEqual(action["fallback"], {"type": "Action.OpenUrl", "title": "Open on the page", "url": URL})
-        (ask,) = [a for a in actions_of(self.card) if a.get("verb") == "ask"]
-        self.assertEqual(ask["title"], "Ask or tell")
+    def test_it_holds_nothing_to_fill_in_and_nothing_that_sends_an_answer(self):
+        # The action of Power Automate that posts the card takes no answer: a button other than a link shows an error there. So no input, no Action.Execute, no Action.Submit, and none of what
+        # the answers that a card of the earlier design carried: the code of the plan, a one-time token, a verb.
+        kinds = {node.get("type") for node in walk(self.card)}
+        self.assertFalse({kind for kind in kinds if str(kind).startswith("Input.")}, kinds)
+        self.assertFalse(kinds & {"Action.Execute", "Action.Submit", "Action.Http", "Action.ShowCard", "Action.ToggleVisibility"}, kinds)
+        everything = json.dumps(self.card)
+        for word in ("nonce", "planCode", "verb", "associatedInputs", "requestId", "7F3K92QD"):
+            self.assertNotIn(word, everything)
 
-    def test_the_one_text_box_is_ask_or_tell_and_is_needed_only_by_that_button(self):
-        box = self.ids["message"]
-        self.assertEqual((box["type"], box["label"], box["isRequired"], box["maxLength"], box["isMultiline"]), ("Input.Text", "Ask or tell", True, 300, True))
-        self.assertTrue(box["errorMessage"])
-        self.assertEqual([n["id"] for n in walk(self.card) if str(n.get("type", "")).startswith("Input.")], ["message"])
-
-    def test_the_titles_are_the_words_of_the_page(self):
-        titles = {a.get("verb", "link"): a["title"] for a in actions_of(self.card) if a["type"] != "Action.OpenUrl" or "id" in a}
-        self.assertEqual(titles, {"link": "Review and decide", "not_mine": "This is not mine", "later": "Decide later", "ask": "Ask or tell"})
-        for action in actions_of(self.card):
-            self.assertLessEqual(len(action["title"]), 24, "a button title is short")
+    def test_the_title_of_the_link_is_the_word_of_the_page(self):
+        (page,) = actions_of(self.card)
+        self.assertEqual(page["title"], "Review and decide")
+        self.assertLessEqual(len(page["title"]), 24, "a button title is short")
 
     def test_it_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_in_one_footer_line(self):
         self.assertEqual(self.ids["ai-label"]["text"], "Meternaut (AI)")
@@ -186,13 +175,12 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.assertLess(len(json.dumps(self.card).encode()), 6000)
 
     def test_the_notification_text_holds_no_name_and_no_amount(self):
-        activity = cards.message_activity(self.card, "change")
-        self.assertEqual(activity["type"], "message")
-        self.assertEqual(activity["summary"], "[Meternaut] A change to Azure waits for your OK")
-        self.assertNotIn(NAME, activity["summary"])
-        self.assertNotRegex(activity["summary"], r"\d")
-        self.assertEqual(activity["attachments"], [{"contentType": "application/vnd.microsoft.card.adaptive", "content": self.card}])
-        self.assertEqual(cards.message_activity(self.card, "advice")["summary"], "[Meternaut] A decision waits for you")
+        for kind, words in (("change", "[Meternaut] A change to Azure waits for your OK"), ("advice", "[Meternaut] A decision waits for you"), ("result", "[Meternaut] A change to Azure has run"),
+                            ("first_contact", "[Meternaut] An AI assistant for Azure costs will write to you")):
+            self.assertEqual(cards.SUMMARIES[kind], words)
+            self.assertNotIn(NAME, cards.SUMMARIES[kind])
+            self.assertNotRegex(cards.SUMMARIES[kind], r"\d")
+        self.assertFalse(hasattr(cards, "message_activity"), "no activity of a bot: the card goes on a queue, in a message that teamsqueue.py makes")
 
 
 class TheDecisionCardOfAdvice(unittest.TestCase):
@@ -201,20 +189,18 @@ class TheDecisionCardOfAdvice(unittest.TestCase):
         self.card = cards.decision_card(self.brief, ctx_for(self.brief))
         self.ids = by_id(self.card)
 
-    def test_it_answers_in_the_card_and_changes_nothing_in_azure(self):
+    def test_it_holds_the_link_to_the_page_where_the_answer_is_given_and_changes_nothing_in_azure(self):
         self.assertEqual(cardcheck.check(self.card), [])
-        executes = {a["verb"]: a for a in actions_of(self.card) if a["type"] == "Action.Execute" and "verb" in a}
-        self.assertEqual(sorted(executes), ["approve", "ask", "decline", "later", "not_mine"])
-        self.assertEqual([executes[v]["title"] for v in ("approve", "decline", "not_mine", "later", "ask")], ["Worth acting on", "Not worth it", "This is not mine", "Decide later", "Ask or tell"])
+        self.assertEqual([a["type"] for a in actions_of(self.card)], ["Action.OpenUrl"], "the answers of advice are given on the page, as the approval of a change is")
         self.assertTrue(self.ids["change"]["text"].startswith("**If you answer:** Nothing changes in Azure."))
         self.assertEqual(self.ids["undo"]["text"].split(":**")[0], "**Undo", "advice can be undone: there is nothing to undo, and no bold warning")
         self.assertNotIn("weight", self.ids["undo"])
-        (link,) = [a for a in actions_of(self.card) if a["type"] == "Action.OpenUrl" and "id" in a]
-        self.assertEqual((link["title"], link["url"]), ("See the evidence", URL))
+        (link,) = actions_of(self.card)
+        self.assertEqual((link["title"], link["url"]), ("Review and decide", URL))
 
-    def test_six_buttons_at_the_most_in_one_row(self):
-        self.assertLessEqual(len(self.ids["decisions"]["actions"]), 6)
-        self.assertEqual(len(self.ids["ask"]["actions"]), 1)
+    def test_one_action_and_nothing_else_on_the_card(self):
+        self.assertEqual(len(self.ids["decisions"]["actions"]), 1)
+        self.assertEqual(len(actions_of(self.card)), 1)
 
 
 class TheDecisionCardOfAChangeThatNeedsTwoPeople(unittest.TestCase):
@@ -242,8 +228,7 @@ class TheDecisionCardOfAChangeThatNeedsTwoPeople(unittest.TestCase):
     def test_no_card_has_a_button_that_confirms_or_approves_and_the_link_is_the_way_to_both(self):
         for viewer, decisions in ((OID, ()), (self.OTHER, ())):
             _, card = self.card_of(viewer, decisions)
-            verbs = sorted(a["verb"] for a in actions_of(card) if a["type"] == "Action.Execute" and "verb" in a)
-            self.assertEqual(verbs, ["ask", "later", "not_mine"])
+            self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
             (page,) = [a for a in by_id(card)["decisions"]["actions"] if a["type"] == "Action.OpenUrl"]
             self.assertEqual((page["title"], page["url"]), ("Review and decide", URL))
 
@@ -317,25 +302,26 @@ class WhenASwitchHoldsTheAnswer(unittest.TestCase):
         self.assertNotIn("style", link)
         self.assertEqual(cardcheck.check(card), [])
 
-    def test_advice_that_is_held_has_no_worth_acting_on(self):
+    def test_advice_that_is_held_has_no_review_and_decide_and_says_so(self):
         brief = brief_of(plan=make_advice_plan(), case=make_case(status="needs_human"), changes_paused=True)
+        self.assertNotIn("approve", brief.answers)
         card = cards.decision_card(brief, ctx_for(brief))
-        self.assertEqual(sorted(a["verb"] for a in actions_of(card) if a.get("verb")), ["ask", "decline", "later", "not_mine"])
         self.assertIn("Meternaut is paused here.", by_id(card)["paused"]["text"])
+        (link,) = actions_of(card)
+        self.assertEqual(link["title"], "See the request")
 
 
 class TheCardOfWhatBecameOfARequest(unittest.TestCase):
-    def test_a_declined_request_shows_who_and_has_no_answer_and_no_token(self):
+    def test_a_declined_request_shows_who_and_has_no_answer(self):
         plan = make_plan(state="declined")
         decision = DecisionRecord(plan_id=PLAN_ID, approver_oid=OID, approver_name="Maya", decision="decline", at="2026-11-05T10:00:00Z", plan_code="7F3K92QD")
         brief = brief_of(plan=plan, decisions=[decision])
-        card = cards.card_for(brief, ctx_for(brief, nonce=""))
+        card = cards.result_card(brief, ctx_for(brief))
         ids = by_id(card)
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(ids["outcome"]["text"], "Declined")
         self.assertIn("Declined by Maya.", ids["outcome-line-1"]["text"])
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
-        self.assertNotIn(NONCE, json.dumps(card))
         self.assertNotIn("planCode", json.dumps(card))
         self.assertEqual(ids["kind"]["text"], "Recorded")
 
@@ -343,14 +329,14 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
         plan = make_advice_plan(state="consumed")
         decision = DecisionRecord(plan_id=PLAN_ID, approver_oid=OID, approver_name="Maya", decision="approve", at="2026-11-05T10:00:00Z", plan_code="7F3K92QD")
         brief = brief_of(plan=plan, case=make_case(status="acknowledged"), decisions=[decision])
-        ids = by_id(cards.card_for(brief, ctx_for(brief, nonce="")))
+        ids = by_id(cards.result_card(brief, ctx_for(brief)))
         self.assertEqual(ids["outcome"]["text"], "Worth acting on")
         self.assertIn("Nothing was changed in Azure.", ids["outcome-line-2"]["text"])
 
     def test_an_expired_request_says_so(self):
         brief = brief_of(plan=make_plan(expires_at="2026-11-04T09:30:00Z"))
         self.assertEqual(brief.state, "expired")
-        ids = by_id(cards.card_for(brief, ctx_for(brief, nonce="")))
+        ids = by_id(cards.result_card(brief, ctx_for(brief)))
         self.assertEqual(ids["outcome"]["text"], "Expired")
 
     def test_a_change_that_ran_has_a_result_card_with_what_it_saves_in_the_words_of_the_pages_and_the_undo_line(self):
@@ -359,7 +345,7 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
                               result="Deleted. Azure no longer lists the resource.", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "checkedAt": "2026-11-05T09:05:00Z"})
         decision = DecisionRecord(plan_id=PLAN_ID, approver_oid=OID, approver_name="Maya", decision="approve", at="2026-11-05T09:00:00Z", plan_code="7F3K92QD")
         brief = brief_of(plan=plan, action=action, decisions=[decision])
-        card = cards.result_card(brief, ctx_for(brief, nonce=""))
+        card = cards.result_card(brief, ctx_for(brief))
         ids = by_id(card)
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(ids["outcome"]["text"], "Done and checked")
@@ -367,22 +353,63 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
         self.assertEqual(ids["price-basis"]["text"], "Based on the cost lines after the change, which show no cost for this resource.")
         self.assertEqual(ids["place"]["text"], "Managed disk, resource group rg-zq7-group")
         self.assertEqual(ids["undo"]["text"], "Undo: This cannot be undone.")
-        self.assertEqual(cards.message_activity(card, "result")["summary"], "[Meternaut] A change to Azure has run")
+        self.assertEqual([a["title"] for a in actions_of(card)], ["See the request"])
 
-    def test_the_card_after_a_question_is_the_decision_card_again_with_a_notice_and_a_fresh_token(self):
+
+class TheShortCard(unittest.TestCase):
+    """The card for a message that cannot hold the whole card: the headline, one line, the one link and the footer, made from the same brief."""
+
+    def short_of(self, brief):
+        card = cards.minimal_card(brief, ctx_for(brief))
+        self.assertEqual(cardcheck.check(card), [])
+        return card, by_id(card)
+
+    def test_a_request_that_waits_gets_its_headline_the_link_that_decides_and_the_footer(self):
         brief = brief_of()
-        card = cards.card_for(brief, ctx_for(brief, nonce="Fresh-0123456789abcdefghijklmnopq"), "Recorded with your name. It approves nothing. The request stays open.")
-        ids = by_id(card)
-        self.assertEqual(ids["notice"]["text"], "Recorded with your name. It approves nothing. The request stays open.")
-        self.assertEqual(card["body"][2]["id"], "notice")
-        self.assertIn("Fresh-0123456789abcdefghijklmnopq", json.dumps(card))
-        self.assertNotIn(NONCE, json.dumps(card))
+        card, ids = self.short_of(brief)
+        self.assertEqual([n["id"] for n in card["body"] if "id" in n], ["header", "headline", "short", "decisions", "ai-footer"])
+        self.assertEqual(ids["headline"]["text"], by_id(cards.decision_card(brief, ctx_for(brief)))["headline"]["text"])
+        self.assertEqual(ids["short"]["text"], cards.SHORT_CARD)
+        self.assertEqual(ids["kind"]["text"], "Needs your OK")
+        (page,) = actions_of(card)
+        self.assertEqual((page["title"], page["url"]), ("Review and decide", URL))
+        self.assertEqual(ids["ai-label"]["text"], "Meternaut (AI)")
+        self.assertIn("Written by an AI", ids["ai-footer"]["text"])
+        self.assertLess(cardcheck.size_of(card), 2000)
 
-    def test_the_invoke_answers(self):
-        card = cards.card_for(brief_of(), ctx_for(brief_of()))
-        self.assertEqual(cards.invoke_card(card), {"statusCode": 200, "type": "application/vnd.microsoft.card.adaptive", "value": card})
-        self.assertEqual(cards.invoke_message("I cannot take your OK on this request.\nsecond"),
-                         {"statusCode": 200, "type": "application/vnd.microsoft.activity.message", "value": "I cannot take your OK on this request. second"})
+    def test_advice_and_a_request_that_is_over_are_told_in_the_same_way(self):
+        for label, brief, kind, title in (("advice", brief_of(plan=make_advice_plan(), case=make_case(status="needs_human")), "Needs your answer", "Review and decide"),
+                                          ("over", brief_of(plan=make_plan(state="declined")), "Recorded", "See the request"),
+                                          ("held", brief_of(changes_paused=True), "Needs your OK", "See the request")):
+            with self.subTest(label):
+                card, ids = self.short_of(brief)
+                self.assertEqual((ids["kind"]["text"], [a["title"] for a in actions_of(card)]), (kind, [title]))
+
+    def test_a_hostile_name_is_inert_on_it_too(self):
+        brief = brief_of(plan=make_plan(resource_name=HOSTILE), case=make_case(resource_name=HOSTILE, summary=HOSTILE))
+        card = cards.minimal_card(brief, ctx_for(brief))
+        self.assertEqual(cardcheck.check(card), [])
+        self.assertEqual({a["url"] for a in actions_of(card)}, {URL})
+        self.assertNotIn("](", json.dumps(card))
+
+    def test_a_card_that_passes_every_check_but_its_size_is_too_large_and_the_short_card_still_fits(self):
+        brief = brief_of()
+        short = cardcheck.size_of(cards.minimal_card(brief, ctx_for(brief)))
+        with mock.patch.object(cardcheck, "MAX_BYTES", short + 100):
+            with self.assertRaises(CardTooLarge):
+                cards.decision_card(brief, ctx_for(brief))
+            self.assertEqual(cardcheck.check(cards.minimal_card(brief, ctx_for(brief))), [])
+        with mock.patch.object(cardcheck, "MAX_BYTES", 100):
+            with self.assertRaises(CardError) as raised:
+                cards.minimal_card(brief, ctx_for(brief))
+            self.assertIsInstance(raised.exception, CardTooLarge, "nothing smaller exists: the caller says that the card could not be made")
+
+    def test_a_card_that_fails_for_another_reason_is_not_a_card_that_is_too_large(self):
+        brief = dataclasses.replace(brief_of(), headline="")
+        with mock.patch.object(cardcheck, "MAX_BYTES", 100):
+            with self.assertRaises(CardError) as raised:
+                cards.decision_card(brief, ctx_for(brief))
+        self.assertNotIsInstance(raised.exception, CardTooLarge)
 
 
 class TheFirstContactCard(unittest.TestCase):
@@ -393,9 +420,11 @@ class TheFirstContactCard(unittest.TestCase):
         self.assertEqual({a["url"] for a in actions_of(card)}, {f"{BASE}/"})
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
         self.assertTrue(ids["hello"]["text"].startswith("Hello Maya, I am Meternaut"))
+        self.assertIn("You cannot answer on a card.", ids["rules"]["text"])
         self.assertTrue(ids["ai-footer"]["text"].startswith("Written by an AI; a person approves every change."))
         self.assertEqual(card["body"][-1]["id"], "ai-footer")
         self.assertNotIn("planCode", json.dumps(card))
+        self.assertEqual(card["version"], "1.4")
 
     def test_a_name_is_data(self):
         card = cards.first_contact_card(HOSTILE, BASE, ())
@@ -444,7 +473,7 @@ class WhatComesFromTheEstateIsData(unittest.TestCase):
     def test_the_same_in_the_card_of_what_became_of_a_request(self):
         decision = DecisionRecord(plan_id=PLAN_ID, approver_oid=OID, approver_name=HOSTILE, decision="decline", at="2026-11-05T10:00:00Z", plan_code="7F3K92QD", note=HOSTILE)
         brief = brief_of(plan=make_plan(state="declined", resource_name=HOSTILE), decisions=[decision])
-        self.assert_inert(cards.result_card(brief, ctx_for(brief, nonce=""), notice=HOSTILE))
+        self.assert_inert(cards.result_card(brief, ctx_for(brief)))
 
     def test_markdown_in_a_name_shows_as_written(self):
         self.assertEqual(cards.md("[click](https://evil.example/x)"), "\\(click\\)\\(https: //evil.example/x\\)")
@@ -492,18 +521,16 @@ class TheAddressOfThePage(unittest.TestCase):
 
 
 class WhatACardNeeds(unittest.TestCase):
-    def test_a_decision_card_needs_a_token_the_code_and_the_page_of_its_own_request(self):
+    def test_a_decision_card_needs_the_page_of_its_own_request(self):
         brief = brief_of()
-        for bad in ("", "short", "has space-0123456789abcdefghij", "x" * 65, None):
-            with self.subTest(nonce=bad):
-                with self.assertRaises(CardError):
-                    cards.decision_card(brief, ctx_for(brief, nonce=bad))
         for url in ("", f"{BASE}/ok/other", "http://meternaut.example/ok/p1a2b3c4d5", f"{BASE}/x/{PLAN_ID}", f"{BASE}/ok/{PLAN_ID}?x=1"):
             with self.subTest(url=url):
                 with self.assertRaises(CardError):
                     cards.decision_card(brief, ctx_for(brief, page_url=url))
-        with self.assertRaises(CardError):
-            cards.decision_card(dataclasses.replace(brief, plan_code=""), ctx_for(brief))
+                with self.assertRaises(CardError):
+                    cards.minimal_card(brief, ctx_for(brief, page_url=url))
+        with self.assertRaises(TypeError, msg="a card takes no token: the context has none"):
+            CardContext(page_url=URL, nonce="N0nce-0123456789abcdefghijklmnop")
 
     def test_only_a_request_that_is_open_and_that_the_person_may_answer_has_a_decision_card(self):
         for brief in (brief_of(may_answer=False), brief_of(plan=make_plan(state="declined")), brief_of(plan=make_plan(expires_at="2026-11-04T09:30:00Z")),
@@ -512,7 +539,7 @@ class WhatACardNeeds(unittest.TestCase):
                 with self.assertRaises(CardError):
                     cards.decision_card(brief, ctx_for(brief))
         brief = brief_of(may_answer=False)
-        self.assertEqual(cardcheck.check(cards.card_for(brief, ctx_for(brief, nonce=""))), [], "the card of a request that this person may not answer holds no answer")
+        self.assertEqual(cardcheck.check(cards.result_card(brief, ctx_for(brief))), [], "the card of a request that this person may not answer holds no answer")
 
     def test_a_card_that_does_not_pass_the_check_is_not_made(self):
         brief = dataclasses.replace(brief_of(), headline="")
@@ -539,11 +566,14 @@ class TheCheckOfACard(unittest.TestCase):
         cases = {
             "type": (lambda c: c.update({"type": "Card"}), "must be AdaptiveCard"),
             "schema": (lambda c: c.update({"$schema": "x"}), "$schema"),
-            "version": (lambda c: c.update({"version": "1.6"}), "must be 1.5"),
+            "version 1.6": (lambda c: c.update({"version": "1.6"}), "must be 1.4"),
+            "version 1.5": (lambda c: c.update({"version": "1.5"}), "must be 1.4"),
             "fallback text": (lambda c: c.update({"fallbackText": ""}), "fallbackText"),
             "an unknown property of the card": (lambda c: c.update({"colour": "red"}), "is not a property of an Adaptive Card"),
             "an unknown element": (lambda c: c["body"].append({"type": "Image", "url": "https://x.example/a.png"}), "is not one that cards use"),
+            "a text box": (lambda c: c["body"].append({"type": "Input.Text", "id": "message", "label": "Ask"}), "is not one that cards use"),
             "a typo in a property": (lambda c: item(c, "headline").update({"wrapp": True}), "is not a property of TextBlock"),
+            "the style heading, which came with 1.5": (lambda c: item(c, "headline").update({"style": "heading"}), "is not a property of TextBlock"),
             "no wrap": (lambda c: item(c, "headline").update({"wrap": False}), "wrap must be true"),
             "no text": (lambda c: item(c, "headline").update({"text": " "}), "has no text"),
             "a number as text": (lambda c: item(c, "headline").update({"text": 5}), "must be a string"),
@@ -552,17 +582,14 @@ class TheCheckOfACard(unittest.TestCase):
             "an empty FactSet": (lambda c: item(c, "facts").update({"facts": []}), "has no fact"),
             "a fact with an extra key": (lambda c: item(c, "facts")["facts"][0].update({"x": "y"}), "a fact has a title and a value"),
             "an Action.Submit": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.Submit", "title": "x"}), "no Action.Submit"),
-            "an execute without a fallback": (lambda c: item(c, "later").pop("fallback"), "an Action.OpenUrl as its fallback"),
-            "an execute that does not say whether it takes input": (lambda c: item(c, "later").pop("associatedInputs"), "associatedInputs says auto or none"),
-            "a second link": (lambda c: item(c, "page").update({"url": "https://other.example/x"}), "different links"),
+            "an Action.Execute": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.Execute", "title": "x", "verb": "later"}), "no Action.Execute"),
+            "a second action with the same link": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.OpenUrl", "title": "Again", "url": URL}), "has 2 actions, and a card has 1"),
+            "a fallback on an action": (lambda c: item(c, "page").update({"fallback": {"type": "Action.OpenUrl", "title": "x", "url": URL}}), "is not a property of Action.OpenUrl"),
+            "a second link": (lambda c: item(c, "page").update({"url": "https://other.example/x"}) or c.update({"actions": [{"type": "Action.OpenUrl", "title": "x", "url": URL}]}), "different links"),
             "a link that is not https": (lambda c: item(c, "page").update({"url": "http://meternaut.example/ok/p"}), "must be an https address"),
-            "a required input with no message": (lambda c: item(c, "message").pop("errorMessage"), "errorMessage"),
-            "an input with no label": (lambda c: item(c, "message").update({"label": ""}), "needs a label"),
             "a duplicate id": (lambda c: item(c, "headline").update({"id": "ai-footer"}), "used twice"),
-            "seven actions": (lambda c: item(c, "decisions")["actions"].extend([dict(item(c, "later"), id=f"x{i}") for i in range(4)]), "at most 6"),
             "a hidden character": (lambda c: item(c, "headline").update({"text": "a\u202eb"}), "direction"),
             "a card that is too large": (lambda c: c["body"].append({"type": "TextBlock", "text": "x" * 21000, "wrap": True}), "at most 20000"),
-            "data that is not flat": (lambda c: item(c, "later")["data"].update({"x": {"a": 1}}), "must be a string, a whole number or a boolean"),
             "a width that is not Full": (lambda c: c.update({"msteams": {"width": "Narrow"}}), "may only set the width to Full"),
             "a fallback on an element": (lambda c: item(c, "headline").update({"fallback": "drop"}), "needs a fallback is not used"),
         }

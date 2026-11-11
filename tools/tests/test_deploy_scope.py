@@ -74,7 +74,7 @@ class TheWorkflowTouchesOnlyTheProjectsGroup(unittest.TestCase):
                     head = " ".join(words[:3]) if words[1] == "private-endpoint" and words[2] == "list" else " ".join(words[:4])
                 heads.setdefault(head, []).append(number)
         allowed = {"bicep build", "bicep lint", "rest", "resource list", "resource delete", "group show", "provider show", "role assignment",
-                   "network private-endpoint list", "network private-endpoint dns-zone-group", "functionapp deployment",  # functionapp deployment: the Teams bot's publish, the one app that is public
+                   "network private-endpoint list", "network private-endpoint dns-zone-group",
                    "vm show"}  # vm show: the read-back of the machine that the action plant makes when plant_vm is set, by its name, in the project's group
         self.assertEqual({head for head in heads if head not in allowed}, set(),
                          "a new kind of az call (for example az identity, az apim, az monitor or az ad): say which resource group it reads and why the deployment identity may, and add it here")
@@ -137,11 +137,8 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
         names = [str(p.relative_to(ROOT)).replace("\\", "/") for p in TEMPLATES]
         self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/aigateway/telemetry.bicep", "environment/base/main.bicep", "environment/cases/main.bicep",
                                  "environment/cases/planted.bicep", "environment/foundry/main.bicep", "environment/governance/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
-                                 "environment/teams/main.bicep",
                                  "infra/budgets/rg-budget.bicep"], "a new template is added to this list on purpose, after it was looked at for what it reads")
         for name in (n for n in names if n.startswith("environment/")):
-            if name == "environment/teams/main.bicep" and "          - teams\n" not in WORKFLOW:
-                continue  # until the action teams is in the Hub workflow, the Teams template is built and linted by tools/tests/test_teams_template.py and not yet by a workflow (docs/proposals/13-teams-and-outlook.md)
             self.assertIn(name, WORKFLOW + CHECKS, f"{name}: a template that no workflow compiles")
 
     def test_no_template_reads_or_writes_in_another_group_subscription_tenant_or_management_group(self):

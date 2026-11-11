@@ -10,7 +10,7 @@
 
 ## 2. Our code runs on Azure Functions; Durable Functions on the Azure Storage provider · Accepted
 
-- **Decision.** Five Function apps (Flex Consumption, Python, zip deployment; the Teams `bot` follows the Agents SDK language): `workflows`, `tools`, `approvals`, `runner` and `bot`.
+- **Decision.** Four Function apps (Flex Consumption, Python, zip deployment): `workflows`, `tools`, `approvals` and `runner`. The Teams `bot` that a fifth would have been is not built ([proposal 13](../proposals/13-teams-and-outlook.md)).
 - **Instead of.** Foundry workflow agents (retire 1 December 2026); Agent Framework workflows inside hosted agents (sessions time out; the hosting and durable packages are prerelease); Logic Apps Standard (always-on floor); Container Apps (a registry, premium behind a private link). Durable Task Scheduler Consumption is preview, has no high availability and keeps 30 days: an option, not the default.
 - **Cost · security · reversibility.** Scales to zero · separate identity per app · medium (the Agent Framework durable extension is the planned switch).
 
@@ -65,7 +65,7 @@
 
 ## 11. Approval is a bound, displayed, single-use authorization · Accepted
 
-- **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once, through a create-only item that only the runner can write. The approver comes from the approver's own token, never from the bot. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
+- **Decision.** The approval service renders the canonical plan; cards carry an opaque id; the record binds plan hash, etags, quote, approver id and role, and the authentication claim; consumed once, through a create-only item that only the runner can write. The approver comes from the approver's own token, never from a message. Purchases need two distinct directory roles. Credentials (autopilot) are policies evaluated in code on facts the model cannot set, never for purchases.
 - **Limits and undo.** One alarm catches an approval with no page sign-in behind it (a stolen signed-in session escapes it). Nothing rolls back by itself; where Azure offers an undo, the approver makes it with their own rights; a purchase cannot be undone.
 - **Instead of.** Trusting a row plus a card; tags or lessons deciding scope.
 - **Cost · security · reversibility.** Small · closes replay, swap and confused-deputy paths · signing the record is a later hardening.
@@ -80,7 +80,7 @@
 
 ## 13. Agents draft, workflows send; recipients come from the directory · Accepted
 
-- **Decision.** A model never chooses or supplies a recipient or a link; free text never approves. Teams cards use the Agents SDK in .NET or JavaScript, in a small `bot` app that validates the Bot Framework token; Azure Bot Service offers no IP allow-list, so token validation is the control. Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used. Cards go only to members of the directory; outsiders get plain-text e-mail.
+- **Decision.** A model never chooses or supplies a recipient or a link; free text never approves. A Teams card is a message on a private queue that a Power Automate flow posts: no bot, no app registration and no public endpoint ([proposal 13](../proposals/13-teams-and-outlook.md)). Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used. Cards go only to members of the directory; outsiders get plain-text e-mail.
 - **Instead of.** Agents sending messages; approval by reply.
 - **Cost · security · reversibility.** Small · stops exfiltration by mail and forged approvals · high.
 

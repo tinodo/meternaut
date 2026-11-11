@@ -1,9 +1,11 @@
-"""The settings of the loop that follows a case: the store, the resource groups where a change may be made, the sign-in to Azure, the people and the console.
+"""The settings of the loop that follows a case: the store, the resource groups where a change may be made, the sign-in to Azure, the people, the console and the Teams cards.
 They are optional as a whole.
 
 When `STORE_ACCOUNT_NAME` is not set the app is the Watch alone (a run is written to the History and to nothing else), which is what it was before the loop.
 When it is set, everything that the loop needs has to be set and valid, and the app refuses to start the loop with a part missing. The three settings of the
-sign-in to Azure are set together or not at all: without them the loop works, but nobody can approve a change (the app says so).
+sign-in to Azure are set together or not at all: without them the loop works, but nobody can approve a change (the app says so). `MAIL_SENDER` is the shared mailbox that the
+letters go from, and `TEAMS_CARDS_QUEUE` the name of the Storage queue, in the same storage account, that the Teams cards are put on (cases/teamsqueue.py): each is optional, and without
+it that way of telling a person is off.
 
 `CHANGE_SCOPES` is the list of Meternaut's OWN resource groups in which a change may be made: `<subscription id>/<resource group>`, separated by commas. The template gives it exactly the
 one group where Meternaut plants waste of its own. Reading more does not widen it (AGENTS.md rule 29), and nothing here lets a change reach a resource that Meternaut did not plant:
@@ -28,12 +30,16 @@ SIGNIN_CLIENT_ID = "SIGNIN_CLIENT_ID"
 SIGNIN_ASSERTION_CLIENT_ID = "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"
 CONSOLE_HOST = "CONSOLE_HOST"
 MAIL_SENDER = "MAIL_SENDER"
+# The name of the Storage queue (in the same storage account as the records) that a flow of Power Automate reads to post the Teams cards (cases/teamsqueue.py). Not set: no card is sent.
+TEAMS_CARDS_QUEUE = "TEAMS_CARDS_QUEUE"
 PLANTED_TAG = "PLANTED_TAG"
 PLAN_TTL_HOURS = "PLAN_TTL_HOURS"
 RECHECK_DAYS = "RECHECK_DAYS"
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 ACCOUNT = re.compile(r"^[a-z0-9]{3,24}$")
+# The name of a queue: 3 to 63 lowercase letters, digits and hyphens, beginning and ending with a letter or a digit, with no two hyphens in a row.
+QUEUE = re.compile(r"^(?=.{3,63}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
 GROUP = re.compile(r"^[A-Za-z0-9._()-]{1,90}$")
 HOST = re.compile(r"^[a-z0-9]([a-z0-9.-]{0,200}[a-z0-9])?$")
 # The sender's address goes into a web address: only what mail.py accepts there.
@@ -59,6 +65,7 @@ class LoopSettings:
     signin_tenant_id: str | None = None
     signin_client_id: str | None = None
     signin_assertion_client_id: str | None = None
+    cards_queue: str | None = None  # the queue that the Teams cards are put on; None: no card is sent
 
     @property
     def base_url(self) -> str:
@@ -107,9 +114,9 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
     if not (env.get(STORE_ACCOUNT_NAME) or "").strip():
         return None
     problems = [f"{name} is not set" for name in REQUIRED if not (env.get(name) or "").strip()]
-    values = {name: (env.get(name) or "").strip() for name in (*REQUIRED, *SIGNIN, MAIL_SENDER, PLANTED_TAG)}
+    values = {name: (env.get(name) or "").strip() for name in (*REQUIRED, *SIGNIN, MAIL_SENDER, TEAMS_CARDS_QUEUE, PLANTED_TAG)}
     values[CONSOLE_HOST] = values[CONSOLE_HOST].lower()
-    for name, pattern, what in ((STORE_ACCOUNT_NAME, ACCOUNT, "a storage account name"), (CONSOLE_HOST, HOST, "a host name"),
+    for name, pattern, what in ((STORE_ACCOUNT_NAME, ACCOUNT, "a storage account name"), (CONSOLE_HOST, HOST, "a host name"), (TEAMS_CARDS_QUEUE, QUEUE, "a queue name"),
                                 (SIGNIN_TENANT_ID, GUID, "a tenant id"), (SIGNIN_CLIENT_ID, GUID, "a client id"), (SIGNIN_ASSERTION_CLIENT_ID, GUID, "a client id")):
         if values[name] and not pattern.match(values[name]):
             problems.append(f"{name} is not {what}")
@@ -128,4 +135,5 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
     return LoopSettings(
         store_account=values[STORE_ACCOUNT_NAME], change_scopes=scopes, console_host=values[CONSOLE_HOST].lower(), mail_sender=values[MAIL_SENDER] or None,
         planted_tag=values[PLANTED_TAG] or "meternaut-planted", plan_ttl_hours=ttl, recheck_days=recheck, signin_tenant_id=values[SIGNIN_TENANT_ID].lower() or None,
-        signin_client_id=values[SIGNIN_CLIENT_ID].lower() or None, signin_assertion_client_id=values[SIGNIN_ASSERTION_CLIENT_ID].lower() or None)
+        signin_client_id=values[SIGNIN_CLIENT_ID].lower() or None, signin_assertion_client_id=values[SIGNIN_ASSERTION_CLIENT_ID].lower() or None,
+        cards_queue=values[TEAMS_CARDS_QUEUE] or None)

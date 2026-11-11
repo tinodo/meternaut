@@ -1,78 +1,71 @@
 # Teams and Outlook: a card in Teams, a letter in Outlook — a decision record
 
-**Status: built, not deployed, and not run in Teams or in Azure. The Hub action `teams` is in the workflow ([`deploy-hub.yml`](../../.github/workflows/deploy-hub.yml)); it refuses to start unless the owner has asked in writing for a public endpoint (the input `public_teams_bot_requested`) and the repository variable `TEAMS_BOT_ENABLED` is `True` (absent until he says so). Whether a card reaches a person is not proven until the first card arrives. Microsoft facts below name their page and status, read on 2026-11-08.**
+**Status: built, not deployed, and not run in Teams or in Azure.** The app puts each card on a private queue; a Power Automate flow, described in `19-teams-cards-through-power-automate.md`, reads the queue and posts the card. Whether a card reaches a person is not proven until the first card arrives, and the app cannot tell whether one did. Microsoft facts below name their page and were read on 2026-11-11.
 
 ## What a person sees
 
-**In Teams** the app "Meternaut (AI)" sends a card into the personal chat, by [the card rules](../experience/04-messages-and-cards.md): the headline, the saving with its level and basis, three facts each with its source, one line each for the change, the undo and the risk, the buttons, one box "Ask or tell", and one footer line (written by an AI, why you got this, whom to talk to). The only link is the page of the request. A change has one button, "Review and decide", which opens the page: signing in to Azure and approving happen there. Advice has "Worth acting on", "Not worth it", "This is not mine" and "Decide later". A message typed to the app gets one plain line. Adding the app gets one welcome card. Someone who is not on the list of people gets a plain refusal.
+**In Teams** a card arrives in a chat with the person, posted by the Flow bot of Power Automate (the sender is the platform's, not "Meternaut"). The card is the one of [the card rules](../experience/04-messages-and-cards.md) without its buttons and boxes: the headline, the saving with its level and basis, three facts each with its source, one line each for the change, the undo and the risk, and one footer line (written by an AI, why you got this, whom to talk to). It has **one link**, the page of the request. A change has the link "Review and decide": signing in to Azure and approving happen on the page, and **an approval that changes Azure is never taken from Teams**. When a switch holds the answers the card says so and its link reads "See the request". A card takes no answer: it has no box, no `Action.Submit` and no `Action.Execute`, so nothing can be declined, asked or taught in Teams.
 
-**Who gets a card.** The person's channel setting decides (`email`, `teams`, `desk`). With `teams` the card goes first, and the letter follows only if no card was sent within 20 minutes; a card and a letter never both go for one request. A card that could not be sent is tried every 15 minutes, up to 12 times. Advice cards count against the weekly budget of letters.
+**The first card.** A person who chose Teams and was never told gets one welcome card before the first request. It says that Meternaut writes in Teams, that a card cannot be answered, and where the page is.
 
-**In Outlook** nothing changes: the letters from the shared mailbox stay, as the audit-safe fallback. Outlook actionable messages are not built. Since 2026-06-08 only Microsoft Entra tokens are accepted, which needs an app registration with an exposed API, a pre-authorised Microsoft app and a tenant-wide consent; the recipient needs an individual mailbox, a shared mailbox as sender is not a documented scenario, and the endpoint would be a second public one ([Entra token](https://learn.microsoft.com/outlook/actionable-messages/enable-entra-token-for-actionable-messages)).
+**Who gets a card.** The person's channel setting decides (`email`, `teams`, `desk`). With `teams` the card goes first, and the letter follows only if no card was put on the queue within 20 minutes; a card and a letter never both go for one request. A card that could not be put on the queue is tried every 15 minutes, up to 12 times, and then the letter goes. Advice cards count against the weekly budget of letters. Inside a person's quiet hours no card is sent; the round that offers cards writes nothing while the hours last, so waiting uses no try.
 
-## What is public, and how it is kept narrow
+**In Outlook** nothing changes: the letters from the shared mailbox stay, as the audit-safe fallback. Outlook actionable messages are not built. Since 2026-06-08 only Microsoft Entra tokens are accepted, which needs an app registration with an exposed API, a pre-authorised Microsoft app and a tenant-wide consent, and the recipient needs an individual mailbox ([Entra token](https://learn.microsoft.com/outlook/actionable-messages/enable-entra-token-for-actionable-messages)); the design avoids all of that.
 
-One function app of its own is public: its one function route, `POST /api/messages`; its deployment site, which takes only an Azure token (basic authentication is off) and is where the Hub publishes the code (private apps are published from inside the network); and the host's own endpoints, which refuse a caller with no key. The web page, the Watch and the cases app stay private.
+## The path of a card
 
-- **Two functions only.** [`tools/build-teams-bot.sh`](../../tools/build-teams-bot.sh) puts the bot's entry ([`teams_function_app.py`](../../src/case-functions/teams_function_app.py)) in place of the cases app's: the messaging route and the timer that offers cards. No console route, no Watch, no loop timer.
-- **The token first** ([`botauth.py`](../../src/case-functions/cases/botauth.py)): RS256 only, the issuer, the audience (the bot's app id), the expiry with five minutes of skew, the `serviceUrl` claim equal to the activity's, the channel `msteams` endorsed. The keys come from Microsoft's OpenID metadata, refreshed every six hours and on an unknown key id. A failing call gets 401 or 403 and an empty body.
-- **A genuine call cannot approve a change.** An approval that changes Azure is never taken from Teams: the card's only link is the page, where the person signs in to Azure and Azure checks the person's own rights. A card records only answers that change nothing in Azure, for a person on the list, with the plan's code and a one-time token that the server made for that person and that plan. A forged call could at most record one such answer for a listed person, and needs a plan id, its code and a live token.
-- **No key, no secret.** The bot's own identity holds no role. The app's system identity holds the four storage roles of an identity-based host and the loop's tables, and no right to read or change the estate. At most two instances.
-- **Narrowing by address is not proved.** The service tag `AzureBotService` exists ([service tags](https://learn.microsoft.com/azure/virtual-network/service-tags-overview), GA), but Microsoft names it for the Direct Line channel, and the [security FAQ](https://learn.microsoft.com/azure/bot-service/bot-service-resources-faq-security) says that allow-listing inbound addresses is not supported. The template has the tag behind the parameter `restrictInboundToBotService`, off: it is turned on only with a card at hand, and off again if a tap stops arriving.
+1. The app decides that a person who chose Teams is to be told, builds the card from the decision brief and checks it ([`cardcheck.py`](../../src/case-functions/cases/cardcheck.py)).
+2. It puts one message on the queue `teams-cards` in the storage account of the base: the REST call "Put Message" with a token of the app's managed identity, over the private endpoint. No key, no connection string. The app already holds the right to write to the queues of that account.
+3. A Power Automate cloud flow reads the queue through Power Platform's virtual network support, so the queue has no public endpoint, and posts the card with the Teams action "Post card in a chat or channel": poster Flow bot, post in "Chat with Flow bot", recipient the message's `to`.
+4. Nothing comes back. The app records that the queue took the message, not that anyone saw a card.
 
-## The bot is a managed identity: one outbound flow
+## The message on the queue
 
-The Azure Bot resource has the app type `UserAssignedMSI`. The bot is the user-assigned identity `id-meternaut-teams-bot`: its client id is the bot's app id, the audience of every token that Teams sends and the `botId` of the Teams app. For the token to the Bot Connector the app asks the platform's identity endpoint for the resource `https://api.botframework.com` with that client id; [Authenticate requests with the Bot Connector API](https://learn.microsoft.com/azure/bot-service/rest-api/bot-framework-rest-connector-authentication) describes exactly this flow for this app type (GA). The page's other flow, a federated credential on an app registration, is for `SingleTenant` and is not used. So the bot needs no secret, certificate, federated credential or app registration.
+One JSON text, UTF-8, not base64, at most 30,000 bytes. The queue's name is the app setting `TEAMS_CARDS_QUEUE`; with no value the app sends no cards.
 
-## The verifier is hand-written
+| Field | Content |
+|---|---|
+| `v` | `1`, the version of this format |
+| `id` | The delivery id: the id of the record that the app keeps of this card (letters, digits, hyphen and underscore; at most 64) |
+| `to` | The person's mail address, as the people list has it. Taken only from the people list, not from a resource name, a tag or any other text of the estate |
+| `title` | A short plain title, one line, at most 120 characters |
+| `card` | The Adaptive Card, schema 1.4 |
 
-The Bot Framework SDK is archived and unsupported since 2025-12-31 ([resources](https://learn.microsoft.com/azure/bot-service/bot-service-resources-links-help)), the Python Agents SDK has no routing for `Action.Execute`, which the cards use, and no vetted token or RSA library is on an approved feed. So the protocol is on the standard library. The RS256 check follows RFC 8017, sections 8.2.2 and 9.2: it rejects a signature as large as the modulus, rebuilds the whole encoded message and compares it with the signature's in constant time, parses no padding, and needs a modulus of at least 2,048 bits and an exponent of at least 65,537. It is tested against OpenSSL known answers, real Bot Framework keys, the classic forgeries and crafted tokens (expired, wrong audience, issuer or service URL, unknown key, `alg` none or HS256). Hand-written code at a public door needs a security review before it is merged, and a vetted library replaces it when one is on an approved feed.
+A card that does not fit in 30,000 bytes is replaced by a minimal card with the headline and the link; the JSON is never cut. The message lives 24 hours on the queue and then lapses. A text that is not an address on the people list is refused by the app before anything is put on the queue.
 
-## What each answer does
+## What the app knows and what it does not
 
-| Tap | What is recorded | Changes Azure |
-|---|---|---|
-| Review and decide (a change) | nothing: it opens the page | the approval on the page, with the person's own sign-in |
-| Worth acting on (advice) | "worth acting on" | no |
-| Not worth it | declined; the request is closed | no |
-| This is not mine | recorded; nothing is approved | no |
-| Decide later | noted; the request stays open | no |
-| Ask or tell | the person's words (300 characters at most), with the name | no |
+The app knows whether the queue took the message. A refusal, a timeout or a server error is a failed try (the words of the record say what happened, without the token), and the letter still goes when the tries are used up. The app does not know whether the flow read the message, whether the Flow bot posted it, or whether the person saw it. **If the flow is off or fails, the person gets no card, and no letter follows a card that the queue took.** The page still lists every request. A receipt from the flow is not in this version; until there is one, delivery is best effort and the cards are never promised.
 
-Each tap goes through the decider that the page's form uses, and the card is replaced, in the response, by one that says what was recorded. A person who may not answer, a closed or expired request and a used one-time token each get one plain line, and nothing is recorded.
+## No bot, and what that removes
 
-A request that two people approve ([the loop](04-the-loop.md#going-through-the-requests-quiet-hours-and-two-people)) is no different here: the card says so in its "If you approve" line and its one link opens the page, where the first person confirms and the second approves. No tap confirms: a tap with the verb `confirm` is refused as unreadable and records nothing. Inside a person's quiet hours no card is sent. The round that offers cards writes nothing while the hours last, so waiting uses no try, and the card is offered after they end, with the hours checked again at that moment. A reply to a tap, a typed message or adding the app is an answer to the person's own action and is not held. Built and tested against fakes, not run in Azure.
+A Teams bot needs an Azure Bot resource, a Teams app package that someone installs, an app registration or a user-assigned identity with a role on the bot channel, a public endpoint that Teams calls, a check of every call's token, and a permission in Microsoft Graph to install the app for a person. Meternaut has none of these. Nothing in Teams calls an endpoint of ours, no permission has to be consented to, and no credential is stored: the queue is read inside the network and written with a managed identity.
+
+What it costs: a card cannot be answered. Taps, replies, a card replaced in place and the typed message to the app are gone; the page and the letters carry every answer.
+
+## What is public
+
+Nothing is new. The queue, the storage account and the app stay private. The flow runs in the Power Platform with a delegated subnet in the project's own network (see the hand steps below). Whoever can write to the queue can put any card, with any link, in front of anyone the flow can address, because the flow posts to the address that the message carries; the project grants that right to the cases app, and the app takes the address from the people list. Such a writer still cannot approve a change, name an approver or reach the estate.
+
+## What Microsoft says (read on 2026-11-11)
+
+| Fact | Source |
+|---|---|
+| The Teams action posts as the Flow bot, in a chat with the recipient, and needs the recipient's mail address | [Adaptive cards for Teams in Power Automate](https://learn.microsoft.com/en-us/power-automate/overview-adaptive-cards) |
+| On a card that a flow posts without waiting for a response only `Action.OpenUrl` works; other actions give an error | The same page |
+| A posted message may be about 28 KB; the Flow bot posts 25 times in 300 seconds a connection; the Workflows app must be allowed in the Teams admin center; the Flow bot is not available in GCC | [Microsoft Teams connector](https://learn.microsoft.com/en-us/connectors/teams/) |
+| Power Automate posts cards up to schema 1.4 although the Teams pages say 1.5 | An open issue in the Adaptive Cards repository, [8965](https://github.com/microsoft/AdaptiveCards/issues/8965): indirect evidence, not a Learn page |
+
+The cards therefore declare 1.4 and use nothing newer: no `style: heading`, no `metadata`. A card that renders only in part is found by the first card that arrives, not before.
 
 ## Costs
 
-The Azure Bot resource is the free tier (F0); the app is on Flex Consumption and scales to zero. Retail Prices API, `swedencentral`, read 2026-11-08: 0.000026 US dollars a GB-second after 100,000 free GB-seconds a month. The timer every minute is about 21,600 GB-seconds and 43,200 executions a month, inside the free grants, so an idle bot costs about 0. With no instance kept warm, the first tap after an idle time waits for a start and Teams may show it as failed; one always-ready 512 MB instance (`alwaysReadyInstances`) is about 5.2 dollars a month.
+The queue costs next to nothing: a few operations for each card and the reads of the flow. There is no Azure Bot resource. The licence of the flow, and of an environment with virtual network support, is not priced here and is not verified.
 
-## What a person does by hand, in order
+## What a person does by hand
 
-The owner:
-1. Asks in writing for a public Teams bot ([AGENTS.md rule 15 (c)](../../AGENTS.md)).
-2. Registers the resource provider once, because the workflow's identity cannot: `az provider register --namespace Microsoft.BotService`.
-3. Sets the repository variable `TEAMS_BOT_ENABLED` to `True`.
-4. Starts the Hub actions `model-side`, `base` and `cases` if they have not run, then the action `teams` with the input `public_teams_bot_requested` ticked. It deploys, builds, publishes, reads everything back and knocks at the public door with no token ([`tools/teams-check.py`](../../tools/teams-check.py)); it prints the bot's client id.
-5. Opens the Azure Bot resource in the Azure portal, Channels, Microsoft Teams, and accepts the terms of the channel if it asks (the template makes the channel with only its name).
-6. Builds and checks the package: `python tools/teams-package.py build --bot-id <client id> --site https://<host of the web page> --out teams-app.zip`, then `python tools/teams-package.py check teams-app.zip`.
-
-A Teams administrator:
-7. In the Teams admin center, Teams apps, Manage apps, Upload new app, uploads `teams-app.zip` ([custom apps](https://learn.microsoft.com/microsoftteams/teams-custom-app-policies-and-settings): available to the org's users after a few hours, no approval needed).
-8. Checks Manage apps, Actions, Org-wide app settings: custom apps are allowed, and no app permission policy blocks the app.
-9. Has the app installed: each person adds it from Teams, Apps, Built for your org; or an app setup policy installs it for the people it is assigned to ([setup policies](https://learn.microsoft.com/microsoftteams/teams-app-setup-policies)).
-
-Optionally `python tools/entra-setup.py teams-check --tenant-id <id> --bot-id <client id> --assign <object id>` reads what is in place, and `teams-apply --apply` installs the app for the signed-in person only: Graph's delegated permission works "for the signed-in user" ([install app for user](https://learn.microsoft.com/graph/api/userteamwork-post-installedapps)), so for other people the setup policy is the way. Which Graph scopes the Azure CLI's token carries for Teams is not proven. The tool never runs in a pipeline and removes nothing.
-
-Each person:
-10. Adds the app and chooses Teams in the settings on the web page. The first card shows whether delivery works.
-
-## Risks that remain
-
-- The app's system identity can read and write the loop's tables. A flaw that runs code in the bot reaches the cases app's records, not Azure.
-- The bot shares the function subnet `snet-func` with the cases app. It is a /27 and is not changed once made. Learn [allows a shared Flex Consumption subnet](https://learn.microsoft.com/azure/azure-functions/flex-consumption-how-to), says that one app can affect the others, and advises a /26 for several apps. The workflow check that gives the web page the subnet to itself, and the same rule in `tools/retire-old.py`, let the bot's app through.
-- The Teams app package (manifest schema 1.30, current: [reference](https://learn.microsoft.com/microsoft-365/extensibility/schema/)) and the template were checked by tools and tests, not by Teams or Azure.
+An administrator of the organisation: allows the Workflows app in the Teams admin center, and sets up the Power Platform environment, the flow and its connection to the queue as `19-teams-cards-through-power-automate.md` says. Each person: chooses Teams in the settings on the web page.
 
 ## What is not built
 
-Outlook actionable messages; proof that a card reaches a person; an agent identity for Meternaut in Microsoft Agent 365; a web application firewall in front of the endpoint; an inbound restriction proved for Teams; installs for other people through Graph; any approval of a change from Teams.
+Outlook actionable messages; proof that a card reaches a person, and any receipt from the flow; an answer on a card; a card in a channel; an agent identity for Meternaut in Microsoft Agent 365; a check, in the flow, that the address belongs to the people list.

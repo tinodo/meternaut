@@ -1036,6 +1036,14 @@ class TheCallsOfTheTool(unittest.TestCase):
         for _, pattern in es.CALLS:
             self.assertNotRegex(pattern.pattern, r"addPassword|addKey|keyCredentials|passwordCredentials|owners|directoryRoles")
 
+    def test_the_tool_has_nothing_to_do_with_teams_the_cards_are_posted_by_a_flow_and_need_no_registration_or_permission(self):
+        for _, pattern in es.CALLS:
+            self.assertNotRegex(pattern.pattern, r"(?i)teams|installedApps|appCatalogs|teamwork")
+        self.assertEqual(sorted({pattern.pattern.split("/")[0] for _, pattern in es.CALLS}), ["applications", "oauth2PermissionGrants", "servicePrincipals"])
+        self.assertFalse([name for name in dir(es) if "teams" in name.lower()])
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            es.main(["teams-check", "--tenant-id", TENANT])
+
     def test_a_call_that_is_not_on_the_list_is_refused_before_it_is_sent(self):
         tenant = FakeTenant()
         graph = es.Graph(es.Tokens(tenant.az, TENANT, es.Hider()), tenant.transport, lambda s: None)

@@ -788,8 +788,7 @@ class PublishScript(unittest.TestCase):
         self.assertIn("for attempt in 1 2 3 4 5; do", source, "five attempts, as on the runner")
         self.assertIn('if [ "$code" = 200 ] || [ "$code" = 202 ]; then', source)
         workflow = text(".github/workflows/deploy-hub.yml")
-        self.assertEqual(workflow.count("config-zip"), 1, "the runner publishes one app only: the Teams bot's, which is public by necessity (docs/proposals/13-teams-and-outlook.md); every private app goes through this script")
-        self.assertIn("Publish the code to the Teams bot's function app", workflow[:workflow.index("config-zip")].rsplit("      - name: ", 1)[1])
+        self.assertEqual(workflow.count("config-zip"), 0, "the runner publishes no app: every app goes through this script")
         self.assertFalse("/api/zipdeploy" in workflow, "the runner does not post a package any more either")
 
 
@@ -857,11 +856,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-11, after the approvals package (quiet hours, "review all", a second approver) on top of the engine package and the
-    # point-to-site gateway family (349,921 bytes; 341,242 after the first two, 331,719 after the engine package alone, 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the
-    # cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the 92 files before them), and the room that more sources may take
-    # before this test asks for a decision. The cap of the request is 480,000 bytes and 100,000 stay free (the test below).
-    SOURCES_ARCHIVE_MEASURED = 349_900
+    # What the archive of the sources of this repository measured on 2026-11-11, after the Teams bot was removed and the cards went onto a queue (340,907 bytes; 349,921 just before, after the approvals
+    # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
+    # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
+    # 92 files before them), and the room that more sources may take before this test asks for a decision. The cap of the request is 480,000 bytes and 100,000 stay free (the test below).
+    SOURCES_ARCHIVE_MEASURED = 340_900
     SOURCES_ARCHIVE_MARGIN = 5_000
 
     def sources_archive(self, fresh=False):

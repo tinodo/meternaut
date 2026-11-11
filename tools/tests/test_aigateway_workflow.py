@@ -497,7 +497,7 @@ class TheStepsAreWrittenAsTheRulesSay(unittest.TestCase):
 
     def test_the_two_actions_are_offered_after_the_probe_and_described_in_plain_words(self):
         offered = re.findall(r"- (\S+)", re.search(r"options:\n((?:          - .+\n)+)", WORKFLOW).group(1))
-        self.assertEqual(offered[-10:-5], ["aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"], "the three actions of the AI security come right after the two of the gateway (the four of the agents' checks and the Teams bot's action, teams, are the last five)")
+        self.assertEqual(offered[-9:-4], ["aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check"], "the three actions of the AI security come right after the two of the gateway (the four of the agents' checks are the last four)")
         self.assertEqual(offered[offered.index("operator-probe") + 1:offered.index("operator-probe") + 3], ["aigateway", "aigateway-check"])
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', WORKFLOW).group(1)
         gateway = description.split(" aigateway: ")[1].split(" aigateway-check: ")[0]
