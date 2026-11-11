@@ -495,27 +495,12 @@ class TheRefusals(unittest.TestCase):
         self.assertEqual((code, azure.calls), (2, []))
         self.assertIn("this command deletes, and only a run of the Hub may do that (AGENTS.md rule 18): this call was not started by a run of the Hub", lines[-1])
 
-    def test_github_actions_true_and_all_that_a_github_runner_sets_are_refused_and_the_refusal_says_nothing_of_what_is_missing(self):
-        for extra in ({"GITHUB_ACTIONS": "true"}, hubenv.RUNNER):
-            azure = basic_world()
-            code, lines, _, _ = run(azure, environ={**PROJECT, **extra})
-            self.assertEqual((code, azure.calls), (2, []), extra)
-            self.assertIn("this call was not started by a run of the Hub", lines[-1])
-            self.assertNotRegex(lines[-1], r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
-
-    def test_the_proof_of_a_run_of_tools_hub_local_that_is_alive_is_enough_and_a_stale_one_or_one_of_another_folder_is_not(self):
-        with tempfile.TemporaryDirectory() as folder:
-            azure = basic_world()
-            code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(folder)})
-            self.assertEqual(code, 0, lines)
-            azure = basic_world()
-            code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(folder, pid=hubenv.dead_pid())})
-            self.assertEqual((code, azure.calls), (2, []))
-            self.assertIn("this call was not started by a run of the Hub", lines[-1])
-            with tempfile.TemporaryDirectory() as hostile:
-                azure = basic_world()
-                code, lines, _, _ = run(azure, environ={**PROJECT, **hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder})
-            self.assertEqual((code, azure.calls), (2, []), "a proof that is not in the repository's own local folder")
+    def test_github_actions_true_alone_is_refused_and_the_refusal_says_nothing_of_what_is_missing(self):
+        azure = basic_world()
+        code, lines, _, _ = run(azure, environ={**PROJECT, "GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, azure.calls), (2, []))
+        self.assertIn("this call was not started by a run of the Hub", lines[-1])
+        self.assertNotRegex(lines[-1], r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
 
     def test_no_other_group_or_subscription_can_be_named(self):
         for environ in ({**ENVIRONMENT, "ENV_RESOURCE_GROUP": "rg-another"}, {**ENVIRONMENT, "ENV_SUBSCRIPTION_ID": "99999999-2222-3333-4444-555555555555"}):

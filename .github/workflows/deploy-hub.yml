@@ -1962,7 +1962,7 @@ jobs:
           fi
           # The deploy identity may give a role to a service principal only for the roles that the condition of its right to assign roles lists (environment/BOOTSTRAP.md). The template gives Foundry User (to the
           # gateway's identity, on the Foundry resource) and AI Gateway Models User (to the Operator's identity, on the gateway). Azure would refuse the second after the gateway was made, so it is looked for here.
-          # A run from the owner's own machine (tools/hub-local.py) is signed in as a person, who holds Owner or User Access Administrator on the group or above it (the tenant's root group too), with no condition:
+          # A run that is signed in as a person (the runs from the owner's own machine, 2026-11-08 to 2026-11-11, were) holds Owner or User Access Administrator on the group or above it (the tenant's root group too), with no condition:
           # such a person may give any role, and the look at the condition below is not needed. An assignment of Owner or User Access Administrator that carries a condition is not counted.
           foundry_user=53ca6127-db72-4b80-b1b0-d745d6d5456d
           models_user=a6b68e3d-a1f0-4c60-8678-237c050cf4ea

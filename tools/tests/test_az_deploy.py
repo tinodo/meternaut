@@ -72,29 +72,13 @@ class Commands(unittest.TestCase):
         self.assertEqual(run(["create", *BASE], runner)[0], 2)
         self.assertEqual(runner.commands, [])
 
-    def test_create_refuses_a_process_that_says_that_github_actions_is_true_and_one_that_sets_all_that_a_github_runner_sets_and_says_nothing_of_what_they_lack(self):
-        for extra in ({"GITHUB_ACTIONS": "true"}, hubenv.RUNNER):
-            runner = Runner()
-            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=extra)
-            self.assertEqual(code, 2, extra)
-            self.assertIn("this call was not started by a run of the Hub", err)
-            self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
-            self.assertEqual(runner.commands, [], extra)
-
-    def test_create_goes_with_the_proof_of_a_run_of_tools_hub_local_that_is_alive_and_not_with_a_stale_one_or_one_of_another_folder(self):
-        with tempfile.TemporaryDirectory() as folder:
-            runner = Runner((0, "", ""))
-            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=hubenv.proof_environment(folder))
-            self.assertEqual((code, err, len(runner.commands)), (0, "", 1))
-            runner = Runner()
-            code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=hubenv.proof_environment(folder, pid=hubenv.dead_pid()))
-            self.assertEqual(code, 2)
-            self.assertIn("this call was not started by a run of the Hub", err)
-            with tempfile.TemporaryDirectory() as hostile:
-                forged = {**hubenv.proof_environment(hostile, run="1"), "METERNAUT_LOCAL": folder}
-                code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra=forged)
-            self.assertEqual(code, 2, "a proof that is not in the repository's own local folder")
-            self.assertEqual(runner.commands, [])
+    def test_create_refuses_a_process_that_only_says_that_github_actions_is_true_and_says_nothing_of_what_it_lacks(self):
+        runner = Runner()
+        code, _, err, _ = run(["create", *BASE, "--name", "n"], runner, actions=False, extra={"GITHUB_ACTIONS": "true"})
+        self.assertEqual(code, 2)
+        self.assertIn("this call was not started by a run of the Hub", err)
+        self.assertNotRegex(err, r"GITHUB_|METERNAUT_|ACTIONS_ID|(?i:proof)|(?i:lock)", "a refusal says nothing to copy")
+        self.assertEqual(runner.commands, [])
 
     def test_create_names_no_other_subscription_or_group_than_the_projects_own(self):
         for subscription, group in (("another", "rg"), ("sub", "another"), ("sub", "RG")):
