@@ -19,7 +19,7 @@ from test_foundry_reads import ReadingService
 from cases import agents, drift, drift_rules as rules, foundry, harness, http, lockfile, toolbox
 from cases.foundry import FoundryError
 from cases.memory_store import MemoryStore
-from cases.models import StoreError, SwitchRecord
+from cases.models import CheckRecord, StoreError, SwitchRecord
 from cases.redact import Redactor
 
 INVESTIGATOR, SKEPTIC = agents.INVESTIGATOR_NAME, agents.SKEPTIC_NAME
@@ -538,6 +538,60 @@ class TheControlsOfTheApp(unittest.TestCase):
         world.store.switch_get = lambda name: (seen.append(name), original(name))[1]
         world.check()
         self.assertEqual(seen, ["all", "changes", "messages", "investigation"])
+
+
+class TheResultThatIsKept(unittest.TestCase):
+    """The latest check is kept in the store, whoever started it, so that the Operations page can show it and the console can hold the gap between two checks."""
+
+    def test_the_timers_check_keeps_one_row_for_every_control_in_the_order_of_the_catalog_with_what_the_telemetry_says(self):
+        world = World()
+        world.check()
+        kept = world.store.check_latest()
+        self.assertEqual((kept.trigger, kept.by, kept.started_at, kept.finished_at, kept.tripped), ("timer", "", "2026-11-04T12:00:00Z", "2026-11-04T12:00:00Z", False))
+        self.assertEqual([item["control"] for item in kept.results], CATALOG)
+        self.assertEqual([dict(item) for item in kept.results], [{key: body[key] for key in ("control", "layer", "state", "detail")} for _, body in world.lines()])
+
+    def test_a_check_that_a_person_started_names_the_person_and_keeps_the_time_that_the_console_claimed(self):
+        world = World()
+        with LogCapture():
+            drift.run_check("console", world.env, clock=fixed_clock, foundry=world.project, extras=world.extras, by="Tino", started_at="2026-11-04T11:59:30Z")
+        kept = world.store.check_latest()
+        self.assertEqual((kept.trigger, kept.by, kept.started_at, kept.finished_at), ("console", "Tino", "2026-11-04T11:59:30Z", "2026-11-04T12:00:00Z"))
+        with LogCapture():
+            drift.run_check("something else", world.env, clock=fixed_clock, foundry=world.project, extras=world.extras, by=HOSTILE)
+        kept = world.store.check_latest()
+        self.assertEqual(kept.trigger, "timer", "a trigger that nobody listed is the timer's")
+        self.assertNotIn("<", kept.by)
+
+    def test_a_check_that_paused_the_investigation_keeps_that_and_what_failed(self):
+        world = World()
+        world.project.stored[INVESTIGATOR]["definition"]["instructions"] = "Edited."
+        world.check()
+        kept = world.store.check_latest()
+        self.assertTrue(kept.tripped)
+        self.assertEqual({item["control"] for item in kept.results if item["state"] == "FAIL"}, {"A-DEF-INSTRUCTIONS"})
+
+    def test_a_store_that_cannot_be_written_does_not_stop_the_check_and_a_check_with_no_store_keeps_nothing(self):
+        world = World()
+        world.store.check_put = mock.Mock(side_effect=StoreError("the store is down", 503))
+        report = world.check()
+        self.assertEqual([body["control"] for _, body in world.lines()], CATALOG)
+        self.assertEqual(len(report.findings), len(CATALOG))
+        world = World()
+        world.extras = SimpleNamespace(store=None, on_alert=None)
+        world.check()
+        self.assertEqual([body["control"] for _, body in world.lines()], CATALOG)
+        self.assertIsNone(world.store.check_latest())
+
+    def test_a_claim_is_written_over_the_check_that_the_caller_saw_and_over_no_other(self):
+        store = MemoryStore()
+        first, second, third = (CheckRecord(started_at=f"2026-11-04T1{n}:00:00Z", trigger="console", by="Tino") for n in (0, 1, 2))
+        self.assertFalse(store.check_claim(first, "2026-11-04T09:00:00Z"), "there is no check, and the caller saw one")
+        self.assertTrue(store.check_claim(first, ""))
+        self.assertFalse(store.check_claim(second, ""), "somebody claimed since the caller looked")
+        self.assertTrue(store.check_claim(second, first.started_at))
+        self.assertFalse(store.check_claim(third, first.started_at))
+        self.assertEqual(store.check_latest(), second)
 
 
 if __name__ == "__main__":

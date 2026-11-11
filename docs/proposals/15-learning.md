@@ -46,9 +46,17 @@ The calibration is a bucket correction, with no model and no curve. A stated con
 
 **What follows** ([rule 14 (c)](../../AGENTS.md)). The claim is withdrawn, and the hold is off until the owner switches `LEARNING_HOLD` on. A second experiment needs new requests, because these have been seen, and thresholds written first. The lessons, the line of the decision brief and the recall tools stay on: they count and decide nothing. Not measured: real requests (the set is invented: the result shows how the mechanism behaves on these patterns, not how often real findings are over-confident), money, the Investigator's use of its tools, the claims of the Study and boomerangs.
 
+## A hold that follows a change of mind
+
+A lesson has no resource of its own, so a person who answered the same finding the other way later was counted twice. `learning.sync` now weighs the answers about one resource and one family against each other: the newest answer that says whether the finding was right is what the person thinks now. An older answer that says the opposite is released (`superseded`) and no longer counts for the calibration or for `recall_lessons`; one that the newest agrees with is kept. The count in the decision brief stays as it was. A changed resource looks like a changed mind. Built with fakes; the replay set has no such rows, so its numbers did not change.
+
+## The check on real requests
+
+Operations has the button "Download the answers" (role ops): one row for each closed request, in the row shape of the check, with a number for the resource and no name. `tools/learning-check.py --real --cases FILE` replays it against the same thresholds. Only the app can read the table. Built with fakes; no lesson exists yet to run it on.
+
 ## The Investigator's tools that recall
 
-Three tools read our own store and nothing of the estate. `recall_lessons` gives counts and rates as typed values. `recall_knowledge` gives the claims of a type with their pages and quotes, as fetched data and never as an instruction. `recall_open_questions` gives up to 15 typed rows for resources whose earlier finding no person has decided: the handle (it works with every other tool), the type word, how many Watches saw it, the days since it was first seen and the confidence of the last judgement, with no text and no name of a person. The instructions of the Investigator say that the tools exist and what they return, never what to find. When the Investigator cites such a resource again the Watch judges it again at once, so that a finding that stayed "needs a person" with no figure comes back with the new tools until it is decision-ready or dropped. The model is not forced to call it; a real run shows whether it does.
+Three tools read our own store and nothing of the estate. `recall_lessons` gives counts and rates as typed values. `recall_knowledge` gives the claims of a type with their pages and quotes, as fetched data and never as an instruction. `recall_open_questions` gives up to 15 typed rows for resources whose earlier finding no person has decided: the handle, the type word, how many Watches saw it, the days since it was first seen and the confidence of the last judgement, with no text and no name of a person. The instructions say that the tools exist and what they return, never what to find. When the Investigator cites such a resource again the Watch judges it again at once, so that a finding that stayed "needs a person" with no figure comes back until it is decision-ready or dropped. The model is not forced to call a tool; a real run shows whether it does.
 
 ## The Study of documentation
 
@@ -56,7 +64,7 @@ Once a week (the timer `study-weekly`, Mondays at 04:30 UTC) the Scholar, a thir
 
 A claim that passes the guard reaches the Investigator through `recall_knowledge`: text from outside the estate, the one exception to the typed values of [rule 30](../../AGENTS.md) (b), kept narrow by the guard and the data marking. The owner allows it: `STUDY` stays off until he says so.
 
-A claim is kept only after a guard of code (`study.accept`): the type was asked for, the kind is on the closed list, the page is one that this run read, and the quote is plain words of 20 to 200 characters that the text of that page holds exactly. Anything else is thrown away and counted; at most four claims for a type and 16 a run. The kinds are in the input of a run, not in the instructions: nothing tells the Scholar what to find. A claim is current for 30 days and is read again after seven; a quote that is gone makes it stale. A run is held to 400,000 tokens. At the price snapshot of 2026-10-31 for the Investigator's model ($5 per million input tokens, $30 output) a run costs $2 to $3 and a month of weekly runs $9 to $13: a calculation, not a measurement. `tools/study-evals.py` replays the Scholar on invented pages against thresholds written first and grades it with the same guard; it has not run on Foundry.
+A claim is kept only after a guard of code (`study.accept`): the type was asked for, the kind is on the closed list, the page is one that this run read, and the quote is plain words of 20 to 200 characters that the text of that page holds exactly. Anything else is thrown away and counted; at most four claims for a type and 16 a run. The kinds are in the input of a run, not in the instructions: nothing tells the Scholar what to find. A claim is current for 30 days and is read again after seven; a quote that is gone makes it stale. A run is held to 400,000 tokens: $2 to $3 a run and $9 to $13 a month of weekly runs at the price snapshot of 2026-10-31 ($5 per million input tokens, $30 output), a calculation and not a measurement. `tools/study-evals.py` replays the Scholar on invented pages against thresholds written first and grades it with the same guard; it has not run on Foundry.
 
 ## The capability profile
 
@@ -79,8 +87,8 @@ The price sheet is read with the Cost Management Reader that the Watch has, and 
 | Open questions | A Watch run while earlier findings are undecided | A `recall_open_questions` call in the History |
 | The Study | A `study` control message with `STUDY` on | Rows in `mnclaims` whose quotes are on their pages |
 | The Scholar's replay | `tools/study-evals.py run` on the Operator | Its code graders against their thresholds |
-| The check on real requests | An export of `mnlessons` in the row shape of the check | Its thresholds, again, before the hold is on |
+| The check on real requests | Operations, "Download the answers", then `tools/learning-check.py --real` on the file | Its thresholds, again, before the hold is on |
 
 ## What is not built
 
-The replay of real lessons (the table has no export), a hold that follows a change of mind, the evaluators and the red team of the Foundry service for the Scholar, the `study` job in the Hub's control message and its steps (its block is written outside the repository, and no workflow has it), a check of T1 to T3 by the access tool, and any proof from Azure: whether the Foundry service accepts the Scholar, whether the documentation can be reached from the app's network, and what a run really costs.
+The evaluators and the red team of the Foundry service for the Scholar and the `study` job in the Hub's control message (its block is written outside the repository, and no workflow has it): none means anything before it runs in Azure. Also not built: a check of T1 to T3 by the access tool, and any proof from Azure: whether the Foundry service accepts the Scholar, whether the documentation can be reached from the app's network, and what a run really costs.

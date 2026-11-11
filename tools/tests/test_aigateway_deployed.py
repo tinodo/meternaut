@@ -85,7 +85,7 @@ class TheRulesAndTheRecordSayTheSame(unittest.TestCase):
                       "**Not needed on 2026-11-07, for the Operator's identity:**",
                       "this record did not read the service principal again, so whether the Agent Service needed it is not known.", "from inside the network in the Operator, passed 4 of 4", "the service never returns `apiFormat` for a model",
                       "**Done:** the owner ordered it (2026-11-07), the switch is True, and the real run was made on 2026-11-08 up to `cases-run`, four times: the agents were made with the model names of the gateway, the Investigator was refused at its first call in the first three runs, and the fourth run, with the Investigator on gpt-5.5 (`foundry`, `aigateway`, `cases`, `cases-run`), ran an investigation to its end",
-                      "**Next, and not part of this step:** faster reads for the Investigator (not built).", "**Done on 2026-11-08:** the judges ran through the gateway with the app's own identity, in the first real run of step 5: 3 cases, every step ok."):
+                      "**Afterwards:** faster reads for the Investigator (built; see *Faster reads* under *What stays open*).", "**Done on 2026-11-08:** the judges ran through the gateway with the app's own identity, in the first real run of step 5: 3 cases, every step ok."):
             self.assertIn(words, section, words)
         self.assertNotIn("has not been run", section)
 
