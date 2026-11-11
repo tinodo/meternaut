@@ -12,10 +12,11 @@ how to undo it; this tool is the same steps with a read first.
   G2  The resource providers that the AI security needs are registered in the subscription, Microsoft.Monitor among them (the OpenTelemetry ingestion of the component makes a managed Azure Monitor workspace).
   G3  The AI Gateway's own identity holds Monitoring Metrics Publisher on the component's data collection rule, so that the telemetry exporter can send. The rule is in a resource group that the platform
       manages, behind a deny assignment: no template and no Hub action can give the role. It needs the action base (which turns the ingestion on) to have run, and the endpoints a few minutes after it.
-  G4  The read-only identity of the independent drift check (the workflow drift.yml): a user-assigned managed identity, with a federated credential for the main branch of this repository, copied from the deploy
-      identity's own, and the role Reader on the project's resource group, which reaches the Foundry resource and the AI Gateway in it (read again at each of them, and given on the resource itself where the
-      group's role does not reach), and no other role. It lives next to the deploy identity (--identity-group), not in the project's group, where the deploy identity could change it, and it is not the deploy
-      identity. The repository variable DRIFT_CLIENT_ID is then set to its client id (the last line says how).
+  G4  The read-only identity of the independent drift check (the workflow drift.yml): a user-assigned managed identity, with a federated credential for the main branch of this repository, made from the
+      repository part of the deploy identity's own credential (the one for the environment `hub`: the branch takes the place of the environment), and the role Reader on the project's resource group, which
+      reaches the Foundry resource and the AI Gateway in it (read again at each of them, and given on the resource itself where the group's role does not reach), and no other role. It lives next to the
+      deploy identity (--identity-group), not in the project's group, where the deploy identity could change it, and it is not the deploy identity. The repository variable DRIFT_CLIENT_ID is then set to its
+      client id (the last line says how).
 
 `check` only reads. `grant` is a dry run unless it is given --apply, then makes only what is missing, each step once, reads again and says what it found. It adds and never deletes or changes. It refuses to run in a
 pipeline (GITHUB_ACTIONS=true): a hand step is the one thing that does not go through a workflow. With --apply and no terminal it needs --yes. Nothing secret is read or printed: ids and states only.
@@ -40,7 +41,10 @@ MONITORING_METRICS_PUBLISHER = "3913510d-42f4-4e42-8a64-420c390055eb"
 READER_ROLE = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 PROVIDERS = ("Microsoft.Authorization", "Microsoft.Insights", "Microsoft.OperationalInsights", "Microsoft.PolicyInsights", "Microsoft.Monitor")
 DRIFT_IDENTITY = "id-meternaut-drift"
-CREDENTIAL_NAME = "github-main"
+CREDENTIAL_NAME = "github-main"  # the drift identity's credential: its subject is this repository's main branch, because drift.yml runs on main with no environment
+DEPLOY_CREDENTIAL = "github-hub-env"  # the deploy identity's credential: its subject is this repository's environment `hub` (environment/BOOTSTRAP.md); the repository part of it is the one that G4 needs
+ENVIRONMENT_SUFFIX = ":environment:hub"
+MAIN_SUFFIX = ":ref:refs/heads/main"
 ISSUER = "https://token.actions.githubusercontent.com"
 AUDIENCE = "api://AzureADTokenExchange"
 COMPONENT = "appi-meternaut"
@@ -139,6 +143,14 @@ class Setup:
         return ["identity", "federated-credential", "create", "--identity-name", DRIFT_IDENTITY, "--resource-group", self.identity_group, "--name", CREDENTIAL_NAME, "--issuer", ISSUER,
                 "--subject", subject, "--audiences", AUDIENCE, "--output", "none"]
 
+    def main_subject(self) -> str:
+        """The subject of this repository's main branch, with which drift.yml signs in. Its repository part is the one of the deploy identity's credential for the environment `hub`: the branch takes the
+        place of the environment. A credential that is not that of an environment `hub` is a Problem, so that a subject is never guessed."""
+        subject = self.read(["identity", "federated-credential", "show", "--identity-name", self.deploy_identity, "--resource-group", self.identity_group, "--name", DEPLOY_CREDENTIAL, "--query", "subject", "--output", "tsv"])
+        if not (subject.startswith("repo:") and subject.endswith(ENVIRONMENT_SUFFIX)):
+            raise Problem(f"the subject of the deploy identity's credential {DEPLOY_CREDENTIAL} is not the environment `hub` of a repository, so the subject of its main branch is not made from it")
+        return subject[: -len(ENVIRONMENT_SUFFIX)] + MAIN_SUFFIX
+
     def covers(self, scope: str, target: str) -> bool:
         """Whether a role assignment at `scope` reaches `target`: it is the target itself, a scope above it, the root, or a management group (which sits above every subscription)."""
         above = scope.lower().rstrip("/")
@@ -207,27 +219,27 @@ class Setup:
         principal, client = (exists.split() + ["", ""])[:2]
         if not GUID.match(principal):
             try:
-                subject = self.read(["identity", "federated-credential", "show", "--identity-name", self.deploy_identity, "--resource-group", self.identity_group, "--name", CREDENTIAL_NAME, "--query", "subject", "--output", "tsv"])
+                subject = self.main_subject()
                 location = self.read(["group", "show", "--name", self.identity_group, "--query", "location", "--output", "tsv"])
             except Problem as e:
-                return [Item("G4", UNREADABLE, f"The deploy identity's federated credential {CREDENTIAL_NAME} or the group {self.identity_group} could not be read: {e}")]
+                return [Item("G4", UNREADABLE, f"The subject of this repository's main branch could not be made from the deploy identity's federated credential {DEPLOY_CREDENTIAL}, or the group {self.identity_group} could not be read: {e}")]
             items.append(Item("G4", MISSING, f"The identity {DRIFT_IDENTITY} is not there. It would be made in {self.identity_group}.",
                               ["identity", "create", "--name", DRIFT_IDENTITY, "--resource-group", self.identity_group, "--location", location, "--output", "none"]))
-            items.append(Item("G4", MISSING, f"It would get a federated credential {CREDENTIAL_NAME} with the subject of the deploy identity's own (the main branch of this repository).", self.credential(subject)))
+            items.append(Item("G4", MISSING, f"It would get a federated credential {CREDENTIAL_NAME} with the subject of this repository's main branch.", self.credential(subject)))
             items.append(Item("G4", MISSING, "It would get the role Reader on the project's resource group, which holds the Foundry resource of the agents and the AI Gateway, so it reaches both (read again at each of them afterwards), and no other role.", None, "reader"))
             return items
         items.append(Item("G4", PRESENT, f"The identity {DRIFT_IDENTITY} is there."))
         try:
-            wanted = self.read(["identity", "federated-credential", "show", "--identity-name", self.deploy_identity, "--resource-group", self.identity_group, "--name", CREDENTIAL_NAME, "--query", "subject", "--output", "tsv"])
+            wanted = self.main_subject()
             subjects = self.read(["identity", "federated-credential", "list", "--identity-name", DRIFT_IDENTITY, "--resource-group", self.identity_group, "--query", "[].subject", "--output", "tsv"]).split()
         except Problem as e:
             return items + [Item("G4", UNREADABLE, f"The federated credentials could not be read: {e}")]
         if subjects == [wanted]:
-            items.append(Item("G4", PRESENT, "It has one federated credential, with the subject of the deploy identity's own (the main branch of this repository)."))
+            items.append(Item("G4", PRESENT, "It has one federated credential, with the subject of this repository's main branch."))
         elif not subjects:
-            items.append(Item("G4", MISSING, "It has no federated credential. It would get one with the subject of the deploy identity's own (the main branch of this repository).", self.credential(wanted)))
+            items.append(Item("G4", MISSING, "It has no federated credential. It would get one with the subject of this repository's main branch.", self.credential(wanted)))
         else:
-            items.append(Item("G4", DIFFERS, "Its federated credentials are not exactly the one of the deploy identity's subject. Nothing is changed here: a person looks at them."))
+            items.append(Item("G4", DIFFERS, "Its federated credentials are not exactly the one of this repository's main branch. Nothing is changed here: a person looks at them."))
         try:
             held = [tuple(line.split("\t")) for line in self.read(["role", "assignment", "list", "--assignee-object-id", principal, "--all", "--fill-principal-name", "false", "--fill-role-definition-name", "false",
                                                                   "--query", "[].[scope, roleDefinitionId]", "--output", "tsv", "--only-show-errors"]).splitlines() if line.strip()]
