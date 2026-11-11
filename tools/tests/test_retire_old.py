@@ -854,7 +854,7 @@ class TheHubAction(unittest.TestCase):
             self.assertIn(words, text)
 
     def test_no_new_input_is_added_for_it(self):
-        inputs = re.findall(r"^      ([a-z_]+):$", WORKFLOW[WORKFLOW.index("    inputs:\n"):WORKFLOW.index("  workflow_call:\n")], re.M)
+        inputs = re.findall(r"^      ([a-z_]+):$", WORKFLOW[WORKFLOW.index("    inputs:\n"):WORKFLOW.index("\npermissions:\n")], re.M)
         self.assertEqual(inputs, ["action", "minutes", "public_ai_gateway_requested", "public_teams_bot_requested", "plant_public_ip", "plant_vm", "evals_command", "evals_judge", "redteam_mode"],
                          "minutes is the input of page-latency; plant_vm is an input of plant (2026-11-08, the families of change); the last three are the inputs of the checks of the agents: retire-old has none")
         self.assertNotIn("inputs.minutes", step("Delete what Meternaut does not use any more, in the project's resource group"))

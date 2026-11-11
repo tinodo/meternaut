@@ -16,7 +16,7 @@ door    The console serves a person only after Microsoft Entra has signed them i
     has to refuse it. That is asked of /, of /ok/<id> and of /arm/return with a code and a state, the page that takes a value from the address.
 
         --host is the name that people open: the console's host name behind the platform's Application Gateway when there is one (the Hub workflow reads it
-        from the repository variable CONSOLE_HOST_NAME), the app's own name otherwise. With --proxied it is the name of a reverse proxy, and a redirect to the
+        from the secret CONSOLE_HOST_NAME of the environment hub), the app's own name otherwise. With --proxied it is the name of a reverse proxy, and a redirect to the
         sign-in has to carry that name too: the return address that the platform's sign-in builds (redirect_uri, or post_login_redirect_uri when the redirect is
         the sign-in's own) must name --host and not the app's own name, which a closed app cannot answer on. A redirect that shows no return address with a host
         in it passes, and the line says so. Without --proxied the check is what it was.

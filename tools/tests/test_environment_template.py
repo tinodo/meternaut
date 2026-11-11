@@ -357,8 +357,10 @@ class Workflow(unittest.TestCase):
             self.assertNotIn(gone, offered)
             self.assertNotIn(f"inputs.action == '{gone}'", self.text)
         for word in ("listSecrets", "primaryKey", "GATEWAY_SMOKE_KEY", "environment-smoke", "check_limits", "CHECK_LIMITS", "environment/gateway", "contract.json", "contract-policy", "contract_files",
-                     "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "Microsoft.ApiManagement/service", "--apim", "/loggers", "identity list", "CONTRACT_"):
+                     "GATEWAY_RESOURCE_ID", "GATEWAY_PRINCIPAL_ID", "GATEWAY_CLIENT_ID", "RECORDING_FRAGMENTS", "Microsoft.ApiManagement/service", "--apim", "/loggers", "CONTRACT_"):
             self.assertNotIn(word, self.text, word)
+        self.assertEqual(self.text.count("identity list"), 1, "the one listing of identities is the step that masks the ids of the project's own group; no step looks for the identity of a gateway")
+        self.assertIn('az identity list --resource-group "$ENV_RESOURCE_GROUP"', self.text)
         self.assertNotRegex(self.text, r"(?<!ai)gateway-prep\.py", "the tool that read and changed the instance is gone (tools/aigateway-prep.py is the AI Gateway's own)")
         names = self.names()
         for old in ("Read the gateway and its Application Insights", "Make the gateway identity", "Work out the settings with the identity's principal", "Find the gateway identity",
@@ -1504,13 +1506,18 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotRegex(script, r"--method (put|patch|post|delete)")
         self.assertEqual(self.text.count("console-check.py door"), 1)
 
-    def test_the_summary_of_cases_prints_the_system_assigned_principal_read_from_the_app_and_says_none_yet_when_there_is_none(self):
-        for title, site_variable, summary in (("The cases app lists its four functions", "SITE_ID", "Identity of the cases app (object id)"),):
+    def test_the_summary_of_cases_says_whether_the_app_has_an_identity_of_its_own_and_prints_no_object_id_because_the_summary_is_public(self):
+        for title, site_variable in (("The cases app lists its four functions", "SITE_ID"),):
             block = self.step(title)
             script = "\n".join(line for line in block.split("run:")[1].splitlines() if not line.strip().startswith("#"))
             self.assertIn(f'system_principal=$(az rest --method get --url "https://management.azure.com${{{site_variable}}}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)', script, title)
-            self.assertIn("if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then system_principal=\"none yet\"; fi", script, title)
-            self.assertIn(summary, script, title)
+            self.assertIn("if grep -Eq '^[0-9a-fA-F-]{36}$' <<< \"$system_principal\"; then", script, title)
+            self.assertIn("printf '::add-mask::%s\\n::add-mask::%s\\n' \"$system_principal\" \"${system_principal^^}\"", script, "the object id is masked the moment it is read")
+            self.assertIn("The cases app has an identity of its own, a system-assigned one: $has_identity.", script, title)
+            self.assertNotIn("Identity of the cases app (object id)", script, title)
+            for line in script.splitlines():
+                if "echo" in line:
+                    self.assertNotIn("$system_principal", line, "the object id is printed nowhere: the summary of a public repository is public")
             self.assertIn("It is the app's own system-assigned identity.", script, title)
             self.assertRegex(script, r"This workflow gives (none of them|neither)", title)
             self.assertNotRegex(script, r"--method (put|patch|post|delete)", title)
@@ -1522,7 +1529,7 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_old_user_assigned_identity_of_the_cases_app_is_neither_looked_for_nor_removed_by_the_workflow_because_retire_needs_it_and_a_person_removes_it_and_the_workflow_names_the_usage_identity_nowhere(self):
         # tools/access-requirements.py retire finds the grants of an identity by its object id: Azure keeps the grants of a deleted identity as "Identity not found", and the tool cannot tell
         # whose they were. The deployment identity cannot see the grants outside the project's group, so the workflow cannot know that they are gone: it leaves the identities alone.
-        code = "\n".join(line for step in self.steps if "run:" in step for line in step.split("run:", 1)[1].splitlines()
+        code = "\n".join(line for step in self.steps if "run:" in step and not step.startswith("name: Mask the identities that exist in the project's resource group") for line in step.split("run:", 1)[1].splitlines()
                          if not line.strip().startswith("#") and "echo" not in line)
         for word in ("id-meternaut-cases", "id-meternaut-usage", "cases_identity_name", "usage_identity_name", "OLD_IDENTITY", "az identity delete", "az identity show"):
             self.assertNotIn(word, code, word)
@@ -2631,7 +2638,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(self.text.count("uses: azure/login@"), 13, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the thirteen are the first, the two of the Teams bot's action, one before its publish and one before its read-back, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, and the one before the read-back of the AI security and the one before the read-back of the telemetry exporter)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
-        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30", "seconds": 2400,
+        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only", "seconds": 2400,
                                  "minutes": 50}}
         for title, want in expected.items():
             block, script = self.step(title), self.script(title)
@@ -2652,9 +2659,9 @@ class OperatorChecksWorkflow(unittest.TestCase):
                 self.assertNotIn(word, block, f"{title}: {word}")
 
     def test_the_arguments_of_the_runner_before_the_change_are_still_the_ones_that_the_tool_takes(self):
-        # cases-check.py run --storage-account --insights --minutes 30: the storage account replaces the namespace, and nothing else of the arguments changed
+        # cases-check.py run --storage-account --insights --minutes 30: the storage account replaces the namespace, and nothing else of the arguments changed; --counts-only (a public log) was added
         cases = text("tools/cases-check.py")
-        for option in ("--storage-account", "--insights", "--minutes", "--summary"):
+        for option in ("--storage-account", "--insights", "--minutes", "--summary", "--counts-only"):
             self.assertIn(f'run.add_argument("{option}"', cases)
         self.assertNotIn("--namespace", cases)
         self.assertNotIn("--no-send", cases, "the tool keeps its behaviour: it puts its message in the queue itself")

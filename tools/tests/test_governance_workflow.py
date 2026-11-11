@@ -170,7 +170,7 @@ if [ "$1" = "tools/source-digest.py" ]; then printf '%s\\n' "$FAKE_DIGEST"; fi
 
     def release(self, **env):
         return ws.run_step_script("Work out which release the cases app is given, the commit and the digest of its own files", {"python3": self.PYTHON},
-                                  {"HUB_SOURCE_SHA": COMMIT, "FAKE_DIGEST": DIGEST, **env})
+                                  {"GITHUB_SHA": COMMIT, "FAKE_DIGEST": DIGEST, **env})
 
     def test_the_commit_of_the_run_and_the_digest_of_the_apps_files_become_two_outputs(self):
         done, lines, out = self.release()
@@ -179,7 +179,7 @@ if [ "$1" = "tools/source-digest.py" ]; then printf '%s\\n' "$FAKE_DIGEST"; fi
         self.assertEqual(lines, ["python3 tools/source-digest.py src/case-functions"])
 
     def test_a_commit_or_a_digest_that_is_not_one_stops_the_run_before_anything_is_changed(self):
-        for env in ({"HUB_SOURCE_SHA": "main"}, {"HUB_SOURCE_SHA": COMMIT[:39]}, {"FAKE_DIGEST": "abc"}, {"FAKE_DIGEST": ""}):
+        for env in ({"GITHUB_SHA": "main"}, {"GITHUB_SHA": COMMIT[:39]}, {"FAKE_DIGEST": "abc"}, {"FAKE_DIGEST": ""}):
             with self.subTest(env=env):
                 done, _, out = self.release(**env)
                 self.assertNotEqual(done.returncode, 0)
@@ -543,7 +543,7 @@ echo "python3 $*" >> "$FAKE_LOG"
 """
 
     def run_it(self, **env):
-        return ws.run_step_script(self.TITLE, {"python3": self.PYTHON}, {"HUB_SOURCE_SHA": COMMIT, "CASES_PUBLIC_ACCESS": "Enabled", **SETTINGS, "ACTION": "drift-check", **env})
+        return ws.run_step_script(self.TITLE, {"python3": self.PYTHON}, {"GITHUB_SHA": COMMIT, "CASES_PUBLIC_ACCESS": "Enabled", **SETTINGS, "ACTION": "drift-check", **env})
 
     def test_the_tool_gets_the_group_the_files_this_commit_and_the_app_folder_and_no_write_and_no_directory(self):
         done, lines, _ = self.run_it()
@@ -580,7 +580,7 @@ class TheSummaryAndTheDescription(unittest.TestCase):
 
     def test_the_summary_of_the_new_actions_names_the_hand_steps_and_never_a_value_of_the_estate(self):
         block = step(HUB, "What was done")
-        for words in ("step G1 of environment/BOOTSTRAP.md", "step G2", "step G3", "the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY", "UNKNOWN is never PASS", "the e-mail holds the rule's name, a count and a link, and never a line of the telemetry"):
+        for words in ("step G1 of environment/BOOTSTRAP.md", "step G2", "step G3", "the secrets DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY", "UNKNOWN is never PASS", "the e-mail holds the rule's name, a count and a link, and never a line of the telemetry"):
             self.assertIn(words, block, words)
 
 

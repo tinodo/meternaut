@@ -433,7 +433,10 @@ printf '%s' "$FAKE_ANSWER"
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertEqual(out, f"host={self.HOST}\n")
         self.assertIn(f"The service reports the host name of the gateway {GATEWAY}.", done.stdout)
-        self.assertNotIn(self.HOST, done.stdout, "the host name is an output and is not printed")
+        for line in done.stdout.splitlines():
+            if self.HOST in line:
+                self.assertEqual(line, f"::add-mask::{self.HOST}", "the host name is an output and is printed nowhere but in the command that masks it")
+        self.assertIn(f"::add-mask::{self.HOST}", done.stdout.splitlines(), "the host name is masked as soon as it is read")
         (call,) = lines
         self.assertEqual(call, f"az rest --method get --url https://management.azure.com/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}/providers/Microsoft.ApiManagement/aigateways/{GATEWAY}"
                                "?api-version=2025-09-01-preview --query properties.frontend.defaultHostname --output tsv")

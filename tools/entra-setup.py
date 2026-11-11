@@ -23,7 +23,7 @@ only as a signed-in person. The return address of the second sign-in is https://
 https://<host>/.auth/login/aad/callback.
 
 <host> is the name that people open. While the function app takes public traffic it is the app's own name, <app>.azurewebsites.net. Once the app is closed and
-the platform's Application Gateway forwards to it, it is the console's host name on that gateway (the repository variable CONSOLE_HOST_NAME): both return
+the platform's Application Gateway forwards to it, it is the console's host name on that gateway (the secret CONSOLE_HOST_NAME of the environment hub): both return
 addresses name that host, because the sign-in sends a person back to the host that the person came on (docs/proposals/07-private-by-default.md). Run the tool
 again with the new host before the variable is set. It only adds the addresses of the new host: the addresses of the app's own name stay, shown as a note,
 until a person removes them in the portal.
@@ -56,8 +56,8 @@ The items, in order:
   8  The consent of the tenant's administrator for User.Read, so that nobody is asked to consent at the first sign-in.
   9  The same consent for user_impersonation of Azure Service Management.
 
-At the end it prints the client id of the app registration: that is the repository variable CONSOLE_APP_CLIENT_ID, which the template reads (a client id is
-an identifier, not a secret). The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
+At the end it prints the client id of the app registration: that is the secret CONSOLE_APP_CLIENT_ID of the environment hub, which the template reads (a client id is
+an identifier, not a credential; it is a secret there so that GitHub masks it in the public log). The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 
 The Teams channel (docs/proposals/13-teams-and-outlook.md) needs no app registration: its bot IS a user-assigned managed identity (the Azure Bot's app type
 UserAssignedMSI), so there is no secret, no certificate and no federated credential to make here. What is left in Microsoft Entra and Microsoft Teams is read, and
@@ -577,7 +577,7 @@ def report(items: list[Item], state: State, cfg: Config, out: Callable[[str], No
     done = sum(1 for i in items if i.state == "present")
     out(f"{done} of {len(items)} in order.")
     if state.app:
-        out(f"Client id of the app registration (the repository variable CONSOLE_APP_CLIENT_ID): {state.app['appId']}")
+        out(f"Client id of the app registration (the secret CONSOLE_APP_CLIENT_ID of the environment hub): {state.app['appId']}")
     for line in guidance(items, state, cfg):
         out(line)
     return done == len(items)
@@ -753,7 +753,7 @@ def command_apply(args: argparse.Namespace, graph: Graph, cfg: Config, out: Call
         if all(i.state == "present" for i in items):
             out("Nothing to make.")
             if state.app:
-                out(f"Client id of the app registration (the repository variable CONSOLE_APP_CLIENT_ID): {state.app['appId']}")
+                out(f"Client id of the app registration (the secret CONSOLE_APP_CLIENT_ID of the environment hub): {state.app['appId']}")
             return 0
         out("Nothing that this tool can make is missing.")
         for line in guidance(items, state, cfg):

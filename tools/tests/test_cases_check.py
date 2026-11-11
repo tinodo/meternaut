@@ -503,6 +503,64 @@ class Run(unittest.TestCase):
         self.assertTrue(summary.endswith("..."))
         self.assertNotIn("\x1b", out)
 
+    def a_run_that_names_the_estate(self):
+        events = a_good_run()
+        events[0] = event("run.started", trigger="control", subscriptions=23, scopes=["11111111", "22222222"], scopeFrom="estate", detectors=["orphan-private-endpoint"])
+        events.insert(1, event("run.note", note="subscription 99999999-aaaa-bbbb-cccc-dddddddddddd could not be read"))
+        events[-1:-1] = an_investigation(note="the Skeptic wrote about rg1 and the disk d1")
+        return events
+
+    def test_counts_only_prints_the_numbers_and_the_statuses_and_no_name_text_or_subscription_of_the_estate(self):
+        code, out, err, _ = self.go([telemetry(self.a_run_that_names_the_estate())], "--counts-only")
+        self.assertEqual((code, err), (0, ""))
+        for text in ("The Watch read 23 subscriptions (every subscription that the app's identity can read).",
+                     "The run ended well after 41 seconds (started by the control).",
+                     "Leads 2; cases taken 1: proposed 0, needs a person 1, dropped 0, errors 0; tokens of the Detective and the Skeptic 1960.",
+                     "Notes of the run: 1, not shown in a public log; they are in the History, in the app's telemetry.",
+                     "Leads by detector: orphan-managed-disk 1, orphan-private-endpoint 1",
+                     "It ended well after 190 seconds: 14 tool calls and 52100 tokens through Foundry; findings kept 1, dropped 1; cases opened 2, resources held back by a guard 0.",
+                     "Why: not shown in a public log; it is in the History, in the app's telemetry.",
+                     "Finding 1: proposal delete, confidence 0.85; 3 resources claimed, 2 left after the checks of code",
+                     "their cost of the last 30 days 12.40 USD (Cost Management cost lines, not an invoice); the Skeptic: agree; kept",
+                     "Finding 2: proposal change, confidence 0.4;", "the Skeptic: no verdict; dropped",
+                     "1. orphan-private-endpoint: microsoft.network/privateendpoints",
+                     "status needs_human, confidence 0.8; cost of the last 30 days 3.10 USD (Cost Management cost lines, not an invoice); monthly saving if removed 3.10 USD",
+                     "step detective gpt-6-luna: ok, 900+210 tokens, 3100 ms"):
+            self.assertIn(text, out)
+        for text in ("pe1", "rg1", "11111111", "22222222", "99999999-aaaa", "The connection was never approved.", "It may be in use", "managed-group", "Two of them carried no traffic",
+                     "Looks too big", "cost by service", "private endpoints", "no handle was proven", "the Skeptic wrote", "What it says it examined", "Note:", "summary:", "objections:", "guards:"):
+            self.assertNotIn(text, out, text)
+
+    def test_counts_only_does_not_show_why_a_run_failed_or_what_the_app_warned_about(self):
+        code, out, _, _ = self.go([telemetry([event("run.started", trigger="control"), event("run.failed", reason="the disk d1 of rg1 could not be read")])], "--counts-only")
+        self.assertEqual(code, 1)
+        self.assertIn("The run failed. Why: not shown in a public log; it is in the History, in the app's telemetry.", out)
+        self.assertNotIn("d1", out)
+        empty = {"tables": [{"rows": []}]}
+        warned = {"tables": [{"rows": [["2026-11-04T13:00:00Z", "The disk d1 of rg1 could not be read"]]}]}
+        code, out, _, asked = self.go([empty, empty, empty, warned], "--counts-only", "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("no end of the run arrived in the telemetry within 1 minutes (0 lines of the run arrived)", out)
+        self.assertIn("The last warnings and errors of the cases app are not shown in a public log", out)
+        self.assertNotIn("d1", out)
+        self.assertEqual(len(asked), 3, "the warnings are not even asked for")
+
+    def test_counts_only_does_not_print_what_azure_said_while_the_telemetry_could_not_be_read(self):
+        code, out, _, _ = self.go([Exception, telemetry(a_good_run())], "--counts-only")
+        self.assertEqual(code, 0)
+        self.assertIn("The telemetry could not be read yet (what Azure said is not shown in a public log); waiting.", out)
+        self.assertNotIn("Forbidden", out)
+
+    def test_without_counts_only_the_lines_are_what_they_were(self):
+        _, plain, _, _ = self.go([telemetry(self.a_run_that_names_the_estate())])
+        for text in ("; the first: 11111111, 22222222.", "Note: subscription 99999999-aaaa-bbbb-cccc-dddddddddddd could not be read", "1. orphan-private-endpoint: pe1 (microsoft.network/privateendpoints, rg1)",
+                     "summary: The connection was never approved.", "What it says it examined: cost by service; private endpoints", "Why: the Skeptic wrote about rg1 and the disk d1",
+                     "dropped: no handle was proven"):
+            self.assertIn(text, plain, text)
+
+    def test_counts_only_is_an_option_of_run_alone(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cc.main(["functions", "--site", SITE, "--counts-only"], azure(lambda args: (0, "{}", "")))
 
 def component(**properties):
     """What Resource Manager says of a component. It holds more than the checker may keep: the instrumentation key and the connection string must reach no line."""

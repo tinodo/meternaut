@@ -7,15 +7,19 @@ name: Hub
 # of step 2 (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py) is on in code, and the order of the real run is aigateway, about ten minutes, foundry, cases, cases-run. The outcome of that run is recorded in the
 # changelog afterwards. Its front door is public only: the action aigateway stops at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows.
 # The usage recording (made for the calls of that instance) and the first model account were removed on 2026-11-07 because nothing used them any more: the action retire-old deletes what is left of them.
-# Nothing starts this workflow but a click on "Run workflow" in the Actions tab. It signs
-# in to Azure with OpenID Connect and a credential that exists only for the main branch, so a copy of this file on any
-# other branch cannot sign in. "what-if" reads and changes nothing.
-# It does not run the tests again (the owner's quota of GitHub Actions minutes is limited: AGENTS.md rule 35). The unit tests, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI
-# (checks.yml), when a commit is pushed to main, and the first step of every run here asks GitHub, read only, whether CI passed for exactly this commit and stops the run, whatever its action, when it did not.
+# Nothing starts this workflow but a click on "Run workflow" in the Actions tab (workflow_dispatch), by the owner's account, on main: the guard of the job says so, and tools/workflow-lint.py fails a change that would
+# make it start any other way. It runs in this repository, which is public, so a run costs no minutes of GitHub Actions and its log is readable by anyone. That is why every identifier of the owner's estate is a secret of
+# the GitHub environment hub: GitHub masks a secret in the log and in a step summary from the first line, the `env:` block that the runner prints at the head of a step before any step of ours could mask anything
+# included, and it does not mask a variable. Only plain configuration (the resource group, the region, the budget and the switch of the Teams bot) is a variable. Nothing is published as an output of the job: GitHub redacts
+# an output that holds a registered secret, so it would arrive empty. The step "Mask the identifiers of the estate" is the second line (it also covers the forms of a secret that GitHub does not know), and a step that reads an
+# identity or a client id from Azure masks it as soon as it has read it.
+# The job is bound to the environment hub, which accepts a deployment from the branch main alone. It signs in to Azure with OpenID Connect and azure/login, as the deploy identity, whose federated credential trusts the subject
+# of that environment and no other: no pull request, no other branch and no other environment can sign in, and no credential is stored anywhere. main is protected by a ruleset (a pull request and the check `checks`, no force push,
+# no deletion, no bypass), and what is on main is what runs with the deploy identity, so a change to .github/, tools/, environment/, the tests or AGENTS.md is read in full before it is merged (AGENTS.md rule 37).
+# "what-if" reads and changes nothing.
+# It does not run the tests again (AGENTS.md rule 35). The unit tests, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI (checks.yml), when a commit is pushed to main, and an early step of every
+# run here asks GitHub, read only, whether CI passed for exactly this commit and stops the run, whatever its action, when it did not.
 # What it does, and what to set up once before the first run: environment/BOOTSTRAP.md.
-# It can also be CALLED (on: workflow_call) by the one workflow of a private deploy repository (environment/deploy-repo/README.md). The logs, the variables, the secrets, the OpenID Connect credential and the minutes of
-# a run are then that repository's, and this public repository holds none of them. In a called run the `github` context is the caller's, so the files of this workflow (the tools, the templates, the app) are checked out
-# from the `job` context (job.workflow_repository at job.workflow_sha), and the commit that CI has to have passed for is that one too: tools/workflow-lint.py fails a step that reads the caller's commit or repository.
 
 on:
   workflow_dispatch:
@@ -102,65 +106,6 @@ on:
           - auto
           - cloud
           - dataset
-  # Called by the workflow of a private deploy repository (environment/deploy-repo/README.md): that repository's variables, secrets, OpenID Connect credential, logs and minutes are used, and this repository
-  # holds none. The inputs are those of workflow_dispatch above, with the same names. A call has no input of the type choice, so the first steps of the job refuse a value that the Hub does not know. The caller
-  # passes the three secrets by name and never `secrets: inherit`, and the variables that the job reads (`vars`) are those of the caller's repository, not of this one.
-  workflow_call:
-    inputs:
-      action:
-        description: "The same as the input action above. A value that the Hub does not know is refused by the first steps of the job."
-        type: string
-        required: true
-      minutes:
-        description: "The same as the input minutes above."
-        type: string
-        required: false
-        default: "20"
-      public_ai_gateway_requested:
-        description: "The same as the input of this name above: set only on the owner's written request."
-        type: boolean
-        required: false
-        default: false
-      public_teams_bot_requested:
-        description: "The same as the input of this name above: set only on the owner's written request."
-        type: boolean
-        required: false
-        default: false
-      plant_public_ip:
-        description: "The same as the input of this name above."
-        type: boolean
-        required: false
-        default: false
-      plant_vm:
-        description: "The same as the input of this name above."
-        type: boolean
-        required: false
-        default: false
-      evals_command:
-        description: "The same as the input of this name above: probe, run, rule or rule-apply."
-        type: string
-        required: false
-        default: probe
-      evals_judge:
-        description: "The same as the input of this name above: none, connection or auto."
-        type: string
-        required: false
-        default: none
-      redteam_mode:
-        description: "The same as the input of this name above: auto, cloud or dataset."
-        type: string
-        required: false
-        default: auto
-    secrets:
-      AZURE_CLIENT_ID:
-        description: "The client id of the deploy identity. It is not a password: azure/login signs in with it by OpenID Connect."
-        required: true
-      AZURE_TENANT_ID:
-        description: "The id of the tenant."
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        description: "The id of the subscription that holds the project's resource groups."
-        required: true
 
 permissions:
   contents: read
@@ -180,27 +125,31 @@ jobs:
   hub:
     name: Hub (${{ inputs.action }})
     if: github.actor == 'tinodo' && github.ref == 'refs/heads/main'
+    # The environment hub: it accepts a deployment from the branch main alone, it holds the identifiers of the estate as secrets, and the federated credential of the deploy identity trusts its subject and no other (environment/BOOTSTRAP.md).
+    environment: hub
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
       ACTION: ${{ inputs.action }}
+      # The identifiers of the owner's estate are secrets of the environment hub: this repository is public, its logs are public, GitHub masks a secret in the log and in a step summary and does not mask a variable. None is a
+      # credential (each is an identifier, an address or a list of them), and an unset secret reads as an empty string, which the tools take as not set. The resource group, the region and the budget are plain configuration and stay variables.
       ENV_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}
       ENV_LOCATION: ${{ vars.ENV_LOCATION }}
-      ENV_VNET_PREFIX: ${{ vars.ENV_VNET_PREFIX }}
-      ENV_PE_SUBNET_PREFIX: ${{ vars.ENV_PE_SUBNET_PREFIX }}
-      ENV_DNS_SERVERS: ${{ vars.ENV_DNS_SERVERS }}
-      ENV_OWNER: ${{ vars.ENV_OWNER }}
+      ENV_VNET_PREFIX: ${{ secrets.ENV_VNET_PREFIX }}
+      ENV_PE_SUBNET_PREFIX: ${{ secrets.ENV_PE_SUBNET_PREFIX }}
+      ENV_DNS_SERVERS: ${{ secrets.ENV_DNS_SERVERS }}
+      ENV_OWNER: ${{ secrets.ENV_OWNER }}
       ENV_BUDGET_AMOUNT: ${{ vars.ENV_BUDGET_AMOUNT }}
-      ENV_ALERT_EMAILS: ${{ vars.ENV_ALERT_EMAILS }}
-      CONSOLE_APP_CLIENT_ID: ${{ vars.CONSOLE_APP_CLIENT_ID }}
-      CONSOLE_PEOPLE: ${{ vars.CONSOLE_PEOPLE }}
-      CONSOLE_HOST_NAME: ${{ vars.CONSOLE_HOST_NAME }}
-      MAIL_SENDER: ${{ vars.MAIL_SENDER }}
+      ENV_ALERT_EMAILS: ${{ secrets.ENV_ALERT_EMAILS }}
+      CONSOLE_APP_CLIENT_ID: ${{ secrets.CONSOLE_APP_CLIENT_ID }}
+      CONSOLE_PEOPLE: ${{ secrets.CONSOLE_PEOPLE }}
+      CONSOLE_HOST_NAME: ${{ secrets.CONSOLE_HOST_NAME }}
+      MAIL_SENDER: ${{ secrets.MAIL_SENDER }}
       # What the owner has accepted of the policy state at the project's group (tools/drift-check.py): the policy exemptions that he knows of, and the policies with the effect Deny that are non-compliant and that he knows of.
-      # They are repository variables and not files, because they name the landing zone's own policies. Unset: those two controls say UNKNOWN and print what they found, so that he can accept it; the word none accepts nothing.
-      DRIFT_ACCEPTED_EXEMPTIONS: ${{ vars.DRIFT_ACCEPTED_EXEMPTIONS }}
-      DRIFT_ACCEPTED_DENY: ${{ vars.DRIFT_ACCEPTED_DENY }}
+      # They are secrets of the environment and not files, because they name the landing zone's own policies. Unset: those two controls say UNKNOWN and print what they found, so that he can accept it; the word none accepts nothing.
+      DRIFT_ACCEPTED_EXEMPTIONS: ${{ secrets.DRIFT_ACCEPTED_EXEMPTIONS }}
+      DRIFT_ACCEPTED_DENY: ${{ secrets.DRIFT_ACCEPTED_DENY }}
       PLANTED_ID: r${{ github.run_number }}
       PLANT_PUBLIC_IP: ${{ inputs.plant_public_ip }}
       PLANT_VM: ${{ inputs.plant_vm }}
@@ -226,97 +175,77 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
-          # What a run prints is its log, and the runner also prints the `env:` block at the head of every step. GitHub masks the three secrets by itself, and it does not mask a variable (the resource group, the address
-          # ranges, the DNS servers, the owner's addresses, the console's host name and its people), nor a secret that Azure writes in another case. This step asks the runner to mask each of them, as it is and in lower
-          # and upper case, from the next step on. It is the second line: the logs of the deploy repository are private, and the first step that runs prints its own head before this one has run. A value of fewer than four
-          # characters is not masked, so that the log stays readable. Nothing is printed here but the mask commands, and a value is never shown. The region and the budget are not identifiers and are left alone.
+          # What a run prints is its log, and this repository is public, so the log is public. The identifiers of the estate are secrets of the environment hub, which GitHub masks by itself from the first line of the log, the `env:` block
+          # that the runner prints at the head of a step included, so no step has to ask for that. This step is the second line, for what GitHub does not know: a secret that Azure writes in another case, the parts of a list and the
+          # people of the console (a tool that prints one address of a list prints what no secret equals), the digest that ends the name of every resource of the project (it is worked out of the subscription and the resource group),
+          # and the start of every address of a network range (a subnet and the address of a private endpoint are worked out of the range). The runner is asked to mask each of them from the next step on. A value of fewer than four
+          # characters is not masked, so that the log stays readable, and neither is the word none, which is how the owner accepts nothing. Nothing is printed here but the mask commands, and a value is never shown. The resource group,
+          # the region and the budget are plain configuration and are left alone.
           mask() {
             local value="${1//$'\r'/}"
             [ "${#value}" -ge 4 ] || return 0
+            [ "${value,,}" != none ] || return 0
             value="${value//\%/%25}"
+            value="${value//$'\n'/%0A}"
             echo "::add-mask::$value"
             echo "::add-mask::${value,,}"
             echo "::add-mask::${value^^}"
           }
-          for value in "$ENV_SUBSCRIPTION_ID" "$AZURE_TENANT_ID" "$AZURE_CLIENT_ID" "$ENV_RESOURCE_GROUP" "$ENV_VNET_PREFIX" "$ENV_PE_SUBNET_PREFIX" "$ENV_OWNER" "$CONSOLE_APP_CLIENT_ID" "$CONSOLE_HOST_NAME" "$MAIL_SENDER"; do
+          for value in "$ENV_SUBSCRIPTION_ID" "$AZURE_TENANT_ID" "$AZURE_CLIENT_ID" "$ENV_VNET_PREFIX" "$ENV_PE_SUBNET_PREFIX" "$ENV_OWNER" "$CONSOLE_APP_CLIENT_ID" "$CONSOLE_HOST_NAME" "$MAIL_SENDER"; do
             mask "$value"
           done
-          for list in "$ENV_DNS_SERVERS" "$ENV_ALERT_EMAILS" "$CONSOLE_PEOPLE"; do
+          for list in "$ENV_DNS_SERVERS" "$ENV_ALERT_EMAILS" "$DRIFT_ACCEPTED_EXEMPTIONS" "$DRIFT_ACCEPTED_DENY"; do
             mask "$list"
             read -ra items <<< "$(printf '%s' "$list" | tr ',\n\r\t' '    ')"
             for item in "${items[@]}"; do
               mask "$item"
             done
           done
-
-      - name: Refuse a value that the Hub does not know
-        env:
-          EVALS_COMMAND: ${{ inputs.evals_command }}
-          EVALS_JUDGE: ${{ inputs.evals_judge }}
-          REDTEAM_MODE: ${{ inputs.redteam_mode }}
-        run: |
-          # GitHub holds a workflow that is started by hand to the options of an input of the type choice. A workflow that is called passes plain strings, because a call has no type choice, so the Hub holds each of them to its
-          # options itself, before anything is checked out, read or signed in to: an action that is misspelt would otherwise run every step that does not name it and look as if it had worked. The lists are those of the
-          # inputs of workflow_dispatch above, and a test fails when they differ. The value is not printed: it came from the caller.
-          refuse() {
-            echo "::error::The Hub does not know the value that was given for the input $1. Its options are those of the input of that name in the workflow. Nothing was changed."
-            exit 1
+          mask "$CONSOLE_PEOPLE"
+          while IFS= read -r item; do
+            mask "$item"
+          done < <(printf '%s' "$CONSOLE_PEOPLE" | grep -oE '"(oid|name|mail)"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/^"[a-z]+"[[:space:]]*:[[:space:]]*"(.*)"$/\1/' || true)
+          # The digest that ends the name of every resource: tools/environment-params.py digest(), the first eight digits of the SHA-256 of "<subscription>/<resource group>" in lower case.
+          if [ -n "$ENV_SUBSCRIPTION_ID" ] && [ -n "$ENV_RESOURCE_GROUP" ]; then
+            mask "$(printf '%s' "${ENV_SUBSCRIPTION_ID,,}/${ENV_RESOURCE_GROUP,,}" | sha256sum | cut -c1-8)"
+          fi
+          # The addresses that every address of a range starts with, as far as whole numbers go: 10.53.0. for 10.53.0.0/24, and 10.53. for 10.53.0.0/16 or a /22.
+          starts() {
+            local bits a b c d
+            [[ "$1" == */* ]] || return 0
+            bits="${1##*/}"
+            IFS=. read -r a b c d <<< "${1%%/*}"
+            [[ "$a.$b.$c.$d" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "$bits" =~ ^[0-9]{1,2}$ ]] || return 0
+            if [ "$bits" -ge 24 ]; then mask "$a.$b.$c."; elif [ "$bits" -ge 16 ]; then mask "$a.$b."; fi
           }
-          case "$ACTION" in
-            what-if | model-side | base | retire-old | retire-event-hubs | foundry | cases | cases-run | page-latency | plant | loop-check | operator | operator-probe | aigateway | aigateway-check | governance | gateway-telemetry | drift-check | agents-drift | foundry-evals | foundry-redteam | agent365-check | teams) ;;
-            *) refuse action ;;
-          esac
-          case "$EVALS_COMMAND" in
-            probe | run | rule | rule-apply) ;;
-            *) refuse evals_command ;;
-          esac
-          case "$EVALS_JUDGE" in
-            none | connection | auto) ;;
-            *) refuse evals_judge ;;
-          esac
-          case "$REDTEAM_MODE" in
-            auto | cloud | dataset) ;;
-            *) refuse redteam_mode ;;
-          esac
-          echo "Every value that was given is one that the Hub knows."
+          starts "$ENV_VNET_PREFIX"
+          starts "$ENV_PE_SUBNET_PREFIX"
 
       - name: The checks of CI have passed for this commit
         env:
           GH_TOKEN: ${{ github.token }}
-          HUB_SOURCE_REPOSITORY: ${{ job.workflow_repository }}
-          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # This run does not repeat the tests. The unit tests of the tools and of the app, the workflow lint, the Bicep lint and the selftest of the drift tool run once, in CI (checks.yml), when a commit is pushed
-          # to main: about five of the eight minutes that a run of this workflow took on average were those tests, and the owner's minutes of GitHub Actions are limited (AGENTS.md rule 35). What is asked here instead takes seconds,
+          # to main: about five of the eight minutes that a run of this workflow took on average were those tests, and a run still costs time (AGENTS.md rule 35). What is asked here instead takes seconds,
           # and it is asked of every action, the ones that only read as well: has the workflow checks.yml a completed, successful run for exactly this commit, started by a push to main? A run for a pull request, for another
           # commit, one that is still going and one that failed do not count, and nothing else of GitHub is looked at. It is a read of the list of runs with the run's own token (the permission actions: read); nothing is started or changed.
-          # This commit is the one of this workflow's own file: the commit that a call pins in the deploy repository (environment/deploy-repo/README.md) and, for a run started in this repository, the run's own commit. In a
-          # called run the `github` context is the caller's, so GITHUB_SHA and GITHUB_REPOSITORY would name the deploy repository, whose checks are not these. The list of the runs of a public repository can be read with any token.
-          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$HUB_SOURCE_SHA"; then
-            echo "::error::The commit of the code that this run deploys is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA"; then
+            echo "::error::The commit of this run is not a git commit id, so the checks of CI cannot be looked up. Nothing was changed."
             exit 1
           fi
-          if ! grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' <<< "$HUB_SOURCE_REPOSITORY"; then
-            echo "::error::The repository of the code that this run deploys is not a name of the form owner/repository, so the checks of CI cannot be looked up. Nothing was changed."
-            exit 1
-          fi
-          if ! passed=$(gh api "repos/$HUB_SOURCE_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$HUB_SOURCE_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
-            echo "::error::GitHub did not say whether the checks of CI passed for commit $HUB_SOURCE_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read, or the repository of the code could not be read."
+          if ! passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/checks.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&status=success&per_page=1" --jq '.total_count' 2>&1); then
+            echo "::error::GitHub did not say whether the checks of CI passed for commit $GITHUB_SHA ($(head -n 1 <<< "$passed")). Nothing was changed. Run the Hub again in a minute; if this stops it again, the workflow needs the permission actions: read."
             exit 1
           fi
           if ! grep -Eq '^[0-9]+$' <<< "$passed" || [ "$passed" -lt 1 ]; then
-            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $HUB_SOURCE_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). A call pins a commit of main whose checks have passed: pin another. Nothing was changed."
+            echo "::error::The checks have not passed for this commit: push it and let CI finish, then run the Hub again. What was looked for is a completed, successful run of the workflow checks.yml for commit $GITHUB_SHA that a push to main started; this run does not repeat the tests (AGENTS.md rule 35). Nothing was changed."
             exit 1
           fi
-          echo "The checks of CI (checks.yml) have passed for commit $HUB_SOURCE_SHA, so this run does not repeat them."
+          echo "The checks of CI (checks.yml) have passed for commit $GITHUB_SHA, so this run does not repeat them."
 
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # This workflow's own repository at its own commit. A plain checkout is the repository that started the run, which for a call is the deploy repository: the tools, the templates and the app that the steps below run would be
-          # whatever that repository holds. The pin of the call is what says which code deploys, and this is what makes the run use it.
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - name: Refuse the Teams bot unless the owner asked for a public endpoint in writing and the switch is on
@@ -372,10 +301,28 @@ jobs:
           # The workflow's identity may not read the directory, so the id is read from the claims of its own token (nothing else of the
           # token is read or printed). The id is used by the action aigateway, which reads the condition of this identity's right to assign roles before it makes the gateway.
           oid=$(python3 tools/cases-check.py whoami)
+          # The object id of the deploy identity is in the text of many Azure errors ("The client ... with object id ... does not have authorization"), and no secret equals it, so it is masked at once.
+          [ -z "$oid" ] || printf '::add-mask::%s\n::add-mask::%s\n' "$oid" "${oid^^}"
           echo "oid=$oid" >> "$GITHUB_OUTPUT"
 
       - name: The resource group is there
         run: az group show --name "$ENV_RESOURCE_GROUP" --query "{name:name, location:location, state:properties.provisioningState}" --output table
+
+      - name: Mask the identities that exist in the project's resource group
+        run: |
+          # The object id and the client id of an identity are in the text of Azure errors, in the output of a preview and in what a tool prints, and no secret equals them, so GitHub does not mask them, and this log is public.
+          # The identities of the project's resource group are read once, here, and each id is masked for the rest of the run: the user-assigned identities (both ids) and the identity of every resource that has one of its own
+          # (the apps, the Foundry resource, the AI Gateway). An identity that does not exist yet is masked by the step that reads it, the moment it is read. Nothing is changed, and nothing is printed but the mask commands and a count.
+          ids=$(az identity list --resource-group "$ENV_RESOURCE_GROUP" --query "[].[principalId, clientId]" --output tsv)
+          ids="$ids"$'\n'"$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --query "[].identity.principalId" --output tsv)"
+          masked=0
+          for id in $ids; do
+            if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$id"; then
+              printf '::add-mask::%s\n::add-mask::%s\n' "$id" "${id^^}"
+              masked=$((masked + 1))
+            fi
+          done
+          echo "Masked $masked identity ids of resource group $ENV_RESOURCE_GROUP."
 
       - name: Read the start date of the budget
         id: budget
@@ -427,16 +374,13 @@ jobs:
       - name: Work out which release the cases app is given, the commit and the digest of its own files
         id: release
         if: inputs.action == 'cases' || inputs.action == 'what-if'
-        env:
-          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # The release that this run deploys (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): the git commit that the run was made from, and the digest of the app's own files at that commit
           # (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, which is one of them, and a zip file would change with every run). The template
           # gives them to the app as the settings BUILD_COMMIT and PACKAGE_SHA256, and a later step writes them as tags of the app once the code has been published and the app answers, which is what a reader of the
           # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure. The preview (what-if) works it out too, so that it shows the two settings of the app changing to this
-          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them). The commit is the one of this workflow's file, which is the code
-          # that was checked out (the commit that a call pins), and not the caller's own commit.
-          commit="$HUB_SOURCE_SHA"
+          # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them).
+          commit="$GITHUB_SHA"
           if ! grep -Eq '^[0-9a-f]{40}$' <<< "$commit"; then
             echo "::error::The commit of this run is not a git commit id, so the release cannot be recorded. Nothing was changed."
             exit 1
@@ -502,6 +446,7 @@ jobs:
                   exit 1
                 fi
                 if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$cases_system_principal"; then cases_system_principal=""; fi
+                [ -z "$cases_system_principal" ] || printf '::add-mask::%s\n::add-mask::%s\n' "$cases_system_principal" "${cases_system_principal^^}"
                 if [ -n "$cases_system_principal" ]; then echo "The cases app's system-assigned identity exists; its principal id goes into the Foundry file and the AI Gateway file."; else echo "The cases app has no system-assigned identity yet (the action cases makes the app with it); the Foundry file holds a placeholder and the AI Gateway file gives no role to the app."; fi ;;
             esac
             # The Operator's own identity (id-meternaut-operator): the Foundry file gives it the Foundry User role on the project, which the tools that check the agents from inside the network need (agents-drift, foundry-evals and foundry-redteam:
@@ -521,6 +466,7 @@ jobs:
                 exit 1
               fi
               if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$operator_principal"; then operator_principal=""; fi
+              [ -z "$operator_principal" ] || printf '::add-mask::%s\n::add-mask::%s\n' "$operator_principal" "${operator_principal^^}"
               if [ -n "$operator_principal" ]; then echo "The Operator's identity exists; its object id goes into the Foundry file (the Foundry User role on the project)."; else echo "The Operator's identity is not there yet (the action operator makes it); the Foundry file asks for no role for it: run foundry again after operator."; fi
             fi
             case "$ACTION" in
@@ -566,6 +512,7 @@ jobs:
               fi
               if grep -Eq '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.ai\.gateway\.azure\.com$' <<< "$reported"; then
                 aigateway_host="$reported"
+                printf '::add-mask::%s\n' "$aigateway_host"
                 echo "The service reports the host name of the AI Gateway $gateway_name; it goes into the cases file (and into the Foundry file while the switch is on)."
               elif [ "$ACTION" = cases ]; then
                 echo "::error::The AI Gateway $gateway_name is not in Azure or has not reported its host name. Every model call of the cases app goes through it, so the Detective and the Skeptic have no route without it and the action cases does not deploy the app. Run aigateway first (the order is in environment/BOOTSTRAP.md). Nothing was changed." >&2
@@ -595,6 +542,7 @@ jobs:
                 fi
                 if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$reported"; then
                   project_principal="$reported"
+                  printf '::add-mask::%s\n::add-mask::%s\n' "$project_principal" "${project_principal^^}"
                   echo "The Foundry project's system-assigned identity exists; its object id goes into the AI Gateway file."
                 elif [ "$ACTION" = aigateway ]; then
                   echo "::error::The switch AGENTS_VIA_AI_GATEWAY (tools/environment-params.py) is True, and the Foundry project $foundry_project is not in Azure or has no identity of its own, so it cannot be given AI Gateway Models User on the gateway. Run foundry first, or set the switch back to False. Nothing was changed." >&2
@@ -660,6 +608,9 @@ jobs:
           cases_principal=$(guid "$cases_principal")
           project_principal=$(guid "$project_principal")
           operator_principal=$(guid "$operator_principal")
+          for id in "$cases_principal" "$project_principal" "$operator_principal"; do
+            [ -z "$id" ] || printf '::add-mask::%s\n::add-mask::%s\n' "$id" "${id^^}"
+          done
           echo "The identities of the access list that are there: the cases app's $(yesno "$cases_principal"), the Foundry project's $(yesno "$project_principal"), the Operator's $(yesno "$operator_principal")."
           # The landing zone's diagnostic setting of the Foundry resource, as the template's own is not counted (it sends to this project's workspace, and a second run finds it).
           diagnostics=false
@@ -979,6 +930,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is base, cases, operator). Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
             :
           elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
@@ -1017,6 +969,7 @@ jobs:
             echo "::error::The cases app $CASES_APP has no system-assigned identity. Run cases first: it makes the identity that gets its role on the project."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$principal" "${principal^^}"
           if ! grep -Fqi "\"$principal\"" "$RUNNER_TEMP/foundry.parameters.json"; then
             echo "::error::The parameter file of the Foundry resource does not carry the object id of the identity of $CASES_APP: the settings step reads it from the app when it builds the file, and it did not find this one. Nothing was deployed."
             exit 1
@@ -1447,6 +1400,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. The action $ACTION asks the app's health address from inside the network, in the Operator, so run operator first, and then $ACTION again. The code was published, and the health of the app was not checked."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
             :
           elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
@@ -1547,9 +1501,13 @@ jobs:
           SITE_ID: ${{ steps.cases.outputs.site }}
         run: |
           python3 tools/cases-check.py functions --site "$SITE_ID" --minutes 15 | tee "$RUNNER_TEMP/case-functions.txt"
-          # The app's own system-assigned identity is read from the app; "none yet" when the app has none.
+          # The app's own system-assigned identity is read from the app. Its object id is not printed: the log and the summary of a public repository are public, so it is masked at once and the summary says only whether the app has one.
           system_principal=$(az rest --method get --url "https://management.azure.com${SITE_ID}?api-version=2024-04-01" --query identity.principalId --output tsv 2>/dev/null || true)
-          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$system_principal"; then system_principal="none yet"; fi
+          has_identity=no
+          if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$system_principal"; then
+            has_identity=yes
+            printf '::add-mask::%s\n::add-mask::%s\n' "$system_principal" "${system_principal^^}"
+          fi
           {
             echo "### The cases app"
             echo
@@ -1557,7 +1515,7 @@ jobs:
             cat "$RUNNER_TEMP/case-functions.txt"
             echo '```'
             echo
-            echo "Identity of the cases app (object id): \`$system_principal\`. It is the app's own system-assigned identity. It reads the pilot subscription with two roles (Reader and Cost Management Reader), and it sends the letters with one Exchange role. This workflow gives none of them (environment/BOOTSTRAP.md). Until they exist, a run ends with an authorization error that \`cases-run\` shows. The application (client) id that the mailbox tool asks for cannot be read from the app, and the deployment identity may not read the directory: the owner's session reads it from the service principal."
+            echo "The cases app has an identity of its own, a system-assigned one: $has_identity. Its object id is not printed here, because this summary is public; the tools that need it read it from the app (tools/access-requirements.py with --cases-site), and a person reads it with their own sign-in. It is the app's own system-assigned identity. It reads the pilot subscription with two roles (Reader and Cost Management Reader), and it sends the letters with one Exchange role. This workflow gives none of them (environment/BOOTSTRAP.md). Until they exist, a run ends with an authorization error that \`cases-run\` shows. The application (client) id that the mailbox tool asks for cannot be read from the app, and the deployment identity may not read the directory: the owner's session reads it from the service principal."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove the first integration subnet of the cases app, snet-web, when it is still there and nothing uses it
@@ -1600,6 +1558,7 @@ jobs:
             echo "::error::The identity id-meternaut-runner could not be read: $principal"
             exit 1
           fi
+          [ -z "$principal" ] || printf '::add-mask::%s\n::add-mask::%s\n' "$principal" "${principal^^}"
           site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$FUNCTION_APP"
           carried=$(az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --query identity.userAssignedIdentities --output json 2>/dev/null || true)
           if grep -qi 'id-meternaut-runner' <<< "$carried"; then
@@ -1648,11 +1607,13 @@ jobs:
           # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
           dns=()
           for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          # The Watch reads every subscription that the app's identity can read, so its History names resources of other teams. This log and this summary are public, so the tool is asked for counts only (--counts-only): no name of a
+          # resource, no resource group, no subscription and no text of a finding or of a warning is printed, and the History itself stays in the app's telemetry, where the owner reads it.
           python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-check-$GITHUB_RUN_ID" \
             --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
             --secret-file "cases-check.py=tools/cases-check.py" --secret-file "check-helpers.py=tools/check-helpers.py" \
             --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
-            --env "TOOL_NAME=cases-check" --env "TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30" \
+            --env "TOOL_NAME=cases-check" --env "TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only" \
             "${dns[@]}" --timeout-seconds 2400 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Delete any container group of the checks that is left
@@ -1790,7 +1751,7 @@ jobs:
           # Without a sign-in nobody gets a page: the sign-in sends a visitor to Microsoft Entra, or, while it is not set up, the app refuses every request.
           # That holds for the return address of the Azure Resource Manager sign-in (/arm/return, with and without a code) like for every other page.
           # A made-up sign-in header is not served either. The site may need a minute after a publish.
-          # The door is the name that people open: the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set, which is the real front door then (the request
+          # The door is the name that people open: the console's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set, which is the real front door then (the request
           # goes from this runner through the gateway to the app's private endpoint, and the check also asks that the sign-in's return address names that host and not the app's own name), and the app's own
           # name when it is not. A closed app answers nobody outside the network, so when the app takes no public traffic and no host name is set this step does not run: the next step makes the same check
           # from inside the network, in the Operator (the output door_in_operator of the settings step says which of the two runs).
@@ -1834,6 +1795,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. The action $ACTION asks the web page's front door from inside the network, in the Operator, because the cases app takes no public traffic and no host name is set, so run operator first (the order is base, cases, operator), and then $ACTION again. The front door was not checked."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
             :
           elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
@@ -1905,6 +1867,7 @@ jobs:
             echo "::error::The deployment did not return the client id of the Operator's identity."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           echo "The Operator's identity and the subnet of its container groups are in resource group $ENV_RESOURCE_GROUP."
 
       - name: The resource provider of Container Instances is registered in the subscription
@@ -1985,6 +1948,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. Run operator first."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           # The names that have a private endpoint must resolve to a private address. The cases app has one (the action cases makes it), and the landing zone's policy
           # registers the names of an endpoint, the app's and its deployment site's, in its central zone some minutes after the endpoint is there. Until then, or where the landing zone has no policy
           # for those names, the answer is public, and the probe says FAIL: a private address was expected. The deployment site has a check of its own in the probe, which also asks for the status of a GET.
@@ -2305,6 +2269,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. The action $ACTION runs its check in the Operator, so run operator first (the order is foundry and cases, operator, aigateway). Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
             :
           elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
@@ -2341,6 +2306,7 @@ jobs:
             echo "::error::The service did not report a host name under .ai.gateway.azure.com for the gateway $GATEWAY_NAME (it may be still starting). Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n' "$host"
           echo "The service reports the host name of the gateway $GATEWAY_NAME."
           echo "host=$host" >> "$GITHUB_OUTPUT"
 
@@ -2468,7 +2434,7 @@ jobs:
         run: |
           # A deployment that says Succeeded does not say that the policy, the alert rules and the workbook came out as the template wrote them (AGENTS.md rule 19). The run fails unless the two assignments of the AI security are on
           # the group with the effects of tools/environment-params.py and enforced, every alert rule is on and tells the owner by e-mail, the workbook is there, and a diagnostic setting sends the Foundry resource's logs to a workspace.
-          # The policy exemptions are judged against what the owner accepted (the repository variable DRIFT_ACCEPTED_EXEMPTIONS): unset, the line says UNKNOWN and prints what it found. Only GET requests (tools/drift-check.py).
+          # The policy exemptions are judged against what the owner accepted (the secret DRIFT_ACCEPTED_EXEMPTIONS): unset, the line says UNKNOWN and prints what it found. Only GET requests (tools/drift-check.py).
           flags=()
           if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
           python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
@@ -2498,6 +2464,7 @@ jobs:
             echo "::error::The AI Gateway $GATEWAY_NAME has no identity of its own that can be read, and it is the identity that sends the telemetry. Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$principal" "${principal^^}"
           if ! state=$(az provider show --namespace Microsoft.Monitor --query registrationState --output tsv 2>&1); then
             echo "::error::The registration of the resource provider Microsoft.Monitor could not be read: $state. Nothing was changed."
             exit 1
@@ -2573,14 +2540,13 @@ jobs:
         timeout-minutes: 30
         env:
           CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}
-          HUB_SOURCE_SHA: ${{ job.workflow_sha }}
         run: |
           # The control-plane half of the drift check of the AI security (tools/drift-check.py; docs/design/07-safeguards-and-drift.md: the check never rests on an app that it watches). It reads Azure Resource Manager with the
           # deploy identity, and nothing else: GET requests, and the two queries that need a POST (Azure Resource Graph for the policy compliance, and Application Insights for the lines that the app's own check logged). It says PASS,
           # FAIL or UNKNOWN for each control, and UNKNOWN is never PASS. The in-app half (the agents' definitions, tools and instructions, which only the Foundry project's private data plane shows) is the app's own daily check
           # (drift-daily, cases/drift.py): this tool reads the lines that it logs, so an app that has gone silent is a FAIL here (I-heartbeat), and a control that the app says has failed is a FAIL here (I-inapp-results).
           # The run fails when a control fails, and the summary says which of them are fail-closed (the agents run outside what was designed): then a person switches the investigation off until the cause is fixed.
-          # The policy exemptions and the non-compliant Deny policies are judged against what the owner accepted (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY): unset, those lines say UNKNOWN and
+          # The policy exemptions and the non-compliant Deny policies are judged against what the owner accepted (the secrets DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY): unset, those lines say UNKNOWN and
           # print what they found, so that he can accept it. The release that the cases app runs is compared with this commit of main, by its tags and by the digest of the app's own files.
           # HOOK, the in-network half: the live agents of the Foundry project (their definitions, tools and instructions against environment/agents.lock.json) can only be read from inside the network, because the project's
           # data plane is private. The change of the agent harness brings tools/agents-drift.py for that, and adds one step for this action right after this one, run by the Operator the way the check actions are
@@ -2589,7 +2555,7 @@ jobs:
           if [ -n "${DRIFT_ACCEPTED_EXEMPTIONS:-}" ]; then flags+=(--accepted-exemptions "$DRIFT_ACCEPTED_EXEMPTIONS"); fi
           if [ -n "${DRIFT_ACCEPTED_DENY:-}" ]; then flags+=(--accepted-deny "$DRIFT_ACCEPTED_DENY"); fi
           python3 tools/drift-check.py --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" --models environment/models.json --policies environment/aigateway/policies.json \
-            --access-list environment/aigateway/contracts.json --commit "$HUB_SOURCE_SHA" --app-dir src/case-functions --cases-public-access "$CASES_PUBLIC_ACCESS" \
+            --access-list environment/aigateway/contracts.json --commit "$GITHUB_SHA" --app-dir src/case-functions --cases-public-access "$CASES_PUBLIC_ACCESS" \
             --json "$RUNNER_TEMP/drift.json" --summary "$GITHUB_STEP_SUMMARY" "${flags[@]}"
 
       - name: Find the Operator, which runs the AI security checks from inside the network
@@ -2608,6 +2574,7 @@ jobs:
             echo "::error::The identity id-meternaut-operator is not there. The action $ACTION runs its tool in the Operator, so run operator first. Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n::add-mask::%s\n' "$client" "${client^^}"
           if found=$(az rest --method get --url "https://management.azure.com${subnet_id}?api-version=2025-05-01" --query name --output tsv 2>&1); then
             :
           elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
@@ -2644,6 +2611,7 @@ jobs:
             echo "::error::The service did not report a host name under .ai.gateway.azure.com for the gateway $GATEWAY_NAME. Nothing was changed."
             exit 1
           fi
+          printf '::add-mask::%s\n' "$host"
           echo "host=$host" >> "$GITHUB_OUTPUT"
 
       - name: Run the drift check of the agents in the Operator
@@ -2946,11 +2914,11 @@ jobs:
                 retire-old) echo "What Meternaut does not use any more was deleted in resource group \`$ENV_RESOURCE_GROUP\`, and nothing else: the usage recording (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs \`ai-usage\`, \`pii-usage\` and \`usage-control\`) and the old model account (its private endpoint, and then the account, which was purged so that its name and its quota are free) and the identity \`id-meternaut-usage\`. The lines above say for each one whether it was deleted or was not there, and the role assignments that the deleted identities left behind, which are listed and not deleted. The function subnet \`snet-func\` was read back after the deletes: it is free (no app but the cases app and the Teams bot's app is integrated with it), so the action \`cases\` can put the web page's app on it if the app is on Flex Consumption (it is on Basic now, which does not use that subnet); the lines above say so and list the platform's links on the subnet, for information. The Event Hubs namespace (the action \`retire-event-hubs\` deletes it), the storage account, the workspace, Application Insights and every subnet were not touched. What the usage app's identity and the custom role Meternaut usage reader held in the owner's lab subscription is retired by a person, with \`tools/access-requirements.py retire --only W9,W10\` (environment/BOOTSTRAP.md), before this action, because that tool reads the usage app and its identity, which this action deletes. Running \`retire-old\` again is safe: it finds nothing." ;;
                 retire-event-hubs) echo "The Event Hubs namespace that carried the control event was deleted in resource group \`$ENV_RESOURCE_GROUP\`, and nothing else: its private endpoint, the namespace (with its hub \`cases-control\` and that hub's consumer group, and whatever else was in it), and the container \`azure-webjobs-eventhub\` of the storage account, which held the namespace's checkpoints. The lines above say for each one whether it was deleted or was not there, and that each was read back until it was gone. The control message goes through the Storage queue \`cases-control\` in the storage account, which this action reads before it deletes anything and does not touch. The base, the cases app, the Operator and every other resource were not touched. Running \`retire-event-hubs\` again is safe: it finds nothing." ;;
                 foundry) echo "The Foundry resource of the agents, \`$FOUNDRY_ACCOUNT\`, is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: public network access and local authentication are off, project management is on, the project \`$FOUNDRY_PROJECT\` has an identity of its own, the models of environment/models.json are deployed with a guardrail that blocks jailbreaks and indirect attacks, the private endpoint is approved and the landing zone has registered its name, and the project sends its traces to Application Insights with its identity. The system-assigned identity of the cases app holds the Foundry User role on the project and nothing else there, and so do the Operator's identity (once the action operator has made it: the tools that check the agents read the project with it) and the project's own identity (for the continuous evaluation rule). The project endpoint is \`$FOUNDRY_ENDPOINT\`. No key was made, read or printed. The cases app was not changed: the next run of \`cases\` gives it that address." ;;
-                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control queue, a timer every minute for the loop and the console's web route), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the console's sign-in to Microsoft Entra and holds no role), the control queue in the base's storage account, a year of retention for the traces and the History workbook, and a private endpoint of its own for the console and its deployment site (the sub-resource \`sites\`), which the landing zone has registered in its central zone: the code is not published before that, so that a later probe finds the names. The app's public network access is \`$CASES_PUBLIC_ACCESS\` (the constant CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py). The app runs on the \`$CASES_APP_PLAN\` plan (the constant CASES_APP_PLAN in tools/environment-params.py): Basic (B1, always on, about 13 US dollars a month) was chosen on 2026-11-08, after a measurement found that the platform holds the web page's requests on Flex Consumption (which scales to zero and bills per execution), and Flex Consumption needs a measurement with \`page-latency\` that meets the rule twice (docs/proposals/07-private-by-default.md). The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan (the log shows that both names of the app resolve to private addresses there); the runner published nothing, and the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint (the log shows that the name resolves to a private address there). The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set (the check then also asks that the sign-in's return address names it), and on the app's own name when it is not; when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there). The deploy identity holds no role on the control queue: the Operator puts the control message there. The Watch reads the pilot subscription with two roles; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The Detective and the Skeptic call the AI Gateway (every model call of Meternaut goes through it: AGENTS.md rule 15 (c)), with the app's own identity and no key: the app reads no key and needs nothing of the owner's API Management instance. The gateway's host name was read from the service, and the app's identity holds AI Gateway Models User on the gateway only once the action \`aigateway\` has given it, which takes up to ten minutes to apply. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off." ;;
+                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control queue, a timer every minute for the loop and the console's web route), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the console's sign-in to Microsoft Entra and holds no role), the control queue in the base's storage account, a year of retention for the traces and the History workbook, and a private endpoint of its own for the console and its deployment site (the sub-resource \`sites\`), which the landing zone has registered in its central zone: the code is not published before that, so that a later probe finds the names. The app's public network access is \`$CASES_PUBLIC_ACCESS\` (the constant CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py). The app runs on the \`$CASES_APP_PLAN\` plan (the constant CASES_APP_PLAN in tools/environment-params.py): Basic (B1, always on, about 13 US dollars a month) was chosen on 2026-11-08, after a measurement found that the platform holds the web page's requests on Flex Consumption (which scales to zero and bills per execution), and Flex Consumption needs a measurement with \`page-latency\` that meets the rule twice (docs/proposals/07-private-by-default.md). The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan (the log shows that both names of the app resolve to private addresses there); the runner published nothing, and the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint (the log shows that the name resolves to a private address there). The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set (the check then also asks that the sign-in's return address names it), and on the app's own name when it is not; when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there). The deploy identity holds no role on the control queue: the Operator puts the control message there. The Watch reads the pilot subscription with two roles; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The Detective and the Skeptic call the AI Gateway (every model call of Meternaut goes through it: AGENTS.md rule 15 (c)), with the app's own identity and no key: the app reads no key and needs nothing of the owner's API Management instance. The gateway's host name was read from the service, and the app's identity holds AI Gateway Models User on the gateway only once the action \`aigateway\` has given it, which takes up to ten minutes to apply. Meternaut holds no right to change Azure. When a person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off." ;;
                 cases-run) echo "The Operator, from inside the network, put the control message in the queue and read the telemetry, with its own identity and no key; this runner put nothing in the queue and read no telemetry. One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. The tokens that the lines above count are those of the Detective and the Skeptic, which call the AI Gateway with the app's identity and no key (a 403 says that the app's identity does not hold AI Gateway Models User yet: the action aigateway gives it, and a new role takes up to ten minutes to apply),                 while the agents of the investigation call their models through the project's connection and the AI Gateway when the switch of step 2 (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py) is on, and straight to the model deployments of their own Foundry project when it is off, which is the way back. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 page-latency) echo "The Operator, from inside the network, asked the web page's \`/healthz\` over the app's private endpoint with no credential, and this runner asked nothing. The lines above are one line for each request (the time, the status and the seconds), then a quiet gap and the requests after it, and the summary: the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. No request took more than 15 seconds and none was not 200, which is what the rule of docs/proposals/07-private-by-default.md asks of the web page on Flex Consumption. The decision needs two such measurements of 20 minutes each. Nothing was changed." ;;
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address and a virtual machine that nothing uses, with its network interface and its OS disk), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group (or, for a machine or a disk, to stop it, resize it or change its tier), because the change runs with that person's own permissions." ;;
-                loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed. The address that was knocked at is the console's host name on the platform's Application Gateway when the repository variable CONSOLE_HOST_NAME is set (the sign-in's return address then names it too), and the app's own name when it is not: from this runner while the app takes public traffic, and from inside the network, in the Operator, when it takes none and no host name is set (the lines above are the log of that container, and the app's name resolved there to a private address; no credential was sent)." ;;
+                loop-check) echo "The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed. The address that was knocked at is the console's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set (the sign-in's return address then names it too), and the app's own name when it is not: from this runner while the app takes public traffic, and from inside the network, in the Operator, when it takes none and no host name is set (the lines above are the log of that container, and the app's name resolved there to a private address; no credential was sent)." ;;
                 operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and two roles for that identity: Reader on the group, and Storage Queue Data Contributor on the control queue \`cases-control\`, and nothing else. A new role takes up to ten minutes to apply, so wait before \`cases-run\`, which puts the control message in the queue with it. No container group exists, so nothing is paid until a run uses it. The next steps are \`operator-probe\`, which shows what a container on the subnet can reach, and \`cases-run\`, which runs its check tool in the Operator." ;;
                 operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. It also signed in as the deploy identity with a token of this run (which only the container group saw, as a secure value), built the cases app's libraries in the container from the lock file, and asked the cases app's deployment site for the status of a GET. docs/proposals/07-private-by-default.md says what each answer decides." ;;
                 aigateway) echo "The AI Gateway \`$AIGATEWAY_NAME\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is Succeeded, its backend subnet is \`snet-aigw\` (delegated to Microsoft.App/environments, with the landing zone's route table on it when the landing zone puts one on this network), and it has a system-assigned identity that holds Foundry User on the Foundry resource of the agents. It was made after the subnet: the action made the subnet first (or found it and left it alone), waited until the landing zone had put its route table on it, and only then made the gateway, so the gateway was made on the subnet as the landing zone left it. It has one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and the gateway-wide limits of environment/aigateway/policies.json: a token limit, a request rate limit, and a cost limit for the day and one for the month, each counted for every caller alone. The Operator's identity holds AI Gateway Models User on the gateway, and so does the cases app's identity when the app had one (its Detective and Skeptic call the gateway with it). No API key was made: the service makes one named master, and the lines above say whether the service let it be deleted (a refusal is a recorded finding and not an error). THE FRONTEND OF THE GATEWAY IS PUBLIC. The service has no private frontend, and its own setting for one has no effect. A request needs a Microsoft Entra token and a role on the gateway, and there is no filter on the address (docs/proposals/08-ai-gateway.md). The agents were not changed by this action: they go through the gateway once \`foundry\` and \`cases\` have run with the switch of step 2 on. The Detective and the Skeptic call the gateway once the action \`cases\` has deployed the app, after the role has applied. A new role takes up to ten minutes to apply, and then \`aigateway-check\` calls each alias from inside the network." ;;
@@ -2961,7 +2929,7 @@ jobs:
                 agent365-check) echo "The Operator, from inside the network, read Microsoft Graph and the Foundry resource and changed nothing. The lines above are one for each control (A365-LICENSE, A365-IDENTITIES, A365-OWNERS, A365-LOGGING), each PASS or UNKNOWN, and the MANUAL lines list what only a person can check, with the portal path. A control that could not be read is UNKNOWN and never a pass: the Operator's identity holds no Graph role until a tenant administrator grants one. The agents were not changed." ;;
                 governance) echo "The AI security is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: the policy assignments for approved models and for model eligibility are on the group with the effect that tools/environment-params.py says (Audit until a run of \`drift-check\` has shown every deployment compliant, then Deny, which is one line there), enforced, with no exemption and no identity; the alert rules are on and tell the owner by e-mail (the e-mail holds the rule's name, a count and a link, and never a line of the telemetry); the workbook Meternaut AI security is there; and the logs of the Foundry resource go to a workspace. The landing zone's own policies were read and not assigned a second time. The heartbeat rule fires when the app's own daily drift check has logged nothing for 26 hours, so it may mail once until the app that carries that check has been deployed (\`cases\`). The next actions are \`drift-check\`, and \`gateway-telemetry\` once its prerequisites are in place." ;;
                 gateway-telemetry) echo "The AI Gateway has a telemetry exporter, read back from Azure: it sends the gateway's logs, traces and metrics to the project's Application Insights component with the gateway's own identity and no key, and payloadCapture is false, so no prompt and no answer is sent. Records arrive a few minutes after the first call of the gateway (a new role takes up to ten minutes to apply): the workbook Meternaut AI security shows the calls by caller, the refusals and the use of the limits, and the alert rules read the same tables. Run \`aigateway-check\` or \`cases-run\` to make a call, and open the workbook." ;;
-                drift-check) echo "Every control of the AI security was read from Azure and none failed: the summary lists each as PASS or UNKNOWN with what was read. UNKNOWN is never PASS: it says what the deploy identity could not read, or which baseline the owner has not accepted yet (the repository variables DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY). Nothing was changed: the check only reads. The in-app half of the check (the agents' definitions in the Foundry project) is the app's own daily check, whose lines this check reads; the workflow drift.yml runs this same tool with an identity of its own that can only read." ;;
+                drift-check) echo "Every control of the AI security was read from Azure and none failed: the summary lists each as PASS or UNKNOWN with what was read. UNKNOWN is never PASS: it says what the deploy identity could not read, or which baseline the owner has not accepted yet (the secrets DRIFT_ACCEPTED_EXEMPTIONS and DRIFT_ACCEPTED_DENY). Nothing was changed: the check only reads. The in-app half of the check (the agents' definitions in the Foundry project) is the app's own daily check, whose lines this check reads; the workflow drift.yml runs this same tool with an identity of its own that can only read." ;;
                 teams) echo "The Teams bot is in resource group \`$ENV_RESOURCE_GROUP\`: the identity that is the bot (client id \`$TEAMS_BOT_CLIENT_ID\`, which is its app id and the botId of the Teams app), the Azure Bot resource with its Teams channel (the free tier, no key), and the function app \`$TEAMS_BOT_APP\` on Flex Consumption with two functions, the messaging endpoint and the timer that offers the cards. It was read back from Azure, and the door was knocked at: a request with no token and a request with a token that is not one were both refused with 401 and an empty body. The endpoint is public by design. This run does not prove that a card reaches a person: a person adds the app in Teams and the first card shows it. What people do by hand next is in docs/proposals/13-teams-and-outlook.md: build the Teams app package (python tools/teams-package.py build --bot-id the-client-id-above --site https://the-web-page-host --out teams-app.zip), a Teams administrator uploads it in the Teams admin center, and the people add the app." ;;
               esac
             fi
