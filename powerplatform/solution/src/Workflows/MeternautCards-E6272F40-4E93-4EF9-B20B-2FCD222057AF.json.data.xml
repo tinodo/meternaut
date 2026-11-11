@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Category 5 = modern cloud flow.
+  StateCode 0 / StatusCode 1 = Draft.
+
+  The flow is imported in Draft state, and it is turned on by a person. Turning it on needs both connection
+  references to resolve to real connections: the Azure Queues connection is a Microsoft Entra ID connection of
+  one person (the connector says it is not shareable), and the Teams connection is that person's too. Both are
+  made once, in the maker portal, when the solution is imported. Nothing in this repository turns the flow on.
+
+  Adapted from the flow's data file in the owner's reference repository tinodo/secure-request-classifier (MIT):
+  powerplatform/solution/src/Workflows/ClassifyAndNotify-*.json.data.xml. An XML comment may not contain two
+  hyphens in a row, so the commands are not spelled out here (docs/proposals/19-teams-cards-through-power-automate.md).
+-->
+<Workflow WorkflowId="{e6272f40-4e93-4ef9-b20b-2fcd222057af}" Name="Meternaut cards" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <JsonFileName>/Workflows/MeternautCards-E6272F40-4E93-4EF9-B20B-2FCD222057AF.json</JsonFileName>
+  <Type>1</Type>
+  <Subprocess>0</Subprocess>
+  <Category>5</Category>
+  <Mode>0</Mode>
+  <Scope>4</Scope>
+  <OnDemand>0</OnDemand>
+  <TriggerOnCreate>0</TriggerOnCreate>
+  <TriggerOnDelete>0</TriggerOnDelete>
+  <AsyncAutodelete>0</AsyncAutodelete>
+  <SyncWorkflowLogOnFailure>0</SyncWorkflowLogOnFailure>
+  <StateCode>0</StateCode>
+  <StatusCode>1</StatusCode>
+  <RunAs>1</RunAs>
+  <IsTransacted>1</IsTransacted>
+  <IntroducedVersion>1.0.0.0</IntroducedVersion>
+  <IsCustomizable>1</IsCustomizable>
+  <BusinessProcessType>0</BusinessProcessType>
+  <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
+  <PrimaryEntity>none</PrimaryEntity>
+  <LocalizedNames>
+    <LocalizedName languagecode="1033" description="Meternaut cards" />
+  </LocalizedNames>
+</Workflow>

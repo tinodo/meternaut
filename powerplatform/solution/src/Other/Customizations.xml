@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Element order and casing below are significant, as in the reference repository's file (tinodo/secure-request-classifier,
+  MIT, powerplatform/solution/src/Other/Customizations.xml, which this follows): SolutionPackager expects every element
+  to be present, even when empty, and in this sequence. "optionsets", "connectionreferences" and
+  "environmentvariabledefinitions" are lowercase; everything else is PascalCase.
+
+  This file is the only place that carries the connection references and the environment variable definitions, and
+  they stay inline: split into folders, "pac solution pack" copies them into the zip as they are and the import
+  fails with an error that says nothing. They are not root components in Solution.xml either.
+-->
+<ImportExportXml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Entities />
+  <Roles />
+  <Workflows />
+  <FieldSecurityProfiles />
+  <Templates />
+  <EntityMaps />
+  <EntityRelationships />
+  <OrganizationSettings />
+  <optionsets />
+  <CustomControls />
+  <SolutionPluginAssemblies />
+  <SdkMessageProcessingSteps />
+  <ServiceEndpoints />
+  <AppModuleSiteMaps />
+  <AppModules />
+  <EntityDataProviders />
+  <CanvasApps />
+  <Connectors />
+  <connectionreferences>
+    <!--
+      Azure Queues is on the list of connectors that run in the delegated subnet (Learn, Power Platform VNet support
+      overview). The connection is made with the authentication type "Microsoft Entra ID Integrated" (tokenBasedAuth):
+      no storage key. The connection belongs to one person, who needs a data role on the queue, and the V2 trigger and
+      actions are the ones that work with it.
+    -->
+    <connectionreference connectionreferencelogicalname="mtnaut_azurequeues">
+      <connectionreferencedisplayname>Meternaut cards - Azure Queues (Microsoft Entra ID)</connectionreferencedisplayname>
+      <connectorid>/providers/Microsoft.PowerApps/apis/shared_azurequeues</connectorid>
+      <iscustomizable>1</iscustomizable>
+      <statecode>0</statecode>
+      <statuscode>1</statuscode>
+    </connectionreference>
+    <!-- Microsoft Teams: posts the card as the Flow bot, in the recipient's chat with the Flow bot. -->
+    <connectionreference connectionreferencelogicalname="mtnaut_teams">
+      <connectionreferencedisplayname>Meternaut cards - Microsoft Teams</connectionreferencedisplayname>
+      <connectorid>/providers/Microsoft.PowerApps/apis/shared_teams</connectorid>
+      <iscustomizable>1</iscustomizable>
+      <statecode>0</statecode>
+      <statuscode>1</statuscode>
+    </connectionreference>
+  </connectionreferences>
+  <!--
+    type 100000000 is String. No value is set here, and nothing of the owner's estate is in this repository: the
+    person who imports the solution types the two values (the import asks for them).
+  -->
+  <environmentvariabledefinitions>
+    <environmentvariabledefinition schemaname="mtnaut_StorageQueueEndpoint">
+      <displayname default="Storage queue endpoint">
+        <label description="Storage queue endpoint" languagecode="1033" />
+      </displayname>
+      <description default="The full queue endpoint of the storage account that holds the queue of the Teams cards, with the scheme and the closing slash, for example https://accountname.queue.core.windows.net/ (the connector rejects a name with no scheme).">
+        <label description="The full queue endpoint of the storage account that holds the queue of the Teams cards, with the scheme and the closing slash, for example https://accountname.queue.core.windows.net/ (the connector rejects a name with no scheme)." languagecode="1033" />
+      </description>
+      <introducedversion>1.0.0.0</introducedversion>
+      <iscustomizable>1</iscustomizable>
+      <isrequired>1</isrequired>
+      <secretstore>0</secretstore>
+      <type>100000000</type>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="mtnaut_QueueName">
+      <displayname default="Queue name">
+        <label description="Queue name" languagecode="1033" />
+      </displayname>
+      <description default="The name of the queue of the Teams cards. It is the value of the setting TEAMS_CARDS_QUEUE of the cases app: teams-cards.">
+        <label description="The name of the queue of the Teams cards. It is the value of the setting TEAMS_CARDS_QUEUE of the cases app: teams-cards." languagecode="1033" />
+      </description>
+      <introducedversion>1.0.0.0</introducedversion>
+      <iscustomizable>1</iscustomizable>
+      <isrequired>1</isrequired>
+      <secretstore>0</secretstore>
+      <type>100000000</type>
+    </environmentvariabledefinition>
+  </environmentvariabledefinitions>
+  <Languages>
+    <Language>1033</Language>
+  </Languages>
+</ImportExportXml>

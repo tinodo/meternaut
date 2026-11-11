@@ -137,7 +137,7 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
         names = [str(p.relative_to(ROOT)).replace("\\", "/") for p in TEMPLATES]
         self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/aigateway/telemetry.bicep", "environment/base/main.bicep", "environment/cases/main.bicep",
                                  "environment/cases/planted.bicep", "environment/foundry/main.bicep", "environment/governance/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
-                                 "environment/teams/main.bicep",
+                                 "environment/powerplatform/main.bicep", "environment/teams/main.bicep",
                                  "infra/budgets/rg-budget.bicep"], "a new template is added to this list on purpose, after it was looked at for what it reads")
         for name in (n for n in names if n.startswith("environment/")):
             if name == "environment/teams/main.bicep" and "          - teams\n" not in WORKFLOW:

@@ -5,7 +5,7 @@
 //   Watch --> Detective and Skeptic (chat completions through the AI Gateway, with the app's identity and no key) --> guards in code --> one telemetry line per step --> workbook
 //
 // What it holds: one user-assigned identity (the console's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
-// casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, one Storage queue (the control queue) in the storage account of the
+// casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, two Storage queues (the control queue, and the queue of the Teams cards) in the storage account of the
 // base, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
 //
 // Identities, and no right to change Azure. The app's own system-assigned identity reads the subscriptions that it was given the read-only roles for, and their cost lines, stores the
@@ -212,6 +212,8 @@ var functionSubnetName = 'snet-func'
 var privateEndpointSubnetName = 'snet-pe'
 // The control queue: one message in it starts one Watch now (the check action cases-run sends it, as the Operator: environment/operator/main.bicep, which names the same queue; a test holds the two together).
 var controlQueueName = 'cases-control'
+// The queue of the Teams cards (docs/proposals/19-teams-cards-through-power-automate.md): the app puts one message in it for each card, and nothing in this template reads it.
+var cardsQueueName = 'teams-cards'
 var deploymentContainerName = 'app-package-cases'
 
 // Flex: Flex Consumption, which scales to zero and bills per execution; the app uses snet-func, the subnet that the model side made for it. Basic: the B1 plan on snet-cases.
@@ -337,6 +339,15 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
 resource controlQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
   parent: queueService
   name: controlQueueName
+}
+
+// The queue of the Teams cards: the app puts one message in it for each card (one JSON text: the version, a delivery id, the recipient's mail address, a title and the Adaptive Card), and a Power Automate flow in an
+// environment that is linked to the virtual network (environment/powerplatform/main.bicep) reads it through the queue's private endpoint and posts the card as the Flow bot. The app sends with its own identity: it holds
+// Storage Queue Data Contributor on the whole account (below), which covers this queue, so no role is added here. The right to read and delete messages is the right of the person whose connection the flow uses, which a person gives
+// on this one queue by hand (docs/proposals/19-teams-cards-through-power-automate.md): the deploy identity gives roles to service principals only. The queue is a plain one: the app sets the time to live of each message.
+resource cardsQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: cardsQueueName
 }
 
 // The History is the app's own telemetry: one line per step in the traces table. A year of it, for a few megabytes, costs cents.
@@ -517,6 +528,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'Authorization=AAD' }
         // The control queue in the host storage account: the trigger reads it through the connection AzureWebJobsStorage (the four settings above, which carry no key) as %CASES_CONTROL_QUEUE_NAME%.
         { name: 'CASES_CONTROL_QUEUE_NAME', value: controlQueueName }
+        // The queue of the Teams cards: the app sends one message for each card, with its own identity (Storage Queue Data Contributor on the account, below) and the queue endpoint of the AzureWebJobsStorage connection above.
+        { name: 'TEAMS_CARDS_QUEUE', value: cardsQueueName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
         { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }
         { name: 'MODEL_DETECTIVE', value: modelDetective }

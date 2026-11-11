@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
-    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json [--governance environment/aigateway/contracts.json]] >> "$GITHUB_OUTPUT"
+    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json [--governance environment/aigateway/contracts.json]] [--powerplatform] >> "$GITHUB_OUTPUT"
     python tools/environment-params.py check --params "$RUNNER_TEMP/base.parameters.json" --template base.json --label base
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
@@ -103,6 +103,17 @@ table on it before it makes the gateway. A network with no free /27 left is not 
 written, the outputs say so (aigateway_subnet_prefix is empty) and the action aigateway stops with that reason. The gateway's name is aigw-meternaut-<digest>, 23 characters, inside the
 service's limit of 24. It prints
 key=value lines for GitHub to read as step outputs.
+
+Virtual network support for Power Platform (docs/proposals/19-teams-cards-through-power-automate.md) is asked for with --powerplatform, and nothing else of the output changes without it. It writes one more file,
+
+    powerplatform.parameters.json     for environment/powerplatform/main.bicep (the subnet snet-powerplatform, delegated to Microsoft.PowerPlatform/enterprisePolicies, and the enterprise policy
+                                      ep-meternaut-netinjection of the Power Platform geography Sweden, whose one Azure region is swedencentral),
+
+and these lines: powerplatform_subnet_name, powerplatform_subnet_prefix, powerplatform_policy_name, powerplatform_geography, powerplatform_files (true or false), powerplatform_reason (why there is no file)
+and cards_queue_name (the Storage queue that environment/cases/main.bicep makes for the Teams cards). The subnet is the last free /27 of the virtual network beside the five other subnets (the AI Gateway's
+included, whether or not its files are asked for); no range is invented: a network with no free /27, or a region other than swedencentral, gets no file and a reason. ENV_PP_SUBNET_EXISTS and ENV_PP_POLICY_EXISTS
+(true or false) are what the workflow found in Azure: a subnet that is there is left alone (AGENTS.md rule 27), and a policy that is there is not written again, because Power Platform refuses every write to a
+policy that an environment is linked to.
 """
 from __future__ import annotations
 
@@ -186,6 +197,21 @@ FOUNDRY_GUARDRAIL_NAME = "meternaut-agents"
 AIGATEWAY_SUBNET_NAME = "snet-aigw"
 # A /26 if the network can spare it, never smaller than a /27 (the service's minimum for the gateway's subnet).
 AIGATEWAY_SUBNET_LENGTHS = (26, 27)
+# Virtual network support for Power Platform (docs/proposals/19-teams-cards-through-power-automate.md; environment/powerplatform/main.bicep). Everything about it is written only with --powerplatform, so that no
+# other file and no other line of the output differs from what it was. The subnet is delegated to Microsoft.PowerPlatform/enterprisePolicies and holds nothing else. Its size: an environment that is not
+# production needs 6 to 10 addresses and Azure keeps five of every subnet, so a /28 (11 usable) is the least, and a production environment needs 25 to 30, which is a /26 (Learn, "Estimating subnet size for Power
+# Platform environments", read 2026-11-11). It is a /27 (27 usable): room for a second environment of the same kind, and a free /27 left in a /24 that has one. The range cannot be changed once the subnet is
+# delegated and an environment is linked: an unlink, the change, a wait of 30 minutes, a link, and for the range a request to Microsoft support. So this is one value, chosen before the first deploy; the builder
+# never invents a range outside the virtual network, and when the network has no free block of this size it writes no file and says so (powerplatform_reason).
+POWERPLATFORM_SUBNET_NAME = "snet-powerplatform"
+POWERPLATFORM_SUBNET_LENGTH = 27
+# The policy's name is the template's (environment/powerplatform/main.bicep: ep-<workload>-netinjection) and the tool's default; a test holds the three together. The geography is the Power Platform name of the one
+# Azure region that the template allows (Learn: Sweden is swedencentral and nothing else); the policy's location is the geography and not an Azure region.
+POWERPLATFORM_POLICY_NAME = "ep-meternaut-netinjection"
+POWERPLATFORM_GEOGRAPHY = "sweden"
+POWERPLATFORM_AZURE_REGION = "swedencentral"
+# The queue of the Teams cards (environment/cases/main.bicep makes it; the app's setting TEAMS_CARDS_QUEUE and the flow's environment variable carry the name).
+CARDS_QUEUE_NAME = "teams-cards"
 # The service's own patterns (Learn and the REST specification of Microsoft.ApiManagement/aigateways, read 2026-11-07): the gateway's name, the name of a model resource, which has
 # no dots (the deployment's name with its dots replaced by hyphens), and the name of an alias, which is the name that a caller sends and may keep its dots.
 AIGATEWAY_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$")
@@ -465,6 +491,54 @@ def aigw_subnet(vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network,
 def aigw_subnet_exists(env: dict) -> bool:
     """Whether the AI Gateway's subnet is in Azure already: the template then leaves it alone (AGENTS.md rule 27)."""
     return exists_flag(env, "ENV_AIGW_SUBNET_EXISTS")
+
+
+def powerplatform_subnet(vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...]) -> ipaddress.IPv4Network | None:
+    """The subnet of Power Platform's connectors (environment/powerplatform/main.bicep makes it): the last free block of POWERPLATFORM_SUBNET_LENGTH that overlaps none of the others.
+
+    Like the Basic plan's, the Operator's and the AI Gateway's it is the last free block, so that no earlier range moves (docs/proposals/07-private-by-default.md). A network with no free block of that
+    size gets None: the builder invents no range, and the action says that the owner has to decide (docs/proposals/19-teams-cards-through-power-automate.md)."""
+    if vnet.prefixlen <= POWERPLATFORM_SUBNET_LENGTH:
+        for candidate in reversed(list(vnet.subnets(new_prefix=POWERPLATFORM_SUBNET_LENGTH))):
+            if not any(candidate.overlaps(other) for other in taken):
+                return candidate
+    return None
+
+
+def powerplatform_files(env: dict, location: str, owner: str, vnet: ipaddress.IPv4Network, taken: tuple[ipaddress.IPv4Network, ...]) -> tuple[dict, dict[str, str]]:
+    """The parameter file of environment/powerplatform/main.bicep and its outputs (the Hub action powerplatform; docs/proposals/19-teams-cards-through-power-automate.md).
+
+    No file is written, and powerplatform_reason says why, when the region is not the one Azure region of the Power Platform geography Sweden, or when the virtual network has no free block for the subnet.
+    The two flags say what the workflow found in Azure: a subnet that is there is left alone (AGENTS.md rule 27), and a policy that is there is not written, because Power Platform refuses every write to a
+    policy that an environment is linked to."""
+    prefix = powerplatform_subnet(vnet, taken)
+    reason = ""
+    if location != POWERPLATFORM_AZURE_REGION:
+        reason = (f"ENV_LOCATION is {location}: the Power Platform geography Sweden has one Azure region, {POWERPLATFORM_AZURE_REGION}, and the subnet and the enterprise policy are made there only")
+    elif prefix is None:
+        reason = (f"the virtual network has no free /{POWERPLATFORM_SUBNET_LENGTH} beside its other subnets, and no range is invented: the owner decides whether a smaller subnet (a /28 is the least), a larger virtual "
+                  "network or another place will do")
+    outputs = {
+        "powerplatform_subnet_name": POWERPLATFORM_SUBNET_NAME,
+        "powerplatform_subnet_prefix": str(prefix) if prefix and not reason else "",
+        "powerplatform_policy_name": POWERPLATFORM_POLICY_NAME,
+        "powerplatform_geography": POWERPLATFORM_GEOGRAPHY,
+        "powerplatform_files": "false" if reason else "true",
+        "powerplatform_reason": reason,
+        "cards_queue_name": CARDS_QUEUE_NAME,
+    }
+    if reason:
+        return {}, outputs
+    files = {
+        "powerplatform.parameters.json": parameters({
+            "location": location,
+            "owner": owner,
+            "powerPlatformSubnetPrefix": str(prefix),
+            "powerPlatformSubnetExists": exists_flag(env, "ENV_PP_SUBNET_EXISTS"),
+            "enterprisePolicyExists": exists_flag(env, "ENV_PP_POLICY_EXISTS"),
+        }),
+    }
+    return files, outputs
 
 
 def ai_gateway_host(env: dict, preview: bool) -> str:
@@ -800,7 +874,8 @@ def governance_files(env: dict, subscription: str, group: str, location: str, ow
     return files, outputs
 
 
-def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None, contracts: dict | None = None) -> tuple[dict[str, dict | list], dict[str, str]]:
+def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None, contracts: dict | None = None,
+          powerplatform: bool = False) -> tuple[dict[str, dict | list], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -999,6 +1074,13 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         outputs["gateway_telemetry"] = "true"
     if AGENTS_VIA_AI_GATEWAY:
         outputs.update({"agents_via_ai_gateway": "true", "aigateway_connection_name": AIGATEWAY_CONNECTION_NAME})
+    if powerplatform:
+        # The subnet of Power Platform's connectors is the last free block beside the five others, whether or not the AI Gateway's file is asked for in this build, so that it never overlaps the gateway's subnet.
+        gateway_range = aigw_subnet(vnet, (subnet, func_subnet, web, ops))
+        taken = (subnet, func_subnet, web, ops) + ((gateway_range,) if gateway_range else ())
+        powerplatform_written, powerplatform_outputs = powerplatform_files(env, location, owner, vnet, taken)
+        files.update(powerplatform_written)
+        outputs.update(powerplatform_outputs)
     return files, outputs
 
 
@@ -1046,7 +1128,7 @@ def run_build(args, environ) -> int:
         models = read_models(Path(args.models))
         policies = read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None
         contracts = read_contracts(Path(args.governance), models, policies) if args.governance else None
-        files, outputs = build(environ, models, preview=args.preview, aigateway_policies=policies, contracts=contracts)
+        files, outputs = build(environ, models, preview=args.preview, aigateway_policies=policies, contracts=contracts, powerplatform=args.powerplatform)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -1068,6 +1150,7 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--preview", action="store_true", help="for a what-if and for the first pass of the workflow: a fact that is not known yet (the AI Gateway's host name, its project's identity) does not stop the build")
     build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway-subnet.parameters.json, aigateway.parameters.json and aigateway-policies.json")
     build_parser.add_argument("--governance", help="the AI Gateway's access list (environment/aigateway/contracts.json), checked against the models and the policies; also writes governance.parameters.json and gateway-telemetry.parameters.json. Needs --aigateway-policies")
+    build_parser.add_argument("--powerplatform", action="store_true", help="also writes powerplatform.parameters.json for environment/powerplatform/main.bicep (the subnet of Power Platform's connectors and the enterprise policy) and the lines powerplatform_* and cards_queue_name; nothing else changes")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

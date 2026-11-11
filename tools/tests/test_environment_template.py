@@ -118,6 +118,14 @@ ALLOWED = {
         "Microsoft.Insights/scheduledQueryRules",
         "Microsoft.Insights/workbooks",
     },
+    # Virtual network support for Power Platform (docs/proposals/19-teams-cards-through-power-automate.md): the subnet that Power Platform's connectors run in, with its group, and the enterprise policy that names it.
+    # No role, no private endpoint and no DNS object; the virtual network is only read.
+    "environment/powerplatform/main.bicep": {
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.PowerPlatform/enterprisePolicies",
+    },
 }
 
 
@@ -536,7 +544,7 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "workspace", "insights", "storage", "blobService", "queueService", "sharedHostContainers", "privateEndpointSubnet"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlQueue", "deploymentContainer", "functionApp", "functionAppEndpoint",
+        self.assertEqual(made, ["authIdentity", "cardsQueue", "consoleSignIn", "controlQueue", "deploymentContainer", "functionApp", "functionAppEndpoint",
                                 "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
                                 "tracesRetention", "webNsg", "webSubnet"])

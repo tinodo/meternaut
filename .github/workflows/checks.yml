@@ -94,7 +94,7 @@ jobs:
           RUBY
       - name: The Bicep templates compile and lint
         run: |
-          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep environment/aigateway/telemetry.bicep environment/governance/main.bicep infra/budgets/*.bicep; do
+          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep environment/aigateway/telemetry.bicep environment/governance/main.bicep environment/powerplatform/main.bicep infra/budgets/*.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
@@ -124,7 +124,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
-          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --governance environment/aigateway/contracts.json > /dev/null
+          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --governance environment/aigateway/contracts.json --powerplatform > /dev/null
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
           az bicep build --file environment/base/main.bicep --outfile "$out/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"
@@ -134,6 +134,7 @@ jobs:
           az bicep build --file environment/aigateway/subnet.bicep --outfile "$out/aigateway-subnet.json"
           az bicep build --file environment/aigateway/telemetry.bicep --outfile "$out/gateway-telemetry.json"
           az bicep build --file environment/governance/main.bicep --outfile "$out/governance.json"
+          az bicep build --file environment/powerplatform/main.bicep --outfile "$out/powerplatform.json"
           python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
           python tools/environment-params.py check --params "$out/base.parameters.json" --template "$out/base.json" --label base
           python tools/environment-params.py check --params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry
@@ -143,3 +144,4 @@ jobs:
           python tools/environment-params.py check --params "$out/aigateway-subnet.parameters.json" --template "$out/aigateway-subnet.json" --label aigateway-subnet
           python tools/environment-params.py check --params "$out/gateway-telemetry.parameters.json" --template "$out/gateway-telemetry.json" --label gateway-telemetry
           python tools/environment-params.py check --params "$out/governance.parameters.json" --template "$out/governance.json" --label governance
+          python tools/environment-params.py check --params "$out/powerplatform.parameters.json" --template "$out/powerplatform.json" --label powerplatform
