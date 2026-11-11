@@ -1,4 +1,4 @@
-"""The environment of a run of the Hub, for the tests of the tools that only a run of the Hub may start (tools/hubguard.py).
+"""The environment of a run of the Hub, for the tests of the tools that only a run of the Hub may start (tools/hubguard.py), and what the runner makes of the output of a step.
 
 A tool of that kind refuses unless GitHub's own variables of a runner are all there. GITHUB_ACTIONS=true alone is refused, so a test that wants the tool to run takes its environment from here, and a
 test that wants a refusal takes it from outside(): the machine that runs the tests may itself be a GitHub runner, which has the variables, so the refusal clears them all."""
@@ -18,6 +18,12 @@ def inside(extra=None) -> dict:
 def outside(environ=None) -> dict:
     """The same environment without any of the variables that say 'a run of the Hub': for the tests of a refusal."""
     return {key: value for key, value in (environ or {}).items() if key not in NAMES}
+
+
+def as_logged(output: str) -> str:
+    """What the log of a run shows of what a step printed. The runner takes a line that starts with `::add-mask::` for a command: it registers the mask and prints nothing, so the value that a step masks is on its
+    standard output and never in its log. A test that says that a value is not in the log looks at this and not at the raw output; a test that says that the value is masked looks at the raw output."""
+    return "\n".join(line for line in output.split("\n") if not line.lstrip().startswith("::add-mask::"))
 
 
 @contextlib.contextmanager

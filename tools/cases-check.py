@@ -4,7 +4,7 @@
     python tools/cases-check.py whoami
     python tools/cases-check.py functions --site <resource id of the cases app> [--minutes 15]
     python tools/cases-check.py run --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
-                                    [--minutes 30] [--summary <file>] [--query-via arm|data-plane]
+                                    [--minutes 30] [--summary <file>] [--query-via arm|data-plane] [--counts-only]
 
 It uses the helpers of tools/check-helpers.py, which it loads from its own folder: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
@@ -24,6 +24,9 @@ run        Puts one message in the control queue of the cases (cases-control, in
 --query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
            from public networks) or data-plane (through https://api.applicationinsights.io with a Microsoft Entra token, for a component that is private; run it
            from inside the network). The same option and the same rules as in tools/check-helpers.py, which has the details.
+--counts-only (run) Prints counts, statuses and numbers, and no text from the estate or from an agent: no name of a resource, no resource group, no subscription, no note, no
+           reason and no text of a finding, a case or a warning. The Watch reads every subscription that the app's identity can read, so its History names resources of other teams, and the
+           log and the summary of a run of a public repository are public (AGENTS.md rule 37). The History itself stays in the app's telemetry. The Hub passes it for the action cases-run.
 """
 from __future__ import annotations
 
@@ -115,7 +118,7 @@ def missing_lines(events: list[dict]) -> list[str]:
     return missing
 
 
-def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, interval: float = 30.0) -> list[dict]:
+def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, interval: float = 30.0, counts_only: bool = False) -> list[dict]:
     """The run's lines once its end has arrived and every line that the end counts. After the deadline, whatever has arrived."""
     deadline = azure.clock() + minutes * 60
     events: list[dict] = []
@@ -123,7 +126,7 @@ def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, i
         try:
             events = events_for(azure, insights, request_id)
         except Problem as e:
-            print(f"The telemetry could not be read yet ({e}); waiting.", flush=True)
+            print("The telemetry could not be read yet (what Azure said is not shown in a public log); waiting." if counts_only else f"The telemetry could not be read yet ({e}); waiting.", flush=True)
         ended = any(e["type"] in ENDS for e in events)
         if ended and not missing_lines(events):
             return events
@@ -154,8 +157,16 @@ def investigation_failed(events: list[dict]) -> bool:
     return False
 
 
-def investigation_lines(events: list[dict]) -> list[str]:
-    """What the investigation did, in plain words: its budget, how it ended, what it says it examined, and each finding with what the checks of code made of it."""
+def word(value, limit: int = 20) -> str:
+    """A value that is one plain lower-case word (a verdict, a kind of proposal), or nothing: a public log never prints the free text of an agent."""
+    text = "" if value is None else str(value)
+    return text if re.fullmatch(r"[a-z][a-z-]{0,%d}" % (limit - 1), text) else ""
+
+
+def investigation_lines(events: list[dict], counts_only: bool = False) -> list[str]:
+    """What the investigation did, in plain words: its budget, how it ended, what it says it examined, and each finding with what the checks of code made of it.
+
+    With counts_only (a public log) the numbers and the words of code stay, and no text of an agent does: not what it examined, not why it ended, not the text or the reason of a finding."""
     started = next((e for e in events if e["type"] == "investigation.started"), None)
     finished = next((e for e in events if e["type"] == "investigation.finished"), None)
     if not started and not finished:
@@ -170,43 +181,54 @@ def investigation_lines(events: list[dict]) -> list[str]:
                      f"{clean(finished.get('findingsKept'), 12)}, dropped {clean(finished.get('findingsDropped'), 12)}; cases opened {clean(finished.get('cases'), 12)}, "
                      f"resources held back by a guard {clean(finished.get('guarded'), 12)}.")
         if finished.get("note"):
-            lines.append(f"  Why: {clean(finished.get('note'), 300)}")
+            lines.append("  Why: not shown in a public log; it is in the History, in the app's telemetry." if counts_only else f"  Why: {clean(finished.get('note'), 300)}")
         examined = finished.get("examined")
-        if isinstance(examined, list) and examined:
+        if isinstance(examined, list) and examined and not counts_only:
             lines.append("  What it says it examined: " + "; ".join(clean(x, 160) for x in examined[:10]))
     else:
         lines.append("  The end of the investigation did not arrive.")
     findings = sorted((e for e in events if e["type"] == "investigation.finding"), key=lambda e: e["finding"] if isinstance(e.get("finding"), int) else 0)
     for e in findings:
-        outcome = "kept" if e.get("kept") is True else f"dropped: {clean(e.get('reason'), 200) or 'no reason given'}"
-        lines.append(f"  Finding {clean(e.get('finding'), 6)}: {clean(e.get('basis'), 60) or 'no basis'}, proposal {clean(e.get('proposal'), 30) or 'none'}, "
+        if counts_only:
+            outcome = "kept" if e.get("kept") is True else "dropped"
+            basis, proposal, verdict = "", word(e.get("proposal"), 30) or "none", word(e.get("verdict"), 30) or "no verdict"
+        else:
+            outcome = "kept" if e.get("kept") is True else f"dropped: {clean(e.get('reason'), 200) or 'no reason given'}"
+            basis, proposal, verdict = clean(e.get("basis"), 60) or "no basis", clean(e.get("proposal"), 30) or "none", clean(e.get("verdict"), 30) or "no verdict"
+        lines.append(f"  Finding {clean(e.get('finding'), 6)}: {basis + ', ' if basis else ''}proposal {proposal}, "
                      f"confidence {clean(e.get('confidence'), 10)}; {clean(e.get('claimed'), 6)} resources claimed, {clean(e.get('handles'), 6)} left after the checks of code "
                      f"(unknown handles {clean(e.get('unknown'), 6)}, not proven by a measurement {clean(e.get('unproven'), 6)}, repeated {clean(e.get('repeated'), 6)}, "
                      f"judged lately {clean(e.get('judgedLately'), 6)}, held back by a guard {clean(e.get('guarded'), 6)}, beyond the cap {clean(e.get('capped'), 6)}); "
                      f"their cost of the last 30 days {money(e.get('coveredCostUsd30d'))} (Cost Management cost lines, not an invoice); "
-                     f"the Skeptic: {clean(e.get('verdict'), 30) or 'no verdict'}; {outcome}")
-        if e.get("summary"):
+                     f"the Skeptic: {verdict}; {outcome}")
+        if e.get("summary") and not counts_only:
             lines.append(f"     {clean(e.get('summary'), 600)}")
     return lines
 
 
-def case_lines(number: int, result: dict, steps: list[dict]) -> list[str]:
+def case_lines(number: int, result: dict, steps: list[dict], counts_only: bool = False) -> list[str]:
+    """One case: with counts_only no name of the resource, no resource group and no text of the Detective or the Skeptic, which come from the estate."""
     where = ", ".join(x for x in (clean(result.get("resourceType"), 80), clean(result.get("resourceGroup"), 80)) if x)
-    lines = [f"  {number}. {clean(result.get('detector'), 60)}: {clean(result.get('resourceName'), 120)} ({where})",
-             f"     status {clean(result.get('status'), 30)}, confidence {clean(result.get('confidence'), 20)}; cost of the last 30 days {money(result.get('costUsd30d'))} "
-             f"(Cost Management cost lines, not an invoice); monthly saving if removed {money(result.get('monthlySavingUsd'))}"]
-    for label, key in (("recommendation", "recommendation"), ("summary", "summary"), ("objections", "objections"), ("guards", "guards")):
-        value = result.get(key)
-        if isinstance(value, (list, tuple)):
-            value = "; ".join(clean(v, 200) for v in value)
-        if value:
-            lines.append(f"     {label}: {clean(value, 600)}")
+    if counts_only:
+        lines = [f"  {number}. {clean(result.get('detector'), 60)}: {clean(result.get('resourceType'), 80) or 'a resource'}",
+                 f"     status {clean(result.get('status'), 30)}, confidence {clean(result.get('confidence'), 20)}; cost of the last 30 days {money(result.get('costUsd30d'))} "
+                 f"(Cost Management cost lines, not an invoice); monthly saving if removed {money(result.get('monthlySavingUsd'))}"]
+    else:
+        lines = [f"  {number}. {clean(result.get('detector'), 60)}: {clean(result.get('resourceName'), 120)} ({where})",
+                 f"     status {clean(result.get('status'), 30)}, confidence {clean(result.get('confidence'), 20)}; cost of the last 30 days {money(result.get('costUsd30d'))} "
+                 f"(Cost Management cost lines, not an invoice); monthly saving if removed {money(result.get('monthlySavingUsd'))}"]
+        for label, key in (("recommendation", "recommendation"), ("summary", "summary"), ("objections", "objections"), ("guards", "guards")):
+            value = result.get(key)
+            if isinstance(value, (list, tuple)):
+                value = "; ".join(clean(v, 200) for v in value)
+            if value:
+                lines.append(f"     {label}: {clean(value, 600)}")
     for step in steps:
         tokens = ""
         if isinstance(step.get("promptTokens"), int) or isinstance(step.get("completionTokens"), int):
             tokens = f", {step.get('promptTokens') or 0}+{step.get('completionTokens') or 0} tokens"
         model = f" {clean(step.get('model'), 40)}" if step.get("model") else ""
-        note = f" ({clean(step.get('note'), 200)})" if step.get("note") else ""
+        note = f" ({clean(step.get('note'), 200)})" if step.get("note") and not counts_only else ""
         lines.append(f"     step {clean(step.get('step'), 30)}{model}: {'ok' if step.get('ok') else 'FAILED'}{tokens}, {clean(step.get('ms'), 12)} ms{note}")
     return lines
 
@@ -219,28 +241,30 @@ def failed(events: list[dict]) -> bool:
             or investigation_failed(events))
 
 
-def subscriptions_line(started: dict) -> str | None:
-    """How many subscriptions the Watch read, and where its list came from, from the run.started line. None for a run whose line carries no count (an older app)."""
+def subscriptions_line(started: dict, counts_only: bool = False) -> str | None:
+    """How many subscriptions the Watch read, and where its list came from, from the run.started line. None for a run whose line carries no count (an older app).
+
+    With counts_only the first subscriptions are not named: the start of a subscription id is an identifier of the estate."""
     number = started.get("subscriptions")
     if isinstance(number, bool) or not isinstance(number, int):
         return None
     where = {"estate": "every subscription that the app's identity can read",
              "setting": "the subscriptions of the app's setting",
              "setting-fallback": "the subscriptions of the app's setting, because the list that its identity can read could not be had"}.get(started.get("scopeFrom"), "")
-    first = ", ".join(clean(x, 8) for x in (started.get("scopes") or [])[:5] if isinstance(x, str)) if isinstance(started.get("scopes"), list) else ""
+    first = ", ".join(clean(x, 8) for x in (started.get("scopes") or [])[:5] if isinstance(x, str)) if isinstance(started.get("scopes"), list) and not counts_only else ""
     return (f"  The Watch read {number} subscription{'' if number == 1 else 's'}" + (f" ({where})" if where else "") + (f"; the first: {first}" if first else "") + ".")
 
 
-def summary_lines(request_id: str, events: list[dict]) -> list[str]:
+def summary_lines(request_id: str, events: list[dict], counts_only: bool = False) -> list[str]:
     started = next((e for e in events if e["type"] == "run.started"), {})
     finished = next((e for e in events if e["type"] == "run.finished"), None)
     broken = [e for e in events if e["type"] == "run.failed"]
     lines = [f"Request {request_id}:"]
-    reading = subscriptions_line(started)
+    reading = subscriptions_line(started, counts_only)
     if reading:
         lines.append(reading)
     for e in broken:
-        lines.append(f"  The run failed: {clean(e.get('reason'), 400)}")
+        lines.append("  The run failed. Why: not shown in a public log; it is in the History, in the app's telemetry." if counts_only else f"  The run failed: {clean(e.get('reason'), 400)}")
     if finished:
         lines.append(f"  The run ended {'well' if finished.get('ok') is True else 'badly'} after {clean(finished.get('seconds'), 12)} seconds "
                      f"(started by the {clean(started.get('trigger'), 20) or 'unknown'}).")
@@ -255,8 +279,11 @@ def summary_lines(request_id: str, events: list[dict]) -> list[str]:
     late = missing_lines(events)
     if late:
         lines.append(f"  Lines that the end counts and the telemetry has not delivered: {', '.join(late)}.")
-    for e in events:
-        if e["type"] == "run.note":
+    notes = [e for e in events if e["type"] == "run.note"]
+    if counts_only and notes:
+        lines.append(f"  Notes of the run: {len(notes)}, not shown in a public log; they are in the History, in the app's telemetry.")
+    else:
+        for e in notes:
             lines.append(f"  Note: {clean(e.get('note'), 400)}")
     leads = [e for e in events if e["type"] == "lead.found"]
     if leads:
@@ -264,13 +291,13 @@ def summary_lines(request_id: str, events: list[dict]) -> list[str]:
         for e in leads:
             by_detector[clean(e.get("detector"), 60)] = by_detector.get(clean(e.get("detector"), 60), 0) + 1
         lines.append("  Leads by detector: " + ", ".join(f"{name} {n}" for name, n in sorted(by_detector.items())))
-    lines.extend(investigation_lines(events))
+    lines.extend(investigation_lines(events, counts_only))
     results = [e for e in events if e["type"] == "case.result"]
     if results:
         lines.append("Cases:")
         for number, result in enumerate(results, 1):
             steps = [e for e in events if e["type"] == "case.step" and e.get("caseId") == result.get("caseId")]
-            lines.extend(case_lines(number, result, steps))
+            lines.extend(case_lines(number, result, steps, counts_only))
     return lines
 
 
@@ -290,11 +317,14 @@ def command_run(args, azure: Azure) -> int:
     rc.send_control_message(azure, args.storage_account, "watch", request_id, queue=CONTROL_QUEUE)
     print(f"Put the control message for one Watch in the queue (request {request_id}); waiting for the History of the run in the telemetry.", flush=True)
     try:
-        events = wait_for_run(azure, insights, request_id, args.minutes)
-        lines = summary_lines(request_id, events)
+        events = wait_for_run(azure, insights, request_id, args.minutes, counts_only=args.counts_only)
+        lines = summary_lines(request_id, events, args.counts_only)
         bad = failed(events)
     except Problem as e:
-        lines = [f"Request {request_id}: {e}", "The last warnings and errors of the cases app:", *rc.problem_lines(azure, insights)]
+        if args.counts_only:
+            lines = [f"Request {request_id}: {e}", "The last warnings and errors of the cases app are not shown in a public log: they are in its Application Insights (traces of severity 2 or more, and exceptions)."]
+        else:
+            lines = [f"Request {request_id}: {e}", "The last warnings and errors of the cases app:", *rc.problem_lines(azure, insights)]
         bad = True
     print("\n".join(lines))
     if args.summary:
@@ -315,6 +345,7 @@ def main(argv=None, azure: Azure | None = None) -> int:
     run.add_argument("--insights", required=True)
     run.add_argument("--minutes", type=float, default=30)
     run.add_argument("--summary")
+    run.add_argument("--counts-only", action="store_true", help="print counts, statuses and numbers, and no text from the estate or from an agent (for the log of a public repository)")
     rc.add_query_via(run)
     args = parser.parse_args(argv)
     azure = azure or Azure()
