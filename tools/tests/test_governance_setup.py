@@ -28,6 +28,7 @@ IDENTITY_GROUP = "rg-identities"
 DEPLOY_NAME = "id-deploy"
 DEPLOY_OBJECT = "aaaaaaaa-0000-0000-0000-000000000001"
 SUBJECT = "repo:someone/somewhere:ref:refs/heads/main"
+DEPLOY_SUBJECT = "repo:someone/somewhere:environment:hub"
 GATEWAY = params.aigateway_name(SUB, GROUP)
 GATEWAY_OBJECT = "bbbbbbbb-0000-0000-0000-000000000002"
 RULE = f"/subscriptions/{SUB}/resourceGroups/mrg-managed/providers/Microsoft.Insights/dataCollectionRules/dcr-test"
@@ -51,6 +52,7 @@ class Azure:
         self.rule = RULE
         self.identity: dict | None = None
         self.credentials: list[str] = []
+        self.deploy_subject = DEPLOY_SUBJECT
         self.calls: list[list[str]] = []
         self.failing: dict[str, str] = {}
 
@@ -107,7 +109,10 @@ class Azure:
         if tuple(arguments[:2]) == ("identity", "federated-credential"):
             action = arguments[2]
             if action == "show":
-                return 0, SUBJECT + "\n", ""
+                # Only the deploy identity's credential for the environment `hub` is there: the credential `github-main` of the earlier, private repository was deleted on 2026-11-11.
+                if option(arguments, "--identity-name") == DEPLOY_NAME and option(arguments, "--name") == setup.DEPLOY_CREDENTIAL:
+                    return 0, self.deploy_subject + "\n", ""
+                return 1, "", "(ResourceNotFound) The federated identity credential was not found."
             if action == "list":
                 return 0, "\n".join(self.credentials) + ("\n" if self.credentials else ""), ""
             if action == "create":
@@ -225,11 +230,47 @@ class Check(unittest.TestCase):
         azure.roles = [(NEW_OBJECT, GROUP_ID, setup.READER_ROLE)]
         run = Run(azure)
         run("check", *ALL, "--step", "G4")
-        self.assertIn("G4  DIFFERS    Its federated credentials are not exactly the one of the deploy identity's subject", run.text)
+        self.assertIn("G4  DIFFERS    Its federated credentials are not exactly the one of this repository's main branch", run.text)
         azure.credentials = []
         run = Run(azure)
         run("check", *ALL, "--step", "G4")
         self.assertIn("G4  MISSING    It has no federated credential", run.text)
+
+    def test_the_subject_of_the_main_branch_is_made_from_the_credential_of_the_environment_and_never_from_a_credential_that_is_gone(self):
+        run = Run()
+        run("check", *ALL, "--step", "G4")
+        shows = [call for call in run.azure.calls if call[:3] == ["identity", "federated-credential", "show"]]
+        self.assertTrue(shows)
+        for call in shows:
+            self.assertEqual((option(call, "--identity-name"), option(call, "--name")), (DEPLOY_NAME, "github-hub-env"))
+        azure = Azure()
+        azure.identity = {"principalId": NEW_OBJECT, "clientId": NEW_CLIENT}
+        azure.credentials = [SUBJECT]
+        azure.roles = [(NEW_OBJECT, GROUP_ID, setup.READER_ROLE)]
+        run = Run(azure)
+        run("check", *ALL, "--step", "G4")
+        self.assertIn("G4  present    It has one federated credential, with the subject of this repository's main branch.", run.text)
+
+    def test_a_credential_of_the_deploy_identity_that_is_not_an_environment_is_never_turned_into_a_subject(self):
+        for subject in ("repo:someone/somewhere:ref:refs/heads/main", "repo:someone/somewhere:environment:other", "nonsense:environment:hub", ""):
+            azure = Azure()
+            azure.deploy_subject = subject
+            run = Run(azure)
+            self.assertEqual(run("check", *ALL, "--step", "G4"), 1, subject)
+            self.assertIn("G4  UNREADABLE", run.text, subject)
+            self.assertIn("is not the environment `hub` of a repository", run.text, subject)
+            self.assertEqual(azure.writes(), [], subject)
+
+    def test_a_deploy_credential_that_cannot_be_read_is_unreadable_and_makes_nothing(self):
+        azure = Azure()
+        azure.failing["federated-credential show"] = "(AuthorizationFailed) the client does not have authorization"
+        run = Run(azure)
+        self.assertEqual(run("check", *ALL, "--step", "G4"), 1)
+        self.assertIn("G4  UNREADABLE", run.text)
+        self.assertIn("could not be made from the deploy identity's federated credential github-hub-env", run.text)
+        run = Run(azure)
+        run("grant", *ALL, "--step", "G4", "--apply", "--yes")
+        self.assertEqual(azure.writes(), [])
 
     def test_the_read_only_identity_needs_the_group_and_the_name_of_the_deploy_identity(self):
         run = Run()
