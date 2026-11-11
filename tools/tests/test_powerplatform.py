@@ -443,19 +443,20 @@ class Steps(unittest.TestCase):
         self.assertEqual(world.calls, [])
         self.assertEqual(world.audiences, [], "not even a token is asked for")
         numbers = [int(n) for n in re.findall(r"(?m)^\s{1,2}(\d{1,2})\. ", out)]
-        self.assertEqual(numbers, list(range(1, 12)))
+        self.assertEqual(numbers, list(range(1, 15)))
         queue = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Storage/storageAccounts/stexample/queueServices/default/queues/teams-cards"
         self.assertIn(f'az role assignment create --assignee-object-id 22222222-3333-4444-5555-666666666666 --assignee-principal-type User --role "Storage Queue Data Message Processor" --scope {queue}', out)
         self.assertIn(f"--role Reader --scope {POLICY}", out)
         self.assertIn("az provider show --namespace Microsoft.PowerPlatform", out)
         for command in ("create-environment --name cards --sku Developer --apply", "managed --environment cards --apply", "link --environment cards", "status --environment cards"):
             self.assertIn(command, out)
-        for words in ("Storage queue endpoint: https://stexample.queue.core.windows.net/", "Queue name: teams-cards", "Microsoft Entra ID Integrated", "turn it on", "Put a message on a queue (V2)", "https://admin.teams.microsoft.com/policies/manage-apps"):
+        for words in ("Storage queue endpoint: https://stexample.queue.core.windows.net/", "Queue name: teams-cards", "Microsoft Entra ID Integrated", "turn it on", "Put a message on a queue (V2)", "https://admin.teams.microsoft.com/policies/manage-apps",
+                      "az ad signed-in-user show --query id --output tsv", f"az storage account list --resource-group {GROUP}", "second connection reference"):
             self.assertIn(words, out)
-        self.assertLess(out.index("create-environment"), out.index("managed --environment"))
-        self.assertLess(out.index("managed --environment"), out.index("link --environment"))
-        self.assertLess(out.index("link --environment"), out.index("Import solution"))
-        self.assertLess(out.index("manage-apps"), out.index("Import solution"), "the app of the Flow bot is allowed before the first card")
+        order = ["Start the action cases once more", "Start the action powerplatform", "az role assignment create", "--role Reader", "manage-apps", "create-environment", "managed --environment", "link --environment", "status --environment",
+                 "Import solution", "Storage queue endpoint:", "save it and turn it on", "The first card"]
+        positions = [out.index(words) for words in order]
+        self.assertEqual(positions, sorted(positions), "the steps come in the order of the proposal: the Hub, the roles, Teams, the environment, the link, the import, the connections, the flow, the first card")
         self.assertLess(out.index("Import solution"), out.index("turn it on"))
 
     def test_without_arguments_it_prints_placeholders_and_no_id(self):

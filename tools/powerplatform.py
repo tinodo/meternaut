@@ -31,7 +31,7 @@ link                 Checks first, and stops at the first check that fails: the 
                      virtual network, and its subnet is delegated to Microsoft.PowerPlatform/enterprisePolicies and has room. A dry run, unless --apply: it then asks for a yes (or takes --yes), links, waits for the
                      operation and reads the environment again.
 unlink               The same, the other way: only the project's own policy is unlinked, the person confirms, and the environment is read again.
-steps                Prints, in order, every step that a person does by hand, with the commands: the roles, the environment, the link, the Teams admin center setting for the Workflows app, the import of the solution, the two connections, the two environment
+steps                Prints, in order, every step that a person does by hand, with the commands: the Hub actions, the roles, the Teams admin center setting for the Workflows app, the environment, the link, the import of the solution, the two connections, the two environment
                      variables, turning the flow on, and the first card. It sends nothing. The import is left to the maker portal: the Dataverse call for it (ImportSolutionAsync) takes the
                      connection references and the values of the environment variables as a collection of entities that the Web API reference does not show an example of, so it is not written here.
 
@@ -665,36 +665,50 @@ def steps_text(args: argparse.Namespace) -> list[str]:
     return [
         "The steps that a person does by hand, in order (docs/proposals/19-teams-cards-through-power-automate.md). Nothing here was run: it is the plan that the Hub and this tool follow.",
         "",
-        "In Azure (the Hub makes the rest: the actions base and cases make the storage account and the queue, the action powerplatform makes the subnet and the policy):",
-        f"  1. Check once that the resource provider is registered: az provider show --namespace Microsoft.PowerPlatform --query registrationState  (and az provider register --namespace Microsoft.PowerPlatform if it is not).",
-        f"  2. Give the person whose Azure Queues connection the flow will use a data role on the queue, and nothing wider. A role takes up to ten minutes to apply:",
+        "Before anything runs:",
+        "  1. Decide the size of the subnet snet-powerplatform (POWERPLATFORM_SUBNET_LENGTH in tools/environment-params.py: /27 by default, /28 is the least, /26 for a Production environment). It cannot change once an environment is linked.",
+        "",
+        "In the Hub (the Actions tab, the workflow Hub, which runs in the environment hub):",
+        "  2. Start the action cases once more: it makes the queue teams-cards next to cases-control and gives the app its setting TEAMS_CARDS_QUEUE; the app's new code, which writes the cards, goes out in the same run.",
+        "  3. Start the action powerplatform: the subnet snet-powerplatform and the enterprise policy. It stops before it changes anything unless the parameter builder found room for the subnet and the resource provider is registered. "
+        "The deploy identity cannot register a provider: check once, and register it if it is not:",
+        "       az provider show --namespace Microsoft.PowerPlatform --query registrationState",
+        "       az provider register --namespace Microsoft.PowerPlatform",
+        "",
+        "In Azure, by a person (the deploy identity gives roles to service principals only):",
+        "  4. Give the person whose Azure Queues connection the flow will use a data role on the queue, and nothing wider. A role takes up to ten minutes to apply:",
         f"       az role assignment create --assignee-object-id {person} --assignee-principal-type User --role \"{ROLE_MESSAGE_PROCESSOR}\" --scope {queue}",
-        f"     (Peek, retrieve and delete: it is what the trigger and the delete need. For the test flow of step 11 add the role \"{ROLE_MESSAGE_SENDER}\" on the same queue, and take it away again after.)",
-        f"  3. If the person who links the environment does not read the policy already, give that person Reader on it:",
+        f"     (The person's own object id: az ad signed-in-user show --query id --output tsv, run by that person. The account's name: az storage account list --resource-group {group} --query \"[].name\" --output tsv.",
+        f"      Peek, retrieve and delete is what the trigger and the delete need. For the test flow of step 14 add the role \"{ROLE_MESSAGE_SENDER}\" on the same queue, and take it away again after.)",
+        "  5. If the person who links the environment does not read the policy already, give that person Reader on it:",
         f"       az role assignment create --assignee-object-id <object id of the Power Platform administrator> --assignee-principal-type User --role Reader --scope {policy}",
         "",
-        "In Power Platform (this tool, with the Power Platform administrator's own `az login`; each command is a dry run until --apply):",
-        f"  4. python tools/powerplatform.py create-environment --name {environment} --sku Developer --apply     (an environment of that name is left alone)",
-        f"  5. python tools/powerplatform.py managed --environment {environment} --apply                     (virtual network support needs a Managed Environment)",
-        f"  6. python tools/powerplatform.py link --environment {environment} --subscription {subscription} --resource-group {group} --apply",
-        "     Wait: connections can be unstable for up to 30 minutes after a link or an unlink.",
-        f"  7. python tools/powerplatform.py status --environment {environment} --subscription {subscription} --resource-group {group}     (the answer must be: linked to the project's policy: YES)",
-        "",
         "In Teams, by a Teams administrator (a setting of the Teams admin center that this tool cannot read):",
-        "  8. Check that the app 'Workflows' (formerly Power Automate) is allowed: https://admin.teams.microsoft.com/policies/manage-apps, find Workflows, its status must be Allowed. The action that posts a card needs it (Learn: the Microsoft Teams connector, known issues and limitations).",
+        "  6. Check that the app 'Workflows' (formerly Power Automate) is allowed: https://admin.teams.microsoft.com/policies/manage-apps, find Workflows, its status must be Allowed. The action that posts a card needs it (Learn: the Microsoft Teams connector, known issues and limitations).",
         "",
-        "In the maker portal (https://make.powerapps.com), as the person of step 2, in the environment of step 4 (the import by the Dataverse API is not written: see this tool's help):",
-        "  9. python tools/powerplatform-pack.py makes powerplatform/out/meternaut-cards.zip. Solutions, Import solution, Browse, that zip, Next.",
-        " 10. The import asks for the two connections and the two values:",
+        "In Power Platform (this tool, with the Power Platform administrator's own `az login`; each command is a dry run until --apply):",
+        f"  7. python tools/powerplatform.py create-environment --name {environment} --sku Developer --apply     (an environment of that name is left alone: skip this step when it exists)",
+        "     From 15 November 2026 a new developer environment has to be a Managed Environment (Learn). This tool makes the environment first and turns Managed Environments on second: if the first call is refused, "
+        "make the environment in the Power Platform admin center with Managed Environments on, and go on with step 9.",
+        f"  8. python tools/powerplatform.py managed --environment {environment} --apply                     (virtual network support needs a Managed Environment)",
+        f"  9. python tools/powerplatform.py link --environment {environment} --subscription {subscription} --resource-group {group} --apply",
+        "     Wait: connections can be unstable for up to 30 minutes after a link or an unlink.",
+        f" 10. python tools/powerplatform.py status --environment {environment} --subscription {subscription} --resource-group {group}     (the answer must be: linked to the project's policy: YES)",
+        "",
+        "In the maker portal (https://make.powerapps.com), as the person of step 4 (who made the environment, or is an administrator of it), in the environment of step 7 (the import by the Dataverse API is not written: see this tool's help):",
+        " 11. python tools/powerplatform-pack.py makes powerplatform/out/meternaut-cards.zip. Solutions, Import solution, Browse, that zip, Next.",
+        " 12. The import asks for the two connections and the two values. Make each connection there, or from the actions of the flow in its designer, and not first under Data, Connections to pick afterwards (that can leave a second connection reference for the same connector):",
         "       - the Azure Queues connection: sign in with Microsoft Entra ID (the authentication type 'Microsoft Entra ID Integrated'), not with an access key; it belongs to you and is not shareable;",
         "       - the Microsoft Teams connection: sign in;",
         f"       - Storage queue endpoint: https://{account}.queue.core.windows.net/   (the whole address, with https and the closing slash);",
         f"       - Queue name: {QUEUE_NAME}",
-        "     Import. Open the solution, open the flow 'Meternaut cards' and turn it on. It is untested in Power Platform: if the designer marks an action, that is the first thing to read.",
-        " 11. The first card, before the app sends one: a second flow in the same environment, with a manual trigger and one action 'Put a message on a queue (V2)', the same connection, the same endpoint, the queue "
+        " 13. Import. Open the solution, open the flow 'Meternaut cards', save it and turn it on: it arrives switched off, and saving does not turn it on. It is untested in Power Platform: if the designer marks an action, that is the first thing to read.",
+        " 14. The first card, before the app sends one: a second flow in the same environment, with a manual trigger and one action 'Put a message on a queue (V2)', the same connection, the same endpoint, the queue "
         f"{QUEUE_NAME} and, as the message, the JSON text {{\"v\":1,\"id\":\"test-1\",\"to\":\"<your mail address>\",\"title\":\"Test\",\"card\":{{\"type\":\"AdaptiveCard\",\"version\":\"1.4\",\"body\":[{{\"type\":\"TextBlock\",\"text\":\"Test card\"}}]}}}}. "
         "Run it. The card should be in your chat with the Workflows app within a few minutes, and the queue empty. Delete the test flow and take the Sender role away.",
         "",
+        "After a new version of the solution: an import replaces the flow, and the replacement arrives switched off with no connection chosen. Pick the two connections again (they are kept, with no new sign-in), save, and turn it on, as in steps 12 and 13.",
+        "If the first runs after the link are slow and fail once with a 404 from the connector's host, wait out the 30 minutes and run again before looking for another cause.",
         "If a step fails: the flow's own run history says which action failed and why; `status` says what is linked; the Power Platform admin center shows the environment's History.",
     ]
 
