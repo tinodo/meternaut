@@ -25,6 +25,15 @@ LOG = logging.getLogger("meternaut.loop")
 LETTER_DAYS = 3  # the letters about a change are offered again for this long after it
 
 
+def _offer_cards(extras: wiring.Extras, redact: Callable[[str], str]) -> None:
+    """Offers the Teams cards that are due, before the letters: a person who chose Teams gets the card first (cases/offers.py), and the letter follows only when no card was sent in the
+    first twenty minutes (cases/notify.py). A card that fails never undoes a change and never stops the round."""
+    try:
+        extras.on_cards()
+    except Exception as error:  # noqa: BLE001 (the timer must go on)
+        LOG.error(redact(f"the cards could not be offered: {type(error).__name__}"))
+
+
 def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Callable[[str], str]) -> None:
     """Offers the letters about every open plan and about the changes of the last days (a result that is not known too: its hook holds the letter until the result has stayed so for a while).
     A hook sends a letter only when it is due, so a letter that was sent
@@ -65,6 +74,7 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings),
                                   arm=Arm(reader_client, reader.token), clock=clock, sleep=sleep, emit=history.emit)
         result = runner.tick(services)
+        _offer_cards(extras, redact)
         _remind(extras, clock, redact)
         if clock().minute % learning.SYNC_EVERY_MINUTES == 0:
             learning.sync(extras.store, clock(), arm=services.arm)  # the lessons of the plans that ended (cases/learning.py); it never raises

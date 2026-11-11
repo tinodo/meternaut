@@ -22,7 +22,6 @@ from cases.web import figures
 BASE = "https://meternaut.example"
 PERSON = Person(TINO, "Tino", ("owner", "approver", "ops"), "tino@example.com")
 CONTACTS = ("Olga (olga@example.com)", "Tino (tino@example.com)")
-NONCE = "N0nce-0123456789abcdefghijklmnop"
 MONEY = "Money is in US dollars, and a year is twelve times the month."
 BANNED = ("No figure", "No saving is shown", "Talk to a person", "Decide:", "saving: about")
 WAITING = re.compile(r" Waiting costs about \$[\d,.]+ a day\.$")
@@ -50,7 +49,7 @@ class Case:
 
     def card(self):
         b = self.brief()
-        ctx = cards.CardContext(page_url=f"{BASE}/ok/{b.plan_id}", nonce=NONCE if self.open else "", contacts=CONTACTS)
+        ctx = cards.CardContext(page_url=f"{BASE}/ok/{b.plan_id}", contacts=CONTACTS)
         return cards.card_for(b, ctx)
 
     def page(self):
@@ -337,7 +336,7 @@ class NoLetterAndNoCardSaysTheOldWords(unittest.TestCase):
     def test_a_subject_and_a_notification_text_hold_no_resource_name_and_no_amount(self):
         for fixture in decision_cases() + done_cases():
             with self.subTest(fixture.label):
-                subject, summary = fixture.letter().subject, cards.message_activity(fixture.card(), "change" if fixture.open else "result")["summary"]
+                subject, summary = fixture.letter().subject, cards.SUMMARIES["change" if fixture.open else "result"]
                 for text in (subject, summary):
                     for name in (fixture.plan.resource_name, fixture.case.resource_name, fixture.plan.resource_group, fixture.plan.code):
                         self.assertNotIn(name, text)
@@ -357,16 +356,13 @@ class NoLetterAndNoCardSaysTheOldWords(unittest.TestCase):
                 urls = {node["url"] for node in walk(fixture.card()) if "url" in node}
                 self.assertEqual(urls, {f"{BASE}/ok/{fixture.plan.plan_id}"})
 
-    def test_the_button_of_a_decision_is_review_and_decide_in_the_letter_and_on_the_card_and_a_card_keeps_its_actions(self):
+    def test_the_link_of_a_decision_is_review_and_decide_in_the_letter_and_on_the_card_and_it_is_the_only_action_of_a_card(self):
         for fixture in decision_cases():
             with self.subTest(fixture.label):
                 if fixture.brief().kind == "change":
                     self.assertIn(">Review and decide<", fixture.letter().html)
-                    titles = [a["title"] for a in by_id(fixture.card())["decisions"]["actions"]]
-                    self.assertEqual(titles[0], "Review and decide")
-                else:
-                    titles = [a["title"] for a in by_id(fixture.card())["decisions"]["actions"]]
-                    self.assertEqual(titles[:2], ["Worth acting on", "Not worth it"])
+                self.assertEqual([a["title"] for a in by_id(fixture.card())["decisions"]["actions"]], ["Review and decide"])
+                self.assertEqual(len([node for node in walk(fixture.card()) if str(node.get("type", "")).startswith("Action.")]), 1)
                 self.assertNotIn(">Decide<", fixture.letter().html)
 
 

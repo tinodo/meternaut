@@ -19,7 +19,7 @@ from support import ENV, GATEWAY_HOST, NOW, RG, SUBSCRIPTION, FakeEstate, LogCap
 from cases import console, loop, loop_config, run
 from cases.http import Client
 from cases.memory_store import stamp
-from cases.models import SwitchRecord
+from cases.models import SettingsRecord, SwitchRecord
 from cases.redact import Redactor
 from cases.runner import ASKED_AGAIN, STEP_UP_ABANDONED
 from cases.store import TableStore, table_calls
@@ -29,6 +29,7 @@ from test_runner import CLAIMS, challenge
 from test_store import FakeTables
 from test_web_approval import rows
 from test_web_support import Reply
+import cardsupport as cs
 
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 GROUP = "rg-meternaut"
@@ -190,6 +191,7 @@ class World:
         self.estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
         self.tables = FakeTables()
         self.mail = Mail()
+        self.queue = cs.FakeQueue()
         self.entra = Entra()
         self.resources = Resources({f"Bearer {PERSON_TOKEN}"})
         self.calls = []
@@ -200,6 +202,8 @@ class World:
         self.calls.append((self.phase, method, parts.netloc, parts.path, headers.get("Authorization", "")))
         if parts.netloc.endswith(".table.core.windows.net"):
             return self.tables.transport(method, url, headers, data, timeout)
+        if parts.netloc.endswith(".queue.core.windows.net"):
+            return self.queue(method, url, headers, data, timeout)
         if parts.netloc == "graph.microsoft.com":
             return self.mail(method, url, headers, data, timeout)
         if parts.netloc == "login.microsoftonline.com":
@@ -241,9 +245,9 @@ class Browser:
         return reply
 
 
-def watch(world, clock):
+def watch(world, clock, env=None):
     world.phase = "watch"
-    return run.run_watch("control", "a" * 32, dict(LOOP_ENV), clock=clock, monotonic=Ticker(), sleep=lambda s: None, transport=world, fetch=fetch,
+    return run.run_watch("control", "a" * 32, dict(env or LOOP_ENV), clock=clock, monotonic=Ticker(), sleep=lambda s: None, transport=world, fetch=fetch,
                          new_id=iter(f"{n:032x}" for n in range(1, 1000)).__next__)
 
 
@@ -255,6 +259,8 @@ def store_of(world, clock):
 class Story(unittest.TestCase):
     """The loop with its fakes: a world, a clock, a store that reads what the app wrote, a browser that is signed in, the timer, and the press of Approve."""
 
+    ENV = LOOP_ENV
+
     def setUp(self):
         self.clock = Clock()
         self.world = World()
@@ -263,7 +269,7 @@ class Story(unittest.TestCase):
 
     def tick(self):
         self.world.phase = "timer"
-        return loop.tick(dict(LOOP_ENV), transport=self.world, sleep=lambda s: None, monotonic=Ticker(), clock=self.clock, fetch=fetch)
+        return loop.tick(dict(self.ENV), transport=self.world, sleep=lambda s: None, monotonic=Ticker(), clock=self.clock, fetch=fetch)
 
     def approve(self, plan):
         """The person presses Approve, signs in to Azure and comes back. Returns the page that shows what came of it."""
@@ -804,6 +810,62 @@ class TheStepUp(Story):
         self.tick()
         self.assert_nothing_deleted_and_closed("failed")
         self.assertEqual(self.store.action_get(self.plan.plan_id).result, STEP_UP_ABANDONED)
+
+
+class TheTeamsCardsOfTheLoop(Story):
+    """A person who chose Teams gets the card on the queue from the timer, and the letter only when no card was sent in the first twenty minutes."""
+
+    ENV = {**LOOP_ENV, "TEAMS_CARDS_QUEUE": cs.QUEUE}
+
+    def setUp(self):
+        super().setUp()
+        self.store.settings_put(SettingsRecord(oid=OID, channel="teams"))
+        self.summary = watch(self.world, self.clock, self.ENV)
+        (self.plan,) = self.store.plans_open()
+
+    def subjects(self):
+        return sorted(m["message"]["subject"].split("] ", 1)[1] for m in self.world.mail.sent)
+
+    def test_the_timer_puts_the_card_on_the_queue_and_no_letter_follows_a_card_that_was_put_there(self):
+        self.assertTrue(self.summary.ok)
+        self.assertEqual((self.world.mail.sent, self.world.queue.calls), ([], []), "the card has the first go, and the Watch makes none: the timer does")
+        self.tick()
+        messages = self.world.queue.messages()
+        self.assertEqual([m["title"].split("] ", 1)[1] for m in messages], ["An AI assistant for Azure costs will write to you", "A change to Azure waits for your OK"])
+        self.assertEqual({m["to"] for m in messages}, {"tino@example.com"})
+        (decisions,) = [node for node in messages[1]["card"]["body"] if node.get("id") == "decisions"]
+        (link,) = decisions["actions"]
+        self.assertEqual((link["title"], link["url"]), ("Review and decide", f"https://{HOST}/ok/{self.plan.plan_id}"))
+        self.assertEqual({call[0] for call in self.world.calls if call[2].endswith(".queue.core.windows.net")}, {"timer"})
+        self.assertEqual(sorted((m.kind, m.status) for m in self.store.mails_since(OID, "2000-01-01T00:00:00Z")), [("approval-card", "sent"), ("first-contact-card", "sent")])
+        self.clock.advance(minutes=25)
+        self.tick()
+        self.assertEqual((self.world.mail.sent, len(self.world.queue.calls)), ([], 2), "a card was put on the queue, so no letter follows and no card is put there twice")
+
+    def test_a_queue_that_refuses_the_app_leaves_the_letters_to_go_after_the_twenty_minutes(self):
+        self.world.queue.replies = [403] * 40
+        self.tick()
+        self.assertEqual(self.world.mail.sent, [], "the card has its twenty minutes, whatever came of the try")
+        self.clock.advance(minutes=19)
+        self.tick()
+        self.assertEqual(self.world.mail.sent, [])
+        self.clock.advance(minutes=1)
+        self.tick()
+        self.assertEqual(self.subjects(), ["A change to Azure waits for your OK", "An AI assistant for Azure costs will write to you"])
+        tries = [(m.kind, m.status) for m in self.store.mails_since(OID, "2000-01-01T00:00:00Z") if m.kind.endswith("-card")]
+        self.assertTrue(tries and {kind for kind, _ in tries} == {"first-contact-card"} and {status for _, status in tries} == {"failed"}, tries)
+        calls = len(self.world.queue.calls)
+        self.clock.advance(hours=2)
+        self.tick()
+        self.assertEqual((len(self.world.queue.calls), len(self.world.mail.sent)), (calls, 2), "the letters went: no card goes for the request, and the letters are not sent again")
+
+    def test_without_the_setting_no_card_is_put_anywhere_and_the_letters_go_after_the_twenty_minutes(self):
+        self.ENV = LOOP_ENV
+        self.tick()
+        self.clock.advance(minutes=20)
+        self.tick()
+        self.assertEqual(self.world.queue.calls, [])
+        self.assertEqual(self.subjects(), ["A change to Azure waits for your OK", "An AI assistant for Azure costs will write to you"])
 
 
 class TheWholeLoopOnTheSystemAssignedIdentity(TheWholeLoop):

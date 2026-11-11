@@ -1,21 +1,20 @@
-"""The Teams card of a decision brief: an Adaptive Card of schema 1.5, as a pure function of the brief (brief.py) and what the card needs besides it.
+"""The Teams card of a decision brief: an Adaptive Card of schema 1.4, as a pure function of the brief (brief.py) and what the card needs besides it.
 
-The page, the letter and the card are renders of the same brief (AGENTS.md rule 34), and the card is the one that a person answers fastest. It holds what a person needs to decide
-in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of words, what it is worth (the figure a year and a month, its
-level and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it can be undone, what could go wrong, whose resource it
-is, the answers that exist, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing else: no reasoning box,
-no counters, no banner.
+The page, the letter and the card are renders of the same brief (AGENTS.md rule 34). A card is posted into the chat of a person by a flow of Power Automate that reads it from a private
+queue (teamsqueue.py): the action that posts it cannot take an answer back, so a card holds nothing to fill in and no button that sends anything. It holds what a person needs to decide in a
+minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of words, what it is worth (the figure a year and a month, its level
+and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it can be undone, what could go wrong, whose resource it is, the
+one link, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing else: no reasoning box, no counters, no banner.
 
-The answers. An approval that changes Azure is never taken on a card: the card's one link, "Review and decide", is the page of the request, where the person signs in to Azure and
-Azure checks the person's own rights. A card never carries an Azure token. The answers that change nothing in Azure are Action.Execute actions that call the bot with the tapper's own
-identity: "Worth acting on" and "Not worth it" for advice, "This is not mine", "Decide later" and one "Ask or tell" with a text box. Every action carries the id of the request, the plan
-code and a one-time token that was made for this person (the same checks as the page's form), and an action that takes no input says so (associatedInputs none).
+The link. Every answer, an approval of a change included, is given on the page of the request, where the person signs in to Azure and Azure checks the person's own rights: the card's one
+link, "Review and decide", is that page. A card never carries an Azure token, a one-time token or an answer. When a switch holds the answers, the card says so and its link reads "See the request".
 
 Text that did not come from code (names, tag values, what a model wrote) has been through brief.plain (no hidden or direction character, no line break, no link) and is escaped here
 for the Markdown that a TextBlock renders, so that it can neither start a link, a list or a bold run nor hide what the card says. No text of the estate is ever put in a link: the
 address of the page is made from the base address and the id of the request alone.
 
-Every card is checked by cardcheck.check before it is handed on, and a card that does not pass is not made.
+Every card is checked by cardcheck.check before it is handed on, and a card that does not pass is not made. A card that is too big for its message is replaced by minimal_card: the
+headline, the link and the footer.
 """
 from __future__ import annotations
 
@@ -29,22 +28,12 @@ from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
 MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
-CONTENT_TYPE = "application/vnd.microsoft.card.adaptive"
-MESSAGE_TYPE = "application/vnd.microsoft.activity.message"
-VERBS = ("approve", "decline", "not_mine", "later", "ask")  # the answers of the decider (models.DECISIONS); the card's verbs are the same words
-MAX_NOTE = 300  # the most characters of the text box: what the decider keeps of a note
-TITLES = {
-    "change": {"approve": "Review and decide", "decline": "Decline", "not_mine": "This is not mine", "later": "Decide later", "ask": "Ask or tell"},
-    "advice": {"approve": "Worth acting on", "decline": "Not worth it", "not_mine": "This is not mine", "later": "Decide later", "ask": "Ask or tell"},
-}
 KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello"}
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
              "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you"}
 PAGE_BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
-PLAN_CODE = re.compile(r"[A-Za-z0-9]{4,16}")
-NONCE = re.compile(r"[A-Za-z0-9_-]{20,64}")
 # What a TextBlock reads as Markdown (the subset that Teams shows), a < that could open a mention or a tag, and the characters that start a list at the start of a text.
 MARKDOWN = re.compile(r"([\\`*_\[\]()#<>])")
 GENTLE = re.compile(r"([\\`*_\[\]#<>])")
@@ -52,19 +41,23 @@ LIST_DASH = re.compile(r"^[-+](?=\s)")
 LIST_NUMBER = re.compile(r"^(\d+)\.(?=\s)")
 TEXT_FEATURE = re.compile(r"\{(?=\{)")
 WHY_APPROVER = "You got this because you are named as an approver of this request."
+SHORT_CARD = "The details did not fit on this card. They are all on the page."
 
 
 class CardError(Exception):
     """A card that cannot be made, or that does not pass the check. The text names the problems and never holds a token."""
 
 
+class CardTooLarge(CardError):
+    """A card that passes every check but its size: the caller puts minimal_card in its place."""
+
+
 @dataclass(frozen=True)
 class CardContext:
-    """What a card needs besides the brief: the address of the page of its request (page_url makes it), a one-time token that was made for the person and the plan (empty when the
-    card shows no answer), why the person got it, and who is responsible for Meternaut (people, each as plain text with the address: the card names the first)."""
+    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, and who is responsible for Meternaut (people, each as plain
+    text with the address: the card names the first)."""
 
     page_url: str
-    nonce: str = ""
     why: str = WHY_APPROVER
     contacts: tuple[str, ...] = ()
 
@@ -190,40 +183,17 @@ def _decision_lines(brief: Brief) -> list[dict]:
             _block("risk", f"**Risk, {md(brief.risk.level, 12)}:** {md(brief.risk.text, 240)}"), _block("owner", f"**Owner:** {md(brief.owner.text, 200)}")]
 
 
-def _data(brief: Brief, nonce: str) -> dict:
-    return {"requestId": brief.plan_id, "planCode": brief.plan_code, "nonce": nonce}
+def _page_set(title: str, ctx: CardContext, *, positive: bool = False) -> dict:
+    """The one action of every card: the link to the page of the request (or, on the card that introduces Meternaut, to the web page)."""
+    return {"type": "ActionSet", "id": "decisions", "actions": [{"type": "Action.OpenUrl", "id": "page", "title": title, "url": ctx.page_url, **({"style": "positive"} if positive else {})}]}
 
 
-def _execute(brief: Brief, ctx: CardContext, verb: str, title: str, *, inputs: bool = False) -> dict:
-    return {"type": "Action.Execute", "title": title, "verb": verb, "data": _data(brief, ctx.nonce), "associatedInputs": "auto" if inputs else "none",
-            "fallback": {"type": "Action.OpenUrl", "title": "Open on the page", "url": ctx.page_url}}
-
-
-def _answer_parts(brief: Brief, ctx: CardContext) -> list[dict]:
-    """The answers that exist for this person right now: the link to the page for a change (its approval is made there), the actions that change nothing in Azure, and the text box
-    with its own button. A switch that holds an answer has taken it out of brief.answers, and the card says so."""
-    titles = TITLES[brief.kind]
-    actions: list[dict] = []
-    if brief.kind == "change":
-        # An approval that changes Azure is made on the page, where the person signs in to Azure: the link is the only way to it. So is the confirmation of the first of two people.
-        approving = bool({"approve", "confirm"} & set(brief.answers))
-        actions.append({"type": "Action.OpenUrl", "id": "page", "title": "Review and decide" if approving else "See the request", "url": ctx.page_url,
-                        **({"style": "positive"} if approving else {})})
-    else:
-        for verb in ("approve", "decline"):
-            if verb in brief.answers:
-                actions.append({**_execute(brief, ctx, verb, titles[verb]), "id": verb, **({"style": "positive"} if verb == "approve" else {})})
-        actions.append({"type": "Action.OpenUrl", "id": "page", "title": "See the evidence", "url": ctx.page_url})
-    for verb in ("not_mine", "later"):
-        if verb in brief.answers:
-            actions.append({**_execute(brief, ctx, verb, titles[verb]), "id": verb})
+def _link_parts(brief: Brief, ctx: CardContext) -> list[dict]:
+    """The link of a request that waits for an answer: "Review and decide" when this person has an answer to give (an approval of a change is made on the page, where the person signs in to
+    Azure, and so is the confirmation of the first of two people), "See the request" when a switch has taken the answers away, and then the card says so."""
+    approving = bool({"approve", "confirm"} & set(brief.answers))
     held = [_block("paused", PAUSED_ADVICE if brief.kind == "advice" else PAUSED_CHANGES, weight="Bolder")] if brief.held else []
-    parts: list[dict] = [*held, {"type": "ActionSet", "id": "decisions", "actions": actions}]
-    if "ask" in brief.answers:
-        parts.append({"type": "Input.Text", "id": "message", "label": "Ask or tell", "isMultiline": True, "maxLength": MAX_NOTE, "isRequired": True,
-                      "errorMessage": "Write a few words first.", "placeholder": "A question, or something I should know. This approves nothing."})
-        parts.append({"type": "ActionSet", "id": "ask", "actions": [{**_execute(brief, ctx, "ask", titles["ask"], inputs=True), "id": "send-ask"}]})
-    return parts
+    return [*held, _page_set("Review and decide" if approving else "See the request", ctx, positive=approving)]
 
 
 def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
@@ -233,22 +203,19 @@ def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
     return _block("ai-footer", line, isSubtle=True, size="Small", separator=True)
 
 
-def _check_context(ctx: CardContext, brief: Brief, *, needs_nonce: bool) -> None:
+def _check_context(ctx: CardContext, brief: Brief) -> None:
     if not isinstance(ctx, CardContext) or not re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/ok/[A-Za-z0-9_-]{1,64}", ctx.page_url or ""):
         raise CardError("the card needs the address of the page of its request (page_url)")
     if not ctx.page_url.endswith(f"/ok/{brief.plan_id}") and brief.plan_id:
         raise CardError("the address of the page is not the page of this request")
-    if needs_nonce:
-        if not NONCE.fullmatch(ctx.nonce or ""):
-            raise CardError("the card needs a one-time token that was made for the person")
-        if not OPAQUE.fullmatch(brief.plan_id or "") or not PLAN_CODE.fullmatch(brief.plan_code or ""):
-            raise CardError("the card needs the id and the code of the plan")
 
 
 def _finish(card: dict) -> dict:
     problems = cardcheck.check(card)
     if problems:
-        raise CardError("the card does not pass the check: " + "; ".join(problems[:5]))
+        size = cardcheck.size_of(card)
+        text = "the card does not pass the check: " + "; ".join(problems[:5])
+        raise (CardTooLarge if len(problems) == 1 and size is not None and size > cardcheck.MAX_BYTES else CardError)(text)
     return card
 
 
@@ -257,88 +224,69 @@ def _card(brief: Brief, ctx: CardContext, kind: str, body: list[dict], what: str
     return _finish({
         "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"},
         "fallbackText": f"{SENDER}: {md(title, 200)}. {what} Open it on the page: {ctx.page_url} Written by an AI.",
-        "body": [_header(kind), _block("headline", md(title, 200), size="Large", weight="Bolder", style="heading"), *body, footer(brief.models, ctx.why, ctx.contacts)],
+        "body": [_header(kind), _block("headline", md(title, 200), size="Large", weight="Bolder"), *body, footer(brief.models, ctx.why, ctx.contacts)],
     })
 
 
 # -- the cards -----------------------------------------------------------------------------------------------------------------------------------
 
-def decision_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
-    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice that changes nothing (kind advice). `notice` is one plain line
-    at the top, for the card that replaces a card after an answer that leaves the request open (a question, or "later")."""
+def decision_card(brief: Brief, ctx: CardContext) -> dict:
+    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice that changes nothing (kind advice). It holds the link to the page, where the
+    answer is given, and no answer of its own."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or not brief.answers:
         raise CardError("only a request that is open and that this person may answer has a decision card")
-    _check_context(ctx, brief, needs_nonce=True)
-    body: list[dict] = []
-    if notice:
-        body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    body += [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-             *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *_answer_parts(brief, ctx)]
+    _check_context(ctx, brief)
+    body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
+            *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *_link_parts(brief, ctx)]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 
-def result_card(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
+def result_card(brief: Brief, ctx: CardContext) -> dict:
     """The card of a request that is not open any more, or that a change has run for: what became of it in plain lines, what it saves (the figure of the pages: Verified only when the cost
-    lines after the change confirm it), whether it can be undone, and the page. It holds no answer, so it holds no token."""
-    _check_context(ctx, brief, needs_nonce=False)
+    lines after the change confirm it), whether it can be undone, and the page."""
+    _check_context(ctx, brief)
     outcome = brief.outcome
-    body: list[dict] = []
-    if notice:
-        body.append(_block("notice", md(notice, 240), weight="Bolder"))
-    body += _place(brief)
+    body: list[dict] = _place(brief)
     if outcome.state:
         body.append(_block("outcome", md(outcome.title, 80), weight="Bolder"))
         body += [_block(f"outcome-line-{n}", md(line, 300)) for n, line in enumerate(outcome.lines[:4], 1)]
-    elif not notice:
+    else:
         body.append(_block("outcome", "Nothing can be answered here now.", weight="Bolder"))
     if outcome.state in ("done", "verified"):
         body += [_stake(brief), _undo(brief)]
-    body.append({"type": "ActionSet", "id": "decisions", "actions": [{"type": "Action.OpenUrl", "id": "page", "title": "See the request", "url": ctx.page_url}]})
+    body.append(_page_set("See the request", ctx))
     return _card(brief, ctx, "result", body, "What became of a request.")
 
 
-def card_for(brief: Brief, ctx: CardContext, notice: str = "") -> dict:
+def card_for(brief: Brief, ctx: CardContext) -> dict:
     """The card that shows a brief as it is now: the decision card while the request is open and this person may answer it, the card of what became of it otherwise."""
     if brief.kind in ("change", "advice") and brief.state == "open" and brief.answers:
-        return decision_card(brief, ctx, notice)
-    return result_card(brief, ctx, notice)
+        return decision_card(brief, ctx)
+    return result_card(brief, ctx)
+
+
+def minimal_card(brief: Brief, ctx: CardContext) -> dict:
+    """The card for a message that cannot hold the whole card: the headline, one line that says that the details are on the page, the one link and the footer. It says nothing that the
+    page does not say better, and it is made from the same brief, so it is still the card of that request and of that person."""
+    _check_context(ctx, brief)
+    waiting = brief.kind in ("change", "advice") and brief.state == "open" and bool(brief.answers)
+    body = [_block("short", SHORT_CARD, weight="Bolder"), *(_link_parts(brief, ctx) if waiting else [_page_set("See the request", ctx)])]
+    return _card(brief, ctx, brief.kind if waiting else "result", body, "A decision waits for you." if waiting else "What became of a request.")
 
 
 def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You got this because you are on my list of people.") -> dict:
-    """What Meternaut says when the app is added for a person, in three sentences, with the one link to the start page of the web page."""
+    """What Meternaut says before its first card to a person, in three sentences, with the one link to the start page of the web page."""
     base = (base_url or "").strip().rstrip("/")
     if not PAGE_BASE.fullmatch(base):
         raise CardError("the address of the web page is not like https://host")
     return _finish({
         "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"},
         "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ Written by an AI.",
-        "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder", style="heading"),
+        "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
                  _block("hello", f"Hello {md(name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a decision waits for you."),
-                 _block("rules", "I change nothing myself: a change to Azure is decided on a web page and runs with your own Azure rights. Answers that change nothing, such as a question, "
-                                 "are recorded here."),
+                 _block("rules", "I change nothing myself. A card has one link, to the page of its request: you decide there, and a change to Azure runs with your own Azure rights after "
+                                 "you sign in to Azure. You cannot answer on a card."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
-                 {"type": "ActionSet", "id": "decisions", "actions": [{"type": "Action.OpenUrl", "id": "page", "title": "Open the web page", "url": f"{base}/"}]},
+                 _page_set("Open the web page", CardContext(page_url=f"{base}/")),
                  footer((), why, contacts)],
     })
-
-
-# -- what goes to Teams --------------------------------------------------------------------------------------------------------------------------
-
-def attachment(card: dict) -> dict:
-    """The card as the attachment of a message activity."""
-    return {"contentType": CONTENT_TYPE, "content": card}
-
-
-def invoke_card(card: dict) -> dict:
-    """The answer to an adaptiveCard/action invoke that replaces the card (Universal Actions: the body of the HTTP answer; Learn, "Universal Action Model")."""
-    return {"statusCode": 200, "type": CONTENT_TYPE, "value": card}
-
-
-def invoke_message(text: object) -> dict:
-    """The answer to an invoke that shows a message and leaves the card as it is."""
-    return {"statusCode": 200, "type": MESSAGE_TYPE, "value": plain(text, 300)}
-
-
-def message_activity(card: dict, kind: str) -> dict:
-    """A message activity that carries the card, with the text of the notification (no resource name, no amount)."""
-    return {"type": "message", "summary": SUMMARIES[kind], "attachments": [attachment(card)]}

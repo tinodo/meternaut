@@ -2,6 +2,8 @@
 
 **What this document answers.** What every message carries, and why; how the Recommendation card is built; what the seventeen Teams cards are for; how access changes a Recommendation; how a card is made, sent and answered; and what a card cannot do.
 
+**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, and a card posted that way takes no answer: it carries one `Action.OpenUrl` to the page and no input, and no bot answers a tap ([proposal 13](../proposals/13-teams-and-outlook.md)). The buttons, boxes and replaced cards below describe cards that a Teams app could carry, not the cards that are built.
+
 ## The layers of a message
 
 A message is short on purpose. Whatever a person may want to check is one step away, in four more layers.
@@ -80,7 +82,7 @@ Five controls are visible: three decisions and two toggles.
 
 ## The plan cards
 
-"Review the plan" authorises nothing. The [bot](../design/05-data-and-integrations.md#6-channels) answers the tap with the plan: the plan card replaces the Recommendation card in the thread, so the exact plan is on screen before anyone is asked for an OK. C4 keeps "Cancel", which drops the plan and changes nothing, and "Open the Recommendation", which puts the Recommendation (evidence, other options) back in the thread and approves nothing. The [approval class](../design/06-security-and-governance.md#approval-classes) decides which plan card appears; C5's header is the class, "Two people" for a purchase and "Your OK on a page" for one person.
+"Review the plan" authorises nothing. The [channel](../design/05-data-and-integrations.md#6-channels) answers the tap with the plan: the plan card replaces the Recommendation card in the thread, so the exact plan is on screen before anyone is asked for an OK. C4 keeps "Cancel", which drops the plan and changes nothing, and "Open the Recommendation", which puts the Recommendation (evidence, other options) back in the thread and approves nothing. The [approval class](../design/06-security-and-governance.md#approval-classes) decides which plan card appears; C5's header is the class, "Two people" for a purchase and "Your OK on a page" for one person.
 
 | | C4 Your OK (small change) | C5 Your OK on a page |
 |---|---|---|
@@ -199,10 +201,10 @@ For builders. A card is a template plus data: a JSON file with `${...}` placehol
 
 Agents draft and workflows send ([data and integrations](../design/05-data-and-integrations.md#6-channels)). The send step:
 
-- **takes the recipient** from the directory's owner of record, never from the draft, and sends one to one through the app; outsiders get e-mail. Names and language are resolved at render time;
+- **takes the recipient** from the directory's owner of record, never from the draft, and sends one to one; outsiders get e-mail. Names and language are resolved at render time;
 - **treats bound text as hostile.** URLs are stripped and markdown is escaped in every bound value, because Teams renders markdown links in cards ([Learn](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-format#format-cards-with-markdown)). Owner text appears in a labelled quote, never in the plan itself;
 - **pins the one link,** `${pageUrl}`, to the configured origin plus an opaque request id, and drops every other link;
-- **sends one activity per message:** `text` is a one-sentence notification line (`notificationText` in the sample data), the card is the attachment, and the AI-generated entity, a locale and the stored conversation reference complete it. Which of `text` and `summary` Teams shows in the toast and the chat-list preview is a client-matrix test.
+- **puts one message on the queue:** the card, the recipient's address from the people list and a short title; the flow posts it in a chat with the person. What the toast and the chat-list preview show is a client-matrix test.
 
 ### What a button sends
 
@@ -210,17 +212,15 @@ A button sends an opaque request id, a verb and, when it decides something, the 
 
 [`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; "I did not approve this" stays open) and what a tap returns (one immediate response, then the outcome by updating the same message).
 
-A tap reaches the bot as an `adaptiveCard/action` request. The bot checks the Connector's signed token, knows the person by the directory object id in the request, records an answer that changes nothing in Azure (a decline, a question, "not mine", "later", or "worth acting on" for a finding that only asks that) through the same Approval service as the web page, and answers with a replacement card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)).
+A card that the flow posts cannot be tapped for an answer: it carries one link to the page, and every answer is given there.
 
-An approval of a change is never taken on a card: its one link opens the page, where the person signs in to Azure and Azure checks that person's own rights. Every tap gets a visible reply within about a second, the card the manifest names for the verb or a receipt, because a bot that takes longer than 10 to 15 seconds times out ([Learn](https://learn.microsoft.com/azure/bot-service/bot-builder-howto-long-operations-guidance)).
+An approval of a change is never taken on a card: its one link opens the page, where the person signs in to Azure and Azure checks that person's own rights.
 
 ### The fallback and the inputs
 
-Cards use schema 1.5 ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.5 shows only `fallbackText`, which ends with the page link, the same single link as the card, and "Written by an AI."
+Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.4 shows only `fallbackText`, which ends with the page link, the same single link as the card, and "Written by an AI."
 
-Every `Action.Execute` still carries an `Action.OpenUrl` fallback to the page, on purpose not the `Action.Submit` that Teams advises for backward compatibility: a bot cannot answer a Submit with a new card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model)).
-
-The input of "Ask or tell" sits inside an `Action.ShowCard` card, never on the face, because an `Action.Execute` sends the inputs of its own card and, inside a ShowCard, of every parent card ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-execute)). Only Read-back and Settings have face inputs, because their buttons exist to send them; there the manifest lists them for the verb `ask` too, and on Read-back "Not quite" also carries the chosen scope. Every action that takes no input sets `associatedInputs` to `none`, so a face input travels only with a verb that lists it.
+`Action.Execute`, the inputs of "Ask or tell" in a `Action.ShowCard` and `associatedInputs` are not used: a card that the flow posts has none of them.
 
 ### Limits
 
@@ -228,7 +228,7 @@ The input of "Ask or tell" sits inside an `Action.ShowCard` card, never on the f
 |---|---|
 | Buttons on a card | At most eight visible and four behind a toggle. Titles have at most 24 characters: a house rule so that each fits alone on a 360 px row, not a Teams limit. Teams' own card limits are in the [platform register](13-platform-register.md) |
 | Thumbs | Learn documents Teams' thumbs (`feedbackLoopEnabled`, [Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/user-feedback-controls)) per message, not for card messages: they are set where the client supports them, and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) checks whether they show on a card message. They mean only "was this useful" and never change a Recommendation |
-| Delivery | A blocked or uninstalled app (403) retires the stored conversation, and the item goes by e-mail. Sends are queued per person and throttled per app and per conversation ([platform register](13-platform-register.md) has the numbers); 429, 412, 502 and 504 are retried with back-off. A send whose result is unknown is recorded as unknown and checked before it is retried; buttons are idempotent, so a duplicate does no harm; the request id is for matching, not a promise that a retry never sends twice ([Learn](https://learn.microsoft.com/microsoftteams/platform/bots/how-to/rate-limit)) |
+| Delivery | A card is one message on the `teams-cards` queue. A failure to put it there is a failed try, repeated every 15 minutes up to 12 times, and the letter still goes; the flow's limits are in the [platform register](13-platform-register.md). Nothing tells the app whether the flow posted the card, so delivery is never promised ([proposal 13](../proposals/13-teams-and-outlook.md)) |
 
 ## The life of one message
 
@@ -260,7 +260,7 @@ The days are starting values; [attention and trust](08-attention-and-trust.md) h
 |---|---|
 | Carry a decision that needs a sign-in to Azure, a security key or a second person | It opens the approval page ([web pages](06-web-pages.md)); no approval is given in Teams |
 | Show a chart, a long table or several heading levels | The headline is the one heading, columns are short and no input sits in the hidden Details panel; charts live on a page or in a workbook ([access, language and inclusion](11-access-language-inclusion.md)) |
-| Promise that anyone sees it: read receipts reach an agent only in a one-to-one chat, with `ChatMessageReadReceipt.Read.Chat`, and the administrator or the person can switch them off ([Learn](https://learn.microsoft.com/microsoftteams/platform/bots/build-conversational-capability#receive-a-read-receipt)); the design knows only whether the person responded | Timing is never promised; an unanswered Recommendation follows the reminder ladder ([attention and trust](08-attention-and-trust.md)) |
+| Promise that anyone sees it: nothing tells the app whether the flow posted a card or the person read it; the design knows only whether the person responded | Timing is never promised; an unanswered Recommendation follows the reminder ladder ([attention and trust](08-attention-and-trust.md)) |
 | Be posted in a private channel (agents cannot post messages or cards there, [Learn](https://learn.microsoft.com/microsoftteams/platform/bots/how-to/conversations/channel-and-group-conversations)) or in a shared one (an opt-in this design does not use) | One to one for people, e-mail for outsiders ([letters](05-letters-and-requests.md), [platform register](13-platform-register.md)) |
 | Prove that it is genuine: the plan code is a reference | The announcement names the app, its publisher and the one address of the approval page; no card asks for a password or a code |
 

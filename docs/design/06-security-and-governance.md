@@ -11,6 +11,8 @@ Capitalised terms (Case, Action, Atlas, Detector, Credential, Contract, Hub) are
 
 An agent can be talked into anything, so assume it will be: no agent holds a write role. Agents read and propose. One component, the action plane, writes, and only what a person approved or a rule a person wrote allows. Proof points P1 to P10 are in [the roadmap](13-roadmap.md); components are in [the architecture](02-architecture.md).
 
+**Superseded in part on 2026-11-11:** the Teams `bot`, its public route and its token check, in this document. A card is a message on a private queue that a Power Automate flow posts and takes no answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
+
 **Superseded in part on 2026-11-05:** the runner, its roles, the purchase identity and Credentials, in this document. A change runs as the approver, and Meternaut holds no right to change Azure; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
 ## 1. Goals, trust zones and data classes
@@ -90,7 +92,7 @@ A write is a propose tool (`plan`, `pr-draft`, `ledger-propose`), a message, an 
 |---|---|---|
 | Tag, name or log line, then notebook, then Engineer, then a propose tool, then the runner | The Engineer is its own hosted agent and gets only schema-checked ids and numbers from an authorised case-context record, never the notebook. Action parameters come from typed fields and ids resolved from Resource Graph, never from model-written text | Wrong data from Azure itself |
 | A tag or name saying "non-production", then an autopilot credential | A credential is a rule a person wrote, evaluated in code on facts the model cannot set: management-group path, Azure Policy state, Entra owner id, resource type, SKU, cost. Tags, names and Lessons cannot satisfy it | A mis-scoped credential; never R3 |
-| A reply, email or card saying "yes", then an approval | Free text never approves. Only the Approval service records an approval, for an authenticated approver, against an opaque id; a tap's approver comes from the tapper's own token, not from the bot | An approver who misreads the plan |
+| A reply, email or card saying "yes", then an approval | Free text never approves. Only the Approval service records an approval, for an authenticated approver, against an opaque id; the approver comes from the approver's own sign-in on the page, never from a message | An approver who misreads the plan |
 | A reply, then a Lesson, then a wider scope | Lessons never widen a credential or scope; only the Respond workflow writes them | A wrong Lesson misdirects advice |
 | A name, tag or address in text, then a recipient or a link | The recipient is the directory object id of record. The send step strips URLs and escapes markdown in every bound value and builds every link from a configured origin and an opaque request id ([channels](05-data-and-integrations.md#6-channels)); a model supplies neither | A wrong owner of record |
 | A public page, then a claim, then the Atlas, then a Case | Pull request, human merge, knowledge CI; a claim never fills an Action parameter or alone qualifies an Action for autopilot | A poisoned claim can mislead a Recommendation or the choice of Action, never a parameter |
@@ -103,7 +105,7 @@ Host separation is the strongest cut. `study`, `investigate`, `skeptic` and `dip
 | Principal | Identity | Holds |
 |---|---|---|
 | Five hosted agents | One [Entra Agent ID](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity) each | App roles `Model.Invoke` and `MCP.Invoke` on its own Hub contract; no Azure role |
-| Five Function apps | Managed identities: one each for `tools`, `workflows`, `approvals` and `bot`; the `runner` app holds one identity per action family and its own for purchases. The `bot`'s few rights are listed in section 8 | Only the reads or writes the job needs |
+| Four Function apps | Managed identities: one each for `tools`, `workflows` and `approvals`; the `runner` app holds one identity per action family and its own for purchases | Only the reads or writes the job needs |
 | Evaluation | Its own identity and contract | Synthetic data and redacted samples; no tools; no production role |
 | People | Entra groups: platform team, FinOps lead, approver (resource-owner and FinOps or finance groups), Atlas reviewer, security reviewer | Rights follow the group; reviewed quarterly |
 
@@ -128,7 +130,7 @@ The Approval service renders the plan from the stored plan record, never from ag
 
 | Field | Why |
 |---|---|
-| Request id | The only identifier a card, button or bot may carry, beside its verb, the plan code where it decides and the inputs the card manifest lists |
+| Request id | The only identifier a card or button may carry, beside its verb, the plan code where it decides and the inputs the card manifest lists |
 | Plan hash | What the approver saw is what runs |
 | Resource etags | The live state has not moved |
 | Purchases: stored quote id, amount, term | The runner buys exactly that quote |
@@ -221,13 +223,12 @@ Prompt Shields do not verify where text came from, are trained mostly on English
 
 Of the two profiles ([architecture](02-architecture.md#7-two-profiles-one-codebase)), Evaluate runs on synthetic data, and a dev identity holds no role on any production scope (CI tests it). Operate adds real data, private endpoints and the roles of sections 4 and 5.
 
-**The one public route.** Microsoft 365 reaches an agent only over the public internet ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/publish-copilot-virtual-network)), so in Operate the Teams bot endpoint is the one deliberate public route. It is secured like this:
+**No public route.** Microsoft 365 reaches an agent only over the public internet ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/publish-copilot-virtual-network)), so Meternaut publishes no agent to Teams and has no endpoint that Teams calls. A Teams card is a message on the private `teams-cards` queue; a Power Automate flow reads it through Power Platform's virtual network support and posts it ([proposal 13](../proposals/13-teams-and-outlook.md)). So:
 
-- The Agents SDK validates every request's token before a handler runs (authentication and service-URL validation switched on, and tested in CI): signature, expiry, exact audience, permitted issuer, service URL. The bot never acts on decoded but unverified claims ([Learn](https://learn.microsoft.com/microsoft-365/agents-sdk/production-ready-agent/production-ready-agent)).
-- It runs under its own identity: it can call the Approval service, use the `inbound` and `outbound` queues and install the Teams app for a person. It has no model access, no store right and no Azure role.
-- The Approval service verifies a tap itself, from the tapper's own token obtained by an on-behalf-of exchange ([data and integrations](05-data-and-integrations.md)). A compromised bot can drop or delay taps, read replies, forge replies in a person's name (a Lesson is scoped, expires and is shown to its owner), post any text to people who have the app installed, and install it for anyone (an alert catches that). It cannot name another approver or approve for anyone: an approval needs that person's own sign-in to Azure on the page, which lists each person's approvals.
-- An IP filter is not available for a bot we host: Azure Bot Service publishes no inbound ranges and does not support an inbound allow-list ([Learn](https://learn.microsoft.com/azure/bot-service/security-faq)), so the design relies on token validation.
-- An adopting organisation that will not accept a public route turns Teams off: approvals use the web page and messages use email.
+- There is no bot, no Azure Bot resource, no Teams app package, no app registration, no Graph permission and no token check at a public door.
+- A card carries one link and takes no answer, so nothing is approved, declined or taught in Teams. An approval needs that person's own sign-in to Azure on the page, which lists each person's approvals.
+- Whoever can write to the queue can put any card, with any link, in front of anyone whom the flow can address, because the flow posts to the address that the message carries. The project grants that right to the cases app, and the app takes the recipient from the people list, never from text. Such a writer still cannot approve for anyone, name an approver or reach the estate.
+- An adopting organisation that will not use Power Automate turns Teams off: messages use email.
 - The approval page is on a private endpoint, so approvers reach it from the organisation's network; from elsewhere a card's button fails and the request expires unapproved. An organisation whose approvers work off-network may publish it through its own front door; its Entra sign-in and Conditional Access do not change.
 - Email: Exchange Online role-based access for applications limits `Mail.Send` to one shared mailbox ([Learn](https://learn.microsoft.com/exchange/permissions-exo/application-rbac)). Recipients come from the directory or the platform team's allow-list, never from a model ([channels](05-data-and-integrations.md#6-channels)).
 
@@ -266,14 +267,14 @@ Mapping, not certification, not legal advice.
 | Cloud Adoption Framework: Govern, Secure, Manage | For agents: ownership, one identity each, policy applied alike, observability, data governance, a security baseline ([Learn](https://learn.microsoft.com/azure/cloud-adoption-framework/ai-agents/governance-security-across-organization)) | Entra Agent ID per hosted agent; Hub contracts and Azure Policy; sections 6 and 7 |
 | Well-Architected pillars ([Learn](https://learn.microsoft.com/azure/well-architected/pillars)) | Reliability, Security, Cost Optimization, Operational Excellence, Performance Efficiency | Security: here. Reliability: idempotent runs. Cost: quotas ([cost and FinOps](10-cost-and-finops.md)). Operations: everything as code. Performance: small models first |
 
-**Where the AI marks travel.** Every message says an AI wrote it four ways (the sender name, a footer line, the AI-generated entity and a machine-readable mark), and a test checks that the marks survive delivery ([channels](05-data-and-integrations.md#6-channels)). Learn's page on the Teams label does not cover a message that carries a card, so a device test checks it ([testing](08-testing-and-evaluation.md)); copied text carries no mark.
+**Where the AI marks travel.** Every message says an AI wrote it (the sender name, a footer line and a machine-readable mark), and a test checks that the marks survive delivery ([channels](05-data-and-integrations.md#6-channels)). A card that the flow posts has the footer line only: its action sets neither the sender's name nor the platform's label. Copied text carries no mark.
 
 ## 12. What each safeguard does not stop
 
 Together, these are the risks an adopting organisation accepts:
 
 - **A stolen identity of the Approval service** (the trust anchor), deceived or colluding approvers, and a mis-written credential. That identity can also release any switch alone, because the two-person rule for resuming purchases is code in the service and not a store rule.
-- **A stolen or left-open Teams session**, or a compromised `bot` holding a signed-in person's token: it can decline a plan and set that person's mutes or a pause, but it cannot approve a change (that needs the person's own sign-in to Azure on the page) or name a delegate (that needs the page and the R2 sign-in).
+- **A stolen or left-open Teams session**: a card takes no answer, so the session can only open the page; approving needs the person's own sign-in to Azure there, and naming a delegate needs the page and the R2 sign-in.
 - **A compromised runner**: its family's Actions at every opted-in scope, any purchase its role allows while the assignment lasts, a purchase already submitted, Azure's refund and exchange limits.
 - **A compromised hosted agent** (its roles share an identity and a contract), a same-schema tool change or a poisoned tool response.
 - **Missed screening**: other languages, MCP responses at the Hub, a person who copies attacker text into a decision, wrong data from Azure itself.

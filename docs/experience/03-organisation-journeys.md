@@ -9,7 +9,7 @@
 | Step | The person sees or does | The system does |
 |---|---|---|
 | 1. Probe | Nadia and Ibrahim read "what I can see here", the capability profile: agreement, cost reach, price basis, commitments visible, who may buy, what more access would buy | Makes read-only calls in plain code; explains each error |
-| 2. Channel, people | Ibrahim sees who can install the app and which approvers have not yet passed the test sign-in, and names owner groups, billing owner and partner contact | Sets Teams or e-mail only per person. Where authentication contexts or phishing-resistant sign-in are missing, it refuses what needs them (anything above a small change, or a two-person purchase) and says why in the profile |
+| 2. Channel, people | Ibrahim sees who can get Teams cards and which approvers have not yet passed the test sign-in, and names owner groups, billing owner and partner contact | Sets Teams or e-mail only per person. Where authentication contexts or phishing-resistant sign-in are missing, it refuses what needs them (anything above a small change, or a two-person purchase) and says why in the profile |
 | 3. Announce, first letter | Nadia and the team leads announce the system. The first Monday letter follows; owners get Hello | Holds first contact until the announcement is recorded; advises only until an action family is opted in |
 
 **If a probe fails, or access changes,** the profile shows what the identity can do today, not what the agreement allows, and names the role to ask for. It re-probes weekly and after any 401 or 403: widened access re-prices open Recommendations, narrowed access marks advice unconfirmed ([people](01-people.md)).

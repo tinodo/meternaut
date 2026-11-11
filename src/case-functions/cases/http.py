@@ -253,26 +253,30 @@ class Client:
     def remaining(self) -> float | None:
         return None if self.deadline is None else self.deadline - self.monotonic()
 
-    def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None,
+    def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None, xml: str | None = None,
                 timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
                 retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0) -> Response:
         """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
 
-        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form). A call has one of them or none.
+        `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form) and `xml` as XML text (the Queue service takes its messages so). A call has one of
+        them or none.
 
         A call that is retried waits as long as the service says (Retry-After, up to `retry_after_max`). When the service says nothing the pause is `backoff` seconds
         (with jitter) before the first repeat, twice that before the second, and so on, up to `backoff_max`."""
         self.check(method, url)
         merged = {"Accept": "application/json", **(headers or {})}
         data = None
-        if body is not None and form is not None:
-            raise ValueError("a call has a JSON body or a form, not both")
+        if sum(item is not None for item in (body, form, xml)) > 1:
+            raise ValueError("a call has a JSON body, a form or XML text, not more than one")
         if body is not None:
             data = json.dumps(body, separators=(",", ":")).encode("utf-8")
             merged["Content-Type"] = "application/json"
         elif form is not None:
             data = urlencode(dict(form)).encode("utf-8")
             merged["Content-Type"] = "application/x-www-form-urlencoded"
+        elif xml is not None:
+            data = xml.encode("utf-8")
+            merged["Content-Type"] = "application/xml"
         attempt = 0
         while True:
             left = self.remaining()

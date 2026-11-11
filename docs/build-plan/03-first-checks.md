@@ -122,7 +122,7 @@ Slices 1a.6a, 1a.6b and 1a.8; P10: tokens and cost per investigation, per Case t
 
 ### C9 The Teams client matrix
 
-Prepared before phase 2 and run in phase 2, once the Teams app exists. Walk every card type through each supported Teams client ([the matrix](../experience/12-testing-the-experience.md#the-client-matrix-layer-5)). It passes when every card type meets the go-live bar on each client, or has a decided fallback that has itself been tested. If it fails, cards only open the page, and e-mail carries the letters.
+Prepared before phase 2 and run in phase 2, once the Teams cards flow exists. Walk every card type through each supported Teams client ([the matrix](../experience/12-testing-the-experience.md#the-client-matrix-layer-5)). It passes when every card type meets the go-live bar on each client, or has a decided fallback that has itself been tested. If it fails, cards only open the page, and e-mail carries the letters.
 
 ### C10 The approval page can be reached and signed in to
 

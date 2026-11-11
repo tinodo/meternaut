@@ -49,21 +49,6 @@ ALLOWED = {
     },
     # The planted waste (2026-11-08, the families of change): a disk, an address when asked, and when asked a machine with its network interface and its OS disk. The machine's subnet is read and never made.
     "environment/cases/planted.bicep": {"Microsoft.Compute/disks", "Microsoft.Network/publicIPAddresses", "Microsoft.Network/networkInterfaces", "Microsoft.Compute/virtualMachines"},
-    # The Teams bot (docs/proposals/13-teams-and-outlook.md): its own identity, plan and function app, the Azure Bot resource with its Teams channel, and the roles on the shared storage account.
-    # It makes no storage account, no subnet, no endpoint and no DNS object.
-    "environment/teams/main.bicep": {
-        "Microsoft.ManagedIdentity/userAssignedIdentities",
-        "Microsoft.Insights/components",
-        "Microsoft.Storage/storageAccounts",
-        "Microsoft.Storage/storageAccounts/blobServices",
-        "Microsoft.Storage/storageAccounts/blobServices/containers",
-        "Microsoft.Authorization/roleAssignments",
-        "Microsoft.Web/serverfarms",
-        "Microsoft.Web/sites",
-        "Microsoft.Web/sites/basicPublishingCredentialsPolicies",
-        "Microsoft.BotService/botServices",
-        "Microsoft.BotService/botServices/channels",
-    },
     "environment/foundry/main.bicep": {
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.CognitiveServices/accounts/raiPolicies",
@@ -117,6 +102,14 @@ ALLOWED = {
         "Microsoft.Insights/actionGroups",
         "Microsoft.Insights/scheduledQueryRules",
         "Microsoft.Insights/workbooks",
+    },
+    # Virtual network support for Power Platform (docs/proposals/19-teams-cards-through-power-automate.md): the subnet that Power Platform's connectors run in, with its group, and the enterprise policy that names it.
+    # No role, no private endpoint and no DNS object; the virtual network is only read.
+    "environment/powerplatform/main.bicep": {
+        "Microsoft.Network/networkSecurityGroups",
+        "Microsoft.Network/virtualNetworks",
+        "Microsoft.Network/virtualNetworks/subnets",
+        "Microsoft.PowerPlatform/enterprisePolicies",
     },
 }
 
@@ -396,10 +389,7 @@ class Workflow(unittest.TestCase):
         self.assertEqual(found, 10, "one publish and nine job starts, all in the Operator's container: the publish of the cases app, the check tool that sends the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, the check of the AI Gateway, and the four checks of the AI security (the second reader of the drift of the agents, the evaluations, the red team and the Agent 365 check)")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
-                if word == "az functionapp deployment source config-zip" and block.startswith("name: Publish the code to the Teams bot's function app\n"):
-                    # The one step that publishes from the runner: the Teams bot's app is public by necessity (docs/proposals/13-teams-and-outlook.md), so its deployment site can be reached from the runner; every private app is published in the Operator
-                    continue
-                self.assertNotIn(word, block, f"no step publishes from the runner any more: {word} is in {block[:80]!r}")
+                self.assertNotIn(word, block, f"no step publishes from the runner: {word} is in {block[:80]!r}")
 
     def test_the_base_is_deployed_read_back_and_waited_for_in_that_order_and_for_its_action_only(self):
         order = ["Deploy the base", "Read the storage account back from Azure, which has no public network access and no key",
@@ -465,7 +455,7 @@ class Workflow(unittest.TestCase):
         block = self.steps[names.index(again)]
         self.assertIn("if: inputs.action == 'retire-old'", block)
         self.assertIn("uses: azure/login@", block)
-        self.assertEqual(self.text.count("uses: azure/login@"), 13, "the first sign-in, two more for the Teams bot (one before its publish and one before its read-back), one more before the retirement of the old things, one more before the retirement of the Event Hubs namespace, one more before the publish of the cases, one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the deploy of the AI Gateway, which follows the deploy of its subnet and a wait of up to 20 minutes for the landing zone's route table, one more before the limits, the built-in key and the read-back of the AI Gateway, and one before the read-back of the AI security and one before the read-back of the telemetry exporter, which follow a deploy and are each given a credential of their own")
+        self.assertEqual(self.text.count("uses: azure/login@"), 11, "the first sign-in, one more before the retirement of the old things, one more before the retirement of the Event Hubs namespace, one more before the publish of the cases, one more before the health check of the cases app in the Operator and one more after it, one more before the read-back of the Foundry resource, which follows a wait of up to 40 minutes, one more before the deploy of the AI Gateway, which follows the deploy of its subnet and a wait of up to 20 minutes for the landing zone's route table, one more before the limits, the built-in key and the read-back of the AI Gateway, and one before the read-back of the AI security and one before the read-back of the telemetry exporter, which follow a deploy and are each given a credential of their own")
         self.assertLess(names.index("Sign in to Azure"), names.index(again))
         self.assertEqual(names.index(again) + 1, names.index("Delete what Meternaut does not use any more, in the project's resource group"), "the sign-in is right before the deletes: the first credential is old by then")
         self.assertIn("if: inputs.action == 'retire-old'", self.steps[names.index("Delete what Meternaut does not use any more, in the project's resource group")])
@@ -536,7 +526,7 @@ class Cases(unittest.TestCase):
         for name in ("vnet", "workspace", "insights", "storage", "blobService", "queueService", "sharedHostContainers", "privateEndpointSubnet"):
             self.assertRegex(self.source, rf"(?m)^resource {name} '[^']+' existing = ", name)
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
-        self.assertEqual(made, ["authIdentity", "consoleSignIn", "controlQueue", "deploymentContainer", "functionApp", "functionAppEndpoint",
+        self.assertEqual(made, ["authIdentity", "cardsQueue", "consoleSignIn", "controlQueue", "deploymentContainer", "functionApp", "functionAppEndpoint",
                                 "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionUsesQueues",
                                 "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
                                 "tracesRetention", "webNsg", "webSubnet"])
@@ -2634,7 +2624,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         for word in ("eventhubs.azure.net", "servicebus.windows.net", "storage.azure.com", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Storage and posts nothing to a queue")
         self.assertNotRegex(code, r"https?://[^\s\"']*queue\.core\.windows\.net", "the probe is given the name of the queue to see that it resolves to a private address, and nothing is sent to it from the runner")
-        self.assertEqual(self.text.count("uses: azure/login@"), 13, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the thirteen are the first, the two of the Teams bot's action, one before its publish and one before its read-back, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, and the one before the read-back of the AI security and the one before the read-back of the telemetry exporter)")
+        self.assertEqual(self.text.count("uses: azure/login@"), 11, "the check action added no sign-in: the runner makes the container group with the credential of the first one (the eleven are the first, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, and the one before the read-back of the AI security and the one before the read-back of the telemetry exporter)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
         expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only", "seconds": 2400,

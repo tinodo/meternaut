@@ -24,7 +24,6 @@ from cases.people import Person
 from cases.web import figures
 
 BASE = "https://meternaut.example"
-NONCE = "N0nce-0123456789abcdefghijklmnop"
 CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
 PERSON = Person(TINO, "Tino", ("approver", "owner"), "tino@example.com")
 APPROVE = "Approve and sign in to Azure"
@@ -95,7 +94,7 @@ def approve_rows(reply) -> dict[str, str]:
 
 
 def card_context(b) -> CardContext:
-    return CardContext(page_url=f"{BASE}/ok/{b.plan_id}", nonce=NONCE, contacts=CONTACTS)
+    return CardContext(page_url=f"{BASE}/ok/{b.plan_id}", contacts=CONTACTS)
 
 
 def texts_of(card) -> dict[str, str]:
@@ -256,7 +255,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, 200)}")
                 self.assertEqual(found["risk"], f"**Risk, {b.risk.level}:** {cards.md(b.risk.text, 240)}")
                 self.assertEqual({a["url"] for a in _actions(card) if "url" in a}, {f"{BASE}/ok/{b.plan_id}"})
-                self.assertNotIn("approve", [a.get("verb") for a in _actions(card)], "no card approves a change in Azure")
+                self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"], "no card approves a change in Azure: its one link opens the page")
                 json.dumps(card)
 
     def test_the_card_of_a_change_whose_saving_is_not_worked_out_says_what_it_costs_and_why_there_is_no_saving(self):
@@ -326,7 +325,7 @@ class WhileAzureIsStillMakingTheChange(unittest.TestCase):
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(found["outcome"], "Running in Azure")
         self.assertIn("still making it", found["outcome-line-2"])
-        self.assertNotIn(NONCE, json.dumps(card))
+        self.assertNotIn("nonce", json.dumps(card))
         self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"])
 
     def test_a_letter_about_it_says_that_it_is_in_progress_and_never_that_it_ran(self):

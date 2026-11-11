@@ -45,22 +45,23 @@ Two rules shape everything. **Agents never change the Azure estate**: they hold 
 | Knowledge | Atlas (Git, served from AI Search); Estate model, Lessons, ledger (Cosmos DB) ([04](04-knowledge-and-learning.md)) | Git, AI Search Basic, Cosmos DB serverless | No |
 | Data and tools | Cost lake, read tools, price simulator, planner ([05](05-data-and-integrations.md)) | Blob, DuckDB inside the `tools` Function app | No (the planner only runs what-if) |
 | Action | Action catalogue, approval service, runner, verifier, audit log, kill switches ([06](06-security-and-governance.md)) | `approvals` and `runner` Function apps; immutable Blob | **Yes: the only writer** |
-| Engagement | Teams bot, email, a small web page | `bot` (the one public endpoint) and `approvals` Function apps; Microsoft Graph | No |
+| Engagement | Teams cards, email, a small web page | A private queue and a Power Automate flow for the cards ([proposal 13](../proposals/13-teams-and-outlook.md)); the `approvals` Function app; Microsoft Graph | No |
 | Governance | The Citadel hub: contracts, quotas, safety, usage logs ([07](07-safeguards-and-drift.md)) | API Management based, in the landing zone | No |
 
-## 3. Five Function apps, one compute family
+## 3. Four Function apps, one compute family
 
-All of our own code runs on Azure Functions (Flex Consumption, zip deployment), and the hosted agents also deploy from a zip of source code, so there is no image to build and no container registry or container platform to run ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code): Python 3.13 or 3.14, or .NET 10; the container path is for custom runtimes and is not used). Five Function apps keep identities and exposure apart. In Operate each app calls out through virtual network integration, so it reaches the stores, the Foundry account and the other apps over private endpoints; only `bot` also takes calls from the public internet.
+All of our own code runs on Azure Functions (Flex Consumption, zip deployment), and the hosted agents also deploy from a zip of source code, so there is no image to build and no container registry or container platform to run ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent-code): Python 3.13 or 3.14, or .NET 10; the container path is for custom runtimes and is not used). Four Function apps keep identities and exposure apart. In Operate each app calls out through virtual network integration, so it reaches the stores, the Foundry account and the other apps over private endpoints, and none takes calls from the public internet.
 
 | App | Holds | Identity can | Exposed to |
 |---|---|---|---|
-| `workflows` | Durable orchestrations and their activities; the send step for messages | Invoke the five hosted agents; read and write workflow state; send e-mail through Graph and queue Teams messages for the `bot`; call the approval service | Nobody: no inbound trigger |
+| `workflows` | Durable orchestrations and their activities; the send step for messages | Invoke the five hosted agents; read and write workflow state; send e-mail through Graph and put Teams cards on the `teams-cards` queue; call the approval service | Nobody: no inbound trigger |
 | `tools` | Read tool services, the price simulator, DuckDB analysis, the front of the `plan` tool | Read the estate with Reader, Cost Management Reader, Monitoring Reader, Log Analytics Reader; read the stores | The hub only: private endpoint |
-| `approvals` | Approval service, the web pages | Write approval records, credentials and preferences; read the estate model to resolve a page's scope; send to the `inbound` queue; start the runner through a queue | People on the organisation's network (Entra sign-in, Conditional Access) and the `bot`: private endpoint |
+| `approvals` | Approval service, the web pages | Write approval records, credentials and preferences; read the estate model to resolve a page's scope; send to the `inbound` queue; start the runner through a queue | People on the organisation's network (Entra sign-in, Conditional Access): private endpoint |
 | `runner` | Action runner (identities per action family), verifier, a what-if-only function for `plan` | Change Azure within opted-in scopes; record that an approval was consumed | `tools`, for what-if by plan id only: private endpoint. Otherwise nobody |
-| `bot` | The Teams bot endpoint (C# or TypeScript, as the Agents SDK needs) | Call the approval service with the tapper's own token; put replies on an `inbound` queue; post what `workflows` leaves on an `outbound` queue; install itself for a person | Teams, over the public internet: token-validated ([06](06-security-and-governance.md)) |
 
 **Superseded in part on 2026-11-05:** the `runner` app's identities and write roles. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
+
+**Superseded in part on 2026-11-11:** the Teams `bot` app, its public endpoint and the taps. A Teams card is a message on the private `teams-cards` queue that a Power Automate flow posts; it carries one link and takes no answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
 
 A workflow that waits days for a person runs no orchestration code while it waits, and a hosted-agent session is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 
@@ -75,8 +76,8 @@ A workflow that waits days for a person runs no orchestration code while it wait
 | Atlas retrieval | `atlas` tool → AI Search | Tool call is; search is internal to the tool | Managed identity |
 | Reading Azure, Graph, price APIs | `tools` → Azure and Graph | No (these are not AI traffic) | Managed identity, least privilege |
 | Writing Azure | `runner` → ARM | No (not AI traffic; guarded by the action plane) | Per-action-family identity |
-| Messages to people | E-mail: `workflows` (send step) → Graph. Teams: `workflows` → `outbound` queue → `bot` → Teams | No | Managed identity |
-| Replies and taps | Teams → `bot` → `inbound` queue → `workflows` (Respond). A tap: `bot` → approval service with the tapper's token | No | Bot Framework token; the tapper's Entra token |
+| Messages to people | E-mail: `workflows` (send step) → Graph. Teams: `workflows` → `teams-cards` queue → Power Automate flow → Teams | No | Managed identity |
+| Replies and decisions | A page → approval service → `inbound` queue → `workflows` (Respond). Nothing is taken from Teams | No | The person's Entra token |
 | Foundry IQ and other direct retrieval | Not used until routable | n/a | n/a |
 
 The spoke's Foundry account holds **no model deployments of its own**; Azure Policy denies them and local keys are off. Egress to model endpoints other than the hub is blocked. A negative-path test in CI proves that a direct model call fails ([08](08-testing-and-evaluation.md)).

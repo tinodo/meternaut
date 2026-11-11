@@ -7,6 +7,9 @@ tools/render-cards/package-lock.json
 # Stays on one machine: records that name an estate and the working files (AGENTS.md rule 17)
 /local/
 
+# The solution zip that tools/powerplatform-pack.py makes: it is made again from powerplatform/solution/src, byte for byte
+/powerplatform/out/
+
 # Nothing that holds a secret or a state of an estate is ever committed (the repository is public: AGENTS.md rule 37)
 .env
 .env.*

@@ -56,12 +56,12 @@ Before go-live each card type is walked through every Teams client: desktop and 
 | Check | Look at | Why |
 |---|---|---|
 | **The approval link** | What `Action.OpenUrl` opens: the system browser or an [embedded view](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-open-url) | An embedded view may lack what [security keys and passkeys need](https://learn.microsoft.com/entra/identity/authentication/concept-passkey-browser-authentication-federated-identity-provider). A purchase always gets the approval-waiting e-mail ([05](05-letters-and-requests.md)); a one-person approval gets it where the link opens in an embedded view. The e-mail link is tested on the same device |
-| **Replacement in place** | "Review the plan" turns the message into the plan card, with no old button left | The bot returns a replacement card ([Learn](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model#response-format)) |
+| **Replacement in place** | "Review the plan" turns the message into the plan card, with no old button left | Not available for a card that the flow posts: the link opens the page |
 | **C3 and C4 at 360 px** | The plan blocks (C4) and Details (C3) stay readable, with no sideways scrolling and no cut-off button title | Teams mobile has no horizontal scrolling ([Learn](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/design-effective-cards)). The reference renderings, [C3](../img/experience-card-c3-recommendation-phone.png) and [C4](../img/experience-card-c4-your-ok-phone.png), wrap buttons; a client may not |
 | **A ShowCard input** | Text typed under "Ask or tell", and days ticked in the multi-select list under "My hours and language" on Hello, arrive intact | An action in a ShowCard also [sends its parent card's inputs](https://learn.microsoft.com/adaptive-cards/authoring-cards/input-validation#fields-to-be-validated-and-submitted) |
 | **Notification and labels** | What the toast and chat list show for a card message (`text`, `summary` or a generic line), and whether the "AI Generated" label and Teams thumbs appear | A one-sentence `text` (`notificationText`) travels with the card; which one Teams shows is settled here. Label ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/ai-content-labels)) and thumbs ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/user-feedback-controls)) are documented per message, not for card messages |
 | **Below schema 1.5** | A client that cannot draw the card shows `fallbackText`; its page link opens | Below the card's version only `fallbackText` renders ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/adaptive-card)), so it carries the card's one link |
-| **Read receipts** | Whether one arrives in a one-to-one chat | It needs the `ChatMessageReadReceipt.Read.Chat` permission and can be switched off ([Learn](https://learn.microsoft.com/microsoftteams/platform/bots/build-conversational-capability#receive-a-read-receipt)). Nothing in the design relies on one |
+| **Read receipts** | Whether one arrives in a one-to-one chat | The app has no such permission. Nothing in the design relies on one |
 
 ## Production signals (layer 6)
 
@@ -76,7 +76,7 @@ Signals cover groups of at least five people, with denominators; smaller groups 
 | **Answers later corrected** | Answers and Lessons an owner later edits, deletes or answers differently | A rise points at an unclear Question |
 | **Mute and stop rates** | Mutes, lowered weekly budgets, "Pause messages" or "Fewer like this" | A trigger to review targeting ([08](08-attention-and-trust.md)), never a penalty |
 | **Approval regret** | Approved changes whose verified outcome was worse than doing nothing ([design 08](../design/08-testing-and-evaluation.md#4-measures-and-the-report-card)) | Arrives weeks later; read with the sampled review of approvals |
-| **Usefulness** | Teams' thumbs, which mean only "was this useful" (the bot records each) | Never changes a Case; the card's own buttons mean something else |
+| **Usefulness** | Teams' thumbs, which mean only "was this useful" (not recorded for a card that the flow posts) | Never changes a Case; the card's own buttons mean something else |
 
 **Why compliance and approval rate are never targets.** They rise when people stop checking: over-trust affects novices and experts alike ([08](08-attention-and-trust.md#what-the-evidence-on-over-trust-shows)).
 
