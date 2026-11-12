@@ -27,7 +27,7 @@ from ..http import HttpError, Refused
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
 from . import calls, capacity
-from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, read_resource, refusal, skeptic_sentence
+from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, read_resource, refusal, skeptic_sentence, subscription_words
 from .gates import Gates
 from .words import CONNECTION_DAYS, CONNECTION_MIN_DAYS
 
@@ -187,7 +187,7 @@ class ScaleVpnGateway(Family):
         return Planned(
             title=f"Scale a point-to-site gateway down to {to} scale units in resource group {group}",
             what_changes=(f"When you approve, Meternaut changes the scale units of the point-to-site gateway named {name} in resource group {group} "
-                          f"(subscription {getattr(lead, 'subscription_id')[:8]}) from {units} to {to}, with your own permissions. It sends the gateway back to Azure as it was read, with that one "
+                          f"(subscription {subscription_words(lead)}) from {units} to {to}, with your own permissions. It sends the gateway back to Azure as it was read, with that one "
                           f"number changed. Right before it acts, it reads the gateway and its connection count again and stops unless the gateway still has {units} scale units, its last operation "
                           f"worked, nobody was connected in the last {CONNECTION_DAYS} days, and it is still tagged as planted by Meternaut, still in this resource group and not locked."),
             could_go_wrong=("Azure says to plan for downtime when the scale units of a gateway change, so users who are connected may be disconnected while it changes, and that a hub update "

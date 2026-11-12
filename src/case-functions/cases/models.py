@@ -16,6 +16,9 @@ field of a record that was there before. The daily cost of a request added `Case
 The approvals and attention work (docs/proposals/04-the-loop.md) added the decision `confirm`, the record TwoPeopleRule (kept in the settings table, in a partition of its own) and no field of
 a record that was there before; it changed the default of `SettingsRecord.quiet_from` and `quiet_to` from a window to none, which a record that was stored keeps as it holds it.
 The drift check at the console added CheckRecord (its own table, one row) and `LessonRecord.superseded` (False: nothing contradicts the lesson).
+The work on names and on the cost that Cost Management shows added `CaseRecord.cost_state` (empty: a record of before, read from `cost_usd_30d` by cases/brief.py), `cost_by_service`, `estimate`,
+`subscription_name` and `advice` (all empty: nothing was looked up), and `RunRecord.held` (0). Nothing was renamed or removed. A series of daily costs that is kept with no number above nothing is
+not drawn (cases/web/figures.py), so a record of before that holds thirty zeros for a resource that had no cost line shows what a record of now shows: no line.
 """
 from __future__ import annotations
 
@@ -125,6 +128,7 @@ class RunRecord(Record):
     notes: tuple[str, ...] = ()
     reason: str | None = None
     investigated: bool = False  # the investigation ran in this run: the daily timer waits INVESTIGATE_EVERY_DAYS after the last such run (cases/run.py)
+    held: int = 0  # the findings that were held back in this run because they say nothing about what to look at (cases/upkeep.py): no request was made for them
 
 
 @dataclass(frozen=True)
@@ -164,7 +168,8 @@ class CaseRecord(Record):
     # showed held a proposal back, "access": a word of cases/capability.py when what the identity cannot see changes what can be said}. A key that is not known is left out.
     learned: dict = field(default_factory=dict)
     # The cost of each of the last 30 closed days (US dollars, the oldest first, 0.0 for a day with no cost line, the last on `cost_series_end`: YYYY-MM-DD, UTC), summed for a case of a group,
-    # while a request about the case is open (cases/run.py, read_cost_series). None: never read, or could not be.
+    # while a request about the case is open (cases/run.py, read_cost_series). None: never read, or could not be, or Azure has no cost line at all for what the case is about (a series of nothing but
+    # zeros is never kept: `cost_series_end` then says on which day that was read, so that the next Watch of the same day does not ask again).
     cost_series: list[float] | None = None
     cost_series_end: str | None = None
     # The use of the resource on each of the last 30 closed days, for the second chart of the card of its request: one number a day, the oldest first, in the unit of the kind that `use_kind`
@@ -174,6 +179,19 @@ class CaseRecord(Record):
     use_series: list[float | None] | None = None
     use_series_end: str | None = None
     use_kind: str | None = None
+    # How the 30-day cost of the finding was read (cases/costs.py: lines, none, failed or currency). Empty in a record of before the state existed: cases/brief.py reads such a record from
+    # `cost_usd_30d` (a number above nothing is lines, 0.0 is none for a resource and unread for a subscription or a resource group, which an earlier version looked up by its own id).
+    cost_state: str = ""
+    # What the cost of a finding about a whole subscription or resource group is made of: its largest services and the rest, as cases/costs.py parts_of makes them. Empty for every other finding.
+    cost_by_service: dict = field(default_factory=dict)
+    # An estimate at list price of what a managed disk costs a month, for a finding that Azure has no cost line for ({"usdMonth", "tier", "table"}: cases/estimate.py). It is never a cost: it is kept
+    # apart from `cost_usd_30d`, so that nothing counts it, learns from it or checks a saving against it. Empty for every other finding.
+    estimate: dict = field(default_factory=dict)
+    # The display name of the subscription of the resource, read once from Azure Resource Manager when the finding was made ("" when it could not be read): a person reads a name before an id.
+    subscription_name: str = ""
+    # Azure Advisor's own words for a finding that is an Advisor recommendation ({"problem", "solution"}: its short description, cut to one line). Text that Advisor wrote and never text for a model;
+    # the title of the request and the line that says what to look at are made from it. Empty for every other finding.
+    advice: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

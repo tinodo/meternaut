@@ -17,6 +17,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from . import costs as cost_words
+from . import estimate as estimates
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import ADVISE, GROUP_FACT, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
@@ -77,6 +79,9 @@ TYPE_WORDS = {
     "microsoft.recoveryservices/vaults": ("Recovery Services vault", "Recovery Services vault"),
     "microsoft.operationalinsights/workspaces": ("Log Analytics workspace", "Log Analytics workspace"),
     "microsoft.cognitiveservices/accounts": ("AI services account", "AI services account"),
+    "microsoft.subscriptions/subscriptions": ("Subscription", "subscription"),
+    "microsoft.resources/subscriptions/resourcegroups": ("Resource group", "resource group"),
+    "microsoft.resources/resourcegroups": ("Resource group", "resource group"),
 }
 GUARD_WORDS = {
     "locked": "A management lock covers the resource.",
@@ -210,6 +215,7 @@ class Where:
     name: str
     portal_url: str  # the address in the Azure portal, only for an id of one resource; empty otherwise
     noun: str = "resource"  # the kind as a noun of a sentence ("disk"), "resource" when the kind has no words
+    subscription_name: str = ""  # the display name of the subscription, when it was read: a person reads a name before an id
 
 
 @dataclass(frozen=True)
@@ -351,6 +357,15 @@ class Brief:
     # Why the last try of an open change was refused before anything was written, in the words that the record keeps (the action is `withdrawn`); empty for every other request. The page shows it at
     # the top when the look made now cannot say more: a person who opens a request that was refused sees at once that it was, and why.
     refused_before: str = ""
+    # What the cost says (cases/costs.py): how it was read (lines, none, failed, currency, or "" when it was not read), what the finding is about (resource, group or subscription), what a
+    # cost of a whole subscription or resource group is made of ("Made of: ..."), an estimate at list price for a managed disk that Azure has no cost line for (never a cost: it is not in `cost`),
+    # and the address of Cost analysis in the Azure portal for the scope of the finding (only the page shows it: a letter and a card have one link, the page of the request).
+    cost_state: str = ""
+    scope: str = "resource"
+    made_of: str = ""
+    estimate: estimates.Estimate | None = None
+    cost_url: str = ""
+    cost_scope: str = ""  # the scope of that address in words ("resource group rg-demo", "subscription contoso-dev"), for the line that holds the link
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -533,9 +548,52 @@ def _subject(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str, str
     return "", "", "", "", ""
 
 
-def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None) -> str:
+def advice_of(case: CaseRecord | None) -> tuple[str, str] | None:
+    """Advisor's own words for a finding that is an Advisor recommendation, as (what it found, what to do about it): each one safe line. The solution stands for the problem when Advisor gave
+    only one. None when the case holds none (cases/detectors.py advisor_words makes them)."""
+    found = case.advice if case is not None and isinstance(case.advice, dict) else {}
+    problem = text_of(found.get("problem"), 160) if isinstance(found.get("problem"), str) else ""
+    if not problem:
+        return None
+    solution = text_of(found.get("solution"), MAX_REASON) if isinstance(found.get("solution"), str) else ""
+    return problem, solution or problem
+
+
+def _id_like(label: str) -> bool:
+    """Whether a name is no name: it is empty, an id (a GUID) or the path of an id. A request that has only that to call its subject says nothing."""
+    return not label or bool(GUID.fullmatch(label)) or label.startswith("/")
+
+
+def says_nothing(case: CaseRecord | None) -> bool:
+    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads and no analysis of
+    gateways to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
+    a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
+    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None:
+        return False
+    if cost_words.is_container(case.resource_id):
+        return True
+    return kind_words(case.resource_type)[1] == "resource" and _id_like(text_of(case.resource_name, MAX_NAME))
+
+
+def _advisor_headline(problem: str, scope: str, name: str, group: str, subscription_name: str, subscription: str) -> str:
+    """The title of an Advisor recommendation: Advisor's own sentence, and then what it is about: the subscription by its name (the start of its id when the name was not read), the resource
+    group, or the resource and its group."""
+    if scope == "subscription":
+        label = text_of(subscription_name, 80) or text_of(subscription, 40)[:8]
+        return f"{problem}: subscription {label}" if label else problem
+    if scope == "group":
+        label = text_of(group or name, 90)
+        return f"{problem}: resource group {label}" if label else problem
+    label = text_of(name, MAX_NAME)
+    place = f" in group {text_of(group, 90)}" if group else ""
+    return f"{problem}: {label}{place}" if label and not _id_like(label) else f"{problem}{place}"
+
+
+def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None,
+                case: CaseRecord | None = None) -> str:
     """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model. `together` is the group that a case stands for (group_of), when it
-    stands for many resources: the line then says how many, of what kind and in how many groups, and names the first."""
+    stands for many resources: the line then says how many, of what kind and in how many groups, and names the first. A case that is an Advisor recommendation (`case`) says it in Advisor's
+    own words (advice_of), then what it is about."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
@@ -545,6 +603,9 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
         return text_of(plan_title, 160)
     if together is not None:
         return group_headline(together, name, recommendation)
+    words = advice_of(case)
+    if words is not None and case is not None:
+        return _advisor_headline(words[0], cost_words.scope_of(case.resource_id).kind or "resource", name, group, case.subscription_name, case.subscription_id)
     noun = kind_words(rtype)[1]
     verb = VERBS.get(recommendation or "", "Look at")
     return f"{verb} the {noun} {label}{place}"
@@ -750,7 +811,10 @@ def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
     covers = _things(group, "resource group") + (f", and {number_text(group.capped)} more that the limit of one run left out" if group.capped else "")
     rows = [Fact("Covers", covers, RESOURCE_GRAPH)]
     cost = group.cost if group.cost is not None else _figure(case.cost_usd_30d)
-    if cost is not None:
+    state = cost_state_of(case, group)
+    if cost is not None and state == cost_words.NONE:
+        rows.append(Fact("Together they cost", "Azure has no cost line for them yet", "Azure cost lines"))
+    elif cost is not None:
         rows.append(Fact("Together they cost", f"{usd_text(cost)} in the last 30 days", "Azure cost lines"))
     examples = [name for name in [text_of(case.resource_name, MAX_EXAMPLE), *group.names][:MAX_EXAMPLES] if name]
     if examples:
@@ -997,6 +1061,70 @@ def scenario_saving(case: CaseRecord | None) -> float | None:
     return unread_saving(case) if _digest(case) is not None else gateways_saving(case)
 
 
+# -- what the cost says -------------------------------------------------------------------------------------------------------------------------
+
+def cost_state_of(case: CaseRecord | None, together: Group | None = None) -> str:
+    """How the 30-day cost of a case was read (cases/costs.py): lines, none, failed, currency, or "" when it was not read. A number above nothing is always lines. A record that holds no state
+    (one from before the state existed) is read from its number: 0.0 is none for a resource, which is what it always meant, and unread for a subscription or a resource group, because an
+    earlier version looked those up by their own id, which no cost line has, and so said 0.0 for a cost that Cost Management shows."""
+    if case is None:
+        return ""
+    cost = together.cost if together is not None and together.cost is not None else _figure(case.cost_usd_30d)
+    stored = case.cost_state if case.cost_state in cost_words.STATES else ""
+    if cost is not None and cost > 0:
+        return cost_words.LINES
+    if stored in (cost_words.FAILED, cost_words.CURRENCY):
+        return stored  # a read that failed, or that is not in dollars, is never a figure of nothing, whatever the number beside it says
+    if cost is None:
+        return cost_words.NONE if stored == cost_words.NONE else ""  # none without a number: the subscription has no cost line at all
+    if stored in (cost_words.NONE, cost_words.LINES):
+        return stored
+    return "" if cost_words.is_container(case.resource_id) else cost_words.NONE
+
+
+def scope_of_case(case: CaseRecord | None) -> str:
+    """What a finding is about, as far as its cost goes: the subscription, a resource group, or a resource (anything else, and a case that is not known)."""
+    kind = cost_words.scope_of(case.resource_id).kind if case is not None else ""
+    return kind if kind in ("subscription", "group") else "resource"
+
+
+def made_of_text(case: CaseRecord | None) -> str:
+    """What the cost of a finding about a whole subscription or resource group is made of, as one sentence with its largest services ("Made of: Virtual Network $88.10, Microsoft Defender for
+    Cloud $41.25, Azure Cognitive Search $19.60 and 5 more services $63.45."); empty for every other finding, and when the services were not kept."""
+    if case is None or scope_of_case(case) == "resource":
+        return ""
+    parts = cost_words.valid_parts(case.cost_by_service)
+    if not parts:
+        return ""
+    items = [f"{text_of(name, cost_words.MAX_SERVICE)} {usd_text(amount)}" for name, amount in parts["services"]]
+    if parts["more"] > 0 and parts["moreUsd"] > 0:
+        items.append(f"{number_text(parts['more'])} more service{'' if parts['more'] == 1 else 's'} {usd_text(parts['moreUsd'])}")
+    return "Made of: " + (items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]) + "."
+
+
+def estimate_for(case: CaseRecord | None, state: str, together: Group | None = None) -> estimates.Estimate | None:
+    """The estimate at list price of what a managed disk costs, only for a finding about one disk that Azure has no cost line for. Never a cost, and never counted as one: it is not in
+    `Brief.cost`, and a finding that has cost lines has none."""
+    if case is None or together is not None or state != cost_words.NONE or (case.resource_type or "").lower() != "microsoft.compute/disks":
+        return None
+    return estimates.estimate_of(case.estimate)
+
+
+def cost_link(subscription: str, resource_id: str, subscription_name: str, scope: str, together: Group | None) -> tuple[str, str]:
+    """The address of Cost analysis in the Azure portal for the scope that the cost of a finding is the cost of, and that scope in words: the subscription for a finding about one (or about a
+    resource that has no group), the resource group for a finding about one or about a resource in one. A finding about many resources in more than one group has none: what they cost is in
+    no one place. The address is made from the id of the subscription and the resource group that the id of the resource names (a name that cannot be one makes no link), never from the
+    words that a page shows."""
+    if together is not None and together.groups != 1:
+        return "", ""
+    name = cost_words.scope_of(resource_id).group
+    if scope != "subscription" and name:
+        url = cost_words.analysis_url(subscription, name)
+        return (url, f"resource group {text_of(name, 90)}") if url else ("", "")
+    url = cost_words.analysis_url(subscription)
+    return (url, f"subscription {text_of(subscription_name, 80) or text_of(subscription, 40)[:8]}") if url else ("", "")
+
+
 def _analysed(case: CaseRecord | None) -> bool:
     return _digest(case) is not None or _gateway_digest(case) is not None
 
@@ -1027,14 +1155,20 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
         group = group_of(case)
-        if cost is None:
-            why = "No cost line of the last 30 days was read for " + ("these resources." if group is not None else "this resource.")
+        read = cost_state_of(case, group)
+        scope = cost_words.scope_of(case.resource_id).kind if case is not None else ""
+        thing, this = {"subscription": ("The subscription", "this subscription"), "group": ("The resource group", "this resource group")}.get(scope, ("The resource", "this resource"))
+        if read == cost_words.NONE:
+            why = cost_words.state_words(read, group is not None)
+        elif cost is None or read == "":
+            why = {cost_words.FAILED: cost_words.FAILED_WORDS, cost_words.CURRENCY: cost_words.CURRENCY_WORDS}.get(read) or (
+                "No cost line of the last 30 days was read for " + ("these resources." if group is not None else f"{this}."))
         elif cost <= 0:
-            why = "The resources had no cost in the last 30 days." if group is not None else "The resource had no cost in the last 30 days."
+            why = cost_words.state_words(cost_words.LINES, group is not None)  # lines that cost nothing: Cost Management shows no cost
         elif group is not None:
             why = f"The {number_text(group.count)} resources cost {usd_text(cost)} together in the last 30 days. What a change would save was not worked out."
         else:
-            why = f"The resource cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
+            why = f"{thing} cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
         specific = False
         if fam is not None and fam.no_figure:
             why, specific = fam.no_figure, True
@@ -1129,9 +1263,9 @@ def _date(value: object) -> str:
 
 
 def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
-    """At most five rows of evidence, chosen by code from the cost lines, the typed facts, the checks and the owner record, the most decision-relevant first: the cost (for a case that stands
-    for many resources: how many they are, what they cost together and the first few), a check that held the resource back, what was measured, why it is a lead and its age, its last
-    change, the checks that found nothing, and then what it is like."""
+    """At most five rows of evidence, chosen by code from the cost lines, the typed facts, the checks and the owner record, the most decision-relevant first: what Advisor says to look at (for
+    an Advisor recommendation), the cost (for a case that stands for many resources: how many they are, what they cost together and the first few), a check that held the resource back,
+    what was measured, why it is a lead and its age, its last change, the checks that found nothing, and then what it is like."""
     if case is None:
         return ()
     head: list[Fact] = []
@@ -1139,11 +1273,19 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     found = gateways_of(case)
     rows = list(found.rows) if found is not None else []
     cost = _figure(case.cost_usd_30d)
+    state = cost_state_of(case, group)
+    words = advice_of(case)
+    if words is not None:
+        head.append(Fact("What to look at", words[1], "Azure Advisor"))  # Advisor's own words say what to look at, before any figure
     if group is not None:
         covered = _group_facts(group, case)
         head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the rows of gateways come before the examples
-    elif cost is not None:
+    elif state == cost_words.NONE:
+        head.append(Fact("Cost, last 30 days", "Azure has no cost line for this yet", "Azure cost lines"))
+    elif cost is not None and state == cost_words.LINES:
         head.append(Fact("Cost, last 30 days", usd_text(cost), "Azure cost lines"))
+    elif state in (cost_words.FAILED, cost_words.CURRENCY):
+        head.append(Fact("Cost, last 30 days", "Could not be read just now" if state == cost_words.FAILED else "Not in US dollars", "Azure cost lines"))
     guards = [g for g in case.guards if isinstance(g, str)]
     if guards:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
@@ -1181,8 +1323,9 @@ def owner_of(case: CaseRecord | None) -> OwnerLine:
     return OwnerLine(False, "Meternaut has not looked up who owns this resource yet.")
 
 
-def _where(name: str, group: str, subscription: str, resource_id: str, rtype: str) -> Where:
-    return Where(text_of(subscription, 40)[:8], text_of(group, 90), kind_words(rtype)[0], text_of(name, MAX_NAME), portal_url(resource_id), kind_words(rtype)[1])
+def _where(name: str, group: str, subscription: str, resource_id: str, rtype: str, subscription_name: str = "") -> Where:
+    return Where(text_of(subscription, 40)[:8], text_of(group, 90), kind_words(rtype)[0], text_of(name, MAX_NAME), portal_url(resource_id), kind_words(rtype)[1],
+                 text_of(subscription_name, 80))
 
 
 def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stage: str = "", refused: bool = False) -> tuple[str, ...]:
@@ -1341,15 +1484,19 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     unread = unread_of(case)
     found = gateways_of(case)
     together = group_of(case)
+    read = cost_state_of(case, together)
+    scope = scope_of_case(case)
+    cost_url, cost_scope = cost_link(subscription, resource_id, case.subscription_name if case is not None else "", scope, together)
     second = second_of(plan, decisions, viewer, now) if kind == "change" and needs(plan) else None
     looked = Readiness(ready.state, plain(ready.why, 300)) if ready is not None and kind == "change" and state == "open" else None
     last_try = text_of(action.result, 300) if kind == "change" and state == "open" and action is not None and action.state == "withdrawn" else ""
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
-        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together),
+        headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together, case=case),
         saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
-        change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
+        change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case),
+        where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
         age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
@@ -1357,7 +1504,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
-        held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try)
+        held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
+        cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope)
 
 
 def order_key(brief: Brief) -> tuple:

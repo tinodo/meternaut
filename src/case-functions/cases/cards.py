@@ -108,6 +108,7 @@ def _stake(brief: Brief) -> dict:
     stake = stake_of(brief)
     label = f"{md(stake.label, 80)}. {md(stake.month, 40)} a month." if stake.month else f"{md(stake.label, 80)}."
     items = [_block("saving-word", label, weight="Bolder"), _block("price-basis", md(stake.note, 300), isSubtle=True)]
+    items += [_block(name, md(text, 300), isSubtle=True) for name, text in (("made-of", stake.made_of), ("estimate", stake.estimate)) if text]
     if stake.year:
         items = [_block("value", md(stake.year, 60), size="Large", weight="Bolder"), *items, _block("money", md(stake.money, 120), isSubtle=True, size="Small")]
     return {"type": "Container", "id": "value-tile", "style": "emphasis", "items": items}

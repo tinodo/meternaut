@@ -5,6 +5,7 @@ from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANG
                               make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.brief import SECOND_WORDS
+from cases.costs import analysis_url
 from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
@@ -147,13 +148,15 @@ class ThePage(unittest.TestCase):
             self.assertNotIn(f">{gone}<", self.reply.text)
 
     def test_the_page_links_to_the_azure_portal_with_an_address_made_from_the_resource_id_only(self):
-        portal = [a for a in self.reply.root.find_all("a") if a.attrs["href"].startswith("https://")]
-        self.assertEqual([(a.text(), a.attrs["href"], a.attrs.get("rel")) for a in portal],
-                         [("Open in the Azure portal", f"https://portal.azure.com/#resource{make_plan().resource_id}", "noopener")])
+        links = [(a.text(), a.attrs["href"], a.attrs.get("rel")) for a in self.reply.root.find_all("a") if a.attrs["href"].startswith("https://")]
+        self.assertEqual(links, [("Open in Cost analysis", analysis_url(make_plan().subscription_id, make_plan().resource_group), "noopener"),
+                                 ("Open in the Azure portal", f"https://portal.azure.com/#resource{make_plan().resource_id}", "noopener")],
+                         "the page of the resource, and Cost analysis for its resource group: each made from ids that code checked")
         self.console.store.case_put(make_case(plan_id="plan0001", resource_id='/subscriptions/x"><script>', resource_name="x"))
         self.console.store.plan_put(make_plan(resource_id='/subscriptions/x"><script>'))
         hostile = self.console.get("/ok/plan0001")
-        self.assertEqual([a for a in hostile.root.find_all("a") if a.attrs["href"].startswith("https://")], [], "an id that is not the id of one resource makes no link")
+        self.assertEqual([a.text() for a in hostile.root.find_all("a") if a.attrs["href"].startswith("https://")], ["Open in Cost analysis"],
+                         "an id that is not the id of one resource makes no link to it, and Cost analysis is made from the subscription and the group, which are ids")
         self.assertNotIn("<script>", hostile.text)
 
     def test_the_case_page_is_the_same_brief(self):
@@ -871,6 +874,15 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         self.assertNotIn("sign in", main.text().lower(), "the sign-in is not on the page, and not on a button")
         self.assertEqual(main.text().count("own permissions"), 1, "who makes the change is said once")
         self.assertNotIn("?", main.text())
+
+    def test_the_place_is_said_with_the_name_of_the_subscription_when_it_is_known_and_not_by_the_start_of_its_id(self):
+        console = Console(delegate=ScriptedDelegate())
+        console.seed()
+        console.store.case_put(make_case(plan_id="plan0001", subscription_name="contoso-dev"))
+        form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+        main = console.submit(form, APPROVE, confirm=False, note="Go on").main
+        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription contoso-dev.", main.text())
+        self.assertNotIn("bbbbbbbb", main.text())
 
     def test_the_safe_button_is_the_main_one_and_it_is_a_plain_link_back_to_the_request(self):
         (back,) = [a for a in self.reply.main.find_all("a") if a.text() == "No, go back"]

@@ -12,7 +12,7 @@ import re
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
 from . import calls
-from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, skeptic_sentence
+from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, skeptic_sentence, subscription_words
 from .delete import DeleteFamily
 from .gates import Gates
 from .machine import locate_machine, power_of, read_vm
@@ -127,7 +127,7 @@ class ChangeDiskTier(Family):
         return Planned(
             title=f"Move a managed disk to {tier_words(to)} in resource group {group}",
             what_changes=(f"When you approve, Meternaut changes the type of the disk named {name} in resource group {group} "
-                          f"(subscription {getattr(lead, 'subscription_id')[:8]}) from {tier_words(frm)} to {tier_words(to)}, with your own permissions. It changes nothing else: not the data and not the size. "
+                          f"(subscription {subscription_words(lead)}) from {tier_words(frm)} to {tier_words(to)}, with your own permissions. It changes nothing else: not the data and not the size. "
                           f"{wait} Right before it acts, it reads the disk again and stops unless it is still {tier_words(frm)} and still in that state, still tagged as planted by Meternaut, "
                           "still in this resource group and not locked."),
             could_go_wrong=("A disk of a lower tier has lower limits on operations and throughput, so a workload that needs them slows down. Azure allows the type of a disk to be changed twice a day. "

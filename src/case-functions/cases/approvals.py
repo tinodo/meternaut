@@ -32,6 +32,8 @@ ADVICE_STATUSES = ("proposed", "needs_human")
 # A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
 # concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py).
 ADVICE_MIN_USD = 50.0
+# What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
+NOTHING_TO_SAY = "held back: nothing to say"
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
@@ -129,7 +131,7 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
     return plan_digest.sealed(PlanRecord(
         plan_id=new_id(), case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, resource_name=clean_text(case.resource_name, 120),
         resource_group=clean_text(case.resource_group, 90), subscription_id=case.subscription_id, code="",
-        title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation, together=brief.group_of(case)),
+        title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation, together=brief.group_of(case), case=case),
         what_changes=brief.ADVICE_CHANGE,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.ADVICE_RISK, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
@@ -426,6 +428,26 @@ class Approvals:
         except StoreError:
             return []
 
+    def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
+        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing) and that nobody has answered: no request is made for such a finding, and one
+        that was made before is closed, as expired and ending now, like the requests that supersede() takes back. The case keeps its status (a finding that no person has seen). A request that a
+        person put off or asked about is theirs and stays. Returns the plans that it closed, each with its case."""
+        try:
+            closed: list[tuple[PlanRecord, CaseRecord]] = []
+            for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
+                case = self.store.case_get(plan.case_id)
+                if case is None or not brief.says_nothing(case):
+                    continue
+                fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
+                if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
+                    continue
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()))
+                self.store.plan_put(fresh)
+                closed.append((fresh, case))
+            return closed
+        except StoreError:
+            return []
+
     def create(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
         """The plan for a case, or None when no plan can be made (why_not says why). The case moves to awaiting_ok.
 
@@ -467,7 +489,8 @@ class Approvals:
 
         None when the case is not a finding for a person (its status is not proposed or needs_human), when nobody can answer, when a person marked the resource do-not-touch,
         when a plan for the resource is open already (the case is linked to it when it is the case's own), or when a person answered an advise plan for the resource lately.
-        None also when the finding is not worth a request (why_not_ask), or when it needs a person only because the AIs did not settle it and ADVICE_OPEN_MAX requests wait already:
+        None also when the finding is not worth a request (why_not_ask), when it cannot say what to look at (brief.says_nothing: NOTHING_TO_SAY, which the caller says in the History and counts),
+        or when it needs a person only because the AIs did not settle it and ADVICE_OPEN_MAX requests wait already:
         the case is then an open question, and nothing is made for it until a place is free.
         The status of the case is left as it is while the plan is open: it still says what the AIs came to."""
         if case.status not in ADVICE_STATUSES or not approvers:
@@ -481,7 +504,7 @@ class Approvals:
                     if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
                         self.store.case_put(_with(case, plan_id=plan.plan_id))
                     return None
-            if why_not_ask(case) is not None:
+            if why_not_ask(case) is not None or brief.says_nothing(case):
                 return None
             if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
                                                     and (plan.preconditions or {}).get("caseStatus") == "needs_human") >= ADVICE_OPEN_MAX:

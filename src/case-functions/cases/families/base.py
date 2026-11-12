@@ -26,6 +26,7 @@ from typing import Callable
 
 from ..http import HttpError, Refused, Response
 from ..models import CaseRecord, PlanRecord
+from ..roles import clean_text
 from . import words
 from .azure import Azure
 from .calls import ARM_HOST, LOCKS_API, NAME, RESOURCE_ID, Call, Kind
@@ -110,6 +111,11 @@ def skeptic_sentence(case: CaseRecord) -> str:
     """What the second AI said, as one sentence of code: how many objections it raised."""
     count = len(case.objections)
     return f"The Skeptic role raised {count} objection{'s' if count != 1 else ''}: they are in the notebook." if count else "The Skeptic role raised no objection."
+
+
+def subscription_words(lead: object) -> str:
+    """The subscription of a request as the plan says it: its display name when it was read (Arm.subscription_name), else the first eight characters of its id. A person reads a name before an id."""
+    return clean_text(getattr(lead, "subscription_name", "") or "", 80) or str(getattr(lead, "subscription_id", ""))[:8]
 
 
 NOT_MEASURED = "Not measured yet: the saving, which cost lines confirm after the change."

@@ -57,8 +57,8 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 23, "nineteen, and the four reads of the capability profile (cases/capability.py)")
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 20 + ["POST"] * 3)
+        self.assertEqual(len(plain), 24, "nineteen, the four reads of the capability profile (cases/capability.py) and the read of the display name of one subscription")
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 21 + ["POST"] * 3)
         for method, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
                             pattern.pattern)
@@ -180,7 +180,6 @@ class TheList(unittest.TestCase):
             ("PUT", f"{arm}/subscriptions?api-version=2022-12-01"),
             ("DELETE", f"{arm}/subscriptions?api-version=2022-12-01"),
             ("GET", f"{arm}/subscriptions/?api-version=2022-12-01"),
-            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
             ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/resourcegroups?api-version=2021-04-01"),
             ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01"),
             ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/locations?api-version=2022-12-01"),
@@ -194,6 +193,30 @@ class TheList(unittest.TestCase):
             with self.assertRaises(http.Refused, msg=f"{method} {url}"):
                 c.request(method, url)
         self.assertEqual(len(script.calls), 3, "nothing else left the app")
+
+    def test_the_one_get_of_a_subscription_gives_its_name_and_is_not_a_door_to_anything_below_it(self):
+        # The display name of a subscription (Arm.subscription_name): the address ends at the id of the subscription, and only a GET of it is allowed.
+        arm = "https://management.azure.com"
+        c, script, _ = client(ok())
+        for url in (f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01", f"{arm}/subscriptions/{SUBSCRIPTION.upper()}?api-version=2022-12-01"):
+            c.request("GET", url)
+        self.assertEqual(len(script.calls), 2)
+        refused = [
+            ("POST", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
+            ("PUT", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
+            ("PATCH", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
+            ("DELETE", f"{arm}/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-x?api-version=2021-04-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Compute/virtualMachines?api-version=2024-03-01"),
+            ("GET", f"{arm}/subscriptions/not-a-subscription?api-version=2022-12-01"),
+            ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}x?api-version=2022-12-01"),
+            ("GET", "https://management.azure.com.evil.example/subscriptions/" + SUBSCRIPTION),
+        ]
+        for method, url in refused:
+            with self.assertRaises(http.Refused, msg=f"{method} {url}"):
+                c.request(method, url)
+        self.assertEqual(len(script.calls), 2, "nothing else left the app")
 
     def test_the_list_of_subscriptions_is_a_read_that_needs_no_foundry_project_and_changes_nothing_in_the_calls_that_there_were(self):
         plain = http.allowed_calls()

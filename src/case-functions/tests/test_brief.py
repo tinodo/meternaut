@@ -24,6 +24,9 @@ INJECTIONS = (
     "line one\r\nBcc: evil@example.com\r\nSubject: hijack", "line one\nline two\u2028line three\u2029line four", "x" * 5000, "\x00\x07\x1b[31mred\x1b[0m", "javascript:alert(1)",
     "&lt;b&gt; &amp; \"quote\" 'tick'", "tab\tseparated\vvertical\x0cform", "\ud800 lone surrogate", "private \ue000 use", "tag \U000e0041 character", "",
 )
+# The address of Cost analysis in the Azure portal that a brief may hold: the scope is the id of a subscription and, when there is one, the name of a resource group that can be one (cases/costs.py).
+COST_ANALYSIS = re.compile(r"https://portal\.azure\.com/#blade/Microsoft_Azure_CostManagement/Menu/open/costanalysis/scope/%2Fsubscriptions%2F[0-9a-f-]{36}"
+                           r"(?:%2FresourceGroups%2F(?:[A-Za-z0-9._-]|%[0-9A-F]{2}){1,270})?")
 
 
 def ip_case(**changes):
@@ -70,7 +73,7 @@ class TheHeadline(unittest.TestCase):
             with self.subTest(type=rtype):
                 found = headline_of(ADVISE, "x-1", "rg-demo", rtype, "change")
                 self.assertEqual(found, f"Consider changing the {noun} x-1 in group rg-demo")
-                self.assertNotIn("the resource", found)
+                self.assertNotRegex(found, r"the resource\b(?! group)")  # the word of a kind of resource, never the general one ("the resource group" is the word of a resource group)
 
     def test_a_name_is_cut_and_is_one_line(self):
         found = headline_of("delete-disk", "n" * 500 + "\n<b>", "g", "microsoft.compute/disks", None)
@@ -373,7 +376,9 @@ class TheFacts(unittest.TestCase):
 
     def test_a_case_without_a_cost_figure_has_no_cost_row(self):
         self.assertNotIn("Cost, last 30 days", [r.label for r in facts_of(make_case(cost_usd_30d=None))])
-        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["$0.00"])
+        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["Azure has no cost line for this yet"],
+                         "a cost line that Azure does not have is never shown as $0.00")
+        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0, cost_state="lines")) if r.label == "Cost, last 30 days"], ["$0.00"], "cost lines that cost nothing are a cost of nothing")
 
 
 class TheSaving(unittest.TestCase):
@@ -405,7 +410,9 @@ class TheSaving(unittest.TestCase):
         none = brief_of(make_case(saving_usd_month=None, cost_usd_30d=None), make_plan(saving_usd_month=None)).saving
         self.assertEqual((none.monthly, none.level, none.why_none), (None, "", "No cost line of the last 30 days was read for this resource."))
         free = brief_of(make_case(cost_usd_30d=0.0), make_plan(saving_usd_month=0)).saving
-        self.assertEqual(free.why_none, "The resource had no cost in the last 30 days.")
+        self.assertEqual(free.why_none, "Azure has no cost line for this yet.")
+        nothing = brief_of(make_case(cost_usd_30d=0.0, cost_state="lines"), make_plan(saving_usd_month=0)).saving
+        self.assertEqual(nothing.why_none, "Cost Management shows no cost for this in the last 30 days.")
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
         self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost $848.75 in the last 30 days. What a change would save was not worked out."))
         self.assertNotIn("No cost line", costly.why_none, "a cost that is known is never said to be missing")
@@ -793,6 +800,10 @@ class ThePlainSanitiser(unittest.TestCase):
                     if path.endswith("where.portal_url"):
                         self.assertEqual(value, "", "an id of the estate that is not the id of one resource makes no link")
                         continue
+                    if path.endswith("cost_url"):
+                        self.assertTrue(value == "" or COST_ANALYSIS.fullmatch(value), "the address of Cost analysis is made from ids, never from text")
+                        self.assertNotIn("resourceGroups", value, "the name of a resource group that cannot be one makes no link to it")
+                        continue
                     with self.subTest(text=text[:20], field=path):
                         self.assertEqual(visible(value), value)
                         self.assertNotIn("\n", value)
@@ -827,14 +838,33 @@ class WhatTheModuleIs(unittest.TestCase):
 
     def test_it_imports_only_the_standard_library_the_records_and_the_words_of_the_families(self):
         allowed = {"__future__", "datetime", "math", "re", "unicodedata", "dataclasses", "typing"}
+        pure = {"costs", "estimate"}  # the words and the address of the cost, and the table of list prices: the next test holds that they too hold no way to reach Azure
         for node in ast.walk(ast.parse(self.source)):
             if isinstance(node, ast.Import):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)
             elif isinstance(node, ast.ImportFrom):
-                if node.level == 1:
+                if node.level == 1 and node.module is None:
+                    self.assertLessEqual({a.name for a in node.names}, pure)
+                elif node.level == 1:
                     self.assertIn(node.module, ("models", "families.words", "twopeople"), "the words of the families and the stages of two people are modules that hold no way to reach Azure (next tests)")
                 else:
                     self.assertIn((node.module or "").split(".")[0], allowed)
+
+    def test_the_words_and_the_address_of_the_cost_and_the_table_of_list_prices_import_only_the_standard_library_and_read_nothing(self):
+        for name in ("costs", "estimate"):
+            source = (Path(support.APP_ROOT) / "cases" / f"{name}.py").read_text(encoding="utf-8")
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.Import):
+                    self.assertLessEqual({a.name.split(".")[0] for a in node.names}, {"datetime", "math", "re"}, name)
+                elif isinstance(node, ast.ImportFrom):
+                    self.assertEqual(node.level, 0, name)
+                    self.assertIn((node.module or "").split(".")[0], {"__future__", "typing", "urllib"}, name)
+            for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen", r"\bsocket", r"\blogging", r"\brandom\b", r"\buuid\b"):
+                self.assertIsNone(re.search(pattern, source), (name, pattern))
+
+    def test_the_cost_module_makes_no_link_but_the_portal_address_of_the_cost_analysis_of_a_checked_scope(self):
+        source = (Path(support.APP_ROOT) / "cases" / "costs.py").read_text(encoding="utf-8")
+        self.assertEqual(sorted(set(re.findall(r"https?://[A-Za-z0-9./#{}_-]+", source))), ["https://portal.azure.com"])
 
     def test_the_stages_of_a_request_that_needs_two_people_import_only_the_standard_library_and_the_records(self):
         source = (Path(support.APP_ROOT) / "cases" / "twopeople.py").read_text(encoding="utf-8")

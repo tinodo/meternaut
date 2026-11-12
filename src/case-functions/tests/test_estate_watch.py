@@ -541,7 +541,7 @@ class TheShareOfTheDeadline(unittest.TestCase):
 
         def token(resource):
             calls.append(resource)
-            if len(calls) > 8 + 3 * 2:  # the eight queries and the three reads of two subscriptions
+            if len(calls) > 8 + 4 * 2:  # the eight queries and the four reads of two subscriptions: Advisor, the locks, the cost lines and the name of the subscription
                 raise IdentityError("the managed identity endpoint answered 500 after 3 tries")
             return TOKEN
 

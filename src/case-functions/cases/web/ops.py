@@ -24,7 +24,7 @@ AMOUNT = re.compile(r"\d{1,7}(?:\.\d{1,2})?")
 DRIFT_WHY = "your role ops lets you start the check of the AI agents"
 RESULTS = {"PASS": ("Pass", "low", "circle"), "FAIL": ("Fail", "high", "diamond"), "UNKNOWN": ("Cannot be told", "mid", "triangle")}  # what a control found: a word and a shape, never a colour alone
 BACK = ("/ops", "Back to Operations")
-RUN_HEADERS = ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes", "Findings of the run"]
+RUN_HEADERS = ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Held back", "Tokens", "Seconds", "Notes", "Findings of the run"]
 LATEST_RUNS = ["Started", "Trigger", "Result", "Findings", "Proposed", "Needs a person", "Errors"]
 RUNS_SHOWN = 20
 CASES_SHOWN = 100
@@ -198,7 +198,7 @@ def _runs_table(ctx: Ctx, runs: list, selected: str) -> Safe:
         mark = Safe("<strong>Selected.</strong> ") if run.run_id == selected else ""
         rows.append([
             fmt("{mark}{when}", mark=mark, when=nowrap(ctx.when(run.started_at))), run.trigger, run_result(run), count(run.leads), count(run.cases), count(run.proposed),
-            count(run.needs_human), count(run.dropped), count(run.errors), count(run.tokens), count(run.seconds),
+            count(run.needs_human), count(run.dropped), count(run.errors), count(run.held), count(run.tokens), count(run.seconds),
             items(run.notes) if run.notes else "none",
             fmt('<a href="{href}">Show them<span class="visually-hidden"> for run {run}</span></a>', href=ctx.url(f"/ops/runs?run={link_part(run.run_id)}"), run=run.run_id),
         ])

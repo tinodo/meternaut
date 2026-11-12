@@ -28,9 +28,12 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, capability, decide, gateways, guards, learning, roles, unread, wiring
+from . import agents, capability, decide, gateways, guards, learning, roles, unread, upkeep, wiring
+from . import costs as cost_words
+from . import estimate as estimates
 from .approvals import is_fixture
 from .arm import scopes_of
+from .brief import says_nothing
 from .detectors import Context, Lead
 from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
@@ -148,6 +151,7 @@ class Investigation:
     # True when the harness did not let the agents run (a pulled switch, a lock that does not hold, a stored definition that differs) or stopped a run: the run of the Watch then opens no new
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
+    said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
 
     @property
     def state(self) -> str:
@@ -322,6 +326,34 @@ def _cost(resource: Resource, context: Context | None) -> float | None:
     if context is not None and context.costs is not None and context.currency == "USD":
         return round(context.costs.get(resource.resource_id.lower(), 0.0), 2)
     return None
+
+
+def _cost_state(resource: Resource, context: Context | None, cost: float | None) -> str:
+    """How the cost of a resource was read (cases/costs.py): lines, none (the cost lines were read and have none for it: not a cost of nothing), failed (those of its subscription could not be
+    read), currency (they are not in US dollars) or "" (nothing says: a part of a resource, which is billed with the resource, has no line of its own)."""
+    if cost is not None:
+        return cost_words.LINES if cost > 0 else cost_words.NONE
+    if getattr(resource, "part_of", None) is not None or context is None:
+        return ""
+    if context.costs is None:
+        return cost_words.FAILED if context.cost_error else ""
+    return cost_words.CURRENCY if context.costs and context.currency != "USD" else cost_words.NONE
+
+
+def _estimate(toolbox: Toolbox, resource: Resource, state: str) -> dict:
+    """The estimate at list price (cases/estimate.py) of a managed disk that Azure has no cost line for, and nothing for any other resource or any other state: it stands for no cost line."""
+    if state != cost_words.NONE or resource.resource_type != estimates.DISK_TYPE:
+        return {}
+    sku, properties = toolbox.known_of(resource.handle)
+    return estimates.disk_estimate(sku, properties.get(estimates.SIZE_PROPERTY))
+
+
+def _subscription_name(s: "Services", subscription: str) -> str:
+    """The display name of a subscription (Arm.subscription_name), which a person reads before an id. It is a convenience: a read that fails costs no case, and the pages then show the id."""
+    try:
+        return s.arm.subscription_name(subscription)
+    except Exception:  # noqa: BLE001 (a name that cannot be read is no reason to lose a case)
+        return ""
 
 
 def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Toolbox, taken: set[str]) -> None:
@@ -579,10 +611,10 @@ def _skeptic_input(findings: list[Finding], toolbox: Toolbox) -> tuple[str, set[
 
 # -- the cases ---------------------------------------------------------------------------------------------------------------------------------------
 
-def _lead(resource: Resource, facts: dict, cost: float | None, advisor: float | None) -> Lead:
+def _lead(resource: Resource, facts: dict, cost: float | None, advisor: float | None, state: str = "", estimate: dict | None = None) -> Lead:
     return Lead(detector=DETECTOR, resource_id=resource.resource_id, resource_type=resource.resource_type, name=resource.name, resource_group=resource.resource_group,
                 subscription_id=resource.subscription_id.lower(), location=resource.location, tags=dict(resource.tags), managed_by=resource.managed_by, facts=facts,
-                advisor_saving_usd=advisor, cost_usd_30d=cost)
+                advisor_saving_usd=advisor, cost_usd_30d=cost, cost_state=state, estimate=dict(estimate or {}))
 
 
 def _facts(finding: Finding, metrics: dict[str, float], cost: float | None, recorded: Mapping[str, dict] | None = None, listed: int | None = None) -> dict:
@@ -790,7 +822,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
             if (resource.resource_type or "").lower() == gateways.TYPE:
                 facts[gateways.KEY] = gateways.analyse(_block(toolbox.evidence, handle), costs[handle])  # a point-to-site gateway: its scale units, the most connections that it saw, and the scenario figure
-            lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle))
+            context = contexts.get(resource.subscription_id.lower())
+            state = _cost_state(resource, context, costs[handle])
+            lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle), state, _estimate(toolbox, resource, state))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
             if old is not None and old.status == "expired" and any(lead.lead_id in _members_of(group) and group.case_id != old.case_id and _recent(s, group, None) for group in groups):
@@ -986,6 +1020,19 @@ def _together(members: list[Item], capped: int = 0, silenced: int = 0) -> dict:
             "resourceIds": sorted(lead.resource_id.lower() for lead in leads)[:MAX_GROUP_IDS]}
 
 
+def _together_state(members: list[Item], cost: float | None) -> str:
+    """How the cost of a group was read (cases/costs.py): lines when the lines of its resources add up to something, none when they were read for every one of them and none has a line, failed or
+    currency when that is why a resource of it has no figure and the rest add up to nothing, and "" when nothing says."""
+    if cost is None:
+        return ""
+    if cost > 0:
+        return cost_words.LINES
+    states = {member.lead.cost_state for member in members}
+    if states == {cost_words.NONE}:
+        return cost_words.NONE
+    return next((word for word in (cost_words.FAILED, cost_words.CURRENCY) if word in states), "")
+
+
 def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, models: dict, steps: tuple[dict, ...], case_id: str, group: list[Item] | None = None) -> None:
     """The case of one resource: decide.py gives it its status, the History gets its result, and the store keeps it when there is a store. The verdict of the Skeptic
     counts only for a resource that it was shown, and the case is never proposed without a measurement that code confirmed.
@@ -1001,7 +1048,8 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if together["type"] == gateways.TYPE:
             combined = gateways.combine(member.lead.facts.get(gateways.KEY) for member in group)
             kept.update({gateways.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its gateways
-        lead = replace(lead, cost_usd_30d=together["costUsd30d"], facts={**kept, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
+        lead = replace(lead, cost_usd_30d=together["costUsd30d"], cost_state=_together_state(group, together["costUsd30d"]), estimate={},
+                       facts={**kept, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)
     judged = finding.verdict if item.shown else None
     outcome = decide.decide(lead, Guards({}), detective, judged, backed=bool(item.metrics), notes=(finding.note,) if finding.note else ())
@@ -1030,6 +1078,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     ex = s.extras
     if ex is None:
         return
+    lead = replace(lead, subscription_name=_subscription_name(s, lead.subscription_id))
     now = stamp(s.clock())
     try:
         old = ex.store.case_get(f"k{lead.lead_id}")
@@ -1039,10 +1088,11 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,
-            recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd), cost_usd_30d=lead.cost_usd_30d,
+            recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd),
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
-            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead), learned=learned)
+            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead), learned=learned,
+            subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
         if outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
@@ -1050,5 +1100,8 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
+            elif says_nothing(record):
+                upkeep.held(h, record)
+                out.said_nothing += 1
     except (StoreError, ValueError) as error:
         h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))

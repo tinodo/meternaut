@@ -2615,6 +2615,81 @@ class WithTheRealToolbox(unittest.TestCase):
         self.assertEqual((line["kept"], line["handles"], line["unproven"]), (False, 0, 3))
 
 
+class WithTheRealToolboxAndNoCostLine(unittest.TestCase):
+    """What the cost of a finding of the investigation says (cases/costs.py) and the estimate at list price for a disk that Azure has no cost line for: the case keeps what the tools showed."""
+
+    def setUp(self):
+        self.estate, self.real = disks_estate()
+        self.estate.rows[2]["sku"] = {"name": "Standard_LRS"}  # disk-c: 32 GiB and unattached, as the fixture says, and no cost line for it below
+        self.estate.cost_rows = [line for line in self.estate.cost_rows if line[2] != self.estate.id_of("disk-c").lower()]
+
+    @staticmethod
+    def idle(listed, measured):
+        rows = what_the_tools_returned(listed, measured)
+        handles = [handle for handle, found in rows.items() if found["total"] == 0]
+        return [finding(handles=handles, evidence=[entry(handle, "MetricX", 0) for handle in handles], summary="Nothing used these disks in the window.")]
+
+    def go(self, claim=None):
+        h = Harness(ScriptedAgent(claim or self.idle), self.real, with_store=True)
+        h.go()
+        return h
+
+    def cases(self, h):
+        return {c.resource_name: c for c in h.store.cases_recent()}
+
+    def test_a_disk_with_a_line_has_its_figure_and_a_disk_with_none_has_the_state_none_and_the_estimate_of_its_type_and_size(self):
+        cases = self.cases(self.go())
+        self.assertEqual((cases["disk-a"].cost_state, cases["disk-a"].cost_usd_30d, cases["disk-a"].estimate), ("lines", 30.0, {}))
+        self.assertEqual((cases["disk-c"].cost_state, cases["disk-c"].cost_usd_30d), ("none", 0.0))
+        self.assertEqual(cases["disk-c"].estimate, {"usdMonth": 1.54, "tier": "S4", "table": "2026-11-12"})
+
+    def test_the_estimate_is_in_no_figure_that_the_run_reports(self):
+        h = self.go()
+        results = {r["resourceName"]: r for r in h.of("case.result")}
+        self.assertEqual((results["disk-c"]["costUsd30d"], results["disk-c"]["monthlySavingUsd"]), (0.0, 0.0))
+        self.assertNotIn("1.54", json.dumps(h.events))
+        self.assertEqual(h.of("investigation.finding")[0]["coveredCostUsd30d"], 30.0, "the cost of the finding is what Cost Management showed")
+
+    def test_cost_lines_that_could_not_be_read_make_no_figure_and_no_estimate_and_the_state_says_so(self):
+        self.estate.failures = {"costs": 500}
+        h = Harness(ScriptedAgent(self.idle), self.real, with_store=True)
+        h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs=None, currency=None, cost_error=True)}
+        h.go()
+        cases = self.cases(h)
+        self.assertEqual([(c.cost_state, c.cost_usd_30d, c.estimate) for c in cases.values()], [("failed", None, {})] * 2)
+
+    def test_a_resource_of_another_kind_and_a_disk_of_a_type_that_the_table_does_not_have_get_no_estimate(self):
+        from test_toolbox import VM
+
+        self.estate.rows[1]["sku"] = {"name": "UltraSSD_LRS"}
+        self.estate.rows[2]["properties"]["diskSizeGB"] = 8192
+        box = self.real
+        box.call("list_resources", {"type": "microsoft.compute/disks", "order_by": None, "limit": None, "offset": None})
+        disks = {r.name: r for r in box.handles.values()}
+        for name in ("disk-b", "disk-c"):
+            self.assertEqual(investigate._estimate(box, disks[name], "none"), {}, name)
+        self.assertEqual(investigate._estimate(box, disks["disk-c"], "lines"), {}, "an estimate stands only for a read that found no line")
+        self.assertEqual(investigate._estimate(box, replace(disks["disk-c"], resource_type=VM), "none"), {})
+        self.assertEqual(investigate._estimate(box, disks["disk-c"], "failed"), {})
+
+
+class AFindingOfTheInvestigationThatSaysNothingIsHeldBack(unittest.TestCase):
+    """A finding of one resource that has only an id for a name, of a kind that has no words here, cannot say what to look at: it is kept in the History and no request is made."""
+
+    ID = "aaaaaaaa-1111-4222-8333-444444444444"
+
+    def test_the_case_is_kept_no_request_is_made_and_the_history_and_the_count_say_so(self):
+        toolbox = FakeToolbox([resource(1, name=self.ID), resource(2)], {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]), finding(handles=["r2"]))), toolbox, with_store=True)
+        h.go()
+        self.assertEqual(h.result.said_nothing, 1)
+        cases = {c.resource_name: c for c in h.store.cases_recent()}
+        self.assertEqual(sorted(cases), [self.ID, "thing-2"], "both cases are kept")
+        self.assertEqual({p.case_id for p in h.store.plans_open()}, {cases["thing-2"].case_id}, "only the finding that says what to look at is put to a person")
+        (held,) = h.of("case.held")
+        self.assertEqual((held["caseId"], held["reason"], held["resourceName"]), (cases[self.ID].case_id, "held back: nothing to say", self.ID))
+
+
 class WithTheRealClientOfTheProject(unittest.TestCase):
     """The whole path with the real client of the Foundry project over the fake service of test_foundry, and the real tools over a fake estate. What is looked at
     is what goes over the wire."""

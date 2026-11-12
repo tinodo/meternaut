@@ -14,6 +14,7 @@ from typing import Callable, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
 from .http import AI_ACCOUNT, ARM_HOST, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError
+from .identity import IdentityError
 
 ARM = f"https://{ARM_HOST}"
 GRAPH_API = "2022-10-01"
@@ -43,7 +44,13 @@ PRICE_SHEET_API = "2026-06-01"  # Learn, "Price Sheet - Get": the price sheet of
 # HTTP 429 with a wait of 2 to 21 seconds while the same call with this header got 200. The header is described in Microsoft Q&A (learn.microsoft.com/answers/a/8268839) and by the owners
 # of the REST specifications (Azure/azure-rest-api-specs issue 24407), and not on a page of the REST reference.
 CLIENT_TYPE = "Meternaut"
+# A read of Cost Management that is told to wait (HTTP 429, with Retry-After or one of its own x-ms-ratelimit-microsoft.costmanagement-*-retry-after headers) waits as long as it is told, up to
+# COST_WAIT_MAX seconds each time, and is made again up to COST_RETRIES times: a read that is still refused after that is an error, and the figure then says that the cost could not be read just now
+# (cases/costs.py, FAILED), never a cost of nothing. The pauses stay inside the deadline of the run (http.Client).
+COST_RETRIES = 4
+COST_WAIT_MAX = 60
 MAX_PAGES = 10
+MAX_SUBSCRIPTION_NAME = 120  # the characters of the display name of a subscription that the app keeps
 SUBSCRIPTION_PAGES = 30  # the pages of the list of subscriptions that are followed, at most
 SCOPE_ID = re.compile(SCOPE, re.I)
 WORKSPACE_ID = re.compile(WORKSPACE, re.I)
@@ -65,6 +72,17 @@ class CostLine(NamedTuple):
     service: str
     amount: float
     currency: str
+
+
+class ScopeCost(NamedTuple):
+    """The cost of one subscription or of one resource group over the period, from every cost line in it: the sum, the currency (None when there are no lines, "mixed" when the lines are in more
+    than one), the cost of each service (a line with no service under "Other") and how many rows Cost Management gave. The lines that no resource and no resource group have are in it: a plan of
+    Microsoft Defender for Cloud and a purchase are in the subscription's."""
+
+    total: float
+    currency: str | None
+    services: dict[str, float]
+    rows: int
 
 
 class MetricPoint(NamedTuple):
@@ -111,6 +129,8 @@ class Arm:
         self._lines: dict[tuple[str, dt.date, dt.date], tuple[CostLine, ...]] = {}
         self._line_locks: dict[tuple[str, dt.date, dt.date], threading.Lock] = {}
         self._memo_lock = threading.Lock()
+        # The display name of a subscription, asked for once in a run (the list of the subscriptions has it already, and a read of one subscription gives it otherwise): "" when it could not be read.
+        self._names: dict[str, str] = {}
 
     def _headers(self, resource: str = ARM) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token(resource)}"}
@@ -167,11 +187,45 @@ class Arm:
             data = self.client.request("GET", link, headers=self._headers(), timeout=60).json()
             if not isinstance(data, dict) or not isinstance(data.get("value", []), list):
                 raise _bad("Azure Resource Manager")
-            found += [item for item in data.get("value", []) if isinstance(item, dict)]
+            page = [item for item in data.get("value", []) if isinstance(item, dict)]
+            found += page
+            for item in page:
+                self._remember_name(item.get("subscriptionId"), item.get("displayName"))
             link = self._next_subscriptions(data.get("nextLink"))
             if not link:
                 return found
         raise HttpError(0, f"the list of subscriptions has more than {SUBSCRIPTION_PAGES} pages")
+
+    def _remember_name(self, subscription: object, name: object) -> str:
+        """Keeps the display name of a subscription (one line, cut) for the rest of the run, and gives it: "" for a name that is not text or a subscription that is not an id."""
+        key = str(subscription or "").strip().lower()
+        shown = " ".join(name.split())[:MAX_SUBSCRIPTION_NAME] if isinstance(name, str) else ""
+        if not WORKSPACE_GUID.fullmatch(key):
+            return ""
+        with self._memo_lock:
+            if shown or key not in self._names:
+                self._names[key] = shown
+        return shown
+
+    def subscription_name(self, subscription: str) -> str:
+        """The display name of a subscription, as a person named it: from the list of subscriptions when the run has read it, else from one read of the subscription (Learn, "Subscriptions - Get":
+        GET /subscriptions/{id}, with the identity that reads the rest). It is asked for once in a run, whatever came of it: "" when it could not be read, and then a page shows the start of the id."""
+        key = str(subscription or "").strip().lower()
+        if not WORKSPACE_GUID.fullmatch(key):
+            return ""
+        with self._memo_lock:
+            if key in self._names:
+                return self._names[key]
+        shown = ""
+        try:
+            data = self.client.request("GET", f"{ARM}/subscriptions/{key}?api-version={SUBSCRIPTIONS_API}", headers=self._headers(), timeout=30, retries=1).json()
+            name = data.get("displayName") if isinstance(data, dict) else None
+            shown = " ".join(name.split())[:MAX_SUBSCRIPTION_NAME] if isinstance(name, str) else ""
+        except (HttpError, IdentityError):
+            shown = ""
+        with self._memo_lock:
+            self._names[key] = shown
+        return shown
 
     @staticmethod
     def _next_subscriptions(link: object) -> str | None:
@@ -199,7 +253,7 @@ class Arm:
         url: str | None = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.CostManagement/query?api-version={COST_API}"
         found: list[tuple[list[str], float, str]] = []
         for _ in range(MAX_PAGES):
-            data = self.client.request("POST", url, headers={**self._headers(), "ClientType": CLIENT_TYPE}, body=body, timeout=60, retries=2, retry_after_max=60).json()
+            data = self.client.request("POST", url, headers={**self._headers(), "ClientType": CLIENT_TYPE}, body=body, timeout=60, retries=COST_RETRIES, retry_after_max=COST_WAIT_MAX).json()
             properties = data.get("properties") if isinstance(data, dict) else None
             if not isinstance(properties, dict):
                 raise _bad("Cost Management")
@@ -279,6 +333,38 @@ class Arm:
             except ValueError:
                 raise _bad("Cost Management") from None
             found.append((moment, resource.lower(), amount, code))
+        return found
+
+    @staticmethod
+    def _in_group(group: str) -> tuple[str, tuple[str, ...]] | None:
+        """The filter that keeps the cost lines of one resource group: Cost Management names the dimension ResourceGroup (Learn, "Query - Usage") and gives the name in lower case, so the filter
+        names it in lower case, and in the case that the caller wrote it when that differs. Nothing for no group: the whole subscription, with the lines that no group has."""
+        name = str(group or "").strip()
+        return ("ResourceGroup", tuple(dict.fromkeys((name.lower(), name)))) if name else None
+
+    def scope_costs(self, subscription: str, start: dt.date, end: dt.date, group: str = "") -> ScopeCost:
+        """What every cost line of one subscription (or of one resource group of it, when `group` is given) cost from start to end (both days included), by service. This is the sum that Cost
+        analysis shows for the scope: a line that has no resource id and no resource group (a plan of Microsoft Defender for Cloud, a purchase) is in the subscription's. One query grouped by
+        service, which has a few rows however many resources there are."""
+        rows = self._cost_rows(subscription, start, end, ("ServiceName",), where=self._in_group(group))
+        services: dict[str, float] = {}
+        currencies: set[str] = set()
+        for (service,), amount, code in rows:
+            label = " ".join(service.split()) or "Other"
+            services[label] = services.get(label, 0.0) + amount
+            if code:
+                currencies.add(code)
+        return ScopeCost(sum(services.values()), None if not currencies else currencies.pop() if len(currencies) == 1 else "mixed", services, len(rows))
+
+    def scope_days(self, subscription: str, start: dt.date, end: dt.date, group: str = "") -> list[tuple[dt.date, float, str]]:
+        """The cost of each day from start to end (both days included) of one subscription, or of one resource group of it: (day, cost of every line of that day, currency). A day that has no
+        cost line is not in it. One query, a row for each day."""
+        found = []
+        for (day,), amount, code in self._cost_rows(subscription, start, end, ("UsageDate",), daily=True, where=self._in_group(group)):
+            try:
+                found.append((dt.datetime.strptime(day[:8], "%Y%m%d").date(), amount, code))
+            except ValueError:
+                raise _bad("Cost Management") from None
         return found
 
     def cost_models(self, subscription: str, start: dt.date, end: dt.date) -> list[tuple[str, str, float, str]]:

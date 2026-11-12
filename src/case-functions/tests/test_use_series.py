@@ -335,7 +335,7 @@ class WhichCasesAreRead(unittest.TestCase):
         read(self.store, FakeMonitor(series_of_vm(1, every_day())))
         got = kept(self.store, case.case_id)
         self.assertEqual((got.cost_series, got.cost_series_end), ([1.0] * 30, "2026-11-03"))
-        costs = SimpleNamespace(cost_days=lambda *a, **k: [])
+        costs = SimpleNamespace(cost_days=lambda subscription, first, last, where=None: [(last, where[1][0], 2.0, "USD")])  # one day with a cost line, the day that closed
         run.read_cost_series(SimpleNamespace(extras=SimpleNamespace(store=self.store), arm=costs, clock=lambda: NOW + DAY, redact=Redactor()), {}, lambda text: None)
         again = kept(self.store, case.case_id)
         self.assertEqual((again.use_series, again.use_series_end, again.use_kind), (got.use_series, "2026-11-03", "vm-cpu"))

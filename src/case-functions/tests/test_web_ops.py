@@ -95,15 +95,23 @@ class TheRunsPage(unittest.TestCase):
     def test_every_run_is_there_with_all_of_its_numbers(self):
         reply = self.console.get("/ops/runs")
         table = reply.table("runs")
-        self.assertEqual(table.headers, ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Tokens", "Seconds", "Notes",
+        self.assertEqual(table.headers, ["Started", "Trigger", "Result", "Candidates", "Findings", "Proposed", "Needs a person", "Dropped", "Errors", "Held back", "Tokens", "Seconds", "Notes",
                                          "Findings of the run"])
         by_start = {row["Started"].split(" (")[0]: row for row in table.rows}
         ok = by_start["Thu 5 Nov 2026 07:00 UTC"]
-        self.assertEqual((ok["Trigger"], ok["Result"], ok["Candidates"], ok["Findings"], ok["Proposed"], ok["Needs a person"], ok["Dropped"], ok["Errors"], ok["Tokens"], ok["Seconds"],
-                          ok["Notes"]), ("timer", "OK", "4", "3", "3", "0", "0", "0", "2,089", "28", "one source was not read"))
+        self.assertEqual((ok["Trigger"], ok["Result"], ok["Candidates"], ok["Findings"], ok["Proposed"], ok["Needs a person"], ok["Dropped"], ok["Errors"], ok["Held back"], ok["Tokens"],
+                          ok["Seconds"], ok["Notes"]), ("timer", "OK", "4", "3", "3", "0", "0", "0", "0", "2,089", "28", "one source was not read"))
         self.assertEqual((by_start["Thu 5 Nov 2026 08:00 UTC"]["Result"], by_start["Thu 5 Nov 2026 08:00 UTC"]["Notes"]), ("Failed: no detector could read any subscription", "none"))
         self.assertEqual((by_start["Thu 5 Nov 2026 08:55 UTC"]["Result"], by_start["Thu 5 Nov 2026 08:55 UTC"]["Notes"]), ("Started, not finished", "a b"))
         self.assertEqual([row["Started"].split(" (")[0] for row in table.rows], ["Thu 5 Nov 2026 08:55 UTC", "Thu 5 Nov 2026 08:00 UTC", "Thu 5 Nov 2026 07:00 UTC"], "newest first")
+
+    def test_a_run_says_how_many_findings_it_held_back_because_they_say_nothing_about_what_to_look_at(self):
+        self.console.store.run_put(make_run(run_id="run00004", started_at=at(minutes=-2), held=3, notes=("3 findings held back: nothing to say",)))
+        table = self.console.get("/ops/runs").table("runs")
+        by_start = {row["Started"].split(" (")[0]: row for row in table.rows}
+        held = by_start["Thu 5 Nov 2026 08:58 UTC"]
+        self.assertEqual((held["Held back"], held["Notes"]), ("3", "3 findings held back: nothing to say"))
+        self.assertEqual(by_start["Thu 5 Nov 2026 07:00 UTC"]["Held back"], "0", "a run of before has none")
 
     def test_every_case_is_there_with_its_recommendation_confidence_and_what_it_would_save_and_a_link_to_its_page(self):
         reply = self.console.get("/ops/runs")

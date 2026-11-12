@@ -102,7 +102,7 @@ class Costs(unittest.TestCase):
         self.assertEqual(len(script.calls), 2, "another period is another read")
 
     def test_a_read_that_failed_is_not_kept_so_the_next_caller_reads_again(self):
-        arm, script = arm_with((500, {}, b"{}"), (500, {}, b"{}"), (500, {}, b"{}"), ok(self.PAGE))
+        arm, script = arm_with(*([(500, {}, b"{}")] * 5), ok(self.PAGE))
         with self.assertRaises(HttpError):
             arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))
         self.assertEqual(len(arm.cost_lines(SUBSCRIPTION, dt.date(2026, 10, 5), dt.date(2026, 11, 3))), 3)

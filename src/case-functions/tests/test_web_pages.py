@@ -8,6 +8,7 @@ from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
                               snapshot)
 
+from cases.costs import analysis_url
 from cases.models import GROUP_FACT, SettingsRecord, StoreError
 from cases.web import core, figures, history
 
@@ -221,7 +222,7 @@ class TheDecisionsPage(unittest.TestCase):
         reply = console.get("/")
         found = {row.find("span", class_="t").text(): spans(row.find("span", class_="impact cost") or row.find("span", class_="impact none")) for row in rows(reply, "look")}
         self.assertEqual(found, {"Review the disk d0": ["Costs, saving not measured", "$36 a year", "$3.00 a month"],
-                                 "Review the disk d1": ["Cost not visible", "—", "No cost line in the last 30 days."],
+                                 "Review the disk d1": ["Cost not visible", "—", "Azure has no cost line for this yet."],
                                  "Review the disk d2": ["Cost not visible", "—", "No cost line was read yet."]})
         self.assertNotIn("No figure", reply.content)
 
@@ -602,7 +603,8 @@ class TheBriefOfACase(unittest.TestCase):
         self.assertEqual(reply.root.find_all("script"), [])
         self.assertNotIn("https://evil.example", reply.links())
         external = [h for h in reply.links() if h.startswith(("http", "javascript", "data:"))]
-        self.assertEqual(external, ["https://portal.azure.com/#resource" + make_case().resource_id], "the only address that is not of this site is the one made from the resource id")
+        self.assertEqual(external, [analysis_url(SUB, make_case().resource_group), "https://portal.azure.com/#resource" + make_case().resource_id],
+                         "the only addresses that are not of this site are Cost analysis and the page of the resource, each made from ids that code checked")
 
     def test_a_case_that_does_not_exist_is_a_404(self):
         reply = self.console.get("/why/nothing")
@@ -707,7 +709,7 @@ class TheRequestPage(unittest.TestCase):
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
         self.assertEqual((classes, figure, sub), (["fig"], "—", "Cost not visible. No cost line was read yet."))
         storage(console, 1, cost=lambda n: 0.0)
-        self.assertEqual(self.stake(console.get("/ok/plan5000"))[2], "Cost not visible. No cost line in the last 30 days.")
+        self.assertEqual(self.stake(console.get("/ok/plan5000"))[2], "Cost not visible. Azure has no cost line for this yet.")
 
     def test_a_reason_of_the_findings_own_takes_the_place_of_the_general_one(self):
         console = seeded()

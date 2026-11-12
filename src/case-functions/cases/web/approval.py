@@ -269,7 +269,7 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     rows = [(name, value) for name, value in brief_page.consequences(brief) if name not in ("Undo", "What could go wrong")]  # the notice says both
     body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here."),
                  notice("warning", "This cannot be undone", f"{brief.risk.text} Risk: {brief.risk.level}."), summary(rows),
-                 fmt('<p class="m">{where}</p>', where=f"{brief.where.kind} {brief.where.name}, resource group {brief.where.group}, subscription {brief.where.subscription}."),
+                 fmt('<p class="m">{where}</p>', where=f"{brief.where.kind} {brief.where.name}, resource group {brief.where.group}, subscription {brief.where.subscription_name or brief.where.subscription}."),
                  answer])
     return page(ctx, f"Confirm: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
 

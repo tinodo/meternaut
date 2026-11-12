@@ -418,7 +418,7 @@ class Approval(unittest.TestCase):
         saves = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=80.0, detector="orphan-managed-disk")).text
         self.assertIn("$960 a year\nCosts, saving not measured. $80.00 a month. The most that a change could save: what it would save was not worked out.\nMoney is in US dollars,", saves)
         none = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=0.0)).text
-        self.assertIn("Cost not visible. No cost line in the last 30 days.", none)
+        self.assertIn("Cost not visible. Azure has no cost line for this yet.", none)
         unread = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=None)).text
         self.assertIn("Cost not visible. No cost line was read yet.", unread)
         for text in (none, unread):

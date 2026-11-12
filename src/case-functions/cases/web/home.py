@@ -12,12 +12,13 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from .. import costs as cost_words
 from ..brief import Brief, ago_text, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import brief_of, cases_by_id, decisions_for, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import (NO_LINES, READ_LATER, RISKS, WEAKEST_FIRST, WHEN_JUDGED, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_of, ids_known, risk_chip, series_of, spark, summed,
-                      title_of, use_block)
+from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
+                      use_block)
 from .layout import code, details, kpi, kpis, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -46,6 +47,12 @@ class Row:
     def cost(self) -> float | None:
         """What the finding costs in 30 days, from the cost lines: everything that it stands for when it is a group. None when no cost line was read."""
         return cost_of(self.brief, self.case)
+
+    @property
+    def cost_text(self) -> str:
+        """The cost as a list of requests shows it: dollars when Cost Management has cost lines for the finding, and a dash for a finding that it has none for or that was not read (a cost of
+        nothing is never said of what has no line)."""
+        return dollars(self.cost) if self.cost is not None and self.brief.cost_state == cost_words.LINES else "—"
 
     @property
     def series(self) -> list[float] | None:
@@ -83,15 +90,13 @@ class Unit:
 
     @property
     def reason(self) -> str:
-        """Why there is no chart: the cost lines are there and the series is read at the next search, the finding of an earlier search has to be judged again before its series can be read,
-        or no cost line exists yet."""
-        if not all(m.ids_known for m in self.members):
-            return WHEN_JUDGED
-        return READ_LATER if any((m.cost or 0) > 0 for m in self.members) else NO_LINES
+        """Why there is no chart (figures.reason_of): the cost lines are there and the series is read at the next search, the finding of an earlier search has to be judged again before its
+        series can be read, or no cost line shows a cost (Azure has none yet, it could not be read just now, it is not in dollars, or it was not read)."""
+        return reason_of([m.brief.cost_state for m in self.members], any((m.cost or 0) > 0 for m in self.members), all(m.ids_known for m in self.members))
 
 
 def _figure(members: Sequence[Row]) -> Figure:
-    return figure_of([m.brief.saving for m in members], [m.cost for m in members], "the figures of each, added up" if len(members) > 1 else "")
+    return figure_for([m.brief for m in members], [m.cost for m in members], "the figures of each, added up" if len(members) > 1 else "")
 
 
 def _unit(members: Sequence[Row]) -> Unit:
@@ -116,7 +121,7 @@ def _units(rows: Sequence[Row]) -> list[Unit]:
 def _ranked(units: Sequence[Unit], sort: str) -> list[Unit]:
     """In the order that was asked for: by what is at stake (what has no figure last), by how long it has waited, or by risk. What a person put off is last, and ties go by plan."""
     def key(unit: Unit) -> tuple:
-        stake = unit.figure.monthly
+        stake = unit.figure.monthly if unit.figure.counts else None  # the cost of a whole subscription is no measure of what a change could save
         amount = (0, -stake) if stake is not None else (1, 0.0)
         waited = -unit.age
         order = {"age": (waited, *amount), "risk": (unit.risk, *amount, waited)}.get(sort, (*amount, waited))
@@ -151,7 +156,8 @@ def _meta(ctx: Ctx, unit: Unit) -> str:
     _, ago = ago_text(ctx.now, oldest.found_at)
     one = unit.first.brief
     place = f"resource group {one.where.group}" if len(unit.members) == 1 and one.where.group else ""
-    return " · ".join(part for part in (one.where.kind, place, f"found {ago}" if ago else "") if part)
+    named = f"subscription {one.where.subscription_name}" if len(unit.members) == 1 and one.where.subscription_name and one.scope != "subscription" else ""
+    return " · ".join(part for part in (one.where.kind, place, named, f"found {ago}" if ago else "") if part)
 
 
 def _chips(unit: Unit) -> Safe:
@@ -174,7 +180,7 @@ def _impact(unit: Unit, top: float) -> Safe:
     if figure.monthly is None:
         return fmt('<span class="impact none"><span class="lab">{label}</span><span class="y">—</span><span class="mo">{note}</span></span>', label=figure.label, note=figure.note)
     return fmt('<span class="impact {state}"><span class="lab">{label}</span><span class="y">{year}<small> a year</small></span><span class="mo">{month} a month</span>{bar}</span>',
-               state=figure.state, label=figure.label, year=a_year(figure.monthly), month=dollars(figure.monthly), bar=bar(figure.monthly / top))
+               state=figure.state, label=figure.label, year=a_year(figure.monthly), month=dollars(figure.monthly), bar=bar(figure.monthly / top) if figure.counts else Safe(""))
 
 
 def _members(ctx: Ctx, unit: Unit, name: str) -> Safe:
@@ -188,7 +194,7 @@ def _members(ctx: Ctx, unit: Unit, name: str) -> Safe:
         listing = table(anchor, f"The first {len(names)} of {first.group.count}", ["Resource"], [[code(n)] for n in names], quiet_caption=True)
         buttons = fmt('<p class="acts"><a class="btn sm primary" href="{href}">Review all {count}</a></p>', href=ctx.url(f"/ok/{link_part(first.plan_id)}"), count=first.group.count)
         return join([listing, more, buttons])
-    rows = [[code(m.brief.where.name), code(m.brief.where.group) if m.brief.where.group else "", dollars(m.cost) if m.cost is not None else "—",
+    rows = [[code(m.brief.where.name), code(m.brief.where.group) if m.brief.where.group else "", m.cost_text,
              fmt('<a class="btn sm" href="{href}">Review<span class="visually-hidden">: {name}</span></a>', href=ctx.url(f"/ok/{link_part(m.brief.plan_id)}"), name=m.brief.where.name)]
             for m in unit.members]
     return table(anchor, f"The {len(unit.members)} requests: {name}", ["Resource", "Resource group", "A month", "Request"], rows, quiet_caption=True)
@@ -221,9 +227,9 @@ def _focus(ctx: Ctx, unit: Unit) -> Safe:
         big, sub = Safe('<p class="fig">—</p>'), f"{figure.label}. {figure.note}"
     facts = [("What changes", brief.change), ("Why", plain(brief.reasoning, 240)), ("Checked", brief.rechecked), ("Undo", brief.undo.how)]
     return fmt('<article class="focus" aria-labelledby="focus-title"><div><p class="eyebrow"><span class="rank first" aria-hidden="true">1</span>Start here</p>'
-               '<h3 id="focus-title">{title}</h3><p class="m">{meta}</p>{big}<p class="figsub">{sub}</p><p class="chips">{chips}</p><dl class="facts">{facts}</dl>'
+               '<h3 id="focus-title">{title}</h3><p class="m">{meta}</p>{big}<p class="figsub">{sub}</p>{under}<p class="chips">{chips}</p><dl class="facts">{facts}</dl>'
                '<p class="acts"><a class="btn primary" href="{href}">Review and decide<span class="visually-hidden">: {name}</span></a></p></div><div>{chart}</div></article>',
-               title=markup, meta=_meta(ctx, unit), big=big, sub=sub, chips=_chips(unit),
+               title=markup, meta=_meta(ctx, unit), big=big, sub=sub, under=under(figure), chips=_chips(unit),
                facts=join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=label, text=text) for label, text in facts if text), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"), name=name,
                chart=join([chart(unit.series, unit.reason), use_block([(m.brief, m.case) for m in unit.members], ctx.now)]))
 
@@ -245,7 +251,7 @@ def _count(n: int, noun: str) -> str:
 
 def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
     saves = [u for u in units if u.figure.state == "save"]
-    costs = [u for u in units if u.figure.state == "cost"]
+    costs = [u for u in units if u.figure.state == "cost" and u.figure.counts]
     levels = ", ".join(w for w in WEAKEST_FIRST if w in {u.figure.level for u in saves})
     ready = (kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"{_count(len(saves), 'decision')} · {levels}. The basis is in each row.", True)  # type: ignore[misc]
              if saves else kpi("Ready to save", "—", "", "No saving is known yet."))
@@ -259,7 +265,7 @@ def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
 
 def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:
     saves = sum(u.figure.monthly for u in units if u.figure.state == "save")  # type: ignore[misc]
-    costs = sum(u.figure.monthly for u in units if u.figure.state == "cost")  # type: ignore[misc]
+    costs = sum(u.figure.monthly for u in units if u.figure.state == "cost" and u.figure.counts)  # type: ignore[misc]
     if not units:
         lead = f"Nothing waits for you. The next search is {ctx.next_search()}."
     else:
@@ -376,7 +382,7 @@ def home(ctx: Ctx) -> Response:
         ready = [u for u in units if u.first.brief.kind == "change"]
         look = [u for u in units if u.first.brief.kind != "change"]
         show = ROWS_MAX if ctx.request.query.get("all") == "1" else ROWS_SHOWN
-        largest = max((u.figure.monthly for u in units if u.figure.monthly), default=1.0)
+        largest = max((u.figure.monthly for u in units if u.figure.monthly and u.figure.counts), default=1.0)
         rest = max(0, len(ready) - show) + max(0, len(look) - show)
         order = next(blurb for key, _, blurb in SORTS if key == sort)
         more = paragraph(fmt('{n} more wait. <a href="{href}">Show all</a>.', n=rest, href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")

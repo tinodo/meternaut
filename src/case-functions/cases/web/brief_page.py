@@ -20,7 +20,7 @@ from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseReco
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
-from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_of, risk_chip, series_of, series_reason, title_of, use_block
+from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_for, risk_chip, series_of, series_reason, title_of, under, use_block
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
@@ -35,7 +35,8 @@ def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
     """The way back, the title, and one line: what kind of resource and where, how long ago it was found, and until when the request is open. No countdown."""
     _, ago = ago_text(ctx.now, brief.found_at)
     place = f"resource group {brief.where.group}" if brief.where.group else ""
-    bits: list[object] = [bit for bit in (brief.where.kind, place, f"found {ago}" if ago else "") if bit]
+    named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" else ""
+    bits: list[object] = [bit for bit in (brief.where.kind, place, named, f"found {ago}" if ago else "") if bit]
     if brief.state == "open" and brief.expires_at:
         bits.append(fmt("open until {when}", when=ctx.when(brief.expires_at)))
     meta = fmt("<p>{meta}</p>", meta=join(bits, " · ")) if bits else Safe("")
@@ -84,18 +85,26 @@ def _look(brief: Brief) -> Safe:
 
 
 def _figure_of(brief: Brief, case: CaseRecord | None) -> Figure:
-    return figure_of([brief.saving], [cost_of(brief, case)])
+    return figure_for([brief], [cost_of(brief, case)])
+
+
+def _analysis(brief: Brief) -> Safe:
+    """The one link of the cost box to Cost analysis in the Azure portal, for the scope that the cost is the cost of (made from ids that code has checked, in cases/costs.py)."""
+    if not brief.cost_url:
+        return Safe("")
+    return fmt('<p class="m"><a href="{href}" rel="noopener">Open in Cost analysis</a> <span class="muted">for {scope}</span></p>', href=brief.cost_url, scope=brief.cost_scope)
 
 
 def _stake(brief: Brief, figure: Figure) -> Safe:
     """What is at stake: the figure a year, then the figure a month with its level and its basis (or what it costs, and why no saving is shown when the finding has a reason of its own),
-    what waiting costs, and, once, the money that the page is in."""
+    what the cost is made of and the estimate when there are any, what waiting costs, the money that the page is in, once, and the link to Cost analysis."""
     note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
     if figure.monthly is None:
-        return fmt('<p class="fig">—</p><p class="figsub">{label}. {note}</p>{money}', label=figure.label, note=note, money=MONEY)
+        return fmt('<p class="fig">—</p><p class="figsub">{label}. {note}</p>{under}{money}{link}', label=figure.label, note=note, under=under(figure), money=MONEY, link=_analysis(brief))
     waiting = f" Waiting costs about {dollars(brief.saving.waiting_per_day)} a day." if figure.state == "save" and brief.saving.waiting_per_day else ""
-    return fmt('<p class="fig{save}">{year}<small> a year</small></p><p class="figsub">{label}. {month} a month. {note}{waiting}</p>{money}', save=" save" if figure.state == "save" else "",
-               year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note, waiting=waiting, money=MONEY)
+    return fmt('<p class="fig{save}">{year}<small> a year</small></p><p class="figsub">{label}. {month} a month. {note}{waiting}</p>{under}{money}{link}',
+               save=" save" if figure.state == "save" else "", year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note, waiting=waiting,
+               under=under(figure), money=MONEY, link=_analysis(brief))
 
 
 def consequences(brief: Brief) -> list[tuple[str, object]]:
@@ -183,8 +192,17 @@ def _options(brief: Brief) -> Safe:
 
 
 def _whose(brief: Brief) -> Safe:
-    place = fmt("{kind} {name}, resource group {group}, subscription {sub}.", kind=brief.where.kind, name=brief.where.name, group=brief.where.group, sub=brief.where.subscription)
-    portal = paragraph(fmt('<a href="{href}" rel="noopener">Open in the Azure portal</a>', href=brief.where.portal_url)) if brief.where.portal_url else Safe("")
+    """Whose it is: the kind and the name of what the finding is about, where it is (the resource group, and the subscription by its name: the start of its id when the name was not read), and the
+    link to the page of the resource in the Azure portal when the finding is about one resource."""
+    where = brief.where
+    sub = where.subscription_name or where.subscription
+    if brief.scope == "subscription":
+        place = fmt("{kind} {name}.", kind=where.kind, name=where.name if where.subscription_name else where.subscription)
+    elif brief.scope == "group":
+        place = fmt("{kind} {name}, subscription {sub}.", kind=where.kind, name=where.name, sub=sub)
+    else:
+        place = fmt("{kind} {name}, resource group {group}, subscription {sub}.", kind=where.kind, name=where.name, group=where.group, sub=sub)
+    portal = paragraph(fmt('<a href="{href}" rel="noopener">Open in the Azure portal</a>', href=where.portal_url)) if where.portal_url else Safe("")
     return join([Safe("<h2>Whose is it</h2>"), paragraph(brief.owner.text), paragraph(place), portal])
 
 

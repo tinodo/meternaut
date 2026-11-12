@@ -1,7 +1,9 @@
 """The figures of the page of the decisions: money as a person reads it, and the small charts and chips that go with it.
 
 A chart is an inline SVG with no script. Its colours and the size of its text are the classes of the stylesheet (never a value of its own), and every number in it was checked here.
-A series is the cost of each day, oldest first, as a case keeps it. The use of a resource is a second series, with a gap for a day that has no value, and its chart (use_chart) is the
+A series is the cost of each day, oldest first, as a case keeps it. A chart is only ever drawn from cost that Cost Management showed: a series with no cost on any day is no series (series_of),
+and a request that has none shows no line at all, only the words that say why (an empty chart is never a line along the floor, which a person would read as a cost of nothing).
+The use of a resource is a second series, with a gap for a day that has no value, and its chart (use_chart) is the
 second figure of a decision card: it starts at zero, it is broken at a gap and it shows the line that the kind of use is read against, when it has one (cases/usage.py).
 """
 from __future__ import annotations
@@ -11,6 +13,8 @@ import math
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
+from .. import costs as cost_words
+from .. import estimate as estimates
 from ..brief import Brief, Saving, things
 from ..models import GROUP_FACT, CaseRecord
 from ..usage import DAYS as USE_DAYS
@@ -25,6 +29,11 @@ SERIES_MAX = 60
 NO_LINES = "Cost Management reports a cost 8 to 72 hours after it happens."
 READ_LATER = "The next search reads them."
 WHEN_JUDGED = "They are read when the AIs judge this finding again."
+READ_AGAIN = f"{cost_words.FAILED_WORDS} The next search reads it again."
+NONE_REASON = f"{cost_words.NO_LINE_WORDS} The chart is drawn when it has one."
+NONE_REASON_MANY = f"{cost_words.state_words(cost_words.NONE, True)} The chart is drawn when they have one."
+STAYS = (cost_words.CURRENCY_WORDS, NONE_REASON, NONE_REASON_MANY)  # the reasons after which a chart does not say that it fills in then: they say what it waits for themselves
+WHOLE_KINDS = {"subscription": "subscription", "group": "resource group"}
 USE_LATER = (f"Azure Monitor shows use a few hours after it happens. The next search reads it. A chart is drawn once {USE_MIN_DAYS} of the last {USE_DAYS} days have a value: "
              "a new resource, a stopped machine and a resource that does not offer this metric have fewer.")
 USE_MANY = "Use is not drawn for a finding about many resources."
@@ -41,11 +50,15 @@ def number_of(value: object) -> float | None:
 
 
 def series_of(value: object) -> list[float] | None:
-    """A series of daily costs as a case keeps it, or None when it is not what it should be: a list of 2 to 60 finite numbers, none of them below zero."""
+    """A series of daily costs as a case keeps it, or None when it is not what it should be: a list of 2 to 60 finite numbers, none of them below zero, and at least one of them above nothing.
+    A series of nothing but zeros is no series: it would be drawn as a line along the floor, which a person reads as a cost of nothing, and Cost Management has shown none (an earlier search
+    kept thirty zeros for a resource that has no cost line)."""
     if not isinstance(value, list) or not SERIES_MIN <= len(value) <= SERIES_MAX:
         return None
     numbers = [number_of(item) for item in value]
-    return None if any(n is None or n < 0 for n in numbers) else numbers  # type: ignore[return-value]
+    if any(n is None or n < 0 for n in numbers):
+        return None
+    return numbers if any(n > 0 for n in numbers) else None  # type: ignore[operator, return-value]
 
 
 def summed(series: Sequence[list[float] | None]) -> list[float] | None:
@@ -58,26 +71,67 @@ def summed(series: Sequence[list[float] | None]) -> list[float] | None:
 @dataclass(frozen=True)
 class Figure:
     """What is at stake in a request, in a month: a saving (with its level and its basis), a cost (the most that a change could save, which nothing has measured), or nothing that can be
-    shown (and why). The list of the decisions and the page of one request draw the same figure from the same code."""
+    shown (and why). The list of the decisions and the page of one request draw the same figure from the same code.
+
+    `read` is how the cost was read when the figure shows none (cases/costs.py: none, failed, currency, or empty when it was not read). `whole` says that the cost is that of a whole subscription
+    or resource group, of which no change would save all: no total and no order counts it. `made_of` is what that cost is made of, by service. `estimate` is an estimate at list price for a
+    managed disk that Azure has no cost line for: a figure of its own that is never a cost, and that nothing adds, orders or learns from."""
 
     state: str  # save, cost or none
     label: str
     monthly: float | None
     level: str
     note: str
+    read: str = ""
+    whole: bool = False
+    made_of: str = ""
+    estimate: estimates.Estimate | None = None
+
+    @property
+    def counts(self) -> bool:
+        """Whether the figure is one that totals, bars and the order of a list may use: a saving, or the cost of what a change could save. The cost of a whole subscription or resource group is not."""
+        return not self.whole
 
 
-def figure_of(savings: Sequence[Saving], costs: Sequence[float | None], basis: str = "") -> Figure:
+def _whole_note(scopes: Sequence[str]) -> str:
+    """The note of the cost of a whole subscription or resource group: what it is the sum of, and that no saving was worked out."""
+    many = len(scopes) > 1
+    kinds = " and ".join(WHOLE_KINDS[kind] + ("s" if many else "") for kind in sorted({scope for scope in scopes if scope in WHOLE_KINDS}))
+    return f"All the cost lines of {'these ' if many else 'the '}{kinds} in the last 30 days. What a change would save was not worked out."
+
+
+def figure_of(savings: Sequence[Saving], costs: Sequence[float | None], basis: str = "", *, reads: Sequence[str] = (), scopes: Sequence[str] = (), made_of: str = "",
+              estimate: estimates.Estimate | None = None) -> Figure:
     """The figure of one request, or of the requests that a row stands for: their savings when every one has a figure (the weakest level of them, and `basis` when they have many), else
-    what they cost in 30 days, else nothing and the reason."""
+    what they cost in 30 days, else nothing and the reason. `reads` says how the cost of each request was read (the states of cases/costs.py; without them a cost that is a number was read and a
+    cost that is None was not), `scopes` what each is about (a subscription, a resource group or a resource) and `made_of` and `estimate` are what the brief of a single request says besides."""
     if savings and all(s.monthly is not None for s in savings):
         levels = {s.level for s in savings}
         level = savings[0].level if len(levels) == 1 else next((w for w in WEAKEST_FIRST if w in levels), "Scenario")
         return Figure("save", f"Saves, {level}", sum(s.monthly for s in savings), level, f"Based on {basis or savings[0].basis}.")  # type: ignore[misc]
     known = [c for c in costs if c is not None]
     if known and sum(known) > 0:
-        return Figure("cost", "Costs, saving not measured", sum(known), "", "The most that a change could save: what it would save was not worked out.")
-    return Figure("none", "Cost not visible", None, "", "No cost line in the last 30 days." if known else "No cost line was read yet.")
+        whole = bool(scopes) and all(scope in WHOLE_KINDS for scope in scopes)
+        note = _whole_note(scopes) if whole else "The most that a change could save: what it would save was not worked out."
+        return Figure("cost", "Costs, saving not measured", sum(known), "", note, cost_words.LINES, whole, made_of if whole else "")
+    states = list(reads) if reads else [cost_words.NONE if c is not None else "" for c in costs]
+    state = cost_words.worst_state(states)
+    return Figure("none", "Cost not visible", None, "", cost_words.state_words(state, len(costs) > 1), state, False, "", estimate if state == cost_words.NONE else None)
+
+
+def figure_for(briefs: Sequence[Brief], costs: Sequence[float | None], basis: str = "") -> Figure:
+    """The figure of these requests (figure_of) with what their briefs say besides: how the cost of each was read, what each is about, what a whole subscription or resource group costs is made
+    of, and the estimate at list price (the sum of them for a row that stands for several disks, when every one has one)."""
+    one = len(briefs) == 1
+    return figure_of([b.saving for b in briefs], costs, basis, reads=[b.cost_state for b in briefs], scopes=[b.scope for b in briefs], made_of=briefs[0].made_of if one else "",
+                     estimate=briefs[0].estimate if one else estimates.summed([b.estimate for b in briefs]))
+
+
+def under(figure: Figure) -> Safe:
+    """What stands under a figure and its line, one paragraph each: what the cost of a whole subscription or resource group is made of, by service, and the estimate at list price for a managed disk
+    that Azure has no cost line for, in the one sentence that says that it is an estimate and not Azure's bill, and the date of its price table. Neither is part of the figure above it."""
+    lines = [text for text in (figure.made_of, estimates.words(figure.estimate) if figure.estimate is not None else "") if text]
+    return join(fmt('<p class="figsub">{text}</p>', text=text) for text in lines)
 
 
 def cost_of(brief: Brief, case: CaseRecord | None) -> float | None:
@@ -96,12 +150,27 @@ def ids_known(brief: Brief, case: CaseRecord | None) -> bool:
     return isinstance(group, dict) and bool(group.get("resourceIds"))
 
 
-def series_reason(brief: Brief, case: CaseRecord | None) -> str:
-    """Why a request has no chart: its cost lines are there and the next search reads the series, the finding of an earlier search has to be judged again before its series can be read,
-    or no cost line exists yet."""
-    if not ids_known(brief, case):
+def reason_of(states: Sequence[str], costly: bool, ids: bool) -> str:
+    """Why a request, or a row that stands for several, has no chart: the finding of an earlier search has to be judged again before its series can be read (`ids` is false), the cost lines
+    are there and the next search reads the series (`costly`), or no cost line shows a cost, and then what the state of the cost says (cases/costs.py): Azure has none yet, it could not be
+    read just now, it is not in dollars, or it was not read."""
+    if not ids:
         return WHEN_JUDGED
-    return READ_LATER if (cost_of(brief, case) or 0) > 0 else NO_LINES
+    if costly:
+        return READ_LATER
+    state = cost_words.worst_state(states)
+    if state == cost_words.FAILED:
+        return READ_AGAIN
+    if state == cost_words.CURRENCY:
+        return cost_words.CURRENCY_WORDS
+    if state == cost_words.NONE:
+        return NONE_REASON_MANY if len(states) > 1 else NONE_REASON
+    return NO_LINES
+
+
+def series_reason(brief: Brief, case: CaseRecord | None) -> str:
+    """Why a request has no chart (reason_of): the series is read at the next search, the finding has to be judged again, or no cost line shows a cost."""
+    return reason_of([brief.cost_state], (cost_of(brief, case) or 0) > 0, ids_known(brief, case))
 
 
 def short_title(headline: str, group: str = "") -> str:
@@ -161,19 +230,22 @@ def _shape(series: Sequence[float], left: int, right: int, top: int, bottom: int
 
 
 def spark(series: list[float] | None, reason: str = NO_LINES) -> Safe:
-    """The small chart of a row: the cost of each of the last days, from zero, with a dot on the last day. Without a series the chart says so, and `reason` says why a screen reader."""
-    if series is None:
-        return fmt('<svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No daily costs yet: {reason}"><path class="ln" d="M2,22 L118,22"/>'
-                   '<text class="ax" x="60" y="12" text-anchor="middle">No daily costs yet</text></svg>', reason=reason)
-    line, area, (x, y) = _shape(series, 2, 118, 6, 30, max(series) or 1)
+    """The small chart of a row: the cost of each of the last days, from zero, with a dot on the last day. Without a series, or with one that has no cost on any day, it draws no line, only the words
+    that say so (a line along the floor would be read as a cost of nothing), and `reason` says why to a screen reader."""
+    if series is None or not any(value > 0 for value in series):
+        return fmt('<svg class="sp none" viewBox="0 0 120 32" role="img" aria-label="No daily costs yet: {reason}"><text class="ax" x="60" y="19" text-anchor="middle">No daily costs yet</text></svg>',
+                   reason=reason)
+    line, area, (x, y) = _shape(series, 2, 118, 6, 30, max(series))
     return fmt('<svg class="sp" viewBox="0 0 120 32" role="img" aria-label="Cost per day, last {days} days: {words}."><path class="ar" d="{area}"/><path class="ln" d="{line}"/>'
                '<circle class="dt" cx="{x}" cy="{y}" r="2"/></svg>', days=len(series), words=describe(series), area=area, line=line, x=f"{x:.1f}", y=f"{y:.1f}")
 
 
 def chart(series: list[float] | None, reason: str = NO_LINES) -> Safe:
-    """The larger chart of the decision in focus: the cost of each of the last days on a scale that starts at zero, with its caption."""
-    if series is None:
-        return fmt('<figure class="chart"><figcaption>Cost per day <span>no daily costs yet</span></figcaption><p class="m">{reason} The chart fills in then.</p></figure>', reason=reason)
+    """The larger chart of the decision in focus: the cost of each of the last days on a scale that starts at zero, with its caption. Without a series, or with one that has no cost on any day,
+    it draws no axis and no line: the caption says that there are no daily costs yet, and `reason` says why (and, for most reasons, that the chart fills in then)."""
+    if series is None or not any(value > 0 for value in series):
+        later = "" if reason in STAYS else " The chart fills in then."
+        return fmt('<figure class="chart"><figcaption>Cost per day <span>no daily costs yet</span></figcaption><p class="m">{reason}{later}</p></figure>', reason=reason, later=later)
     ceiling = _nice(max(series))
     line, area, (x, y) = _shape(series, 40, 352, 8, 96, ceiling)
     grid = "".join(f'<line class="gl" x1="40" y1="{at}" x2="352" y2="{at}"/>' for at in (8, 52, 96))

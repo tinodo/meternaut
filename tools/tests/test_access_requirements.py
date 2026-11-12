@@ -673,6 +673,7 @@ class TheCallsOfTheApp(unittest.TestCase):
         "p2s-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/p2svpnGateways/" in p and "Microsoft.Insights/metrics" not in p,  # its connection count is a read of "metrics-read"
         "compute-usage-read": lambda m, p: m == "GET" and "Microsoft.Compute/locations/" in p and p.endswith("/usages"),
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
+        "subscription-read": lambda m, p: m == "GET" and re.search(r"/subscriptions/\[0-9a-fA-F\]\{8\}-\[0-9a-fA-F\]\{4\}-\[0-9a-fA-F\]\{4\}-\[0-9a-fA-F\]\{4\}-\[0-9a-fA-F\]\{12\}$", p) is not None,
         "price-sheet-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Consumption/pricesheets/default"),
         "billing-accounts-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Billing/billingAccounts"),
         "reservation-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Capacity/reservationOrders"),
