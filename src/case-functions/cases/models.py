@@ -521,6 +521,9 @@ class Store(Protocol):
     def nonce_new(self, oid: str, purpose: str, ttl_seconds: int = 3600, data: str = "") -> str:
         """A one-time token for one person and one purpose (the id of a plan, or the name of a form). It is kept on the server, with `data` (text, never a token)."""
         ...
+    def nonce_peek(self, token: str, oid: str, purpose: str) -> str | None:
+        """The `data` that nonce_take would give, without using the token up."""
+        ...
     def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
         """The `data` that was kept with the token, once: for the person and the purpose that the token was made for, before it expired. None for anything else, and for a second use."""
         ...

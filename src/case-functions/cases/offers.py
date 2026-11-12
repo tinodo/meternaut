@@ -31,7 +31,7 @@ import logging
 import uuid
 from typing import Callable
 
-from . import cards, quiet, switches, teamsqueue
+from . import cardlinks, cards, quiet, switches, teamsqueue
 from .brief import Brief, build_brief, contact_text
 from .cards import CardContext, CardError
 from .http import Client
@@ -174,8 +174,23 @@ class Offers:
 
     # -- one card ------------------------------------------------------------------------------------------------------------------------------
 
-    def _context(self, person: Person, plan: PlanRecord) -> CardContext:
-        return CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), contacts=contacts_of(self.people, person.oid))
+    def _context(self, person: Person, plan: PlanRecord, brief: Brief | None = None) -> CardContext:
+        return CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), contacts=contacts_of(self.people, person.oid), links=self._links(person, plan, brief) if brief is not None else {})
+
+    def _links(self, person: Person, plan: PlanRecord, brief: Brief) -> dict[str, str]:
+        """The addresses of the answer buttons of this brief's card (cards.answers_of), each with a link token made now for this person that lives as long as the request is open. If a token cannot be made
+        the card has the link to the page only: the person can still answer there."""
+        wanted = cards.answers_of(brief)
+        if not wanted or not plan.code:
+            return {}
+        try:
+            seconds = (parse(plan.expires_at) - self.clock()).total_seconds()
+            page = cards.page_url(self.base_url, plan.plan_id)
+            return {answer: cardlinks.answer_url(page, answer, plan.code, cardlinks.mint(self.store.nonce_new, person.oid, plan.plan_id, plan.code, answer, twice, seconds))
+                    for answer, twice in wanted}
+        except Exception as error:  # noqa: BLE001 (a card without buttons is better than no card)
+            LOG.error(self.redact(f"the buttons of a card could not be made: {type(error).__name__}"))
+            return {}
 
     def _request(self, oid: str, plan: PlanRecord, case: CaseRecord | None) -> int:
         person = self.people.by_oid(oid)
@@ -199,7 +214,11 @@ class Offers:
             # The switches that hold the answer that approves: `all`, which is checked above, and `changes` for a change (the page and the brief say so in the same way).
             paused = plan.family != ADVISE and switches.pulled(self.store, "changes")
             return build_brief(case, plan, None, self.store.decisions_of_plan(plan.plan_id), now=now, may_answer=True, changes_paused=paused, viewer=person.oid)  # type: ignore[union-attr]
-        self._deliver(person, kind, plan.plan_id, now, lambda: cards.decision_card(brief(), self._context(person, plan)),  # type: ignore[arg-type]
+
+        @functools.cache
+        def with_buttons() -> CardContext:
+            return self._context(person, plan, brief())  # type: ignore[arg-type]
+        self._deliver(person, kind, plan.plan_id, now, lambda: cards.decision_card(brief(), with_buttons()),
                       lambda: cards.minimal_card(brief(), self._context(person, plan)))  # type: ignore[arg-type]
         return tries + 1
 

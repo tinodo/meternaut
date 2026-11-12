@@ -672,7 +672,7 @@ class TheSummaryAndTheDocumentsSayWhatIsTrue(unittest.TestCase):
 
     def test_the_proposals_link_each_other_and_the_readme_has_one_row_for_this_one(self):
         thirteen = read("docs/proposals/13-teams-and-outlook.md")
-        self.assertEqual(thirteen.count("](19-teams-cards-through-power-automate.md)"), 2)
+        self.assertEqual(thirteen.count("](19-teams-cards-through-power-automate.md)"), 3)
         self.assertNotIn("`19-teams-cards-through-power-automate.md`", thirteen)
         nineteen = read("docs/proposals/19-teams-cards-through-power-automate.md")
         for words in ("Start the action `powerplatform`.", "the virtual network is there (`model-side`)", "waits for the landing zone's route table to appear on the subnet (20 minutes at most)", "signs in again and reads both back",

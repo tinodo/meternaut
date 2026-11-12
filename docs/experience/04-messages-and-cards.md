@@ -2,7 +2,7 @@
 
 **What this document answers.** What every message carries, and why; how the Recommendation card is built; what the seventeen Teams cards are for; how access changes a Recommendation; how a card is made, sent and answered; and what a card cannot do.
 
-**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, and a card posted that way takes no answer: it carries one `Action.OpenUrl` to the page and no input, and no bot answers a tap ([proposal 13](../proposals/13-teams-and-outlook.md)). The buttons, boxes and replaced cards below describe cards that a Teams app could carry, not the cards that are built.
+**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, so no bot answers a tap and a card takes no typed answer. Its buttons are links to pages of the function app that send the answer, and a change that cannot be undone asks again on the card ([proposal 19](../proposals/19-teams-cards-through-power-automate.md)). The text boxes, replaced cards and other buttons below describe cards that a Teams app could carry, not the cards that are built.
 
 ## The layers of a message
 
@@ -82,7 +82,7 @@ Five controls are visible: three decisions and two toggles.
 
 ## The plan cards
 
-"Review the plan" authorises nothing. The [channel](../design/05-data-and-integrations.md#6-channels) answers the tap with the plan: the plan card replaces the Recommendation card in the thread, so the exact plan is on screen before anyone is asked for an OK. C4 keeps "Cancel", which drops the plan and changes nothing, and "Open the Recommendation", which puts the Recommendation (evidence, other options) back in the thread and approves nothing. The [approval class](../design/06-security-and-governance.md#approval-classes) decides which plan card appears; C5's header is the class, "Two people" for a purchase and "Your OK on a page" for one person.
+A card carries the plan and the decision, so the exact plan is on screen before anyone is asked. "Approve" opens a page that sends the answer by itself, and no second page asks again; "Decline" records the answer at once. A change that cannot be undone asks on the card: "Approve" shows "This cannot be undone: ..." with "No, go back" first and then "Yes, delete it". The [approval class](../design/06-security-and-governance.md#approval-classes) decides which card appears; C5's header is the class, "Two people" for a purchase, where the first person's button reads "Confirm", and "Your OK on a page" for one person.
 
 | | C4 Your OK (small change) | C5 Your OK on a page |
 |---|---|---|
@@ -95,11 +95,11 @@ Five controls are visible: three decisions and two toggles.
 
 ![Your OK card at 360 px: one block per resource.](../img/experience-card-c4-your-ok-phone.png)
 
-(An invented example.) Maya's plan has the code 7F3K-92QD and three blocks: vm-qa-web-01, vm-qa-web-02 and sql-qa-orders. The order platform's savings-plan purchase is another plan, with its own request and code: its card (C5) says "Plan code K4M8-R6TW. The page shows the same code. Nothing is approved in this message."
+(An invented example.) Maya's plan has the code 7F3K-92QD and three blocks: vm-qa-web-01, vm-qa-web-02 and sql-qa-orders. The order platform's savings-plan purchase is another plan, with its own request and code: its card (C5) says "Plan code K4M8-R6TW. The page shows the same code. Nothing is approved until you press a button."
 
 **The plan code is a reference**, not a secret and not a token: eight characters from the hash of the plan, shown on the card, the page and the waiting e-mail so a person can check that they match. The [Approval service](../design/05-data-and-integrations.md#7-the-approval-record) refuses a wrong or expired code and a second submit by the same person; the other approver's decision still counts. The plan itself is used once, when it runs.
 
-**The card cannot approve.** A Teams card cannot carry an Azure token, so the button of C4 and C5 opens the page, where the person signs in to Azure and the change is made at that moment, with their own rights.
+**The card never changes Azure.** Its buttons are links. The page that "Approve" opens sends the answer, and the change is made then, with the person's own rights, after Azure's own sign-in.
 
 **The page may open inside Teams.** For a purchase, C5 says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." ([Web pages](06-web-pages.md) says when that e-mail is sent.)
 
@@ -114,8 +114,8 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 | C1 | [Hello](cards/hello.json) | First contact, after the announcement; it says what I keep and who sees it | One decision: Yes, I look after these or Not mine. Offered once, nothing waits on them: Pause messages · My hours and language (working days as seven checkboxes, a summary day, quiet hours, and a time zone and language from lists bound to data) |
 | C2 | [Question](cards/question.json) | The system needs a fact only a person has | Two short answers · Not sure · Something else · Not mine |
 | C3 | [Recommendation](cards/recommendation.json) | A finding survived challenge and no open fact remains | Review the plan · No, leave it as it is · Not mine · Details |
-| C4 | [Your OK (small change)](cards/your-ok.json) | After "Review the plan" on a small change; replaces C3 | Open the page to approve · Cancel · Open the Recommendation |
-| C5 | [Your OK on a page](cards/ok-on-page.json) | After "Review the plan" on a page or two-person change; replaces C3 | Review and give your OK · No, leave it as it is · Not mine |
+| C4 | [Your OK (small change)](cards/your-ok.json) | A small change waits for the person's OK | Approve · Decline · Open the request |
+| C5 | [Your OK on a page](cards/ok-on-page.json) | A change that needs two people, or a purchase | Confirm or Approve · Decline · Open the request |
 | C6 | [Done](cards/done.json) | A change ran; the undo link only where Azure allows an undo | Open the page to undo · I did not approve this |
 | C7 | [Result](cards/result.json) | After verification; not sent where costs cannot be read | Yes, it matches · No, it does not |
 | C8 | [Told afterwards](cards/told-afterwards.json) | Optional mode, not built: a standing permission ran | Open the page to undo · Pause changes here |
@@ -143,7 +143,7 @@ The Card column is the name used here; on the card (the manifest's `displayTitle
 
 ![Recommendation card: switch off a QA environment at night, about €690 a month, Expected saving.](../img/experience-card-c3-recommendation.png)
 
-![Your OK card: three plan blocks, the plan code; Open the page to approve, Cancel and Open the Recommendation.](../img/experience-card-c4-your-ok.png)
+![Your OK card: three plan blocks, the plan code; Approve, Decline and Open the request.](../img/experience-card-c4-your-ok.png)
 
 ![Your OK on a page card, headed Two people, with plan code K4M8-R6TW.](../img/experience-card-c5-ok-on-page.png)
 
@@ -208,19 +208,15 @@ Agents draft and workflows send ([data and integrations](../design/05-data-and-i
 
 ### What a button sends
 
-A button sends an opaque request id, a verb and, when it decides something, the plan code and a one-time token that was made for that person; at most an option key, a scope or a reason chip joins them. A decision carries no prose: only "Ask or tell" and the text boxes send words, which are bounded, screened and quoted as untrusted data, and free text never approves. (An invented example.) "Cancel" sends the verb `cancel`, the request id `r_9vK2xQ` and the plan code `7F3K-92QD`.
+A button on a card that the flow posts sends nothing: it opens an address. An answer's address names the request and the answer and carries the plan code and a one-time token that the app made for that person, never prose. (An invented example.) "Decline" opens `/ok/r_9vK2xQ/decline` with the code `7F3K92QD` and a token. Opening it changes nothing, so a link preview is harmless. The page sends the answer by itself, with one fixed script that the page's policy allows by its hash and a button for a browser without scripts. The answer then takes the path of an answer given on the page, with every check again, including two people for a large change. A token works once.
 
-[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, the input ids it accepts (the service ignores any other id), whether it needs the plan code, and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that only opens the page is listed under `openUrl`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does (nothing: the service answers "already recorded"), when a verb is refused (the request is expired, changed, answered or paused; "I did not approve this" stays open) and what a tap returns (one immediate response, then the outcome by updating the same message).
-
-A card that the flow posts cannot be tapped for an answer: it carries one link to the page, and every answer is given there.
-
-An approval of a change is never taken on a card: its one link opens the page, where the person signs in to Azure and Azure checks that person's own rights.
+[`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, its input ids, whether it needs the plan code and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that is a link is listed under `openUrl`, and the answer links of a card under `answers`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does, when a verb is refused (the request is expired, changed, answered or paused) and what a tap returns (one immediate response, then the outcome by updating the same message).
 
 ### The fallback and the inputs
 
-Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.4 shows only `fallbackText`, which ends with the page link, the same single link as the card, and "Written by an AI."
+Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.4 shows only `fallbackText`, which ends with the page link and "Written by an AI."
 
-`Action.Execute`, the inputs of "Ask or tell" in a `Action.ShowCard` and `associatedInputs` are not used: a card that the flow posts has none of them.
+`Action.Execute`, the inputs of "Ask or tell" in a `Action.ShowCard` and `associatedInputs` are not used: a card that the flow posts has none of them. Its actions are `Action.OpenUrl` and `Action.ToggleVisibility`, which is from schema 1.2.
 
 ### Limits
 

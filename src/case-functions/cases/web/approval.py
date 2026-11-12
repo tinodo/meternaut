@@ -5,23 +5,33 @@ code and a one-time token. Declining, asking, "not mine", "later" and the answer
 decider. Approving a change sends the person to the sign-in to Azure (Microsoft Entra), and the page that the person comes back to (`/arm/return`) shows what came of it:
 the change is made right there, with the person's own token. When Azure asks for an extra sign-in check, that page is a redirect to the sign-in once more, and the page that
 the person comes back to then shows what came of it. Each kind of result has a plain page of its own.
+
+A button on a Teams card opens a GET of `card_answer` (/ok/<request>/approve, /confirm or /decline, with the plan's code and a link token made for this person: cardlinks.py). A GET changes
+nothing, so a link preview is harmless: the page checks the person, the request, the code and the token, and shows a small page that sends the form of that answer by itself (one fixed script that the
+page's policy allows by its hash, and a button for a browser without scripts). The form is the one of the page of the request, with the link token as its one-time token, so every check after it stays,
+and no second page asks the person to decide again.
 """
 from __future__ import annotations
 
 import re
 
 from ..brief import PAUSED_ADVICE, Brief, called_of
+from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
 from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import checked_brief, decisions_for, may_answer, read
+from .common import brief_of, checked_brief, decisions_for, effective_state, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
-from .layout import SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
+from .layout import SEND_SCRIPT, SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
 
 REFUSED_ROLE = "I cannot take your OK on this request."
 PAUSED = brief_page.PAUSED
 CHANGED = "This request changed. Nothing is approved. A new message will bring the new request and its code."
+CARD_WHY = "you pressed a button on a card that Meternaut sent you"
+SENDING = "Your answer is being sent. If nothing happens, press the button."
+STALE_BUTTON = ("It was used already, it ran out of time, or the request changed since the card was sent. Nothing was changed. "
+                "The request has its own page, where you can answer it.")
 # The only address that an approval may send a person to: the sign-in of Microsoft Entra, with a query that holds nothing but escaped characters. The same check holds for the
 # first sign-in (`begin`) and for the second one that Azure's claims challenge asks for (the result of `finish`).
 SIGNIN_ADDRESS = re.compile(re.escape(SIGNIN_ORIGIN) + rf"/[A-Za-z0-9._~%/+=&?-]{{1,{MAX_SIGNIN_PATH}}}")
@@ -98,6 +108,61 @@ def _walking(ctx: Ctx, plan: PlanRecord) -> Safe | None:
 def approval_page(ctx: Ctx, plan_id: str) -> Response:
     plan, refused = _gate(ctx, plan_id)
     return refused if refused is not None else render_plan(ctx, plan)  # type: ignore[arg-type]
+
+
+# -- Teams card buttons --
+
+def _stale_button(ctx: Ctx, plan_id: str) -> Response:
+    return message_page(ctx, 409, "This button cannot be used now", STALE_BUTTON, back=(f"/ok/{link_part(plan_id)}", PAGE_LABEL), ai=True, why=CARD_WHY)
+
+
+def _sending(ctx: Ctx, plan: PlanRecord, brief: Brief, answer: str, sure: bool, token: str) -> Response:
+    """The page that sends the form of the answer with the link's token; the button, with the word of the card, is for a browser without script."""
+    _, title = title_of(brief)
+    word = sure_label(called_of(plan.family)) if sure else LABEL[brief.kind][answer]
+    fields = [hidden("code", plan.code), hidden("nonce", token), hidden("decision", answer), *([hidden("confirm", "yes")] if sure else [])]
+    send = button(word, kind="danger" if sure else "primary" if answer in ("approve", "confirm") else "secondary")
+    body = join([head(title, SENDING), form(_base(ctx, plan.plan_id), *fields, fmt('<p class="acts">{send}</p>', send=send), ident="send"), fmt("<script>{script}</script>", script=Safe(SEND_SCRIPT))])
+    return page(ctx, title, body, ai=True, models=brief.models or None, why=CARD_WHY, sends=True)
+
+
+def card_answer(ctx: Ctx, plan_id: str, answer: str) -> Response:
+    """The page that a button on a Teams card opens (GET /ok/<request>/<answer>?code=...&token=...). It records nothing. It checks, in order, that the person may answer, that the request is open,
+    the code, that the link token is this person's for this answer and code and is still there, and that the answer exists now (a switch may hold it); then it shows `_sending`. A link that fails a check
+    says why and offers the page of the request."""
+    plan, refused = _gate(ctx, plan_id)
+    if refused is not None:
+        return refused
+    state = effective_state(ctx, plan)  # type: ignore[arg-type]
+    if state != "open":
+        return outcome(ctx, DecideResult(False, "expired" if state == "expired" else "refused_state", "", plan), plan_id)  # type: ignore[arg-type]
+    if ctx.request.query.get("code", "").strip().upper() != plan.code:  # type: ignore[union-attr]
+        return outcome(ctx, DecideResult(False, "refused_code", "", plan), plan_id)
+    token = ctx.request.query.get("token", "")
+    link_kept = read_link(ctx.store.nonce_peek, ctx.principal.oid, plan.plan_id, token)  # type: ignore[union-attr]
+    if link_kept is None or link_kept.verb != answer or link_kept.code.upper() != plan.code:  # type: ignore[union-attr]
+        return _stale_button(ctx, plan_id)
+    case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)  # type: ignore[union-attr]
+    make = brief_of if answer == "decline" else checked_brief  # the look at the resource (cases/precheck.py) is for the answers that go on to a change
+    brief = make(ctx, plan, case, decisions=decisions_for(ctx, plan), answerable=True)  # type: ignore[arg-type]
+    if brief.ready is not None and brief.ready.state == REFUSED:
+        # Like the page of the request: the runner would refuse the change now, so the person gets that page, which says why and has no Approve.
+        return render_plan(ctx, plan, ready=brief.ready, status=409)  # type: ignore[arg-type]
+    if answer not in brief.answers:
+        return outcome(ctx, DecideResult(False, "refused_paused", "", plan), plan_id) if brief.held else _stale_button(ctx, plan_id)
+    return _sending(ctx, plan, brief, answer, link_kept.sure, token)  # type: ignore[arg-type]
+
+
+def card_approve(ctx: Ctx, plan_id: str) -> Response:
+    return card_answer(ctx, plan_id, "approve")
+
+
+def card_confirm(ctx: Ctx, plan_id: str) -> Response:
+    return card_answer(ctx, plan_id, "confirm")
+
+
+def card_decline(ctx: Ctx, plan_id: str) -> Response:
+    return card_answer(ctx, plan_id, "decline")
 
 
 # -- the answers ---------------------------------------------------------------------------------------------------------------------------------

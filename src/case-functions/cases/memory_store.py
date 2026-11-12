@@ -163,6 +163,13 @@ class MemoryStore:
         self.nonces[token] = (oid, purpose, self.clock() + dt.timedelta(seconds=ttl_seconds), data)
         return token
 
+    def nonce_peek(self, token: str, oid: str, purpose: str) -> str | None:
+        entry = self.nonces.get(token)
+        if entry is None:
+            return None
+        owner, wanted, expires, data = entry
+        return data if owner == oid and wanted == purpose and expires > self.clock() else None
+
     def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
         entry = self.nonces.get(token)
         if entry is None:

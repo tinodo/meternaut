@@ -6,12 +6,13 @@ same store of mail records, so that the letter and the card count the same thing
 import dataclasses
 import json
 import logging
+import re
 import unittest
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
-from cases import cardcheck, cards, offers, teamsqueue
+from cases import cardcheck, cardlinks, cards, offers, teamsqueue
 from cases.identity import IdentityError
 from cases.models import ActionRecord, MailRecord, SwitchRecord
 from test_cards import make_case
@@ -81,17 +82,19 @@ class TheCardOfARequest(unittest.TestCase):
         self.assertEqual(json.dumps(message).count('"to":'), 1)
         self.assertNotIn(hostile, json.dumps({k: v for k, v in message.items() if k != "card"}))
 
-    def test_the_card_holds_one_link_to_the_page_and_nothing_to_answer_with(self):
+    def test_the_card_holds_buttons_that_open_pages_of_the_app_and_nothing_to_fill_in(self):
         self.world.open_plan(cs.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
         self.world.run()
         self.assertEqual(len(self.fake.cards()), 2)
         for message in self.fake.messages():
             card = message["card"]
             kinds = {node.get("type") for node in walk(card)}
-            self.assertFalse({kind for kind in kinds if str(kind).startswith("Input.")} | (kinds & {"Action.Execute", "Action.Submit"}), kinds)
-            link = link_of(card)
-            self.assertEqual((link["type"], link["title"]), ("Action.OpenUrl", "Review and decide"))
-            self.assertIn(link["url"], {f"{cs.BASE}/ok/{cs.PLAN_ID}", f"{cs.BASE}/ok/p3change"})
+            self.assertFalse({kind for kind in kinds if str(kind).startswith("Input.")} | (kinds & {"Action.Execute", "Action.Submit", "Action.Http", "Action.ShowCard"}), kinds)
+            page = re.search(r"Open it on the page: (\S+)", card["fallbackText"]).group(1)
+            self.assertIn(page, {f"{cs.BASE}/ok/{cs.PLAN_ID}", f"{cs.BASE}/ok/p3change"})
+            for node in walk(card):
+                if node.get("type") == "Action.OpenUrl":
+                    self.assertTrue(node["url"] == page or node["url"].startswith(f"{page}/"), node["url"])
             self.assertNotIn("nonce", json.dumps(message))
 
     def test_the_notification_names_no_resource_and_no_amount(self):
@@ -149,12 +152,19 @@ class TheCardOfARequest(unittest.TestCase):
         self.world.run()
         self.assertEqual([m.kind for m in self.world.tries()], ["approval", "advice-card"], "the advice card of the other request went; the approval card did not")
 
-    def test_the_card_of_a_change_has_the_link_to_the_page_and_no_answer_that_approves(self):
+    def test_the_card_of_a_change_has_the_buttons_of_the_decision_and_the_page_of_the_request(self):
         self.world.open_plan(cs.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
         self.world.run()
-        card = next(c for c in self.fake.cards() if "Review and decide" in str(c) and "p3change" in str(c))
-        self.assertEqual(link_of(card)["url"], f"{cs.BASE}/ok/p3change")
+        card = next(c for c in self.fake.cards() if "p3change" in str(c))
+        self.assertEqual([a["title"] for a in by_id(card)["decisions"]["actions"]], ["Approve", "Decline", "Open the request"])
+        self.assertEqual(by_id(card)["decisions"]["actions"][2]["url"], f"{cs.BASE}/ok/p3change")
+        self.assertEqual(by_id(card)["sure-yes"]["title"], "Yes, delete it", "a delete cannot be undone, so the card asks twice")
         self.assertEqual(sorted(m.kind for m in self.world.tries()), ["advice-card", "approval-card"])
+
+    def test_the_card_of_advice_has_worth_acting_on_and_not_worth_it(self):
+        self.world.run()
+        (card,) = self.fake.cards()
+        self.assertEqual([a["title"] for a in by_id(card)["decisions"]["actions"]], ["Worth acting on", "Not worth it", "Open the request"])
 
     def test_a_pause_of_the_changes_is_said_on_the_card_of_a_change(self):
         self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get(cs.PLAN_ID), state="declined"))
@@ -165,6 +175,116 @@ class TheCardOfARequest(unittest.TestCase):
         self.assertNotIn("Review and decide", "\n".join(cs.texts(card)))
         self.assertIn("Changes are paused here.", "\n".join(cs.texts(card)))
         self.assertEqual(link_of(card)["title"], "See the request")
+        self.assertEqual(self.world.store.nonces, {}, "a card that has no answer has no link token")
+
+
+def by_id(card: dict) -> dict:
+    return {node["id"]: node for node in walk(card) if isinstance(node.get("id"), str)}
+
+
+class TheLinkTokensOfACard(unittest.TestCase):
+    """Each button that answers carries a one-time token that the app made for this person and this request when it built the card (cases/cardlinks.py): nothing else is made to send a card."""
+
+    def setUp(self):
+        self.world = cs.World()
+        self.fake = self.world.queue_fake
+        self.world.open_plan(cs.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
+        for oid in (cs.MAYA, cs.ANNA):
+            self.world.channel(oid)
+            self.world.introduce(oid)
+
+    def answers(self, card: dict) -> dict[str, dict]:
+        """The buttons of a card that carry a token, by answer: the address, split."""
+        found = {}
+        for node in walk(card):
+            if node.get("type") == "Action.OpenUrl" and "token=" in node["url"]:
+                match = cardlinks.ANSWER_ADDRESS.fullmatch(node["url"])
+                assert match is not None, node["url"]
+                found[match["verb"]] = {"url": node["url"], "code": match["code"], "token": match["token"]}
+        return found
+
+    def cards_by_person(self) -> dict[str, dict]:
+        return {message["to"]: message["card"] for message in self.fake.messages()}
+
+    def test_a_token_is_made_for_each_answer_and_each_person_and_keeps_what_the_link_does(self):
+        self.world.run()
+        by_person = self.cards_by_person()
+        self.assertEqual(sorted(by_person), ["anna@example.com", "maya@example.com"])
+        tokens = []
+        for address, oid in (("maya@example.com", cs.MAYA), ("anna@example.com", cs.ANNA)):
+            found = self.answers(by_person[address])
+            self.assertEqual(sorted(found), ["approve", "decline"])
+            for verb, link in found.items():
+                self.assertEqual(link["code"], cs.CODE, "the code of the plan at the time of the card")
+                kept = json.loads(self.world.store.nonce_peek(link["token"], oid, "p3change"))
+                self.assertEqual(kept, [verb, cs.CODE, 1 if verb == "approve" else 0], "a delete asks twice on the card: its approve says so")
+                tokens.append(link["token"])
+        self.assertEqual(len(set(tokens)), 4, "no token is shared between two buttons or two people")
+
+    def test_a_token_is_good_for_the_person_and_the_request_that_it_was_made_for_and_for_nobody_else(self):
+        self.world.run()
+        link = self.answers(self.cards_by_person()["maya@example.com"])["approve"]
+        peek = self.world.store.nonce_peek
+        self.assertIsNotNone(peek(link["token"], cs.MAYA, "p3change"))
+        self.assertIsNone(peek(link["token"], cs.ANNA, "p3change"), "another approver of the same request")
+        self.assertIsNone(peek(link["token"], cs.MAYA, cs.PLAN_ID), "another request")
+        self.assertIsNone(peek(link["token"], cs.MAYA.upper() + "x", "p3change"))
+
+    def test_a_token_lives_as_long_as_the_request_is_open_and_is_used_up_once(self):
+        self.world.run()
+        link = self.answers(self.cards_by_person()["maya@example.com"])["decline"]
+        self.world.clock.advance(days=24)
+        self.assertIsNotNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "the request is open until 2026-12-01")
+        self.world.clock.advance(days=2)
+        self.assertIsNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "the request has expired")
+        self.world.clock.advance(days=-2)
+        self.assertTrue(self.world.store.nonce_use(link["token"], cs.MAYA, "p3change"))
+        self.assertIsNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"))
+
+    def test_a_request_that_is_about_to_expire_still_gets_a_quarter_of_an_hour(self):
+        self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get("p3change"), expires_at="2026-11-05T10:20:00Z"))
+        self.world.run()
+        link = self.answers(self.cards_by_person()["maya@example.com"])["decline"]
+        self.world.clock.advance(minutes=14)
+        self.assertIsNotNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"))
+
+    def test_a_card_that_cannot_get_its_tokens_goes_with_the_link_to_the_page_of_the_request(self):
+        def down(*args, **kwargs):
+            raise RuntimeError("the records are down")
+        self.world.store.nonce_new = down
+        with self.assertLogs("meternaut.teams.offers", level="ERROR") as logged:
+            self.world.run()
+        self.assertTrue(any("buttons of a card could not be made" in line for line in logged.output), logged.output)
+        self.assertEqual([m.status for m in self.world.tries(cs.MAYA, "approval-card")], ["sent"])
+        card = self.cards_by_person()["maya@example.com"]
+        self.assertEqual([a["title"] for a in by_id(card)["decisions"]["actions"]], ["Review and decide"])
+        self.assertNotIn("token=", json.dumps(card))
+
+    def test_the_short_card_of_a_card_that_did_not_fit_carries_no_token(self):
+        from unittest import mock
+        with mock.patch.object(cardcheck, "MAX_BYTES", 2500):
+            self.world.run()
+        card = self.cards_by_person()["maya@example.com"]
+        self.assertEqual([a["title"] for a in by_id(card)["decisions"]["actions"]], ["Review and decide"])
+        self.assertNotIn("token=", json.dumps(card))
+        self.assertIn(offers.SHORT_SENT, self.world.tries(cs.MAYA, "approval-card")[0].detail)
+
+    def test_the_message_has_no_token_outside_the_addresses_of_the_buttons(self):
+        self.world.run()
+        for message in self.fake.messages():
+            if message["to"] != "maya@example.com" or "decisions" not in json.dumps(message["card"]):
+                continue
+            text = json.dumps({k: v for k, v in message.items() if k != "card"}) + message["card"]["fallbackText"]
+            self.assertNotIn("token", text)
+            self.assertNotIn("code=", text)
+
+    def test_the_two_people_of_a_change_that_needs_two_have_a_confirm_and_an_approve_token_each_as_their_turn_comes(self):
+        self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get("p3change"), approval_class="R3", digest="d" * 64))
+        self.world.run()
+        for address, oid in (("maya@example.com", cs.MAYA), ("anna@example.com", cs.ANNA)):
+            found = self.answers(self.cards_by_person()[address])
+            self.assertEqual(sorted(found), ["confirm", "decline"], "nobody has confirmed yet: each is the first")
+            self.assertEqual(json.loads(self.world.store.nonce_peek(found["confirm"]["token"], oid, "p3change"))[0], "confirm")
 
 
 class TheChecksBeforeACard(unittest.TestCase):

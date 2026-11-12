@@ -256,7 +256,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, 200)}")
                 self.assertEqual(found["risk"], f"**Risk, {b.risk.level}:** {cards.md(b.risk.text, 240)}")
                 self.assertEqual({a["url"] for a in _actions(card) if "url" in a}, {f"{BASE}/ok/{b.plan_id}"})
-                self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"], "no card approves a change in Azure: its one link opens the page")
+                self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"], "a card made without link tokens has the page link only; no card approves a change in Azure")
                 json.dumps(card)
 
     def test_the_card_of_a_change_whose_saving_is_not_worked_out_says_what_it_costs_and_why_there_is_no_saving(self):

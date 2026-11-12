@@ -4,7 +4,7 @@
 
 ## The pages at a glance
 
-Every page is a render of the decision brief, which lets a stranger answer eight questions in a minute ([the decision brief](../proposals/09-the-decision-brief.md)); what is not needed to decide sits under one Details, or on a page for the platform team. The send step builds every link from one address and an opaque id, so no name, resource or figure travels in a link. A card and a letter each carry one link: the page of the request, which records no decision when opened. Each page filters on the server by the signed-in person's scope.
+Every page is a render of the decision brief, which lets a stranger answer eight questions in a minute ([the decision brief](../proposals/09-the-decision-brief.md)); what is not needed to decide sits under one Details, or on a page for the platform team. The send step builds every link from one address and an opaque id, so no name, resource or figure travels in a link. A letter carries one link, the page of the request; a card also carries the links of its answer buttons. Opening a link records no decision: the page that an answer button opens sends the answer, and a one-time token that was made for that person goes with it. Each page filters on the server by the signed-in person's scope.
 
 | Page and route | For | What it is for | What a card hands over |
 |---|---|---|---|

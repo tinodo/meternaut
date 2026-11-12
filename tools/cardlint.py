@@ -7,9 +7,12 @@ whether it needs the plan code and what a tap returns. The checks encode the rul
 (docs/experience/04-messages-and-cards.md) and of the decision brief that every page, letter and card renders: a card says that an AI
 wrote it, and ends with ONE footer line that says that, why the person got the card and whom to talk to as plain text (a name and an
 address: never a button, never a link); it offers ONE way to ask or tell something ("Ask or tell": a text box and a button), in place of
-the three buttons that explained, challenged and taught; every saving figure carries its price basis; the only link is the page of the
-request (${pageUrl}); a button sends an opaque id and a verb, never prose; an action that takes no input says associatedInputs none; no
-urgency theatre; no en dash or middot between figures; text wraps; images have alternative text; inputs have labels.
+the three buttons that explained, challenged and taught; every saving figure carries its price basis; a link is the page of the
+request (${pageUrl}) or, on a card whose manifest entry lists "answers", the link of a button that answers (${approveUrl}, ${confirmUrl},
+${declineUrl}, ${sureUrl}: the app makes each one for one person, with a one-time token), and a change that cannot be undone asks again on
+the card, in a part that stays hidden until "Approve" shows it, with "No, go back" first; a button sends an opaque id and a verb, never
+prose; an action that takes no input says associatedInputs none; no urgency theatre; no en dash or middot between figures; text wraps;
+images have alternative text; inputs have labels.
 
 Run by tools/check-docs.py (and alone: python tools/cardlint.py [--self-test]).
 """
@@ -43,6 +46,14 @@ GONE_IDS = ("talk-to-a-person", "why-you-get-this")  # they were a button and a 
 TEXT_ONLY_KEYS = ("contact",)  # sample data that holds a name and an address as plain text: no link, but an address is what it is for
 PAGE_URL = "${pageUrl}"
 PAGE_URLS = (PAGE_URL, "${$root.pageUrl}")  # the second form is for use inside a $data loop
+# The links of the buttons that answer, one for each answer: the app makes each for one person (a one-time token is in it), and a card may carry one only where its manifest entry lists the
+# answer under "answers". "sure" is the "Yes" of the question that a change that cannot be undone asks on the card, and it opens the same page as "approve".
+ANSWER_URLS = {"approve": "${approveUrl}", "confirm": "${confirmUrl}", "decline": "${declineUrl}", "sure": "${sureUrl}"}
+ANSWER_KEYS = tuple(placeholder[2:-1] for placeholder in ANSWER_URLS.values())  # the keys of the sample data that hold them
+ANSWER_TITLES = {"approve": ("Approve", "Worth acting on"), "confirm": ("Confirm",), "decline": ("Decline", "Not worth it")}
+SURE_START = "Yes, "
+BACK_TITLE = "No, go back"
+CANNOT_UNDO = "This cannot be undone"
 FIGURE_RANGE = re.compile(r"\d\s*[\u2013\u2014-]\s*\d")  # a dash between two numbers: a screen reader may drop it and merge them
 MIDDOT = "\u00b7"
 NOTIFICATION_MAX = 120
@@ -142,6 +153,49 @@ def _executes(obj, own: list[str], out: list) -> None:
             _executes(v, own, out)
 
 
+def _says(answer: str, title: str) -> bool:
+    """Whether the title of the button of an answer link is one of the words that the app's own card says there."""
+    return title.startswith(SURE_START) if answer == "sure" else title in ANSWER_TITLES[answer]
+
+
+def _targets(node: dict) -> list[tuple[str, bool | None]]:
+    """(element id, True to show, False to hide, None to toggle) for each target of an Action.ToggleVisibility; a target is an id or {elementId, isVisible}."""
+    out: list[tuple[str, bool | None]] = []
+    for target in node.get("targetElements", []):
+        if isinstance(target, str):
+            out.append((target, None))
+        elif isinstance(target, dict):
+            out.append((str(target.get("elementId", "")), target.get("isVisible")))
+    return out
+
+
+def answer_problems(card: dict, answers: list[str]) -> list[str]:
+    """What a card must show besides its answer buttons: each answer link once, the button to the page for a button that cannot be used, and, for a change that cannot be undone, a question that
+    stays hidden until "Approve" shows it, whose "Yes" is hidden with it and comes second."""
+    body = card.get("body", [])
+    urls = [n.get("url") for n, _, _, in_fallback in list(_walk(body)) + list(_walk(card.get("actions", []))) if n.get("type") == "Action.OpenUrl" and not in_fallback]
+    out: list[str] = []
+    for answer in answers:
+        count = urls.count(ANSWER_URLS[answer])
+        if count != 1:
+            out.append(f"the answer link {ANSWER_URLS[answer]} is on the card {count} times: it is on one button, once")
+    if answers and not any(url in PAGE_URLS for url in urls):
+        out.append(f"a card with answer buttons has one more button to the page of the request ({PAGE_URL}): a button that cannot be used leads there")
+    if "sure" in answers:
+        for node, _, hidden, in_fallback in _walk(body):
+            if node.get("url") == ANSWER_URLS["sure"] and not hidden and not in_fallback:
+                out.append(f"the button of {ANSWER_URLS['sure']} sits in a part that is hidden until a button shows it: a change that cannot be undone asks on the card before it opens the link")
+        sets = [n for n in _nodes(body) if n.get("type") == "ActionSet" and any(a.get("url") == ANSWER_URLS["sure"] for a in n.get("actions", []) if isinstance(a, dict))]
+        for one in sets:
+            first = (one.get("actions") or [{}])[0]
+            if first.get("type") != "Action.ToggleVisibility" or first.get("title") != BACK_TITLE:
+                out.append(f"in the question that a change that cannot be undone asks, {BACK_TITLE!r} comes first: the safe answer is the first button")
+        holders = [n for n in _nodes(body) if n.get("type") == "Container" and n.get("isVisible") is False and ANSWER_URLS["sure"] in json.dumps(n)]
+        if not any(str(item.get("text", "")).startswith(CANNOT_UNDO) for n in holders for item in n.get("items", []) if isinstance(item, dict)):
+            out.append(f"the hidden part with {ANSWER_URLS['sure']} starts with a text that says {CANNOT_UNDO!r} and what is lost")
+    return out
+
+
 def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | None) -> list[str]:
     """Messages for one card template; an empty list means it passes."""
     msgs: list[str] = []
@@ -224,6 +278,10 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
     if root_inputs and not spec.get("rootInputs"):
         add(f"root-level input(s) {root_inputs}: an action inside a ShowCard also sends the inputs of its parent card, "
             "so only cards that say \"rootInputs\" in the manifest may have them")
+    answers = spec.get("answers", [])
+    if not isinstance(answers, list) or any(a not in ANSWER_URLS for a in answers):
+        add(f"manifest answers must be a list of {sorted(ANSWER_URLS)}: the answer links that the card carries")
+        answers = []
     for node in list(_nodes(card.get("body", []))) + list(_nodes(top_actions)):
         t = node.get("type")
         if t not in ACTIONS:
@@ -236,8 +294,16 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
         elif not re.search(r"[^\W\d_]|\$\{", title):
             add(f"{t} {title!r}: a button needs words, not symbols")
         if t == "Action.OpenUrl":
-            if node.get("url") not in PAGE_URLS:
-                add(f"Action.OpenUrl {title!r}: the only link a card may carry is {PAGE_URL}")
+            url = node.get("url")
+            answer = next((a for a, placeholder in ANSWER_URLS.items() if placeholder == url), None)
+            if url in PAGE_URLS:
+                pass
+            elif answer is None:
+                add(f"Action.OpenUrl {title!r}: the only links a card may carry are {PAGE_URL} and the answer links {', '.join(ANSWER_URLS.values())}")
+            elif answer not in answers:
+                add(f"Action.OpenUrl {title!r}: the answer link {url} is not listed under \"answers\" in the manifest entry of this card")
+            elif not _says(answer, title):
+                add(f"Action.OpenUrl {title!r}: the button of {url} says {' or '.join(repr(w) for w in ANSWER_TITLES.get(answer, (SURE_START + '...',)))}")
         elif t in ("Action.Execute", "Action.Submit"):
             data_obj = node.get("data", {})
             verb = node.get("verb") if t == "Action.Execute" else None
@@ -252,6 +318,17 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
                     add(f"{t} {title!r}: data may hold only {sorted(DATA_KEYS)}, found {sorted(extra)}")
         elif t == "Action.ToggleVisibility" and not node.get("targetElements"):
             add(f"Action.ToggleVisibility {title!r}: targetElements is required")
+    msgs.extend(answer_problems(card, answers))
+    shown: set[str] = set()
+    for node in list(_nodes(card.get("body", []))) + list(_nodes(top_actions)):
+        if node.get("type") == "Action.ToggleVisibility":
+            for target, wanted in _targets(node):
+                if target not in ids:
+                    add(f"Action.ToggleVisibility {str(node.get('title', '?'))!r}: the target {target!r} is not an element of the card")
+                elif wanted is not False:
+                    shown.add(target)
+    for hidden_id in sorted(i for i, n in ids.items() if n.get("isVisible") is False and i not in shown):
+        add(f"element {hidden_id!r} is hidden and no button shows it: nothing on a card may be unreadable")
     for key in card:
         if key == "msteams":
             extra = set(card["msteams"]) - {"width"}
@@ -262,7 +339,7 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
         if DARK_PATTERNS.search(s):
             add(f"urgency or pressure wording: {s[:60]!r}")
         if LINK.search(s):
-            add(f"a link in the text: {s[:60]!r} (the only link is {PAGE_URL})")
+            add(f"a link in the text: {s[:60]!r} (a link is a button: the page is {PAGE_URL})")
         if MD_LINK.search(s):
             add(f"markdown link syntax in the template: {s[:60]!r}")
         if EMAIL.search(s):
@@ -354,6 +431,15 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
                 add(f"sample data key {key!r}: a model never supplies a recipient or a link")
         if not str(data.get("pageUrl", "https://")).startswith("https://"):
             add("sample data pageUrl must be https")
+        page = str(data.get("pageUrl", ""))
+        for answer, placeholder in ANSWER_URLS.items():
+            key, value = placeholder[2:-1], data.get(placeholder[2:-1])
+            verb = "approve" if answer == "sure" else answer
+            if answer in answers:
+                if not (isinstance(value, str) and re.fullmatch(re.escape(f"{page}/{verb}") + r"\?code=[A-Z0-9]{8}&token=[A-Za-z0-9_-]{16,}", value)):
+                    add(f"sample data {key!r} must be the page address, '/{verb}' and the query '?code=' (the plan code without its dash) and '&token=' (a link token that is made up)")
+            elif value is not None:
+                add(f"sample data {key!r} is an answer link, and the manifest entry of this card does not list {answer!r} under \"answers\"")
         for key, value in data.items():
             if key.endswith("Label") and isinstance(value, str) and len(value) > limits["max_title_chars"]:
                 add(f"sample data {key!r} is bound into a button title and is longer than {limits['max_title_chars']} characters")
@@ -369,7 +455,7 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
         if not isinstance(contact, str) or not CONTACT.fullmatch(contact):
             add("sample data needs contact: whom to talk to, as plain text, a name and an address in brackets like 'Maya Okafor (maya.okafor@example.com)'")
         for key, value in data.items():
-            if key == "pageUrl":
+            if key == "pageUrl" or key in ANSWER_KEYS:
                 continue
             for s in _strings(value):
                 if EMAIL.search(s) and key not in TEXT_ONLY_KEYS:
@@ -619,6 +705,65 @@ def self_test() -> int:
     under_a_show_card(listed, data, listed_spec)
     listed_spec["verbs"][ASK_VERB]["inputs"] = ["message", "free"]
     assert check_card("t", listed, listed_spec, limits, data) == [], check_card("t", listed, listed_spec, limits, data)
+
+    # The buttons that answer: a link for each answer where the manifest lists it, each once, with the words of the app's own card, and the page of the request as well.
+    page = data["pageUrl"]
+
+    def with_answers(c, d, s):
+        c["body"].insert(5, {"type": "ActionSet", "id": "decisions", "actions": [
+            {"type": "Action.OpenUrl", "id": "approve", "title": "Approve", "url": ANSWER_URLS["approve"]},
+            {"type": "Action.OpenUrl", "id": "decline", "title": "Decline", "url": ANSWER_URLS["decline"]},
+            {"type": "Action.OpenUrl", "id": "page", "title": "Open the request", "url": PAGE_URL}]})
+        s["answers"] = ["approve", "decline"]
+        d.update({"approveUrl": f"{page}/approve?code=7F3K92QD&token=sample-link-token-a", "declineUrl": f"{page}/decline?code=7F3K92QD&token=sample-link-token-b"})
+
+    def with_question(c, d, s):
+        # A change that cannot be undone: "Approve" only shows the question, and the "Yes" is in the part that it shows.
+        with_answers(c, d, s)
+        c["body"][5]["actions"][0] = {"type": "Action.ToggleVisibility", "id": "approve", "title": "Approve", "tooltip": "Asks once more.",
+                                      "targetElements": [{"elementId": "sure", "isVisible": True}]}
+        c["body"].insert(6, {"type": "Container", "id": "sure", "isVisible": False, "items": [
+            {"type": "TextBlock", "id": "sure-text", "text": "This cannot be undone: ${plan.lost}", "wrap": True},
+            {"type": "ActionSet", "id": "sure-actions", "actions": [
+                {"type": "Action.ToggleVisibility", "id": "sure-back", "title": "No, go back", "tooltip": "Hides this question.", "targetElements": [{"elementId": "sure", "isVisible": False}]},
+                {"type": "Action.OpenUrl", "id": "sure-yes", "title": "Yes, ${plan.verb} it", "url": ANSWER_URLS["sure"]}]}]})
+        s["answers"] = ["decline", "sure"]
+        d.pop("approveUrl")
+        d["sureUrl"] = f"{page}/approve?code=7F3K92QD&token=sample-link-token-c"
+
+    def answered(question):
+        c, d, s = copy.deepcopy(card), copy.deepcopy(data), copy.deepcopy(spec)
+        (with_question if question else with_answers)(c, d, s)
+        return c, d, s
+
+    for question in (False, True):
+        c, d, s = answered(question)
+        assert check_card("t", c, s, limits, d) == [], check_card("t", c, s, limits, d)
+
+    def broken_answers(mutate, needle, question=False):
+        c, d, s = answered(question)
+        mutate(c, d, s)
+        found = check_card("t", c, s, limits, d)
+        assert any(needle in m for m in found), f"missed: {needle!r} in {found}"
+
+    broken(lambda c, d, s: (with_answers(c, d, s), s.update({"answers": ["approve"]})), "is not listed under")
+    broken(lambda c, d, s: (with_answers(c, d, s), s.update({"answers": ["wipe"]})), "manifest answers must be")
+    broken(lambda c, d, s: with_answers(c, d, s) or d.update({"confirmUrl": f"{page}/confirm?code=7F3K92QD&token=sample-link-token-a"}), "does not list 'confirm'")
+    broken_answers(lambda c, d, s: c["body"][5]["actions"][0].update({"title": "Go"}), "says 'Approve' or 'Worth acting on'")
+    broken_answers(lambda c, d, s: c["body"][5]["actions"][1].update({"title": "Not now"}), "says 'Decline' or 'Not worth it'")
+    broken_answers(lambda c, d, s: c["body"][5]["actions"].pop(1), "is on the card 0 times")
+    broken_answers(lambda c, d, s: c["body"][5]["actions"].append({"type": "Action.OpenUrl", "id": "again", "title": "Decline", "url": ANSWER_URLS["decline"]}), "is on the card 2 times")
+    broken_answers(lambda c, d, s: c["body"][5]["actions"].pop(2), "one more button to the page")
+    broken_answers(lambda c, d, s: d.update({"approveUrl": "https://evil.example/approve"}), "sample data 'approveUrl' must be")
+    broken_answers(lambda c, d, s: d.pop("declineUrl"), "sample data 'declineUrl' must be")
+    broken_answers(lambda c, d, s: d.update({"approveUrl": f"{page}/approve?code=7F3K92QD&token=short"}), "sample data 'approveUrl' must be")
+    broken_answers(lambda c, d, s: c["body"][6].pop("isVisible"), "sits in a part that is hidden", question=True)
+    broken_answers(lambda c, d, s: c["body"][6]["items"][1]["actions"].reverse(), "comes first", question=True)
+    broken_answers(lambda c, d, s: c["body"][6]["items"][0].update({"text": "Are you sure?"}), "starts with a text that says", question=True)
+    broken_answers(lambda c, d, s: c["body"][6]["items"][1]["actions"][1].update({"title": "Delete"}), "says 'Yes, ...'", question=True)
+    broken_answers(lambda c, d, s: c["body"][5]["actions"][0].update({"targetElements": [{"elementId": "sure", "isVisible": False}]}), "hidden and no button shows it", question=True)
+    broken_answers(lambda c, d, s: c["body"][5]["actions"][0].update({"targetElements": [{"elementId": "elsewhere", "isVisible": True}]}), "is not an element of the card", question=True)
+    broken_answers(lambda c, d, s: c["body"][6]["items"][1]["actions"][0].pop("tooltip"), "a tooltip is required", question=True)
 
     # One example, one request id; unrelated examples never share one.
     def sample(rid, scenario, page=None):

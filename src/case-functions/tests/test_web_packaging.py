@@ -55,9 +55,10 @@ class ThePackage(unittest.TestCase):
                         self.assertEqual(level, 2)
                         # `usage` joined the three modules of the contract with the chart of use: a table of data and a few pure functions that reads nothing (the test below pins that). `costs` and
                         # `estimate` joined them with the cost of a whole subscription and the estimate at list price: the words and the address of the cost, and a table of prices (the test after it
-                        # pins that they are of the same kind).
-                        self.assertIn(module, {"brief", "models", "people", "usage", "costs", "estimate"}, "the pages know the records, the people, the decision brief, the table of the use that is "
-                                                                                                        "drawn and the words of the cost, and nothing of how they are kept")
+                        # pins that they are of the same kind). `cardlinks` joined them with the buttons of a Teams card: the shape of their addresses and of their link tokens (pinned the same way).
+                        self.assertIn(module, {"brief", "models", "people", "usage", "costs", "estimate", "cardlinks"}, "the pages know the records, the people, the decision brief, the table of the use "
+                                                                                                                         "that is drawn, the words of the cost and the addresses of the buttons of a "
+                                                                                                                         "card, and nothing of how they are kept")
 
     def test_the_table_of_use_that_the_pages_know_is_data_and_pure_functions_over_the_standard_library_and_nothing_of_the_app(self):
         self.check_that_a_module_is_pure("usage")
@@ -77,6 +78,9 @@ class ThePackage(unittest.TestCase):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 self.assertNotIn(node.func.id, {"open", "eval", "exec", "compile", "__import__", "input", "print"}, f"{name}.py:{node.lineno}")
         self.assertNotRegex(source, r"\.now\(|\.today\(|time\.time\(", "no clock: a page gives it the day")
+
+    def test_the_addresses_of_the_buttons_of_a_card_that_the_pages_know_are_data_and_pure_functions_over_the_standard_library_and_nothing_of_the_app(self):
+        self.check_that_a_module_is_pure("cardlinks")
 
     def test_a_page_does_not_touch_a_network_a_process_or_a_file(self):
         for path in modules():
@@ -148,7 +152,8 @@ class ThePackage(unittest.TestCase):
         shown = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)) for method, pattern, _, _ in router.ROUTES}
         self.assertEqual(len(shown), len(router.ROUTES), "no route is listed twice")
         self.assertEqual(shown, {
-            ("GET", "/"), ("GET", "/ok/<id>"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"), ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
+            ("GET", "/"), ("GET", "/ok/<id>"), ("GET", "/ok/<id>/approve"), ("GET", "/ok/<id>/confirm"), ("GET", "/ok/<id>/decline"), ("POST", "/ok/<id>"), ("POST", "/ok/<id>/ask"),
+            ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
             ("GET", "/history"), ("GET", "/me/decisions"), ("GET", "/me/activity"), ("GET", "/me/settings"), ("POST", "/me/settings"), ("POST", "/me/settings/export"),
             ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops"), ("GET", "/ops/runs"),
             ("GET", "/ops/permissions"), ("GET", "/ops/pause"), ("POST", "/ops/pause"), ("GET", "/ops/two-people"), ("POST", "/ops/two-people"), ("POST", "/ops/drift"),

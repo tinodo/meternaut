@@ -1,10 +1,12 @@
 """The page shell and the parts that every page is made of: the style, the landmarks, the footer, notices, tables and form fields.
 
-The style is the one stylesheet of the style guide (style.py): no script and no outside file, Fluent 2 design tokens as CSS custom properties (light and dark), and a block for forced
-colors. Every part returns `Safe` text, and every value that goes into it is escaped by `fmt`.
+The style is the one stylesheet of the style guide (style.py): no outside file, Fluent 2 design tokens as CSS custom properties (light and dark), and a block for forced
+colors. No page has a script but the one that sends the answer of a button on a Teams card (below). Every part returns `Safe` text, and every value that goes into it is escaped by `fmt`.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 from typing import Iterable, Mapping, Sequence
 
 from ..brief import contact_text
@@ -18,7 +20,11 @@ JSON = "application/json; charset=utf-8"
 SIGNIN_ORIGIN = "https://login.microsoftonline.com"
 CSP = f"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {SIGNIN_ORIGIN}; frame-ancestors 'none'; base-uri 'none'"
 # `form-action` names Microsoft Entra's sign-in address on purpose: the approve form is answered with a redirect to the sign-in to Azure, and Chromium checks the target of
-# a redirect after a form post against this directive. Nothing else is allowed (the page has no script and no outside file).
+# a redirect after a form post against this directive. Nothing else is allowed (a page has no script and no outside file, but the one below).
+# The page that a button on a Teams card opens sends the form of the answer by itself with one fixed script, which the policy of that page allows by its hash (not 'unsafe-inline'); with scripts off it has a button.
+SEND_SCRIPT = 'var f=document.getElementById("send");if(f){f.submit();}'
+SEND_HASH = "sha256-" + base64.b64encode(hashlib.sha256(SEND_SCRIPT.encode("utf-8")).digest()).decode("ascii")
+CSP_SEND = f"default-src 'none'; script-src '{SEND_HASH}'; style-src 'unsafe-inline'; form-action 'self' {SIGNIN_ORIGIN}; frame-ancestors 'none'; base-uri 'none'"
 # "same-origin" and not "no-referrer", on purpose. Under "no-referrer" a browser sends `Origin: null` on every form POST (Fetch standard, "append a request Origin header"), and
 # the platform's sign-in refuses an authenticated POST that carries it with an empty 403, before the app is reached: the approve button failed on 2026-11-05 (AGENTS.md rule 28).
 # "same-origin" sends the console's own origin on a POST and still sends no referrer to any other site, which is what the header is for: an address holds the request id.
@@ -41,15 +47,19 @@ NAV = (
 )
 
 
-def respond(status: int, body: str, *, content_type: str = HTML, headers: dict[str, str] | None = None) -> Response:
-    """A response. The security headers and the content type are set here, so no response leaves without them."""
+def respond(status: int, body: str, *, content_type: str = HTML, headers: dict[str, str] | None = None, sends: bool = False) -> Response:
+    """A response. The security headers and the content type are set here, so no response leaves without them. `sends`: the page that sends the answer of a card's button, which has CSP_SEND."""
     merged = {**(headers or {}), **SECURITY_HEADERS, "Content-Type": content_type}
+    if sends:
+        merged["Content-Security-Policy"] = CSP_SEND
     return Response(status, merged, body.encode("utf-8", "replace"))
 
 
 def secured(response: Response) -> Response:
-    """The same response with the security headers on it, whatever made it."""
+    """The same response with the security headers on it, whatever made it (CSP_SEND is kept)."""
     headers = {**response.headers, **SECURITY_HEADERS}
+    if response.headers.get("Content-Security-Policy") == CSP_SEND:
+        headers["Content-Security-Policy"] = CSP_SEND
     headers.setdefault("Content-Type", HTML)
     return Response(response.status, headers, response.body)
 
@@ -152,9 +162,10 @@ def hidden(name: str, value: object) -> Safe:
     return fmt('<input type="hidden" name="{name}" value="{value}">', name=name, value=value)
 
 
-def form(action: str, *content: object, cls: str = "") -> Safe:
-    """A form that changes something: always a POST."""
-    return fmt('<form method="post" action="{action}"{cls}>{content}</form>', action=action, cls=_class(cls), content=join(content))
+def form(action: str, *content: object, cls: str = "", ident: str = "") -> Safe:
+    """A form that changes something: always a POST. `ident` is the id of the form, for the one page whose script sends it."""
+    return fmt('<form method="post" action="{action}"{ident}{cls}>{content}</form>', action=action, ident=fmt(' id="{ident}"', ident=ident) if ident else Safe(""), cls=_class(cls),
+               content=join(content))
 
 
 def button(label: str, *, name: str = "", value: str = "", kind: str = "") -> Safe:
@@ -259,9 +270,9 @@ def _nav(ctx: Ctx, current: str) -> Safe:
 
 
 def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = "", ai: bool = False, why: str = "", models: Sequence[str] | None = None,
-         headers: dict[str, str] | None = None, wide: bool = False) -> Response:
+         headers: dict[str, str] | None = None, wide: bool = False, sends: bool = False) -> Response:
     """A whole page for a signed-in person: the landmarks, the title, the footer. `why` finishes the sentence "You see this because ..." of "About this page". `wide` is for the page
-    of the decisions, which has room for a chart beside the text."""
+    of the decisions, which has room for a chart beside the text. `sends` is for the page that sends the answer of a button on a card by itself (respond)."""
     principal = ctx.principal
     footer = footer_line(ctx, ai, why, models)
     document = fmt(
@@ -272,7 +283,7 @@ def page(ctx: Ctx, title: str, body: Safe, *, status: int = 200, current: str = 
         '<nav aria-label="Pages"><ul>{nav}</ul></nav>\n<main id="main"{wide}>\n{body}\n</main>\n<footer>\n{footer}\n</footer>\n</body>\n</html>\n',
         title=title, style=Safe(STYLE), home=ctx.url("/"), name=principal.name if principal else "", roles=", ".join(principal.roles) if principal else "",
         nav=_nav(ctx, current), body=body, footer=footer, wide=Safe(' class="wide"') if wide else Safe(""))
-    return respond(status, document, headers=headers)
+    return respond(status, document, headers=headers, sends=sends)
 
 
 def message_page(ctx: Ctx, status: int, title: str, *lines: object, back: tuple[str, str] | None = None, ai: bool = False, why: str = "", current: str = "", kind: str = "") -> Response:

@@ -11,9 +11,10 @@ The message is one JSON text in UTF-8, not base64, and at most MAX_BYTES bytes:
     {"v": 1, "id": "<delivery id>", "to": "<mail address of the person>", "title": "<short plain title>", "card": {<Adaptive Card 1.4>}}
 
 `id` is the id of the record that Meternaut writes about the try (cases/offers.py), so that a run of the flow and the record can be put side by side. `to` is the address that the list of people
-holds for the person, and never a text of the estate. `title` is the fixed words of a notification (cards.SUMMARIES), with no resource name and no amount. `card` has one link, to the page
-of its request, and nothing to fill in: the action that posts it takes no answer. A card that does not fit is not cut (cut JSON is not a card): offers.py puts cards.minimal_card in its
-place, which holds the headline, the link and the footer.
+holds for the person, and never a text of the estate. `title` is the fixed words of a notification (cards.SUMMARIES), with no resource name and no amount. `card` has the page of its request as a
+link and, for a request that this person may answer, its answer buttons as links to pages of the function app (cases/cardlinks.py), and nothing to fill in: the action that posts it takes no typed
+answer, and nothing comes back from a tap. A card that does not fit is not cut (cut JSON is not a card): offers.py puts cards.minimal_card in its place, which holds the headline, the link and the
+footer.
 
 Delivery is best effort and there is no receipt. `sent` means that the queue took the message. It does not mean that the flow read it, that the Flow bot posted it, or that the person saw it:
 nothing comes back to Meternaut, and the letter follows after the time that cases/notify.py says when no card was sent. A call that failed on the network or with a 5xx answer may have

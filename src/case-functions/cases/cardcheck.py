@@ -1,16 +1,15 @@
-"""A structural check of an Adaptive Card of schema 1.4, written with the standard library (cards.py makes every card that Meternaut puts on the queue, and this checks it).
+"""A structural check of an Adaptive Card of schema 1.4, with the standard library (cards.py makes every card that Meternaut puts on the queue, and this checks it).
 
-The renderers of the repository's card tooling (tools/render-cards) need node packages that cannot be installed on the machines that build this repository, so the card is checked
-here against what the public schema (https://adaptivecards.microsoft.com/schemas/adaptive-card.json, read on 2026-11-08) says about the elements and actions that cards.py uses and
-against the rules of this project that a machine can check. The check is deliberately narrower than the schema: an element or an action that cards.py does not use is an error
-(a card with an Action.Submit, an Action.Execute, an input, an image, a table or a link in a text is a mistake here: the action of Power Automate that posts the card takes no answer, so
-the card has one link and nothing to fill in), a property that the schema does not list for its element is an error (a typo would be ignored by a renderer and be seen by nobody), and the
-size, the links, the identifiers and the characters of every text are held to what the card needs. The version is 1.4: Microsoft's own tracker reports that the posting actions of Power Automate
-render only up to 1.4 (https://github.com/microsoft/AdaptiveCards/issues/8965, an open issue read on 2026-11-11), the Teams reference says 1.5, and a 1.4 card renders in both. So a
-property that came with 1.5 (the style heading of a TextBlock) is not used.
+The card tooling of the repository (tools/render-cards) needs node packages that the build machines cannot install, so a card is checked here against what the public schema
+(https://adaptivecards.microsoft.com/schemas/adaptive-card.json, read on 2026-11-08) says about the elements and actions that cards.py uses, and against the rules of this project that a machine can check.
+The check is narrower than the schema on purpose: an element or action that cards.py does not use is an error (no Action.Submit, no Action.Execute, no input, image or table: the action of Power Automate
+that posts the card takes no answer, so a button opens a page of the app or shows and hides a part of the card), and so is a property that the schema does not list (a renderer would ignore a typo and nobody
+would see it). A link is the page of one request, a button that answers it (cardlinks.py) or the start page of the web page, and nothing else. A hidden part must be shown by a button
+(Action.ToggleVisibility says for each target whether to show or hide it). The version is 1.4: Microsoft's tracker reports that the posting actions of Power Automate render only up to 1.4
+(https://github.com/microsoft/AdaptiveCards/issues/8965, read on 2026-11-11), the Teams reference says 1.5, and a 1.4 card renders in both. Action.ToggleVisibility and isVisible are from 1.2; the style
+heading of a TextBlock (1.5) is not used.
 
-`check(card)` returns the problems as plain lines with the path of each; an empty list means that the card passes. cards.py checks the card that it made before it hands it on, and
-sends nothing when a problem is found.
+`check(card)` returns the problems as plain lines with the path of each; an empty list means that the card passes. cards.py sends nothing when a problem is found.
 """
 from __future__ import annotations
 
@@ -18,10 +17,12 @@ import json
 import re
 import unicodedata
 
+from . import cardlinks
+
 SCHEMA = "http://adaptivecards.io/schemas/adaptive-card.json"
 VERSION = "1.4"
 MAX_BYTES = 20000  # the message of the Teams actions of Power Automate is at most about 28 KB (Learn, "Microsoft Teams connector", read on 2026-11-11); a card of this repository stays far below it
-MAX_ACTIONS = 1  # the link to the page of the request: nothing else is on a card
+MAX_ACTIONS = 6  # the answers, the page of the request and the two buttons of the question for a change that cannot be undone
 HIDDEN = ("Cc", "Cf", "Cs", "Co", "Cn")
 
 ENUMS = {
@@ -48,9 +49,10 @@ ELEMENTS = {
 ACTION_COMMON = {"id": "str", "title": "str", "style": "style_action", "tooltip": "str", "isEnabled": "bool", "mode": "mode", "requires": "dict"}
 ACTIONS = {
     "Action.OpenUrl": {**ACTION_COMMON, "url": "str"},
+    "Action.ToggleVisibility": {**ACTION_COMMON, "targetElements": "targets"},
 }
 ROOT = {"type", "$schema", "version", "fallbackText", "body", "actions", "msteams", "lang", "speak"}
-REQUIRED = {"TextBlock": {"text"}, "FactSet": {"facts"}, "ActionSet": {"actions"}, "Container": {"items"}, "Action.OpenUrl": {"url"}}
+REQUIRED = {"TextBlock": {"text"}, "FactSet": {"facts"}, "ActionSet": {"actions"}, "Container": {"items"}, "Action.OpenUrl": {"url"}, "Action.ToggleVisibility": {"targetElements"}}
 HTTPS = re.compile(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~%/-]*)?")
 
 
@@ -61,8 +63,12 @@ def _kind(value: object) -> str:
 class _Check:
     def __init__(self) -> None:
         self.problems: list[str] = []
-        self.ids: set[str] = set()
-        self.links: set[str] = set()
+        self.ids: set[str] = set()  # the ids of elements and actions: one name each on the whole card
+        self.element_ids: set[str] = set()
+        self.pages: set[str] = set()  # the pages of a request (or the start page) that links name
+        self.answers: list[tuple[str, str]] = []  # (the answer, the page) of every link that answers
+        self.targets: list[tuple[str, str, bool]] = []  # (where, element id, whether the button shows it) of every target of a toggle
+        self.hidden: list[tuple[str, str | None]] = []  # (where, id) of every element that starts hidden
         self.actions_seen = 0
 
     def add(self, path: str, text: str) -> None:
@@ -121,6 +127,7 @@ class _Check:
                     if value in self.ids:
                         self.add(f"{path}.id", f"the id {value!r} is used twice")
                     self.ids.add(value)
+                    self.element_ids.add(value)
             elif name == "fallback":
                 self.add(f"{path}.fallback", "an element that needs a fallback is not used")
             elif name == "requires":
@@ -138,6 +145,8 @@ class _Check:
         for name in REQUIRED.get(kind, ()):
             if name not in node:
                 self.add(path, f"{kind} needs {name}")
+        if node.get("isVisible") is False:
+            self.hidden.append((path, node.get("id") if isinstance(node.get("id"), str) else None))
         if kind == "TextBlock":
             if node.get("wrap") is not True:
                 self.add(path, "wrap must be true, so that no text is cut")
@@ -192,7 +201,8 @@ class _Check:
             return
         kind = node.get("type")
         if kind not in ACTIONS:
-            self.add(path, f"the action type {kind!r} is not one that cards use (no Action.Submit and no Action.Execute: a card that a flow posts takes no answer, and its one link opens the page)")
+            self.add(path, f"the action type {kind!r} is not one that cards use (no Action.Submit and no Action.Execute: a card that a flow posts takes no answer, so a button opens a page of "
+                           "the app or shows and hides a part of the card)")
             return
         self.actions_seen += 1
         spec = ACTIONS[kind]
@@ -209,6 +219,8 @@ class _Check:
                     if value in self.ids:
                         self.add(f"{path}.id", f"the id {value!r} is used twice")
                     self.ids.add(value)
+            elif spec[name] == "targets":
+                self.targets_of(f"{path}.targetElements", value)
             else:
                 self.value(f"{path}.{name}", spec[name], value, kind)
         if not str(node.get("title", "")).strip():
@@ -217,11 +229,46 @@ class _Check:
             if name not in node:
                 self.add(path, f"{kind} needs {name}")
         if kind == "Action.OpenUrl":
-            url = node.get("url")
-            if not isinstance(url, str) or not HTTPS.fullmatch(url):
-                self.add(f"{path}.url", "must be an https address")
-            else:
-                self.links.add(url)
+            self.link(f"{path}.url", node.get("url"))
+        if kind == "Action.ToggleVisibility" and not str(node.get("tooltip", "")).strip():
+            self.add(path, "a button that shows or hides a part of the card has a tooltip: it is what a screen reader says")
+
+    def link(self, path: str, url: object) -> None:
+        """A link is the page of a request, the start page of the web page, or a button that answers a request (cardlinks.py): nothing else."""
+        if not isinstance(url, str):
+            self.add(path, "must be an https address")
+            return
+        found = cardlinks.ANSWER_ADDRESS.fullmatch(url)
+        if found is not None:
+            self.answers.append((found["verb"], found["page"]))
+            self.pages.add(found["page"])
+        elif HTTPS.fullmatch(url):
+            self.pages.add(url)
+        else:
+            self.add(path, "must be an https address: the page of a request, or the address of a button that answers it (the page, the answer, the code and a link token)")
+
+    def targets_of(self, path: str, value: object) -> None:
+        if not isinstance(value, list) or not value:
+            self.add(path, "must be a list with at least one target")
+            return
+        for index, item in enumerate(value):
+            where = f"{path}[{index}]"
+            if not isinstance(item, dict) or set(item) != {"elementId", "isVisible"} or not isinstance(item["elementId"], str) or not isinstance(item["isVisible"], bool):
+                self.add(where, "a target is the id of an element and whether to show it (true) or hide it (false), and nothing else: a toggle could leave the wrong part showing")
+                continue
+            self.targets.append((where, item["elementId"], item["isVisible"]))
+
+    def toggles(self) -> None:
+        """A button may name elements only, and what starts hidden must be shown by a button."""
+        shown = {element for _, element, visible in self.targets if visible}
+        for where, element, _ in self.targets:
+            if element not in self.element_ids:
+                self.add(where, f"names {element!r}, which is not an element of the card (an action cannot be shown or hidden here)")
+        for where, element in self.hidden:
+            if element is None:
+                self.add(where, "starts hidden and has no id, so no button can show it")
+            elif element not in shown:
+                self.add(where, f"starts hidden, and no button of the card shows {element!r}: a part that nobody can open has no place on a card")
 
     def root(self, card: object) -> None:
         if not isinstance(card, dict):
@@ -251,9 +298,15 @@ class _Check:
         if "actions" in card:
             self.actions("card.actions", card["actions"])
         if self.actions_seen > MAX_ACTIONS:
-            self.add("card", f"has {self.actions_seen} actions, and a card has {MAX_ACTIONS}: the link to the page of its request")
-        if len(self.links) > 1:
-            self.add("card", f"carries {len(self.links)} different links, and a card has one: the page of its request")
+            self.add("card", f"has {self.actions_seen} actions, and a card has at most {MAX_ACTIONS}: the answers, the page of its request and the two buttons of the question")
+        self.toggles()
+        if len(self.pages) > 1:
+            self.add("card", f"carries {len(self.pages)} different pages, and a card is about one request: the buttons that answer and the link to its page are all of that one page")
+        seen: set[str] = set()
+        for verb, _ in self.answers:
+            if verb in seen:
+                self.add("card", f"has two buttons that {verb}")
+            seen.add(verb)
         size = size_of(card)
         if size is None:
             self.add("card", "is not JSON")

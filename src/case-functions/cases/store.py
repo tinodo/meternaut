@@ -380,6 +380,14 @@ class TableStore:
         self._upsert(NONCES, "n", self._digest(token), None, oid=self._quoted(oid), purpose=self._quoted(purpose), expires=expires, payload=data or None)
         return token
 
+    def nonce_peek(self, token: str, oid: str, purpose: str) -> str | None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", token or ""):
+            return None
+        row, _ = self._get(NONCES, "n", self._digest(token))
+        if row is None or row.get("oid") != oid or row.get("purpose") != purpose:
+            return None
+        return _text(row.get("payload")) if _text(row.get("expires")) > stamp(self.clock()) else None
+
     def nonce_take(self, token: str, oid: str, purpose: str) -> str | None:
         if not re.fullmatch(r"[A-Za-z0-9_-]{20,64}", token or ""):
             return None
