@@ -163,6 +163,7 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
                 ("something mentions its addresses", arrange(mentions=[{"type": "microsoft.network/routetables", "n": 1}]), "check"),
                 ("an automation changed it 40 days ago", arrange(events=[written(40, AUTOMATION)]), "check"),
                 ("a person changed it yesterday", arrange(events=[written(1, "alice@example.com")]), "safe"),
+                ("a person changed it yesterday and an automation 40 days ago", arrange(events=[written(1, "alice@example.com"), written(40, AUTOMATION)]), "check"),
                 ("Meternaut changed it", arrange(events=[written(1, OWN)]), "safe")):
             with self.subTest(case=label):
                 azure = Azure()
