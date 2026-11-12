@@ -178,7 +178,7 @@ def _decision_lines(brief: Brief) -> list[dict]:
     """What changes and with whose rights, whether it can be undone, what could go wrong and whose resource it is: one line each."""
     approving = brief.kind == "change"
     two = (brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else "") if approving else ""
-    change = md(brief.change, 300) + (" It runs with your own permissions, after you sign in to Azure." if approving else "") + (f" {md(two, 320)}" if two else "")
+    change = md(brief.change, 300) + (" It runs with your own permissions." if approving else "") + (f" {md(two, 320)}" if two else "")
     return [_block("change", f"**{'If you approve' if approving else 'If you answer'}:** {change}"), _undo(brief),
             _block("risk", f"**Risk, {md(brief.risk.level, 12)}:** {md(brief.risk.text, 240)}"), _block("owner", f"**Owner:** {md(brief.owner.text, 200)}")]
 
@@ -284,8 +284,8 @@ def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = ()
         "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ Written by an AI.",
         "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
                  _block("hello", f"Hello {md(name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a decision waits for you."),
-                 _block("rules", "I change nothing myself. A card has one link, to the page of its request: you decide there, and a change to Azure runs with your own Azure rights after "
-                                 "you sign in to Azure. You cannot answer on a card."),
+                 _block("rules", "I change nothing myself. A card has one link, to the page of its request: you decide there, and a change to Azure runs with your own Azure rights. "
+                                 "You cannot answer on a card."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
                  _page_set("Open the web page", CardContext(page_url=f"{base}/")),
                  footer((), why, contacts)],

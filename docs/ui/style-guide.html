@@ -233,7 +233,7 @@ nav.toc a{min-height:0;padding:0;border:0}
 
 <h3>Buttons</h3>
 <div class="demo"><p class="acts"><a class="btn primary" href="#buttons">Review and decide</a><a class="btn" href="#buttons">Decide later</a><a class="btn subtle" href="#buttons">Show details</a><a class="btn danger" href="#buttons">Decline</a><a class="btn sm primary" href="#buttons">Review</a></p></div>
-<ul><li>A button starts with a verb and says what it does: "Review and decide", never "OK" or "Open".</li><li>One primary button for each card or row. The rest are plain or subtle.</li><li>Height 40 pixels, or 32 in a row. A button that changes Azure says so in its own words ("Approve and sign in to Azure").</li></ul>
+<ul><li>A button starts with a verb and says what it does in one or two words: "Review and decide", "Approve", "Decline", never "OK" or "Open".</li><li>One primary button for each card or row. The rest are plain or subtle.</li><li>Height 40 pixels, or 32 in a row.</li><li>The sign-in to Azure is never on a button. The person signs in when Azure asks. A page, a letter and a card say once that the change is made with the person's own permissions (the line "Who does it" of the page), and nowhere else.</li></ul>
 
 <h3>Charts in a row</h3>
 <div class="two"><div class="demo flex">
@@ -258,10 +258,10 @@ nav.toc a{min-height:0;padding:0;border:0}
 
 <h3>The answer panel</h3>
 <div class="demo"><section class="panel"><h2>Your answer</h2>
-<div class="acts stack"><a class="btn primary" href="#buttons">Approve and sign in to Azure</a><a class="btn secondary" href="#buttons">Decline</a></div>
+<div class="acts stack"><a class="btn primary" href="#buttons">Approve</a><a class="btn secondary" href="#buttons">Decline</a></div>
 <div class="acts"><a class="btn sm subtle" href="#buttons">This is not mine</a><a class="btn sm subtle" href="#buttons">Ask or tell</a><a class="btn sm subtle" href="#buttons">Decide later</a></div>
 </section></div>
-<ul><li>One panel, one form. The note and the reason come first; then the main button and "Decline" stacked, full width; then the quiet answers, which are small and look like links.</li><li>The main button says what happens: for a change it is "Approve and sign in to Azure", for advice "Worth acting on". Nothing in the panel approves anything on its own.</li><li>While a switch holds changes, the main button is left out and a notice says so; the other answers stay.</li></ul>
+<ul><li>One panel, one form. The note and the reason come first; then the main button and "Decline" stacked, full width; then the quiet answers, which are small and look like links.</li><li>The main button says what happens: for a change it is "Approve", for advice "Worth acting on". Nothing in the panel approves anything on its own.</li><li>While a switch holds changes, the main button is left out and a notice says so; the other answers stay.</li></ul>
 
 <h3>Notices</h3>
 <div class="demo">
@@ -277,8 +277,8 @@ nav.toc a{min-height:0;padding:0;border:0}
 
 <h3>The confirmation before a change that cannot be undone</h3>
 <div class="demo"><div class="notice warning"><p class="notice-title">This cannot be undone</p><p>The disk and the data on it are deleted, and no snapshot was taken.</p></div>
-<p class="acts"><a class="btn primary" href="#buttons">No, go back</a><a class="btn danger" href="#buttons">Yes, delete it and sign in to Azure</a></p></div>
-<ul><li>Approving a change that cannot be undone, such as a delete, does not start the sign-in at once. A second page, titled "Confirm: " and the short title of the request, says that nothing has happened yet, what would be lost, where, and asks once.</li><li>The safe answer is the main button and stands first: "No, go back". The other is red and says what it does in the words of the first button: "Yes, delete it and sign in to Azure". Nothing is recorded and nothing is changed until that button is pressed and the person has signed in to Azure.</li><li>A change that can be undone (stop a machine, resize, change a tier) and advice never ask. Asking every time teaches people to press through.</li><li>The page has no question mark, because plain pages state and do not ask; it carries the same one-time token and the note of the page before.</li></ul>
+<p class="acts"><a class="btn primary" href="#buttons">No, go back</a><a class="btn danger" href="#buttons">Yes, delete it</a></p></div>
+<ul><li>Approving a change that cannot be undone, such as a delete, does not start the sign-in at once. A second page, titled "Confirm: " and the short title of the request, says that nothing has happened yet, what would be lost, where, and asks once.</li><li>The safe answer is the main button and stands first: "No, go back". The other is red and says what it does, with the verb of the request: "Yes, delete it". Nothing is recorded and nothing is changed until that button is pressed and the person has signed in to Azure.</li><li>A change that can be undone (stop a machine, resize, change a tier) and advice never ask. Asking every time teaches people to press through.</li><li>The page has no question mark, because plain pages state and do not ask; it carries the same one-time token and the note of the page before.</li></ul>
 
 <h3>The AI line in the footer</h3>
 <div class="demo"><footer class="bare"><p>Recommendations written by AI. A person approves every change.</p><details><summary>About this page</summary><p>Two AI agents, the Investigator and the Skeptic, wrote what you see. Code checked every figure against Cost Management and Azure. You see this page because you are listed as an approver. Responsible for Meternaut: Olga (olga@example.com).</p></details></footer></div>

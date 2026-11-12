@@ -60,7 +60,7 @@ class DeleteFamily(Family):
         name = clean_text(getattr(lead, "name"), 120)
         return Planned(
             title=f"{w.title} in resource group {group}",
-            what_changes=(f"When you approve and sign in to Azure, Meternaut deletes the {w.noun} named {name} in resource group {group} "
+            what_changes=(f"When you approve, Meternaut deletes the {w.noun} named {name} in resource group {group} "
                           f"(subscription {getattr(lead, 'subscription_id')[:8]}) with your own permissions. It changes nothing else. "
                           f"Right before it deletes, it reads the resource again and stops unless {w.recheck}."),
             could_go_wrong=(f"{w.gone_wrong} If your account may not delete the resource, Azure refuses and nothing changes. {skeptic_sentence(case)}"),

@@ -186,7 +186,7 @@ class ScaleVpnGateway(Family):
                    if now_limit and then_limit else "")
         return Planned(
             title=f"Scale a point-to-site gateway down to {to} scale units in resource group {group}",
-            what_changes=(f"When you approve and sign in to Azure, Meternaut changes the scale units of the point-to-site gateway named {name} in resource group {group} "
+            what_changes=(f"When you approve, Meternaut changes the scale units of the point-to-site gateway named {name} in resource group {group} "
                           f"(subscription {getattr(lead, 'subscription_id')[:8]}) from {units} to {to}, with your own permissions. It sends the gateway back to Azure as it was read, with that one "
                           f"number changed. Right before it acts, it reads the gateway and its connection count again and stops unless the gateway still has {units} scale units, its last operation "
                           f"worked, nobody was connected in the last {CONNECTION_DAYS} days, and it is still tagged as planted by Meternaut, still in this resource group and not locked."),

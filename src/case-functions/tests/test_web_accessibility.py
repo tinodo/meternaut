@@ -8,7 +8,7 @@ from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, 
 from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
 from cases.web import approval, layout
 
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 KINDS = ("declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
          "step_up_failed", "refused_code", "refused_state", "refused_role", "refused_paused", "expired", "duplicate", "error")
 SUCCESSES = ("declined", "asked", "later", "acknowledged", "confirmed", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged")
@@ -274,6 +274,13 @@ class EveryPage(unittest.TestCase):
                 self.assertTrue(link.text(), f"{name}: a link with no words: {link.attrs}")
             for node in reply.root.walk():
                 self.assertIn(node.attrs.get("tabindex", "0"), ("0", "-1"), "no positive tabindex")
+
+    def test_no_button_link_or_label_says_sign_in(self):
+        # The person signs in when Azure asks, and that is no part of what a button or a link is called ("Approve", "Yes, delete it").
+        for name, reply in self.each():
+            for node in reply.root.walk():
+                if node.tag in ("button", "a", "label", "legend", "summary"):
+                    self.assertNotRegex(node.text(), r"(?i)\bsign(?:s|ed|ing)?[ -]?in\b", f"{name}: {node.tag} {node.text()!r}")
 
     def test_nothing_changes_or_moves_by_itself(self):
         for name, reply in self.each():

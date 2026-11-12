@@ -126,7 +126,7 @@ class ChangeDiskTier(Family):
                 else "The disk is attached to a machine that is stopped and released, so nothing runs while it changes.")
         return Planned(
             title=f"Move a managed disk to {tier_words(to)} in resource group {group}",
-            what_changes=(f"When you approve and sign in to Azure, Meternaut changes the type of the disk named {name} in resource group {group} "
+            what_changes=(f"When you approve, Meternaut changes the type of the disk named {name} in resource group {group} "
                           f"(subscription {getattr(lead, 'subscription_id')[:8]}) from {tier_words(frm)} to {tier_words(to)}, with your own permissions. It changes nothing else: not the data and not the size. "
                           f"{wait} Right before it acts, it reads the disk again and stops unless it is still {tier_words(frm)} and still in that state, still tagged as planted by Meternaut, "
                           "still in this resource group and not locked."),

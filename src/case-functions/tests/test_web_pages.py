@@ -573,7 +573,7 @@ class TheBriefOfACase(unittest.TestCase):
         self.assertIn("Every step of the finding", disclosure.text())
 
     def test_the_status_of_a_case_that_was_approved_or_declined_is_said_in_words(self):
-        for status, words_ in (("approved", "Approved. A person approved the request and signed in to Azure. The change is being made now."),
+        for status, words_ in (("approved", "Approved. A person approved the request. The change is being made now."),
                                ("declined", "Declined. A person said no. Nothing changed."),
                                ("acknowledged", "Worth acting on. A person said that this is worth acting on. Meternaut changed nothing in Azure.")):
             with self.subTest(status=status):

@@ -24,8 +24,8 @@ from .models import ADVISE, TWO_PEOPLE_CLASS, DecisionRecord, PlanRecord, TwoPeo
 CLASS = TWO_PEOPLE_CLASS
 # Why a person may not give the second approval, as plain sentences. Each ends in "Nothing is approved."
 ALONE = "This change needs two people, and fewer than two are listed as approvers of this request, so nobody can approve it. Nothing is approved."
-FIRST = "This change needs two people. Nobody has confirmed the request yet: one person confirms it, and then another approves it and signs in to Azure. Nothing is approved."
-MINE = "You confirmed this request yourself, so a second person has to approve it and sign in to Azure. Nothing is approved."
+FIRST = "This change needs two people. Nobody has confirmed the request yet: one person confirms it, and then another approves it. Nothing is approved."
+MINE = "You confirmed this request yourself, so a second person has to approve it. Nothing is approved."
 STALE = "The request changed after {name} confirmed it, so that confirmation does not count any more. It has to be confirmed again. Nothing is approved."
 
 

@@ -33,7 +33,7 @@ def make_plan(**changes) -> PlanRecord:
         plan_id=PLAN_ID, case_id="c1", family="delete-disk", resource_id=f"/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/{NAME}",
         resource_name=NAME, resource_group=GROUP, subscription_id="11111111-2222-3333-4444-555555555555", code="7F3K92QD",
         title=f"Delete an unattached managed disk in resource group {GROUP}",
-        what_changes=f"When you approve and sign in to Azure, Meternaut deletes the disk named {NAME} with your own permissions. It changes nothing else.",
+        what_changes=f"When you approve, Meternaut deletes the disk named {NAME} with your own permissions. It changes nothing else.",
         saving_usd_month=41.2, waiting_costs_usd_day=1.37, could_go_wrong="If something still uses the disk, that use stops.", undo="A deleted disk cannot be restored.",
         evidence_level="Observed now: the disk is unattached.", approvers=(OID,), created_at="2026-11-02T09:00:00Z", expires_at="2026-11-08T09:30:00Z")
     values.update(changes)
@@ -123,11 +123,17 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.assertTrue(self.ids["confidence"]["text"].startswith("**How sure: "))
         self.assertLessEqual(len(self.ids["facts"]["facts"]), 3)
         self.assertTrue(self.ids["change"]["text"].startswith("**If you approve:** "))
-        self.assertIn("with your own permissions, after you sign in to Azure", self.ids["change"]["text"], "whose rights it uses")
+        self.assertIn("It runs with your own permissions.", self.ids["change"]["text"], "whose rights it uses")
+        self.assertEqual(self.ids["change"]["text"].count("own permissions"), 1)
         self.assertEqual(self.ids["undo"]["text"], "Undo: This cannot be undone.")
         self.assertEqual(self.ids["undo"]["weight"], "Bolder", "an irreversible change is one bold line")
         self.assertTrue(self.ids["risk"]["text"].startswith("**Risk, medium:** "))
         self.assertIn("alice@example.com", self.ids["owner"]["text"])
+
+    def test_no_text_and_no_button_of_the_card_says_sign_in_and_who_makes_the_change_is_said_once(self):
+        everything = " ".join(texts(self.card))
+        self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", everything), [])
+        self.assertEqual(everything.count("own permissions"), 1)
 
     def test_the_only_link_is_the_page_of_the_request_and_the_approval_is_made_there(self):
         (page,) = actions_of(self.card)
@@ -223,6 +229,8 @@ class TheDecisionCardOfAChangeThatNeedsTwoPeople(unittest.TestCase):
                 self.assertIn(words, text)
                 self.assertTrue(text.startswith("**If you approve:** "))
                 self.assertIn("Two people approve this.", text)
+                self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", " ".join(texts(card))), [])
+                self.assertEqual(" ".join(texts(card)).count("own permissions"), 1, "who makes the change is said once, whatever the stage")
                 self.assertEqual(cardcheck.check(card), [])
 
     def test_no_card_has_a_button_that_confirms_or_approves_and_the_link_is_the_way_to_both(self):
@@ -421,6 +429,8 @@ class TheFirstContactCard(unittest.TestCase):
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
         self.assertTrue(ids["hello"]["text"].startswith("Hello Maya, I am Meternaut"))
         self.assertIn("You cannot answer on a card.", ids["rules"]["text"])
+        self.assertIn("a change to Azure runs with your own Azure rights. You cannot answer", ids["rules"]["text"])
+        self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", json.dumps(card)), [])
         self.assertTrue(ids["ai-footer"]["text"].startswith("Written by an AI; a person approves every change."))
         self.assertEqual(card["body"][-1]["id"], "ai-footer")
         self.assertNotIn("planCode", json.dumps(card))

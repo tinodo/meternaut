@@ -128,8 +128,8 @@ class ThePackage(unittest.TestCase):
                     console.get(path, oid=oid)
             form = console.get("/me/settings").form("/me/settings/export")
             self.assertEqual(console.submit(form).status, 200)
-            approve = console.get("/ok/plan0001").form("/ok/plan0001", has_button="Approve and sign in to Azure")
-            self.assertEqual(console.submit(approve, "Approve and sign in to Azure").status, 303, "the page answers with a redirect and does not make the call itself")
+            approve = console.get("/ok/plan0001").form("/ok/plan0001", has_button="Approve")
+            self.assertEqual(console.submit(approve, "Approve").status, 303, "the page answers with a redirect and does not make the call itself")
 
     def test_the_routes_are_in_one_table_and_are_the_pages_of_the_design(self):
         from cases.web import router

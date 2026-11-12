@@ -101,16 +101,16 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
               "premiumv2_lrs": "Premium SSD v2", "standardssd_zrs": "Standard SSD (ZRS)", "premium_zrs": "Premium SSD (ZRS)"}
 
 # The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
-# reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family.
-WHO_ACTS = ("You do, with your own Azure sign-in: you approve, you sign in to Azure, Azure checks your rights, and the change is made right then. "
+# reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family, and a page says it
+# once, in these words: no button and no line of an approval repeats that the person signs in to Azure (the person does, when Azure asks).
+WHO_ACTS = ("You do, with your own permissions: when you approve, Azure checks your rights and the change is made right then. "
             "Meternaut holds no right of its own to change anything.")
-TWO_PEOPLE = "Two people approve this: one confirms the request, then another approves it and signs in to Azure."
+TWO_PEOPLE = "Two people approve this: one confirms the request, then another approves it."
 # What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
 SECOND_WORDS = {
-    "first": ("Two people approve this. One of them confirms the request, which needs no sign-in to Azure, and then another approves it and signs in to Azure. "
-              "Nobody has confirmed it yet."),
-    "second": "Two people approve this. {name} confirmed the request {when}. You approve it now and sign in to Azure, and it runs with your own permissions.",
-    "mine": "Two people approve this. You confirmed the request {when}. A second person approves it and signs in to Azure.",
+    "first": "Two people approve this. One of them confirms the request, which changes nothing, and then another approves it. Nobody has confirmed it yet.",
+    "second": "Two people approve this. {name} confirmed the request {when}. You approve it now.",
+    "mine": "Two people approve this. You confirmed the request {when}. A second person approves it.",
     "stale": "Two people approve this. The request changed after {name} confirmed it {when}, so that confirmation does not count any more. It has to be confirmed again.",
     "alone": ("Two people approve this, and fewer than two people are listed as approvers of it, so nobody can approve it. You can decline it, say that it is not yours, "
               "or ask the people who are responsible for Meternaut to add a second approver."),

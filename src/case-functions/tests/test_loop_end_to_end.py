@@ -43,7 +43,7 @@ HOST = "func.example.net"
 PERSON_TOKEN = "arm-access-token-of-the-person-0123456789"
 CHECKED_TOKEN = "arm-access-token-after-the-extra-check-0123456789"
 SCHEME = "Bearer"
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 LOOP_ENV = {
     **ENV,
     "STORE_ACCOUNT_NAME": "stexample",

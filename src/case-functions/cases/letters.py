@@ -307,7 +307,7 @@ def _gateways_block(doc: "_Doc", brief: Brief) -> None:
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each. A change that needs two people says so in the
     same line, in words that stay true whatever has happened since the letter was written."""
-    acts = " It runs with your own permissions, after you sign in to Azure." if brief.kind == "change" else ""
+    acts = " It runs with your own permissions." if brief.kind == "change" else ""
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     return (("Owner", _data(brief.owner.text, 160)),
             ("If you approve" if brief.kind == "change" else "If you answer", _data(brief.change, 200) + acts + two),

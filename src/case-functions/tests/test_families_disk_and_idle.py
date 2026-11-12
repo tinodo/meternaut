@@ -251,7 +251,7 @@ class DeletingWhatNothingUses(unittest.TestCase):
                 self.assertEqual((plan.family, plan.title), ("delete-idle-resource", f"{title} in resource group meternaut-fam-rg"))
                 self.assertEqual(plan.target, {})
                 self.assertEqual(plan.preconditions["resourceType"], fs.KINDS[kind][2])
-                self.assertIn("When you approve and sign in to Azure, Meternaut deletes the", plan.what_changes)
+                self.assertIn("When you approve, Meternaut deletes the", plan.what_changes)
                 self.assertIn("with your own permissions", plan.what_changes)
                 for state in IN_USE[kind]:
                     with self.subTest(kind=kind, in_use=state):

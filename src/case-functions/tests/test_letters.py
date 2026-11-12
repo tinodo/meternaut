@@ -37,7 +37,7 @@ def make_plan(**changes) -> PlanRecord:
     values = dict(
         plan_id="p1a2b3c4d5", case_id="c1", family="delete-disk", resource_id=f"/subscriptions/s/resourceGroups/{GROUP}/providers/Microsoft.Compute/disks/{NAME}",
         resource_name=NAME, resource_group=GROUP, subscription_id="s", code="7F3K92QD", title=f"Delete an unattached managed disk in resource group {GROUP}",
-        what_changes=f"When you approve and sign in to Azure, Meternaut deletes the disk named {NAME} with your own permissions. It changes nothing else.",
+        what_changes=f"When you approve, Meternaut deletes the disk named {NAME} with your own permissions. It changes nothing else.",
         saving_usd_month=41.2, waiting_costs_usd_day=1.37,
         could_go_wrong="If something still uses the disk, that use stops.", undo="A deleted disk cannot be restored.",
         evidence_level="Observed now: the disk is unattached. Not measured yet: the saving.", approvers=(OID,), created_at="2026-11-05T09:00:00Z",
@@ -365,14 +365,19 @@ class Approval(unittest.TestCase):
         self.assertIn("State: Not attached to any virtual machine", text)
         self.assertIn("Owner: Meternaut has not looked up who owns this resource yet.", text)  # whose is it
         self.assertIn("If you approve: Deletes the disk disk-zq7-name in resource group rg-zq7-group. Nothing else changes. "
-                      "It runs with your own permissions, after you sign in to Azure.", text)  # what happens, who does it, with whose rights
+                      "It runs with your own permissions.", text)  # what happens, who does it, with whose rights
         self.assertIn("Undo: This cannot be undone.", text)
         self.assertIn("Risk, medium: If something still uses the disk, that use stops, and the data on it is lost for good.", text)
         self.assertIn("Review and decide: https://meternaut.example/ok/p1a2b3c4d5", text)  # what are my choices: the page
+        for part in (text, self.letter().html):  # the link is a link to the page, and nothing in the letter, its link included, says that the person signs in
+            self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", part), [])
+        self.assertEqual(text.count("own permissions"), 1, "who makes the change is said once")
 
     def test_a_change_that_needs_two_people_says_so_in_words_that_stay_true_and_one_for_one_person_does_not(self):
         two = self.letter(plan=make_plan(approval_class="R3", approvers=("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"))).text
-        self.assertIn("It runs with your own permissions, after you sign in to Azure. Two people approve this: one confirms the request, then another approves it and signs in to Azure.", two)
+        self.assertIn("It runs with your own permissions. Two people approve this: one confirms the request, then another approves it.", two)
+        self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", two), [], "no sign-in in the letter, whatever the number of people")
+        self.assertEqual(two.count("own permissions"), 1)
         self.assertNotIn("Two people", self.letter().text)
         advice = self.letter(plan=make_plan(family="advise", approval_class="R3"), case=make_case(status="needs_human")).text
         self.assertNotIn("Two people", advice, "advice changes nothing, so it never needs two people")

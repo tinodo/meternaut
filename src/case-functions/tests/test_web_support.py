@@ -76,7 +76,7 @@ def make_case(**changes) -> CaseRecord:
 def make_plan(**changes) -> PlanRecord:
     base = dict(plan_id="plan0001", case_id="case0001", family="delete-disk", resource_id=DISK, resource_name="planted-disk-1", resource_group=GROUP, subscription_id=SUB,
                 code="7F3K92QD", title=f"Delete an unattached managed disk in resource group {GROUP}",
-                what_changes="When you approve and sign in to Azure, Meternaut deletes the disk named planted-disk-1 with your own permissions. It changes nothing else.",
+                what_changes="When you approve, Meternaut deletes the disk named planted-disk-1 with your own permissions. It changes nothing else.",
                 saving_usd_month=7.17, waiting_costs_usd_day=0.24,
                 could_go_wrong="If something still uses the disk, that use stops.", undo="A deleted disk cannot be restored and its data is lost.",
                 evidence_level="Observed now: the disk is unattached. Not measured yet: the saving.", approvers=(TINO,), created_at=at(hours=-1), expires_at=at(hours=71),
@@ -419,6 +419,10 @@ class Reply:
 
     def forms(self) -> list[Form]:
         return [Form(node) for node in self.root.find_all("form")]
+
+    def has_button(self, label: str) -> bool:
+        """Whether a form of the page has a button with exactly this label: the word of a button is also a word of the text ("Approve" and "Approved by")."""
+        return any(form.has_button(label) for form in self.forms())
 
     def form(self, action_ends: str | None = None, has_button: str | None = None) -> Form:
         for candidate in self.forms():

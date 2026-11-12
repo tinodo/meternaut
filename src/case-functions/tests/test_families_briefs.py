@@ -26,7 +26,7 @@ from cases.web import figures
 BASE = "https://meternaut.example"
 CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
 PERSON = Person(TINO, "Tino", ("approver", "owner"), "tino@example.com")
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 
 
 def machine(world, **more):
@@ -219,7 +219,8 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertIn(brief.plain(figures.title_of(b)[1], 200), letter.text)
                 self.assertIn(f"{b.where.kind}, resource group {fs.GROUP}", letter.text, "the place is on the line under the title")
                 self.assertIn(brief.plain(b.change, 200), letter.text)
-                self.assertIn("It runs with your own permissions, after you sign in to Azure.", letter.text)
+                self.assertIn("It runs with your own permissions.", letter.text)
+                self.assertNotIn("sign in", letter.text.lower())
                 self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 160), letter.text)
                 self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
                 self.assertIn(f"Risk, {b.risk.level}", letter.text)

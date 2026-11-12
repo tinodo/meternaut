@@ -665,7 +665,7 @@ class AdviceNeverReachesAzure(Base):
                 token = self.token(who)
                 begun = self.delegation().begin(who, self.plan.plan_id, self.plan.code, token)
                 self.assertEqual((begun.location, begun.refusal.kind), ("", "refused_state"))
-                self.assertIn("nothing to sign in to", begun.refusal.message)
+                self.assertIn("no change to approve", begun.refusal.message)
                 self.assertTrue(self.store.nonce_use(token, who.oid, self.plan.plan_id), "the form's token is not used up by the refusal")
         self.assertEqual((self.azure.calls, self.redeemed), ([], []))
         self.assertEqual([n for n in self.store.nonces.values() if n[1] == "arm-signin"], [], "no state of a sign-in was made")
