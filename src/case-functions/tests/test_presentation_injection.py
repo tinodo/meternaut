@@ -10,6 +10,7 @@ import re
 import unicodedata
 import unittest
 from dataclasses import replace
+from urllib.parse import urlsplit
 
 from support import APP_ROOT  # noqa: F401
 
@@ -401,7 +402,7 @@ class TheLinks(unittest.TestCase):
                     self.assertEqual(reply.status, 200, label)
                     audit_html(self, reply.text, f"{label}", PAYLOADS["html"])
                     self.assertEqual([link for link in reply.links() if link.startswith("https://portal.azure.com/#resource")], [], label)
-                    self.assertTrue(all(re.fullmatch(ANALYSIS, link) for link in reply.links() if link.startswith("https://portal.azure.com")),
+                    self.assertTrue(all(re.fullmatch(ANALYSIS, link) for link in reply.links() if urlsplit(link).netloc == "portal.azure.com"),
                                     f"{label}: the one link that is left is Cost analysis, made from the id of the subscription, which is the id of one")
 
     def test_a_plan_id_that_is_not_an_id_is_made_into_a_safe_piece_of_a_path_on_the_home_page(self):
