@@ -354,7 +354,7 @@ resource cardsQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023
 
 // The queue that the flow writes to once it has posted a card. The app's trigger (the function cards-posted) reads it through the host storage connection, as it reads the control queue: the app holds
 // Storage Queue Data Contributor on the whole account for its host (below), so no role is added for it, and a message that fails five times goes to teams-posted-poison, a queue that the host makes
-// itself. The right to write to it is the right of the person whose connection the flow uses: that person gets Storage Queue Data Message Sender on this one queue by hand, as for the cards queue.
+// itself. The right to write to it is the right of the account that owns the flow's connection (a person today, perhaps a service account): it gets Storage Queue Data Message Sender on this one queue by hand, as for the cards queue.
 resource postedQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
   parent: queueService
   name: postedQueueName

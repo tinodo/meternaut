@@ -130,7 +130,7 @@ The owner starts the Hub actions. The roles in Teams and in Power Platform may b
 
 **In Azure, by a person.** The deploy identity gives roles to service principals only, never to a person.
 
-4. Give the person whose connection the flow will use a data role on each of the two queues, and nothing wider. A role takes up to ten minutes to apply:
+4. Give the account that owns the flow's connections (a person, or a cloud-only service account if the owner chooses one) a data role on each of the two queues, and nothing wider. A role takes up to ten minutes to apply:
 
    ```
    az role assignment create --assignee-object-id <object id of the person> --assignee-principal-type User --role "Storage Queue Data Message Processor" --scope /subscriptions/<subscription id>/resourceGroups/<resource group>/providers/Microsoft.Storage/storageAccounts/<storage account>/queueServices/default/queues/teams-cards
@@ -186,7 +186,7 @@ The import by an API call (`ImportSolutionAsync`) is not written: its connection
 | Cards posted as the Flow bot | 25 requests per connection in 300 seconds. A burst above that is delayed by the retry of 15 minutes. | [Teams connector, throttling](https://learn.microsoft.com/connectors/teams/) |
 | A flow that fails | A cloud flow whose trigger or actions fail without a break for 14 days is turned off. One that nothing triggers for 90 days may be turned off, unless its owner has a premium licence. | [Limits of cloud flows](https://learn.microsoft.com/power-automate/limits-and-config) |
 | A developer environment | One that is inactive for 30 days is disabled. Whether a flow that only looks at a queue counts as use is not stated. | [Developer Plan](https://learn.microsoft.com/power-platform/developer/plan) |
-| A person behind the flow | The connections belong to a person. If that account is disabled, or a sign-in rule asks for a new sign-in, the flow stops and the cards wait in the queue until their messages expire. A dedicated service user is the usual cure; it needs its own licences and is not decided. | [Azure Queues connector](https://learn.microsoft.com/connectors/azurequeues/) |
+| A person behind the flow | The connections belong to a person. If that account is disabled, or a sign-in rule asks for a new sign-in, the flow stops and the cards wait in the queue until their messages expire. A dedicated service user is the usual cure; it needs its own licences and is not decided. This was seen on 2026-11-12: the trigger failed with Unauthorized because the sign-in token of the Azure Queues connection, and of the Teams connection, had expired and was not renewed; the owner is a guest of the tenant, and its rules probably stop a server from renewing a token (not proved). The app's messages do not depend on who owns the connections: whichever account does needs the two roles of step 4, and a card that an earlier account posted may not be replaceable by a later one (not tried). | [Azure Queues connector](https://learn.microsoft.com/connectors/azurequeues/) |
 | A private channel | Posting to a private channel is not supported; the flow posts to a person's chat only. | [Teams connector](https://learn.microsoft.com/connectors/teams/) |
 | Region | The Power Platform region `sweden` maps to `swedencentral` only, so there is one network and no second region to fail over to. | [Supported regions](https://learn.microsoft.com/power-platform/admin/vnet-support-overview#supported-regions) |
 

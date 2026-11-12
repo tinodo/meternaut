@@ -953,7 +953,7 @@ az role assignment list --subscription $devSub --assignee-object-id $driftPrinci
 | Step | What a person does | Who can | Needed by |
 |---|---|---|---|
 | T1 | Registers the resource provider `Microsoft.PowerPlatform` (it was registered in the pilot subscription when it was read on 2026-11-11) | A person with Contributor or Owner on the subscription | `powerplatform`, which stops at its first step until it is registered |
-| T2 | Gives the person whose Azure Queues connection the flow uses *Storage Queue Data Message Processor* on the queue `teams-cards` and *Storage Queue Data Message Sender* on the queue `teams-posted` (a new role takes up to ten minutes to apply) | A person with a role assignment right on the queues | The flow: the trigger, the delete and the message that it writes after a post |
+| T2 | Gives the account that owns the flow's Azure Queues connection (a person, or a cloud-only service account) *Storage Queue Data Message Processor* on the queue `teams-cards` and *Storage Queue Data Message Sender* on the queue `teams-posted` (a new role takes up to ten minutes to apply) | A person with a role assignment right on the queues | The flow: the trigger, the delete and the message that it writes after a post |
 | T3 | Gives the Power Platform administrator who links the environment *Reader* on the enterprise policy, if that person cannot read it | A person with a role assignment right on the policy | `python tools/powerplatform.py link` |
 | T4 | Checks that the app *Workflows* is allowed in the Teams admin center | A Teams administrator | The Teams action that posts the card |
 

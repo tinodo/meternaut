@@ -1045,7 +1045,7 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         "       az provider register --namespace Microsoft.PowerPlatform",
         "",
         "In Azure, by a person (the deploy identity gives roles to service principals only):",
-        "  4. Give the person whose Azure Queues connection the flow will use a data role on each of the two queues, and nothing wider. A role takes up to ten minutes to apply:",
+        "  4. Give the account that owns the flow's Azure Queues connection (a person, or the cloud-only service account that the owner may choose) a data role on each of the two queues, and nothing wider. A role takes up to ten minutes to apply:",
         f"       az role assignment create --assignee-object-id {person} --assignee-principal-type User --role \"{ROLE_MESSAGE_PROCESSOR}\" --scope {queue}",
         f"       az role assignment create --assignee-object-id {person} --assignee-principal-type User --role \"{ROLE_MESSAGE_SENDER}\" --scope {posted}",
         f"     (The person's own object id: az ad signed-in-user show --query id --output tsv, run by that person. The account's name: az storage account list --resource-group {group} --query \"[].name\" --output tsv.",
