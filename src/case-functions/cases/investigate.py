@@ -28,10 +28,10 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, capability, decide, gateways, guards, learning, roles, unread, upkeep, wiring
+from . import agents, capability, decide, gateways, guards, impact, learning, roles, unread, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
-from .approvals import MANAGED_BY_AUTOMATION, is_fixture
+from .approvals import is_fixture
 from .arm import scopes_of
 from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, says_nothing, shared
 from .detectors import Context, Lead
@@ -59,6 +59,7 @@ MAX_GROUP_IDS = 200  # the resource ids that the case of a group keeps, for its 
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 AUTOMATION_DAYS = 14  # a resource that an application or service identity changed within this many days is managed by an automation, which is not Meternaut's to advise on
+MAX_IMPACT = 6  # the resources of one run whose impact is checked (cases/impact.py): each check is about ten reads
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
 MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
 SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, at most
@@ -154,7 +155,7 @@ class Investigation:
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
-    automated: int = 0  # the cases whose request was not made because an automation manages the resource (AUTOMATION_DAYS): counted with the findings that were held back
+    held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made because of what the case says (brief.held_back: automation, impact), by reason: counted with the findings held back
 
     @property
     def state(self) -> str:
@@ -604,6 +605,9 @@ def _row(item: Item, toolbox: Toolbox, count: int, fields: tuple[str, ...], sku:
         row["properties"] = typed
     if item.lead.advisor_saving_usd is not None:
         row["advisorSavingUsdMonth"] = item.lead.advisor_saving_usd
+    found = impact.typed(item.lead.facts.get(impact.KEY))
+    if found is not None:
+        row["impact"] = found  # what code found that depends on the resource, as words and counts, and the verdict that its rules made: the Skeptic may object to a fact and not to the verdict
     return row
 
 
@@ -1019,13 +1023,27 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
             "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up}
 
 
+def _own_ids(s: "Services") -> set[str]:
+    """The identities of Meternaut itself: the app's own and the two of the sign-in of the approvers. A change by one of them is not an automation of somebody else."""
+    ex = s.extras
+    return {text.lower() for text in (s.settings.client_id, ex.settings.signin_client_id if ex else "", ex.settings.signin_assertion_client_id if ex else "") if text}
+
+
 def _automated(s: "Services", owner: dict, lead: Lead) -> bool:
     """Whether an automation manages the resource: the Activity Log names a change within AUTOMATION_DAYS days by an identity that is no person (a sign-in name has an @) and is not one of
     Meternaut's own. Waste that Meternaut planted is changed by Meternaut's own deploy, so it is never held."""
     when, by, ex, now = moment(owner.get("changedAt")), str(owner.get("changedBy") or ""), s.extras, s.clock()
-    own = {text.lower() for text in (s.settings.client_id, ex.settings.signin_client_id, ex.settings.signin_assertion_client_id) if text}
-    return (when is not None and bool(by) and "@" not in by and by.lower() not in own and (now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)) - when <= dt.timedelta(days=AUTOMATION_DAYS)
+    return (when is not None and bool(by) and "@" not in by and by.lower() not in _own_ids(s) and (now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)) - when <= dt.timedelta(days=AUTOMATION_DAYS)
             and not is_fixture(lead, wiring.approval_settings(ex.settings)))
+
+
+def _held(s: "Services", finding: Finding, lead: Lead, owner: dict, grouped: bool) -> str:
+    """Why no request is made for a finding of the investigation, or "": an automation manages the resource (_automated), or the finding proposed to delete a resource of the network, or one that
+    others share, and no check of its impact was made (cases/impact.py: a check that read what it could is shown with what it could not read, and is never Safe)."""
+    if _automated(s, owner, lead):
+        return "automation"
+    asked = "delete" in (finding.asked, finding.proposal) and not grouped
+    return "impact" if asked and impact.needed(lead.resource_type) and not isinstance(lead.facts.get(impact.KEY), dict) else ""
 
 
 def _group_of(finding: Finding) -> list[Item] | None:
@@ -1084,7 +1102,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     lead = item.lead
     if group:
         together = _together(group, finding.capped, finding.silenced)
-        kept = {k: v for k, v in lead.facts.items() if k not in (unread.KEY, gateways.KEY)}  # the analysis of one workspace, or of one gateway, is not the analysis of the group
+        kept = {k: v for k, v in lead.facts.items() if k not in (unread.KEY, gateways.KEY, impact.KEY)}  # the analysis of one workspace, one gateway or one resource is not the analysis of the group
         if together["type"] == gateways.TYPE:
             combined = gateways.combine(member.lead.facts.get(gateways.KEY) for member in group)
             kept.update({gateways.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its gateways
@@ -1126,9 +1144,9 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if past and "past" not in learned:
             learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
         owner = _owner_of(s, out, lead)
-        managed = outcome.status in ("proposed", "needs_human") and _automated(s, owner, lead)
-        if managed:
-            learned["held"] = "automation"  # the case stays and no request is made for it (brief.automated)
+        reason = _held(s, finding, lead, owner, bool(group)) if outcome.status in ("proposed", "needs_human") else ""
+        if reason:
+            learned["held"] = reason  # the case stays and no request is made for it (brief.held_back)
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,
@@ -1138,9 +1156,9 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
             subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
-        if managed:
+        if reason:
             upkeep.held(h, record)
-            out.automated += 1
+            out.held_back[reason] = out.held_back.get(reason, 0) + 1
         elif outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:

@@ -37,6 +37,10 @@ NOTHING_TO_SAY = "held back: nothing to say"
 # What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): somebody else
 # manages it, so no request is made, and the run counts it like the findings that say nothing (investigate.py AUTOMATION_DAYS).
 MANAGED_BY_AUTOMATION = "held back: managed by an automation"
+# And of one that proposes to delete a resource of the network, or one that others share, when the check of what depends on it was not made or did not finish (cases/impact.py): the deletion is
+# not announced without it, and the run counts the finding too.
+IMPACT_NOT_CHECKED = "held back: impact not checked"
+HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "impact": IMPACT_NOT_CHECKED}  # the word that a case keeps (learned["held"], brief.held_back) -> what the History says
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
@@ -432,14 +436,14 @@ class Approvals:
             return []
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
-        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing) or that an automation manages (brief.automated) and that nobody has answered: no
+        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing) or that a Watch held back (brief.held_back) and that nobody has answered: no
         request is made for such a finding, and one that was made before is closed, as expired and ending now, like the requests that supersede() takes back. The case keeps its status (a finding that no person has seen). A request that a
         person put off or asked about is theirs and stays. Returns the plans that it closed, each with its case."""
         try:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
-                if case is None or not (brief.says_nothing(case) or brief.automated(case)):
+                if case is None or not (brief.says_nothing(case) or brief.held_back(case)):
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                 if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
@@ -507,7 +511,7 @@ class Approvals:
                     if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
                         self.store.case_put(_with(case, plan_id=plan.plan_id))
                     return None
-            if why_not_ask(case) is not None or brief.says_nothing(case) or brief.automated(case):
+            if why_not_ask(case) is not None or brief.says_nothing(case) or brief.held_back(case):
                 return None
             if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
                                                     and (plan.preconditions or {}).get("caseStatus") == "needs_human") >= ADVICE_OPEN_MAX:

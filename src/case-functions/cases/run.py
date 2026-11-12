@@ -21,7 +21,7 @@ from . import costs as cost_words
 from . import decide, detectors, evidence, guards, investigate, learning, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
-from .approvals import MANAGED_BY_AUTOMATION, NOTHING_TO_SAY, is_fixture
+from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
 from .arm import Arm, scopes_of
 from .brief import says_nothing
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
@@ -510,13 +510,13 @@ def _keep_requests_up_to_date(s: Services, ranked: Sequence[Lead], say: Callable
         say(f"the open requests could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
-def _take_back_empty(s: Services, say: Callable[[str], None]) -> tuple[int, int]:
-    """Takes back the open requests that cannot say what to look at, and those that an automation manages (cases/upkeep.py take_back), and returns how many of each. It never fails the run."""
+def _take_back_empty(s: Services, say: Callable[[str], None]) -> Counter:
+    """Takes back the open requests that cannot say what to look at, and those that a Watch held back (cases/upkeep.py take_back), and returns how many of each reason. It never fails the run."""
     try:
         return upkeep.take_back(s.extras, s.history)
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"the requests that say nothing could not be taken back ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
-        return 0, 0
+        return Counter()
 
 
 def execute(s: Services, trigger: str) -> Summary:
@@ -685,13 +685,13 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
-    nothing, managed = len(held_ids) + investigation.said_nothing, investigation.automated
+    held = Counter({NOTHING_TO_SAY: len(held_ids) + investigation.said_nothing})
+    held.update({HELD_BACK[key]: count for key, count in investigation.held_back.items()})
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
-        more, taken = _take_back_empty(s, say)  # the requests that cannot say what to look at, or that an automation manages, are taken back before the cost of the others is read
-        nothing, managed = nothing + more, managed + taken
-    summary.held += nothing + managed
-    for count, reason in ((nothing, NOTHING_TO_SAY), (managed, MANAGED_BY_AUTOMATION)):
+        held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, or that a Watch held back, are taken back before the cost of the others is read
+    summary.held += sum(held.values())
+    for reason, count in held.items():
         if count:
             say(f"{count} finding{'s' if count != 1 else ''} {reason}")
     read_cost_series(s, contexts, say)

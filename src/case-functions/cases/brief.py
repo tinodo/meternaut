@@ -77,7 +77,7 @@ IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do
 NOT_ANALYSED = "Impact not analysed: Meternaut has no check yet for what depends on this kind of resource, so it did not look."
 SAFE_RISK = "Nothing that Meternaut could read depends on it. Some things cannot be seen from here: see Not checked."
 KEEP_RISK = "It is in use, and removing it breaks what uses it."
-HELD_REASONS = ("automation", "impact", "inuse")  # why a Watch holds a finding back and makes no request for it (cases/investigate.py)
+HELD_REASONS = ("automation", "impact")  # why a Watch holds a finding back and makes no request for it (cases/investigate.py)
 
 # resource type -> (what the resource is, in a sentence of a person)
 TYPE_WORDS = {
@@ -624,7 +624,7 @@ def says_nothing(case: CaseRecord | None) -> bool:
 
 
 def held_back(case: CaseRecord | None) -> str:
-    """Why a Watch held a finding back (one of HELD_REASONS: an automation manages the resource, the impact of a deletion was not checked, or the check shows that something uses the resource),
+    """Why a Watch held a finding back (one of HELD_REASONS: an automation manages the resource, or the impact of deleting a resource of the network or one that others share was not checked),
     and "" when it did not: no request is made for such a finding, and one that was made before and that nobody answered is taken back."""
     held = case.learned.get("held") if case is not None and isinstance(case.learned, dict) else None
     return held if held in HELD_REASONS else ""

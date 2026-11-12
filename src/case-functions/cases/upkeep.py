@@ -8,12 +8,13 @@ Nothing here changes Azure. It reads and writes the records of the app only.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import Sequence
 
 from . import brief
 from . import costs as cost_words
-from .approvals import MANAGED_BY_AUTOMATION, NOTHING_TO_SAY
+from .approvals import HELD_BACK, NOTHING_TO_SAY
 from .detectors import Lead
 from .events import History
 from .models import CaseRecord, StoreError
@@ -66,17 +67,15 @@ def refresh(store, ranked: Sequence[Lead]) -> int:
     return changed
 
 
-def held(history: History, case: CaseRecord) -> None:
-    """Says in the History that a finding was held back, because it cannot say what to look at or because an automation manages its resource: its case stays, no request is made."""
-    history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120),
-                 reason=MANAGED_BY_AUTOMATION if brief.automated(case) else NOTHING_TO_SAY)
+def held(history: History, case: CaseRecord) -> str:
+    """Says in the History that a finding was held back, because it cannot say what to look at, because an automation manages its resource or because the impact of deleting it was not checked: its
+    case stays, no request is made. Returns the reason that it said."""
+    reason = HELD_BACK.get(brief.held_back(case), NOTHING_TO_SAY)
+    history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120), reason=reason)
+    return reason
 
 
-def take_back(ex, history: History) -> tuple[int, int]:
-    """Takes back the open requests of the findings that cannot say what to look at and of those that an automation manages, when nobody has answered them (Approvals.hold_back_empty), says each in
-    the History and returns how many of each kind: those that had nothing to say, and those that an automation manages."""
-    closed = ex.approvals.hold_back_empty()
-    for _, case in closed:
-        held(history, case)
-    managed = sum(1 for _, case in closed if brief.automated(case))
-    return len(closed) - managed, managed
+def take_back(ex, history: History) -> Counter:
+    """Takes back the open requests of the findings that cannot say what to look at and of those that a Watch held back, when nobody has answered them (Approvals.hold_back_empty), says each in
+    the History and returns how many there were of each reason (the words that the History says)."""
+    return Counter(held(history, case) for _, case in ex.approvals.hold_back_empty())
