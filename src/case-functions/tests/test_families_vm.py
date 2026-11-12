@@ -113,10 +113,11 @@ class RecheckingBeforeTheStop(unittest.TestCase):
 
     def stopped(self, why):
         done = self.world.run(self.plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
         self.assertIn(why, done.action.result)
         self.assertIn("Nothing was changed", done.action.result)
         self.assertEqual(self.world.arm.writes(), [])
+        self.assertEqual(self.world.state(self.plan), ("open", "withdrawn", "awaiting_ok"), "a refusal before the change leaves the request open")
 
     def test_it_stops_when_the_machine_is_not_running_or_stopped_any_more(self):
         fs.Arm.set_power(self.resource, "starting")
@@ -260,13 +261,14 @@ class RecheckingBeforeTheResize(unittest.TestCase):
 
     def stopped(self, why, plan=None):
         done = self.world.run(plan or self.plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
         self.assertIn(why, done.action.result)
         self.assertEqual(self.world.arm.writes(), [])
+        self.assertEqual(self.world.state(plan or self.plan), ("open", "withdrawn", "awaiting_ok"), "a refusal before the change leaves the request open")
 
     def test_it_stops_when_the_size_is_not_the_one_that_the_plan_was_made_for(self):
         self.resource["properties"]["hardwareProfile"]["vmSize"] = "Standard_D8s_v5"
-        self.stopped("not of the size that the plan was made for any more")
+        self.stopped("not of the size that the request was made for any more")
 
     def test_it_stops_when_the_new_size_is_not_one_that_the_machine_can_take_any_more(self):
         self.world.arm.sizes[self.resource["id"].lower()] = [row for row in fs.D_SERIES if row["name"] != "Standard_D2s_v5"]
@@ -302,7 +304,7 @@ class RecheckingBeforeTheResize(unittest.TestCase):
         plan, _ = world.approved(resource, "vm", "change", 60.0, mutate={"target": larger})
         world.arm.usage[fs.REGION] = (97, 100)
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"))
         self.assertIn("no room in its quota of vCPUs for 4 more", done.action.result)
         self.assertEqual(world.arm.writes(), [])
         world = World()
@@ -327,7 +329,7 @@ class RecheckingBeforeTheResize(unittest.TestCase):
                 plan, _ = world.approved(resource, "vm", "change", 60.0, mutate={"target": {"vmSize": "Standard_D8s_v5", "fromVmSize": "Standard_D4s_v5"}})
                 setup(world.arm)
                 done = world.run(plan)
-                self.assertEqual((done.kind, done.action.state), ("azure_refused" if label == "refused" else "stopped", "failed"), done.action.result)
+                self.assertEqual((done.kind, done.action.state), (("azure_refused", "failed") if label == "refused" else ("stopped", "withdrawn")), done.action.result)
                 self.assertEqual(world.arm.writes(), [])
 
     def test_a_plan_that_names_a_size_that_is_not_a_size_name_is_refused_before_it_is_used_in_a_call(self):
@@ -337,7 +339,7 @@ class RecheckingBeforeTheResize(unittest.TestCase):
                 resource = machine(world)
                 plan, _ = world.approved(resource, "vm", "change", 60.0, mutate={"target": {"vmSize": bad, "fromVmSize": "Standard_D4s_v5"}})
                 done = world.run(plan)
-                self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+                self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"))
                 self.assertIn("not a size name", done.action.result)
                 self.assertEqual(world.arm.writes(), [])
         self.assertFalse(SIZE_NAME.fullmatch("Standard_D2s_v5\n"))

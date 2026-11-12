@@ -325,6 +325,25 @@ class Approvals:
         self._set_case(plan.case_id, "failed")
         return failed
 
+    def reopen(self, plan: PlanRecord, action: ActionRecord, text: str) -> ActionRecord:
+        """A check right before the change refused it, and nothing was written: the approval is not used, and the request is open again, as it was before the person approved it.
+
+        The action stays as the record of the try, withdrawn, with the reason in plain words; a new approval takes its place (`Store.action_claim`). The person's approval is taken back
+        (`Store.decision_release`: a confirmation of the first of two people stays), the plan is open and the case waits for an OK again. A new approval is a new one: it goes through the form
+        and the sign-in once more, with a one-time token of its own, and it is bound to the digest of the plan as the plan is then; the tokens of the try that was refused were used up, and
+        a plan that changed since has another digest, which no earlier approval fits.
+
+        The action is written first, and the plan last. If a write fails between them, the plan stays approved with a withdrawn action, which the timer finishes (`runner.tick` calls this
+        again: every step is the same when it is repeated). Returns the withdrawn action."""
+        withdrawn = replace(action, state="withdrawn", result=text, error=None, finished_at=stamp(self.clock()))
+        self.store.action_put(withdrawn)
+        for decision in self.store.decisions_of_plan(plan.plan_id):
+            if decision.decision == "approve":
+                self.store.decision_release(plan.plan_id, decision.approver_oid)
+        self.store.plan_put(_plan_with(plan, state="open"))
+        self._set_case(plan.case_id, "awaiting_ok")
+        return withdrawn
+
     def record_approval(self, principal: Principal, plan: PlanRecord, note: str) -> tuple[DecideResult, ActionRecord | None]:
         """Records the approval of a person who has signed in to Azure, and the action that the change is made under. The change itself is made by the caller.
 

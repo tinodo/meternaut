@@ -6,7 +6,9 @@ are on a list of their own (`change_calls`, built from cases/families/calls.py):
 scopes, and the status of an asynchronous operation. Azure checks the person's own rights on top of that.
 
 Before it acts, the runner refuses unless the plan is the one that was approved (its digest: cases/families/digest.py) and a person's approval of that exact plan is recorded; the family
-then re-checks the facts that the plan states, and a check that fails stops the change and says why. When Azure answers the write with a claims challenge (the person signed in without
+then re-checks the facts that the plan states, and a check that fails stops the change and says why, in the words of a person. Nothing was written then, so the approval is not used: the
+request is open again (`Approvals.reopen`) and a person can decline it, ask, decide later, or approve it again once what stopped it is put right, with a new sign-in. A request that is not the
+one that was approved (its digest does not fit) is closed instead, and the Watch makes a new one. When Azure answers the write with a claims challenge (the person signed in without
 the extra check that a change needs), nothing was changed: the action waits in the queue for that check, and `execute` is called again after it (delegated.py). A write that Azure
 carries out later (a stop, a resize, a change of a disk's tier) is followed for a few seconds with the same token; when it is not finished by then the action is `running`, the person is
 told so, and `tick` reads the resource later with the reader's token and settles it. A change that has no known end is `unknown`, and nothing here ever makes a second write: a retry is a
@@ -26,7 +28,7 @@ from .approvals import Approvals, ApprovalSettings
 from .arm import Arm
 from .claims import claims_challenge
 from .families import digest as plan_digest
-from .families import lro, registry
+from .families import lro, registry, words
 from .families.azure import Azure
 from .families.base import Env, Family, Stop, Verdict, refusal
 from .families.calls import change_patterns, read_patterns
@@ -96,6 +98,8 @@ class Executed:
     """What `execute` did: the action as it was recorded, and what kind of end it came to: ran, ran_unconfirmed, running, unchanged, stopped, azure_refused or failed.
 
     The kind unchanged is an end with no write: when the runner looked, the resource was in the state that the plan wants (or gone), and the action is marked `noChange`.
+    The kind stopped is a check that refused the change before any write. Mostly the request is open again then, and the action is `withdrawn` with the reason in plain words (`_refused`);
+    when the request itself is not the one that was approved, or the app's own list of calls refused the write, the plan is closed as failed instead, and the plan's state says which.
     The kind running is not an end: Azure accepted the change and is still making it. The kind step_up is not an end either: Azure asked for an extra sign-in check (a claims challenge) in
     answer to the write, so nothing was changed, the action waits in the queue and the plan stays approved. `claims` is the claims request that Microsoft Entra has to be given, as compact JSON
     text. It is not a record, and it is on no page and in no log."""
@@ -126,28 +130,39 @@ def _finish(s: RunnerServices, action: ActionRecord, plan: PlanRecord, *, state:
     return action
 
 
-def _stopped(why: str) -> str:
-    return f"Stopped before the change: {why}. Nothing was changed."
+def _stopped(why: str, plan: PlanRecord | None = None) -> str:
+    """What the record says when a check right before the change refuses it, in the words of a person: what Meternaut did not do, why, and that nothing was changed. `why` is the end of a
+    sentence that a check wrote (no capital letter, no full stop); the resource is named as the plan's kind of resource calls it ("the disk")."""
+    noun = words.noun_of(words.type_of(plan.family, plan.preconditions)) if plan is not None else "resource"
+    return f"Meternaut did not change the {noun}: {why}. Nothing was changed."
+
+
+def _refused(s: RunnerServices, action: ActionRecord, plan: PlanRecord, why: str) -> Executed:
+    """A check right before the change refused it, and nothing was written: the request is open again, and the approval is not used (`Approvals.reopen`). The kind is `stopped`. The check
+    may be one that the person can put right, or one that a later look finds put right already, so the request is not closed for good: a person who approves it again signs in again."""
+    s.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=False)
+    return Executed(Approvals(s.store, s.settings, s.clock).reopen(plan, action, _stopped(why, plan)), "stopped")
 
 
 def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) -> Executed:
     """Makes the change of one approved plan with the token of `s`, or stops before it. Never raises for a failed check or a failed call: the record says what happened.
 
     `approved_digest` is the digest of the plan that the person approved at the sign-in (delegated.py keeps it with the state of the round trip). A plan whose digest is not that one, or
-    is not the one that its fields give now, is refused: nothing is changed, and the record says so."""
+    is not the one that its fields give now, is refused: nothing is changed, the record says so, and the plan is closed. Any other check that refuses before the write (the resource is not
+    as the plan says, a lock, a note, a pause, a read that failed) leaves the request open (`_refused`)."""
     plan = s.store.plan_get(action.plan_id)
     family = registry.get(plan.family) if plan is not None else None
     if plan is None or family is None:
-        return _failed(s, action, None, "the plan is not there, or names a change that Meternaut does not make")
+        return _failed(s, action, None, "the request is not there, or names a change that Meternaut does not make")
     problem = plan_digest.problem(plan, approved_digest)
     if problem:
-        return _failed(s, action, plan, _stopped(problem), kind="stopped")
+        return _failed(s, action, plan, _stopped(problem, plan), kind="stopped")
     decisions = [d for d in s.store.decisions_of_plan(plan.plan_id)
                  if d.decision == "approve" and d.plan_code == plan.code and d.plan_digest == plan.digest and d.approver_oid in plan.approvers]
     if plan.state != "approved" or not decisions:
-        return _failed(s, action, plan, "no approval by a named approver is recorded for this exact plan")
+        return _failed(s, action, plan, "no approval by a named approver is recorded for this exact request")
     if twopeople.needs(plan) and not twopeople.satisfied(plan, s.store.decisions_of_plan(plan.plan_id)):
-        return _failed(s, action, plan, _stopped("this change needs two people, and no confirmation of this exact plan by somebody other than the approver is recorded"), kind="stopped")
+        return _refused(s, action, plan, "this change needs two people, and no confirmation of this exact request by somebody other than the approver is recorded")
     started = replace(action, state="running", started_at=stamp(s.clock()), result="")
     s.store.action_put(started)
     s.emit("action.started", planId=plan.plan_id, family=plan.family, correlationId=action.correlation_id)
@@ -155,13 +170,14 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
     try:
         located, resource = family.recheck(env, plan)
     except Stop as error:
-        text = str(error) if error.kind == "azure_refused" else _stopped(str(error))
-        return _failed(s, started, plan, text, kind=error.kind)
+        if error.kind == "azure_refused":
+            return _failed(s, started, plan, str(error), kind=error.kind)
+        return _refused(s, started, plan, str(error))
     except (HttpError, Refused, StoreError) as error:
-        return _failed(s, started, plan, f"Stopped before the change: a check could not be made ({str(error)[:120]}). Nothing was changed.", kind="stopped")
+        return _refused(s, started, plan, f"a check could not be made ({str(error)[:120]})")
     if resource is None:
         if not family.deletes:
-            return _failed(s, started, plan, _stopped("the resource does not exist any more"), kind="stopped")
+            return _refused(s, started, plan, "the resource does not exist any more")
         done = _finish(s, started, plan, state="done", result="The resource did not exist any more when Meternaut looked. Nothing to delete.", plan_state="consumed",
                        case_status="done", verification={"gone": True, "noChange": True, "note": "already gone"})
         s.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=True)
@@ -174,12 +190,12 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
         s.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=True)
         return Executed(done, "unchanged")
     if switches.pulled(s.store, "all", "changes"):
-        return _failed(s, started, plan, "Stopped before the change: changes were paused after the approval. Nothing was changed.", kind="stopped")
+        return _refused(s, started, plan, "changes were paused after the approval")
     # The plan is read once more and compared with the digest that was approved, as late as it can be: nothing between here and the call can change what is made.
     latest = s.store.plan_get(plan.plan_id)
-    late = plan_digest.problem(latest, approved_digest) if latest is not None else "the plan is not there any more"
+    late = plan_digest.problem(latest, approved_digest) if latest is not None else "the request is not there any more"
     if late or latest is None or latest.state != "approved":
-        return _failed(s, started, plan, _stopped(late or "the plan is not approved any more"), kind="stopped")
+        return _failed(s, started, plan, _stopped(late or "the request is not approved any more", plan), kind="stopped")
     try:
         response = family.write(env, plan, located)
     except HttpError as error:
@@ -193,7 +209,7 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
                            unknown=error.status == 0)
         accepted = lro.Initiated(404)  # the resource was gone already: the read below says so
     except Stop as error:
-        return _failed(s, started, plan, _stopped(str(error)), kind="stopped")
+        return _refused(s, started, plan, str(error))
     except Refused as error:
         return _failed(s, started, plan, f"The app may not make this call ({str(error)[:120]}). Nothing was changed.", kind="stopped")
     else:
@@ -423,13 +439,21 @@ def verdict_text(family: Family, verification: dict, said: str) -> str:
 
 
 def tick(s: RunnerServices) -> TickResult:
-    """What runs every minute: closes the plans that have expired and the approvals whose change never started or never showed, and checks the changes that were made.
+    """What runs every minute: closes the plans that have expired and the approvals whose change never started or never showed, finishes a refusal that stopped half way, and checks the changes
+    that were made.
 
     It makes no change: its token is the reader's and its list of calls holds no write."""
     result = TickResult()
     result.expired = Approvals(s.store, s.settings, s.clock).expire()
     now = s.clock()
     for action in s.store.actions_recent(50):
+        if action.state == "withdrawn":
+            # A refusal that stopped half way (the store failed between its writes) leaves the plan approved with a withdrawn action, and nothing else would ever open the request again: the
+            # timer finishes what the refusal was doing, which is the same at each step when it is repeated.
+            stuck_plan = s.store.plan_get(action.plan_id)
+            if stuck_plan is not None and stuck_plan.state == "approved":
+                Approvals(s.store, s.settings, s.clock).reopen(stuck_plan, action, action.result)
+            continue
         if action.state == "queued" and parse(action.queued_at) < now - dt.timedelta(minutes=QUEUED_MINUTES):
             plan = s.store.plan_get(action.plan_id)
             text = STEP_UP_ABANDONED if action.step_up else (

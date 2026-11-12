@@ -79,7 +79,7 @@ def _action_events(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[Eve
     events: list[Event] = []
     if action.finished_at and action.state in ("done", "verified", "unknown"):
         events.append(Event(action.finished_at, "unchanged" if action.no_change else "made", _headline(ctx, plan), action.result))  # an approval that found nothing to change wrote nothing
-    elif action.finished_at and action.state == "failed":
+    elif action.finished_at and action.state in ("failed", "withdrawn"):  # withdrawn: a check refused the change before anything was written, and the request is open again
         events.append(Event(action.finished_at, "failed", _headline(ctx, plan), action.error or action.result))
     if action.verified_at:
         note = action.verification.get("note", "") if isinstance(action.verification, dict) else ""

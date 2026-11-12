@@ -337,6 +337,37 @@ class StoreContract:
         self.store.action_release("nothing-here")
         self.assertFalse(self.store.action_claim(queued))
 
+    def test_a_withdrawn_action_is_taken_over_by_the_next_claim_and_no_other_action_is(self):
+        def action(state, correlation, **more):
+            return ActionRecord(plan_id="p8", case_id="k1", family="delete-disk", resource_id="/r", state=state, queued_at="2026-11-05T09:00:00Z", correlation_id=correlation, **more)
+
+        withdrawn = action("withdrawn", "first", started_at="2026-11-05T09:00:05Z", finished_at="2026-11-05T09:00:06Z", result="a check refused the change")
+        second, third = action("queued", "second"), action("queued", "third")
+        self.store.action_put(withdrawn)
+        self.assertTrue(self.store.action_claim(second), "the change was refused before anything was written: the next approval may claim the action again")
+        self.assertEqual(self.store.action_get("p8"), second)
+        self.assertFalse(self.store.action_claim(third), "a claim that is not withdrawn is the claim of an approval that is going on")
+        self.assertEqual(self.store.action_get("p8"), second)
+        for state in ("running", "done", "failed", "unknown", "verified"):
+            self.store.action_put(action(state, state))
+            self.assertFalse(self.store.action_claim(third), state)
+            self.assertEqual(self.store.action_get("p8").state, state)
+
+    def test_the_approval_of_a_person_can_be_released_and_nothing_else_of_what_people_said_is(self):
+        def decision(kind, who, minute):
+            return DecisionRecord(plan_id="p7", approver_oid=who, approver_name="A", decision=kind, at=f"2026-11-05T09:{minute:02d}:00Z", plan_code="ABCD1234", plan_digest="d" * 64)
+
+        self.store.decision_put(decision("confirm", OTHER, 0))
+        self.store.decision_put(decision("approve", OID, 5))
+        self.store.decision_release("p7", OTHER)
+        self.assertEqual([(d.approver_oid, d.decision) for d in self.store.decisions_of_plan("p7")], [(OTHER, "confirm"), (OID, "approve")], "a confirmation is not an approval, and stays")
+        self.store.decision_release("p7", OID)
+        self.assertEqual([(d.approver_oid, d.decision) for d in self.store.decisions_of_plan("p7")], [(OTHER, "confirm")], "only the approval of this person went")
+        self.assertTrue(self.store.decision_put(decision("approve", OID, 10)), "the person can approve once more, as if the first approval had not been given")
+        self.store.decision_release("p7", "nobody-at-all")
+        self.store.decision_release("no-plan", OID)
+        self.assertEqual(len(self.store.decisions_of_plan("p7")), 2)
+
     def test_switches_start_released_and_keep_what_was_set(self):
         self.assertEqual([s.paused for s in self.store.switches()], [False, False, False, False])
         self.store.switch_put(SwitchRecord(name="changes", paused=True, by=OID, at="2026-11-05T09:00:00Z", reason="drill"))
@@ -487,6 +518,28 @@ class TableStoreOnItsOwn(unittest.TestCase):
         self.assertEqual(self.store.check_latest().by, "Otto")
         writes = [h for (method, url), h in zip(self.service.calls, self.service.headers) if method == "PUT" and "mnchecks" in url]
         self.assertTrue(writes[-1].get("If-Match") not in (None, "*"), "the claim named the version that it read")
+
+    def test_a_withdrawn_action_is_taken_over_with_the_etag_that_was_read_and_the_other_of_two_approvers_who_claim_at_the_same_moment_loses(self):
+        def action(state, correlation, **more):
+            return ActionRecord(plan_id="p8", case_id="k1", family="delete-disk", resource_id="/r", state=state, queued_at="2026-11-05T09:00:00Z", correlation_id=correlation, **more)
+
+        self.store.action_put(action("withdrawn", "first", finished_at="2026-11-05T09:00:06Z", result="a check refused the change"))
+        real_get = self.store._get
+
+        def raced(table, pk, rk):
+            found = real_get(table, pk, rk)
+            if table == "mnactions":
+                self.store.action_put(action("queued", "rival"))  # the other approver's claim lands between the read and the write of this one
+            return found
+
+        self.store._get = raced
+        self.assertFalse(self.store.action_claim(action("queued", "mine")), "the version that was read is not the version that is stored")
+        self.store._get = real_get
+        self.assertEqual(self.store.action_get("p8").correlation_id, "rival")
+        self.store.action_put(action("withdrawn", "again"))
+        self.assertTrue(self.store.action_claim(action("queued", "mine")))
+        writes = [h for (method, url), h in zip(self.service.calls, self.service.headers) if method == "PUT" and "mnactions" in url]
+        self.assertTrue(writes[-1].get("If-Match") not in (None, "*"), "the take-over named the version that it read")
 
     def test_a_first_claim_is_an_insert_and_the_second_of_two_people_who_ask_at_the_same_moment_loses(self):
         real_get = self.store._get

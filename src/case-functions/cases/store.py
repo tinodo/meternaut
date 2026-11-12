@@ -281,6 +281,11 @@ class TableStore:
         self._upsert(DECISIONS, decision.plan_id, decision.approver_oid, decision, approverOid=decision.approver_oid)
         return True
 
+    def decision_release(self, plan_id: str, oid: str) -> None:
+        row, etag = self._get(DECISIONS, plan_id, oid)
+        if row is not None and self._records([row], DecisionRecord)[0].decision == "approve":
+            self._delete(DECISIONS, plan_id, oid, etag)
+
     def action_get(self, plan_id: str) -> ActionRecord | None:
         row, _ = self._get(ACTIONS, "a", plan_id)
         return None if row is None else self._records([row], ActionRecord)[0]
@@ -289,7 +294,21 @@ class TableStore:
         self._upsert(ACTIONS, "a", action.plan_id, action, state=action.state)
 
     def action_claim(self, action: ActionRecord) -> bool:
-        return self._insert(ACTIONS, "a", action.plan_id, action, state=action.state)
+        if self._insert(ACTIONS, "a", action.plan_id, action, state=action.state):
+            return True
+        row, etag = self._get(ACTIONS, "a", action.plan_id)
+        if row is None or not etag or self._records([row], ActionRecord)[0].state != "withdrawn":
+            return False
+        # A withdrawn action (a change that a check refused before anything was written) is replaced, and only when nobody has changed it since it was read (If-Match): of two approvers who
+        # claim at the same moment, one writes over the ETag that was read and the other gets the answer 412.
+        entity = self._entity("a", action.plan_id, action, state=action.state)
+        try:
+            self._call("PUT", self._address(ACTIONS, "a", action.plan_id), body=entity, headers={"Prefer": "return-no-content", "If-Match": etag})
+        except StoreError as error:
+            if self._status(error) in (404, 412):
+                return False
+            raise
+        return True
 
     def action_release(self, plan_id: str) -> None:
         row, etag = self._get(ACTIONS, "a", plan_id)

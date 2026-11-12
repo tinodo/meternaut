@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 
 from ..brief import PAUSED_ADVICE, Brief, called_of
-from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, DecideResult, PlanRecord
+from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import brief_of, decisions_for, may_answer, read
+from .common import checked_brief, decisions_for, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
@@ -71,14 +71,15 @@ def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
 
 # -- the page ------------------------------------------------------------------------------------------------------------------------------------
 
-def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = None, errors: dict[str, str] | None = None, status: int = 200) -> Response:
-    """The page of a request, for a person who may answer it. The form appears only while the request is open; the approve button is left out while changes are paused. A person who
-    comes from "Review all" (`?walk=1`) is told how many requests wait after this one."""
+def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = None, errors: dict[str, str] | None = None, status: int = 200, ready: Readiness | None = None) -> Response:
+    """The page of a request, for a person who may answer it. The form appears only while the request is open; the approve button is left out while changes are paused, and while a look at
+    the resource shows that the change would be refused (`ready` is that look when the caller made it already, else it is made here). A person who comes from "Review all" (`?walk=1`) is
+    told how many requests wait after this one."""
     values, errors = values or {}, errors or {}
     case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
     decisions, _ = read(lambda: ctx.store.decisions_of_plan(plan.plan_id), [])
     action, _ = read(lambda: ctx.store.action_get(plan.plan_id), None)
-    brief = brief_of(ctx, plan, case, action=action, decisions=decisions, answerable=True)
+    brief = checked_brief(ctx, plan, case, action=action, decisions=decisions, answerable=True, ready=ready)
     answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
                              why="you are named as an approver of this request, and you have the role approver", banner=_walking(ctx, plan))
@@ -166,7 +167,15 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("Nothing was changed", text or "Nothing was changed.",
                     "The resource was already as the request asks, so Meternaut wrote nothing, and no saving is claimed for this approval.", history)
     if kind == "stopped":
-        return show("The change was stopped", text or "A check failed before the change.", "Nothing was changed. The request is closed.")
+        plan = _plan_of(ctx, result, plan_id)
+        if plan is None:
+            after = "Nothing was changed. Open the request to see where it stands."
+        elif plan.state == "open":
+            after = ("Nothing was changed. The request is still open: you can decline it, decide later, or ask or tell. "
+                     "When what stopped the change is put right, this page offers Approve again.")
+        else:
+            after = "Nothing was changed. The request is closed. A new request is made when Meternaut finds the resource again."
+        return show("The change was not made", text or "Meternaut did not make the change.", after)
     if kind == "azure_refused":
         return show("Azure refused the change", text or "Azure refused the change.",
                     "Meternaut holds no right of its own: the change is made with your permissions. If you should be able to make it, ask whoever manages access to this resource group.")
@@ -280,7 +289,10 @@ def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
     if decision == "approve" and plan.family != ADVISE:
         if form_data.get("confirm") != "yes":
             case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
-            brief = brief_of(ctx, plan, case, decisions=decisions_for(ctx, plan), answerable=True)
+            brief = checked_brief(ctx, plan, case, decisions=decisions_for(ctx, plan), answerable=True)
+            if brief.ready is not None and brief.ready.state == REFUSED:
+                # The page that this person pressed Approve on is older than the look: the checks of the runner would refuse the change now. They are not sent to the sign-in to Azure for it.
+                return render_plan(ctx, plan, ready=brief.ready, status=409)
             if "approve" in brief.answers and not brief.undo.reversible:  # a request that cannot be approved now (paused, closed) is refused by `begin`, in its own words
                 return confirm_page(ctx, plan, brief, form_data.get("code", ""), nonce, note)
         return _begin(ctx, plan_id, nonce)

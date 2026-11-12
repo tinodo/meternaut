@@ -7,7 +7,10 @@ does not widen what may be changed. So every family of change (cases/families/) 
    one group where Meternaut plants waste of its own);
 2. the planted gate: the resource carries the tag that Meternaut put on what it planted (`meternaut-planted`, any value) AND is on the planted list, which is what
    environment/cases/planted.bicep makes: a resource type and a name of the shape `planted-<kind>-<id>` (a test holds this list and the template together). A tag alone is not a
-   proof: anybody who may write tags in the group could add it.
+   proof: anybody who may write tags in the group could add it. This gate is the owner's line and it is not loosened for a planted resource that lost its tag. An outside job, which is
+   not Meternaut's, takes the tags off the unattached test disks every night at about 22:56 UTC and leaves one tag of its own, so a planted disk that is approved after that night is
+   refused here, on purpose, and the request stays open. The action `plant` of the Hub (deploy-hub.yml) puts the planted tags back on every planted disk and public IP address of the
+   group, and the page of a request looks at the tag before it offers Approve (cases/precheck.py). So: approve a planted disk the same day it is planted.
 
 The third gate is a person's do-not-touch note (store.do_not_touch). Each gate is checked at three places: when the plan is made, again right before the change with the
 approver's token (the family's `recheck`), and in the runner before any call is made.

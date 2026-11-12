@@ -1,11 +1,13 @@
+import dataclasses
 import re
 import unittest
 
+from test_web_look_before_approve import ScriptedChecker
 from test_web_pages import busy
 from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_advice, make_advice_case, make_case,
                               make_decision, make_plan, make_run)
 
-from cases.models import Begun, DecideResult, NoteRecord, SwitchRecord
+from cases.models import READY, REFUSED, UNKNOWN, Begun, DecideResult, NoteRecord, Readiness, SwitchRecord
 from cases.web import approval, layout
 
 APPROVE = "Approve"
@@ -24,7 +26,7 @@ MESSAGES = {
     "running": "Azure accepted the change and is still making it. Meternaut reads the resource again in a few minutes and records what it finds. It makes no second try: if it does not "
                "work, a new try is a new approval by a person.",
     "unchanged": "The machine was already stopped and released when Meternaut looked. Nothing to change.",
-    "stopped": "Stopped before the change: the disk is not unattached any more. Nothing was changed.",
+    "stopped": "Meternaut did not change the disk: it is not unattached any more. Nothing was changed.",
     "azure_refused": "Azure refused to delete the resource (403, AuthorizationFailed): your account has no right to do this here. Nothing was changed.",
     "failed": "The delete was refused or failed (500 InternalError). Check the resource before anything is tried again.",
     "signin_failed": "The sign-in to Azure was cancelled or refused. Nothing is approved.",
@@ -144,6 +146,19 @@ def gallery() -> dict:
     console.store.plan_put(make_plan(state="failed"))
     console.store.action_put(make_action(state="failed", finished_at=at(), result=MESSAGES["azure_refused"], error=MESSAGES["azure_refused"]))
     pages["failed plan"] = console.get("/ok/plan0001")
+    # A request that is open again after a check refused its change before anything was written, with what a look at the resource found (a box, one line, or no look at all).
+    console.store.switch_put(SwitchRecord("changes"))
+    console.store.plan_put(make_plan())
+    console.store.action_put(make_action(state="withdrawn", finished_at=at(), result=MESSAGES["stopped"]))
+    why = "it no longer carries the test tag meternaut-planted, so it cannot be told apart from a real disk"
+    for name, look in (("refused by a look", Readiness(REFUSED, why)), ("unknown to a look", Readiness(UNKNOWN)), ("refused before and not looked at", None)):
+        console.services = dataclasses.replace(console.services, checker=None if look is None else ScriptedChecker(look))
+        pages[name] = console.get("/ok/plan0001")
+    console.services = dataclasses.replace(console.services, checker=ScriptedChecker(Readiness(READY)))
+    form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
+    console.services = dataclasses.replace(console.services, checker=ScriptedChecker(Readiness(REFUSED, why)))
+    pages["approve pressed on an old page"] = console.submit(form, APPROVE, confirm=False)
+    console.services = dataclasses.replace(console.services, checker=None)
     broken = Console(store=FailingStore(fail={"case_get", "plan_get"}, clock=lambda: NOW))
     broken.seed(case=False, plan=False, run=False)
     pages["store down case"] = broken.get("/why/x")

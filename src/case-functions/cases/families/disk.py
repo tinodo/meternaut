@@ -45,7 +45,7 @@ def aim_of(plan: PlanRecord) -> tuple[str, str]:
     target = plan.target if isinstance(plan.target, dict) else {}
     frm, to = target.get("fromSkuName"), target.get("skuName")
     if not isinstance(frm, str) or not isinstance(to, str) or KNOWN.get(frm.lower()) != frm or STEPS.get(frm.lower()) != to:
-        raise Stop("the plan names a tier change that Meternaut does not make")
+        raise Stop("the request names a tier change that Meternaut does not make")
     return frm, to
 
 
@@ -146,7 +146,7 @@ class ChangeDiskTier(Family):
         frm, to = aim_of(plan)
         now = sku_of(resource)
         if now not in (frm, to):
-            raise Stop("the disk is not of the tier that the plan was made for any more")
+            raise Stop("the disk is not of the tier that the request was made for any more")
         if now == to:
             return  # it is the aim already: `already` says so
         self.attachment_of(env, resource)

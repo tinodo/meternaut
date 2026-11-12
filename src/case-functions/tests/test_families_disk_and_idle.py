@@ -124,13 +124,14 @@ class RecheckingBeforeTheMove(unittest.TestCase):
 
     def stopped(self, why):
         done = self.world.run(self.plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
         self.assertIn(why, done.action.result)
         self.assertEqual(self.world.arm.writes(), [])
+        self.assertEqual(self.world.state(self.plan), ("open", "withdrawn", "awaiting_ok"), "a refusal before the change leaves the request open")
 
     def test_it_stops_when_the_tier_is_neither_the_one_of_the_plan_nor_the_aim(self):
         self.resource["sku"] = {"name": "Standard_LRS"}
-        self.stopped("not of the tier that the plan was made for any more")
+        self.stopped("not of the tier that the request was made for any more")
 
     def test_it_stops_when_the_disk_has_been_attached_to_a_running_machine_since(self):
         machine = vm_of_the_planting(self.world, power="running")
@@ -176,7 +177,7 @@ class TheCallToChangeTheTier(unittest.TestCase):
                 plan, _ = world.approved(resource, "disk", "change", 20.0, mutate={"target": {"skuName": bad, "fromSkuName": "Premium_LRS"}})
                 done = world.run(plan)
                 self.assertEqual(world.arm.writes(), [])
-                self.assertEqual(done.action.state, "failed")
+                self.assertEqual((done.action.state, world.state(plan)), ("withdrawn", ("open", "withdrawn", "awaiting_ok")), "a plan that cannot be used is refused before any call is made, and the request stays open")
 
     def test_the_change_is_confirmed_by_the_cost_lines_by_the_rate_of_a_day_not_by_the_end_of_all_cost(self):
         world = World()
@@ -281,9 +282,10 @@ class DeletingWhatNothingUses(unittest.TestCase):
                     plan, _ = world.approved(resource, kind, "delete", 5.0)
                     resource["properties"] = dict(state)
                     done = world.run(plan)
-                    self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                    self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
                     self.assertEqual(world.arm.writes(), [])
                     self.assertIn("Nothing was changed", done.action.result)
+                    self.assertEqual(world.state(plan), ("open", "withdrawn", "awaiting_ok"))
 
     def test_a_kind_that_is_not_on_the_closed_list_has_no_family_and_so_no_plan(self):
         world = World()
@@ -334,7 +336,7 @@ class TheNetworkInterfaceThatThePlantingMakes(unittest.TestCase):
         plan, _ = world.approved(nic, "nic", "delete", 0.0)
         world.store.note_put(NoteRecord(note_id="n", oid=OID, kind="do_not_touch", text="no", scope_resource_id=nic["id"], expires_at="2099-01-01T00:00:00Z"))
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"))
         self.assertIn("do-not-touch", done.action.result)
 
 

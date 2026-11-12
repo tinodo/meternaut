@@ -461,7 +461,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         resource["properties"]["hardwareProfile"]["vmSize"] = "Standard_D2s_v5"
         resource["properties"]["provisioningState"] = "Updating"
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), "an operation is going on: it is not made a second time")
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), "an operation is going on: it is not made a second time")
         self.assertEqual(world.arm.writes(), [])
 
     def test_a_disk_that_has_the_tier_already_is_a_no_op(self):
@@ -488,7 +488,7 @@ class IdempotencyAndNoSecondTry(unittest.TestCase):
         plan, _ = world.approved(vm, "vm", "delete", 60.0)
         del world.arm.resources[vm["id"].lower()]
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"))
         self.assertIn("does not exist any more", done.action.result)
 
 

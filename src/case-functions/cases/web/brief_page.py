@@ -15,8 +15,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, Brief
-from ..models import GROUP_FACT, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from ..brief import COULD_NOT_LOOK, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
@@ -64,6 +64,25 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
 
 
+def _look(brief: Brief) -> Safe:
+    """What a look at the resource said, at the top of the page, for a change that waits for an OK: when the checks of the runner would refuse it, a box that says what Meternaut will not do and
+    why, in plain words, that nothing was changed and what happens next (the form then has no answer that approves). When the look could not be made, one line says so (Approve stays, because
+    the runner looks again with the approver's own rights right before it acts and changes nothing if a check fails), and when the last try of this request was refused before anything was
+    written, the reason of that try comes first: the look that is made now cannot say that it is put right. Nothing when the look found nothing in the way."""
+    found = brief.ready
+    if brief.kind != "change" or brief.state != "open":
+        return Safe("")
+    noun = brief.where.noun
+    if found is not None and found.state == REFUSED:
+        return notice("warning", NOT_NOW_TITLE.format(noun=noun), not_now_reason(found.why), NOT_NOW_NEXT)
+    if found is not None and found.state == READY:
+        return Safe("")
+    if found is not None and found.state == UNKNOWN:
+        said = COULD_NOT_LOOK.format(noun=noun)
+        return notice("warning", NOT_MADE_BEFORE, brief.refused_before, f"{said} {LOOKS_AGAIN}") if brief.refused_before else notice("info", "", f"{said} {LOOKS_AGAIN}")
+    return notice("warning", NOT_MADE_BEFORE, brief.refused_before, LOOKS_AGAIN) if brief.refused_before else Safe("")
+
+
 def _figure_of(brief: Brief, case: CaseRecord | None) -> Figure:
     return figure_of([brief.saving], [cost_of(brief, case)])
 
@@ -100,6 +119,8 @@ def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
     what the person is about to do."""
     figure = _figure_of(brief, case)
     heading = {"change": "If you approve", "advice": "If you answer"}.get(brief.kind, "What changes")
+    if brief.ready is not None and brief.ready.state == REFUSED and brief.kind == "change":
+        heading = "What the change would do"  # the form has no answer that approves: the card says what the request is, not what an approval would do
     facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in consequences(brief))
     plot = join([chart(series_of(case.cost_series) if case is not None else None, series_reason(brief, case)), use_block([(brief, case)], now)])
     return fmt('<section class="focus" aria-labelledby="decision-title"><div><h2 class="eyebrow" id="decision-title">{heading}</h2>{stake}</div><div>{plot}</div><dl class="facts">{facts}</dl></section>',
@@ -299,7 +320,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_outcome(ctx, brief), _decision(brief, case, ctx.now)]
+    parts += [_look(brief), _outcome(ctx, brief), _decision(brief, case, ctx.now)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

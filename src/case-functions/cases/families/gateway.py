@@ -60,7 +60,7 @@ def aim_of(plan: PlanRecord) -> tuple[int, int]:
     target = plan.target if isinstance(plan.target, dict) else {}
     frm, to = capacity.whole(target.get("fromScaleUnit")), capacity.whole(target.get(UNITS))
     if frm is None or to is None or capacity.one_step_down(frm) != to:
-        raise Stop("the plan names a change of scale units that Meternaut does not make")
+        raise Stop("the request names a change of scale units that Meternaut does not make")
     return frm, to
 
 
@@ -109,7 +109,7 @@ def _highest(data: object, now: dt.datetime) -> tuple[int, float]:
     found = data.get("value") if isinstance(data, dict) else None
     metric = next((item for item in found if isinstance(item, dict)), None) if isinstance(found, list) else None
     if metric is None or str(metric.get("errorCode") or "Success").lower() != "success" or not isinstance(metric.get("timeseries"), list):
-        raise Stop("Azure Monitor did not answer with the connection count of the gateway")
+        raise Stop("Azure Monitor did not answer with the connection count of the gateway", unread=True)
     first = dt.datetime.strptime(_span(now).split("/")[0], METRIC_TIME).date()
     days: dict[dt.date, float] = {}
     for series in metric["timeseries"]:
@@ -131,9 +131,9 @@ def read_connections(env: Env, located: Located) -> tuple[int, float]:
     except HttpError as error:
         if error.status in (401, 403):
             raise Stop(refusal(error, "read the connection count of the gateway"), "azure_refused") from error
-        raise Stop(f"the connection count of the gateway could not be read ({error.status or 'no answer'})") from error
+        raise Stop(f"the connection count of the gateway could not be read ({error.status or 'no answer'})", unread=True) from error
     except Refused as error:
-        raise Stop("the app may not read the connection count of the gateway") from error
+        raise Stop("the app may not read the connection count of the gateway", unread=True) from error
     return _highest(data, env.clock())
 
 
@@ -216,7 +216,7 @@ class ScaleVpnGateway(Family):
         if state != "succeeded":
             raise Stop(f"the last operation on the gateway is not finished or did not work (its provisioning state is {clean_text(state, 20) or 'not shown'}): {UPDATING}")
         if units != frm:
-            raise Stop("the gateway does not have the scale units that the plan was made for any more")
+            raise Stop("the gateway does not have the scale units that the request was made for any more")
         why = nobody(*read_connections(env, located))
         if why is not None:
             raise Stop(why)
@@ -239,7 +239,7 @@ class ScaleVpnGateway(Family):
         if gateway is None:
             raise Stop("the gateway does not exist any more")
         if units_of(gateway) != frm or provisioning_of(gateway) != "succeeded":
-            raise Stop("the gateway changed after it was checked: it does not have the scale units that the plan was made for, or its last operation is not finished")
+            raise Stop("the gateway changed after it was checked: it does not have the scale units that the request was made for, or its last operation is not finished")
         return env.azure.write(self.call(), located.url(), put_body(gateway, to))
 
     def verify(self, env: Env, plan: PlanRecord) -> Verdict:

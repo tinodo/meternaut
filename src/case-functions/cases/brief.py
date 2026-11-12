@@ -19,7 +19,7 @@ from typing import Mapping, Sequence
 
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, GROUP_FACT, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from .models import ADVISE, GROUP_FACT, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -131,6 +131,15 @@ NOTHING_CHANGED_SAVING = "Nothing was changed, so no saving is claimed for this 
 # What a person is told while a switch holds the answer that approves: all of them hold a change, and only the full stop holds advice (nothing changes in Azure for it).
 PAUSED_CHANGES = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now."
+# What a request says when a look at the resource (cases/precheck.py) shows that the checks which the runner makes right before the change would refuse it: the title of the box, what happens
+# next, and the answers that are left. The reason is the check's own, in plain words, and then "Nothing was changed.". When the look could not be made, one line says so.
+NOT_NOW_TITLE = "Meternaut will not change this {noun} now"
+NOT_NOW_NEXT = ("What happens next: Meternaut looks again every time this page opens, and offers Approve again when the change can be made. "
+                "Until then you can decline this request, decide later, or ask or tell.")
+COULD_NOT_LOOK = "Meternaut could not look at the {noun} just now, so it cannot say whether the change can be made."
+LOOKS_AGAIN = "It looks again right before it acts, and it changes nothing if a check fails."
+# What a request that was refused before and is open again says at the top, when the look made now cannot say whether the reason still holds (the reason itself is the record's).
+NOT_MADE_BEFORE = "Meternaut did not make this change last time"
 # The data that a workspace takes in and nothing reads: cases/unread.py works it out and keeps it in the facts of the case under this key, as numbers, flags and the names of kinds of data. This
 # module reads that typed digest and nothing of how it is made. The words are code's; the names of tables are text of the estate and are cut and escaped like every other.
 UNREAD = "unread"
@@ -200,6 +209,7 @@ class Where:
     kind: str  # the resource in words ("Managed disk"), or its type as Azure names it
     name: str
     portal_url: str  # the address in the Azure portal, only for an id of one resource; empty otherwise
+    noun: str = "resource"  # the kind as a noun of a sentence ("disk"), "resource" when the kind has no words
 
 
 @dataclass(frozen=True)
@@ -335,6 +345,12 @@ class Brief:
     held: bool = False
     # A change that needs two people: where it stands for the reader (None for every other request).
     second: Second | None = None
+    # What a look at the resource, made when the page was built, said about a change that waits for an OK (cases/precheck.py): None when no look was made (a letter and a card make none). When it
+    # says `refused`, the answers that approve are not in `answers`, and the page says why in plain words.
+    ready: Readiness | None = None
+    # Why the last try of an open change was refused before anything was written, in the words that the record keeps (the action is `withdrawn`); empty for every other request. The page shows it at
+    # the top when the look made now cannot say more: a person who opens a request that was refused sees at once that it was, and why.
+    refused_before: str = ""
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -1166,12 +1182,13 @@ def owner_of(case: CaseRecord | None) -> OwnerLine:
 
 
 def _where(name: str, group: str, subscription: str, resource_id: str, rtype: str) -> Where:
-    return Where(text_of(subscription, 40)[:8], text_of(group, 90), kind_words(rtype)[0], text_of(name, MAX_NAME), portal_url(resource_id))
+    return Where(text_of(subscription, 40)[:8], text_of(group, 90), kind_words(rtype)[0], text_of(name, MAX_NAME), portal_url(resource_id), kind_words(rtype)[1])
 
 
-def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stage: str = "") -> tuple[str, ...]:
+def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stage: str = "", refused: bool = False) -> tuple[str, ...]:
     """The answers that exist for this person right now: a person who may answer, and a request that is open. The answer that approves is missing while a switch holds it (the
-    caller says so in `changes_paused`: for a change the switches `all` and `changes`, for advice the switch `all`). A change that needs two people (`stage`, see cases/twopeople.py)
+    caller says so in `changes_paused`: for a change the switches `all` and `changes`, for advice the switch `all`), and while a look at the resource shows that the change would be refused
+    (`refused`): the answers that are left are the ones that approve nothing. A change that needs two people (`stage`, see cases/twopeople.py)
     offers the first person "confirm" in the place of "approve", the second person "approve", and a person who confirmed it only a decline or "not mine": a question or a "later" would
     take the place of their confirmation."""
     if kind == "info" or state != "open" or not may_answer:
@@ -1181,7 +1198,7 @@ def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stag
         answers = ["decline", "not_mine"]
     elif stage:
         answers[0:1] = {"first": ["confirm"], "stale": ["confirm"], "second": ["approve"]}.get(stage, [])
-    if changes_paused:
+    if changes_paused or refused:
         answers = [name for name in answers if name not in ("approve", "confirm")]
     return tuple(answers)
 
@@ -1207,6 +1224,12 @@ def _confirmed_line(plan: PlanRecord, decisions: Sequence[DecisionRecord]) -> tu
 def _decisive(decisions: Sequence[DecisionRecord], *kinds: str) -> DecisionRecord | None:
     chosen = [d for d in decisions if d.decision in kinds]
     return max(chosen, key=lambda d: (d.at, d.approver_oid)) if chosen else None
+
+
+def not_now_reason(why: str) -> str:
+    """The reason that a look at the resource gave (cases/precheck.py), as a sentence of its own: a capital letter, a full stop, and that nothing was changed."""
+    text = plain(why, 300).rstrip(". ")
+    return f"{text[:1].upper()}{text[1:]}. Nothing was changed." if text else "Nothing was changed."
 
 
 def check_lines(check: Mapping, said: str = "") -> list[str]:
@@ -1287,10 +1310,11 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
 
 def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None = None, decisions: Sequence[DecisionRecord] = (), *, now: dt.datetime,
-                may_answer: bool = False, changes_paused: bool = False, viewer: str = "") -> Brief:
+                may_answer: bool = False, changes_paused: bool = False, viewer: str = "", ready: Readiness | None = None) -> Brief:
     """The brief of one case, with its plan and the action of the plan when there are any. `may_answer` says that the person who looks may answer the plan (the role and
     the names are checked by the caller); `changes_paused` that a switch holds the changes; `viewer` is the object id of the person who looks, for a request that needs two people
-    (what that person may do depends on whether they confirmed it). At least one of `case` and `plan` is given."""
+    (what that person may do depends on whether they confirmed it); `ready` is what a look at the resource said about a change that waits for an OK (cases/precheck.py), when the caller took
+    one: it takes the answers that approve out of a change that the checks of the runner would refuse. At least one of `case` and `plan` is given."""
     now = _utc(now)
     name, group, subscription, resource_id, rtype = _subject(case, plan)
     family = plan.family if plan is not None else ""
@@ -1318,20 +1342,22 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     found = gateways_of(case)
     together = group_of(case)
     second = second_of(plan, decisions, viewer, now) if kind == "change" and needs(plan) else None
+    looked = Readiness(ready.state, plain(ready.why, 300)) if ready is not None and kind == "change" and state == "open" else None
+    last_try = text_of(action.result, 300) if kind == "change" and state == "open" and action is not None and action.state == "withdrawn" else ""
     return Brief(
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
         headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together),
         saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case), where=_where(name, group, subscription, resource_id, rtype),
-        answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else ""), found_at=plain(found_at, 30), age_days=age,
-        expires_at=plain(plan.expires_at if plan is not None else "", 30),
+        answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
+        age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
         models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
-        held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second)
+        held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try)
 
 
 def order_key(brief: Brief) -> tuple:

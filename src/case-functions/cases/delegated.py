@@ -14,6 +14,8 @@ Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorizatio
 4. Only then the approval is recorded, and the change is made with the person's access token (runner.py): the family of the plan re-reads the resource and the locks, the runner
    compares the digest once more and makes the one change of the family (a delete, a stop, a resize, a change of tier), and follows it until Azure says that it is done. A change that
    Azure carries out later is `running` when the person's request ends, and the timer settles it by reading. Azure checks the person's own rights, and the Activity Log shows the person.
+   A check that refuses the change before anything is written (the resource is not as the request says, a lock, a pause, a read that failed) does not use the approval: the request is open
+   again, and the page of what came of it says so in plain words. A new approval is a new one, with a new sign-in and the tokens of that.
 5. A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the write with a claims challenge (HTTP 401 and a
    `www-authenticate` header that asks for more claims). That is a step-up and not a refusal: nothing was changed, the plan stays approved and its action waits in the
    queue. The person is sent to Microsoft Entra once more, with the claims request that Azure gave, in a new state with a new PKCE verifier and a new nonce. The return of

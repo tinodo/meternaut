@@ -33,7 +33,7 @@ PLAN_STATE = {
     "failed": "Failed. The change could not be finished.",
 }
 
-WITHDRAWN_ACTION = "Withdrawn before it started. Nothing changed."
+WITHDRAWN_ACTION = "Not made: a check refused the change before anything was written. Nothing changed."
 # What the page of an approved plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = WAITING_TEXT
 ACTION_STATE = {

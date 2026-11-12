@@ -325,12 +325,16 @@ class TheWholeLoop(Story):
         self.assertEqual(len(self.world.entra.redemptions), 1)
         self.assertEqual(self.world.entra.redemptions[0]["client_assertion"], f"assertion-of-{ASSERTION_CLIENT}")
 
-        # Only the person's token deleted, once; no identity of Meternaut did.
+        # Only the person's token deleted, once; no identity of Meternaut did. Before it offered Approve, the page looked at the disk with the app's own token, which can only read.
         deletes = [c for c in self.world.calls if c[1] == "DELETE" and c[2] == "management.azure.com"]
         self.assertEqual([(phase, auth) for phase, _, _, _, auth in deletes], [("approval", f"Bearer {PERSON_TOKEN}")])
         arm_calls = [c for c in self.world.calls if c[0] == "approval" and c[2] == "management.azure.com"]
         self.assertTrue(arm_calls)
-        self.assertTrue(all(c[4] == f"Bearer {PERSON_TOKEN}" for c in arm_calls), arm_calls)
+        self.assertEqual({c[4] for c in arm_calls if c[1] != "GET"}, {f"Bearer {PERSON_TOKEN}"}, "every call that is not a read is the person's own")
+        looks = [c for c in arm_calls if c[4] != f"Bearer {PERSON_TOKEN}"]
+        self.assertTrue(looks, "the page looked at the disk before it offered Approve")
+        self.assertEqual({(c[1], c[4].startswith("Bearer tok-")) for c in looks}, {("GET", True)}, "the look is a read with the token of the app")
+        self.assertTrue(all("/providers/microsoft.compute/disks/" in c[3].lower() or "/providers/microsoft.authorization/" in c[3].lower() for c in looks), [c[3] for c in looks])
 
         # The timer tells the person what ran, and makes no change.
         self.clock.advance(minutes=1)
