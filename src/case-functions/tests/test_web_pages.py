@@ -291,7 +291,7 @@ class TheDecisionsPage(unittest.TestCase):
         (row,) = rows(console.get("/"), "look")
         self.assertEqual(spans(row.find("span", class_="impact save")), ["Saves, Scenario", "$252 a year", "$21.00 a month"])
         self.assertIn("Based on the figures of each, added up.", row.text())
-        self.assertEqual(chips(row), ["Low risk"])
+        self.assertEqual(chips(row), ["Medium risk if you act on it"])
 
     def test_findings_of_another_kind_a_single_finding_and_a_change_are_not_consolidated(self):
         console = seeded()
@@ -774,7 +774,8 @@ class TheRequestPage(unittest.TestCase):
         storage(console, 1, cost=lambda n: 80.0)
         reply = console.get("/ok/plan5000")
         self.assertEqual(reply.headings(2)[0], "If you answer")
-        self.assertIn("Changes nothing in Azure", reply.main.find("p", class_="chips").text())
+        self.assertIn("Answering changes nothing in Azure", reply.main.find("p", class_="chips").text())
+        self.assertNotIn("Low risk", reply.main.find("p", class_="chips").text(), "the word low never describes the risk of an answer")
         self.assertEqual([text for _, _, text in reply.forms()[0].buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
 
 

@@ -262,7 +262,7 @@ class TheFigureInWords(unittest.TestCase):
         reversible = dataclasses.replace(change, undo=dataclasses.replace(change.undo, reversible=True), risk=dataclasses.replace(change.risk, level="low"))
         self.assertEqual(stake.chips_of(reversible), ("Low risk", "High confidence", "Can be undone"))
         advice = brief_mod.build_brief(make_advice_case(), make_advice(), now=WEB_NOW)
-        self.assertEqual(stake.chips_of(advice)[2], "Changes nothing in Azure")
+        self.assertEqual(stake.chips_of(advice), ("Medium risk if you act on it", "Low confidence", "Answering changes nothing in Azure"), "the risk is of acting; answering changes nothing")
         odd = dataclasses.replace(change, risk=dataclasses.replace(change.risk, level="weird"))
         self.assertEqual(stake.chips_of(odd)[0], "Medium risk", "a risk that is not a risk is read as the middle one, as on the page")
         self.assertEqual(len(stake.chips_of(brief_mod.build_brief(make_case(), None, now=WEB_NOW))), 2, "a case without a request says nothing of an answer")

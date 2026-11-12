@@ -351,7 +351,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_what_only_code_worked_out(self):
         facts = {row["Fact"] for row in self.reply.table("facts").rows}
-        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricUnits", "metrics", "proposal"})
+        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metricUnits", "metrics", "proposal"})
         self.assertEqual(sorted(self.case.facts), sorted([*facts, "unread"]), "the case keeps the digest all the same")
 
     def test_the_page_is_well_formed_and_offers_the_answers_of_every_advice(self):
@@ -392,7 +392,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(letter.subject, "[Meternaut] A decision waits for you")
         self.assertEqual(letter.text.splitlines()[0], "Consider changing the Log Analytics workspace ws-demo", "the title of the page")
         self.assertIn("Log Analytics workspace, resource group rg-demo", letter.text)
-        self.assertIn("Low risk, High confidence, Changes nothing in Azure", letter.text)
+        self.assertIn("Medium risk if you act on it, High confidence, Answering changes nothing in Azure", letter.text)
         self.assertIn("$859 a year\nSaves, Scenario. $71.60 a month.\nMoney is in US dollars, and a year is twelve times the month.", letter.text)
         self.assertNotIn("Based on", letter.text, "the lines that follow say what the figure rests on: the method, the share and the kinds")
         self.assertIn("About 75 percent of what this workspace is billed for is data that nothing reads.", letter.text)

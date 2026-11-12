@@ -27,7 +27,7 @@ One object, made by code from a case, its plan and its action, in `src/case-func
 
 | Part | What it holds |
 |---|---|
-| Headline | A verb, an object and a place, written by code: "Delete the unattached disk disk-x in group rg-y". Never a model's sentence |
+| Headline | A verb, an object and a place, written by code: "Delete the unattached disk disk-x in group rg-y", or "Check whether the private endpoint x is still used" when nothing measured shows that it can go. Never a model's sentence |
 | Saving | A monthly figure in US dollars with its year, what it is computed from, and its level (Verified, Expected or Scenario). Without a backed figure the page says what the finding costs ("Costs, saving not measured") or why nothing can be shown ("Cost not visible", with the reason: "Azure has no cost line for this yet.", "Cost could not be read just now.", "The cost lines are not in US dollars." or "No cost line was read yet."), and never "No figure" and never a cost of nothing for a cost that Azure does not have (below) |
 | Confidence | High, Medium or Low, derived by code from the second reviewer's verdict, the guards and how many cited numbers code re-checked |
 | Facts | At most five rows (label, value with unit, source and period), chosen by code from the typed facts |
@@ -35,7 +35,8 @@ One object, made by code from a case, its plan and its action, in `src/case-func
 | Group | For a finding that asks for a look at many resources: one case and one request. The headline says how many, of what kind and in how many groups, and names the first; the rows say what they cover, what they cost together and which they are (below) |
 | Reasoning, doubt | The first AI's reason and the second AI's strongest objection, in labelled boxes marked as not checked by code |
 | Change | What changes, who makes it (the approver, with their own permissions, so Azure checks their rights) and what is read again just before |
-| Undo, risk | Whether it can be undone and how; one sentence of what could go wrong, with a level |
+| Undo, risk | Whether it can be undone and how; one sentence of what could go wrong, with a level. For advice the sentence is "If you act on it: ..." and is about doing what the title suggests, derived from the kind of resource and the evidence; answering changes nothing in Azure and says so in its own chip |
+| Check first | For advice about a resource that others share, or that may not be used any more: what it connects to, who owns it and its traffic (the page has three lines, a card and a letter one) |
 | Owner | Who the resource probably belongs to, as plain facts from the tags and the Activity Log. A missing owner is said |
 | Where, age | Group, kind of resource in words, the subscription by its name, one link to the Azure portal (web page only) and one to Cost analysis for the scope of the finding (web page only); "Found 3 days ago. Open until ...", with no urgency |
 | Answers, footer | The choices that exist now for this person; one footer line: an AI wrote it and which models, why this person got it, whom to talk to (a name and an address as text) |
@@ -87,6 +88,20 @@ A person's time is the scarce thing, so code decides whether a finding is worth 
 `advise` never reaches Azure: the sign-in to Azure refuses an advise plan, the runner has no call for it, and a test pins that the two modules do not know the family.
 
 Records stay readable: new fields have defaults and unknown fields are dropped. `CaseRecord.owner` is new: a dictionary with the keys `tagOwner`, `tagName`, `createdBy`, `createdAt`, `changedBy`, `changedAt` and `lookedUp`. Another part of the system has to fill it from the tags and the Activity Log; until then the page says that nobody has looked up the owner.
+
+## Advice says no more than it knows
+
+A request once read "Consider deleting the private endpoint x", with "Low risk", "Low confidence", "Changes nothing in Azure" and a saving, for a private endpoint of an API Management instance that belongs to another team. Its only evidence was that the endpoint was Disconnected and that no data came back for its traffic. Nothing had shown that nothing used it, and a person who acted on it would have broken what sits behind the instance. Five rules came out of it. Each is in code, and none is left to the words of a model.
+
+**Missing data is not zero.** A claim that a resource is not used rests on a measurement that exists, had a value on at least 20 of the last 30 days (the same 20 that the chart of use asks for) and is nil in every total that the tools recorded. No data, a read that failed, a metric that the type does not offer and a few days of values are unknown. Under the basis no-usage code drops the resources whose measurement is not one (`_quiet` and `_verify` in `cases/investigate.py`), and a finding that asks to delete is to delete only when every resource of it has a measured zero (`_hold_delete`): otherwise it asks for a look, with a note, and the case says "Not measured". A state that a resource reports about itself, such as a connection that is Disconnected, says how it is now and not whether anything uses it. The Investigator and the Skeptic are told so in their instructions.
+
+**A resource that others share is never to be deleted.** Private endpoints, private DNS zones and their links, the gateways of virtual networks, firewalls, route tables, NAT gateways, API Management, Bastion, ExpressRoute and VPN objects and peerings are on a list (`SHARED` in `cases/brief.py`). A finding about one of them may ask for a look and never for a deletion, whatever it measured, because what depends on it cannot be seen from here.
+
+**The title asks what is not known.** When no measured zero lets a finding ask to delete, its title is "Check whether the private endpoint x is still used" and not "Consider deleting ...", it claims no saving (the figure is "Costs, saving not measured"), its facts say "Use: Not measured" when nothing was measured, and a "Check first" list follows: what it connects to, who owns it and its traffic. A card and a letter carry the list in one line. A request that an earlier version made keeps its record, and the page reads it by the same rules.
+
+**The risk of acting is not the risk of answering.** Advice has two risks, and the page, the card and the letter say them apart. "Answering changes nothing in Azure" is a chip of its own. The risk chip and the line "If you act on it: ..." are about doing what the title suggests: "Unproven: nothing shows that nothing uses it." when no measured zero shows it, "Could break traffic that you cannot see from here." for a resource that others share, and "High risk" for the two together (`acting_risk` in `cases/brief.py`). The level is never low: a change is at least a medium risk, and the word "Low risk" never describes an answer.
+
+**A resource that an automation manages is held back.** When the Activity Log names a change within 14 days by an identity that is no person (a sign-in name has an @) and is not one of Meternaut's own, somebody else's automation manages the resource: the case stays, no request is made for it, one that nobody answered is taken back, the History says `held back: managed by an automation` (`case.held`) and the run counts it with the findings that say nothing (`heldBack`). Waste that Meternaut planted itself is never held: its deploy changes it.
 
 ## Data that a workspace stores and nothing reads
 

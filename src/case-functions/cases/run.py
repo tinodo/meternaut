@@ -21,7 +21,7 @@ from . import costs as cost_words
 from . import decide, detectors, evidence, guards, investigate, learning, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
-from .approvals import NOTHING_TO_SAY, is_fixture
+from .approvals import MANAGED_BY_AUTOMATION, NOTHING_TO_SAY, is_fixture
 from .arm import Arm, scopes_of
 from .brief import says_nothing
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
@@ -78,7 +78,7 @@ class Summary:
     errors: int = 0
     tokens: int = 0
     seconds: int = 0
-    held: int = 0  # the findings held back because they cannot say what to look at (cases/upkeep.py)
+    held: int = 0  # the findings held back because they cannot say what to look at, or because an automation manages the resource (cases/upkeep.py)
 
 
 class CaseEnded(Exception):
@@ -510,13 +510,13 @@ def _keep_requests_up_to_date(s: Services, ranked: Sequence[Lead], say: Callable
         say(f"the open requests could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
-def _take_back_empty(s: Services, say: Callable[[str], None]) -> int:
-    """Takes back the open requests that cannot say what to look at (cases/upkeep.py take_back) and returns how many. It never fails the run."""
+def _take_back_empty(s: Services, say: Callable[[str], None]) -> tuple[int, int]:
+    """Takes back the open requests that cannot say what to look at, and those that an automation manages (cases/upkeep.py take_back), and returns how many of each. It never fails the run."""
     try:
         return upkeep.take_back(s.extras, s.history)
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"the requests that say nothing could not be taken back ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
-        return 0
+        return 0, 0
 
 
 def execute(s: Services, trigger: str) -> Summary:
@@ -685,12 +685,15 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
-    summary.held += len(held_ids) + investigation.said_nothing
+    nothing, managed = len(held_ids) + investigation.said_nothing, investigation.automated
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
-        summary.held += _take_back_empty(s, say)  # the requests that cannot say what to look at are taken back before the cost of the others is read
-    if summary.held:
-        say(f"{summary.held} finding{'s' if summary.held != 1 else ''} {NOTHING_TO_SAY}")
+        more, taken = _take_back_empty(s, say)  # the requests that cannot say what to look at, or that an automation manages, are taken back before the cost of the others is read
+        nothing, managed = nothing + more, managed + taken
+    summary.held += nothing + managed
+    for count, reason in ((nothing, NOTHING_TO_SAY), (managed, MANAGED_BY_AUTOMATION)):
+        if count:
+            say(f"{count} finding{'s' if count != 1 else ''} {reason}")
     read_cost_series(s, contexts, say)
     read_use_series(s, say)
     summary.tokens = tokens

@@ -28,9 +28,11 @@ ALLOWED_TAGS = {"html", "head", "meta", "title", "style", "body", "table", "tr",
 LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$")
 # The most words that a letter may have (what a person reads in about a minute), counted in what the letter shows. The decision letter went from 133 to 163 words and the letter about what ran from
 # 77 to 101, because of what the owner asked of them (AGENTS.md rule 36): the figure a year and a month with its level and its basis, once that money is in US dollars, the place under the
-# title and the risk, the confidence and the undo as words are 44 words where the old line of the saving was 11; the title lost the place (4 words) and nothing else was cut. The limits are the
-# measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to 56) keep the limits that they had.
-MOST_WORDS = {"first contact": 110, "approval": 165, "digest": 150, "done": 105}
+# title and the risk, the confidence and the undo as words are 44 words where the old line of the saving was 11; the title lost the place (4 words) and nothing else was cut. The decision letter
+# went from 163 to 169 words when the risk of advice became the risk of acting on it and answering said so in its own words ("Medium risk if you act on it, Low confidence, Answering changes
+# nothing in Azure" against "Low risk, Low confidence, Changes nothing in Azure"). The limits are the measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to
+# 56) keep the limits that they had.
+MOST_WORDS = {"first contact": 110, "approval": 170, "digest": 150, "done": 105}
 
 
 def make_plan(**changes) -> PlanRecord:
@@ -484,7 +486,8 @@ class Approval(unittest.TestCase):
         self.assertEqual(letter.subject, "[Meternaut] A decision waits for you")
         self.assertEqual(letter.text.splitlines()[0], "Review the disk disk-zq7-name", "the title of the page, not the headline with its place")
         self.assertIn("Managed disk, resource group rg-zq7-group", letter.text)
-        self.assertIn("Low risk, Low confidence, Changes nothing in Azure", letter.text)
+        self.assertIn("Medium risk if you act on it, Low confidence, Answering changes nothing in Azure", letter.text)
+        self.assertIn("Risk, medium: If you act on it: What depends on it can slow down or stop.", letter.text, "the risk is that of doing what the title suggests, said apart from the answer")
         self.assertIn("If you answer: Nothing changes in Azure. Your answer is recorded with your name.", letter.text)
         self.assertNotIn("sign in to Azure", letter.text)
         self.assertNotIn("Undo: This cannot be undone.", letter.text)

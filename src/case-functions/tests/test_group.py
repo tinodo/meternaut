@@ -38,11 +38,22 @@ def endpoints(count: int, cost=float, **changes) -> list:
     return [resource(n, resource_type=TYPE, name=f"pe-{n:02d}", resource_group=f"rg-{n % 14:02d}", cost_usd_30d=cost(n), **changes) for n in range(1, count + 1)]
 
 
+def disks(numbers) -> tuple[list, dict]:
+    """Resources that a deletion may be asked for (a kind that others do not share) with a measured zero each: the resources and the evidence of the tools for them."""
+    found = [resource(n, resource_type="microsoft.compute/disks", name=f"disk-{n:02d}", resource_group=f"rg-{n % 14:02d}", cost_usd_30d=100.0) for n in numbers]
+    return found, {r.handle: metrics(Traffic=0) for r in found}
+
+
 def raw_of(count: int, **changes) -> dict:
     """One finding of the Investigator that asks for a look at `count` resources, none of which has data to measure."""
     values = dict(handles=[f"r{n}" for n in range(1, count + 1)], basis="other", proposal="investigate", confidence=0.4, summary="These resources have no data in the window.", evidence=[])
     values.update(changes)
     return finding(**values)
+
+
+def quiet_raw(handles, **changes) -> dict:
+    """A finding that asks to delete resources of which the tools measured nothing used any: each has a cited measured zero."""
+    return finding(handles=list(handles), basis="no-usage", proposal="delete", confidence=0.9, evidence=[entry(handle, "Traffic", 0) for handle in handles], **changes)
 
 
 def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None) -> Harness:
@@ -157,11 +168,18 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
     def test_a_delete_and_a_change_are_never_one_case(self):
         for proposal in ("delete", "change"):
             with self.subTest(proposal=proposal):
-                h = watch(raw_of(8, proposal=proposal), endpoints(8))
+                resources, evidence = disks(range(1, 9))
+                raw = quiet_raw([f"r{n}" for n in range(1, 9)]) if proposal == "delete" else raw_of(8, proposal=proposal)
+                h = watch(raw, resources if proposal == "delete" else endpoints(8), evidence=evidence if proposal == "delete" else None)
                 cases = h.store.cases_recent()
                 self.assertEqual((h.result.cases, len(cases)), (8, 8))
                 self.assertTrue(all(GROUP_FACT not in c.facts for c in cases))
                 self.assertTrue(all(r.get("groupSize") is None for r in h.of("case.result")))
+
+    def test_a_delete_that_no_measured_zero_backs_is_a_look_and_is_one_case_like_any_other_look(self):
+        h = watch(raw_of(8, proposal="delete"), endpoints(8, cost=lambda n: 100.0))
+        case = only_case(h)
+        self.assertEqual((h.result.cases, case.recommendation, case.facts[GROUP_FACT]["count"], case.facts["asked"]), (1, "investigate", 8, "delete"))
 
     def test_a_finding_with_the_basis_of_a_measurement_is_one_case_too_when_it_asks_for_a_look(self):
         evidence = {f"r{n}": metrics(Traffic=0) for n in range(1, 9)}
@@ -234,8 +252,9 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertIn("10 resources of the findings are not listed as cases: a run opens at most 60", h.notes)
         cases = {c.resource_name: c for c in h.store.cases_recent()}
         self.assertEqual((cases["pe-40"].facts[GROUP_FACT]["capped"], cases["pe-70"].facts[GROUP_FACT]["capped"]), (0, 10), "the second group says how many of its finding the cap left out")
-        raw = [raw_of(40), raw_of(30, handles=[f"r{n}" for n in range(41, 71)], proposal="delete")]
-        h = watch(raw, endpoints(70))
+        resources_41_70, evidence_41_70 = disks(range(41, 71))
+        raw = [raw_of(40), quiet_raw([f"r{n}" for n in range(41, 71)])]
+        h = watch(raw, endpoints(40) + resources_41_70, evidence={**{f"r{n}": absent() for n in range(1, 41)}, **evidence_41_70})
         first, second = h.of("investigation.finding")
         self.assertEqual((first["handles"], first["capped"], second["handles"], second["capped"], h.result.cases), (40, 0, 20, 10, 21), "the group takes forty of the sixty places")
         sixty = watch(raw_of(60), endpoints(70))
@@ -631,9 +650,9 @@ class WhenAPersonMarkedAResourceDoNotTouch(unittest.TestCase):
         self.assertEqual((again.result.ran, only_case(again).facts[GROUP_FACT]["count"]), (True, 10), "the next run, with the marks readable, is the investigation as it always was")
 
     def test_a_finding_that_asks_for_a_delete_is_not_changed_by_the_marks(self):
-        resources = endpoints(8, cost=lambda n: 100.0)
+        resources, evidence = disks(range(1, 9))
         mark(self.extras, resources[7])
-        h = self.watch(raw_of(8, proposal="delete"), resources)
+        h = self.watch(quiet_raw([f"r{n}" for n in range(1, 9)]), resources, evidence=evidence)
         cases = h.store.cases_recent()
         self.assertEqual((h.result.cases, len(cases)), (8, 8))
         self.assertTrue(all(GROUP_FACT not in case.facts for case in cases))

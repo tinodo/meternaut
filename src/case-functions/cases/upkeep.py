@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Sequence
 
+from . import brief
 from . import costs as cost_words
-from .approvals import NOTHING_TO_SAY
+from .approvals import MANAGED_BY_AUTOMATION, NOTHING_TO_SAY
 from .detectors import Lead
 from .events import History
 from .models import CaseRecord, StoreError
@@ -66,14 +67,16 @@ def refresh(store, ranked: Sequence[Lead]) -> int:
 
 
 def held(history: History, case: CaseRecord) -> None:
-    """Says in the History that a finding was held back because it cannot say what to look at: its case stays, no request is made."""
+    """Says in the History that a finding was held back, because it cannot say what to look at or because an automation manages its resource: its case stays, no request is made."""
     history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120),
-                 reason=NOTHING_TO_SAY)
+                 reason=MANAGED_BY_AUTOMATION if brief.automated(case) else NOTHING_TO_SAY)
 
 
-def take_back(ex, history: History) -> int:
-    """Takes back the open requests of the findings that cannot say what to look at and that nobody has answered (Approvals.hold_back_empty), says each in the History and returns how many."""
+def take_back(ex, history: History) -> tuple[int, int]:
+    """Takes back the open requests of the findings that cannot say what to look at and of those that an automation manages, when nobody has answered them (Approvals.hold_back_empty), says each in
+    the History and returns how many of each kind: those that had nothing to say, and those that an automation manages."""
     closed = ex.approvals.hold_back_empty()
     for _, case in closed:
         held(history, case)
-    return len(closed)
+    managed = sum(1 for _, case in closed if brief.automated(case))
+    return len(closed) - managed, managed

@@ -197,7 +197,7 @@ def investigation_lines(events: list[dict], counts_only: bool = False) -> list[s
             basis, proposal, verdict = clean(e.get("basis"), 60) or "no basis", clean(e.get("proposal"), 30) or "none", clean(e.get("verdict"), 30) or "no verdict"
         lines.append(f"  Finding {clean(e.get('finding'), 6)}: {basis + ', ' if basis else ''}proposal {proposal}, "
                      f"confidence {clean(e.get('confidence'), 10)}; {clean(e.get('claimed'), 6)} resources claimed, {clean(e.get('handles'), 6)} left after the checks of code "
-                     f"(unknown handles {clean(e.get('unknown'), 6)}, not proven by a measurement {clean(e.get('unproven'), 6)}, repeated {clean(e.get('repeated'), 6)}, "
+                     f"(unknown handles {clean(e.get('unknown'), 6)}, not proven by a measurement on enough days {clean(e.get('unproven'), 6)}, repeated {clean(e.get('repeated'), 6)}, "
                      f"judged lately {clean(e.get('judgedLately'), 6)}, held back by a guard {clean(e.get('guarded'), 6)}, beyond the cap {clean(e.get('capped'), 6)}); "
                      f"their cost of the last 30 days {money(e.get('coveredCostUsd30d'))} (Cost Management cost lines, not an invoice); "
                      f"the Skeptic: {verdict}; {outcome}")

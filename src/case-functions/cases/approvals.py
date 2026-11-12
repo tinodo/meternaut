@@ -34,6 +34,9 @@ ADVICE_STATUSES = ("proposed", "needs_human")
 ADVICE_MIN_USD = 50.0
 # What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
 NOTHING_TO_SAY = "held back: nothing to say"
+# What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): somebody else
+# manages it, so no request is made, and the run counts it like the findings that say nothing (investigate.py AUTOMATION_DAYS).
+MANAGED_BY_AUTOMATION = "held back: managed by an automation"
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
@@ -133,7 +136,7 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
         resource_group=clean_text(case.resource_group, 90), subscription_id=case.subscription_id, code="",
         title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation, together=brief.group_of(case), case=case),
         what_changes=brief.ADVICE_CHANGE,
-        saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.ADVICE_RISK, undo=brief.ADVICE_UNDO,
+        saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.acting_risk(case).text, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
         state="open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status}))
 
@@ -429,14 +432,14 @@ class Approvals:
             return []
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
-        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing) and that nobody has answered: no request is made for such a finding, and one
-        that was made before is closed, as expired and ending now, like the requests that supersede() takes back. The case keeps its status (a finding that no person has seen). A request that a
+        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing) or that an automation manages (brief.automated) and that nobody has answered: no
+        request is made for such a finding, and one that was made before is closed, as expired and ending now, like the requests that supersede() takes back. The case keeps its status (a finding that no person has seen). A request that a
         person put off or asked about is theirs and stays. Returns the plans that it closed, each with its case."""
         try:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
-                if case is None or not brief.says_nothing(case):
+                if case is None or not (brief.says_nothing(case) or brief.automated(case)):
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                 if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
@@ -504,7 +507,7 @@ class Approvals:
                     if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
                         self.store.case_put(_with(case, plan_id=plan.plan_id))
                     return None
-            if why_not_ask(case) is not None or brief.says_nothing(case):
+            if why_not_ask(case) is not None or brief.says_nothing(case) or brief.automated(case):
                 return None
             if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
                                                     and (plan.preconditions or {}).get("caseStatus") == "needs_human") >= ADVICE_OPEN_MAX:

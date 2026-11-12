@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import estimate as estimates
-from .brief import Brief
+from .brief import ACTING, IF_ACTED, Brief
 from .models import CaseRecord
 from .web.figures import RISKS, Figure, a_year, dollars, figure_for, title_of
 from .web.home import Row, unit_title, units_of
@@ -110,10 +110,11 @@ def place_of(brief: Brief) -> str:
 
 
 def chips_of(brief: Brief) -> tuple[str, ...]:
-    """The chips of the page as words (a letter has no shapes): the risk, how sure the AIs are, and what a change leaves behind, or that an answer changes nothing in Azure."""
-    chips = [RISKS.get(brief.risk.level, RISKS["medium"])[0], f"{brief.confidence.level} confidence"]
+    """The chips of the page as words (a letter has no shapes): the risk (of acting, for advice: answering changes nothing), how sure the AIs are, and what a change leaves behind, or that an
+    answer changes nothing in Azure."""
+    chips = [RISKS.get(brief.risk.level, RISKS["medium"])[0] + (IF_ACTED if brief.risk.text.startswith(ACTING) else ""), f"{brief.confidence.level} confidence"]
     if brief.kind == "change":
         chips.append("Can be undone" if brief.undo.reversible else "Cannot be undone")
     elif brief.kind == "advice":
-        chips.append("Changes nothing in Azure")
+        chips.append("Answering changes nothing in Azure")
     return tuple(chips)

@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import COULD_NOT_LOOK, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, COULD_NOT_LOOK, IF_ACTED, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -47,11 +47,11 @@ def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
 def _chips(brief: Brief) -> Safe:
     """Three chips at most, each with a word and a shape: the risk, how sure the AIs are, and what a change leaves behind (or that the answer changes nothing in Azure)."""
     level = brief.confidence.level
-    chips = [risk_chip(brief.risk.level), chip(f"{level} confidence", "info" if level == "High" else "")]
+    chips = [risk_chip(brief.risk.level, IF_ACTED if brief.risk.text.startswith(ACTING) else ""), chip(f"{level} confidence", "info" if level == "High" else "")]
     if brief.kind == "change":
         chips.append(chip("Can be undone", "low", "circle") if brief.undo.reversible else chip("Cannot be undone", "high", "diamond"))
     elif brief.kind == "advice":
-        chips.append(chip("Changes nothing in Azure"))
+        chips.append(chip("Answering changes nothing in Azure"))
     return fmt('<p class="chips">{chips}</p>', chips=join(chips))
 
 
@@ -189,6 +189,13 @@ def _options(brief: Brief) -> Safe:
         return Safe("")
     rows = [fmt('<li>{what} <span class="muted">At risk: {risk}</span></li>', what=option.what, risk=option.risk) for option in brief.options]
     return join([Safe("<h2>What you could do</h2>"), fmt("<ol>{rows}</ol>", rows=join(rows)), paragraph(OPTIONS_END)])
+
+
+def _check_first(brief: Brief) -> Safe:
+    """What to check before acting on advice about a resource that others share, or that may not be used any more: what it connects to, who owns it and its traffic, in the words of code."""
+    if not brief.check_first:
+        return Safe("")
+    return join([Safe("<h2>Check first</h2>"), fmt("<ol>{rows}</ol>", rows=join(fmt("<li>{text}</li>", text=line) for line in brief.check_first))])
 
 
 def _whose(brief: Brief) -> Safe:
@@ -344,7 +351,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)
     elif brief.state == "open" and plan is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2><p>Only the people who are named for this request can answer it.</p></section>')
-    reading = join(block(part) for part in (_measured(brief), _options(brief), _why(brief), _whose(brief)))
+    reading = join(block(part) for part in (_measured(brief), _options(brief), _check_first(brief), _why(brief), _whose(brief)))
     parts.append(fmt('<div class="cols{solo}"><div>{reading}</div>{side}</div>', solo="" if side is not None else " solo", reading=reading, side=side if side is not None else Safe("")))
     parts.append(_details(ctx, brief, case, plan, action))
     return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=brief.models or None, why=why or "you opened a request that Meternaut made", wide=True)
