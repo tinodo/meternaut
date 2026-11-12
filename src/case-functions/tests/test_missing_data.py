@@ -4,6 +4,8 @@ AGENTS.md rules 26 and 30: a model's claim is checked by code, and what a person
 """
 import datetime as dt
 import unittest
+from dataclasses import replace
+from types import SimpleNamespace
 
 import support  # noqa: F401  (it puts the app on the path)
 from support import NOW, REPO_ROOT, SUBSCRIPTION
@@ -305,14 +307,14 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         notes = [e["note"] for e in events if e["type"] == "run.note"]
         self.assertIn("1 finding held back: managed by an automation", notes)
         self.assertFalse([note for note in notes if note.endswith("held back: nothing to say")], "it is not a finding that says nothing")
-        self.assertEqual(kept.learned["taken"], "automation")
+        self.assertEqual((after.preconditions["takenBack"], "taken" in kept.learned), ("automation", False), "the plan keeps why, and the case is not touched")
 
     def test_a_request_that_asks_to_delete_on_less_than_the_rules_ask_for_now_is_taken_back_and_the_person_is_told_why(self):
         case, plan = self.open_request("Consider deleting the private endpoint pe-apim-demo in group rg-platform", dict(saving_usd_month=7.2), recommendation="delete", saving_usd_month=7.2,
                                        facts={"basis": "other", "proposal": "delete", "metrics": {}})
         summary, events, _ = self.watch()
         after, kept = self.taken(case, plan)
-        self.assertEqual((after.state, kept.learned["taken"], summary.held), ("expired", "rules", 1))
+        self.assertEqual((after.state, after.preconditions["takenBack"], summary.held), ("expired", "rules", 1))
         (held,) = [e for e in events if e["type"] == "case.held"]
         self.assertEqual((held["reason"], RULES_CHANGED), ("held back: Meternaut's rules changed", "held back: Meternaut's rules changed"))
         b = brief.build_brief(kept, after, now=WEB_NOW)
@@ -331,7 +333,42 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
                                        facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 0}, "metricDaysWithData": {"M": 28}})
         self.watch()
         after, kept = self.taken(case, plan)
-        self.assertEqual((after.state, kept.learned["taken"]), ("expired", "unchecked"))
+        self.assertEqual((after.state, after.preconditions["takenBack"]), ("expired", "unchecked"))
+
+    def test_a_judgment_after_the_take_back_loses_nothing_the_page_the_card_and_the_lessons_stay_as_they_were(self):
+        case, plan = self.open_request("Consider deleting the private endpoint pe-apim-demo in group rg-platform", dict(saving_usd_month=7.2), recommendation="delete", saving_usd_month=7.2,
+                                       facts={"basis": "other", "proposal": "delete", "metrics": {}})
+        self.watch()
+        after, kept = self.taken(case, plan)
+
+        def read(taken_case):
+            b = brief.build_brief(taken_case, self.store.plan_get(plan.plan_id), now=WEB_NOW)
+            card = cards.closed_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}"))
+            return b.outcome, {block["id"]: block["text"] for block in walk_blocks(card)}["closed"]
+
+        before = read(kept)
+        self.assertEqual((before[0].title, learning.sync(self.store, self.clock()), self.store.lessons_recent(10)), ("Taken back", 0, []))
+        # A week later the case is judged again, and what it keeps of its judgment is made again from the verdict alone (investigate.py, run.py): nothing of the take-back stays in it.
+        self.clock.advance(days=8)
+        self.store.case_put(replace(kept, learned={"skeptic": "agree"}, updated_at=stamp(self.clock())))
+        self.assertEqual(read(self.store.case_get(case.case_id)), before)
+        self.assertEqual((learning.sync(self.store, self.clock()), self.store.lessons_recent(10)), (0, []), "a request that Meternaut took back is not one that nobody answered, a week later either")
+
+    def test_each_reason_says_what_it_is_and_only_the_rules_say_that_the_rules_changed(self):
+        case, plan = self.open_request("Consider deleting the private endpoint pe-apim-demo in group rg-platform")
+        ended = replace(plan, state="expired", expires_at="2026-11-04T09:00:00Z")
+        for why, first in (("rules", "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now."),
+                           ("automation", "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it."),
+                           ("unchecked", "Meternaut took this request back: nobody has looked up who changed the resource.")):
+            with self.subTest(why=why):
+                b = brief.build_brief(case, replace(ended, preconditions={**ended.preconditions, "takenBack": why}), now=WEB_NOW)
+                self.assertEqual((b.outcome.title, b.outcome.lines), ("Taken back", (first, "Nothing was changed in Azure.")))
+        for label, shown, learned in (("no reason", {}, {}), ("a reason that is none", {"takenBack": "x"}, {}), ("a reason that is no word", {"takenBack": ["rules"]}, {"taken": {"a": 1}})):
+            with self.subTest(case=label):
+                b = brief.build_brief(replace(case, learned=learned), replace(ended, preconditions=shown), now=WEB_NOW)
+                self.assertEqual((b.outcome.title, b.outcome.lines), ("Expired", ("Nobody answered in time.", "Nothing changed.")))
+        old = brief.build_brief(replace(case, learned={"taken": "automation"}), ended, now=WEB_NOW)
+        self.assertEqual(old.outcome.title, "Taken back", "a request that was taken back before the plan kept the reason has it in its case")
 
     def test_what_a_person_decided_what_runs_and_what_meternaut_planted_stay_as_they_are(self):
         from cases.models import DecisionRecord
@@ -349,7 +386,7 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         self.store.plan_put(planted_plan)
         self.watch()
         self.assertEqual((self.store.plan_get(later_plan.plan_id).state, self.store.plan_get(planted_plan.plan_id).state), ("open", "open"))
-        self.assertNotIn("taken", self.store.case_get("klater").learned)
+        self.assertNotIn("takenBack", self.store.plan_get(later_plan.plan_id).preconditions)
         self.assertEqual(kept, {})
 
     def test_a_finding_that_no_rule_holds_back_keeps_its_request(self):
@@ -403,6 +440,20 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         self.assertIn("Held back: 2 findings", content)
         self.assertIn("1 finding is held back because an automation manages the resource", content)
         self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+
+    def test_the_count_of_what_a_rule_holds_is_made_from_the_findings_that_are_held_and_never_exceeds_them(self):
+        from cases.web import home
+        from test_web_support import Console, make_advice
+
+        console = Console()
+        recent = stamp(WEB_NOW - dt.timedelta(days=1))
+        for letter in ("a", "b"):
+            console.store.case_put(make_advice_case(case_id=f"case40{letter}", resource_id=f"{PE}-{letter}", resource_name=f"endpoint-{letter}", plan_id=f"plan40{letter}", recommendation="investigate",
+                                                    owner={"lookedUp": True, "automatedAt": recent}))
+        console.store.plan_put(make_advice(plan_id="plan40b", case_id="case40b", resource_id=f"{PE}-b", state="declined", created_at=stamp(WEB_NOW - dt.timedelta(days=2))))
+        ctx = SimpleNamespace(store=console.store, now=WEB_NOW)
+        self.assertEqual((home.held_count(ctx), home.held_by_rules(ctx)), (1, 1), "the finding that somebody answered lately is neither held nor held by a rule")
+        self.assertIn("1 finding is held back because an automation manages the resource", console.get("/").content)
 
 
 class TheWordsAboutWhatWasNotMeasured(unittest.TestCase):

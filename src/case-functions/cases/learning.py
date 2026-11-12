@@ -204,7 +204,7 @@ def lesson_of(plan: PlanRecord, case: CaseRecord | None, decisions: Sequence, ac
     """The lesson of a plan that has ended, or None while it has not. `previous` is the lesson that was written before: what only a later look can add (a boomerang) is kept."""
     if plan.state not in CLOSED:
         return None
-    if plan.family == ADVISE and plan.state == "expired" and (says_nothing(case) or taken_back(case)):
+    if plan.family == ADVISE and plan.state == "expired" and (says_nothing(case) or taken_back(plan, case)):
         return None  # a request that was taken back (it cannot say what to look at, or Meternaut's rules held it back or changed) was never one for a person to answer: it teaches nothing, and does not count as unanswered
     answer, reason, decided = _answer(plan, decisions)
     facts = case.facts if case is not None and isinstance(case.facts, dict) else {}

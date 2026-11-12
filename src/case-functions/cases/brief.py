@@ -75,8 +75,9 @@ RARE_USE = "Something that is used less often than the days measured may still n
 CHANGE_RISK = "What depends on it can slow down or stop."
 NOT_MEASURED = "Not measured: no measurement is cited for this finding, so nothing shows that nothing uses it."
 NOT_LOOKED_UP = "Not checked: who changed it."
-TAKEN_BACK = {"rules": "it asks about this resource on less evidence than Meternaut's rules ask for now", "automation": "an application or service identity changed the resource lately",
-              "unchecked": "it is not known who changed the resource"}  # why Meternaut took a request back when its rules changed (cases/approvals.py hold_back_empty)
+TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now.",
+              "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
+              "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -624,10 +625,13 @@ def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
     return "unchecked" if about_a_resource and _asked_delete(case) and not owner.get("lookedUp") else ""
 
 
-def taken_back(case: CaseRecord | None) -> str:
-    """The reason that Meternaut gave when it took an open request back because its rules had changed (a key of TAKEN_BACK), or "" when it did not."""
-    taken = case.learned.get("taken") if case is not None and isinstance(case.learned, dict) else None
-    return taken if taken in TAKEN_BACK else ""
+def taken_back(plan: PlanRecord | None, case: CaseRecord | None = None) -> str:
+    """The reason that Meternaut gave when it took an open request back (a key of TAKEN_BACK), or "" when it did not. The plan keeps it (`preconditions["takenBack"]`), written with its end: what a
+    case keeps in `learned` is made again at every judgment. A request that was taken back before that has it in the `learned` of its case."""
+    pre = plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {}
+    learned = case.learned if case is not None and isinstance(case.learned, dict) else {}
+    taken = pre.get("takenBack") or learned.get("taken")
+    return taken if isinstance(taken, str) and taken in TAKEN_BACK else ""
 
 
 def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
@@ -1541,9 +1545,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         return none
     advice = plan.family == ADVISE
     if state == "expired":
-        why = taken_back(case)
+        why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            return Outcome("expired", "Taken back", (f"Meternaut's rules changed, so it took this request back: {TAKEN_BACK[why]}.", "Nothing was changed in Azure."), "Taken back by Meternaut", "", plan.expires_at)
+            return Outcome("expired", "Taken back", (TAKEN_BACK[why], "Nothing was changed in Azure."), "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Expired", ("Nobody answered in time.", "Nothing changed."), "Expired, nobody answered", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")

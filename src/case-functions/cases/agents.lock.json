@@ -66,7 +66,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "db7bd92b9fa80c89751eab62aa65d85dbcb362543877b03c068c916dfc16c36d"
+    "moduleSha256": "a672b55ae013b9f5081fe5ecb8b12e1c8c3c8563a077a914f5ad5ba5a201a1c0"
   },
   "tools": {
     "advisor_items": {

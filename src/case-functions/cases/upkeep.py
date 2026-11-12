@@ -78,4 +78,4 @@ def held(history: History, case: CaseRecord, why: str = "") -> str:
 def take_back(ex, history: History) -> Counter:
     """Takes back the open requests of the findings that cannot say what to look at, that the rules hold back or that were made under rules that have changed, when nobody has answered them
     (Approvals.hold_back_empty), says each in the History and returns how many there were of each reason, in the words that the History says."""
-    return Counter(held(history, case, brief.taken_back(case)) for _, case in ex.approvals.hold_back_empty())
+    return Counter(held(history, case, brief.taken_back(plan)) for plan, case in ex.approvals.hold_back_empty())
