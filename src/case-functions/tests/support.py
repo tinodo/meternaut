@@ -115,6 +115,8 @@ class FakeEstate:
         self.sleeps: list[float] = []
         self.after_chat = None
         self.first_call = None
+        self.recommendation = "delete"  # what the Detective answers: a deletion of a resource outside a group where a change may be made is held back by the rules (cases/brief.py held_reason), so a test that needs a request says "change"
+        self.activity: list[dict] = []  # the events that the Activity Log of any resource shows (a failure of source `activity` makes the read fail)
 
     # -- the answers ---------------------------------------------------------------------------------------------------------------------------
     def model(self, model: str, system: str, user: str) -> tuple:
@@ -122,7 +124,7 @@ class FakeEstate:
         if self.chat_replies:
             return self.chat_replies.pop(0)
         if system.startswith("You are the Detective"):
-            return model_reply(detective_says())
+            return model_reply(detective_says(self.recommendation))
         return model_reply(skeptic_says())
 
     def _failure(self, source: str):
@@ -160,6 +162,9 @@ class FakeEstate:
         if "/providers/microsoft.advisor/recommendations" in path:
             failed = self._failure("advisor")
             return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.advisor})
+        if "/providers/microsoft.insights/eventtypes/management/values" in path:
+            failed = self._failure("activity")
+            return (failed, {}, b'{"error":{"code":"Failed","message":"boom"}}') if failed else self._json({"value": self.activity})
         if "/providers/microsoft.authorization/locks" in path:
             if path == f"/subscriptions/{SUBSCRIPTION}/providers/microsoft.authorization/locks":
                 failed = self._failure("locks")

@@ -39,13 +39,13 @@ def loop_for(clock, store=None, *, recheck_days=7, approvers=True, on_plan=None)
     return extras
 
 
-def estate_with(planted_disk=True, endpoints=0):
+def estate_with(planted_disk=True, endpoints=0, group="rg-app"):
     estate = FakeEstate()
     if planted_disk:
         row = disk_row("planted-disk-1", GROUP, tags=PLANTED, timeCreated=stamp(NOW))
         estate.graph["orphan-managed-disk"] = [row]
         estate.graph["recent-creations"] = [{"targetId": row["id"].lower()}]
-    estate.graph["orphan-private-endpoint"] = [pe_row(f"pe{n}", "rg-app") for n in range(endpoints)]
+    estate.graph["orphan-private-endpoint"] = [pe_row(f"pe{n}", group) for n in range(endpoints)]
     return estate
 
 
@@ -129,7 +129,7 @@ class WhatTheLoopKeeps(unittest.TestCase):
         self.assertEqual((case.status, case.guards), ("needs_human", ("too-new",)))
 
     def test_a_proposed_case_that_may_not_be_changed_gets_advice_and_not_a_plan_of_a_change(self):
-        watch(estate_with(planted_disk=False, endpoints=1), self.extras, self.clock)
+        watch(estate_with(planted_disk=False, endpoints=1, group=GROUP), self.extras, self.clock)  # in the group where a change may be made, but without the planting tag
         (case,) = self.store.cases_recent()
         (plan,) = self.store.plans_open()
         self.assertEqual((case.status, case.recommendation, case.plan_id), ("proposed", "delete", plan.plan_id))

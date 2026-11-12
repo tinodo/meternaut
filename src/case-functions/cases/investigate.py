@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Callable, Mapping
 from . import agents, capability, decide, gateways, guards, learning, roles, unread, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
-from .approvals import MANAGED_BY_AUTOMATION, is_fixture
+from .approvals import is_fixture
 from .arm import scopes_of
 from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, says_nothing, shared
 from .detectors import Context, Lead
@@ -41,7 +41,7 @@ from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
 from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
-from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, moment, owner_hints
+from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
 
@@ -58,7 +58,6 @@ MAX_GROUP_NAMES = 12  # the names of the other resources that the case of such a
 MAX_GROUP_IDS = 200  # the resource ids that the case of a group keeps, for its daily cost (run.read_cost_series)
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
-AUTOMATION_DAYS = 14  # a resource that an application or service identity changed within this many days is managed by an automation, which is not Meternaut's to advise on
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
 MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
 SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, at most
@@ -154,7 +153,7 @@ class Investigation:
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
-    automated: int = 0  # the cases whose request was not made because an automation manages the resource (AUTOMATION_DAYS): counted with the findings that were held back
+    held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (automation, unchecked), by reason: counted with the findings that were held back
 
     @property
     def state(self) -> str:
@@ -308,6 +307,13 @@ def _quiet(aggregate: dict) -> bool:
     return all(total is not None and total == 0 for total in aggregate["totals"]) and days is not None and days >= MEASURED_DAYS
 
 
+def _zero_only(cited: Mapping, recorded: Mapping[str, dict]) -> bool:
+    """Whether the measurements that a finding cited for one resource show that nothing used it: one of them is a measured zero (_quiet) and none of them shows anything. A measured zero does not
+    outweigh a measurement of the same resource that shows use, whatever the basis of the finding is."""
+    shown = [aggregate for name, aggregate in recorded.items() if name in cited]
+    return any(_quiet(aggregate) for aggregate in shown) and not any(_nonzero(aggregate) for aggregate in shown)
+
+
 def _properties(evidence: Mapping[str, dict], handle: str) -> dict[str, bool | int | float | str]:
     """The typed properties that the tools showed for one handle: a flag, a number or a word under a plain key path."""
     properties = _block(evidence, handle).get("properties")
@@ -427,7 +433,7 @@ def _hold_delete(finding: Finding, toolbox: Toolbox) -> None:
     if finding.proposal != "delete" or not finding.handles:
         return
     others = any(shared(toolbox.handles[handle].resource_type) for handle in finding.handles)
-    proved = all(any(_quiet(found) for name, found in _aggregates(toolbox.evidence, handle).items() if name in finding.cited[handle]) for handle in finding.handles)
+    proved = all(_zero_only(finding.cited[handle], _aggregates(toolbox.evidence, handle)) for handle in finding.handles)
     if proved and not others:
         return
     finding.asked, finding.proposal = finding.proposal, "investigate"
@@ -994,14 +1000,25 @@ def _skeptic_step_of(shared: dict | None, finding: Finding, item: Item) -> dict 
     return dict(shared)
 
 
+def _own_ids(s: "Services") -> set[str]:
+    """The identities of Meternaut itself: the app's own and the two of the sign-in of the approvers. A write by one of them is not an automation of somebody else."""
+    ex, settings = getattr(s, "extras", None), getattr(s, "settings", None)
+    return {text.lower() for text in (getattr(settings, "client_id", ""), getattr(getattr(ex, "settings", None), "signin_client_id", ""),
+                                      getattr(getattr(ex, "settings", None), "signin_assertion_client_id", "")) if text}
+
+
 def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
-    """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py). It is shown to people and
-    never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is left out, so that the page says only what it knows."""
+    """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py), and when an application or service identity last
+    wrote to it (`automatedAt`, from every write of the Activity Log and not only the newest: a person's edit yesterday does not hide an automation's write three days ago; cases/brief.py
+    held_reason holds a finding back on it). It is shown to people and never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is
+    left out, so that the page says only what it knows."""
     reader = out.owners
+    writes = None
     try:
         if reader is None:
             reader = out.owners = OwnerReader(s.arm, s.clock())
         hint = reader.hints(lead.resource_id, lead.tags)
+        writes = reader.writes(lead.resource_id)
         # A read that was refused, that failed or that was not made (the reads of the run were used up) answers nothing: the page must then say that the lookup was not made, and not that
         # the resource has no owner.
         looked_up = hint.get("lastChangedBy") not in (UNAVAILABLE, NOT_VISIBLE)
@@ -1013,19 +1030,12 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
     def real(value: object) -> str:
         return value if isinstance(value, str) and value not in sentinels else ""
 
+    own = _own_ids(s)
+    automated = max((when for when, caller in writes or [] if "@" not in caller and caller.lower() not in own), default=None)
     tags = hint.get("tags") if isinstance(hint.get("tags"), dict) else {}
     name = next((tag for tag in ("owner", "contact", "team", "manager", "createdby") if tags.get(tag)), "")
     return {"tagOwner": tags.get(name, ""), "tagName": name, "createdBy": real(hint.get("createdBy")), "createdAt": real(hint.get("createdAt")),
-            "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up}
-
-
-def _automated(s: "Services", owner: dict, lead: Lead) -> bool:
-    """Whether an automation manages the resource: the Activity Log names a change within AUTOMATION_DAYS days by an identity that is no person (a sign-in name has an @) and is not one of
-    Meternaut's own. Waste that Meternaut planted is changed by Meternaut's own deploy, so it is never held."""
-    when, by, ex, now = moment(owner.get("changedAt")), str(owner.get("changedBy") or ""), s.extras, s.clock()
-    own = {text.lower() for text in (s.settings.client_id, ex.settings.signin_client_id, ex.settings.signin_assertion_client_id) if text}
-    return (when is not None and bool(by) and "@" not in by and by.lower() not in own and (now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)) - when <= dt.timedelta(days=AUTOMATION_DAYS)
-            and not is_fixture(lead, wiring.approval_settings(ex.settings)))
+            "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up, "automatedAt": stamp(automated) if automated else ""}
 
 
 def _group_of(finding: Finding) -> list[Item] | None:
@@ -1125,10 +1135,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         past = old.learned.get("past") if old is not None and isinstance(old.learned, dict) else None
         if past and "past" not in learned:
             learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
-        owner = _owner_of(s, out, lead)
-        managed = outcome.status in ("proposed", "needs_human") and _automated(s, owner, lead)
-        if managed:
-            learned["held"] = "automation"  # the case stays and no request is made for it (brief.automated)
+        owner = _owner_of(s, out, lead) if outcome.status in ("proposed", "needs_human") else {}  # a case that is dropped is never shown to anybody: it takes no lookup of the Activity Log, whose reads are few
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,
@@ -1138,17 +1145,19 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
             subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
-        if managed:
-            upkeep.held(h, record)
-            out.automated += 1
-        elif outcome.status in ("proposed", "needs_human"):
+        if outcome.status in ("proposed", "needs_human"):
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
-            elif says_nothing(record):
-                upkeep.held(h, record)
-                out.said_nothing += 1
+            else:
+                why = ex.approvals.held_why(record)  # an automation manages the resource, or nobody looked up who changed it: no request is made (cases/brief.py held_reason)
+                if why or says_nothing(record):
+                    upkeep.held(h, record, why)
+                    if why:
+                        out.held_back[why] = out.held_back.get(why, 0) + 1
+                    else:
+                        out.said_nothing += 1
     except (StoreError, ValueError) as error:
         h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))

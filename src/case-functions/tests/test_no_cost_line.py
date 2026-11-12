@@ -27,8 +27,8 @@ VM = f"{RG}/rg-app/providers/microsoft.compute/virtualmachines/some-vm"
 
 
 def an_idle_disk(name: str = "idle-disk-4gb") -> dict:
-    """An unattached 4 GB Standard HDD that nobody planted, in a group that Meternaut may not change: it is a matter for advice."""
-    return disk_row(name, "rg-app", skuName="Standard_LRS", sizeGb=4, timeCreated="2026-10-01T10:00:00.0000000+00:00")
+    """An unattached 4 GB Standard HDD that nobody planted, in the group where Meternaut may make a change but without the tag of planted waste: it is a matter for advice."""
+    return disk_row(name, "rg-meternaut", skuName="Standard_LRS", sizeGb=4, timeCreated="2026-10-01T10:00:00.0000000+00:00")
 
 
 def an_estate(disks=1) -> FakeEstate:

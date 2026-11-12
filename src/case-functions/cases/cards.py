@@ -322,7 +322,7 @@ def closed_card(brief: Brief, ctx: CardContext) -> dict:
         raise CardError("only a request that has ended has a closing card")
     by = md(outcome.by, 80)
     if outcome.state == "expired":
-        said = "Expired. Nothing more to do."
+        said = "Expired. Nothing more to do." if outcome.title == "Expired" else f"{md(outcome.title, 40)}. {md(outcome.lines[0], 200)} {md(outcome.lines[1], 80)}"
     elif outcome.state == "failed":
         said = f"Approved by {by}, not made: {md(outcome.lines[0], 200)}"
     else:

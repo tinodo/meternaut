@@ -52,13 +52,20 @@ VERBS = {"delete": "Consider deleting", "change": "Consider changing", "keep": "
 MEASURED_DAYS = 20
 USE_BASES = ("no-usage", "low-usage", "unused-feature")  # what a finding of the investigation has for a basis when it says that something is not used
 # Platform resources that others share, as the start of their type in lower case: private endpoints, private DNS zones and their links, gateways of networks, firewalls, route tables, NAT gateways,
-# API Management, Bastion, ExpressRoute and VPN objects, peerings. Meternaut never asks to delete one, however quiet it looks, because what depends on it cannot be seen from here.
+# API Management, Bastion, ExpressRoute and VPN objects, virtual networks with their peerings, network security groups, application gateways, Virtual WAN and its hubs, DNS resolvers, DDoS plans,
+# network managers and Key Vaults. Meternaut never asks to delete one, however quiet it looks, because what depends on it cannot be seen from here.
 SHARED = ("microsoft.network/privateendpoints", "microsoft.network/privatednszones", "microsoft.network/privatelinkservices", "microsoft.network/virtualnetworkgateways",
           "microsoft.network/azurefirewalls", "microsoft.network/firewallpolicies", "microsoft.network/routetables", "microsoft.network/natgateways", "microsoft.apimanagement/service",
           "microsoft.network/bastionhosts", "microsoft.network/expressroute", "microsoft.network/vpn", "microsoft.network/p2svpngateways", "microsoft.network/localnetworkgateways",
-          "microsoft.network/connections", "microsoft.network/virtualnetworks/virtualnetworkpeerings")
+          "microsoft.network/connections", "microsoft.network/virtualnetworks", "microsoft.network/networksecuritygroups", "microsoft.network/applicationgateways",
+          "microsoft.network/virtualwans", "microsoft.network/virtualhubs", "microsoft.network/dnsresolvers", "microsoft.network/ddosprotectionplans",
+          "microsoft.network/networkmanagers", "microsoft.keyvault/vaults")
 HELD_UNPROVEN = "nothing measured shows that nothing uses it, so this asks for a look and not for a deletion"  # what code notes when it turns a finding that asks to delete into a look
 HELD_SHARED = "others share this kind of resource, so this asks for a look and not for a deletion"
+# A finding that an automation manages is held back: the Activity Log names a write within this many days by an identity that is no person and not Meternaut's own. A finding that asks to delete
+# a resource whose Activity Log was not read is held back as well: an unread log shows nothing, and nothing is not "nobody changed it".
+AUTOMATION_DAYS = 14
+HELD_REASONS = ("automation", "unchecked")
 # The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card.
 ACTING = "If you act on it: "
 IF_ACTED = " if you act on it"  # what the chip of such a risk adds to its word: "High risk if you act on it"
@@ -66,7 +73,10 @@ UNPROVEN = "Unproven: nothing shows that nothing uses it."
 SHARED_RISK = "Could break traffic that you cannot see from here."
 RARE_USE = "Something that is used less often than the days measured may still need it."
 CHANGE_RISK = "What depends on it can slow down or stop."
-NOT_MEASURED = "Not measured: Azure Monitor gave no values on enough days, so nothing shows that nothing uses it."
+NOT_MEASURED = "Not measured: no measurement is cited for this finding, so nothing shows that nothing uses it."
+NOT_LOOKED_UP = "Not checked: who changed it."
+TAKEN_BACK = {"rules": "it asks about this resource on less evidence than Meternaut's rules ask for now", "automation": "an application or service identity changed the resource lately",
+              "unchecked": "it is not known who changed the resource"}  # why Meternaut took a request back when its rules changed (cases/approvals.py hold_back_empty)
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -599,9 +609,32 @@ def says_nothing(case: CaseRecord | None) -> bool:
     return kind_words(case.resource_type)[1] == "resource" and _id_like(text_of(case.resource_name, MAX_NAME))
 
 
-def automated(case: CaseRecord | None) -> bool:
-    """Whether a Watch held a finding back because an automation manages its resource (investigate.py): no request is made for it, and one that nobody answered is taken back."""
-    return case is not None and isinstance(case.learned, dict) and case.learned.get("held") == "automation"
+def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
+    """Why no request is made for a finding, or one that was made is taken back (one of HELD_REASONS), and "" when none is held. `automation`: the Activity Log names a write within AUTOMATION_DAYS days
+    by an identity that is no person (the owner record keeps the newest, `automatedAt`; a record from before it has only the last change). `unchecked`: the finding asks to delete the resource and who
+    changed it was not looked up, or could not be (a read that failed, or a run whose reads were used up, or a Watch that never looks it up). The caller exempts what Meternaut planted."""
+    if case is None:
+        return ""
+    owner = case.owner if isinstance(case.owner, dict) else {}
+    last = owner.get("automatedAt") if "automatedAt" in owner else (owner.get("changedAt") if "@" not in str(owner.get("changedBy") or "@") else "")
+    when = parse_time(last)
+    if when is not None and _utc(now) - when <= dt.timedelta(days=AUTOMATION_DAYS):
+        return "automation"
+    about_a_resource = advice_of(case) is None and not cost_words.is_container(case.resource_id)  # a recommendation of Advisor, or about a whole subscription or group, is not the deletion of a resource
+    return "unchecked" if about_a_resource and _asked_delete(case) and not owner.get("lookedUp") else ""
+
+
+def taken_back(case: CaseRecord | None) -> str:
+    """The reason that Meternaut gave when it took an open request back because its rules had changed (a key of TAKEN_BACK), or "" when it did not."""
+    taken = case.learned.get("taken") if case is not None and isinstance(case.learned, dict) else None
+    return taken if taken in TAKEN_BACK else ""
+
+
+def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
+    """Whether an open advise request asks to delete (the words of its title) although the case would not be a deletion now: a resource that others share, or a measurement that does not show that
+    nothing used it. It was made when a deletion could be asked on less than the rules ask for."""
+    return (plan.family == ADVISE and plan.title.startswith(VERBS["delete"]) and case is not None and case.recommendation == "delete"
+            and (shared(case.resource_type) or not measured_zero(case.facts)))
 
 
 def _advisor_headline(problem: str, scope: str, name: str, group: str, subscription_name: str, subscription: str) -> str:
@@ -624,11 +657,11 @@ def shared(rtype: object) -> bool:
 
 
 def measured_zero(facts: object) -> bool:
-    """Whether the facts of a finding hold a measurement that shows that nothing used the resource: a total of nil over a window that had a value on at least MEASURED_DAYS days. No data, a read
-    that failed and a few days are not one."""
+    """Whether the facts of a finding hold a measurement that shows that nothing used the resource: a total of nil over a window that had a value on at least MEASURED_DAYS days, and no cited
+    measurement of it that shows anything (a deletion needs that none of its cited totals is above nil). No data, a read that failed and a few days are not a measurement."""
     found = facts if isinstance(facts, Mapping) else {}
     totals, days = found.get("metrics"), found.get("metricDaysWithData")
-    if not isinstance(totals, dict) or not isinstance(days, dict):
+    if not isinstance(totals, dict) or not isinstance(days, dict) or any(_figure(total) for total in totals.values()):
         return False
     return any(_figure(total) == 0 and isinstance(days.get(name), int) and not isinstance(days.get(name), bool) and days[name] >= MEASURED_DAYS for name, total in totals.items())
 
@@ -646,7 +679,7 @@ def _idle(case: CaseRecord) -> bool:
 
 def proposal_of(case: CaseRecord | None) -> str | None:
     """What a case asks for. A finding of the investigation asks to delete a resource only on a measured zero, and never for a resource that others share (investigate.py makes the case so; this
-    holds a case that an earlier version made to the same). Any other case asks what it recorded."""
+    holds a case that an earlier version made to the same). Any other case asks what it recorded: the older detectors are held by held_reason, and the waste that Meternaut planted keeps its words."""
     if case is not None and case.detector == "investigation" and case.recommendation == "delete" and (shared(case.resource_type) or not measured_zero(case.facts)):
         return "investigate"
     return case.recommendation if case is not None else None
@@ -1386,7 +1419,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
     head += rows if group is None else []
     if unread_of(case) is None and found is None:  # the rows of the data that nothing reads, and of gateways, say it better than two measurements of it
-        head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, MONITOR)] if group is None and _idle(case) else [])
+        head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, CHECKED)] if group is None and _idle(case) else [])
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
@@ -1413,6 +1446,8 @@ def owner_of(case: CaseRecord | None) -> OwnerLine:
     if last_by or last_at:
         parts.append("Last changed" + (f" by {last_by}" if last_by else "") + (f" on {last_at}" if last_at else "") + ".")
     if parts:
+        if not owner.get("lookedUp"):
+            parts.append(NOT_LOOKED_UP)  # a tag is there, but the Activity Log was not read: the line must not read as if nobody had changed the resource
         return OwnerLine(True, " ".join(parts))
     if owner.get("lookedUp"):
         return OwnerLine(False, "No owner is recorded on the resource.")
@@ -1500,12 +1535,15 @@ def _nothing_changed(result: object) -> str:
     return f"Nothing was changed: {why}" if why else "Nothing was changed."
 
 
-def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord]) -> Outcome:
+def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state == "open":
         return none
     advice = plan.family == ADVISE
     if state == "expired":
+        why = taken_back(case)
+        if why:  # Meternaut took it back itself, and says why: nobody was too late
+            return Outcome("expired", "Taken back", (f"Meternaut's rules changed, so it took this request back: {TAKEN_BACK[why]}.", "Nothing was changed in Azure."), "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Expired", ("Nobody answered in time.", "Nothing changed."), "Expired, nobody answered", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")
@@ -1595,7 +1633,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
         age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
-        models=models_of(case), outcome=_outcome(plan, state, action, decisions), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
+        models=models_of(case), outcome=_outcome(plan, state, action, decisions, case), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,

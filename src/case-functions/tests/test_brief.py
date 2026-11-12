@@ -612,8 +612,12 @@ class TheOwner(unittest.TestCase):
         self.assertEqual(owner_of(make_case(owner={"lookedUp": True, "tagOwner": "   "})).known, False)
 
     def test_a_part_of_the_record_is_enough_and_a_key_that_is_not_known_is_left_out(self):
-        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x"})).text, "Created by bob@example.com.")
-        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z"})).text, "Last changed on 2026-10-01.")
+        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x", "lookedUp": True})).text, "Created by bob@example.com.")
+        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})).text, "Last changed on 2026-10-01.")
+
+    def test_a_tag_is_not_all_that_the_line_says_when_the_activity_log_was_not_read(self):
+        text = owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": False})).text
+        self.assertEqual(text, "Tag team: platform. Not checked: who changed it.", "an owner tag must not read as if nobody had changed the resource")
 
     def test_text_from_the_estate_is_data_and_is_made_safe_by_plain(self):
         owner = owner_of(make_case(owner={"tagOwner": "[mail me](javascript:alert(1)) https://evil.example\u202e", "createdBy": "x" * 500, "lookedUp": True}))

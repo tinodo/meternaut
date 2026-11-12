@@ -159,6 +159,11 @@ class OwnerReader:
             self._kept[key] = self._read(resource_id)
         return self._kept[key]
 
+    def writes(self, resource_id: str) -> list[tuple[dt.datetime, str]] | None:
+        """Every successful write and delete of the resource that the Activity Log shows (see `changes`), newest first, and None when the log was not read: an unread log shows nothing."""
+        events, _, _ = self._events(resource_id)
+        return None if events is None else changes(events)
+
     def _read(self, resource_id: str) -> tuple[list[dict] | None, bool, str | None]:
         found = RESOURCE.fullmatch(resource_id)
         if found is None:

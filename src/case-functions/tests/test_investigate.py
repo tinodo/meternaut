@@ -149,18 +149,28 @@ def agree_all(seen: dict) -> str:
 
 
 class FakeArm:
-    """The one call of Azure Resource Manager that the investigation makes itself: the locks of a scope."""
+    """The calls of Azure Resource Manager that the investigation makes itself: the locks of a scope, and the Activity Log of a resource (which shows no change unless a test sets `events`, or a
+    read that fails when it sets `log_fails`)."""
 
     def __init__(self):
         self.locks: dict[str, list[str]] = {}
         self.failing: set[str] = set()
         self.calls: list[str] = []
+        self.events: list[dict] = []
+        self.log_fails = False
+        self.log_reads = 0
 
     def locks_at(self, subscription: str, scope: str) -> list[str]:
         self.calls.append(scope.lower())
         if scope.lower() in self.failing:
             raise HttpError(403, "GET management.azure.com: 403 no right")
         return list(self.locks.get(scope.lower(), []))
+
+    def activity_events(self, subscription, since, until, *, resource_id=None, group=None, max_pages=3):
+        self.log_reads += 1
+        if self.log_fails:
+            raise HttpError(503, "GET management.azure.com: 503 try later")
+        return list(self.events), True
 
 
 def loop_for(clock, store=None, *, recheck_days=7):
