@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import costs as cost_words
 from .detectors import ADVISOR, Lead
 from .guards import Guards
 from .roles import DetectiveAnswer, SkepticAnswer
@@ -27,10 +28,11 @@ class Decision:
 
 
 def saving_of(lead: Lead) -> float | None:
-    """What removing the resource would save in a month: Advisor's own figure for an Advisor lead, else the resource's 30-day cost lines."""
+    """What removing the resource would save in a month: Advisor's own figure for an Advisor lead, else the resource's 30-day cost lines. What a whole subscription or resource group costs is not
+    what removing anything would save, so a lead about one of them has Advisor's figure or none."""
     if lead.detector == ADVISOR and lead.advisor_saving_usd is not None:
         return lead.advisor_saving_usd
-    return lead.cost_usd_30d
+    return None if cost_words.is_container(lead.resource_id) else lead.cost_usd_30d
 
 
 def decide(lead: Lead, guards: Guards, detective: DetectiveAnswer, skeptic: SkepticAnswer | None, *, backed: bool = True, notes: tuple[str, ...] = ()) -> Decision:

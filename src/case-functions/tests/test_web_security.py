@@ -20,8 +20,11 @@ REQUIRED = {
 }
 GET_PATHS = ["/", "/ok/plan0001", "/ok/plan0002", "/why/case0001", "/why/case0002", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs",
              "/ops/runs?run=run00001", "/ops/permissions", "/ops/pause"]
-# The one address outside the console that a page may hold: the page of the resource in the Azure portal, made from a resource id that code checked, on a brief page only.
+# The addresses outside the function app that a page may hold: the page of the resource in the Azure portal, made from a resource id that code checked, and Cost analysis of its subscription or resource
+# group in the same portal, made from the id of the subscription and, when there is one, the name of a resource group that can be one. Each at most once, on a brief page only.
 PORTAL = re.compile(r"^https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}$")
+ANALYSIS = re.compile(r"^https://portal\.azure\.com/#blade/Microsoft_Azure_CostManagement/Menu/open/costanalysis/scope/%2Fsubscriptions%2F[0-9a-f-]{36}"
+                      r"(?:%2FresourceGroups%2F(?:[A-Za-z0-9._-]|%[0-9A-F]{2}){1,270})?$")
 # Where the sign-in to Azure sends the person back to. It is the one GET that goes on to a change, and only through the delegate and with the one-time state of the sign-in.
 RETURN = "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24
 RESULT_KINDS = ("declined", "asked", "later", "acknowledged", "not_mine", "ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed",
@@ -44,10 +47,10 @@ SVG_PARTS = ("svg", "path", "line", "rect", "circle", "text")  # a chart is a dr
 
 
 def active_content(reply) -> list[str]:
-    """Everything in a page that could run or load something: scripts, event handlers, frames, scripted or outside addresses. The one link to the Azure portal is allowed,
-    once, with rel="noopener" and an address that has the shape of the page of one resource. A drawing (svg) is allowed when it is made of shapes and words only."""
+    """Everything in a page that could run or load something: scripts, event handlers, frames, scripted or outside addresses. The link to the page of the resource in the Azure portal and the link to
+    Cost analysis are allowed, each once, with rel="noopener" and an address that has the shape that code makes it in. A drawing (svg) is allowed when it is made of shapes and words only."""
     problems = []
-    portal = 0
+    portal = analysis = 0
     for node in reply.root.walk():
         if node.tag in ("script", "iframe", "object", "embed", "base", "frame", "applet", "canvas", "img", "video", "audio"):
             problems.append(f"<{node.tag}>")
@@ -62,10 +65,14 @@ def active_content(reply) -> list[str]:
                 target = value.strip().lower()
                 if node.tag == "a" and name == "href" and PORTAL.fullmatch(value) and node.attrs.get("rel") == "noopener":
                     portal += 1
+                elif node.tag == "a" and name == "href" and ANALYSIS.fullmatch(value) and node.attrs.get("rel") == "noopener":
+                    analysis += 1
                 elif target.startswith(("javascript:", "data:", "vbscript:", "http:", "https:", "//", "ftp:")):
                     problems.append(f"{name}={value}")
     if portal > 1:
         problems.append("more than one link to the Azure portal")
+    if analysis > 1:
+        problems.append("more than one link to Cost analysis")
     return problems
 
 
@@ -242,7 +249,7 @@ class NoActiveContent(unittest.TestCase):
         self.assertNotIn("@import", style)
         self.assertNotIn("http", style)
 
-    def test_the_only_links_are_to_pages_of_the_console_and_the_brief_page_adds_the_one_link_to_the_azure_portal(self):
+    def test_the_only_links_are_to_pages_of_the_console_and_the_brief_page_adds_the_link_to_the_resource_and_the_link_to_cost_analysis(self):
         console = seeded()
         for path in GET_PATHS:
             reply = console.get(path)
@@ -250,12 +257,14 @@ class NoActiveContent(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertNotIn("mailto:", reply.text, "the person to talk to is plain text, never a link")
                 if path.startswith(("/ok/plan", "/why/case")):
-                    self.assertEqual(len(outside), 1)
-                    self.assertRegex(outside[0], PORTAL)
+                    self.assertEqual(len(outside), 2)
+                    self.assertEqual(sum(1 for href in outside if PORTAL.fullmatch(href)), 1)
+                    self.assertEqual(sum(1 for href in outside if ANALYSIS.fullmatch(href)), 1)
                 else:
                     self.assertEqual(outside, [])
         portal = console.get("/ok/plan0001").root.find("a", rel="noopener")
-        self.assertEqual(portal.text(), "Open in the Azure portal")
+        self.assertEqual(portal.text(), "Open in Cost analysis", "the cost box comes first")
+        self.assertEqual([a.text() for a in console.get("/ok/plan0001").root.find_all("a") if a.attrs.get("rel") == "noopener"], ["Open in Cost analysis", "Open in the Azure portal"])
 
 
 class SignIn(unittest.TestCase):

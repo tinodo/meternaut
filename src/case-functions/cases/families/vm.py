@@ -17,7 +17,7 @@ from ..http import HttpError, Refused
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
 from . import calls
-from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, skeptic_sentence
+from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, skeptic_sentence, subscription_words
 from .gates import Gates
 from .machine import INSTANCE_VIEW, has_size_properties, power_of, provisioning_of, read_vm, region_of, size_of
 from .words import SIZE_NAME
@@ -81,7 +81,7 @@ class StopVm(Family):
         billed = "is billed for compute while it stands" if power == "running" else "is stopped but not released, which Azure still bills for compute"
         return Planned(
             title=f"Stop (deallocate) a virtual machine in resource group {group}",
-            what_changes=(f"When you approve, Meternaut stops the virtual machine named {name} in resource group {group} (subscription {getattr(lead, 'subscription_id')[:8]}) and "
+            what_changes=(f"When you approve, Meternaut stops the virtual machine named {name} in resource group {group} (subscription {subscription_words(lead)}) and "
                           "releases its compute (it deallocates it) with your own permissions, so that it is no longer billed for compute. It changes nothing else: its disks and any public IP address "
                           "stay and keep billing. Right before it acts, it reads the machine again and stops unless it is still running or stopped, still tagged as planted by Meternaut, still in this "
                           "resource group and not locked."),
@@ -178,7 +178,7 @@ class ResizeVm(Family):
         return Planned(
             title=f"Resize a virtual machine to {target} in resource group {group}",
             what_changes=(f"When you approve, Meternaut changes the size of the virtual machine named {name} in resource group {group} (subscription "
-                          f"{getattr(lead, 'subscription_id')[:8]}) from {current} ({cores} vCPUs, {round(memory / 1024, 1):g} GB) to {target} ({t_cores} vCPUs, {round(t_memory / 1024, 1):g} GB) "
+                          f"{subscription_words(lead)}) from {current} ({cores} vCPUs, {round(memory / 1024, 1):g} GB) to {target} ({t_cores} vCPUs, {round(t_memory / 1024, 1):g} GB) "
                           f"with your own permissions. {restart} It changes nothing else. Right before it acts, it reads the machine and the sizes that it can take again and stops unless it is "
                           f"still {current}, running, stopped or released, {target} is still one of the sizes that it can take, it is still tagged as planted by Meternaut, still in this resource "
                           "group and not locked."),

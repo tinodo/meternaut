@@ -123,7 +123,7 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
     """(method, address without its query) of every call that the app may make. `foundry_endpoint` adds the calls of foundry_calls for that one project and `ai_gateway_host` the one
     call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
     question: a query). The one GET of /subscriptions lists the subscriptions that the app's own identity can read (scope.py): the Reader role covers it (R1 of
-    environment/access-requirements.json), and the address has no part after it. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
+    environment/access-requirements.json), and the address has no part after it. The GET of one subscription (/subscriptions/<id>, nothing after the id) gives its display name, with the same role. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
     searches, the deployments of an account, the activity log, the diagnostic settings of a resource) and never a resource as such: a GET of one resource would read any of its properties."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
@@ -151,6 +151,8 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         ("GET", re.compile(arm + r"/providers/Microsoft\.Capacity/reservationOrders", re.I)),
         ("GET", re.compile(arm + r"/providers/Microsoft\.BillingBenefits/savingsPlanOrders", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Consumption/pricesheets/default", re.I)),
+        # The display name of one subscription (Learn, "Subscriptions - Get"): the address is the subscription itself and nothing after it, so no resource of it is read this way.
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}", re.I)),
         ("GET", re.compile(arm + r"/subscriptions", re.I)),
     )
     if foundry_endpoint is not None:

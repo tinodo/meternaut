@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from support import NOW, SUBSCRIPTION, FakeEstate, run_watch
 
 from cases import run
+from cases.arm import COST_RETRIES
 from cases.detectors import Context
 from cases.http import HttpError
 from cases.memory_store import MemoryStore, stamp
@@ -101,10 +102,20 @@ class TheSeriesOfOneCase(unittest.TestCase):
         self.assertEqual(costs.queries, [(SUBSCRIPTION, FIRST, LAST, ("ResourceId", (rid(1).lower(),)))])
         self.assertEqual((LAST - FIRST).days + 1, run.COST_DAYS)
 
-    def test_a_resource_with_no_cost_line_at_all_is_thirty_zeros(self):
+    def test_a_resource_with_no_cost_line_at_all_gets_no_series_and_says_that_azure_has_no_line_never_thirty_zeros(self):
+        fresh = open_case(self.store, 2, cost_usd_30d=0.0)
+        costs = FakeCosts()
+        read(self.store, costs)
+        got = self.store.case_get(fresh.case_id)
+        self.assertEqual((got.cost_series, got.cost_series_end, got.cost_state, got.cost_usd_30d), (None, "2026-11-03", "none", 0.0))
+        self.assertEqual(costs.asked(), [(SUBSCRIPTION, 2)])
+        read(self.store, costs)
+        self.assertEqual(costs.queries[-1][3][1], (rid(1).lower(),), "the same day: the case that was read and has no line is not asked about again")
+
+    def test_a_case_that_cost_something_in_the_thirty_days_keeps_its_figure_when_the_days_show_no_line(self):
         read(self.store, FakeCosts())
         got = self.store.case_get(self.case.case_id)
-        self.assertEqual((got.cost_series, got.cost_series_end), ([0.0] * 30, "2026-11-03"))
+        self.assertEqual((got.cost_series, got.cost_usd_30d, got.cost_state), (None, 7.17, ""))
 
     def test_the_figures_are_rounded_to_a_hundredth_of_a_cent_and_never_to_minus_zero(self):
         read(self.store, FakeCosts({rid(1).lower(): {LAST: 0.0049, LAST - DAY: 1.23456789, LAST - 2 * DAY: -0.00001}}))
@@ -196,7 +207,7 @@ class WhatIsRead(unittest.TestCase):
     def test_an_approved_plan_that_is_not_done_yet_is_open_too(self):
         case = open_case(self.store, 1)
         self.store.plan_put(replace(self.store.plan_get(case.plan_id), state="approved"))
-        read(self.store, FakeCosts())
+        read(self.store, FakeCosts({rid(1).lower(): {LAST: 1.0}}))
         self.assertIsNotNone(self.store.case_get(case.case_id).cost_series)
 
     def test_a_plan_of_a_case_that_is_gone_is_left_alone(self):
@@ -234,8 +245,9 @@ class WhatIsRead(unittest.TestCase):
     def test_the_day_is_the_utc_day(self):
         case = open_case(self.store, 1)
         late = dt.datetime(2026, 11, 4, 23, 30, tzinfo=dt.timezone(dt.timedelta(hours=-3)))  # 02:30 on the 5th in UTC
-        read(self.store, FakeCosts(), now=late)
-        self.assertEqual(self.store.case_get(case.case_id).cost_series_end, "2026-11-04")
+        read(self.store, FakeCosts({rid(1).lower(): {dt.date(2026, 11, 4): 1.0}}), now=late)
+        got = self.store.case_get(case.case_id)
+        self.assertEqual((got.cost_series_end, got.cost_series[29]), ("2026-11-04", 1.0))
 
     def test_a_person_who_answered_while_the_cost_was_read_keeps_the_answer(self):
         case = open_case(self.store, 1)
@@ -287,7 +299,7 @@ class WhenTheCostCannotBeRead(unittest.TestCase):
             with self.subTest(known=known):
                 store = store_of()
                 case = open_case(store, 1)
-                costs = FakeCosts()
+                costs = FakeCosts({rid(1).lower(): {LAST: 1.0}})
                 read(store, costs, known)
                 self.assertEqual((len(costs.queries), store.case_get(case.case_id).cost_series_end), (1, "2026-11-03"))
 
@@ -319,7 +331,7 @@ class WhenTheCostCannotBeRead(unittest.TestCase):
     def test_another_error_goes_on_with_the_other_queries_and_only_a_case_with_all_its_resources_is_updated(self):
         group = group_case(self.store, 2, [rid(n) for n in range(10, 70)])  # with the first case 61 ids: a query of 50 and one of 11
         far = open_case(self.store, 3, OTHER)
-        costs = FakeCosts({rid(3, OTHER).lower(): {LAST: 6.0}}, fail={1: HttpError(403, "POST management.azure.com: 403 AuthorizationFailed: no right")})
+        costs = FakeCosts({rid(3, OTHER).lower(): {LAST: 6.0}, rid(1).lower(): {LAST: 1.0}}, fail={1: HttpError(403, "POST management.azure.com: 403 AuthorizationFailed: no right")})
         said = read(self.store, costs)
         self.assertEqual(costs.asked(), [(SUBSCRIPTION, 50), (SUBSCRIPTION, 11), (OTHER, 1)], "the query after the one that failed was made")
         self.assertEqual((self.kept(far).cost_series[29], self.kept(self.case).cost_series_end, self.kept(group).cost_series), (6.0, "2026-11-03", None))
@@ -351,7 +363,7 @@ class WhenTheCostCannotBeRead(unittest.TestCase):
         picky = Picky(clock=lambda: NOW)
         stale = open_case(picky, 1, cost_series=[4.0] * 30, cost_series_end="2026-11-02")
         other = open_case(picky, 2)
-        said = read(picky, FakeCosts())
+        said = read(picky, FakeCosts({rid(1).lower(): {LAST: 1.0}, rid(2).lower(): {LAST: 1.0}}))
         self.assertEqual((picky.case_get("k001"), picky.case_get(other.case_id).cost_series_end), (stale, "2026-11-03"))
         self.assertEqual(said, ["the daily cost of 1 open request could not be read (a record is larger than a table property may be); what was read before stays"])
 
@@ -462,14 +474,14 @@ class InTheWatch(unittest.TestCase):
         self.assertEqual((self.case().cost_series, self.case().cost_series_end), (first.cost_series, "2026-11-03"))
         record = self.store.runs_recent()[0]
         self.assertEqual((record.ok, note in record.notes), (True, True))
-        self.assertEqual(len(self.daily()), 3, "the client's own two repeats and nothing else")
+        self.assertEqual(len(self.daily()), 1 + COST_RETRIES, "the client's own repeats and nothing else")
 
     def test_a_limit_is_waited_for_by_the_client_as_for_any_read_and_the_step_asks_no_more(self):
         self.estate.failures["daily"] = 429
         summary, events, _ = watch(self.estate, self.extras, self.clock)
         self.assertTrue(summary.ok)
-        self.assertEqual(len(self.daily()), 3, "one query and its two repeats")
-        self.assertEqual(self.estate.sleeps, [1.0, 1.0], "the waits that Cost Management asked for, and no other")
+        self.assertEqual(len(self.daily()), 1 + COST_RETRIES, "one query and its repeats")
+        self.assertEqual(self.estate.sleeps, [1.0] * COST_RETRIES, "the waits that Cost Management asked for, and no other")
         self.assertIsNone(self.case().cost_series)
         self.assertEqual(len(self.said(events)), 1)
 

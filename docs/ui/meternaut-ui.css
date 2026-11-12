@@ -193,7 +193,6 @@ footer details p{margin-top:var(--spacingXS);max-width:46rem}
 .spark{grid-area:spark;min-width:0}
 svg.sp{display:block;width:100%;height:32px}
 .sp .ln{stroke-width:1.5}
-.sp.none .ln{stroke:var(--colorNeutralStrokeAccessible);stroke-dasharray:3 3}
 .act{grid-area:act;text-align:right}
 .chip{display:inline-flex;align-items:center;gap:var(--spacingXS);padding:1px var(--spacingS);border:var(--strokeWidthThin) solid var(--chip-b,var(--colorNeutralStrokeAccessible));border-radius:var(--borderRadiusCircular);background:var(--chip-bg,var(--colorNeutralBackground1));color:var(--chip-fg,var(--colorNeutralForeground2));font-size:var(--fontSizeBase200);line-height:var(--lineHeightBase200);font-weight:var(--fontWeightSemibold);white-space:nowrap}
 .chip svg{width:12px;height:12px;fill:currentColor}

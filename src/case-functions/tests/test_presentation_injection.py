@@ -10,11 +10,13 @@ import re
 import unicodedata
 import unittest
 from dataclasses import replace
+from urllib.parse import urlsplit
 
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief, letters
 from cases.brief import build_brief, contact_text, plain, portal_url, visible
+from cases.costs import analysis_url
 from cases.models import NoteRecord
 from cases.people import Person
 from cases.web import core
@@ -44,7 +46,9 @@ LETTER_TAGS = {"html", "head", "meta", "title", "style", "body", "table", "tr", 
 LINK_ATTRIBUTES = {"href", "src", "action", "formaction", "data", "poster", "srcset", "background", "cite", "ping", "manifest", "codebase", "xlink:href"}
 PORTAL = (r"https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}"
           r"(?:/[A-Za-z0-9._()~-]{1,100}){2,16}")
-SAFE_TARGET = re.compile(r"/[A-Za-z0-9/_.~%-]{0,300}(?:\?[A-Za-z0-9=&_.~%-]{0,300})?|#[A-Za-z0-9_-]{1,80}|" + PORTAL + r"|https://meternaut\.example(?:/ok/[A-Za-z0-9_-]{1,64})?/?")
+ANALYSIS = (r"https://portal\.azure\.com/#blade/Microsoft_Azure_CostManagement/Menu/open/costanalysis/scope/%2Fsubscriptions%2F[0-9a-f-]{36}"
+            r"(?:%2FresourceGroups%2F(?:[A-Za-z0-9._-]|%[0-9A-F]{2}){1,270})?")
+SAFE_TARGET = re.compile(r"/[A-Za-z0-9/_.~%-]{0,300}(?:\?[A-Za-z0-9=&_.~%-]{0,300})?|#[A-Za-z0-9_-]{1,80}|" + PORTAL + "|" + ANALYSIS + r"|https://meternaut\.example(?:/ok/[A-Za-z0-9_-]{1,64})?/?")
 HEADER_LINE = re.compile(r"(?i)\s*(bcc|cc|to|from|subject|reply-to|content-type|mime-version|x-[a-z-]+)\s*:")
 ADDRESS = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://\S*")
 PERSON = Person(MAYA, "Maya", ("owner", "approver"), "maya@example.com")
@@ -195,21 +199,25 @@ class TheFieldsOfACard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.briefs = {name: briefs_of(records(text)) for name, text in PAYLOADS.items()}
+        cls.calm_briefs = briefs_of(records(BENIGN))
 
     def test_every_string_of_a_brief_is_one_plain_line_for_every_payload(self):
         for name, made_of in self.briefs.items():
             for kind, made in made_of.items():
                 for path, value in strings(dataclasses.asdict(made)):
-                    if path.endswith("portal_url"):
-                        continue
+                    if path.endswith(("portal_url", "cost_url")):
+                        continue  # the two addresses are checked in the next test
                     with self.subTest(payload=name, brief=kind, field=path):
                         self.assertEqual(problems_of_a_line(value), [], value[:120])
 
-    def test_the_only_address_in_a_brief_is_the_link_to_the_portal_that_is_made_from_the_id(self):
+    def test_the_only_addresses_in_a_brief_are_the_link_to_the_portal_that_is_made_from_the_id_and_the_one_to_cost_analysis_that_is_made_from_the_ids_of_the_subscription_and_the_group(self):
         for name, made_of in self.briefs.items():
             for kind, made in made_of.items():
                 with self.subTest(payload=name, brief=kind):
                     self.assertTrue(made.where.portal_url == "" or re.fullmatch(PORTAL, made.where.portal_url), made.where.portal_url)
+                    self.assertTrue(made.cost_url == "" or re.fullmatch(ANALYSIS, made.cost_url), made.cost_url)
+                    self.assertEqual(made.cost_url, self.calm_briefs[kind].cost_url, "the same whatever the text: the ids are the ones of the resource")
+                    self.assertTrue(made.cost_url.startswith(analysis_url(SUB)), "the scope is the subscription of the resource, or its resource group")
         self.assertEqual(self.briefs["everything"]["a change"].where.portal_url, f"https://portal.azure.com/#resource{DISK}")
 
     def test_a_brief_is_json_text_with_no_raw_control_or_direction_character(self):
@@ -393,7 +401,9 @@ class TheLinks(unittest.TestCase):
                     reply = page(path, BENIGN, disk=bad, vm=bad)
                     self.assertEqual(reply.status, 200, label)
                     audit_html(self, reply.text, f"{label}", PAYLOADS["html"])
-                    self.assertEqual([link for link in reply.links() if link.startswith("https://portal.azure.com")], [], label)
+                    self.assertEqual([link for link in reply.links() if link.startswith("https://portal.azure.com/#resource")], [], label)
+                    self.assertTrue(all(re.fullmatch(ANALYSIS, link) for link in reply.links() if urlsplit(link).netloc == "portal.azure.com"),
+                                    f"{label}: the one link that is left is Cost analysis, made from the id of the subscription, which is the id of one")
 
     def test_a_plan_id_that_is_not_an_id_is_made_into_a_safe_piece_of_a_path_on_the_home_page(self):
         console = Console()

@@ -279,7 +279,7 @@ class TheFigureOnTheCard(unittest.TestCase):
                                 "price-basis": "The most that a change could save: what it would save was not worked out.", "money": self.MONEY})
 
     def test_nothing_that_can_be_shown_has_no_year_and_no_money_line_and_says_why(self):
-        for cost, why in ((0.0, "No cost line in the last 30 days."), (None, "No cost line was read yet.")):
+        for cost, why in ((0.0, "Azure has no cost line for this yet."), (None, "No cost line was read yet.")):
             with self.subTest(cost=cost):
                 card, tile = self.tile(saving=None, cost=cost)
                 self.assertEqual(tile, {"saving-word": "Cost not visible.", "price-basis": why})

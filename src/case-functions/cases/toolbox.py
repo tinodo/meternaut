@@ -872,6 +872,12 @@ class Toolbox:
         space = self._spaces.get(handle)
         return space.tables.handled() if space is not None else {}
 
+    def known_of(self, handle: str) -> tuple[str | None, dict[str, "bool | int | float | str | list"]]:
+        """The SKU name and the typed properties (typed_properties) of a resource, as the toolbox holds them for its handle: for the code of a case, never for an agent. (None, {}) for a handle that
+        no answer has shown."""
+        entry = self._by_handle.get(handle)
+        return (entry.sku, dict(entry.properties)) if entry is not None else (None, {})
+
     def call(self, name: str, arguments: dict) -> str:
         """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
 

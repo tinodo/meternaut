@@ -7,7 +7,7 @@ import unittest
 
 import support  # noqa: F401 (it puts the app on the path)
 from cases import toolbox as tb
-from cases.arm import Arm
+from cases.arm import COST_RETRIES, Arm
 from cases.http import Client, allowed_calls
 from cases.redact import Redactor
 from support import NOW, TOKEN
@@ -127,7 +127,7 @@ class TheReadsOfManySubscriptions(unittest.TestCase):
     def test_a_read_that_failed_is_not_asked_again_by_the_tools_in_the_run_but_the_memo_keeps_no_failure_for_the_watch(self):
         estate, arm, subs = ten(2)
         box = tb.Toolbox(arm, tuple(subs), NOW, [])
-        estate.failures["costs"] = [500, 500, 500, 500, 500, 500]
+        estate.failures["costs"] = [500] * (2 * (1 + COST_RETRIES))  # both subscriptions are turned away at every try
         self.assertEqual(ask(box, "cost_lines")["costs"], "unavailable")
         estate.failures["costs"] = None
         before = sum(cost_calls(estate).values())

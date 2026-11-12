@@ -9,7 +9,7 @@ from ..brief import Brief, build_brief, needs as needs_two_people  # the pages k
 from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
-from .figures import a_year, chip, cost_of, dollars, figure_of
+from .figures import a_year, chip, cost_of, dollars, figure_for
 from .layout import code, nowrap, paragraph, summary
 
 T = TypeVar("T")
@@ -194,7 +194,7 @@ def saving_cell(ctx: Ctx, case: CaseRecord) -> Safe:
     """What a finding would save, said as the pages of the guide say it and from the same code: the figure a year, then its level, the month and its basis; or what it costs; or why no
     figure can be shown. A figure never stands without its level and its basis (rule 13)."""
     brief = brief_of(ctx, None, case)
-    figure = figure_of([brief.saving], [cost_of(brief, case)])
+    figure = figure_for([brief], [cost_of(brief, case)])
     note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
     if figure.monthly is None:
         return fmt('{label}<br><span class="muted">{note}</span>', label=figure.label, note=note)

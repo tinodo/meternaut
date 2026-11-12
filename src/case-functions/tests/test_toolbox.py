@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from support import APP_ROOT, NOW, SUBSCRIPTION, TOKEN
 from cases import toolbox as tb
-from cases.arm import Arm
+from cases.arm import COST_RETRIES, Arm
 from cases.foundry import FunctionTool
 from cases.http import Client, HttpError, Refused, allowed_calls
 from cases.identity import IdentityError
@@ -942,6 +942,23 @@ def rows_by_cost(box, kind):
     return [r["handle"] for r in listed(box, kind)["resources"]]
 
 
+class TheKnownOfAResource(unittest.TestCase):
+    def test_the_code_of_a_case_can_read_the_sku_and_the_typed_properties_of_a_handle_and_nothing_of_another(self):
+        box = toolbox(standard())
+        handle = rows_by_cost(box, DISK)[-1]  # disk-c, the cheapest: Standard_LRS, 32 GiB, unattached
+        sku, properties = box.known_of(handle)
+        self.assertEqual((sku, properties["diskSizeGB"], properties["diskState"]), ("Standard_LRS", 32, "Unattached"))
+        for unknown in ("r99", "", "disk-c"):
+            self.assertEqual(box.known_of(unknown), (None, {}), unknown)
+
+    def test_what_it_gives_is_a_copy_and_no_answer_to_an_agent_changes(self):
+        box = toolbox(standard())
+        handle = rows_by_cost(box, DISK)[-1]
+        box.known_of(handle)[1]["diskSizeGB"] = 1
+        self.assertEqual(box.known_of(handle)[1]["diskSizeGB"], 32)
+        self.assertEqual(ask(box, "describe", handle=handle)["properties"]["diskSizeGB"], 32)
+
+
 class TheHandles(unittest.TestCase):
     def test_the_last_handle_is_the_longest_that_the_pattern_of_a_handle_allows(self):
         self.assertTrue(tb.HANDLE.fullmatch(f"r{tb.HANDLE_LIMIT}"))
@@ -1091,7 +1108,7 @@ class TheOverview(unittest.TestCase):
         ask(box, "estate_overview")
         listed(box, DISK)
         ask(box, "cost_lines")
-        self.assertEqual(len(estate.paths("costmanagement")), 3, "the first read and its two retries, and no other")
+        self.assertEqual(len(estate.paths("costmanagement")), 1 + COST_RETRIES, "the first read and its repeats, and no other")
 
     def test_cost_lines_that_are_not_in_us_dollars_are_never_shown_as_dollars(self):
         estate = standard()
@@ -1421,7 +1438,7 @@ class TheResources(unittest.TestCase):
     def test_when_the_costs_of_one_subscription_cannot_be_read_the_answer_names_it_and_the_rows_of_it_have_no_cost(self):
         estate = standard()
         estate.rows.append(row(DISK, "other-disk", sub=SUB2))
-        estate.failures["costs"] = [None, 500, 500, 500]
+        estate.failures["costs"] = [None] + [500] * (1 + COST_RETRIES)  # the first subscription is read, the second is turned away at every try
         answer = listed(toolbox(estate, (SUB, SUB2)), DISK)
         self.assertEqual((answer["costs"], answer["costs_unavailable"]), ("unavailable", ["s2"]))
         self.assertEqual([("usd30d" in r) for r in answer["resources"]], [True, True, True, False])
@@ -2003,7 +2020,7 @@ class TheMeasure(unittest.TestCase):
     def test_a_subscription_without_costs_has_null_in_the_usd_column_for_its_rows(self):
         estate = self.estate(2)
         estate.rows.append(row(VM, "other", sub=SUB2))
-        estate.failures["costs"] = [None, 500, 500, 500]
+        estate.failures["costs"] = [None] + [500] * (1 + COST_RETRIES)
         box = toolbox(estate, (SUB, SUB2))
         answer = ask(box, "measure", type=VM, metric=VM1_METRIC)
         self.assertEqual((answer["costs"], answer["costs_unavailable"]), ("unavailable", ["s2"]))
@@ -2449,7 +2466,7 @@ class TheCostLines(unittest.TestCase):
         self.assertEqual(ask(toolbox(estate), "cost_lines"), {"costs": "unavailable", "lines": []})
         mixed = standard()
         mixed.rows.append(row(DISK, "other-disk", sub=SUB2))
-        mixed.failures["costs"] = [None, 500, 500, 500]
+        mixed.failures["costs"] = [None] + [500] * (1 + COST_RETRIES)
         answer = ask(toolbox(mixed, (SUB, SUB2)), "cost_lines", type=DISK)
         self.assertEqual((answer["costs"], answer["total"]), ("unavailable", 4))
 

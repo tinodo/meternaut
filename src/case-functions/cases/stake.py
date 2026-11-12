@@ -13,9 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from . import estimate as estimates
 from .brief import Brief
 from .models import CaseRecord
-from .web.figures import RISKS, Figure, a_year, dollars, figure_of, title_of
+from .web.figures import RISKS, Figure, a_year, dollars, figure_for, title_of
 from .web.home import Row, unit_title, units_of
 
 MONEY = "Money is in US dollars, and a year is twelve times the month."  # the page says it in the same words, once under its figure
@@ -32,11 +33,18 @@ class Stake:
     month: str  # "$140.16"
     note: str  # the basis ("Based on the cost lines of the last 30 days.") or the reason
     monthly: float | None = None  # the figure of a month as a number, for the order of a list
+    made_of: str = ""  # what the cost of a whole subscription or resource group is made of ("Made of: Virtual Network $88.10, ...")
+    estimate: str = ""  # the estimate at list price for a disk that Azure has no cost line for, with its label and the date of its price table: never part of the figure
 
     @property
     def line(self) -> str:
         """The line under the figure, as the page has it: the label, the month and the basis or the reason."""
         return " ".join(part for part in (f"{self.label}.", f"{self.month} a month." if self.month else "", self.note) if part)
+
+    @property
+    def extra(self) -> str:
+        """What the page puts under that line: what a whole subscription or resource group costs is made of, and the estimate at list price. Each says what it is."""
+        return " ".join(part for part in (self.made_of, self.estimate) if part)
 
     @property
     def short(self) -> str:
@@ -52,18 +60,20 @@ class Stake:
 
 
 def stake_of_figure(figure: Figure, note: str | None = None) -> Stake:
-    """The figure of the page (a request's, or a row's that stands for several) in words: its year, its month, its label and its basis, or what is known when there is no figure."""
+    """The figure of the page (a request's, or a row's that stands for several) in words: its year, its month, its label and its basis, or what is known when there is no figure, and, under
+    them, what the cost is made of and the estimate at list price when the figure has them."""
     note = figure.note if note is None else note
+    under = {"made_of": figure.made_of, "estimate": estimates.words(figure.estimate) if figure.estimate is not None else ""}
     if figure.monthly is None:
-        return Stake(figure.state, "", figure.label, "", "", note)
-    return Stake(figure.state, figure.level, figure.label, f"{a_year(figure.monthly)} a year", dollars(figure.monthly), note, figure.monthly)
+        return Stake(figure.state, "", figure.label, "", "", note, **under)
+    return Stake(figure.state, figure.level, figure.label, f"{a_year(figure.monthly)} a year", dollars(figure.monthly), note, figure.monthly, **under)
 
 
 def stake_of(brief: Brief) -> Stake:
     """The figure of a request as its page shows it: a saving when the brief has one (with its level and its basis), else what the finding costs in 30 days (the most that a change could
     save, which nothing has measured), else nothing, and why. A finding's own reason for having no saving takes the place of the general one. The cost is the brief's own (`Brief.cost`),
     the number that the page reads with `cost_of`: a test holds the two to each other."""
-    figure = figure_of([brief.saving], [brief.cost])
+    figure = figure_for([brief], [brief.cost])
     return stake_of_figure(figure, figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none)
 
 
@@ -90,11 +100,13 @@ def decisions_of(waiting: Sequence[tuple[Brief, CaseRecord | None, bool]]) -> li
 
 
 def place_of(brief: Brief) -> str:
-    """The line under the title: what kind of resource, and in which resource group. A request for many resources has none: its title counts them and the groups that they are in."""
+    """The line under the title: what kind of resource, in which resource group and in which subscription (by its name, when it was read: a person reads a name before an id; the title of a
+    request about a subscription has the name already). A request for many resources has none: its title counts them and the groups that they are in."""
     if brief.group is not None:
         return ""
     group = f"resource group {brief.where.group}" if brief.where.group else ""
-    return ", ".join(bit for bit in (brief.where.kind, group) if bit)
+    named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" else ""
+    return ", ".join(bit for bit in (brief.where.kind, group, named) if bit)
 
 
 def chips_of(brief: Brief) -> tuple[str, ...]:

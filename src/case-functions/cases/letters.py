@@ -145,9 +145,10 @@ class _Doc:
 
     def figure(self, stake: Stake, basis_shown: bool = True, then: str = "") -> None:
         """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. `basis_shown` is false for a letter that says the basis of a saving in the
-        lines that follow (the reason of a missing figure is always said)."""
+        lines that follow (the reason of a missing figure is always said). What the cost of a whole subscription is made of, and the estimate at list price for a disk that Azure has no cost
+        line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
         shown = stake if basis_shown or stake.state != "save" else replace(stake, note="")
-        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(shown.line, 400), then) if part), stake.money, stake.state == "save"))
+        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(shown.line, 400), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
 
     def facts(self, *rows: tuple[str, str]) -> None:
         if rows:

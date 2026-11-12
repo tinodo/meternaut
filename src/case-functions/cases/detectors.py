@@ -12,9 +12,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from .arm import Arm
+from . import costs as cost_words
+from . import estimate as estimates
+from .arm import Arm, ScopeCost
 from .http import HttpError
 from .identity import IdentityError
+from .roles import clean_text
 
 ADVISOR = "advisor-cost"
 RECENT_DAYS = 7
@@ -144,6 +147,13 @@ class Lead:
     age_days: int | None = None
     advisor_saving_usd: float | None = None
     cost_usd_30d: float | None = None
+    # How cost_usd_30d was read (cases/costs.py), what it is made of when the lead is about a whole subscription or resource group, an estimate at list price for a managed disk that Azure has no cost
+    # line for, the display name of the subscription and Advisor's own words for an Advisor lead. None of them goes to a model: evidence.py builds what a model sees from the typed facts alone.
+    cost_state: str = ""
+    cost_by_service: dict = field(default_factory=dict)
+    estimate: dict = field(default_factory=dict)
+    subscription_name: str = ""
+    advice: dict = field(default_factory=dict)
 
     @property
     def lead_id(self) -> str:
@@ -152,13 +162,19 @@ class Lead:
 
 @dataclass
 class Context:
-    """What the guards and the ranking need for one subscription. None means that it could not be read."""
+    """What the guards and the ranking need for one subscription. None means that it could not be read.
+
+    `costs` are the cost lines of the resources of the subscription (lower-case resource id and the sum of its lines, the lines that no resource has under ""), and `cost_error` says that they could
+    not be read (as opposed to a read that found none). `containers` holds, for each lead that is about the whole subscription or a whole resource group of it, the cost of every line in it, by
+    service (lower-case id of the scope): None when that read failed."""
 
     locks: list[str] | None = None
     recent: set[str] | None = None
     managed_groups: set[str] | None = None
     costs: dict[str, float] | None = None
     currency: str | None = None
+    cost_error: bool = False
+    containers: dict[str, "ScopeCost | None"] = field(default_factory=dict)
 
 
 @dataclass
@@ -221,7 +237,10 @@ def _private_endpoint(row: dict, now: dt.datetime) -> Lead | None:
 
 def _managed_disk(row: dict, now: dt.datetime) -> Lead | None:
     age = age_of(row.get("timeCreated"), now)
-    return _lead("orphan-managed-disk", row, {"diskState": "unattached", "sku": pick(row.get("skuName"), DISK_SKUS), "sizeGb": bucket(row.get("sizeGb")), "ageDays": age}, age)
+    lead = _lead("orphan-managed-disk", row, {"diskState": "unattached", "sku": pick(row.get("skuName"), DISK_SKUS), "sizeGb": bucket(row.get("sizeGb")), "ageDays": age}, age)
+    if lead is not None:
+        lead.estimate = estimates.disk_estimate(row.get("skuName"), row.get("sizeGb"))  # kept only when Azure has no cost line for the disk (rank)
+    return lead
 
 
 def _public_ip(row: dict, now: dt.datetime) -> Lead | None:
@@ -262,6 +281,21 @@ DETECTORS = (
 DETECTOR_NAMES = tuple(d.name for d in DETECTORS) + (ADVISOR,)
 
 
+ADVICE_PROBLEM = 160  # the characters of Advisor's own short problem that a record keeps: it is the title of a request
+ADVICE_SOLUTION = 300
+
+
+def advisor_words(properties: dict) -> dict:
+    """Advisor's own words for a recommendation (Learn, "Recommendations - List": properties.shortDescription has a problem and a solution, each a sentence that Advisor wrote), one line each, with
+    one standing in for the other when Advisor gave only one. Empty when it gave neither. It is text that Advisor wrote, kept for a person to read: it never goes into a prompt."""
+    short = properties.get("shortDescription") if isinstance(properties.get("shortDescription"), dict) else {}
+    problem = clean_text(short.get("problem"), ADVICE_PROBLEM) if isinstance(short.get("problem"), str) else ""
+    solution = clean_text(short.get("solution"), ADVICE_SOLUTION) if isinstance(short.get("solution"), str) else ""
+    if not problem and not solution:
+        return {}
+    return {"problem": problem or clean_text(solution, ADVICE_PROBLEM), "solution": solution or problem}
+
+
 def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
     properties = recommendation.get("properties")
     if not isinstance(properties, dict):
@@ -283,7 +317,7 @@ def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
              "recommendationType": type_id.lower() if GUID.match(type_id) else "none"}
     return Lead(detector=ADVISOR, resource_id=resource_id, resource_type=str(properties.get("impactedField") or "").lower(),
                 name=str(properties.get("impactedValue") or ""), resource_group=group.group(1) if group else "", subscription_id=subscription.lower(),
-                location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=saving)
+                location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=saving, advice=advisor_words(properties))
 
 
 GRAPH_CHUNK = 50  # the subscriptions that one Resource Graph query reads: Learn recommends groups of fewer than 300 (the guidance for throttled requests)
@@ -421,10 +455,28 @@ def _read_subscription(arm: Arm, subscription: str, today: dt.date, graph: _Grap
         context.locks = arm.locks(subscription)
     except HttpError as error:
         problems.add(LOCKS, subscription, error)
+    start, end = today - dt.timedelta(days=30), today - dt.timedelta(days=1)
     try:
-        context.costs, context.currency = arm.costs(subscription, today - dt.timedelta(days=30), today - dt.timedelta(days=1))
+        context.costs, context.currency = arm.costs(subscription, start, end)
     except HttpError as error:
+        context.cost_error = True
         problems.add(COSTS, subscription, error)
+    for lead in leads:
+        # A finding about the whole subscription, or about a whole resource group, costs what every cost line in it costs (also the lines that no resource and no resource group have): one read
+        # of Cost Management by service, however many findings are about the same scope.
+        key = cost_words.container_key(lead.resource_id)
+        if key and key not in context.containers:
+            try:
+                context.containers[key] = arm.scope_costs(subscription, start, end, cost_words.scope_of(lead.resource_id).group)
+            except HttpError as error:
+                context.containers[key] = None
+                problems.add(COSTS, subscription, error)
+    if leads:
+        named = arm.subscription_name(subscription)  # once for the subscription: the list of the subscriptions has it already, or one read of the subscription gives it
+        for lead in leads:
+            lead.subscription_name = named
+            if named and cost_words.scope_of(lead.resource_id).kind == "subscription":
+                lead.name = named  # a finding about the subscription itself is about "this subscription", and a person knows it by its name
     return Collected(leads, context, read, failed)
 
 
@@ -477,8 +529,41 @@ def collect(arm: Arm, subscription: str, now: dt.datetime, notes: list[str]) -> 
     return estate.collected[subscription]
 
 
+def _cost_of_resource(lead: Lead, context: Context) -> None:
+    """The 30-day cost of a lead about one resource, from the cost lines of its subscription, found by the id in lower case (Cost Management gives ids in lower case whatever the case of the id that
+    Resource Graph or Advisor gave). A subscription whose cost lines could not be read says so (FAILED), one whose lines are not in dollars says that (CURRENCY), and a resource that has no
+    line is NONE (0.0, as it always was): not a cost of nothing, and the pages say so. A subscription that has no cost line at all is NONE too, with no figure: no currency is known without a line."""
+    if context.costs is None:
+        lead.cost_state = cost_words.FAILED if context.cost_error else ""
+    elif context.currency == "USD":
+        if lead.resource_id.lower() in context.costs:
+            lead.cost_usd_30d, lead.cost_state = round(context.costs[lead.resource_id.lower()], 2), cost_words.LINES
+        else:
+            lead.cost_usd_30d, lead.cost_state = 0.0, cost_words.NONE
+    else:
+        lead.cost_state = cost_words.CURRENCY if context.costs else cost_words.NONE
+    if lead.cost_state != cost_words.NONE:
+        lead.estimate = {}  # an estimate at list price is for a resource that Azure has no cost line for, and for no other
+
+
+def _cost_of_container(lead: Lead, context: Context, key: str) -> None:
+    """The 30-day cost of a lead about a whole subscription or resource group: the sum of every cost line in it, by service (the read of Cost Management that _read_subscription made)."""
+    if key not in context.containers:
+        return
+    scoped = context.containers[key]
+    if scoped is None:
+        lead.cost_state = cost_words.FAILED
+    elif scoped.currency not in (None, "USD"):
+        lead.cost_state = cost_words.CURRENCY
+    elif scoped.rows == 0:
+        lead.cost_usd_30d, lead.cost_state = 0.0, cost_words.NONE
+    else:
+        lead.cost_usd_30d, lead.cost_state, lead.cost_by_service = round(scoped.total, 2), cost_words.LINES, cost_words.parts_of(scoped.services)
+
+
 def rank(leads: list[Lead], contexts: dict[str, Context]) -> list[Lead]:
-    """One lead for each resource (a Resource Graph detector before Advisor), each with its 30-day cost, dearest first."""
+    """One lead for each resource (a Resource Graph detector before Advisor), each with its 30-day cost, dearest first. What a whole subscription or resource group costs is not what a resource
+    costs, so a finding about one of them does not rank by it."""
     seen: set[str] = set()
     unique: list[Lead] = []
     for lead in sorted(leads, key=lambda l: (l.detector == ADVISOR, l.detector, l.resource_id.lower())):
@@ -488,6 +573,11 @@ def rank(leads: list[Lead], contexts: dict[str, Context]) -> list[Lead]:
             unique.append(lead)
     for lead in unique:
         context = contexts.get(lead.subscription_id)
-        if context and context.costs is not None and context.currency == "USD":
-            lead.cost_usd_30d = round(context.costs.get(lead.resource_id.lower(), 0.0), 2)
-    return sorted(unique, key=lambda l: (-(l.cost_usd_30d or 0.0), l.detector, l.resource_id.lower()))
+        if context is None:
+            continue
+        key = cost_words.container_key(lead.resource_id)
+        if key:
+            _cost_of_container(lead, context, key)
+        else:
+            _cost_of_resource(lead, context)
+    return sorted(unique, key=lambda l: (-((l.cost_usd_30d or 0.0) if not cost_words.is_container(l.resource_id) else 0.0), l.detector, l.resource_id.lower()))

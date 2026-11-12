@@ -910,7 +910,7 @@ class TheEndOfTheRunSaysWhatBecameOfTheInvestigation(unittest.TestCase):
                 _, events, _, _, _ = investigating(estate_with_leads(), env=env)
                 end = self.end(events)
                 self.assertEqual(sorted(k for k in end if k not in ("v", "ts", "runId", "requestId", "type")),
-                                 sorted(["ok", "leads", "cases", "proposed", "needsHuman", "dropped", "errors", "tokens", "seconds", "investigation", "investigationLines"]))
+                                 sorted(["ok", "leads", "cases", "proposed", "needsHuman", "dropped", "errors", "tokens", "seconds", "investigation", "investigationLines", "heldBack"]))
                 self.assertIn(end["investigation"], ("ran", "failed", "off"))
                 self.assertIsInstance(end["investigationLines"], int)
 

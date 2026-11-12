@@ -65,11 +65,11 @@ class CostLines(unittest.TestCase):
             with self.assertRaises(HttpError, msg=str(answer)[:80]):
                 arm.cost_lines(SUBSCRIPTION, FIRST, LAST)
 
-    def test_a_throttled_read_is_asked_again_twice_and_then_it_is_an_error(self):
+    def test_a_throttled_read_is_asked_again_four_times_and_then_it_is_an_error(self):
         arm, script = arm_with((429, {"retry-after": "1"}, b"{}"))
         with self.assertRaises(HttpError) as raised:
             arm.cost_lines(SUBSCRIPTION, FIRST, LAST)
-        self.assertEqual((raised.exception.status, len(script.calls)), (429, 3))
+        self.assertEqual((raised.exception.status, len(script.calls)), (429, 5))
 
     def test_the_cost_of_every_resource_is_added_up_from_the_lines_and_gives_the_same_totals(self):
         arm, script = arm_with(ok(self.page([[1.5, RESOURCE, "Storage", "USD"], [0.5, RESOURCE, "Bandwidth", "USD"]])))

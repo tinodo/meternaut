@@ -644,9 +644,9 @@ class WhenTheVolumeMovesWhileTheRequestIsOpen(unittest.TestCase):
         self.assertNotIn("savingUsd", case.facts["unread"])
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
         self.assertEqual((b.saving.monthly, b.saving.level, b.saving.basis, b.saving.waiting_per_day), (None, "", "", None))
-        self.assertEqual(b.saving.why_none, "The resource had no cost in the last 30 days.")
+        self.assertEqual(b.saving.why_none, "Azure has no cost line for this yet.")
         _, text = page_of(case, plan)
-        self.assertIn("Cost not visible. No cost line in the last 30 days.", text)
+        self.assertIn("Cost not visible. Azure has no cost line for this yet.", text)
         self.assertNotIn("71.60", text)
         self.assertIn("AzureDiagnostics: 20 GB in 30 days", text, "the rows are those of the digest all the same")
 

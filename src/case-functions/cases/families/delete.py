@@ -10,7 +10,7 @@ from ..http import HttpError, Refused
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
 from . import calls
-from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, skeptic_sentence
+from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, skeptic_sentence, subscription_words
 from .calls import Kind
 from .gates import Gates
 from .words import DELETE_WORDING, Wording
@@ -61,7 +61,7 @@ class DeleteFamily(Family):
         return Planned(
             title=f"{w.title} in resource group {group}",
             what_changes=(f"When you approve, Meternaut deletes the {w.noun} named {name} in resource group {group} "
-                          f"(subscription {getattr(lead, 'subscription_id')[:8]}) with your own permissions. It changes nothing else. "
+                          f"(subscription {subscription_words(lead)}) with your own permissions. It changes nothing else. "
                           f"Right before it deletes, it reads the resource again and stops unless {w.recheck}."),
             could_go_wrong=(f"{w.gone_wrong} If your account may not delete the resource, Azure refuses and nothing changes. {skeptic_sentence(case)}"),
             undo=w.undo, evidence=evidence_text(lead, w.observed), saving_usd_month=self.saving(case, lead, facts), target={},

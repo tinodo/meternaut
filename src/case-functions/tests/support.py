@@ -102,6 +102,11 @@ class FakeEstate:
         self.locks_at: dict[str, list[dict]] = {}
         self.cost_rows: list[list] = []
         self.days: list[tuple[dt.date, str, float]] = []
+        # What Cost Management gives for a whole subscription or one resource group: `scope_rows` are the lines (cost, service, resource group in lower case, "" for a line that has no group, such as a
+        # plan of Microsoft Defender for Cloud) that a query by service reads, and `scope_days` the cost of each day (day, cost, group) that a query by day of a whole scope reads.
+        self.scope_rows: list[tuple[float, str, str]] = []
+        self.scope_days: list[tuple[dt.date, float, str]] = []
+        self.subscription_name: str | None = None  # the display name that a read of the subscription gives; None: that read is answered with 404
         self.metrics: dict[tuple[str, str], dict[dt.date, object]] = {}
         self.currency = "USD"
         self.failures: dict[str, object] = {}
@@ -142,6 +147,10 @@ class FakeEstate:
             failed = self._failure("daily" if daily else "costs")
             if failed:
                 return failed, {"retry-after": "1"} if failed == 429 else {}, b'{"error":{"code":"Throttled","message":"slow down"}}'
+            asked = body["dataset"].get("filter", {}).get("dimensions")
+            by_service = [g["name"] for g in body["dataset"].get("grouping", [])] == ["ServiceName"]
+            if (asked and asked["name"] == "ResourceGroup") or (not asked and (by_service or (daily and "grouping" not in body["dataset"]))):
+                return self._by_scope(body, daily, asked)
             if daily:
                 return self._by_day(body)
             return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": "ResourceId"}, {"name": "ServiceName"}, {"name": "Currency"}],
@@ -170,11 +179,30 @@ class FakeEstate:
                 status, answer_headers, answer = reply
                 return status, answer_headers, json.dumps(answer).encode("utf-8")
             return self._json(reply[1], reply[0])
+        if method == "GET" and path == f"/subscriptions/{SUBSCRIPTION}" and self.subscription_name is not None:
+            return self._json({"id": f"/subscriptions/{SUBSCRIPTION}", "subscriptionId": SUBSCRIPTION, "displayName": self.subscription_name, "state": "Enabled"})
         return 404, {}, b"{}"
 
     @staticmethod
     def _json(document, status: int = 200):
         return status, {}, json.dumps(document).encode("utf-8")
+
+    def _by_scope(self, body, daily: bool, asked):
+        """The answer to a query of Cost Management about a whole subscription or one resource group of it: the cost of each service, or of each day, of the lines of `scope_rows` or
+        `scope_days` whose group is one of the groups that the filter names (all of them without a filter), without regard to the case of a name."""
+        groups = {value.lower() for value in asked["values"]} if asked else None
+        sums: dict = {}
+        if daily:
+            for day, cost, group in self.scope_days:
+                if groups is None or group.lower() in groups:
+                    sums[int(day.strftime("%Y%m%d"))] = sums.get(int(day.strftime("%Y%m%d")), 0.0) + cost
+            name = "UsageDate"
+        else:
+            for cost, service, group in self.scope_rows:
+                if groups is None or group.lower() in groups:
+                    sums[service] = sums.get(service, 0.0) + cost
+            name = "ServiceName"
+        return self._json({"properties": {"columns": [{"name": "Cost"}, {"name": name}, {"name": "Currency"}], "rows": [[cost, key, self.currency] for key, cost in sums.items()]}})
 
     def _by_day(self, body):
         """The answer to a query of Cost Management by day: the lines of `days` of the resources that the query names, each with its day as a number (20261103)."""

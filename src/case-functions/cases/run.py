@@ -14,14 +14,16 @@ import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from . import config as cfg
-from . import decide, detectors, evidence, guards, investigate, learning, roles, usage, wiring
+from . import costs as cost_words
+from . import decide, detectors, evidence, guards, investigate, learning, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
-from .approvals import is_fixture
+from .approvals import NOTHING_TO_SAY, is_fixture
 from .arm import Arm, scopes_of
+from .brief import says_nothing
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
 from .events import History
 from .evidence import EvidenceError
@@ -76,6 +78,7 @@ class Summary:
     errors: int = 0
     tokens: int = 0
     seconds: int = 0
+    held: int = 0  # the findings held back because they cannot say what to look at (cases/upkeep.py)
 
 
 class CaseEnded(Exception):
@@ -129,8 +132,9 @@ def _when(value: object) -> dt.datetime | None:
         return None
 
 
-def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_before: int) -> tuple[str, int]:
-    """One case, from the evidence to the result. Returns its status and the tokens that it used."""
+def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_before: int, held: list[str] | None = None) -> tuple[str, int]:
+    """One case, from the evidence to the result. Returns its status and the tokens that it used. `held` collects the ids of the cases whose request was not made because the finding cannot
+    say what to look at (cases/upkeep.py): the Watch counts them."""
     h, st = s.history, s.settings
     case_id = f"{h.run_id[:8]}-c{number}"
     used = 0
@@ -152,9 +156,10 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
             record = CaseRecord(
                 case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
                 resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=lead.detector, run_id=h.run_id, status=status,
-                recommendation=recommendation, confidence=confidence, saving_usd_month=saving, cost_usd_30d=lead.cost_usd_30d, summary=clean_text(summary, 600),
+                recommendation=recommendation, confidence=confidence, saving_usd_month=saving, summary=clean_text(summary, 600),
                 objections=tuple(clean_text(o, 300) for o in objections), guards=tuple(flags_on), models=dict(models), steps=tuple(steps), facts=facts,
-                first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1, learned={"skeptic": skeptic})
+                first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now, runs_seen=(old.runs_seen + 1) if old else 1, learned={"skeptic": skeptic},
+                subscription_name=lead.subscription_name or (old.subscription_name if old else ""), advice=lead.advice or (old.advice if old else {}), **upkeep.cost_fields(lead, old))
             ex.store.case_put(record)
             if status in ("proposed", "needs_human"):
                 plan = ex.approvals.plan_for(record, lead, ex.approvers())
@@ -162,6 +167,9 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
                     record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                     h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                     ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
+                elif says_nothing(record) and held is not None:
+                    upkeep.held(h, record)
+                    held.append(record.case_id)
         except (StoreError, ValueError) as error:
             h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))
 
@@ -279,9 +287,36 @@ def _subscription(resource_id: str) -> str:
     return resource_id.split("/")[2] if resource_id.startswith("/subscriptions/") else ""
 
 
+def _read_today(case: CaseRecord, last: dt.date) -> bool:
+    """Whether the daily cost of a case was read for yesterday already: it holds the thirty days that end yesterday, or it was read for yesterday and Azure has no cost line for it (a series of
+    nothing is not kept: cost_state says none, and the end says on which day that was found)."""
+    if case.cost_series_end != last.isoformat():
+        return False
+    return len(case.cost_series or ()) == COST_DAYS or (case.cost_series is None and case.cost_state == cost_words.NONE)
+
+
+def _with_series(kept: CaseRecord, series: list[float] | None, last: dt.date, container: bool) -> CaseRecord:
+    """The case with the daily cost that was read. A series that has a day with a line is kept as it is; no line on any of the thirty days is no series (never thirty zeros): the case says that
+    Azure has no cost line for it, with the day on which that was read, and a case that held no figure for its 30 days gets that figure, 0.0 as it always meant. For a subscription or a resource
+    group the series is the cost of every line in it, so its sum is the cost of the 30 days, and it makes right a case whose figure was looked up by its own id."""
+    if series is None:
+        if (kept.cost_usd_30d or 0.0) > 0:
+            return kept  # the 30 days have a cost: a day that has none is no reason to say that there is no line
+        # A case that says already that Azure has no line keeps the number that it has (0.0, or none for a subscription that has no cost line at all): they mean the same.
+        none = kept.cost_state == cost_words.NONE
+        figure = kept.cost_usd_30d if kept.cost_usd_30d is not None or none or GROUP_FACT in (kept.facts if isinstance(kept.facts, dict) else {}) else 0.0
+        return replace(kept, cost_series=None, cost_series_end=last.isoformat(), cost_state=cost_words.NONE, cost_usd_30d=figure)
+    changes: dict = {"cost_series": series, "cost_series_end": last.isoformat()}
+    if container and (kept.cost_state != cost_words.LINES or not kept.cost_usd_30d):
+        changes.update(cost_usd_30d=round(sum(series), 2), cost_state=cost_words.LINES if sum(series) > 0 else cost_words.NONE)
+    return replace(kept, **changes)
+
+
 def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable[[str], None]) -> None:
-    """The last step of a Watch: reads the daily cost (CaseRecord.cost_series) of each case with an open plan whose series does not end yesterday, in US dollars only, one query for each
-    subscription and COST_IDS resources. A failure leaves the case as it was and is one line in the History; a limit ends the step. It never fails the run."""
+    """A step of a Watch: reads the daily cost (CaseRecord.cost_series) of each case with an open plan whose series does not end yesterday, in US dollars only, one query for each
+    subscription and COST_IDS resources, and one query for a case about a whole subscription or resource group (the cost of every line in it: Arm.scope_days). A case that Azure has no cost line
+    for on any of the thirty days gets no series, and says so (cost_state), never thirty zeros. A failure leaves the case as it was and is one line in the History; a limit ends the step. It
+    never fails the run."""
     ex = s.extras
     if ex is None:
         return
@@ -290,9 +325,15 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
         first = last - dt.timedelta(days=COST_DAYS - 1)
         other = {sub for sub, context in contexts.items() if context.currency not in (None, "USD")}  # the Watch said already that these are not in dollars
         due: dict[str, list[str]] = {}
+        wholes: dict[str, tuple[str, str]] = {}  # the case about a whole subscription or resource group -> (the subscription, the resource group or "")
         for plan in ex.store.plans_open():
             case = ex.store.case_get(plan.case_id)
-            if case is None or case.case_id in due or (case.cost_series_end == last.isoformat() and len(case.cost_series or ()) == COST_DAYS):
+            if case is None or case.case_id in due or case.case_id in wholes or _read_today(case, last):
+                continue
+            scope = cost_words.scope_of(case.resource_id)
+            if scope.kind in ("subscription", "group") and GROUP_FACT not in (case.facts if isinstance(case.facts, dict) else {}):
+                if scope.subscription not in other:
+                    wholes[case.case_id] = (scope.subscription, scope.group)
                 continue
             ids = _members(case)
             subs = {_subscription(i) for i in ids}
@@ -304,12 +345,14 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
         daily: dict[str, list[float]] = {}
         read: set[str] = set()
         why = ""
+        stopped = False
         for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
             try:
                 rows = s.arm.cost_days(sub, first, last, where=("ResourceId", tuple(chunk)))
             except HttpError as error:
                 why = why or clean_text(s.redact(error), 200)
                 if error.status == 429:
+                    stopped = True
                     break
                 continue
             if any(code != "USD" for _, _, _, code in rows):
@@ -319,19 +362,53 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                 if 0 <= (day - first).days < COST_DAYS:
                     daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
             read.update(chunk)
+        whole_series: dict[tuple[str, str], list[float] | None] = {}
+        for sub, group in sorted(set(wholes.values())):
+            if stopped:
+                break
+            try:
+                rows = s.arm.scope_days(sub, first, last, group)
+            except HttpError as error:
+                why = why or clean_text(s.redact(error), 200)
+                if error.status == 429:
+                    stopped = True
+                    break
+                continue
+            if any(code != "USD" for _, _, code in rows):
+                why = why or "the cost lines are not in US dollars"
+                continue
+            found = [0.0] * COST_DAYS
+            seen = False
+            for day, amount, _ in rows:
+                if 0 <= (day - first).days < COST_DAYS:
+                    found[(day - first).days] += amount
+                    seen = True
+            whole_series[(sub, group)] = [round(value, 4) or 0.0 for value in found] if seen else None
         done = 0
+        left_over: list[str] = []
         for case_id, ids in due.items():
             if not read.issuperset(ids):
+                left_over.append(case_id)
                 continue
-            series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)]
+            series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)] if any(i in daily for i in ids) else None
             try:
-                ex.store.case_update(case_id, lambda kept: replace(kept, cost_series=series, cost_series_end=last.isoformat()))  # only these two fields, on the case as it is stored now
+                ex.store.case_update(case_id, lambda kept: _with_series(kept, series, last, False))  # only these fields, on the case as it is stored now
                 done += 1
             except StoreError as error:
                 why = why or clean_text(s.redact(error), 200)
-        if done < len(due):
-            left = len(due) - done
-            say(f"the daily cost of {left} open request{'' if left == 1 else 's'} could not be read ({why}); what was read before stays")
+                left_over.append(case_id)
+        for case_id, key in wholes.items():
+            if key not in whole_series:
+                left_over.append(case_id)
+                continue
+            try:
+                ex.store.case_update(case_id, lambda kept, series=whole_series[key]: _with_series(kept, series, last, True))
+                done += 1
+            except StoreError as error:
+                why = why or clean_text(s.redact(error), 200)
+                left_over.append(case_id)
+        if left_over:
+            say(f"the daily cost of {len(left_over)} open request{'' if len(left_over) == 1 else 's'} could not be read ({why}); what was read before stays")
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"the daily cost of the open requests could not be read ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
@@ -424,6 +501,24 @@ def read_use_series(s: Services, say: Callable[[str], None]) -> None:
         say(f"the use of the open requests could not be read ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
+def _keep_requests_up_to_date(s: Services, ranked: Sequence[Lead], say: Callable[[str], None]) -> None:
+    """Gives the open requests what this Watch learned since they were made: the name of the subscription, Advisor's words and the cost (cases/upkeep.py refresh). It writes the records of the
+    app only, and it never fails the run."""
+    try:
+        upkeep.refresh(s.extras.store, ranked)
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the open requests could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
+def _take_back_empty(s: Services, say: Callable[[str], None]) -> int:
+    """Takes back the open requests that cannot say what to look at (cases/upkeep.py take_back) and returns how many. It never fails the run."""
+    try:
+        return upkeep.take_back(s.extras, s.history)
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the requests that say nothing could not be taken back ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+        return 0
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -441,7 +536,7 @@ def execute(s: Services, trigger: str) -> Summary:
         record = RunRecord(
             run_id=h.run_id, trigger=trigger, started_at=started_at, finished_at=stamp(s.clock()) if finished else None, ok=summary.ok and reason is None,
             leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needs_human=summary.needs_human, dropped=summary.dropped, errors=summary.errors,
-            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in notes[:20]), reason=reason, investigated=investigated)
+            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in notes[:20]), reason=reason, investigated=investigated, held=summary.held)
         try:
             s.extras.store.run_put(record)
         except StoreError as error:
@@ -570,6 +665,7 @@ def execute(s: Services, trigger: str) -> Summary:
         note = f"{skipped} lead{'s were' if skipped != 1 else ' was'} judged within the last {s.extras.settings.recheck_days} days and not taken up again"
         notes.append(note)
         h.emit("run.note", note=note)
+    held_ids: list[str] = []
     for number, lead in enumerate(wanted, 1):
         left = len(wanted) - number + 1
         if s.monotonic() >= deadline:
@@ -578,7 +674,7 @@ def execute(s: Services, trigger: str) -> Summary:
         if tokens + st.max_completion_tokens + PROMPT_TOKEN_RESERVE > st.max_tokens_per_run:
             h.emit("run.note", note=f"the token budget of {st.max_tokens_per_run} for the run was reached; {_cases(left)} not taken up")
             break
-        status, used = work_case(s, number, lead, contexts.get(lead.subscription_id, Context()), tokens)
+        status, used = work_case(s, number, lead, contexts.get(lead.subscription_id, Context()), tokens, held_ids)
         tokens += used
         summary.cases += 1
         if status == "proposed":
@@ -589,13 +685,19 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
+    summary.held += len(held_ids) + investigation.said_nothing
+    if s.extras is not None:
+        _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
+        summary.held += _take_back_empty(s, say)  # the requests that cannot say what to look at are taken back before the cost of the others is read
+    if summary.held:
+        say(f"{summary.held} finding{'s' if summary.held != 1 else ''} {NOTHING_TO_SAY}")
     read_cost_series(s, contexts, say)
     read_use_series(s, say)
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)
     h.emit("run.finished", ok=summary.ok, leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needsHuman=summary.needs_human,
            dropped=summary.dropped, errors=summary.errors, tokens=summary.tokens, seconds=summary.seconds, investigation=investigation.state,
-           investigationLines=h.lines("investigation."))
+           investigationLines=h.lines("investigation."), heldBack=summary.held)
     finished = keep(True)
     if finished is not None and s.extras is not None:
         try:
