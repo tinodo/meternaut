@@ -61,7 +61,7 @@ All of our own code runs on Azure Functions (Flex Consumption, zip deployment), 
 
 **Superseded in part on 2026-11-05:** the `runner` app's identities and write roles. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
-**Superseded in part on 2026-11-11:** the Teams `bot` app, its public endpoint and the taps. A Teams card is a message on the private `teams-cards` queue that a Power Automate flow posts; it carries one link and takes no answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
+**Superseded in part on 2026-11-11:** the Teams `bot` app, its public endpoint and the taps. A Teams card is a message on the private `teams-cards` queue that a Power Automate flow posts; it carries links and takes no typed answer: its buttons open pages that send the answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
 
 A workflow that waits days for a person runs no orchestration code while it waits, and a hosted-agent session is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 

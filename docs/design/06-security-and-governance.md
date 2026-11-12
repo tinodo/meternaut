@@ -11,7 +11,7 @@ Capitalised terms (Case, Action, Atlas, Detector, Credential, Contract, Hub) are
 
 An agent can be talked into anything, so assume it will be: no agent holds a write role. Agents read and propose. One component, the action plane, writes, and only what a person approved or a rule a person wrote allows. Proof points P1 to P10 are in [the roadmap](13-roadmap.md); components are in [the architecture](02-architecture.md).
 
-**Superseded in part on 2026-11-11:** the Teams `bot`, its public route and its token check, in this document. A card is a message on a private queue that a Power Automate flow posts and takes no answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
+**Superseded in part on 2026-11-11:** the Teams `bot`, its public route and its token check, in this document. A card is a message on a private queue that a Power Automate flow posts and takes no typed answer: its buttons are links to pages that send the answer; see [proposal 13](../proposals/13-teams-and-outlook.md) and [proposal 19](../proposals/19-teams-cards-through-power-automate.md).
 
 **Superseded in part on 2026-11-05:** the runner, its roles, the purchase identity and Credentials, in this document. A change runs as the approver, and Meternaut holds no right to change Azure; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
@@ -226,7 +226,7 @@ Of the two profiles ([architecture](02-architecture.md#7-two-profiles-one-codeba
 **No public route.** Microsoft 365 reaches an agent only over the public internet ([Learn](https://learn.microsoft.com/azure/foundry/agents/how-to/publish-copilot-virtual-network)), so Meternaut publishes no agent to Teams and has no endpoint that Teams calls. A Teams card is a message on the private `teams-cards` queue; a Power Automate flow reads it through Power Platform's virtual network support and posts it ([proposal 13](../proposals/13-teams-and-outlook.md)). So:
 
 - There is no bot, no Azure Bot resource, no Teams app package, no app registration, no Graph permission and no token check at a public door.
-- A card carries one link and takes no answer, so nothing is approved, declined or taught in Teams. An approval needs that person's own sign-in to Azure on the page, which lists each person's approvals.
+- A card takes no typed answer: its buttons are links to pages that send the answer, so nothing is taught in Teams, and an approval is recorded with the person's own name after that person's own sign-in to Azure, on a page that lists each person's approvals.
 - Whoever can write to the queue can put any card, with any link, in front of anyone whom the flow can address, because the flow posts to the address that the message carries. The project grants that right to the cases app, and the app takes the recipient from the people list, never from text. Such a writer still cannot approve for anyone, name an approver or reach the estate.
 - An adopting organisation that will not use Power Automate turns Teams off: messages use email.
 - The approval page is on a private endpoint, so approvers reach it from the organisation's network; from elsewhere a card's button fails and the request expires unapproved. An organisation whose approvers work off-network may publish it through its own front door; its Entra sign-in and Conditional Access do not change.
@@ -274,7 +274,7 @@ Mapping, not certification, not legal advice.
 Together, these are the risks an adopting organisation accepts:
 
 - **A stolen identity of the Approval service** (the trust anchor), deceived or colluding approvers, and a mis-written credential. That identity can also release any switch alone, because the two-person rule for resuming purchases is code in the service and not a store rule.
-- **A stolen or left-open Teams session**: a card takes no answer, so the session can only open the page; approving needs the person's own sign-in to Azure there, and naming a delegate needs the page and the R2 sign-in.
+- **A stolen or left-open Teams session**: a button on a card only opens a page in the person's browser, with a one-time token made for that person; approving needs the person's own sign-in to Azure there, a change that cannot be undone asks again on the card, and naming a delegate needs the page and the R2 sign-in.
 - **A compromised runner**: its family's Actions at every opted-in scope, any purchase its role allows while the assignment lasts, a purchase already submitted, Azure's refund and exchange limits.
 - **A compromised hosted agent** (its roles share an identity and a contract), a same-schema tool change or a poisoned tool response.
 - **Missed screening**: other languages, MCP responses at the Hub, a person who copies attacker text into a decision, wrong data from Azure itself.

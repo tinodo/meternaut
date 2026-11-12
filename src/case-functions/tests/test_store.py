@@ -433,6 +433,27 @@ class StoreContract:
         self.assertTrue(self.store.nonce_use(token, OID, "p"))
         self.assertIsNone(self.store.nonce_take(token, OID, "p"))
 
+    def test_a_token_can_be_looked_at_without_being_used_up_and_only_by_its_person_for_its_purpose_before_it_expires(self):
+        data = json.dumps({"a": "approve", "c": "7F3K92QD", "s": 1})
+        token = self.store.nonce_new(OID, "plan-1", 60, data)
+        self.assertIsNone(self.store.nonce_peek(token, OTHER, "plan-1"), "another person sees nothing")
+        self.assertIsNone(self.store.nonce_peek(token, OID, "plan-2"), "nor does another purpose")
+        for _ in range(3):
+            self.assertEqual(self.store.nonce_peek(token, OID, "plan-1"), data, "looking at it is as often as anybody likes and uses nothing up")
+        self.assertEqual(self.store.nonce_take(token, OID, "plan-1"), data, "the token is still there for the one use")
+        self.assertIsNone(self.store.nonce_peek(token, OID, "plan-1"), "and gone after it")
+        late = self.store.nonce_new(OID, "plan-1", 60, data)
+        self.clock.advance(seconds=61)
+        self.assertIsNone(self.store.nonce_peek(late, OID, "plan-1"), "an expired token shows nothing")
+        for odd in ("not-a-token", "", "x" * 24):
+            self.assertIsNone(self.store.nonce_peek(odd, OID, "plan-1"))
+
+    def test_looking_at_a_token_writes_nothing_and_a_token_without_data_shows_an_empty_text(self):
+        token = self.store.nonce_new(OID, "plan-1", 60)
+        self.assertEqual(self.store.nonce_peek(token, OID, "plan-1"), "")
+        self.assertTrue(self.store.nonce_use(token, OID, "plan-1"))
+        self.assertIsNone(self.store.nonce_peek(token, OID, "plan-1"))
+
     def test_mails_since_counts_the_messages_of_one_person(self):
         for index, when in enumerate(("2026-11-03T09:00:00Z", "2026-11-05T09:00:00Z", "2026-11-05T10:00:00Z")):
             self.store.mail_put(MailRecord(mail_id=f"m{index}", oid=OID, kind="digest", subject="s", sent_at=when, status="sent"))

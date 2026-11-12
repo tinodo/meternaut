@@ -1,6 +1,9 @@
 """The Teams card of a decision brief (cases/cards.py) and its structural check (cases/cardcheck.py).
 
 Every name below is invented (AGENTS.md rule 17): the cards are made from a disk that nobody uses. No test touches the network.
+
+The tests of the decision card in this file make it from a context with no buttons (`ctx_for`), which is the card that goes when the app cannot make the links of its buttons: the facts, the
+words and the link to the page of the request only. The card with its buttons (`buttons_for`) is in test_card_buttons.py.
 """
 import dataclasses
 import datetime as dt
@@ -11,7 +14,7 @@ import unittest
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import cardcheck, cards
+from cases import cardcheck, cardlinks, cards
 from cases.brief import Brief, build_brief
 from cases.cards import CardContext, CardError, CardTooLarge
 from cases.models import ADVISE, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
@@ -24,6 +27,7 @@ GROUP = "rg-zq7-group"
 PLAN_ID = "p1a2b3c4d5"
 CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
 URL = f"{BASE}/ok/{PLAN_ID}"
+TOKEN = "t" * 24  # a link token is 20 to 64 characters of a URL-safe alphabet
 HOSTILE = ("[click](https://evil.example/x) **bold** _italic_ `code` # head > quote - item 1. one \u202e\u200bhidden\x00\nsecond line <at>Maya</at> www.evil.example "
            "{{DATE(2000-01-01T00:00:00Z,LONG)}} {{{TIME(2000-01-01T00:00:00Z)}}}")
 
@@ -64,6 +68,16 @@ def ctx_for(brief: Brief, **changes) -> CardContext:
     values = dict(page_url=f"{BASE}/ok/{brief.plan_id}", contacts=CONTACTS)
     values.update(changes)
     return CardContext(**values)
+
+
+def links_for(brief: Brief, *answers: str) -> dict[str, str]:
+    """The addresses of the buttons of a card as offers.py makes them (cardlinks.answer_url), with one fixed token for each answer."""
+    return {answer: cardlinks.answer_url(f"{BASE}/ok/{brief.plan_id}", answer, brief.plan_code, f"{answer}-{TOKEN}") for answer in (answers or ("approve", "decline"))}
+
+
+def buttons_for(brief: Brief, *answers: str, **changes) -> CardContext:
+    """The context of a card that has its buttons."""
+    return ctx_for(brief, links=links_for(brief, *answers), **changes)
 
 
 def walk(node):
@@ -428,8 +442,9 @@ class TheFirstContactCard(unittest.TestCase):
         self.assertEqual({a["url"] for a in actions_of(card)}, {f"{BASE}/"})
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
         self.assertTrue(ids["hello"]["text"].startswith("Hello Maya, I am Meternaut"))
-        self.assertIn("You cannot answer on a card.", ids["rules"]["text"])
-        self.assertIn("a change to Azure runs with your own Azure rights. You cannot answer", ids["rules"]["text"])
+        self.assertEqual(ids["rules"]["text"], "I change nothing myself. You answer a request with the buttons on its card: an answer button opens a page of mine that sends your answer, "
+                                               "and a change to Azure runs with your own Azure rights.")
+        self.assertNotIn("cannot answer", json.dumps(card), "a card can be answered now")
         self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", json.dumps(card)), [])
         self.assertTrue(ids["ai-footer"]["text"].startswith("Written by an AI; a person approves every change."))
         self.assertEqual(card["body"][-1]["id"], "ai-footer")
@@ -593,9 +608,10 @@ class TheCheckOfACard(unittest.TestCase):
             "a fact with an extra key": (lambda c: item(c, "facts")["facts"][0].update({"x": "y"}), "a fact has a title and a value"),
             "an Action.Submit": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.Submit", "title": "x"}), "no Action.Submit"),
             "an Action.Execute": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.Execute", "title": "x", "verb": "later"}), "no Action.Execute"),
-            "a second action with the same link": (lambda c: item(c, "decisions")["actions"].append({"type": "Action.OpenUrl", "title": "Again", "url": URL}), "has 2 actions, and a card has 1"),
+            "more actions than a card has": (lambda c: item(c, "decisions")["actions"].extend({"type": "Action.OpenUrl", "title": f"Again {n}", "url": URL} for n in range(6)),
+                                             "has 7 actions, and a card has at most 6"),
             "a fallback on an action": (lambda c: item(c, "page").update({"fallback": {"type": "Action.OpenUrl", "title": "x", "url": URL}}), "is not a property of Action.OpenUrl"),
-            "a second link": (lambda c: item(c, "page").update({"url": "https://other.example/x"}) or c.update({"actions": [{"type": "Action.OpenUrl", "title": "x", "url": URL}]}), "different links"),
+            "a second page": (lambda c: item(c, "page").update({"url": "https://other.example/x"}) or c.update({"actions": [{"type": "Action.OpenUrl", "title": "x", "url": URL}]}), "different pages"),
             "a link that is not https": (lambda c: item(c, "page").update({"url": "http://meternaut.example/ok/p"}), "must be an https address"),
             "a duplicate id": (lambda c: item(c, "headline").update({"id": "ai-footer"}), "used twice"),
             "a hidden character": (lambda c: item(c, "headline").update({"text": "a\u202eb"}), "direction"),

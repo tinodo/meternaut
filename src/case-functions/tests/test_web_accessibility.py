@@ -2,6 +2,7 @@ import dataclasses
 import re
 import unittest
 
+from test_web_card_buttons import token_for
 from test_web_look_before_approve import ScriptedChecker
 from test_web_pages import busy
 from test_web_support import (MAYA, NOW, STRANGER, TINO, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action, make_advice, make_advice_case, make_case,
@@ -95,6 +96,11 @@ def gallery() -> dict:
     for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
                  "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
+    # The pages that a button on a Teams card opens: the one that sends the answer by itself, for a delete that the card asked about, for a decline and for advice, and the one for a button that
+    # cannot be used.
+    for name, plan_id, answer, sure in (("button approve", "plan0001", "approve", True), ("button decline", "plan0001", "decline", False), ("button advice", "plan0005", "approve", False)):
+        pages[f"GET {name}"] = console.get(f"/ok/{plan_id}/{answer}", query=token_for(console, plan_id, answer, sure=sure))
+    pages["GET button used"] = console.get("/ok/plan0001/approve", query={"code": "7F3K92QD", "token": "x" * 24})
     pages["busy decisions"] = busy().get("/")
     pages["confirm"] = console.submit(console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE), APPROVE, confirm=False, note="Go on")
     pages["GET refused"] = console.get("/ok/plan0001", oid=MAYA)

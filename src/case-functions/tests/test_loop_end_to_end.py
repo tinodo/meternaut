@@ -838,13 +838,108 @@ class TheTeamsCardsOfTheLoop(Story):
         self.assertEqual([m["title"].split("] ", 1)[1] for m in messages], ["An AI assistant for Azure costs will write to you", "A change to Azure waits for your OK"])
         self.assertEqual({m["to"] for m in messages}, {"tino@example.com"})
         (decisions,) = [node for node in messages[1]["card"]["body"] if node.get("id") == "decisions"]
-        (link,) = decisions["actions"]
-        self.assertEqual((link["title"], link["url"]), ("Review and decide", f"https://{HOST}/ok/{self.plan.plan_id}"))
+        self.assertEqual([(a["type"], a["title"]) for a in decisions["actions"]],
+                         [("Action.ToggleVisibility", "Approve"), ("Action.OpenUrl", "Decline"), ("Action.OpenUrl", "Open the request")],
+                         "the card carries the decision: a delete asks once more on the card itself, so Approve only opens that question")
+        self.assertEqual(decisions["actions"][2]["url"], f"https://{HOST}/ok/{self.plan.plan_id}")
         self.assertEqual({call[0] for call in self.world.calls if call[2].endswith(".queue.core.windows.net")}, {"timer"})
         self.assertEqual(sorted((m.kind, m.status) for m in self.store.mails_since(OID, "2000-01-01T00:00:00Z")), [("approval-card", "sent"), ("first-contact-card", "sent")])
         self.clock.advance(minutes=25)
         self.tick()
         self.assertEqual((self.world.mail.sent, len(self.world.queue.calls)), ([], 2), "a card was put on the queue, so no letter follows and no card is put there twice")
+
+    def card(self):
+        self.tick()
+        (message,) = [m for m in self.world.queue.messages() if m["title"].endswith("A change to Azure waits for your OK")]
+        return message["card"]
+
+    @staticmethod
+    def button(card, title):
+        found = []
+
+        def walk(node):
+            if isinstance(node, dict):
+                if str(node.get("type", "")).startswith("Action.") and node.get("title") == title:
+                    found.append(node)
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+
+        walk(card)
+        assert len(found) == 1, (title, found)
+        return found[0]
+
+    def open(self, action, method="GET"):
+        """The person presses a button of the card: the browser opens its address."""
+        parts = urlsplit(action["url"])
+        self.world.phase = "approval"
+        return self.browser.send(method, parts.path, query={k: v[0] for k, v in parse_qs(parts.query).items()})
+
+    def send(self, opened):
+        """The page that the button opened sends its form by itself (here: the test does what the script does)."""
+        form = opened.form(f"/ok/{self.plan.plan_id}")
+        return self.browser.send("POST", f"/ok/{self.plan.plan_id}", form=form.fields)
+
+    def test_the_yes_button_of_the_card_makes_the_change_with_the_persons_own_token_and_no_page_asks_again(self):
+        card = self.card()
+        yes = self.button(card, "Yes, delete it")
+        self.assertRegex(yes["url"], rf"^https://{HOST}/ok/{self.plan.plan_id}/approve\?code=[0-9A-Z]{{8}}&token=[\w-]{{20,}}$")
+        self.world.phase = "approval"
+        before = len(self.world.calls)
+        for _ in range(3):
+            opened = self.open(yes)
+            self.assertEqual((opened.status, opened.has_button("Yes, delete it")), (200, True), opened.text)
+        self.assertEqual([call[1:4] for call in self.world.calls[before:] if call[1] != "GET"], [], "a preview or a prefetch of the address writes and changes nothing")
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, self.store.decisions_of_plan(self.plan.plan_id), self.world.entra.redemptions), ("open", [], []))
+        self.assertTrue(self.world.resources.exists)
+
+        sent = self.send(opened)
+        self.assertEqual(sent.status, 303, sent.text)
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "open", "the answer is recorded when the change is made, at the return from Azure's own sign-in")
+        code, state = self.world.entra.sign_in(sent.headers["Location"])
+        done = self.browser.send("GET", "/arm/return", query={"code": code, "state": state})
+        self.assertEqual(done.status, 200, done.text)
+        self.assertIn("The change was made", done.content)
+        self.assertFalse(self.world.resources.exists)
+        deletes = [c for c in self.world.calls if c[1] == "DELETE" and c[2] == "management.azure.com"]
+        self.assertEqual([(phase, auth) for phase, _, _, _, auth in deletes], [("approval", f"Bearer {PERSON_TOKEN}")], "the person's own token deleted, once, and no other")
+        self.assertEqual([(d.decision, d.approver_oid) for d in self.store.decisions_of_plan(self.plan.plan_id)], [("approve", OID)])
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "consumed")
+        self.assertFalse(any("Nothing is changed until you confirm here" in text for text in self.browser.seen), "no page asked the person to decide again")
+
+        again = self.open(yes)
+        self.assertEqual((again.status, again.headings(1)), (409, ["This request cannot take an answer"]), "the request is closed: the button shows what became of it and does nothing")
+        self.assertFalse(again.has_button("Yes, delete it"))
+        self.assertEqual(len([c for c in self.world.calls if c[1] == "DELETE" and c[2] == "management.azure.com"]), 1)
+
+    def test_the_decline_button_of_the_card_records_the_answer_at_once_and_the_other_buttons_stop_working(self):
+        card = self.card()
+        yes, decline = self.button(card, "Yes, delete it"), self.button(card, "Decline")
+        opened = self.open(decline)
+        self.assertEqual(opened.status, 200, opened.text)
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "open", "opening the address records nothing")
+        declined = self.send(opened)
+        self.assertEqual(declined.status, 200, declined.text)
+        self.assertIn("declined", declined.content.lower())
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, [d.decision for d in self.store.decisions_of_plan(self.plan.plan_id)]), ("declined", ["decline"]))
+        self.assertTrue(self.world.resources.exists)
+        self.assertEqual(self.world.entra.redemptions, [])
+        late = self.open(yes)
+        self.assertEqual(late.status, 409, "the buttons of a request that was answered show what became of it, and no more")
+        self.assertFalse(late.has_button("Yes, delete it"))
+        self.assertTrue(self.world.resources.exists)
+
+    def test_the_approve_address_is_for_the_person_it_was_made_for_and_for_nobody_else(self):
+        yes = self.button(self.card(), "Yes, delete it")
+        self.world.phase = "approval"
+        parts = urlsplit(yes["url"])
+        stranger = Browser(self.browser.services, oid="bbbbbbbb-1111-4222-8333-444444444444")
+        reply = stranger.send("GET", parts.path, query={k: v[0] for k, v in parse_qs(parts.query).items()})
+        self.assertIn(reply.status, (403, 404, 409), reply.text)
+        self.assertFalse(reply.has_button("Yes, delete it"))
+        self.assertTrue(self.world.resources.exists)
 
     def test_a_queue_that_refuses_the_app_leaves_the_letters_to_go_after_the_twenty_minutes(self):
         self.world.queue.replies = [403] * 40

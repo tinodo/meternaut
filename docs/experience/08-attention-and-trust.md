@@ -126,7 +126,7 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 
 ### Resisting forgery
 
-- **A lookalike app or page:** the announcement, sent first, names the app, its publisher and the one address of the approval page; every card carries one link, pinned to it. The system never asks for a password, code or secret.
+- **A lookalike app or page:** the announcement, sent first, names the app, its publisher and the one address of the approval page; every link on a card is pinned to it. The system never asks for a password, code or secret.
 - **A forwarded or old card:** the plan code, a reference rather than a secret or proof of authenticity, is echoed on every tap and page submit; a stale code, or a second submit by the same person, is refused.
 - **A card from elsewhere or from an outsider:** cards that change anything are accepted only through the stored one-to-one conversation with this app, and only directory members get cards; partners get e-mail, which never carries a button that acts.
 - **A consent prompt:** the announcement names the app's one permission; a sign-in that asks for any other is fraud, a known attack ([Learn](https://learn.microsoft.com/entra/identity/enterprise-apps/protect-against-consent-phishing)).

@@ -1,4 +1,5 @@
-"""The web console of Meternaut: server-rendered pages with no script, as one pure handler.
+"""The web console of Meternaut: server-rendered pages as one pure handler. No page has a script but one: the page that a button on a Teams card opens has a fixed script that sends the form of the
+answer (web/layout.py).
 
     request = parse_request(method, url, headers, body)
     response = handle(request, Services(store=..., decider=..., delegate=..., people=..., now=..., host=..., acts_on=..., models=...))

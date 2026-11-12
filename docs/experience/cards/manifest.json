@@ -9,8 +9,8 @@
     "max_options": 2
   },
   "contract": {
-    "who": "The card's addressee; a decision verb (cancel, not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name. A card never approves and never changes Azure: its link opens the page, where the approver signs in to Azure and the change is made with that person's own rights.",
-    "repeat": "A repeated tap changes nothing: the service answers that it is already recorded.",
+    "who": "The card's addressee; a decision verb (not-me) also needs the designated approver or a named delegate, checked by directory object id, never by name. An answer button is a link with a one-time token that the app made for the addressee: opening it changes nothing, the page that it shows sends the answer, and a change is made there with that person's own Azure rights, after every check of the page. A card never holds a right of its own.",
+    "repeat": "A repeated tap or press changes nothing: the service answers that it is already recorded, and a button that was used shows that and leads to the page.",
     "refused": "A verb is refused when its request is expired, changed, answered or paused, and the refusal says why; \"I did not approve this\" stays open. Whom to talk to is plain text in the footer of every card, so it needs no verb.",
     "response": "One immediate response per tap, as listed under returns; the outcome follows by updating the same message.",
     "words": "Only Ask or tell and the text boxes send words: bounded, screened and quoted as untrusted data. Free text never approves."
@@ -169,21 +169,12 @@
         "undo",
         "plan-code",
         "could-go-wrong",
-        "page-button"
+        "page-button",
+        "approve",
+        "decline"
       ],
       "displayTitle": "Your OK",
       "verbs": {
-        "cancel": {
-          "inputs": [],
-          "plan": true,
-          "returns": "receipt"
-        },
-        "reopen": {
-          "inputs": [],
-          "plan": false,
-          "returns": "card",
-          "card": "C3"
-        },
         "ask": {
           "inputs": [
             "message"
@@ -192,7 +183,15 @@
           "returns": "receipt"
         }
       },
+      "answers": [
+        "approve",
+        "decline",
+        "sure"
+      ],
       "openUrl": [
+        "approve",
+        "decline",
+        "sure-yes",
         "page-button"
       ]
     },
@@ -206,20 +205,12 @@
         "class-line",
         "plan-code",
         "browser-note",
-        "page-button"
+        "page-button",
+        "confirm",
+        "decline"
       ],
       "displayTitle": "${classLabel}",
       "verbs": {
-        "decline": {
-          "inputs": [],
-          "plan": false,
-          "returns": "receipt"
-        },
-        "not-mine": {
-          "inputs": [],
-          "plan": false,
-          "returns": "receipt"
-        },
         "ask": {
           "inputs": [
             "message"
@@ -228,7 +219,15 @@
           "returns": "receipt"
         }
       },
+      "answers": [
+        "approve",
+        "confirm",
+        "decline"
+      ],
       "openUrl": [
+        "confirm",
+        "approve",
+        "decline",
         "page-button"
       ]
     },

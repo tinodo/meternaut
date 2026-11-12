@@ -23,6 +23,9 @@ Handler = Callable[..., Response]
 ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/", home.home, ()),
     ("GET", rf"/ok/(?P<plan_id>{ID})", approval.approval_page, ()),
+    ("GET", rf"/ok/(?P<plan_id>{ID})/approve", approval.card_approve, ()),
+    ("GET", rf"/ok/(?P<plan_id>{ID})/confirm", approval.card_confirm, ()),
+    ("GET", rf"/ok/(?P<plan_id>{ID})/decline", approval.card_decline, ()),
     ("POST", rf"/ok/(?P<plan_id>{ID})", approval.approval_decide, ()),
     ("POST", rf"/ok/(?P<plan_id>{ID})/ask", approval.approval_ask, ()),
     ("POST", rf"/ok/(?P<plan_id>{ID})/not-mine", approval.approval_not_mine, ()),

@@ -1,17 +1,18 @@
 """The Teams card of a decision brief: an Adaptive Card of schema 1.4, as a pure function of the brief (brief.py) and what the card needs besides it.
 
 The page, the letter and the card are renders of the same brief (AGENTS.md rule 34). A card is posted into the chat of a person by a flow of Power Automate that reads it from a private
-queue (teamsqueue.py): the action that posts it cannot take an answer back, so a card holds nothing to fill in and no button that sends anything. It holds what a person needs to decide in a
-minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of words, what it is worth (the figure a year and a month, its level
-and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it can be undone, what could go wrong, whose resource it is, the
-one link, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing else: no reasoning box, no counters, no banner.
+queue (teamsqueue.py). It holds what a person needs to decide in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of
+words, what it is worth (the figure a year and a month, its level and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it
+can be undone, what could go wrong, whose resource it is, the buttons, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing
+else: no reasoning box, no counters, no banner.
 
-The link. Every answer, an approval of a change included, is given on the page of the request, where the person signs in to Azure and Azure checks the person's own rights: the card's one
-link, "Review and decide", is that page. A card never carries an Azure token, a one-time token or an answer. When a switch holds the answers, the card says so and its link reads "See the request".
+The buttons. The card carries the decision. The action that posts it cannot take an answer back, so each answer is an Action.OpenUrl to a page of the function app that sends it (cardlinks.py):
+"Approve", "Confirm" (the first of two people), "Decline", and for advice "Worth acting on" and "Not worth it". A change that cannot be undone asks on the card: "Approve" only shows "This cannot be
+undone: ..." with "No, go back" and "Yes, delete it", and only "Yes" is a link (docs/proposals/19-teams-cards-through-power-automate.md says that this toggle is not proven for the Flow bot).
+A card never carries an Azure token. A card whose links could not be made, or of a request that a switch holds, has the link to the page only ("Review and decide", "See the request").
 
-Text that did not come from code (names, tag values, what a model wrote) has been through brief.plain (no hidden or direction character, no line break, no link) and is escaped here
-for the Markdown that a TextBlock renders, so that it can neither start a link, a list or a bold run nor hide what the card says. No text of the estate is ever put in a link: the
-address of the page is made from the base address and the id of the request alone.
+Text that did not come from code (names, tag values, what a model wrote) has been through brief.plain and is escaped here for the Markdown that a TextBlock renders, so that it can neither start a link, a
+list or a bold run nor hide what the card says. No text of the estate is ever put in a link.
 
 Every card is checked by cardcheck.check before it is handed on, and a card that does not pass is not made. A card that is too big for its message is replaced by minimal_card: the
 headline, the link and the footer.
@@ -19,11 +20,11 @@ headline, the link and the footer.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, field
+from typing import Mapping, Sequence
 
-from . import cardcheck
-from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, footer_line, plain
+from . import cardcheck, cardlinks
+from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, plain
 from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -54,12 +55,13 @@ class CardTooLarge(CardError):
 
 @dataclass(frozen=True)
 class CardContext:
-    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, and who is responsible for Meternaut (people, each as plain
-    text with the address: the card names the first)."""
+    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, who is responsible for Meternaut (each as plain text with the
+    address; the card names the first), and the addresses of its answer buttons by answer (`links`, from cardlinks.answer_url). Without them a card has the link to the page only."""
 
     page_url: str
     why: str = WHY_APPROVER
     contacts: tuple[str, ...] = ()
+    links: Mapping[str, str] = field(default_factory=dict)
 
 
 def page_url(base_url: str, plan_id: str) -> str:
@@ -185,16 +187,60 @@ def _decision_lines(brief: Brief) -> list[dict]:
 
 
 def _page_set(title: str, ctx: CardContext, *, positive: bool = False) -> dict:
-    """The one action of every card: the link to the page of the request (or, on the card that introduces Meternaut, to the web page)."""
+    """A card with one action: the link to the page of the request (on the first card, to the web page)."""
     return {"type": "ActionSet", "id": "decisions", "actions": [{"type": "Action.OpenUrl", "id": "page", "title": title, "url": ctx.page_url, **({"style": "positive"} if positive else {})}]}
 
 
 def _link_parts(brief: Brief, ctx: CardContext) -> list[dict]:
-    """The link of a request that waits for an answer: "Review and decide" when this person has an answer to give (an approval of a change is made on the page, where the person signs in to
-    Azure, and so is the confirmation of the first of two people), "See the request" when a switch has taken the answers away, and then the card says so."""
+    """The link of a request that waits and that the card has no buttons for: "Review and decide" when this person has an answer to give, "See the request" when a switch holds the answers (and the card says so)."""
     approving = bool({"approve", "confirm"} & set(brief.answers))
     held = [_block("paused", PAUSED_ADVICE if brief.kind == "advice" else PAUSED_CHANGES, weight="Bolder")] if brief.held else []
     return [*held, _page_set("Review and decide" if approving else "See the request", ctx, positive=approving)]
+
+
+def answers_of(brief: Brief) -> tuple[tuple[str, bool], ...]:
+    """The answer buttons of this brief as (answer, whether the card asks twice first): "approve" (the first of two people: "confirm") and "decline", for a request that nothing holds and that this
+    person may answer; any other request has none. A change that cannot be undone asks twice: its "approve" opens the question and the link is on the "Yes"."""
+    if brief.kind not in ("change", "advice") or brief.state != "open" or brief.held:
+        return ()
+    first = "confirm" if "confirm" in brief.answers else "approve" if "approve" in brief.answers else ""
+    if not first or "decline" not in brief.answers:
+        return ()
+    return ((first, first == "approve" and brief.kind == "change" and not brief.undo.reversible), ("decline", False))
+
+
+def _open_url(id_: str, title: str, url: str, style: str = "") -> dict:
+    return {"type": "Action.OpenUrl", "id": id_, "title": title, "url": url, **({"style": style} if style else {})}
+
+
+def _toggle(id_: str, title: str, tooltip: str, targets: Sequence[tuple[str, bool]], style: str = "") -> dict:
+    """A button that shows or hides parts of the card, which Teams does itself; each target says which, so that pressing twice cannot turn the wrong way. The tooltip is what a screen reader says."""
+    return {"type": "Action.ToggleVisibility", "id": id_, "title": title, "tooltip": tooltip, **({"style": style} if style else {}),
+            "targetElements": [{"elementId": element, "isVisible": shown} for element, shown in targets]}
+
+
+def _sure(brief: Brief, yes_url: str) -> dict:
+    """The question before a change that cannot be undone, hidden until "Approve" is pressed: what is lost and where, and two buttons; the safe "No, go back" comes first."""
+    where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + (f" in resource group {md(brief.where.group, 90)}" if brief.where.group else "")
+    return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
+        _block("sure-text", f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}", weight="Bolder"),
+        {"type": "ActionSet", "id": "sure-actions", "actions": [
+            _toggle("sure-back", cardlinks.BACK_LABEL, "Hides this question. Nothing is changed.", [("sure", False)], "positive"),
+            _open_url("sure-yes", cardlinks.sure_label(called_of(brief.family)), yes_url, "destructive")]}]}
+
+
+def _answer_parts(brief: Brief, ctx: CardContext, answers: Sequence[tuple[str, bool]]) -> list[dict]:
+    """The buttons of a request that waits, in the words of the page, then "Open the request"; for a change that cannot be undone also the question that "Approve" opens."""
+    buttons, asks = [], ""
+    for position, (answer, twice) in enumerate(answers):
+        title, style = cardlinks.LABEL[brief.kind][answer], "positive" if position == 0 else ""
+        if twice:
+            asks = answer
+            buttons.append(_toggle(answer, title, "Asks once more: this cannot be undone.", [("sure", True)], style))
+        else:
+            buttons.append(_open_url(answer, title, ctx.links[answer], style))
+    buttons.append(_open_url("page", cardlinks.PAGE_LABEL, ctx.page_url))
+    return [{"type": "ActionSet", "id": "decisions", "actions": buttons}, *([_sure(brief, ctx.links[asks])] if asks else [])]
 
 
 def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
@@ -205,10 +251,14 @@ def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
 
 
 def _check_context(ctx: CardContext, brief: Brief) -> None:
-    if not isinstance(ctx, CardContext) or not re.fullmatch(r"https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/ok/[A-Za-z0-9_-]{1,64}", ctx.page_url or ""):
+    if not isinstance(ctx, CardContext) or not cardlinks.PAGE_ADDRESS.fullmatch(ctx.page_url or ""):
         raise CardError("the card needs the address of the page of its request (page_url)")
     if not ctx.page_url.endswith(f"/ok/{brief.plan_id}") and brief.plan_id:
         raise CardError("the address of the page is not the page of this request")
+    for answer, url in ctx.links.items():
+        found = cardlinks.ANSWER_ADDRESS.fullmatch(url or "") if answer in cardlinks.VERBS else None
+        if found is None or found["verb"] != answer or found["page"] != ctx.page_url:
+            raise CardError("the address of a button is not the page of this request, the answer, its code and a link token")
 
 
 def _finish(card: dict) -> dict:
@@ -232,13 +282,14 @@ def _card(brief: Brief, ctx: CardContext, kind: str, body: list[dict], what: str
 # -- the cards -----------------------------------------------------------------------------------------------------------------------------------
 
 def decision_card(brief: Brief, ctx: CardContext) -> dict:
-    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice that changes nothing (kind advice). It holds the link to the page, where the
-    answer is given, and no answer of its own."""
+    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice that changes nothing (kind advice), with the answer buttons when the context has their links (answers_of) and the link to the page."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or not brief.answers:
         raise CardError("only a request that is open and that this person may answer has a decision card")
     _check_context(ctx, brief)
+    answers = answers_of(brief)
+    buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
     body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-            *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *_link_parts(brief, ctx)]
+            *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 
@@ -285,8 +336,8 @@ def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = ()
         "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ Written by an AI.",
         "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
                  _block("hello", f"Hello {md(name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a decision waits for you."),
-                 _block("rules", "I change nothing myself. A card has one link, to the page of its request: you decide there, and a change to Azure runs with your own Azure rights. "
-                                 "You cannot answer on a card."),
+                 _block("rules", "I change nothing myself. You answer a request with the buttons on its card: an answer button opens a page of mine that sends your answer, "
+                                 "and a change to Azure runs with your own Azure rights."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
                  _page_set("Open the web page", CardContext(page_url=f"{base}/")),
                  footer((), why, contacts)],

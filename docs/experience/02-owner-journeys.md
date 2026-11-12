@@ -36,7 +36,7 @@
 |---|---|---|
 | 1 | Question (C2): "Does anything run in rg-webshop-qa at night on the last Tuesday?" Activity shows at 02:10–02:50. She taps "Something else", writes "that is the month-end regression" and taps "Yes, that is right" on the read-back (C10) | Asks first: the strongest objection is a fact only she knows. Stores a Lesson (her Note) with an expiry |
 | 2 | Recommendation (C3): switch off 19:30–07:30 and weekends, except the last Tuesday. About EUR 690 a month (range 620–760), "At the rates on your bill", "Expected saving". Keeping things as they are forgoes about EUR 23 a day, at the rates on your bill | Details holds two other options and the rest of the [ten-part Recommendation](../design/03-agents-and-workflows.md#6-what-a-person-receives) |
-| 3 | "Review the plan" turns the message into the plan card (C4): the exact change to vm-qa-web-01, vm-qa-web-02 and sql-qa-orders, plan code 7F3K-92QD. She taps "Open the page to approve" and presses "Approve"; "Cancel" and "Open the Recommendation" approve nothing | Reviewing authorises nothing; the app [replaces the card in place](https://learn.microsoft.com/adaptive-cards/authoring-cards/universal-action-model) |
+| 3 | The plan card (C4) shows the exact change to vm-qa-web-01, vm-qa-web-02 and sql-qa-orders, plan code 7F3K-92QD. She presses "Approve"; "Decline" and "Open the request" approve nothing | The button opens a page that sends the answer, and no second page asks again. The card never changes Azure |
 | 4 | At the moment she approves: Done (C6), with an undo only where Azure offers one | Re-checks live state first, and changes Azure with Maya's own rights |
 
 ![Card C3: the QA Recommendation with its decision buttons.](../img/experience-card-c3-recommendation.png)

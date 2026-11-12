@@ -27,9 +27,15 @@
       }
     ],
     "couldGoWrong": "a late test run could find the environment off. If activity appears after 19:30, I ask you before I switch anything on; I do not do it myself.",
-    "undo": "Azure lets you switch the machines on again and set the old auto-pause back. The Done message links to the page where you sign in to Azure and do it with your own rights."
+    "undo": "Azure lets you switch the machines on again and set the old auto-pause back. The Done message links to the page where you do it with your own rights.",
+    "cannotUndo": false,
+    "lost": "the data on a deleted disk, where it was kept",
+    "verb": "delete"
   },
   "planCode": "7F3K-92QD",
+  "approveUrl": "https://meternaut.contoso.example/ok/r_9vK2xQ/approve?code=7F3K92QD&token=sample-link-token-0001",
+  "declineUrl": "https://meternaut.contoso.example/ok/r_9vK2xQ/decline?code=7F3K92QD&token=sample-link-token-0002",
+  "sureUrl": "https://meternaut.contoso.example/ok/r_9vK2xQ/approve?code=7F3K92QD&token=sample-link-token-0003",
   "value": "About €690 a month",
   "range": "Range €620 to €760",
   "priceBasis": "At the rates on your bill",
