@@ -28,6 +28,10 @@ OWN_GUIDS = {
     "4f6a9852-a482-4893-a75e-9e8c4e34d667", "75458fd0-36ac-4083-a7c9-e8e316b599ce", "eea68d7d-e530-4fd0-acb5-fc16764e8483", "247d1c9e-d687-431f-9e3b-570acf68c307",
     "05079912-4314-48ea-b9bb-deaafc81c321", "836fd17e-efa2-4ce3-89f6-51763127e9db", "d825f06b-9cce-4141-a731-8bdead3b6e1a", "ebc9ce71-1ba2-4a80-a576-898274f50d98",
     "92b5f918-c3c9-4a8b-8a22-62330cbd5548",
+    # added with the card that closes itself: the condition, the update and its deletes and end, and the posted message with its end
+    "3a1f6d52-7c1e-4b8a-9a43-0d6e2f8b5c71", "b7d94e18-52a3-4c06-8e1f-9a2c3d4e5f60", "c2e5a7f3-1b64-4d98-a0c7-6e8f9b1d2a35", "d9f3b1a6-8e27-4c5d-b4a0-7f1e6c2d9a84",
+    "e4a8c6d2-3f19-4b7e-9d5a-2c8b0f6e1a97", "f1b7d3e9-6a42-4c8f-b2e0-5d9a7c3f8b16", "a5c9e1f7-2d38-4b60-8f4a-1e7d3b9c6a52", "b3d7f2a8-9c15-4e61-a7b4-6f0e8d2c1a39",
+    "c8e2a4b6-1f73-4d95-9c08-3a5b7e1f2d64",
 }
 GUID = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
 # The addresses that the solution may hold: the schemas of the file formats, and the example of a queue endpoint in the description of an environment variable (an invented account name).
@@ -78,7 +82,7 @@ class TheSourcePacksClean(unittest.TestCase):
         customizations = pack.xml_root("customizations.xml", pack.collect(SOURCE)["customizations.xml"])
         names = [e.get("connectionreferencelogicalname") for e in customizations.findall("./connectionreferences/connectionreference")] + \
                 [e.get("schemaname") for e in customizations.findall("./environmentvariabledefinitions/environmentvariabledefinition")]
-        self.assertEqual(sorted(names), ["mtnaut_QueueName", "mtnaut_StorageQueueEndpoint", "mtnaut_azurequeues", "mtnaut_teams"])
+        self.assertEqual(sorted(names), ["mtnaut_PostedQueueName", "mtnaut_QueueName", "mtnaut_StorageQueueEndpoint", "mtnaut_azurequeues", "mtnaut_teams"])
         for name in names:
             self.assertTrue(name.startswith(prefix + "_"), name)
         self.assertTrue(10000 <= int(solution.findtext("./SolutionManifest/Publisher/CustomizationOptionValuePrefix")) <= 99999, "an option value prefix is 10000 to 99999")

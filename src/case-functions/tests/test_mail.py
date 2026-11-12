@@ -304,6 +304,12 @@ class Holds(unittest.TestCase):
         fixture.sent_before(1, "reminder", MONDAY)
         self.assertEqual(fixture.send(kind="reminder").status, "sent")
 
+    def test_a_card_that_closed_itself_is_no_message_and_the_budget_does_not_count_it(self):
+        fixture = Fixture()
+        fixture.settings(weekly_budget=1)
+        fixture.sent_before(3, "card-closed", MONDAY)
+        self.assertEqual(fixture.send(kind="reminder").status, "sent")
+
     def test_only_letters_with_the_status_sent_count_and_only_the_letters_of_this_person(self):
         fixture = Fixture()
         fixture.settings(weekly_budget=1)

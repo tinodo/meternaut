@@ -13,13 +13,14 @@ TIMER = "watch-daily"
 DRIFT = "drift-daily"
 STUDY = "study-weekly"
 CONTROL = "cases-control"
+POSTED = "cards-posted"
 TICK = "runner-tick"
 CONSOLE = "console"
 SCHEDULE = "0 30 5 * * *"
 DRIFT_SCHEDULE = "0 10 5 * * *"
 STUDY_SCHEDULE = "0 30 4 * * 1"
 TICK_SCHEDULE = "0 * * * * *"
-NAMES = sorted([TIMER, DRIFT, STUDY, CONTROL, TICK, CONSOLE])
+NAMES = sorted([TIMER, DRIFT, STUDY, CONTROL, POSTED, TICK, CONSOLE])
 
 
 class FunctionAppSourceTests(unittest.TestCase):
@@ -31,10 +32,10 @@ class FunctionAppSourceTests(unittest.TestCase):
         cls.tree = ast.parse(cls.source)
         cls.functions = [node for node in cls.tree.body if isinstance(node, ast.FunctionDef)]
 
-    def test_the_app_has_the_six_functions_that_the_checker_and_the_template_name(self):
-        # Six since the learning: the Study has a timer of its own.
+    def test_the_app_has_the_seven_functions_that_the_checker_and_the_template_name(self):
+        # Seven since the cards close: the flow's message about a posted card has a function of its own.
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', self.source)), NAMES)
-        self.assertEqual(len(self.functions), 6)
+        self.assertEqual(len(self.functions), 7)
 
     def test_the_timer_runs_daily_at_half_past_five_utc_and_not_at_startup(self):
         self.assertIn(f'TIMER_SCHEDULE = "{SCHEDULE}"', self.source)
@@ -80,6 +81,13 @@ class FunctionAppSourceTests(unittest.TestCase):
             self.assertIn(f"{{ name: '{setting}'", template)
         self.assertNotIn("{ name: 'AzureWebJobsStorage',", template, "a connection string is a key: the host storage connection is the identity-based settings alone")
 
+    def test_the_posted_function_reads_the_queue_that_the_flow_writes_through_the_host_storage_connection_and_the_template_names_it(self):
+        template = (REPO_ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+        self.assertIn('queue_name="%TEAMS_POSTED_QUEUE%"', self.source)
+        self.assertEqual(self.source.count("connection=HOST_STORAGE_CONNECTION"), 2, "the control queue and the posted queue, and no key")
+        self.assertIn("{ name: 'TEAMS_POSTED_QUEUE', value: postedQueueName }", template)
+        self.assertIn("var postedQueueName = 'teams-posted'", template)
+
     def test_only_azure_functions_and_the_cases_package_are_imported(self):
         modules = set()
         for node in ast.walk(self.tree):
@@ -117,7 +125,7 @@ class FunctionAppIndexingTests(unittest.TestCase):
         self.assertEqual(len(bindings), 1 if name != CONSOLE else 2, "a trigger and no other binding (the web trigger has its output)")
         return {key: getattr(value, "value", value) for key, value in bindings[0].items()}
 
-    def test_the_app_has_exactly_the_six_functions(self):
+    def test_the_app_has_exactly_the_seven_functions(self):
         self.assertEqual(sorted(function.get_function_name() for function in self.list), NAMES)
 
     def test_the_study_is_a_weekly_timer_that_does_not_run_at_startup(self):
@@ -146,6 +154,10 @@ class FunctionAppIndexingTests(unittest.TestCase):
         self.assertEqual(binding["type"], "queueTrigger")
         self.assertEqual(binding["queueName"], "%CASES_CONTROL_QUEUE_NAME%")
         self.assertEqual(binding["connection"], "AzureWebJobsStorage")
+
+    def test_the_posted_function_reads_one_message_from_its_queue_through_the_host_storage_connection(self):
+        binding = self.binding(POSTED)
+        self.assertEqual((binding["type"], binding["queueName"], binding["connection"]), ("queueTrigger", "%TEAMS_POSTED_QUEUE%", "AzureWebJobsStorage"))
 
     def test_the_parameter_of_a_trigger_is_named_in_the_binding(self):
         for name in self.functions:

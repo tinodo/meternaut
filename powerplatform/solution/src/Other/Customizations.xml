@@ -32,7 +32,8 @@
     <!--
       Azure Queues is on the list of connectors that run in the delegated subnet (Learn, Power Platform VNet support
       overview). The connection is made with the authentication type "Microsoft Entra ID Integrated" (tokenBasedAuth):
-      no storage key. The connection belongs to one person, who needs a data role on the queue, and the V2 trigger and
+      no storage key. The connection belongs to one person, who needs a data role on each queue that the flow uses
+      (read and delete on the queue of the cards, write on the queue of the posted cards), and the V2 trigger and
       actions are the ones that work with it.
     -->
     <connectionreference connectionreferencelogicalname="mtnaut_azurequeues">
@@ -53,7 +54,7 @@
   </connectionreferences>
   <!--
     type 100000000 is String. No value is set here, and nothing of the owner's estate is in this repository: the
-    person who imports the solution types the two values (the import asks for them).
+    person who imports the solution types the three values (the import asks for them).
   -->
   <environmentvariabledefinitions>
     <environmentvariabledefinition schemaname="mtnaut_StorageQueueEndpoint">
@@ -77,6 +78,19 @@
         <label description="The name of the queue of the Teams cards. It is the value of the setting TEAMS_CARDS_QUEUE of the cases app: teams-cards." languagecode="1033" />
       </description>
       <introducedversion>1.0.0.0</introducedversion>
+      <iscustomizable>1</iscustomizable>
+      <isrequired>1</isrequired>
+      <secretstore>0</secretstore>
+      <type>100000000</type>
+    </environmentvariabledefinition>
+    <environmentvariabledefinition schemaname="mtnaut_PostedQueueName">
+      <displayname default="Posted queue name">
+        <label description="Posted queue name" languagecode="1033" />
+      </displayname>
+      <description default="The name of the queue that the flow writes to after it posted a card, so that the app knows which Teams message the card is. It is the value of the setting TEAMS_POSTED_QUEUE of the cases app: teams-posted.">
+        <label description="The name of the queue that the flow writes to after it posted a card, so that the app knows which Teams message the card is. It is the value of the setting TEAMS_POSTED_QUEUE of the cases app: teams-posted." languagecode="1033" />
+      </description>
+      <introducedversion>1.1.0.0</introducedversion>
       <iscustomizable>1</iscustomizable>
       <isrequired>1</isrequired>
       <secretstore>0</secretstore>

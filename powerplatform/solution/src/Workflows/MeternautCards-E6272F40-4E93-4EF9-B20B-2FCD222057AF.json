@@ -45,6 +45,13 @@
           "metadata": {
             "schemaName": "mtnaut_QueueName"
           }
+        },
+        "Posted queue name (mtnaut_PostedQueueName)": {
+          "defaultValue": "",
+          "type": "String",
+          "metadata": {
+            "schemaName": "mtnaut_PostedQueueName"
+          }
         }
       },
       "triggers": {
@@ -96,6 +103,12 @@
                     1
                   ]
                 },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "update"
+                  ]
+                },
                 "id": {
                   "type": "string"
                 },
@@ -107,6 +120,12 @@
                 },
                 "card": {
                   "type": "object"
+                },
+                "request": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -118,56 +137,354 @@
             }
           }
         },
-        "Post_card_in_a_chat_or_channel": {
+        "Condition_The_message_replaces_a_card": {
+          "actions": {
+            "Update_an_adaptive_card_in_a_chat_or_channel": {
+              "runAfter": {},
+              "metadata": {
+                "operationMetadataId": "b7d94e18-52a3-4c06-8e1f-9a2c3d4e5f60"
+              },
+              "type": "OpenApiConnection",
+              "description": "Replaces the posted card with the card of the message, which has no button. Its body fields are named as those of the post action (recipient, messageBody) and messageId: the first run proves them.",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_teams",
+                  "operationId": "UpdateCardInConversation",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams"
+                },
+                "parameters": {
+                  "poster": "Flow bot",
+                  "location": "Chat with Flow bot",
+                  "body/recipient": "@body('Parse_message')?['to']",
+                  "body/messageId": "@body('Parse_message')?['message']",
+                  "body/messageBody": "@string(body('Parse_message')?['card'])"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Delete_message_after_the_update_(V2)": {
+              "runAfter": {
+                "Update_an_adaptive_card_in_a_chat_or_channel": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "c2e5a7f3-1b64-4d98-a0c7-6e8f9b1d2a35"
+              },
+              "type": "OpenApiConnection",
+              "description": "Only after the update has succeeded. A message that was not deleted becomes visible again after the visibility timeout of the trigger and is tried again.",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_azurequeues",
+                  "operationId": "DeleteMessage_V2",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
+                },
+                "parameters": {
+                  "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
+                  "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
+                  "messageId": "@triggerBody()?['MessageId']",
+                  "popreceipt": "@triggerBody()?['PopReceipt']"
+                },
+                "authentication": "@parameters('$authentication')"
+              }
+            },
+            "Condition_Teams_refused_the_update_for_good": {
+              "actions": {
+                "Delete_message_that_Teams_refused_the_update_(V2)": {
+                  "runAfter": {},
+                  "metadata": {
+                    "operationMetadataId": "e4a8c6d2-3f19-4b7e-9d5a-2c8b0f6e1a97"
+                  },
+                  "type": "OpenApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connectionName": "shared_azurequeues",
+                      "operationId": "DeleteMessage_V2",
+                      "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
+                    },
+                    "parameters": {
+                      "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
+                      "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
+                      "messageId": "@triggerBody()?['MessageId']",
+                      "popreceipt": "@triggerBody()?['PopReceipt']"
+                    },
+                    "authentication": "@parameters('$authentication')"
+                  }
+                }
+              },
+              "runAfter": {
+                "Update_an_adaptive_card_in_a_chat_or_channel": [
+                  "Failed",
+                  "TimedOut"
+                ]
+              },
+              "else": {
+                "actions": {}
+              },
+              "expression": {
+                "or": [
+                  {
+                    "equals": [
+                      "@outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode']",
+                      400
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode']",
+                      404
+                    ]
+                  },
+                  {
+                    "equals": [
+                      "@outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode']",
+                      413
+                    ]
+                  }
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "d9f3b1a6-8e27-4c5d-b4a0-7f1e6c2d9a84"
+              },
+              "type": "If",
+              "description": "Teams answered 400, 404 or 413: the message is gone or the card is too big, so the message is deleted. Any other failure (timeout, 401, 403, 429, 5xx) leaves it, and it is tried again after the visibility timeout."
+            },
+            "Terminate_card_not_updated": {
+              "runAfter": {
+                "Condition_Teams_refused_the_update_for_good": [
+                  "Succeeded",
+                  "Failed"
+                ]
+              },
+              "metadata": {
+                "operationMetadataId": "f1b7d3e9-6a42-4c8f-b2e0-5d9a7c3f8b16"
+              },
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Failed",
+                "runError": {
+                  "code": "CardNotUpdated",
+                  "message": "@{concat('The update of the card ', body('Parse_message')?['id'], ' (', body('Parse_message')?['title'], ') was not applied: Teams answered ', string(outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode']), '. ', if(or(equals(outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode'], 400), equals(outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode'], 404), equals(outputs('Update_an_adaptive_card_in_a_chat_or_channel')?['statusCode'], 413)), 'The message was deleted.', 'The message stays in the queue and is tried again.'))}"
+                }
+              }
+            }
+          },
           "runAfter": {
             "Parse_message": [
               "Succeeded"
             ]
           },
-          "metadata": {
-            "operationMetadataId": "eea68d7d-e530-4fd0-acb5-fc16764e8483"
+          "else": {
+            "actions": {
+              "Post_card_in_a_chat_or_channel": {
+                "runAfter": {},
+                "metadata": {
+                  "operationMetadataId": "eea68d7d-e530-4fd0-acb5-fc16764e8483"
+                },
+                "type": "OpenApiConnection",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_teams",
+                    "operationId": "PostCardToConversation",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams"
+                  },
+                  "parameters": {
+                    "poster": "Flow bot",
+                    "location": "Chat with Flow bot",
+                    "body/recipient": "@body('Parse_message')?['to']",
+                    "body/messageBody": "@string(body('Parse_message')?['card'])"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Compose_what_was_posted": {
+                "runAfter": {
+                  "Post_card_in_a_chat_or_channel": [
+                    "Succeeded"
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "a5c9e1f7-2d38-4b60-8f4a-1e7d3b9c6a52"
+                },
+                "type": "Compose",
+                "description": "What the app needs to replace the card later: the request that the message named, the address, and the id of the Teams message and of the conversation that the post gave.",
+                "inputs": {
+                  "v": 1,
+                  "request": "@body('Parse_message')?['request']",
+                  "to": "@body('Parse_message')?['to']",
+                  "message": "@body('Post_card_in_a_chat_or_channel')?['id']",
+                  "conversation": "@body('Post_card_in_a_chat_or_channel')?['conversationId']"
+                }
+              },
+              "Put_a_message_on_a_queue_(V2)": {
+                "runAfter": {
+                  "Compose_what_was_posted": [
+                    "Succeeded"
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "b3d7f2a8-9c15-4e61-a7b4-6f0e8d2c1a39"
+                },
+                "type": "OpenApiConnection",
+                "description": "Tells the app that the card arrived and which message it is. The text is base64, because the Functions host decodes the messages of a queue that it reads.",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_azurequeues",
+                    "operationId": "PutMessage_V2",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
+                  },
+                  "parameters": {
+                    "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
+                    "queueName": "@parameters('Posted queue name (mtnaut_PostedQueueName)')",
+                    "message": "@base64(string(outputs('Compose_what_was_posted')))"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Delete_message_(V2)": {
+                "runAfter": {
+                  "Put_a_message_on_a_queue_(V2)": [
+                    "Succeeded",
+                    "Failed",
+                    "TimedOut"
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "247d1c9e-d687-431f-9e3b-570acf68c307"
+                },
+                "type": "OpenApiConnection",
+                "description": "After the post, whether or not the posted message was written: a card must not be posted twice. A message that was not deleted becomes visible again after the visibility timeout and is tried again.",
+                "inputs": {
+                  "host": {
+                    "connectionName": "shared_azurequeues",
+                    "operationId": "DeleteMessage_V2",
+                    "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
+                  },
+                  "parameters": {
+                    "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
+                    "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
+                    "messageId": "@triggerBody()?['MessageId']",
+                    "popreceipt": "@triggerBody()?['PopReceipt']"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Terminate_posted_message_not_written": {
+                "runAfter": {
+                  "Delete_message_(V2)": [
+                    "Succeeded",
+                    "Failed"
+                  ],
+                  "Put_a_message_on_a_queue_(V2)": [
+                    "Failed",
+                    "TimedOut"
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "c8e2a4b6-1f73-4d95-9c08-3a5b7e1f2d64"
+                },
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "PostedMessageNotWritten",
+                    "message": "@{concat('The card ', body('Parse_message')?['id'], ' (', body('Parse_message')?['title'], ') was posted, but the message that tells the app which Teams message it is was not written to the queue ', parameters('Posted queue name (mtnaut_PostedQueueName)'), ', so the app cannot close the card later. The message of the card was deleted, so that the card is not posted twice.')}"
+                  }
+                }
+              },
+              "Condition_Teams_refused_the_card_for_good": {
+                "actions": {
+                  "Delete_message_that_Teams_refused_(V2)": {
+                    "runAfter": {},
+                    "metadata": {
+                      "operationMetadataId": "d825f06b-9cce-4141-a731-8bdead3b6e1a"
+                    },
+                    "type": "OpenApiConnection",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_azurequeues",
+                        "operationId": "DeleteMessage_V2",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
+                      },
+                      "parameters": {
+                        "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
+                        "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
+                        "messageId": "@triggerBody()?['MessageId']",
+                        "popreceipt": "@triggerBody()?['PopReceipt']"
+                      },
+                      "authentication": "@parameters('$authentication')"
+                    }
+                  }
+                },
+                "runAfter": {
+                  "Post_card_in_a_chat_or_channel": [
+                    "Failed",
+                    "TimedOut"
+                  ]
+                },
+                "else": {
+                  "actions": {}
+                },
+                "expression": {
+                  "or": [
+                    {
+                      "equals": [
+                        "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
+                        400
+                      ]
+                    },
+                    {
+                      "equals": [
+                        "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
+                        404
+                      ]
+                    },
+                    {
+                      "equals": [
+                        "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
+                        413
+                      ]
+                    }
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "ebc9ce71-1ba2-4a80-a576-898274f50d98"
+                },
+                "type": "If",
+                "description": "Teams answered 400, 404 or 413 (card over about 28 KB): the card or the recipient stays wrong, so the message is deleted. Any other failure (timeout, 401, 403, 429, 5xx) leaves the message, which is tried again after the visibility timeout."
+              },
+              "Terminate_card_not_posted": {
+                "runAfter": {
+                  "Condition_Teams_refused_the_card_for_good": [
+                    "Succeeded",
+                    "Failed"
+                  ]
+                },
+                "metadata": {
+                  "operationMetadataId": "92b5f918-c3c9-4a8b-8a22-62330cbd5548"
+                },
+                "type": "Terminate",
+                "inputs": {
+                  "runStatus": "Failed",
+                  "runError": {
+                    "code": "CardNotPosted",
+                    "message": "@{concat('The card ', body('Parse_message')?['id'], ' (', body('Parse_message')?['title'], ') was not posted: Teams answered ', string(outputs('Post_card_in_a_chat_or_channel')?['statusCode']), '. ', if(or(equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 400), equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 404), equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 413)), 'The message was deleted.', 'The message stays in the queue and is tried again.'))}"
+                  }
+                }
+              }
+            }
           },
-          "type": "OpenApiConnection",
-          "inputs": {
-            "host": {
-              "connectionName": "shared_teams",
-              "operationId": "PostCardToConversation",
-              "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams"
-            },
-            "parameters": {
-              "poster": "Flow bot",
-              "location": "Chat with Flow bot",
-              "body/recipient": "@body('Parse_message')?['to']",
-              "body/messageBody": "@string(body('Parse_message')?['card'])"
-            },
-            "authentication": "@parameters('$authentication')"
-          }
-        },
-        "Delete_message_(V2)": {
-          "runAfter": {
-            "Post_card_in_a_chat_or_channel": [
-              "Succeeded"
+          "expression": {
+            "equals": [
+              "@body('Parse_message')?['op']",
+              "update"
             ]
           },
           "metadata": {
-            "operationMetadataId": "247d1c9e-d687-431f-9e3b-570acf68c307"
+            "operationMetadataId": "3a1f6d52-7c1e-4b8a-9a43-0d6e2f8b5c71"
           },
-          "type": "OpenApiConnection",
-          "description": "Only after the post has succeeded. A message that was not deleted becomes visible again after the visibility timeout of the trigger and is tried again.",
-          "inputs": {
-            "host": {
-              "connectionName": "shared_azurequeues",
-              "operationId": "DeleteMessage_V2",
-              "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
-            },
-            "parameters": {
-              "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
-              "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
-              "messageId": "@triggerBody()?['MessageId']",
-              "popreceipt": "@triggerBody()?['PopReceipt']"
-            },
-            "authentication": "@parameters('$authentication')"
-          }
+          "type": "If",
+          "description": "A message with op update replaces a card that was posted (the app sends it when its request ends). Any other message is a card to post."
         },
         "Delete_message_that_cannot_be_read_(V2)": {
           "runAfter": {
@@ -210,87 +527,7 @@
             "runStatus": "Failed",
             "runError": {
               "code": "MessageCannotBeRead",
-              "message": "@{concat('Queue message ', triggerBody()?['MessageId'], ' is not a card message of version 1 (the JSON text with v, id, to, title and card), so it was deleted. Its text is in the inputs of the first action.')}"
-            }
-          }
-        },
-        "Condition_Teams_refused_the_card_for_good": {
-          "actions": {
-            "Delete_message_that_Teams_refused_(V2)": {
-              "runAfter": {},
-              "metadata": {
-                "operationMetadataId": "d825f06b-9cce-4141-a731-8bdead3b6e1a"
-              },
-              "type": "OpenApiConnection",
-              "inputs": {
-                "host": {
-                  "connectionName": "shared_azurequeues",
-                  "operationId": "DeleteMessage_V2",
-                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_azurequeues"
-                },
-                "parameters": {
-                  "storageAccountName": "@parameters('Storage queue endpoint (mtnaut_StorageQueueEndpoint)')",
-                  "queueName": "@parameters('Queue name (mtnaut_QueueName)')",
-                  "messageId": "@triggerBody()?['MessageId']",
-                  "popreceipt": "@triggerBody()?['PopReceipt']"
-                },
-                "authentication": "@parameters('$authentication')"
-              }
-            }
-          },
-          "runAfter": {
-            "Post_card_in_a_chat_or_channel": [
-              "Failed",
-              "TimedOut"
-            ]
-          },
-          "else": {
-            "actions": {}
-          },
-          "expression": {
-            "or": [
-              {
-                "equals": [
-                  "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
-                  400
-                ]
-              },
-              {
-                "equals": [
-                  "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
-                  404
-                ]
-              },
-              {
-                "equals": [
-                  "@outputs('Post_card_in_a_chat_or_channel')?['statusCode']",
-                  413
-                ]
-              }
-            ]
-          },
-          "metadata": {
-            "operationMetadataId": "ebc9ce71-1ba2-4a80-a576-898274f50d98"
-          },
-          "type": "If",
-          "description": "Teams answered 400, 404 or 413 (card over about 28 KB): the card or the recipient stays wrong, so the message is deleted. Any other failure (timeout, 401, 403, 429, 5xx) leaves the message, which is tried again after the visibility timeout."
-        },
-        "Terminate_card_not_posted": {
-          "runAfter": {
-            "Condition_Teams_refused_the_card_for_good": [
-              "Succeeded",
-              "Failed"
-            ]
-          },
-          "metadata": {
-            "operationMetadataId": "92b5f918-c3c9-4a8b-8a22-62330cbd5548"
-          },
-          "type": "Terminate",
-          "inputs": {
-            "runStatus": "Failed",
-            "runError": {
-              "code": "CardNotPosted",
-              "message": "@{concat('The card ', body('Parse_message')?['id'], ' (', body('Parse_message')?['title'], ') was not posted: Teams answered ', string(outputs('Post_card_in_a_chat_or_channel')?['statusCode']), '. ', if(or(equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 400), equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 404), equals(outputs('Post_card_in_a_chat_or_channel')?['statusCode'], 413)), 'The message was deleted.', 'The message stays in the queue and is tried again.'))}"
+              "message": "@{concat('Queue message ', triggerBody()?['MessageId'], ' is not a message of version 1 (the JSON text with v, id, to and card, and for an update op and message), so it was deleted. Its text is in the inputs of the first action.')}"
             }
           }
         }

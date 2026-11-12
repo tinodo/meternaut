@@ -27,7 +27,7 @@ Before a call the mailer checks, in this order, and the first check that fails e
    00:00 UTC of the current ISO week. The kinds of BUDGET_FREE_KINDS (`approval`, `first_contact`, `notice`, `verified`, `unsure`, `digest`, `alert`) are not counted
    against the budget and are not held by it: they ask for an OK, introduce Meternaut once, tell a person the outcome of a decision of theirs (an
    approver must always be told), or are the weekly desk itself, which is what a budget of 0 leaves (docs/experience/06 and 08). Every other kind
-   counts and can be held.
+   counts and can be held. A record of NOT_MESSAGES (`card-closed`, a card that closes itself: cases/offers.py) is no message and is not counted.
 6. held: the person chose the weekly desk (`SettingsRecord.channel == "desk"`) and the kind is not `digest`. The other free kinds are held here too.
 Settings or records that cannot be read hold the letter as well. A held letter is not queued here: the caller decides whether to offer it again.
 
@@ -54,6 +54,7 @@ GRAPH_RESOURCE = "https://graph.microsoft.com"
 SENDER = re.compile(r"^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
 KIND = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "unsure", "digest", "alert")
+NOT_MESSAGES = ("card-closed",)  # a card that closes itself is edited in place (cases/offers.py): no message, so no budget counts it
 DESK_KINDS = ("digest",)
 SWITCHES = ("messages", "all")
 RETRY_ONLY = frozenset({429})
@@ -153,7 +154,7 @@ class Mailer:
             if quiet.inside(settings, now):
                 return MailResult("held", quiet.WAITING)
             if kind not in BUDGET_FREE_KINDS:
-                sent = [m for m in self.store.mails_since(listed.oid, _stamp(_week_start(now))) if m.status == "sent" and m.kind not in BUDGET_FREE_KINDS]
+                sent = [m for m in self.store.mails_since(listed.oid, _stamp(_week_start(now))) if m.status == "sent" and m.kind not in BUDGET_FREE_KINDS + NOT_MESSAGES]
                 if len(sent) >= settings.weekly_budget:
                     return MailResult("held", f"The weekly budget of {settings.weekly_budget} messages is reached ({len(sent)} sent since Monday).")
             if settings.channel == "desk" and kind not in DESK_KINDS:

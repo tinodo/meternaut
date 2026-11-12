@@ -1,9 +1,8 @@
 """The addresses of the buttons of a Teams card that answer, and the link tokens in them (docs/proposals/19-teams-cards-through-power-automate.md).
 
-An answer is an Action.OpenUrl to a page of the function app: <page of the request>/<approve|confirm|decline>?code=<plan code>&token=<link token>. Opening it changes nothing: the page checks the person,
-the request, the code and the token and sends the form of the answer by itself (cases/web/approval.py), so every check of that answer stays. The link token is a one-time token of the store, made with the
-card for one person and one request; it keeps the answer, the plan's code and whether the card asked twice already. The page only reads it (nonce_peek) and the form uses it up.
-Data and pure functions over the standard library: the pages know this module, so it imports nothing of the app.
+An answer is an Action.OpenUrl to <page of the request>/<approve|confirm|decline>?code=<plan code>&token=<link token>. Opening it changes nothing: the page checks the person, the request, the code and
+the token and sends the form of the answer by itself (cases/web/approval.py), so every check of that answer stays. The link token is a one-time token of the store, made with the card for one person and one
+request; it keeps the answer, the plan's code and whether the card asked twice already. The page only peeks at it and the form uses it up. Pure functions over the standard library, imported by the pages.
 """
 from __future__ import annotations
 
@@ -50,7 +49,7 @@ def mint(new: Callable[..., str], oid: str, plan_id: str, code: str, verb: str, 
 
 
 def read(peek: Callable[[str, str, str], str | None], oid: str, plan_id: str, token: object) -> Link | None:
-    """What a link token keeps, without using it up (`peek` is the store's nonce_peek); None for a token that is not one, is for somebody else or another request, was used or expired."""
+    """What a link token keeps, without using it up (`peek` is the store's nonce_peek); None for anything that is not a good token for this person and request."""
     kept = peek(token, oid, plan_id) if isinstance(token, str) and TOKEN.fullmatch(token) else None
     try:
         verb, code, sure = json.loads(kept) if kept else (None, None, None)

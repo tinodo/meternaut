@@ -324,19 +324,19 @@ class WhatTheCheckOfACardRefuses(unittest.TestCase):
         def item(card, id_):
             return by_id(card)[id_]
         cases = {
-            "a toggle with no tooltip": (lambda c: item(c, "approve").pop("tooltip"), "has a tooltip"),
-            "a toggle with an empty tooltip": (lambda c: item(c, "approve").update({"tooltip": " "}), "has a tooltip"),
+            "a toggle with no tooltip": (lambda c: item(c, "approve").pop("tooltip"), "needs a tooltip"),
+            "a toggle with an empty tooltip": (lambda c: item(c, "approve").update({"tooltip": " "}), "needs a tooltip"),
             "a toggle that names nothing": (lambda c: item(c, "approve").update({"targetElements": []}), "at least one target"),
             "a toggle with no targets": (lambda c: item(c, "approve").pop("targetElements"), "needs targetElements"),
-            "a target that is a bare id": (lambda c: item(c, "approve").update({"targetElements": ["sure"]}), "a target is the id of an element"),
-            "a target that does not say show or hide": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure"}]}), "a target is the id of an element"),
-            "a target with another key": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure", "isVisible": True, "x": 1}]}), "a target is the id of an element"),
+            "a target that is a bare id": (lambda c: item(c, "approve").update({"targetElements": ["sure"]}), "a target is an element id"),
+            "a target that does not say show or hide": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure"}]}), "a target is an element id"),
+            "a target with another key": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure", "isVisible": True, "x": 1}]}), "a target is an element id"),
             "a target that is not on the card": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "nothing", "isVisible": True}]}), "not an element of the card"),
             "a target that is an action": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "decline", "isVisible": True}]}), "not an element of the card"),
-            "a part that nobody can show": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure", "isVisible": False}]}), "no button of the card shows 'sure'"),
+            "a part that nobody can show": (lambda c: item(c, "approve").update({"targetElements": [{"elementId": "sure", "isVisible": False}]}), "no button shows 'sure'"),
             "a hidden part without an id": (lambda c: c["body"].insert(1, {"type": "TextBlock", "text": "hidden", "wrap": True, "isVisible": False}), "has no id, so no button can show it"),
             "a part that is hidden and that nothing opens": (lambda c: c["body"].insert(1, {"type": "TextBlock", "id": "secret", "text": "hidden", "wrap": True, "isVisible": False}),
-                                                             "no button of the card shows 'secret'"),
+                                                             "no button shows 'secret'"),
             "a toggle with a style that does not exist": (lambda c: item(c, "approve").update({"style": "scary"}), "must be one of"),
             "a toggle with a property of a link": (lambda c: item(c, "approve").update({"url": URL}), "is not a property of Action.ToggleVisibility"),
         }

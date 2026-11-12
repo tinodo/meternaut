@@ -65,7 +65,8 @@ class TheCardOfARequest(unittest.TestCase):
         (text,) = self.fake.texts()
         message = json.loads(text)
         self.assertTrue(text.startswith('{"v":1,"id":"'), "plain JSON text, not base64")
-        self.assertEqual(list(message), ["v", "id", "to", "title", "card"])
+        self.assertEqual(list(message), ["v", "id", "to", "title", "card", "request"])
+        self.assertEqual(message["request"], cs.PLAN_ID, "the flow writes it back with the Teams message, so that the app can replace the card")
         self.assertEqual((message["v"], message["to"], message["title"]), (1, "maya@example.com", "[Meternaut] A decision waits for you"))
         self.assertLessEqual(len(text.encode("utf-8")), teamsqueue.MAX_BYTES)
         self.assertEqual(message["card"]["version"], "1.4")
@@ -108,7 +109,7 @@ class TheCardOfARequest(unittest.TestCase):
         self.world.run()
         (record,) = self.world.tries()
         self.assertIn("not delivery", record.detail)
-        self.assertIn("nothing tells Meternaut whether it arrived", record.detail)
+        self.assertIn("the message on teams-posted says when it did", record.detail)
 
     def test_a_card_that_was_sent_is_not_sent_again(self):
         self.world.run()

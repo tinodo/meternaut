@@ -241,6 +241,16 @@ class World:
 LINK = ["link", "--environment", ENV, "--subscription", SUB, "--resource-group", GROUP]
 
 
+def connections_used(actions):
+    """The connections that the steps of a flow use, in a condition too."""
+    found = set()
+    for action in actions.values():
+        inputs = action.get("inputs")
+        found.add(inputs.get("host", {}).get("connectionName") if isinstance(inputs, dict) else None)
+        found |= connections_used(action.get("actions", {})) | connections_used(action.get("else", {}).get("actions", {}))
+    return found - {None}
+
+
 class Status(unittest.TestCase):
     def test_it_lists_what_the_signed_in_person_sees_with_region_type_managed_state_and_the_linked_policy(self):
         world = World()
@@ -535,15 +545,17 @@ class Steps(unittest.TestCase):
         self.assertEqual(world.audiences, [], "not even a token is asked for")
         numbers = [int(n) for n in re.findall(r"(?m)^\s{1,2}(\d{1,2})\. ", out)]
         self.assertEqual(numbers, list(range(1, 19)))
-        for words in ("connections --environment", "flow --environment", "test-card --environment", "flow-runs --environment", "You are not permitted to make flows in this environment"):
+        for words in ("connections --environment", "flow --environment", "test-card --environment", "test-close --environment", "flow-runs --environment", "You are not permitted to make flows in this environment"):
             self.assertIn(words, out)
         queue = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Storage/storageAccounts/stexample/queueServices/default/queues/teams-cards"
         self.assertIn(f'az role assignment create --assignee-object-id 22222222-3333-4444-5555-666666666666 --assignee-principal-type User --role "Storage Queue Data Message Processor" --scope {queue}', out)
+        self.assertIn(f'--role "Storage Queue Data Message Sender" --scope {queue.removesuffix("teams-cards")}teams-posted', out, "the flow writes to the queue of the posted cards: one more role of the person, on that queue only")
+        self.assertIn("TEAMS_CARDS_QUEUE and TEAMS_POSTED_QUEUE", out)
         self.assertIn(f"--role Reader --scope {POLICY}", out)
         self.assertIn("az provider show --namespace Microsoft.PowerPlatform", out)
         for command in ("create-environment --name cards --sku Developer --apply", "managed --environment cards --apply", "link --environment cards", "status --environment cards"):
             self.assertIn(command, out)
-        for words in ("Storage queue endpoint: https://stexample.queue.core.windows.net/", "Queue name: teams-cards", "Microsoft Entra ID Integrated", "turn it on", "Put a message on a queue (V2)", "https://admin.teams.microsoft.com/policies/manage-apps",
+        for words in ("Storage queue endpoint: https://stexample.queue.core.windows.net/", "Queue name: teams-cards", "Posted queue name: teams-posted", "Microsoft Entra ID Integrated", "turn it on", "Put a message on a queue (V2)", "https://admin.teams.microsoft.com/policies/manage-apps",
                       "az ad signed-in-user show --query id --output tsv", f"az storage account list --resource-group {GROUP}", "second connection reference"):
             self.assertIn(words, out)
         order = ["Start the action cases once more", "Start the action powerplatform", "az role assignment create", "--role Reader", "manage-apps", "create-environment", "managed --environment", "link --environment", "status --environment",
@@ -618,11 +630,12 @@ class TheConnectionsAndTheFlow(unittest.TestCase):
         self.assertIn("Azure Queues", err)
         self.assertIn("run `connections --apply`", err)
 
-    def test_the_flow_is_made_from_the_definition_of_the_solution_with_the_two_values_and_the_two_connections(self):
+    def test_the_flow_is_made_from_the_definition_of_the_solution_with_the_three_values_and_the_two_connections(self):
         world = World()
         world.sign_in("shared_azurequeues", "shared_teams")
         code, out, err = world.run(["flow", *self.ARGS, "--storage-account", ACCOUNT, "--apply", "--yes"])
         self.assertEqual((code, err), (0, ""))
+        self.assertIn("by a message on the queue teams-posted", out)
         (flow,) = world.flows.values()
         properties = flow["properties"]
         self.assertEqual((properties["displayName"], properties["state"]), (pp.FLOW_NAME, "Started"))
@@ -633,9 +646,10 @@ class TheConnectionsAndTheFlow(unittest.TestCase):
         expected = copy.deepcopy(pp.flow_definition())
         expected["parameters"][pp.ENDPOINT_PARAMETER]["defaultValue"] = f"https://{ACCOUNT}.queue.core.windows.net/"
         expected["parameters"][pp.QUEUE_PARAMETER]["defaultValue"] = "teams-cards"
+        expected["parameters"][pp.POSTED_PARAMETER]["defaultValue"] = "teams-posted"
         self.assertEqual(properties["definition"], expected)
-        used = {action["inputs"]["host"]["connectionName"] for action in properties["definition"]["actions"].values() if "host" in action.get("inputs", {})}
-        self.assertLessEqual(used, set(properties["connectionReferences"]))
+        self.assertEqual(connections_used(properties["definition"]["actions"]), {"shared_azurequeues", "shared_teams"}, "every connection that a step of the flow uses, in a condition too, has its reference")
+        self.assertLessEqual(connections_used(properties["definition"]["actions"]), set(properties["connectionReferences"]))
 
     def test_a_second_run_updates_the_flow_and_two_flows_of_the_name_are_left_alone(self):
         world = World()
@@ -713,10 +727,52 @@ class TheConnectionsAndTheFlow(unittest.TestCase):
         code, _, _ = world.run(["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "someone@example.com"])
         self.assertEqual((code, world.changes()), (0, []))
 
+    def test_test_close_posts_a_card_waits_and_replaces_it_with_the_two_steps_of_the_flow_and_deletes_the_flow(self):
+        world = World()
+        world.sign_in("shared_teams")
+        code, out, err = world.run(["test-close", *self.ARGS, "--to", "someone@example.com", "--apply", "--yes"])
+        self.assertEqual((code, err, world.flows), (0, "", {}))
+        made = [p for m, u, p in world.calls if m == "POST" and u.split("?")[0].endswith("/flows")]
+        self.assertEqual(len(made), 1)
+        definition = made[0]["properties"]["definition"]
+        self.assertEqual(list(made[0]["properties"]["connectionReferences"]), ["shared_teams"], "no queue is used: the Teams connection alone")
+        post, wait, update = (definition["actions"][name] for name in (pp.POST_ACTION, "Wait_ten_seconds", pp.UPDATE_ACTION))
+        real = pp.flow_definition()
+        for test, name in ((post, pp.POST_ACTION), (update, pp.UPDATE_ACTION)):
+            self.assertEqual(test["inputs"]["host"], pp.action_of(real, name)["inputs"]["host"], "the step that the flow runs")
+            self.assertEqual(set(test["inputs"]["parameters"]), set(pp.action_of(real, name)["inputs"]["parameters"]), "with the fields that the flow gives it")
+        self.assertEqual((post["runAfter"], wait["runAfter"], update["runAfter"]), ({}, {pp.POST_ACTION: ["Succeeded"]}, {"Wait_ten_seconds": ["Succeeded"]}))
+        self.assertEqual(update["inputs"]["parameters"]["body/messageId"], f"@body('{pp.POST_ACTION}')?['id']", "the message that the post gave")
+        self.assertEqual((post["inputs"]["parameters"]["body/recipient"], update["inputs"]["parameters"]["body/recipient"]), ("someone@example.com",) * 2)
+        for step in (post, update):
+            self.assertEqual(json.loads(step["inputs"]["parameters"]["body/messageBody"])["type"], "AdaptiveCard")
+        self.assertIn("The card was posted and replaced.", out)
+        self.assertIn("The test flow is deleted.", out)
+
+    def test_a_test_close_that_fails_names_the_step_and_the_flow_is_deleted_all_the_same(self):
+        world = World(run_outcome=("Failed", ["BadRequest"]))
+        world.sign_in("shared_teams")
+        code, out, _ = world.run(["test-close", *self.ARGS, "--to", "someone@example.com", "--apply", "--yes"])
+        self.assertEqual((code, world.flows), (1, {}))
+        self.assertIn("The test flow failed: BadRequest.", out)
+        self.assertIn("check it against the flow", out)
+
+    def test_the_dry_run_of_the_test_close_changes_nothing_and_needs_no_queue_connection(self):
+        world = World()
+        world.sign_in("shared_teams")
+        code, out, _ = world.run(["test-close", *self.ARGS, "--to", "someone@example.com"])
+        self.assertEqual((code, world.changes(), world.flows), (0, [], {}))
+        self.assertIn("No queue is used.", out)
+        code, _, err = World().run(["test-close", *self.ARGS, "--to", "someone@example.com"])
+        self.assertEqual(code, 1)
+        self.assertIn("Microsoft Teams", err)
+
     def test_a_bad_storage_account_queue_mail_address_or_count_is_refused_before_anything_is_asked(self):
         for argv, words in ((["flow", *self.ARGS, "--storage-account", "Not_Valid"], "--storage-account is a storage account name"),
                             (["flow", *self.ARGS, "--storage-account", ACCOUNT, "--queue", "Bad_Queue"], "--queue is a queue name"),
+                            (["flow", *self.ARGS, "--storage-account", ACCOUNT, "--posted-queue", "Bad_Queue"], "--posted-queue is a queue name"),
                             (["test-card", *self.ARGS, "--storage-account", ACCOUNT, "--to", "not a mail"], "--to is a mail address"),
+                            (["test-close", *self.ARGS, "--to", "not a mail"], "--to is a mail address"),
                             (["flow-runs", *self.ARGS, "--last", "0"], "--last is a number from 1 to 20")):
             world = World()
             code, _, err = world.run(argv)
@@ -744,8 +800,9 @@ class TheConnectionsAndTheFlow(unittest.TestCase):
         parameters = pp.flow_definition()["parameters"]
         self.assertIn(pp.ENDPOINT_PARAMETER, parameters)
         self.assertIn(pp.QUEUE_PARAMETER, parameters)
+        self.assertIn(pp.POSTED_PARAMETER, parameters)
         self.assertEqual(sorted(pp.flow_definition()["triggers"]), ["When_there_are_messages_in_a_queue_(V2)"])
-        self.assertEqual(pp.QUEUE_NAME, "teams-cards")
+        self.assertEqual((pp.QUEUE_NAME, pp.POSTED_QUEUE_NAME), ("teams-cards", "teams-posted"))
 
 
 class TheTokensAndTheCalls(unittest.TestCase):
@@ -824,7 +881,8 @@ class TheTokensAndTheCalls(unittest.TestCase):
             self.assertEqual(world.changes(), [], argv)
 
     def test_a_pipeline_is_refused_for_every_command_but_steps(self):
-        for argv in (["status"], ["create-environment", "--name", "new one"], ["managed", "--environment", ENV], LINK):
+        for argv in (["status"], ["create-environment", "--name", "new one"], ["managed", "--environment", ENV], LINK, ["test-card", "--environment", ENV, "--storage-account", ACCOUNT, "--to", "someone@example.com"],
+                     ["test-close", "--environment", ENV, "--to", "someone@example.com"]):
             world = World()
             code, out, err = world.run(argv, env={"GITHUB_ACTIONS": "true"})
             self.assertEqual(code, 1, argv)
@@ -860,6 +918,7 @@ class TheNamesAreTheTemplates(unittest.TestCase):
         self.assertIn(f"serviceName: '{pp.DELEGATION}'", code)
         self.assertIn(f"'{pp.AZURE_REGION}'", code)
         self.assertIn(f"var cardsQueueName = '{pp.QUEUE_NAME}'", self.text("environment/cases/main.bicep"))
+        self.assertIn(f"var postedQueueName = '{pp.POSTED_QUEUE_NAME}'", self.text("environment/cases/main.bicep"))
         spec = importlib.util.spec_from_file_location("environment_params_of_the_powerplatform_tests", ROOT / "tools" / "environment-params.py")
         params = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(params)

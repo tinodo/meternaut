@@ -2,7 +2,7 @@
 
 **What this document answers.** What every message carries, and why; how the Recommendation card is built; what the seventeen Teams cards are for; how access changes a Recommendation; how a card is made, sent and answered; and what a card cannot do.
 
-**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, so no bot answers a tap and a card takes no typed answer. Its buttons are links to pages of the function app that send the answer, and a change that cannot be undone asks again on the card ([proposal 19](../proposals/19-teams-cards-through-power-automate.md)). The text boxes, replaced cards and other buttons below describe cards that a Teams app could carry, not the cards that are built.
+**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, so no bot answers a tap and a card takes no typed answer. Its buttons are links to pages of the function app that send the answer, and a change that cannot be undone asks again on the card ([proposal 19](../proposals/19-teams-cards-through-power-automate.md)). The text boxes and other buttons below describe cards that a Teams app could carry, not the cards that are built.
 
 ## The layers of a message
 
@@ -82,7 +82,7 @@ Five controls are visible: three decisions and two toggles.
 
 ## The plan cards
 
-A card carries the plan and the decision, so the exact plan is on screen before anyone is asked. "Approve" opens a page that sends the answer by itself, and no second page asks again; "Decline" records the answer at once. A change that cannot be undone asks on the card: "Approve" shows "This cannot be undone: ..." with "No, go back" first and then "Yes, delete it". The [approval class](../design/06-security-and-governance.md#approval-classes) decides which card appears; C5's header is the class, "Two people" for a purchase, where the first person's button reads "Confirm", and "Your OK on a page" for one person.
+A card carries the plan and the decision, so the exact plan is on screen before anyone is asked. "Approve" opens a page that sends the answer by itself; "Decline" records the answer at once. A change that cannot be undone asks on the card: "Approve" shows "This cannot be undone: ..." with "No, go back" first, then "Yes, delete it". The [approval class](../design/06-security-and-governance.md#approval-classes) decides which card appears; C5's header is the class, "Two people" for a purchase, where the first person's button reads "Confirm", and "Your OK on a page" for one person.
 
 | | C4 Your OK (small change) | C5 Your OK on a page |
 |---|---|---|
@@ -99,7 +99,7 @@ A card carries the plan and the decision, so the exact plan is on screen before 
 
 **The plan code is a reference**, not a secret and not a token: eight characters from the hash of the plan, shown on the card, the page and the waiting e-mail so a person can check that they match. The [Approval service](../design/05-data-and-integrations.md#7-the-approval-record) refuses a wrong or expired code and a second submit by the same person; the other approver's decision still counts. The plan itself is used once, when it runs.
 
-**The card never changes Azure.** Its buttons are links. The page that "Approve" opens sends the answer, and the change is made then, with the person's own rights, after Azure's own sign-in.
+**The card never changes Azure.** Its buttons are links: the page that "Approve" opens sends the answer, and the change is made then, with the person's own rights.
 
 **The page may open inside Teams.** For a purchase, C5 says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." ([Web pages](06-web-pages.md) says when that e-mail is sent.)
 
@@ -208,7 +208,7 @@ Agents draft and workflows send ([data and integrations](../design/05-data-and-i
 
 ### What a button sends
 
-A button on a card that the flow posts sends nothing: it opens an address. An answer's address names the request and the answer and carries the plan code and a one-time token that the app made for that person, never prose. (An invented example.) "Decline" opens `/ok/r_9vK2xQ/decline` with the code `7F3K92QD` and a token. Opening it changes nothing, so a link preview is harmless. The page sends the answer by itself, with one fixed script that the page's policy allows by its hash and a button for a browser without scripts. The answer then takes the path of an answer given on the page, with every check again, including two people for a large change. A token works once.
+A button on a card that the flow posts sends nothing: it opens an address that names the request and the answer and carries the plan code and a one-time token that the app made for that person, never prose. (An invented example.) "Decline" opens `/ok/r_9vK2xQ/decline` with the code `7F3K92QD` and a token. Opening it changes nothing, so a link preview is harmless. The page sends the answer by itself (one fixed script that the page's policy allows by its hash, and a button for a browser without scripts), and the answer takes the path of an answer given on the page, with every check, including two people for a large change. A token works once. When the request ends, the card is replaced by one without a button.
 
 [`cards/manifest.json`](cards/manifest.json) lists, for each verb of each card, its input ids, whether it needs the plan code and what the tap returns: a `receipt`, an `answer`, a `handoff` or a named `card`; a button that is a link is listed under `openUrl`, and the answer links of a card under `answers`. One `contract` covers every verb: who may tap (the card's addressee; for a decision, the designated approver or a named delegate, by directory object id), what a repeated tap does, when a verb is refused (the request is expired, changed, answered or paused) and what a tap returns (one immediate response, then the outcome by updating the same message).
 
@@ -224,7 +224,7 @@ Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](
 |---|---|
 | Buttons on a card | At most eight visible and four behind a toggle. Titles have at most 24 characters: a house rule so that each fits alone on a 360 px row, not a Teams limit. Teams' own card limits are in the [platform register](13-platform-register.md) |
 | Thumbs | Learn documents Teams' thumbs (`feedbackLoopEnabled`, [Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/user-feedback-controls)) per message, not for card messages: they are set where the client supports them, and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) checks whether they show on a card message. They mean only "was this useful" and never change a Recommendation |
-| Delivery | A card is one message on the `teams-cards` queue. A failure to put it there is a failed try, repeated every 15 minutes up to 12 times, and the letter still goes; the flow's limits are in the [platform register](13-platform-register.md). Nothing tells the app whether the flow posted the card, so delivery is never promised ([proposal 13](../proposals/13-teams-and-outlook.md)) |
+| Delivery | A card is one message on the `teams-cards` queue. A failure to put it there is a failed try, repeated every 15 minutes up to 12 times, and the letter still goes; the flow's limits are in the [platform register](13-platform-register.md). The app learns which message a card is, not that anyone saw it, so delivery is never promised ([proposal 13](../proposals/13-teams-and-outlook.md)) |
 
 ## The life of one message
 
@@ -256,7 +256,7 @@ The days are starting values; [attention and trust](08-attention-and-trust.md) h
 |---|---|
 | Carry a decision that needs a sign-in to Azure, a security key or a second person | It opens the approval page ([web pages](06-web-pages.md)); no approval is given in Teams |
 | Show a chart, a long table or several heading levels | The headline is the one heading, columns are short and no input sits in the hidden Details panel; charts live on a page or in a workbook ([access, language and inclusion](11-access-language-inclusion.md)) |
-| Promise that anyone sees it: nothing tells the app whether the flow posted a card or the person read it; the design knows only whether the person responded | Timing is never promised; an unanswered Recommendation follows the reminder ladder ([attention and trust](08-attention-and-trust.md)) |
+| Promise that anyone sees it: nothing tells the app that the person read a card; the design knows only whether the person responded | Timing is never promised; an unanswered Recommendation follows the reminder ladder ([attention and trust](08-attention-and-trust.md)) |
 | Be posted in a private channel (agents cannot post messages or cards there, [Learn](https://learn.microsoft.com/microsoftteams/platform/bots/how-to/conversations/channel-and-group-conversations)) or in a shared one (an opt-in this design does not use) | One to one for people, e-mail for outsiders ([letters](05-letters-and-requests.md), [platform register](13-platform-register.md)) |
 | Prove that it is genuine: the plan code is a reference | The announcement names the app, its publisher and the one address of the approval page; no card asks for a password or a code |
 

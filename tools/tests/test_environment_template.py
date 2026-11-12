@@ -531,7 +531,7 @@ class Cases(unittest.TestCase):
         made = sorted(name for name, (_, body) in self.found.items() if not re.search(rf"(?m)^resource {name} '[^']+' existing", self.source))
         self.assertEqual(made, ["authIdentity", "cardsQueue", "consoleSignIn", "controlQueue", "deploymentContainer", "functionApp", "functionAppEndpoint",
                                 "functionOwnsHostContainers", "functionOwnsOwnPackage", "functionPublishesTelemetry", "functionUsesQueues",
-                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan",
+                                "functionUsesTables", "historyWorkbook", "noBasicAuthForDeployment", "noBasicAuthForFtp", "plan", "postedQueue",
                                 "tracesRetention", "webNsg", "webSubnet"])
         for name in ("deploymentContainer", "functionOwnsOwnPackage"):
             self.assertTrue(self.found[name][1].startswith("if (isFlex) {"), f"{name}: only a Flex app has its own package container and the role on it")
@@ -711,8 +711,8 @@ class Cases(unittest.TestCase):
         self.assertIn("httpsOnly: true", self.code)
         self.assertIn("minTlsVersion: '1.2'", self.code)
 
-    def test_the_function_app_starts_after_its_subnet_its_container_and_its_queue_and_never_waits_for_roles_that_wait_for_its_identity(self):
-        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "deploymentContainer", "controlQueue"},
+    def test_the_function_app_starts_after_its_subnet_its_container_and_its_queues_and_never_waits_for_roles_that_wait_for_its_identity(self):
+        self.assertEqual(depends_on(self.found["functionApp"][1]), {"webSubnet", "deploymentContainer", "controlQueue", "postedQueue"},
                          "the roles of the app's own identity need the app, so the app cannot wait for them: the host retries until they are there")
 
     def test_the_control_queue_is_made_in_the_host_storage_account_and_the_app_is_told_its_name_and_reads_it_through_the_host_connection(self):
