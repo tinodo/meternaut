@@ -669,7 +669,10 @@ class TheCallsOfTheApp(unittest.TestCase):
         "network-interface-read": lambda m, p: m == "GET" and "Microsoft.Network/networkInterfaces" in p,
         "nat-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/natGateways" in p,
         "load-balancer-read": lambda m, p: m == "GET" and "Microsoft.Network/loadBalancers" in p,
-        "private-endpoint-read": lambda m, p: m == "GET" and "Microsoft.Network/privateEndpoints" in p,
+        "private-endpoint-read": lambda m, p: m == "GET" and "Microsoft.Network/privateEndpoints" in p and not p.endswith("/privateDnsZoneGroups"),
+        # The two lists of the impact check of a private endpoint (cases/impact.py): the DNS zone groups of the endpoint, and the address records of a private DNS zone.
+        "private-dns-zone-groups-read": lambda m, p: m == "GET" and "Microsoft.Network/privateEndpoints/" in p and p.endswith("/privateDnsZoneGroups"),
+        "private-dns-records-read": lambda m, p: m == "GET" and "Microsoft.Network/privateDnsZones/" in p and p.endswith("/A"),
         "p2s-gateway-read": lambda m, p: m == "GET" and "Microsoft.Network/p2svpnGateways/" in p and "Microsoft.Insights/metrics" not in p,  # its connection count is a read of "metrics-read"
         "compute-usage-read": lambda m, p: m == "GET" and "Microsoft.Compute/locations/" in p and p.endswith("/usages"),
         "subscriptions-list": lambda m, p: m == "GET" and p.endswith("/subscriptions"),
