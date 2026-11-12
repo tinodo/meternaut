@@ -6,10 +6,9 @@ decider. Approving a change sends the person to the sign-in to Azure (Microsoft 
 the change is made right there, with the person's own token. When Azure asks for an extra sign-in check, that page is a redirect to the sign-in once more, and the page that
 the person comes back to then shows what came of it. Each kind of result has a plain page of its own.
 
-A button on a Teams card opens a GET of `card_answer` (/ok/<request>/approve, /confirm or /decline, with the plan's code and a link token made for this person: cardlinks.py). A GET changes
-nothing, so a link preview is harmless: the page checks the person, the request, the code and the token, and shows a small page that sends the form of that answer by itself (one fixed script that the
-page's policy allows by its hash, and a button for a browser without scripts). The form is the one of the page of the request, with the link token as its one-time token, so every check after it stays,
-and no second page asks the person to decide again.
+A button on a Teams card opens a GET of `card_answer` (/ok/<request>/approve, /confirm or /decline, with the plan's code and a link token: cardlinks.py). A GET changes nothing, so a link preview is
+harmless: the page checks the person, the request, the code and the token, and shows a small page that sends the form of that answer by itself (one fixed script that the page's policy allows by its
+hash, and a button for a browser without scripts). The form is the page's own, with the link token as its one-time token, so every check after it stays and no second page asks again.
 """
 from __future__ import annotations
 
@@ -127,9 +126,8 @@ def _sending(ctx: Ctx, plan: PlanRecord, brief: Brief, answer: str, sure: bool, 
 
 
 def card_answer(ctx: Ctx, plan_id: str, answer: str) -> Response:
-    """The page that a button on a Teams card opens (GET /ok/<request>/<answer>?code=...&token=...). It records nothing. It checks, in order, that the person may answer, that the request is open,
-    the code, that the link token is this person's for this answer and code and is still there, and that the answer exists now (a switch may hold it); then it shows `_sending`. A link that fails a check
-    says why and offers the page of the request."""
+    """The page that a button on a Teams card opens (GET /ok/<request>/<answer>?code=...&token=...). It records nothing. It checks that the person may answer, that the request is open, the code, that
+    the link token is this person's for this answer and code, and that the answer exists now (a switch may hold it); then it shows `_sending`. A link that fails a check says why."""
     plan, refused = _gate(ctx, plan_id)
     if refused is not None:
         return refused

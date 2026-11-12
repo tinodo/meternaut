@@ -8,9 +8,10 @@
     python tools/powerplatform.py unlink --environment <name or id> --subscription <id> --resource-group <name> [--policy-name <name>] [--apply] [--yes]
     python tools/powerplatform.py steps [--subscription <id>] [--resource-group <name>] [--storage-account <name>] [--environment <name>] [--person <object id>]
     python tools/powerplatform.py connections --environment <name or id> [--apply] [--yes]
-    python tools/powerplatform.py flow --environment <name or id> --storage-account <name> [--queue <name>] [--apply] [--yes]
+    python tools/powerplatform.py flow --environment <name or id> --storage-account <name> [--queue <name>] [--posted-queue <name>] [--apply] [--yes]
     python tools/powerplatform.py flow-runs --environment <name or id> [--last <1 to 20>]
     python tools/powerplatform.py test-card --environment <name or id> --storage-account <name> --to <mail address> [--queue <name>] [--apply] [--yes]
+    python tools/powerplatform.py test-close --environment <name or id> --to <mail address> [--apply] [--yes]
 
 Why. Teams cards reach people through a Power Automate flow that reads the Storage queue `teams-cards` over Power Platform virtual network support: the flow's Azure Queues connector runs in a subnet of the
 project's own virtual network (environment/powerplatform/main.bicep), so the storage account needs no public endpoint, and no key and no app registration is involved (docs/proposals/19-teams-cards-through-power-automate.md).
@@ -21,7 +22,7 @@ How it signs in, and what it will not do. It asks the Azure CLI of the person wh
 memory. No credential is stored, read from a file or taken from the command line, and a token is taken out of everything that is printed. The person needs the Power Platform Administrator role in Microsoft Entra,
 and Reader on the enterprise policy (docs/proposals/19-teams-cards-through-power-automate.md: the command that gives it). It never runs in a pipeline (AGENTS.md rules 18 and 24: its output names environments and policies of the
 estate, which a log must not hold, and the deploy identity holds no right in Power Platform), and it sends only the calls of CALLS below: a read of Azure Resource Manager is the only thing it does to Azure, and it
-changes nothing there. It deletes nothing, except the one test flow that `test-card` made a moment before.
+changes nothing there. It deletes nothing, except the one test flow that `test-card` or `test-close` made a moment before.
 
 status               Read only. Without --environment, the environments that the signed-in person sees (name, region, type, Managed Environment, state, linked policy). With one, what it takes to
                      link it: its region, type, Managed Environment setting and linked policy, the project's policy in Azure (kind, geography, virtual network, subnet, delegation), and whether they are linked.
@@ -35,7 +36,7 @@ link                 Checks first, and stops at the first check that fails: the 
                      virtual network, and its subnet is delegated to Microsoft.PowerPlatform/enterprisePolicies and has room. A dry run, unless --apply: it then asks for a yes (or takes --yes), links, waits for the
                      operation and reads the environment again.
 unlink               The same, the other way: only the project's own policy is unlinked, the person confirms, and the environment is read again.
-steps                Prints, in order, every step that a person does by hand, with the commands: the Hub actions, the roles, the Teams admin center setting for the Workflows app, the environment, the link, the import of the solution, the two connections, the two environment
+steps                Prints, in order, every step that a person does by hand, with the commands: the Hub actions, the roles, the Teams admin center setting for the Workflows app, the environment, the link, the import of the solution, the two connections, the three environment
                      variables, turning the flow on, and the first card. It sends nothing. The import is left to the maker portal: the Dataverse call for it (ImportSolutionAsync) takes the
                      connection references and the values of the environment variables as a collection of entities that the Web API reference does not show an example of, so it is not written here.
 connections          For a person whom the maker portal refuses (a guest of the tenant: new Dataverse environments refuse guests, and the admin center does not take a guest at all), and for anyone who would rather not click. A dry run says
@@ -43,12 +44,16 @@ connections          For a person whom the maker portal refuses (a guest of the 
                      made, with the signed-in person's own token, and prints the address at which the person signs in to each (the platform's own consent page: the person ticks a box and allows). The addresses are good for
                      about 15 minutes. It stores nothing, and the connections belong to the person.
 flow                 With the two connections connected: a dry run, or, with --apply, makes the flow `Meternaut cards` from the definition of the unpacked solution (the one that tools/powerplatform-pack.py packs) with the
-                     address of the queue and its name, started; a flow of that name that is there is updated, never made twice, and two of that name are left alone. It is not a solution: it is one of the person's own flows.
-flow-runs            Read only: the last runs of that flow and, for a failed one, the actions that failed. The app cannot tell whether a card arrived; this does.
+                     address of the queue of the cards, its name and the name of the queue of the posted cards, started; a flow of that name that is there is updated, never made twice, and two of that name are left alone. It is not a
+                     solution: it is one of the person's own flows.
+flow-runs            Read only: the last runs of that flow and, for a failed one, the actions that failed. The code of a failed run says which: CardNotPosted, PostedMessageNotWritten, CardNotUpdated or MessageCannotBeRead.
 test-card            A dry run, or, with --apply, makes a flow with a button that puts one test card on the queue, runs it once, says where the card is, and deletes that flow (the only thing the tool ever deletes, and only
                      the one it made a moment before). The signed-in person needs Storage Queue Data Message Sender on the queue while it runs: without it the queue answers `AuthorizationPermissionMismatch` and the tool says so.
+test-close           The same for the step that replaces a card: the test flow posts a test card as the Flow bot with the step of the flow `Meternaut cards`, waits ten seconds and replaces it with a card that has no button, with
+                     that flow's own step and fields. No queue is involved: only the Microsoft Teams connection is needed. It proves the names of the fields of the step, which no document shows.
 
-On 2026-11-11 the commands status, create-environment, managed, link, connections, flow, flow-runs and test-card ran against the owner's tenant, and a card reached a Teams chat. The calls follow the owner's reference repository
+On 2026-11-11 the commands status, create-environment, managed, link, connections, flow, flow-runs and test-card ran against the owner's tenant, and a card reached a Teams chat. test-close, the queue of the posted
+cards and the step that replaces a card were added later and have not run there yet. The calls follow the owner's reference repository
 (scripts/Set-PowerPlatformSubnetInjection.ps1, New-PowerPlatformEnvironment.ps1 and Resolve-PowerPlatformEnvironment.ps1), Microsoft's own module (microsoft/PowerPlatform-EnterprisePolicies,
 Source/Common/EnvironmentOperations.ps1) and the calls that the maker portal makes. The tests run it against a fake of those calls and of nothing else. Enabling or disabling the delegation can leave
 connections unstable for up to 30 minutes (Learn): the tool says so before it links.
@@ -56,6 +61,7 @@ connections unstable for up to 30 minutes (Learn): the tool says so before it li
 from __future__ import annotations
 
 import argparse
+import copy
 import http.client
 import importlib.util
 import json
@@ -92,12 +98,15 @@ GEOGRAPHY = "sweden"
 AZURE_REGION = "swedencentral"
 DELEGATION = "Microsoft.PowerPlatform/enterprisePolicies"
 QUEUE_NAME = "teams-cards"
+POSTED_QUEUE_NAME = "teams-posted"
 FLOW_NAME = "Meternaut cards"
 TEST_FLOW_NAME = "Meternaut test card (made by tools/powerplatform.py, deleted at once)"
 # The two connectors of the flow: (api name, what it is called, the connection parameter set of Microsoft Entra ID sign-in or None).
 CONNECTORS = (("shared_azurequeues", "Azure Queues (Microsoft Entra ID Integrated)", "tokenBasedAuth", "Premium"), ("shared_teams", "Microsoft Teams", None, "Standard"))
-ENDPOINT_PARAMETER = "Storage queue endpoint (mtnaut_StorageQueueEndpoint)"  # the two values of the flow, named as the packed solution names its environment variables
+ENDPOINT_PARAMETER = "Storage queue endpoint (mtnaut_StorageQueueEndpoint)"  # the three values of the flow, named as the packed solution names its environment variables
 QUEUE_PARAMETER = "Queue name (mtnaut_QueueName)"
+POSTED_PARAMETER = "Posted queue name (mtnaut_PostedQueueName)"
+POST_ACTION, UPDATE_ACTION = "Post_card_in_a_chat_or_channel", "Update_an_adaptive_card_in_a_chat_or_channel"  # the two Teams steps of the flow, which test-close copies
 STORAGE_ACCOUNT_RE = re.compile(r"^[a-z0-9]{3,24}$")
 QUEUE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 MAIL_RE = re.compile(r"^[^@\s<>\"']{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,}$")
@@ -827,9 +836,9 @@ def flow_definition() -> dict:
     return json.loads(parts[flows[0]])["properties"]["definition"]
 
 
-def flow_body(account: str, queue: str, names: Mapping[str, str]) -> dict:
+def flow_body(account: str, queue: str, names: Mapping[str, str], posted: str = POSTED_QUEUE_NAME) -> dict:
     definition = flow_definition()
-    for key, value in ((ENDPOINT_PARAMETER, f"https://{account}.queue.core.windows.net/"), (QUEUE_PARAMETER, queue)):
+    for key, value in ((ENDPOINT_PARAMETER, f"https://{account}.queue.core.windows.net/"), (QUEUE_PARAMETER, queue), (POSTED_PARAMETER, posted)):
         if key not in definition.get("parameters", {}):
             raise Problem(f"the flow of the solution has no parameter {key!r}: the tool and the solution have drifted apart")
         definition["parameters"][key]["defaultValue"] = value
@@ -847,12 +856,13 @@ def find_flows(client: Client, environment_id: str, display_name: str) -> list[d
 def command_flow(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"]) -> int:
     f = facts(resolve_environment(client, args.environment))
     names = connected_names(client, str(f["id"]), tuple(api for api, _, _, _ in CONNECTORS))
-    body = flow_body(args.storage_account, args.queue, names)
+    body = flow_body(args.storage_account, args.queue, names, args.posted_queue)
     found = find_flows(client, str(f["id"]), FLOW_NAME)
     if len(found) > 1:
         raise Problem(f"{len(found)} flows in this environment are named {FLOW_NAME!r}: this tool changes none of them on a guess")
     out(f"The environment {f['name']} (id {f['id']}): both connections are connected.")
-    out(f"Would {'update the definition and the connections of' if found else 'make'} the flow {FLOW_NAME}, started: it reads the queue {args.queue} of the storage account {args.storage_account} once a minute and posts each message as a Teams card.")
+    out(f"Would {'update the definition and the connections of' if found else 'make'} the flow {FLOW_NAME}, started: it reads the queue {args.queue} of the storage account {args.storage_account} once a minute, posts each message as a Teams card "
+        f"(or replaces a card with it), and tells the app which message each card is by a message on the queue {args.posted_queue}.")
     if not args.apply:
         out("This was a dry run. Run again with --apply to do it.")
         return 0
@@ -915,6 +925,34 @@ def test_flow_body(account: str, queue: str, to: str, queue_connection: str, car
     return {"properties": {"displayName": TEST_FLOW_NAME, "definition": definition, "state": "Started", "connectionReferences": references}}
 
 
+def action_of(definition: dict, name: str) -> dict:
+    """The action of that name in the definition, in a condition too: test-close copies the two Teams steps of the flow, so that what it proves is what the flow does."""
+    todo = [definition["actions"]]
+    while todo:
+        actions = todo.pop()
+        if name in actions:
+            return copy.deepcopy(actions[name])
+        for action in actions.values():
+            todo += [action.get("actions", {}), action.get("else", {}).get("actions", {})]
+    raise Problem(f"the flow of the solution has no action {name!r}: the tool and the solution have drifted apart")
+
+
+def test_close_flow_body(to: str, teams_connection: str) -> dict:
+    def card(text: str) -> str:
+        return json.dumps({"type": "AdaptiveCard", "version": "1.4", "$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "body": [{"type": "TextBlock", "text": text, "wrap": True}]})
+    real = flow_definition()
+    post, update = action_of(real, POST_ACTION), action_of(real, UPDATE_ACTION)
+    post["runAfter"], update["runAfter"] = {}, {"Wait_ten_seconds": ["Succeeded"]}
+    post["inputs"]["parameters"].update({"body/recipient": to, "body/messageBody": card("Meternaut test card: in ten seconds this card is replaced by one that has no button.")})
+    update["inputs"]["parameters"].update({"body/recipient": to, "body/messageId": f"@body('{POST_ACTION}')?['id']", "body/messageBody": card("Decided: Declined by the test, just now. Nothing more to do.")})
+    wait = {"runAfter": {POST_ACTION: ["Succeeded"]}, "type": "Wait", "inputs": {"interval": {"count": 10, "unit": "Second"}}}
+    definition = {"$schema": real["$schema"], "contentVersion": real["contentVersion"], "parameters": {"$connections": {"defaultValue": {}, "type": "Object"}, "$authentication": {"defaultValue": {}, "type": "SecureObject"}},
+                  "triggers": {"manual": {"type": "Request", "kind": "Button", "inputs": {"schema": {"type": "object", "properties": {}, "required": []}}}},
+                  "actions": {POST_ACTION: post, "Wait_ten_seconds": wait, UPDATE_ACTION: update}}
+    references = {"shared_teams": {"connectionName": teams_connection, "source": "Embedded", "id": "/providers/Microsoft.PowerApps/apis/shared_teams", "tier": "Standard"}}
+    return {"properties": {"displayName": TEST_FLOW_NAME, "definition": definition, "state": "Started", "connectionReferences": references}}
+
+
 def command_test_card(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"], clock: Callable[[], float]) -> int:
     f = facts(resolve_environment(client, args.environment))
     names = connected_names(client, str(f["id"]), ("shared_azurequeues",))
@@ -925,7 +963,29 @@ def command_test_card(args: argparse.Namespace, client: Client, out: Callable[[s
         out("This was a dry run. Run again with --apply to do it.")
         return 0
     confirm(args, "Put a test card on the queue?", ask)
-    made = client.send("POST", flows_url(str(f["id"])), test_flow_body(args.storage_account, args.queue, args.to, names["shared_azurequeues"], "test-" + secrets.token_hex(4)))
+    body = test_flow_body(args.storage_account, args.queue, args.to, names["shared_azurequeues"], "test-" + secrets.token_hex(4))
+    return run_test_flow(client, f, body, out, clock, f"The card is on the queue {args.queue}. The flow {FLOW_NAME} picks it up within a minute: look at your chat with Workflows in Teams (in the tenant's organisation, when you are a guest), or run `flow-runs`.",
+                         f" Forbidden here is the queue's own answer that the signed-in person has no {ROLE_MESSAGE_SENDER} on it yet (a role takes up to 10 minutes to apply).", "Forbidden")
+
+
+def command_test_close(args: argparse.Namespace, client: Client, out: Callable[[str], None], ask: Callable[[str], "str | None"], clock: Callable[[], float]) -> int:
+    f = facts(resolve_environment(client, args.environment))
+    names = connected_names(client, str(f["id"]), ("shared_teams",))
+    out(f"The environment {f['name']} (id {f['id']}): the Teams connection is connected.")
+    out(f"Would make a flow with a button, run it once and delete it: it posts a test card for {args.to} as the Flow bot, waits ten seconds and replaces it with a card that has no button, with the two steps of the flow {FLOW_NAME}. "
+        "No queue is used.")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to do it.")
+        return 0
+    confirm(args, "Post a test card and replace it?", ask)
+    return run_test_flow(client, f, test_close_flow_body(args.to, names["shared_teams"]), out, clock,
+                         "The card was posted and replaced. Look at your chat with Workflows in Teams (in the tenant's organisation, when you are a guest): the card must say 'Decided: Declined by the test' and have no button. "
+                         "If it still shows the first text, the step took the call and did not replace the card: say so.", " The step that failed names the field that Teams did not take: check it against the flow.")
+
+
+def run_test_flow(client: Client, f: dict[str, object], body: dict, out: Callable[[str], None], clock: Callable[[], float], success: str, hint: str, hint_when: str = "") -> int:
+    """Makes the test flow, runs it once, says how it went (`hint` is added to a failure, when an action failed with the code `hint_when` if one is named) and deletes it, whatever came of it."""
+    made = client.send("POST", flows_url(str(f["id"])), body)
     if made.status not in (200, 201) or not GUID_RE.match(str(pick(made.body, "name") or "")):
         raise Problem(f"the test flow was not made: {message_of(made)}")
     flow_id = str(pick(made.body, "name"))
@@ -945,13 +1005,13 @@ def command_test_card(args: argparse.Namespace, client: Client, out: Callable[[s
             if status in ("Succeeded", "Failed", "Cancelled"):
                 break
         if status == "Succeeded":
-            out(f"The card is on the queue {args.queue}. The flow {FLOW_NAME} picks it up within a minute: look at your chat with Workflows in Teams (in the tenant's organisation, when you are a guest), or run `flow-runs`.")
+            out(success)
             result = 0
         elif status == "Failed" and latest:
             detail = client.send("GET", f"{FLOW}/providers/Microsoft.ProcessSimple/environments/{f['id']}/flows/{flow_id}/runs/{latest.get('name')}?api-version={APPS_API}&$expand=properties/actions")
             actions = pick(detail.body, "properties", "actions") if detail.status == 200 else None
             codes = [str(r.get("code")) for r in actions.values() if isinstance(r, dict) and r.get("status") == "Failed"] if isinstance(actions, dict) else []
-            out(f"The test flow failed: {', '.join(codes) or 'no code'}." + (f" Forbidden here is the queue's own answer that the signed-in person has no {ROLE_MESSAGE_SENDER} on it yet (a role takes up to 10 minutes to apply)." if "Forbidden" in codes else ""))
+            out(f"The test flow failed: {', '.join(codes) or 'no code'}." + (hint if not hint_when or hint_when in codes else ""))
         else:
             out(f"The test flow did not end in two minutes (last state: {status or 'none'}).")
     finally:
@@ -969,6 +1029,7 @@ def steps_text(args: argparse.Namespace) -> list[str]:
     environment = args.environment or "<environment name>"
     person = args.person or "<object id of the person whose connection reads the queue>"
     queue = f"/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.Storage/storageAccounts/{account}/queueServices/default/queues/{QUEUE_NAME}"
+    posted = queue.removesuffix(QUEUE_NAME) + POSTED_QUEUE_NAME
     policy = policy_id_of(subscription, group, DEFAULT_POLICY_NAME)
     return [
         "The steps that a person does by hand, in order (docs/proposals/19-teams-cards-through-power-automate.md). Nothing here was run: it is the plan that the Hub and this tool follow.",
@@ -977,17 +1038,18 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         "  1. Decide the size of the subnet snet-powerplatform (POWERPLATFORM_SUBNET_LENGTH in tools/environment-params.py: /27 by default, /28 is the least, /26 for a Production environment). It cannot change once an environment is linked.",
         "",
         "In the Hub (the Actions tab, the workflow Hub, which runs in the environment hub):",
-        "  2. Start the action cases once more: it makes the queue teams-cards next to cases-control and gives the app its setting TEAMS_CARDS_QUEUE; the app's new code, which writes the cards, goes out in the same run.",
+        "  2. Start the action cases once more: it makes the queues teams-cards and teams-posted next to cases-control and gives the app its settings TEAMS_CARDS_QUEUE and TEAMS_POSTED_QUEUE; the app's new code, which writes the cards, keeps the answer of the flow and replaces a card when its request ends, goes out in the same run.",
         "  3. Start the action powerplatform: the subnet snet-powerplatform and the enterprise policy. It stops before it changes anything, and says why, unless the resource provider is registered, the virtual network is there and the parameter builder found room for the subnet. "
         "It waits up to 20 minutes for the landing zone's route table on the subnet and reads both back. The deploy identity cannot register a provider: check once, and register it if it is not:",
         "       az provider show --namespace Microsoft.PowerPlatform --query registrationState",
         "       az provider register --namespace Microsoft.PowerPlatform",
         "",
         "In Azure, by a person (the deploy identity gives roles to service principals only):",
-        "  4. Give the person whose Azure Queues connection the flow will use a data role on the queue, and nothing wider. A role takes up to ten minutes to apply:",
+        "  4. Give the person whose Azure Queues connection the flow will use a data role on each of the two queues, and nothing wider. A role takes up to ten minutes to apply:",
         f"       az role assignment create --assignee-object-id {person} --assignee-principal-type User --role \"{ROLE_MESSAGE_PROCESSOR}\" --scope {queue}",
+        f"       az role assignment create --assignee-object-id {person} --assignee-principal-type User --role \"{ROLE_MESSAGE_SENDER}\" --scope {posted}",
         f"     (The person's own object id: az ad signed-in-user show --query id --output tsv, run by that person. The account's name: az storage account list --resource-group {group} --query \"[].name\" --output tsv.",
-        f"      Peek, retrieve and delete is what the trigger and the delete need. For the test flow of step 14 add the role \"{ROLE_MESSAGE_SENDER}\" on the same queue, and take it away again after.)",
+        f"      The first role is for the queue of the cards: peek, retrieve and delete is what the trigger and the delete need. The second is for the queue of the posted cards: the flow writes one message to it for each card that it posted, and the app reads it with its own role on the account. For the test flow of step 14 add the role \"{ROLE_MESSAGE_SENDER}\" on the first queue too, and take it away again after.)",
         "  5. If the person who links the environment does not read the policy already, give that person Reader on it:",
         f"       az role assignment create --assignee-object-id <object id of the Power Platform administrator> --assignee-principal-type User --role Reader --scope {policy}",
         "",
@@ -1005,11 +1067,12 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         "",
         "In the maker portal (https://make.powerapps.com), as the person of step 4 (who made the environment, or is an administrator of it), in the environment of step 7 (the import by the Dataverse API is not written: see this tool's help):",
         " 11. python tools/powerplatform-pack.py makes powerplatform/out/meternaut-cards.zip. Solutions, Import solution, Browse, that zip, Next.",
-        " 12. The import asks for the two connections and the two values. Make each connection there, or from the actions of the flow in its designer, and not first under Data, Connections to pick afterwards (that can leave a second connection reference for the same connector):",
+        " 12. The import asks for the two connections and the three values. Make each connection there, or from the actions of the flow in its designer, and not first under Data, Connections to pick afterwards (that can leave a second connection reference for the same connector):",
         "       - the Azure Queues connection: sign in with Microsoft Entra ID (the authentication type 'Microsoft Entra ID Integrated'), not with an access key; it belongs to you and is not shareable;",
         "       - the Microsoft Teams connection: sign in;",
         f"       - Storage queue endpoint: https://{account}.queue.core.windows.net/   (the whole address, with https and the closing slash);",
         f"       - Queue name: {QUEUE_NAME}",
+        f"       - Posted queue name: {POSTED_QUEUE_NAME}",
         " 13. Import. Open the solution, open the flow 'Meternaut cards', save it and turn it on: it arrives switched off, and saving does not turn it on. It is untested in Power Platform: if the designer marks an action, that is the first thing to read.",
         " 14. The first card, before the app sends one: a second flow in the same environment, with a manual trigger and one action 'Put a message on a queue (V2)', the same connection, the same endpoint, the queue "
         f"{QUEUE_NAME} and, as the message, the JSON text {{\"v\":1,\"id\":\"test-1\",\"to\":\"<your mail address>\",\"title\":\"Test\",\"card\":{{\"type\":\"AdaptiveCard\",\"version\":\"1.4\",\"body\":[{{\"type\":\"TextBlock\",\"text\":\"Test card\"}}]}}}}. "
@@ -1019,6 +1082,7 @@ def steps_text(args: argparse.Namespace) -> list[str]:
         f" 15. python tools/powerplatform.py connections --environment {environment} --apply     (open each address that it prints, choose your own account, tick the box, click Allow access; for a guest, put the tenant id in place of /common/ in the Azure Queues sign-in page's address)",
         f" 16. python tools/powerplatform.py flow --environment {environment} --storage-account {account} --apply",
         f" 17. python tools/powerplatform.py test-card --environment {environment} --storage-account {account} --to <your mail address> --apply     (needs {ROLE_MESSAGE_SENDER} on the queue while it runs; take it away after)",
+        f"     python tools/powerplatform.py test-close --environment {environment} --to <your mail address> --apply     (posts a card and replaces it ten seconds later: it proves the step that closes a card, with no queue and no role)",
         f" 18. python tools/powerplatform.py flow-runs --environment {environment}     (what the flow did with each card)",
         "",
         "After a new version of the solution: an import replaces the flow, and the replacement arrives switched off with no connection chosen. Pick the two connections again (they are kept, with no new sign-in), save, and turn it on, as in steps 12 and 13.",
@@ -1087,6 +1151,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     common(flow, True, False, True)
     flow.add_argument("--storage-account", required=True, help="the name of the storage account that holds the queue (the output of `az storage account list` in the project's resource group)")
     flow.add_argument("--queue", default=QUEUE_NAME, help="the queue that the cards are put on")
+    flow.add_argument("--posted-queue", default=POSTED_QUEUE_NAME, help="the queue that the flow writes to after it posted a card")
     flow_runs = commands.add_parser("flow-runs", help="read only: the last runs of the flow and, for a failed one, the actions that failed")
     common(flow_runs, True, False, False)
     flow_runs.add_argument("--last", type=int, default=5, help="how many runs (1 to 20)")
@@ -1095,6 +1160,9 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     test_card.add_argument("--storage-account", required=True, help="the name of the storage account that holds the queue")
     test_card.add_argument("--queue", default=QUEUE_NAME, help="the queue that the cards are put on")
     test_card.add_argument("--to", required=True, help="the mail address of the person whose chat with Workflows gets the card")
+    test_close = commands.add_parser("test-close", help="a dry run; with --apply, post a test card and replace it ten seconds later by a flow that is made, run once and deleted")
+    common(test_close, True, False, True)
+    test_close.add_argument("--to", required=True, help="the mail address of the person whose chat with Workflows gets the card")
     args = parser.parse_args(argv)
     hide = Hider()
     try:
@@ -1104,7 +1172,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
             raise Problem("a person who administers Power Platform runs this, never a pipeline: its output names environments and policies of the estate, and the deploy identity holds no right in Power Platform (AGENTS.md rules 18 and 24)")
         for field, pattern, text in (("subscription", GUID_RE, "a subscription id"), ("resource_group", RESOURCE_GROUP_RE, "a resource group name"), ("policy_name", POLICY_RE, "the name of an enterprise policy"),
                                      ("storage_account", STORAGE_ACCOUNT_RE, "a storage account name (3 to 24 lower case letters and digits)"), ("queue", QUEUE_RE, "a queue name (3 to 63 lower case letters, digits and hyphens)"),
-                                     ("to", MAIL_RE, "a mail address")):
+                                     ("posted_queue", QUEUE_RE, "a queue name (3 to 63 lower case letters, digits and hyphens)"), ("to", MAIL_RE, "a mail address")):
             value = getattr(args, field, None)
             if value is not None and not pattern.match(value):
                 raise Problem(f"--{field.replace('_', '-')} is {text}")
@@ -1127,6 +1195,8 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
             return command_flow_runs(args, client, out)
         if args.command == "test-card":
             return command_test_card(args, client, out, ask, clock)
+        if args.command == "test-close":
+            return command_test_close(args, client, out, ask, clock)
         if args.command in ("link", "unlink") and not (args.subscription and args.resource_group):
             raise Problem("--subscription and --resource-group name where the project's policy is (the variables ENV_SUBSCRIPTION_ID and ENV_RESOURCE_GROUP of the Hub)")
         if args.command == "managed":

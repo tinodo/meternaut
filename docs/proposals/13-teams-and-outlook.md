@@ -1,10 +1,10 @@
 # Teams and Outlook: a card in Teams, a letter in Outlook — a decision record
 
-**Status: deployed, and run on 2026-11-11: a test card and three real requests reached the owner's Teams chat.** The app puts each card on a private queue; a Power Automate flow, described in [proposal 19](19-teams-cards-through-power-automate.md), reads the queue and posts the card. The app cannot tell whether a card arrived (the flow's run history says: `tools/powerplatform.py flow-runs`). Microsoft facts below name their page and were read on 2026-11-11.
+**Status: deployed, and run on 2026-11-11: a test card and three real requests reached the owner's Teams chat.** The app puts each card on a private queue; a Power Automate flow, described in [proposal 19](19-teams-cards-through-power-automate.md), reads the queue and posts the card. For the card of a request the app learns which Teams message it is and replaces the card when the request ends; it cannot tell whether a person saw a card (the flow's run history says what the flow did: `tools/powerplatform.py flow-runs`). Microsoft facts below name their page and were read on 2026-11-11.
 
 ## What a person sees
 
-**In Teams** a card arrives in a chat with the person, posted by the Flow bot of Power Automate (the sender is the platform's, not "Meternaut"). The card is the one of [the card rules](../experience/04-messages-and-cards.md) without its boxes: the headline, the saving with its level and basis, three facts each with its source, one line each for the change, the undo and the risk, and one footer line (written by an AI, why you got this, whom to talk to). It carries the decision as buttons that are links: "Approve" and "Decline" (advice: "Worth acting on" and "Not worth it"), and always "Open the request", the link to the page. A button opens a small page of the function app that sends the answer, so **a change in Azure is made by a person, with that person's own rights, and never by Teams** ([proposal 19](19-teams-cards-through-power-automate.md)). A change that cannot be undone asks again on the card. When a switch holds the answers the card says so and has the link "See the request" only. A card takes no typed answer: it has no box, no `Action.Submit` and no `Action.Execute`, so nothing can be asked or taught in Teams.
+**In Teams** a card arrives in a chat with the person, posted by the Flow bot of Power Automate (the sender is the platform's, not "Meternaut"). The card is the one of [the card rules](../experience/04-messages-and-cards.md) without its boxes: the headline, the saving with its level and basis, three facts each with its source, one line each for the change, the undo and the risk, and one footer line (written by an AI, why you got this, whom to talk to). It carries the decision as buttons that are links: "Approve" and "Decline" (advice: "Worth acting on" and "Not worth it"), and always "Open the request", the link to the page. A button opens a small page of the function app that sends the answer, so **a change in Azure is made by a person, with that person's own rights, and never by Teams** ([proposal 19](19-teams-cards-through-power-automate.md)). A change that cannot be undone asks again on the card. When the request is decided or ends, the card is replaced by one that has no button. When a switch holds the answers the card says so and has the link "See the request" only. A card takes no typed answer: it has no box, no `Action.Submit` and no `Action.Execute`, so nothing can be asked or taught in Teams.
 
 **The first card.** A person who chose Teams and was never told gets one welcome card before the first request. It says that Meternaut writes in Teams, that a card cannot be answered, and where the page is.
 
@@ -17,7 +17,7 @@
 1. The app decides that a person who chose Teams is to be told, builds the card from the decision brief and checks it ([`cardcheck.py`](../../src/case-functions/cases/cardcheck.py)).
 2. It puts one message on the queue `teams-cards` in the storage account of the base: the REST call "Put Message" with a token of the app's managed identity, over the private endpoint. No key, no connection string. The app already holds the right to write to the queues of that account.
 3. A Power Automate cloud flow reads the queue through Power Platform's virtual network support, so the queue has no public endpoint, and posts the card with the Teams action "Post card in a chat or channel": poster Flow bot, post in "Chat with Flow bot", recipient the message's `to`.
-4. Nothing comes back. The app records that the queue took the message, not that anyone saw a card.
+4. After the post, for the card of a request, the flow writes the id of the Teams message to a second queue, `teams-posted`, which the app reads. When the request ends, the app puts an update on `teams-cards` and the flow replaces the card with one that has no button. The app records that the queue took the message, not that anyone saw a card.
 
 ## The message on the queue
 
@@ -30,12 +30,14 @@ One JSON text, UTF-8, not base64, at most 30,000 bytes. The queue's name is the 
 | `to` | The person's mail address, as the people list has it. Taken only from the people list, not from a resource name, a tag or any other text of the estate |
 | `title` | A short plain title, one line, at most 120 characters |
 | `card` | The Adaptive Card, schema 1.4 |
+| `request` | On the card of a request that waits: the id of its plan. The flow writes it back to `teams-posted` with the Teams message |
+| `op`, `message` | For an update: `update` and the id of the Teams message to replace; the card has no button |
 
 A card that does not fit in 30,000 bytes is replaced by a minimal card with the headline and the link; the JSON is never cut. The message lives 24 hours on the queue and then lapses. A text that is not an address on the people list is refused by the app before anything is put on the queue.
 
 ## What the app knows and what it does not
 
-The app knows whether the queue took the message. A refusal, a timeout or a server error is a failed try (the words of the record say what happened, without the token), and the letter still goes when the tries are used up. The app does not know whether the flow read the message, whether the Flow bot posted it, or whether the person saw it. **If the flow is off or fails, the person gets no card, and no letter follows a card that the queue took.** The page still lists every request. A receipt from the flow is not in this version; until there is one, delivery is best effort and the cards are never promised.
+The app knows whether the queue took the message. A refusal, a timeout or a server error is a failed try (the words of the record say what happened, without the token), and the letter still goes when the tries are used up. For the card of a request the app also learns which Teams message it is. It does not know whether the person saw it, and a flow that did not post the card says so only in its run history. **If the flow is off or fails, the person gets no card, and no letter follows a card that the queue took.** The page still lists every request. Delivery is best effort and the cards are never promised.
 
 ## No bot, and what that removes
 

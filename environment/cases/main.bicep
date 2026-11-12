@@ -214,6 +214,8 @@ var privateEndpointSubnetName = 'snet-pe'
 var controlQueueName = 'cases-control'
 // The queue of the Teams cards (docs/proposals/19-teams-cards-through-power-automate.md): the app puts one message in it for each card, and nothing in this template reads it.
 var cardsQueueName = 'teams-cards'
+// The queue that the flow writes to after it posted a card: the plan, the Teams message and the conversation, which the app keeps so that it can replace the card when the request ends.
+var postedQueueName = 'teams-posted'
 var deploymentContainerName = 'app-package-cases'
 
 // Flex: Flex Consumption, which scales to zero and bills per execution; the app uses snet-func, the subnet that the model side made for it. Basic: the B1 plan on snet-cases.
@@ -348,6 +350,14 @@ resource controlQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@20
 resource cardsQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
   parent: queueService
   name: cardsQueueName
+}
+
+// The queue that the flow writes to once it has posted a card. The app's trigger (the function cards-posted) reads it through the host storage connection, as it reads the control queue: the app holds
+// Storage Queue Data Contributor on the whole account for its host (below), so no role is added for it, and a message that fails five times goes to teams-posted-poison, a queue that the host makes
+// itself. The right to write to it is the right of the person whose connection the flow uses: that person gets Storage Queue Data Message Sender on this one queue by hand, as for the cards queue.
+resource postedQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: postedQueueName
 }
 
 // The History is the app's own telemetry: one line per step in the traces table. A year of it, for a few megabytes, costs cents.
@@ -530,6 +540,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'CASES_CONTROL_QUEUE_NAME', value: controlQueueName }
         // The queue of the Teams cards: the app sends one message for each card, with its own identity (Storage Queue Data Contributor on the account, below) and the queue endpoint of the AzureWebJobsStorage connection above.
         { name: 'TEAMS_CARDS_QUEUE', value: cardsQueueName }
+        // The queue that the flow writes to after a post: the trigger of the function cards-posted reads it through the AzureWebJobsStorage connection above, as %TEAMS_POSTED_QUEUE%.
+        { name: 'TEAMS_POSTED_QUEUE', value: postedQueueName }
         { name: 'SCOPE_SUBSCRIPTIONS', value: scopeSubscriptions }
         { name: 'SCOPE_ALL_SUBSCRIPTIONS', value: scopeAllSubscriptions ? 'true' : 'false' }
         { name: 'MODEL_DETECTIVE', value: modelDetective }
@@ -569,6 +581,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     webSubnet
     deploymentContainer
     controlQueue
+    postedQueue
   ]
 }
 

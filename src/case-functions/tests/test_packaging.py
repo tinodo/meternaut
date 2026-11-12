@@ -251,9 +251,9 @@ class WhatTheAppIs(unittest.TestCase):
                     with self.subTest(file=path.name, line=number):
                         self.assertNotRegex(line, r"(?i)\bclaims\b|\bchallenge\b|www-authenticate")
 
-    def test_the_six_functions_read_and_start_nothing_but_the_watch_the_drift_check_the_study_and_the_loop(self):
+    def test_the_seven_functions_read_and_start_nothing_but_the_watch_the_drift_check_the_study_the_loop_and_the_card_that_the_flow_posted(self):
         self.assertEqual(sorted(re.findall(r'function_name\(name="([a-z-]+)"\)', (APP_ROOT / "function_app.py").read_text(encoding="utf-8"))),
-                         ["cases-control", "console", "drift-daily", "runner-tick", "study-weekly", "watch-daily"])
+                         ["cards-posted", "cases-control", "console", "drift-daily", "runner-tick", "study-weekly", "watch-daily"])
 
 
 if __name__ == "__main__":

@@ -1,27 +1,26 @@
-"""The cards that Meternaut sends on its own: the card of a request that waits for a person, of a change that ran, and of a check that came after it. Each is one message on the queue that a
-flow of Power Automate reads (cases/teamsqueue.py); the flow posts it into the chat of the person.
+"""The cards that Meternaut sends on its own: of a request that waits for a person, of a change that ran, of a check that came after it, and the card that replaces one when its request ends. Each is
+one message on the queue that a flow of Power Automate reads (cases/teamsqueue.py): the flow posts it into the chat of the person, or replaces a card with it.
 
-It does for the people who chose Teams what mail.py and notify.py do for the letters, with the same checks, in the same order, and the same words for what came of each try. A person
-who chose e-mail (the default) gets no card, a person who chose the weekly summary gets none either, and a person who chose Teams gets the card first: the letter follows (notify.py) only
-when no card was sent in the first twenty minutes.
+It does for the people who chose Teams what mail.py and notify.py do for the letters, with the same checks in the same order and the same words for what came of each try. A person who chose e-mail
+(the default) or the weekly summary gets no card; a person who chose Teams gets the card first, and the letter follows (notify.py) only when no card was sent in the first twenty minutes.
 
-Before a card goes, in this order, and the first check that fails ends the try and is written as its outcome (a record of kind `approval-card`, `advice-card`, `notice-card`,
-`verified-card` or `first-contact-card` in the store of mail records, which is the one place that the letters and the cards both count in):
+Before a card goes, in this order, the first check that fails ends the try and is written as its outcome (a record of kind `approval-card`, `advice-card`, `notice-card`, `verified-card` or
+`first-contact-card`, in the store of mail records that the letters count in too):
 1. the person is on the list of people, has an address there, is named on the plan, and may answer it (the role approver; for advice, the owner too);
 2. held: the switch `messages` or `all` is pulled (a switch that cannot be read counts as pulled);
 3. held: the person paused messages (`SettingsRecord.paused_until` is in the future);
-3a. held: the person is inside their quiet hours (cases/quiet.py). The rounds look at the hours first and write nothing while they last, so that waiting uses up no try; the first round
-   after the hours sends what is still due, and the letter of the same request waits for twenty minutes after the hours ended (notify.py);
-4. held: the person's weekly budget is reached. Only the card of advice counts against it: an approval, a notice and a check are asked for or owed, as with the letters, and the weekly
-   budget does not hold them; advice is not urgent, and one card for each finding would be a flood;
-5. introduced: a person who was never told who writes (no `first-contact-card` and no `first_contact` letter was sent to them) gets the card that says so first, and the card of the request
-   goes only when that one was sent, or when its twelve tries are used up;
+3a. held: the person is inside their quiet hours (cases/quiet.py): nothing is written while they last, so that waiting uses up no try, and the letter waits for twenty minutes after them (notify.py);
+4. held: the person's weekly budget is reached. Only the card of advice counts against it: an approval, a notice and a check are asked for or owed, as with the letters;
+5. introduced: a person who was never told who writes gets the card that says so first, and the card of the request goes when that one was sent or its twelve tries are used up;
 6. failed: the card or the message could not be made, or the queue did not take it. The try is written, and the letter follows after the twenty minutes.
-A try that was held or failed is offered again after 15 minutes, at most 12 times. A card that was sent is never sent again for the same request, and a card is not sent for a request whose
-letter went already.
+A try that was held or failed is offered again after 15 minutes, at most 12 times. A card that was sent is never sent again for the same request, and none is sent for a request whose letter went.
 
-Delivery is not proof, and nothing comes back: `sent` means that the queue took the message. Whether the flow posted it and whether the person saw it, Meternaut cannot tell, which is why the
-letter is the fallback. What came of the try is the only thing that is written: no body, no name and no figure of the card is kept in the record, and its id is the id of the message.
+When the flow has posted the card of a request it writes the Teams message to the queue `teams-posted`, and record_posted keeps it (a record of kind `card-posted`, which no count of letters sees). When
+that request is decided, declined, expired or withdrawn, by whatever way, the next round puts the card that replaces it (cards.closed_card) on the queue for each posted message (a record of kind
+`card-closed`, tried again like a card that failed). No check above holds it back: it tells nobody anything new.
+
+`sent` means that the queue took the message; whether the person saw the card, Meternaut cannot tell, which is why the letter is the fallback. Of a try only its outcome is written: no body, no name and no
+figure of the card, and its id is the id of the message.
 """
 from __future__ import annotations
 
@@ -47,8 +46,9 @@ RETRY_MINUTES = 15  # a card that was not sent is offered again after this long
 MAX_TRIES = 12  # and given up after this many tries
 RESULT_DAYS = 3  # the cards about a change are offered for this long after it
 APPROVAL, ADVICE, NOTICE, VERIFIED, FIRST_CONTACT = "approval-card", "advice-card", "notice-card", "verified-card", "first-contact-card"
+POSTED, CLOSED = "card-posted", "card-closed"
 FREE_KINDS = (APPROVAL, NOTICE, VERIFIED, FIRST_CONTACT)
-SUMMARY_OF = {APPROVAL: "change", ADVICE: "advice", NOTICE: "result", VERIFIED: "result", FIRST_CONTACT: "first_contact"}
+SUMMARY_OF = {APPROVAL: "change", ADVICE: "advice", NOTICE: "result", VERIFIED: "result", FIRST_CONTACT: "first_contact", CLOSED: "closed"}
 LETTER_OF = {APPROVAL: "approval", NOTICE: "notice", VERIFIED: "verified"}
 SWITCHES = ("messages", "all")
 MAX_DETAIL = 240
@@ -108,6 +108,7 @@ class Offers:
                     if plan is not None:
                         for oid in plan.approvers:
                             tries += self._safely("a card about a change", lambda oid=oid, plan=plan, action=action, case=case: self._change(oid, plan, action, case))
+            tries += self._close(now)
         except Exception as error:  # noqa: BLE001 (the timer must go on)
             LOG.error(self.redact(f"the cards could not be offered: {type(error).__name__}"))
         return tries
@@ -159,9 +160,8 @@ class Offers:
         return None
 
     def _introduce(self, person: Person, now: dt.datetime) -> tuple[int, bool]:
-        """The card that says who writes, before the first card of a request goes to a person who chose Teams. Returns (the tries made, whether the card of the request may go now). It may
-        when the person was told already (by this card or by the letter of the same name), and when the tries of this card are used up (the person is told by the card of the request
-        itself, which carries the label of an AI, its reason and its footer); it may not go before the next try of this card when one was made less than fifteen minutes ago."""
+        """The card that says who writes, before the first card of a request goes to a person who chose Teams. Returns (the tries made, whether the card of the request may go now): it may when the person
+        was told already (by this card or by the letter) or when the tries of this card are used up (the card of the request tells them itself), and not before the next try."""
         told = any(m.status == "sent" and m.kind in (FIRST_CONTACT, "first_contact") for m in self.store.mails_since(person.oid, EPOCH))
         if told or len(self._tries(person, FIRST_CONTACT, None)) >= MAX_TRIES:
             return 0, True
@@ -178,8 +178,8 @@ class Offers:
         return CardContext(page_url=cards.page_url(self.base_url, plan.plan_id), contacts=contacts_of(self.people, person.oid), links=self._links(person, plan, brief) if brief is not None else {})
 
     def _links(self, person: Person, plan: PlanRecord, brief: Brief) -> dict[str, str]:
-        """The addresses of the answer buttons of this brief's card (cards.answers_of), each with a link token made now for this person that lives as long as the request is open. If a token cannot be made
-        the card has the link to the page only: the person can still answer there."""
+        """The addresses of the answer buttons of this brief's card (cards.answers_of), each with a link token made now for this person that lives as long as the request is open. If a token cannot be
+        made the card has the link to the page only."""
         wanted = cards.answers_of(brief)
         if not wanted or not plan.code:
             return {}
@@ -252,27 +252,50 @@ class Offers:
             total += 1
         return total
 
-    def _message(self, person: Person, kind: str, delivery_id: str, make_card: Callable[[], dict], make_short: Callable[[], dict] | None) -> tuple[str | None, str]:
-        """(the text of the message, a note for the record), or (None, why not). The address is the one that the list of people holds for this person, and nothing else; a card
-        that is too big for its message is replaced by the short one, and one that cannot be made at all is a failed try."""
+    def _close(self, now: dt.datetime) -> int:
+        """Replaces the card of each request that is not open any more, once for each message that the flow posted for it (cards.closed_card, with no button). Returns how many tries it made."""
+        tries = 0
+        for person in self.people.persons:
+            mails = self.store.mails_since(person.oid, EPOCH)
+            done = {m.plan_id for m in mails if m.kind == CLOSED and m.status == "sent"}
+            for plan_id in {m.plan_id for m in mails if m.kind == POSTED} - done:
+                tries += self._safely("a card that closes", lambda person=person, plan_id=plan_id: self._replace(person, plan_id, now))
+        return tries
+
+    def _replace(self, person: Person, plan_id: str, now: dt.datetime) -> int:
+        plan = self.store.plan_get(plan_id)
+        if plan is None or plan.state == "open" or not self._due(person, CLOSED, plan_id):
+            return 0
+        brief = build_brief(self.store.case_get(plan.case_id), plan, None, self.store.decisions_of_plan(plan_id), now=now)
+        posted = [m for m in self.store.mails_since(person.oid, plan.created_at) if m.kind == POSTED and m.plan_id == plan_id]
+        for m in posted:
+            self._deliver(person, CLOSED, plan_id, now, lambda: cards.closed_card(brief, self._context(person, plan)), update=m.detail.split()[0])
+        return len(posted)
+
+    def _message(self, person: Person, kind: str, delivery_id: str, make_card: Callable[[], dict], make_short: Callable[[], dict] | None, **extra: object) -> tuple[str | None, str]:
+        """(the text of the message, a note for the record), or (None, why not). The address is the one that the list of people holds, and nothing else; a card that is too big for its message is
+        replaced by the short one, and one that cannot be made is a failed try. `extra` is what teamsqueue.render takes besides (`request`, `update`)."""
         listed = self.people.by_oid(person.oid)
         if listed is None or not listed.mail or listed.mail.lower() not in self.people.allowed_addresses():
             return None, "This person has no address on the list of people, so no card was sent."
         title = cards.SUMMARIES[SUMMARY_OF[kind]]
         try:
             try:
-                return teamsqueue.render(delivery_id, listed.mail, title, make_card()), ""
+                return teamsqueue.render(delivery_id, listed.mail, title, make_card(), **extra), ""
             except (cards.CardTooLarge, teamsqueue.TooBig):
                 if make_short is None:
                     raise
-                return teamsqueue.render(delivery_id, listed.mail, title, make_short()), SHORT_SENT
+                return teamsqueue.render(delivery_id, listed.mail, title, make_short(), **extra), SHORT_SENT
         except (CardError, teamsqueue.MessageError) as error:
             return None, f"The card could not be made: {_short(self.redact(str(error)))}"
 
-    def _deliver(self, person: Person, kind: str, plan_id: str | None, now: dt.datetime, make_card: Callable[[], dict], make_short: Callable[[], dict] | None = None) -> str:
-        """Makes the message, puts it on the queue and writes what came of it. Returns the status that was written, `sent` or `failed`."""
+    def _deliver(self, person: Person, kind: str, plan_id: str | None, now: dt.datetime, make_card: Callable[[], dict], make_short: Callable[[], dict] | None = None,
+                 update: str | None = None) -> str:
+        """Makes the message, puts it on the queue and writes what came of it. Returns `sent` or `failed`. The card of a request that waits carries the request, so that the flow can say which message it
+        posted; `update` (a Teams message id) makes it a card that replaces that message."""
         delivery_id = self.ids()
-        text, note = self._message(person, kind, delivery_id, make_card, make_short)
+        extra = {"request": plan_id} if kind in (APPROVAL, ADVICE) else {"update": update} if update else {}
+        text, note = self._message(person, kind, delivery_id, make_card, make_short, **extra)
         if text is None:
             self._record(person, kind, plan_id, now, "failed", note, delivery_id)
             return "failed"
@@ -300,3 +323,20 @@ def cards_hook(settings: LoopSettings, store: Store, people: People, token: Call
     client = Client(teamsqueue.queue_calls(settings.store_account, settings.cards_queue), redact, transport=transport, sleep=sleep, monotonic=monotonic)
     queue = teamsqueue.CardQueue(client, token, settings.store_account, settings.cards_queue, redact, clock)
     return Offers(store, people, queue, settings.base_url, clock, redact).run
+
+
+def record_posted(text: str, store: Store, people: People, clock: Callable[[], dt.datetime]) -> str:
+    """The flow says that it posted a card (a message of the queue teams-posted): keeps which Teams message it is, for the person and the request that the message names, so that the card can be
+    replaced when the request ends. Returns what it did, in words. A message that is not what the flow writes, or names no approver of a request, is refused. A store that cannot be written raises, so
+    that the host tries again (five times in all)."""
+    try:
+        request, to, message, conversation = teamsqueue.read_posted(text)
+    except teamsqueue.MessageError as error:
+        return f"refused: {error}"
+    plan = store.plan_get(request)
+    person = next((p for p in people.persons if (p.mail or "").lower() == to.lower()), None)
+    if plan is None or person is None or person.oid.lower() not in {a.lower() for a in plan.approvers}:
+        return "refused: no request of that person"
+    store.mail_put(MailRecord(mail_id=uuid.uuid4().hex[:12], oid=person.oid, kind=POSTED, subject="A card was posted", sent_at=stamp(clock()), status="posted", plan_id=request,
+                              detail=f"{message} {conversation}"))
+    return "kept"

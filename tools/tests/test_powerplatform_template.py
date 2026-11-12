@@ -169,6 +169,20 @@ class TheQueue(unittest.TestCase):
         self.assertIn("{ name: 'TEAMS_CARDS_QUEUE', value: cardsQueueName }", CASES_CODE)
         self.assertEqual(CASES_CODE.count("TEAMS_CARDS_QUEUE"), 1)
 
+    def test_the_cases_template_makes_the_queue_that_the_flow_writes_after_a_post_and_the_app_reads_it_through_the_host_connection(self):
+        found = resources(CASES)
+        self.assertEqual(found["postedQueue"][0], "Microsoft.Storage/storageAccounts/queueServices/queues")
+        self.assertIn("var postedQueueName = 'teams-posted'", CASES_CODE)
+        self.assertIn("parent: queueService", found["postedQueue"][1])
+        self.assertIn("name: postedQueueName", found["postedQueue"][1])
+        self.assertNotIn("properties", found["postedQueue"][1], "a plain queue")
+        self.assertIn("{ name: 'TEAMS_POSTED_QUEUE', value: postedQueueName }", CASES_CODE)
+        self.assertEqual(CASES_CODE.count("TEAMS_POSTED_QUEUE"), 1)
+        self.assertIn("postedQueue", " ".join(re.findall(r"(?m)^  dependsOn: \[\n(.*?)^  \]", CASES, re.S | re.M)), "the trigger reads it, so the app starts after it exists, as for the control queue")
+        for name, (kind, role_body) in found.items():
+            if kind == "Microsoft.Authorization/roleAssignments":
+                self.assertNotIn("postedQueue", role_body, f"{name}: the app reads it with the role that it holds on the account, and the flow's person is given the right to write by hand")
+
     def test_the_apps_identity_can_send_to_it_through_the_role_that_it_holds_on_the_account_and_no_role_was_added_for_the_queue(self):
         found = resources(CASES)
         self.assertIn("Microsoft.Authorization/roleAssignments", found["functionUsesQueues"][0])

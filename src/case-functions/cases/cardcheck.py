@@ -1,15 +1,14 @@
-"""A structural check of an Adaptive Card of schema 1.4, with the standard library (cards.py makes every card that Meternaut puts on the queue, and this checks it).
+"""A structural check of an Adaptive Card of schema 1.4, with the standard library (cards.py makes the cards, and this checks them).
 
 The card tooling of the repository (tools/render-cards) needs node packages that the build machines cannot install, so a card is checked here against what the public schema
 (https://adaptivecards.microsoft.com/schemas/adaptive-card.json, read on 2026-11-08) says about the elements and actions that cards.py uses, and against the rules of this project that a machine can check.
-The check is narrower than the schema on purpose: an element or action that cards.py does not use is an error (no Action.Submit, no Action.Execute, no input, image or table: the action of Power Automate
-that posts the card takes no answer, so a button opens a page of the app or shows and hides a part of the card), and so is a property that the schema does not list (a renderer would ignore a typo and nobody
-would see it). A link is the page of one request, a button that answers it (cardlinks.py) or the start page of the web page, and nothing else. A hidden part must be shown by a button
-(Action.ToggleVisibility says for each target whether to show or hide it). The version is 1.4: Microsoft's tracker reports that the posting actions of Power Automate render only up to 1.4
-(https://github.com/microsoft/AdaptiveCards/issues/8965, read on 2026-11-11), the Teams reference says 1.5, and a 1.4 card renders in both. Action.ToggleVisibility and isVisible are from 1.2; the style
-heading of a TextBlock (1.5) is not used.
+The check is narrower than the schema on purpose: an element or action that cards.py does not use is an error (no Action.Submit, no Action.Execute, no input, image or table: the action that posts the
+card takes no answer, so a button opens a page of the app or shows and hides a part of the card), and so is a property that the schema does not list (a renderer would ignore a typo). A link is the page of
+one request, a button that answers it (cardlinks.py) or the start page of the web page, and nothing else. A hidden part must be shown by a button. The version is 1.4: Microsoft's tracker reports that
+the posting actions of Power Automate render only up to 1.4 (https://github.com/microsoft/AdaptiveCards/issues/8965, read on 2026-11-11), the Teams reference says 1.5, and a 1.4 card renders in both
+(Action.ToggleVisibility and isVisible are from 1.2; the style heading of a TextBlock, 1.5, is not used).
 
-`check(card)` returns the problems as plain lines with the path of each; an empty list means that the card passes. cards.py sends nothing when a problem is found.
+`check(card)` returns the problems as plain lines with the path of each; an empty list means that the card passes.
 """
 from __future__ import annotations
 
@@ -63,11 +62,11 @@ def _kind(value: object) -> str:
 class _Check:
     def __init__(self) -> None:
         self.problems: list[str] = []
-        self.ids: set[str] = set()  # the ids of elements and actions: one name each on the whole card
+        self.ids: set[str] = set()
         self.element_ids: set[str] = set()
-        self.pages: set[str] = set()  # the pages of a request (or the start page) that links name
+        self.pages: set[str] = set()
         self.answers: list[tuple[str, str]] = []  # (the answer, the page) of every link that answers
-        self.targets: list[tuple[str, str, bool]] = []  # (where, element id, whether the button shows it) of every target of a toggle
+        self.targets: list[tuple[str, str, bool]] = []  # (where, element id, whether the button shows it)
         self.hidden: list[tuple[str, str | None]] = []  # (where, id) of every element that starts hidden
         self.actions_seen = 0
 
@@ -201,8 +200,7 @@ class _Check:
             return
         kind = node.get("type")
         if kind not in ACTIONS:
-            self.add(path, f"the action type {kind!r} is not one that cards use (no Action.Submit and no Action.Execute: a card that a flow posts takes no answer, so a button opens a page of "
-                           "the app or shows and hides a part of the card)")
+            self.add(path, f"the action type {kind!r} is not one that cards use (a card that a flow posts takes no answer: no Action.Submit, no Action.Execute)")
             return
         self.actions_seen += 1
         spec = ACTIONS[kind]
@@ -231,7 +229,7 @@ class _Check:
         if kind == "Action.OpenUrl":
             self.link(f"{path}.url", node.get("url"))
         if kind == "Action.ToggleVisibility" and not str(node.get("tooltip", "")).strip():
-            self.add(path, "a button that shows or hides a part of the card has a tooltip: it is what a screen reader says")
+            self.add(path, "needs a tooltip: a screen reader says it")
 
     def link(self, path: str, url: object) -> None:
         """A link is the page of a request, the start page of the web page, or a button that answers a request (cardlinks.py): nothing else."""
@@ -245,7 +243,7 @@ class _Check:
         elif HTTPS.fullmatch(url):
             self.pages.add(url)
         else:
-            self.add(path, "must be an https address: the page of a request, or the address of a button that answers it (the page, the answer, the code and a link token)")
+            self.add(path, "must be an https address: the page of a request or one of its answer buttons")
 
     def targets_of(self, path: str, value: object) -> None:
         if not isinstance(value, list) or not value:
@@ -254,7 +252,7 @@ class _Check:
         for index, item in enumerate(value):
             where = f"{path}[{index}]"
             if not isinstance(item, dict) or set(item) != {"elementId", "isVisible"} or not isinstance(item["elementId"], str) or not isinstance(item["isVisible"], bool):
-                self.add(where, "a target is the id of an element and whether to show it (true) or hide it (false), and nothing else: a toggle could leave the wrong part showing")
+                self.add(where, "a target is an element id and true (show) or false (hide), and nothing else")
                 continue
             self.targets.append((where, item["elementId"], item["isVisible"]))
 
@@ -263,12 +261,12 @@ class _Check:
         shown = {element for _, element, visible in self.targets if visible}
         for where, element, _ in self.targets:
             if element not in self.element_ids:
-                self.add(where, f"names {element!r}, which is not an element of the card (an action cannot be shown or hidden here)")
+                self.add(where, f"names {element!r}, which is not an element of the card")
         for where, element in self.hidden:
             if element is None:
                 self.add(where, "starts hidden and has no id, so no button can show it")
             elif element not in shown:
-                self.add(where, f"starts hidden, and no button of the card shows {element!r}: a part that nobody can open has no place on a card")
+                self.add(where, f"starts hidden, and no button shows {element!r}")
 
     def root(self, card: object) -> None:
         if not isinstance(card, dict):
@@ -298,10 +296,10 @@ class _Check:
         if "actions" in card:
             self.actions("card.actions", card["actions"])
         if self.actions_seen > MAX_ACTIONS:
-            self.add("card", f"has {self.actions_seen} actions, and a card has at most {MAX_ACTIONS}: the answers, the page of its request and the two buttons of the question")
+            self.add("card", f"has {self.actions_seen} actions, and a card has at most {MAX_ACTIONS}")
         self.toggles()
         if len(self.pages) > 1:
-            self.add("card", f"carries {len(self.pages)} different pages, and a card is about one request: the buttons that answer and the link to its page are all of that one page")
+            self.add("card", f"carries {len(self.pages)} different pages, and a card is about one request")
         seen: set[str] = set()
         for verb, _ in self.answers:
             if verb in seen:

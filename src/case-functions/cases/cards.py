@@ -1,21 +1,19 @@
 """The Teams card of a decision brief: an Adaptive Card of schema 1.4, as a pure function of the brief (brief.py) and what the card needs besides it.
 
-The page, the letter and the card are renders of the same brief (AGENTS.md rule 34). A card is posted into the chat of a person by a flow of Power Automate that reads it from a private
-queue (teamsqueue.py). It holds what a person needs to decide in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind as one line of
-words, what it is worth (the figure a year and a month, its level and its basis, and once that money is in US dollars: the words of the pages, cases/stake.py), the facts, what changes, whether it
-can be undone, what could go wrong, whose resource it is, the buttons, and ONE footer line (that an AI wrote it and which models, why this person got it, who is responsible for Meternaut). Nothing
-else: no reasoning box, no counters, no banner.
+The page, the letter and the card are renders of the same brief (AGENTS.md rule 34). A flow of Power Automate posts the card into the chat of a person (teamsqueue.py). It holds what a person needs to
+decide in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind in one line, what it is worth (the words of the pages, cases/stake.py), the
+facts, what changes, whether it can be undone, what could go wrong, whose resource it is, the buttons, and ONE footer line (that an AI wrote it and which models, why this person got it, who is
+responsible for Meternaut). No reasoning box, no counters, no banner.
 
-The buttons. The card carries the decision. The action that posts it cannot take an answer back, so each answer is an Action.OpenUrl to a page of the function app that sends it (cardlinks.py):
-"Approve", "Confirm" (the first of two people), "Decline", and for advice "Worth acting on" and "Not worth it". A change that cannot be undone asks on the card: "Approve" only shows "This cannot be
-undone: ..." with "No, go back" and "Yes, delete it", and only "Yes" is a link (docs/proposals/19-teams-cards-through-power-automate.md says that this toggle is not proven for the Flow bot).
-A card never carries an Azure token. A card whose links could not be made, or of a request that a switch holds, has the link to the page only ("Review and decide", "See the request").
+The card carries the decision. The action that posts it cannot take an answer back, so each answer is an Action.OpenUrl to a page of the function app that sends it (cardlinks.py): "Approve", "Confirm" (the
+first of two people), "Decline", and for advice "Worth acting on" and "Not worth it". A change that cannot be undone asks on the card: "Approve" shows "This cannot be undone: ..." with "No, go back" and
+"Yes, delete it", and only "Yes" is a link (proposal 19 says that this toggle is not proven for the Flow bot). A card never carries an Azure token. A card whose links could not be made, or of a request that
+a switch holds, has the link to the page only ("Review and decide", "See the request"). When the request ends, closed_card (no button) replaces the card.
 
 Text that did not come from code (names, tag values, what a model wrote) has been through brief.plain and is escaped here for the Markdown that a TextBlock renders, so that it can neither start a link, a
 list or a bold run nor hide what the card says. No text of the estate is ever put in a link.
 
-Every card is checked by cardcheck.check before it is handed on, and a card that does not pass is not made. A card that is too big for its message is replaced by minimal_card: the
-headline, the link and the footer.
+Every card is checked by cardcheck.check, and one that does not pass is not made. A card that is too big for its message is replaced by minimal_card: the headline, the link and the footer.
 """
 from __future__ import annotations
 
@@ -24,15 +22,15 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, plain
+from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
 from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
 MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
-KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello"}
+KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello", "closed": "Closed"}
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
-             "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you"}
+             "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you", "closed": "[Meternaut] A request was closed"}
 PAGE_BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # What a TextBlock reads as Markdown (the subset that Teams shows), a < that could open a mention or a tag, and the characters that start a list at the start of a text.
@@ -55,8 +53,8 @@ class CardTooLarge(CardError):
 
 @dataclass(frozen=True)
 class CardContext:
-    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, who is responsible for Meternaut (each as plain text with the
-    address; the card names the first), and the addresses of its answer buttons by answer (`links`, from cardlinks.answer_url). Without them a card has the link to the page only."""
+    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, who is responsible for Meternaut (as plain text with the address; the card
+    names the first) and the addresses of its answer buttons by answer (`links`, from cardlinks.answer_url). Without buttons a card has the link to the page only."""
 
     page_url: str
     why: str = WHY_APPROVER
@@ -104,9 +102,8 @@ def _header(kind: str) -> dict:
 
 
 def _stake(brief: Brief) -> dict:
-    """What is at stake, as a tile in the words of the pages (cases/stake.py, which uses the code of the pages): the figure a year in large type, its label and the month, its basis or why
-    there is none, and, where a figure is shown, the one line that says what the money is in (AGENTS.md rule 13 (c) and 36). How long the request has waited and what waiting costs are on the
-    page and not on the card: neither helps a person decide, and the second one pushes."""
+    """What is at stake, as a tile in the words of the pages (cases/stake.py): the figure a year in large type, its label and the month, its basis or why there is none, and, where a figure is shown, the
+    one line that says what the money is in (AGENTS.md rule 13 (c) and 36). How long the request has waited and what waiting costs are on the page and not on the card: neither helps a person decide."""
     stake = stake_of(brief)
     label = f"{md(stake.label, 80)}. {md(stake.month, 40)} a month." if stake.month else f"{md(stake.label, 80)}."
     items = [_block("saving-word", label, weight="Bolder"), _block("price-basis", md(stake.note, 300), isSubtle=True)]
@@ -200,7 +197,7 @@ def _link_parts(brief: Brief, ctx: CardContext) -> list[dict]:
 
 def answers_of(brief: Brief) -> tuple[tuple[str, bool], ...]:
     """The answer buttons of this brief as (answer, whether the card asks twice first): "approve" (the first of two people: "confirm") and "decline", for a request that nothing holds and that this
-    person may answer; any other request has none. A change that cannot be undone asks twice: its "approve" opens the question and the link is on the "Yes"."""
+    person may answer. A change that cannot be undone asks twice: its "approve" opens the question and the link is on the "Yes"."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or brief.held:
         return ()
     first = "confirm" if "confirm" in brief.answers else "approve" if "approve" in brief.answers else ""
@@ -220,7 +217,7 @@ def _toggle(id_: str, title: str, tooltip: str, targets: Sequence[tuple[str, boo
 
 
 def _sure(brief: Brief, yes_url: str) -> dict:
-    """The question before a change that cannot be undone, hidden until "Approve" is pressed: what is lost and where, and two buttons; the safe "No, go back" comes first."""
+    """The question before a change that cannot be undone, hidden until "Approve" is pressed: what is lost and where, and two buttons, the safe "No, go back" first."""
     where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + (f" in resource group {md(brief.where.group, 90)}" if brief.where.group else "")
     return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
         _block("sure-text", f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}", weight="Bolder"),
@@ -282,7 +279,7 @@ def _card(brief: Brief, ctx: CardContext, kind: str, body: list[dict], what: str
 # -- the cards -----------------------------------------------------------------------------------------------------------------------------------
 
 def decision_card(brief: Brief, ctx: CardContext) -> dict:
-    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice that changes nothing (kind advice), with the answer buttons when the context has their links (answers_of) and the link to the page."""
+    """The card of a request that waits for an answer: a change that a person may approve (kind change) or advice (kind advice), with the answer buttons when the context has their links (answers_of), else the link to the page."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or not brief.answers:
         raise CardError("only a request that is open and that this person may answer has a decision card")
     _check_context(ctx, brief)
@@ -308,6 +305,16 @@ def result_card(brief: Brief, ctx: CardContext) -> dict:
         body += [_stake(brief), _undo(brief)]
     body.append(_page_set("See the request", ctx))
     return _card(brief, ctx, "result", body, "What became of a request.")
+
+
+def closed_card(brief: Brief, ctx: CardContext) -> dict:
+    """The card that takes the place of one that cannot be answered any more, because the request was decided, declined, or has ended: what became of it in one line, and no button."""
+    _check_context(ctx, brief)
+    if brief.state == "open":
+        raise CardError("only a request that is not open has a closing card")
+    outcome, moment = brief.outcome, parse_time(brief.outcome.at)
+    said = "Expired." if outcome.state == "expired" else f"Decided: {md(outcome.title, 40)} by {md(outcome.by, 80)}" + (f", {moment.day} {moment:%b %H:%M} UTC." if moment else ".")
+    return _card(brief, ctx, "closed", [_block("closed", f"{said} Nothing more to do.", weight="Bolder")], f"{said} Nothing more to do.")
 
 
 def card_for(brief: Brief, ctx: CardContext) -> dict:

@@ -12,7 +12,7 @@
   packer and its test, tools/powerplatform-pack.py, fail the build if either comes back).
 
   The publisher's prefix is mtnaut, not the project's name: a customization prefix is 2 to 8 characters
-  (Learn, Customize table definitions), and the name of the project has nine. The flow's two environment
+  (Learn, Customize table definitions), and the name of the project has nine. The flow's three environment
   variables and two connection references carry it.
 -->
 <ImportExportXml version="9.2.24045.1" SolutionPackageVersion="9.2" languagecode="1033" generatedBy="CrmLive" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -22,9 +22,9 @@
       <LocalizedName description="Meternaut cards" languagecode="1033" />
     </LocalizedNames>
     <Descriptions>
-      <Description description="Reads the Storage queue of Teams cards through Power Platform virtual network support and posts each card to a person in Microsoft Teams as the Flow bot." languagecode="1033" />
+      <Description description="Reads the Storage queue of Teams cards through Power Platform virtual network support, posts each card to a person in Microsoft Teams as the Flow bot, tells the app which Teams message it is, and replaces it when the app says that its request ended." languagecode="1033" />
     </Descriptions>
-    <Version>1.0.0.0</Version>
+    <Version>1.1.0.0</Version>
     <Managed>0</Managed>
     <Publisher>
       <UniqueName>meternaut</UniqueName>

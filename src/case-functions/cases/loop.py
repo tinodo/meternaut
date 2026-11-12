@@ -26,8 +26,7 @@ LETTER_DAYS = 3  # the letters about a change are offered again for this long af
 
 
 def _offer_cards(extras: wiring.Extras, redact: Callable[[str], str]) -> None:
-    """Offers the Teams cards that are due, before the letters: a person who chose Teams gets the card first (cases/offers.py), and the letter follows only when no card was sent in the
-    first twenty minutes (cases/notify.py). A card that fails never undoes a change and never stops the round."""
+    """Offers the Teams cards that are due, before the letters (a person who chose Teams gets the card first: cases/offers.py). A card that fails never undoes a change and never stops the round."""
     try:
         extras.on_cards()
     except Exception as error:  # noqa: BLE001 (the timer must go on)
@@ -36,8 +35,7 @@ def _offer_cards(extras: wiring.Extras, redact: Callable[[str], str]) -> None:
 
 def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Callable[[str], str]) -> None:
     """Offers the letters about every open plan and about the changes of the last days (a result that is not known too: its hook holds the letter until the result has stayed so for a while).
-    A hook sends a letter only when it is due, so a letter that was sent
-    is never sent again and one that was held or failed is tried again later. A letter that fails never undoes a change and never stops the round."""
+    A hook sends a letter only when it is due, so a letter that was sent is never sent again and one that was held or failed is tried again later. A letter that fails never stops the round."""
     try:
         for plan in extras.store.plans_open():
             case = extras.store.case_get(plan.case_id) if plan.state == "open" else None
@@ -88,3 +86,16 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
     except Exception as error:  # noqa: BLE001 (the timer must go on)
         LOG.error(redact(f"the tick failed: {type(error).__name__}: {error}"))
         return None
+
+
+def card_posted(message, env: Mapping[str, str] | None = None, *, clock: Callable[[], dt.datetime] = utc_now) -> str:
+    """What the trigger of the queue teams-posted calls: the flow says that it posted a card, and the app keeps which message it is (offers.record_posted). A store that cannot be written raises, so that
+    the host tries again; a wrong message is refused and consumed."""
+    from .offers import record_posted
+    env = os.environ if env is None else env
+    extras = wiring.build_extras(env, Identity(env).token, Redactor(), transport=default_transport, sleep=time.sleep, monotonic=time.monotonic, clock=clock)
+    if extras is None:
+        return "the loop is off"
+    result = record_posted(message.get_body().decode("utf-8", "replace"), extras.store, extras.people, clock)
+    LOG.info("a card that the flow posted: %s", result)
+    return result

@@ -50,6 +50,12 @@ def runner_tick(timer: func.TimerRequest) -> None:
     loop.tick()
 
 
+@app.function_name(name="cards-posted")
+@app.queue_trigger(arg_name="msg", queue_name="%TEAMS_POSTED_QUEUE%", connection=HOST_STORAGE_CONNECTION)
+def cards_posted(msg: func.QueueMessage) -> None:
+    loop.card_posted(msg)
+
+
 # Every page of the console. The platform's sign-in stands in front of it (anonymous here means "no function key": a key would be a secret), and the
 # app refuses every request unless that sign-in is on.
 @app.function_name(name="console")

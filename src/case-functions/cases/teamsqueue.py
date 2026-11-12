@@ -1,24 +1,21 @@
-"""A Teams card as one message on a private Storage queue: what is written, how it must fit and how it is put there.
+"""A Teams card as one message on a private Storage queue, and the message that comes back: what is written, how it must fit and how it is put there.
 
-Meternaut has no bot in Teams: no Azure Bot resource, no Teams app, no app registration, no Microsoft Graph permission and no endpoint that Teams calls. A card reaches a person like this.
-Meternaut puts one message on the queue `teams-cards` (the setting TEAMS_CARDS_QUEUE) of the storage account of the base, with the app's managed identity and no key: the app already holds
-Storage Queue Data Contributor on the account, and the account takes traffic only through its private endpoints. A flow of Power Automate reads the queue through the virtual network support
-of the Power Platform and posts the card with the action "Post card in a chat or channel" of the Teams connector, as the Flow bot, in the chat of the person that the message names
-(docs/proposals/13-teams-and-outlook.md has the whole path and says what is proved and what is not).
+Meternaut has no bot in Teams: no Azure Bot resource, no Teams app, no app registration, no Graph permission and no endpoint that Teams calls. It puts one message on the queue `teams-cards`
+(TEAMS_CARDS_QUEUE) of the storage account of the base, with the app's managed identity and no key (the app holds Storage Queue Data Contributor on the account, which takes traffic only through its
+private endpoints). A flow of Power Automate reads the queue and posts the card as the Flow bot in the chat of the person that the message names (docs/proposals/19-teams-cards-through-power-automate.md
+says what is proved and what is not).
 
 The message is one JSON text in UTF-8, not base64, and at most MAX_BYTES bytes:
 
-    {"v": 1, "id": "<delivery id>", "to": "<mail address of the person>", "title": "<short plain title>", "card": {<Adaptive Card 1.4>}}
+    {"v": 1, "id": "<delivery id>", "to": "<mail address>", "title": "<short plain title>", "card": {<Adaptive Card 1.4>}, "request": "<plan id>"}
 
-`id` is the id of the record that Meternaut writes about the try (cases/offers.py), so that a run of the flow and the record can be put side by side. `to` is the address that the list of people
-holds for the person, and never a text of the estate. `title` is the fixed words of a notification (cards.SUMMARIES), with no resource name and no amount. `card` has the page of its request as a
-link and, for a request that this person may answer, its answer buttons as links to pages of the function app (cases/cardlinks.py), and nothing to fill in: the action that posts it takes no typed
-answer, and nothing comes back from a tap. A card that does not fit is not cut (cut JSON is not a card): offers.py puts cards.minimal_card in its place, which holds the headline, the link and the
-footer.
+`id` is the id of the record of the try (offers.py), `to` the address that the list of people holds, `title` the fixed words of a notification (cards.SUMMARIES). `request` is on the card of a request that
+waits: after the post the flow writes it, with the id of the Teams message and of the conversation, to the queue `teams-posted` (read_posted), and the app keeps them (offers.record_posted). When the request
+ends the app puts `{"v": 1, "op": "update", "id", "to", "title", "card", "message"}` on the queue, and the flow replaces that message with the card, which has no button. A card that does
+not fit is not cut: offers.py puts cards.minimal_card in its place.
 
-Delivery is best effort and there is no receipt. `sent` means that the queue took the message. It does not mean that the flow read it, that the Flow bot posted it, or that the person saw it:
-nothing comes back to Meternaut, and the letter follows after the time that cases/notify.py says when no card was sent. A call that failed on the network or with a 5xx answer may have
-been carried out, so it is not made again here (only the answers that the service gives before it takes a message are: 429 and 503), and the record says to look at the queue first.
+Delivery is best effort. `sent` means that the queue took the message, not that the flow posted it: the message on `teams-posted` says that, and the letter follows (cases/notify.py) when no card was sent.
+A call that failed on the network or with a 5xx answer may have been carried out, so it is not made again here (only 429 and 503, which the service gives before it takes a message).
 """
 from __future__ import annotations
 
@@ -47,7 +44,8 @@ MAX_TITLE = 120
 RETRY_ONLY = frozenset({429, 503})  # the answers that the Queue service gives before it takes a message
 MAX_DETAIL = 240
 ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-SENT = "The queue took the message. That is not delivery: the flow posts the card, and nothing tells Meternaut whether it arrived."
+TEAMS_ID = re.compile(r"[!-~]{1,200}")  # an id that Teams made: printable, no space
+SENT = "The queue took the message. That is not delivery: the flow posts the card, and the message on teams-posted says when it did."
 REFUSALS = {
     401: "The queue did not accept the app's token.",
     403: ("The queue refused the app: its identity needs Storage Queue Data Contributor on the storage account (a new role takes up to ten minutes to apply), and the account is reached "
@@ -73,24 +71,40 @@ def _body(text: str) -> str:
     return f"<QueueMessage><MessageText>{escape(text)}</MessageText></QueueMessage>"
 
 
-def render(delivery_id: str, to: str, title: str, card: dict) -> str:
-    """The text of the message. Raises TooBig when it is over MAX_BYTES (or its XML over MAX_BODY_BYTES), and MessageError when anything in it is not what it has to be."""
+def render(delivery_id: str, to: str, title: str, card: dict, *, request: str | None = None, update: str | None = None) -> str:
+    """The text of the message: a card to post (`request`: the plan that it is about) or a card that replaces one (`update`: the Teams message id). Raises TooBig when it is over MAX_BYTES (or its XML over
+    MAX_BODY_BYTES), and MessageError when anything in it is not what it has to be."""
     if not isinstance(delivery_id, str) or not ID.fullmatch(delivery_id):
         raise MessageError("the delivery id is not an opaque id")
     if not isinstance(to, str) or len(to) > 254 or not ADDRESS.fullmatch(to):
         raise MessageError("the address of the person is not an address")
     if not _one_line(title) or len(title) > MAX_TITLE:
         raise MessageError("the title is not one short line")
+    if request is not None and not ID.fullmatch(request) or update is not None and not TEAMS_ID.fullmatch(update):
+        raise MessageError("the request or the Teams message is not an id")
     problems = cardcheck.check(card)
     if problems:
         if len(problems) == 1 and (cardcheck.size_of(card) or 0) > cardcheck.MAX_BYTES:
             raise TooBig(problems[0])
         raise MessageError("the card does not pass the check: " + "; ".join(problems[:3]))
-    text = json.dumps({"v": FORMAT, "id": delivery_id, "to": to, "title": title, "card": card}, ensure_ascii=False, separators=(",", ":"))
+    document = {"v": FORMAT, "id": delivery_id, "to": to, "title": title, "card": card, **({"request": request} if request else {}), **({"op": "update", "message": update} if update else {})}
+    text = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
     size = len(text.encode("utf-8"))
     if size > MAX_BYTES or len(_body(text).encode("utf-8")) > MAX_BODY_BYTES:
         raise TooBig(f"the message is {size} bytes, at most {MAX_BYTES}")
     return text
+
+
+def read_posted(text: str) -> tuple[str, str, str, str]:
+    """(the plan, the address, the Teams message and the conversation) of a message that the flow wrote to the queue `teams-posted`. Raises MessageError for anything else."""
+    try:
+        found = json.loads(text)
+        request, to, message, conversation = (found[key] for key in ("request", "to", "message", "conversation"))
+        if found["v"] == FORMAT and ID.fullmatch(request) and ADDRESS.fullmatch(to) and TEAMS_ID.fullmatch(message) and TEAMS_ID.fullmatch(conversation):
+            return request, to, message, conversation
+    except (TypeError, KeyError, ValueError):
+        pass
+    raise MessageError("the message is not what the flow writes after a post: v, request, to, message and conversation")
 
 
 def queue_calls(account: str, queue: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
