@@ -294,13 +294,19 @@ class TheChange(Base):
         if mutate:
             mutate()
         done = self.make_change(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
         self.assertIn(expect_in_text, done.action.result)
         self.assertIn("Nothing was changed", done.action.result)
+        self.assertNotIn("Stopped before the change", done.action.result, "the words of a person: no label of the runner")
+        self.assertNotIn("precondition", done.action.result)
         self.assertNotIn("DELETE", [m for m, _ in self.azure.calls])
         self.assertIn(DISK.lower(), self.azure.resources)
-        self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
-        self.assertEqual(self.store.case_get(plan.case_id).status, "failed")
+        # Nothing was written, so the approval was not used: the request is open again, the record of the try stays, and a person can approve once more.
+        self.assertEqual(self.store.action_get(plan.plan_id), done.action)
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, "open")
+        self.assertEqual(self.store.case_get(plan.case_id).status, "awaiting_ok")
+        self.assertEqual(self.store.decisions_of_plan(plan.plan_id), [])
+        self.assertEqual(self.events[-1], ("action.finished", {"planId": plan.plan_id, "family": self.store.plan_get(plan.plan_id).family, "ok": False}))
 
     def test_it_stops_when_the_disk_has_been_attached_since(self):
         self.stops("not unattached any more", lambda: self.azure.resources[DISK.lower()]["properties"].update(diskState="Attached"))
@@ -319,7 +325,12 @@ class TheChange(Base):
         self.stops("not unattached any more", lambda: self.azure.resources[DISK.lower()].update(managedBy="/vm"))
 
     def test_it_stops_when_the_tag_is_gone(self):
-        self.stops("tag any more", lambda: self.azure.resources[DISK.lower()].update(tags={}))
+        # The words that the owner read after the first real approval of a planted disk whose tags an outside job had stripped: now in plain words, with what it means.
+        self.stops("Meternaut did not change the disk: it no longer carries the test tag meternaut-planted, so it cannot be told apart from a real disk. Nothing was changed.",
+                   lambda: self.azure.resources[DISK.lower()].update(tags={}))
+
+    def test_it_stops_when_the_tag_has_no_value(self):
+        self.stops("it no longer carries the test tag meternaut-planted", lambda: self.azure.resources[DISK.lower()].update(tags={"meternaut-planted": " "}))
 
     def test_it_stops_when_a_lock_exists_on_the_resource_or_the_group(self):
         self.stops("management lock", lambda: self.azure.locks.update({DISK.lower(): [{"name": "l"}]}))
@@ -343,14 +354,15 @@ class TheChange(Base):
         }.items():
             with self.subTest(label):
                 self.setUp()
-                self.stops("a change may be made on" if label != "precondition" else "preconditions", plan_mutate=change)
+                self.stops("a change may be made on" if label != "precondition" else "do not fit the resource that it names", plan_mutate=change)
 
     def test_it_stops_when_a_guard_cannot_be_read(self):
         plan, _ = self.approved()
         self.azure.fail_reads = True
         done = self.make_change(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"))
         self.assertIn("Nothing was changed", done.action.result)
+        self.assertEqual((self.store.plan_get(plan.plan_id).state, self.store.case_get(plan.case_id).status), ("open", "awaiting_ok"), "a read that failed closes nothing")
 
     def test_it_does_nothing_for_a_plan_without_a_recorded_approval_or_a_wrong_code(self):
         plan, _ = self.approved()
@@ -476,7 +488,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
         for label, change, expected in (
                 ("the disk was attached meanwhile", lambda: self.azure.resources[DISK.lower()]["properties"].update(diskState="Attached"), "not unattached any more"),
                 ("a lock was put on it", lambda: self.azure.locks.update({DISK.lower(): [{"name": "l"}]}), "management lock"),
-                ("the tag is gone", lambda: self.azure.resources[DISK.lower()].update(tags={}), "tag any more"),
+                ("the tag is gone", lambda: self.azure.resources[DISK.lower()].update(tags={}), "it no longer carries the test tag meternaut-planted"),
                 ("changes were paused", lambda: self.store.switch_put(SwitchRecord(name="changes", paused=True, by=OID, at=stamp(NOW))), "paused after the approval"),
                 ("somebody marked it do-not-touch", lambda: self.store.note_put(NoteRecord(note_id="n", oid=OID, kind="do_not_touch", text="no", scope_resource_id=DISK,
                                                                                             expires_at="2099-01-01T00:00:00Z")), "do-not-touch")):
@@ -485,12 +497,12 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
                 plan, step_up = self.asked()
                 change()
                 done = execute(self.s, step_up.action, approved_digest=plan.digest)
-                self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
                 self.assertIn(expected, done.action.result)
                 self.assertIn("Nothing was changed", done.action.result)
                 self.assertEqual([m for m, _ in self.azure.calls].count("DELETE"), 1, "only the first delete was made")
                 self.assertIn(DISK.lower(), self.azure.resources)
-                self.assertEqual(self.store.plan_get(plan.plan_id).state, "failed")
+                self.assertEqual((self.store.plan_get(plan.plan_id).state, self.store.case_get(plan.case_id).status), ("open", "awaiting_ok"), "the extra check was passed for nothing, and the request is open again")
 
     def test_a_second_challenge_is_final_and_says_that_azure_asked_again_and_that_nothing_was_changed(self):
         plan, step_up = self.asked()

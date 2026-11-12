@@ -6,7 +6,7 @@ came from the estate or from an AI is escaped and set in a labelled quote, never
 from __future__ import annotations
 
 from . import brief_page
-from .common import brief_of, may_answer, read
+from .common import checked_brief, may_answer, read
 from .core import Ctx, Response
 from .layout import message_page
 
@@ -23,6 +23,6 @@ def notebook(ctx: Ctx, case_id: str) -> Response:
         decisions, _ = read(lambda: ctx.store.decisions_of_plan(case.plan_id), [])
     answerable = plan is not None and may_answer(ctx.principal, plan)  # type: ignore[arg-type]
     seen = decisions if answerable else []  # who answered is shown to the people who are named for the request, and to nobody else
-    brief = brief_of(ctx, plan, case, action=action, decisions=seen, answerable=answerable)
+    brief = checked_brief(ctx, plan, case, action=action, decisions=seen, answerable=answerable)  # the same look at the resource as on the page of the request: Approve is offered only when it can be made
     answer = brief_page.answer_form(ctx, plan, brief, {}, {}) if brief.answers and plan is not None else None
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=seen, answer=answer, why="you opened the record of one finding that Meternaut looked at")

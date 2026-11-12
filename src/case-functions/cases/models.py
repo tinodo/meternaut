@@ -54,6 +54,8 @@ LESSON_RESULTS = ("", "ran", "failed", "verified")
 CLAIM_KINDS = ("bills-while-idle", "scales-to-zero", "minimum-charge", "retires-on-date", "price-changes-on-date", "commitment-available", "sku-successor", "quota-limit", "other")
 STUDIED = "studied"
 CLAIM_STATES = ("fresh", "stale")
+# `withdrawn` is the action of an approval whose change a check refused right before it, with nothing written (runner.py): the request is open again, the action keeps the reason, and a new
+# approval takes its place (Store.action_claim).
 ACTION_STATES = ("queued", "running", "done", "failed", "unknown", "verified", "withdrawn")
 SWITCH_NAMES = ("all", "changes", "messages", "investigation")
 NOTE_KINDS = ("note", "do_not_touch")
@@ -410,7 +412,8 @@ class DecideResult:
     # Answers: declined, asked, not_mine, later, confirmed (the first of two people: the plan stays open for the second) and acknowledged (an advise plan answered with "worth acting on":
     # nothing changes in Azure). What a sign-in to Azure led to:
     # ran, ran_unconfirmed, running (Azure accepted the change and is still making it: the timer reads the resource later), unchanged (nothing had to be changed: the resource was as the plan
-    # wants when the runner looked, and nothing was written), stopped, azure_refused, failed, signin_failed, and step_up_failed
+    # wants when the runner looked, and nothing was written), stopped (a check right before the change refused it and nothing was written: the request is open again, except when the request
+    # itself is not what was approved, which closes it), azure_refused, failed, signin_failed, and step_up_failed
     # (the extra sign-in check that Azure asked for was not completed: the request is closed). step_up: Azure asked for an extra sign-in check, and `location` is where the person goes.
     # Refusals: refused_code, refused_state, refused_role, refused_paused, expired, duplicate, error.
     kind: str
@@ -425,6 +428,19 @@ class Begun:
 
     location: str = ""
     refusal: DecideResult | None = None
+
+
+READY, REFUSED, UNKNOWN = "ready", "refused", "unknown"
+
+
+@dataclass(frozen=True)
+class Readiness:
+    """What a look at a resource, made now, says about a change that waits for an approval (cases/precheck.py): `ready` (none of the checks that the runner makes right before the change would
+    refuse it), `refused` (one would, and `why` says which, in plain words, as the end of a sentence that starts "Meternaut will not change this disk now:") or `unknown` (the look could not be made,
+    and `why` stays empty). The look is advice for a page: the runner makes the same checks again right before it acts, with the approver's own token."""
+
+    state: str
+    why: str = ""
 
 
 class Store(Protocol):
@@ -452,10 +468,15 @@ class Store(Protocol):
 
         A question ("ask") and a "later" are not decisions: a later answer of the same approver replaces them."""
         ...
+    def decision_release(self, plan_id: str, oid: str) -> None:
+        """Removes the approval of a person on a plan whose change was refused before anything was written (runner.py), so that the approval is as if it had not been given and the person can
+        approve again. Only an approval goes: any other answer of the person stays, and so does a confirmation (the first of two people)."""
+        ...
     def action_get(self, plan_id: str) -> ActionRecord | None: ...
     def action_put(self, action: ActionRecord) -> None: ...
     def action_claim(self, action: ActionRecord) -> bool:
-        """Stores the first action of a plan and returns True; returns False, and changes nothing, when the plan has an action already.
+        """Stores the first action of a plan and returns True; returns False, and changes nothing, when the plan has an action already, unless that action was withdrawn (a change that was
+        refused before anything was written, and whose request is open again): the new action then takes its place, and only one of two approvers who claim at the same moment gets True.
 
         Of several approvers who answer at the same moment, only one gets True: that one makes the change."""
         ...
@@ -527,6 +548,13 @@ class Delegate(Protocol):
 
     def begin(self, principal: Principal, plan_id: str, code: str, nonce: str, note: str = "", hint: str = "") -> Begun: ...
     def finish(self, principal: Principal, query: dict[str, str]) -> DecideResult: ...
+
+
+class Checker(Protocol):
+    """The look that a page takes at the resource of a change before it offers Approve (cases/precheck.py): the checks that the runner would make right before the change, made now with the
+    app's own reader, which holds no right to write. It never raises, it changes nothing, and what it says is advice: the runner checks again when it acts."""
+
+    def check(self, plan: PlanRecord) -> Readiness: ...
 
 
 class StoreError(Exception):

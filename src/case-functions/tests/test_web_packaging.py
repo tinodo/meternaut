@@ -89,7 +89,7 @@ class ThePackage(unittest.TestCase):
         self.assertEqual(sorted(web.__all__), ["Request", "Response", "Services", "handle", "parse_request"])
         for name in web.__all__:
             self.assertTrue(hasattr(web, name))
-        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "delegate", "people", "now", "host", "acts_on", "models", "base", "drift", "lessons"])
+        self.assertEqual([f.name for f in dataclasses.fields(web.Services)], ["store", "decider", "delegate", "people", "now", "host", "acts_on", "models", "base", "drift", "lessons", "checker"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Request)], ["method", "path", "query", "headers", "form", "body", "problem"])
         self.assertEqual([f.name for f in dataclasses.fields(web.Response)], ["status", "headers", "body"])
 

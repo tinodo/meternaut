@@ -3,7 +3,8 @@
 The platform's built-in sign-in (Microsoft Entra, with a federated credential and no secret) stands in front of every route but /healthz, and it adds the
 headers that say who the person is. If it is not on, those headers could be made up by anybody, so the app refuses every request (503) and serves nothing
 but /healthz. The pages themselves are in the web package; nothing here makes a page. A change is made with the approving person's own token (delegated.py):
-this module wires the two clients that go with it, and the app holds no right of its own to change Azure.
+this module wires the client that goes with it, and the reader that looks at a resource before a page offers Approve (precheck.py: the app's own identity and a list of calls that holds reads
+only). The app holds no right of its own to change Azure.
 """
 from __future__ import annotations
 
@@ -14,10 +15,11 @@ import uuid
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import delegated, drift, learning, loop_config, people as people_mod, runner, web, wiring
+from . import delegated, drift, learning, loop_config, people as people_mod, precheck, runner, web, wiring
 from .approvals import Approvals
 from .events import History
 from .families import registry
+from .families.azure import Azure
 from .http import Client, default_transport
 from .identity import Identity
 from .memory_store import utc_now
@@ -62,6 +64,16 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         redeem = delegated.TokenClient(signin, Identity({**env, "AZURE_CLIENT_ID": signin.assertion_client_id}, **options).token,
                                        Client(delegated.token_calls(signin), redact, transport=transport, sleep=sleep, monotonic=monotonic)).redeem
     delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit)
+    reader_calls = runner.read_calls(settings.change_scopes)
+
+    def look() -> Azure:
+        # The reader of one look at a resource before a page offers Approve (cases/precheck.py): the app's own identity, and a list of calls that holds reads only, in the resource groups of the
+        # change scopes. Each look has a client of its own, with a deadline, because a page waits for it. The page gains no right to change anything.
+        reader = Client(reader_calls, redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        reader.deadline = monotonic() + precheck.LOOK_SECONDS
+        return Azure(reader, identity.token)
+
+    checker = precheck.Precheck(store, approval, look, clock)
     # The models that wrote anything on a page: the older roles, and the agents of the investigation when it is on (each name once).
     written_by = (watch.model_detective, watch.model_skeptic) + ((watch.foundry_model_investigator, watch.foundry_model_skeptic) if watch.investigate else ())
 
@@ -70,7 +82,7 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         return drift.run_check("console", env, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, by=by, started_at=started_at)
 
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store))
+                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker)
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":

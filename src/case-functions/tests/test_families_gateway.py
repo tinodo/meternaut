@@ -225,17 +225,19 @@ class TheRecheckRightBeforeTheChange(unittest.TestCase):
     def stopped(self, world, plan, text, kind="stopped"):
         written = len(world.arm.writes())
         done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), (kind, "failed"), done.action.result)
+        refused_by_azure = kind == "azure_refused"
+        self.assertEqual((done.kind, done.action.state), (kind, "failed" if refused_by_azure else "withdrawn"), done.action.result)
         self.assertIn(text, done.action.result)
         self.assertEqual(len(world.arm.writes()), written, "no write was made")
-        self.assertEqual(world.state(plan), ("failed", "failed", "failed"))
+        self.assertEqual(world.state(plan), ("failed", "failed", "failed") if refused_by_azure else ("open", "withdrawn", "awaiting_ok"),
+                         "Azure's own refusal closes the request; a refusal of Meternaut's checks leaves it open")
 
     def test_a_gateway_with_other_scale_units_than_the_plan_was_made_for_stops_the_change(self):
         for units in (13, 10, 8):
             with self.subTest(units):
                 world, resource, plan = approved()
                 resource["properties"]["vpnGatewayScaleUnit"] = units
-                self.stopped(world, plan, "does not have the scale units that the plan was made for any more")
+                self.stopped(world, plan, "does not have the scale units that the request was made for any more")
 
     def test_a_gateway_that_somebody_else_is_changing_stops_the_change(self):
         for state in ("Updating", "Failed", "Deleting"):
@@ -279,7 +281,7 @@ class TheRecheckRightBeforeTheChange(unittest.TestCase):
                 resource = world.arm.add(fs.p2s())
                 plan, _ = world.approved(resource, "p2s", "change", 60.0, mutate={"target": target})
                 done = world.run(plan)
-                self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
                 self.assertIn("a change of scale units that Meternaut does not make", done.action.result)
                 self.assertEqual(world.arm.writes(), [])
 

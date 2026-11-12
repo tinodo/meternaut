@@ -113,6 +113,15 @@ DELETE_WORDING = {
 UNLISTED = Wording(noun="resource", title="Delete a resource", verb="Delete the resource", state="not in use", observed="Azure shows the resource as not in use.",
                    risk="If something still uses the resource, that use stops.", undo="A deleted resource cannot be restored.")
 
+# What a resource of each kind that a family changes is called in a sentence of a person: the nouns of the deletes above, and the two kinds that are changed and not deleted. cases/brief.py
+# has the same words for every kind of resource that a page names, and a test holds the two together.
+NOUNS = {**{kind: wording.noun for kind, wording in DELETE_WORDING.items()}, "microsoft.compute/virtualmachines": "virtual machine", "microsoft.network/p2svpngateways": "point-to-site gateway"}
+
+
+def noun_of(resource_type: object) -> str:
+    """The resource of this type as a noun of a sentence ("disk", "public IP address"); "resource" for a type that no family changes."""
+    return NOUNS.get(str(resource_type or "").lower(), "resource")
+
 # One step down, by the name of the type as Azure writes it (Learn, Disks - Update: sku.name is one of Standard_LRS, Premium_LRS, StandardSSD_LRS, UltraSSD_LRS, Premium_ZRS,
 # StandardSSD_ZRS, PremiumV2_LRS). Only the five that a disk is moved between are known here: an Ultra Disk and a Premium SSD v2 are not converted in place.
 KNOWN = {name.lower(): name for name in ("Standard_LRS", "StandardSSD_LRS", "Premium_LRS", "Premium_ZRS", "StandardSSD_ZRS")}

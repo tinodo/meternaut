@@ -531,6 +531,9 @@ class ReturningFromTheSignIn(Flow):
         self.assertIn("not unattached any more", result.message)
         self.assertIn(DISK.lower(), self.azure.resources)
         self.assertNotIn("DELETE", [m for m, _ in self.azure.calls])
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, self.store.action_get(self.plan.plan_id).state, self.store.case_get(self.plan.case_id).status),
+                         ("open", "withdrawn", "awaiting_ok"), "nothing was written: the request is open again")
+        self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [], "the approval was not used")
 
     def test_the_state_is_used_once(self):
         begun = self.begin()
@@ -925,7 +928,9 @@ class SteppingUp(Flow):
         self.assertEqual((result.ok, result.kind), (False, "stopped"))
         self.assertIn("not unattached any more", result.message)
         self.assertEqual(self.deletes(), [self.auth(ACCESS)])
-        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "failed")
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, self.store.action_get(self.plan.plan_id).state, self.store.case_get(self.plan.case_id).status),
+                         ("open", "withdrawn", "awaiting_ok"), "Azure asked for the check and changed nothing; the second look refused: the request is open again")
+        self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [], "the approval was not used")
 
     def test_the_second_state_is_used_once_and_so_is_the_first(self):
         step = self.asked()

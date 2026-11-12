@@ -90,6 +90,11 @@ class MemoryStore:
         self.decisions[key] = decision
         return True
 
+    def decision_release(self, plan_id: str, oid: str) -> None:
+        found = self.decisions.get((plan_id, oid))
+        if found is not None and found.decision == "approve":
+            del self.decisions[(plan_id, oid)]
+
     def action_get(self, plan_id: str) -> ActionRecord | None:
         return self.actions.get(plan_id)
 
@@ -97,7 +102,8 @@ class MemoryStore:
         self.actions[action.plan_id] = action
 
     def action_claim(self, action: ActionRecord) -> bool:
-        if action.plan_id in self.actions:
+        existing = self.actions.get(action.plan_id)
+        if existing is not None and existing.state != "withdrawn":
             return False
         self.actions[action.plan_id] = action
         return True

@@ -539,7 +539,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "running": (200, "The change is being made", "Meternaut reads the resource again in a few minutes and records what it finds. It was made with your own permissions, and it is "
                                                   "not made a second time."),
     "unchanged": (200, "Nothing was changed", "The resource was already as the request asks, so Meternaut wrote nothing, and no saving is claimed for this approval."),
-    "stopped": (409, "The change was stopped", "Nothing was changed. The request is closed."),
+    "stopped": (409, "The change was not made", "Nothing was changed. The request is still open: you can decline it, decide later, or ask or tell."),
     "azure_refused": (403, "Azure refused the change", "Meternaut holds no right of its own: the change is made with your permissions. If you should be able to make it, "
                                                        "ask whoever manages access to this resource group."),
     "failed": (502, "The change failed", "Look at the resource in Azure before anything is tried again."),
@@ -667,7 +667,7 @@ class EveryKindOfResult(unittest.TestCase):
     def test_a_page_that_shows_the_message_has_a_plain_line_of_its_own_when_the_message_is_empty(self):
         lines = {"ran": "Done.", "ran_unconfirmed": "Azure accepted the delete.", "running": "Azure accepted the change and is still making it.",
                  "unchanged": "Nothing was changed.",
-                 "stopped": "A check failed before the change.", "azure_refused": "Azure refused the change.",
+                 "stopped": "Meternaut did not make the change.", "azure_refused": "Azure refused the change.",
                  "failed": "The change failed.", "signin_failed": "Nothing is approved.",
                  "step_up_failed": "The extra sign-in check that Azure asked for was not completed. The change was not made.",
                  "refused_state": "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.",

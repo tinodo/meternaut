@@ -6,7 +6,7 @@ import math
 from typing import Callable, Iterable, TypeVar
 
 from ..brief import Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
-from ..models import ADVISE, SWITCH_NAMES, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, RunRecord, SwitchRecord
+from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_of
@@ -34,11 +34,38 @@ def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:
     return found
 
 
-def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False) -> Brief:
+def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False,
+             ready: Readiness | None = None) -> Brief:
     """The brief of one request, as the signed-in person sees it. A switch that holds this kind of answer (a change is held by `all` and `changes`, advice by `all`) takes the
-    answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`."""
+    answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`. `ready` is a look at the resource
+    (look_at): when it says that the change would be refused, the brief has no answer that approves."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
-    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "")
+    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready)
+
+
+def look_at(ctx: Ctx, plan: PlanRecord) -> Readiness | None:
+    """The look at the resource of a change that waits for an OK (cases/precheck.py), made through the checker of the services: the page makes no call itself. None when there is no checker, or
+    the plan is not the open plan of a change. A look that fails in any way is `unknown`: the page is shown without it, and never fails because of it."""
+    checker = ctx.services.checker
+    if checker is None or plan.family == ADVISE or plan.state != "open":
+        return None
+    try:
+        found = checker.check(plan)
+    except Exception:  # noqa: BLE001 (a look that cannot be made is not a reason to refuse the page)
+        return Readiness(UNKNOWN)
+    return found if isinstance(found, Readiness) else Readiness(UNKNOWN)
+
+
+def checked_brief(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False,
+                  ready: Readiness | None = None) -> Brief:
+    """The brief of one request for a page that offers the answers: when Approve (or the confirmation of the first of two people) is on offer, the resource is looked at first, and what the
+    look says is in the brief (`ready`, which the caller may have made already). A request that offers no such answer is not looked at: nothing is read for it."""
+    decisions = list(decisions)
+    brief = brief_of(ctx, plan, case, action=action, decisions=decisions, answerable=answerable)
+    if plan is None or not ({"approve", "confirm"} & set(brief.answers)):
+        return brief
+    ready = look_at(ctx, plan) if ready is None else ready
+    return brief if ready is None else brief_of(ctx, plan, case, action=action, decisions=decisions, answerable=answerable, ready=ready)
 
 
 def decisions_for(ctx: Ctx, plan: PlanRecord) -> list[DecisionRecord]:

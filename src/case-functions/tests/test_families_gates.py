@@ -248,10 +248,11 @@ class EveryFamilyIsHeldByTheGates(unittest.TestCase):
                         world.store.note_put(NoteRecord(note_id="n", oid=OID, kind="do_not_touch", text="no", scope_resource_id=resource["id"], expires_at="2099-01-01T00:00:00Z"))
                     written = len(world.arm.writes())
                     done = world.run(plan)
-                    self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                    self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
                     self.assertIn("Nothing was changed", done.action.result)
                     self.assertEqual(len(world.arm.writes()), written, "no write was made")
-                    self.assertEqual(world.state(plan), ("failed", "failed", "failed"))
+                    self.assertEqual(world.state(plan), ("open", "withdrawn", "awaiting_ok"), "nothing was written, so the request is open again and the gate stays as it was")
+                    self.assertEqual(world.store.decisions_of_plan(plan.plan_id), [], "the approval was not used")
 
     def test_the_plan_itself_cannot_name_another_scope_kind_or_a_name_off_the_planted_list_even_when_it_was_approved_as_it_is(self):
         for name in self.subtests():
@@ -271,7 +272,7 @@ class EveryFamilyIsHeldByTheGates(unittest.TestCase):
                         world.arm.add(make(name="keep-this-1") | {"id": off_list})
                     plan, _ = world.approved(resource, kind, recommendation, 50.0, detector, mutate=mutate)
                     done = world.run(plan)
-                    self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+                    self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
                     self.assertIn(expected, done.action.result)
                     self.assertEqual(world.arm.writes(), [], "nothing was written")
 
@@ -330,7 +331,7 @@ class AGatewayIsNotPlantedSoItsFamilyIsInert(unittest.TestCase):
         plan, _ = world.approved(resource, "p2s", "change", 50.0)
         with self.real():
             done = world.run(plan)
-        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"), done.action.result)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "withdrawn"), done.action.result)
         self.assertIn("planted", done.action.result)
         self.assertEqual(world.arm.writes(), [])
 

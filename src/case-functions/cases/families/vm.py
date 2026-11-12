@@ -202,13 +202,13 @@ class ResizeVm(Family):
         target = plan.target if isinstance(plan.target, dict) else {}
         want, was = str(target.get("vmSize", "")), str(target.get("fromVmSize", ""))
         if not SIZE_NAME.fullmatch(want) or not SIZE_NAME.fullmatch(was):
-            raise Stop("the plan names a size that is not a size name")
+            raise Stop("the request names a size that is not a size name")
         now = size_of(resource)
         if now == want and provisioning_of(resource) == "succeeded":
             return  # the aim already: `already` says so
         _machine_checks(resource)
         if now != was:
-            raise Stop("the machine is not of the size that the plan was made for any more")
+            raise Stop("the machine is not of the size that the request was made for any more")
         power = power_of(resource)
         if power not in RESIZABLE:
             raise Stop(f"the machine is not running, stopped or released any more (its power state is {clean_text(power, 20) or 'not shown'})")
@@ -230,7 +230,7 @@ class ResizeVm(Family):
         except (HttpError, Refused) as error:
             if isinstance(error, HttpError) and error.status in (401, 403):
                 raise Stop("Azure refused to read the quota (your account has no right to do this here). Nothing was changed.", "azure_refused") from error
-            raise Stop("the quota could not be read") from error
+            raise Stop("the quota could not be read", unread=True) from error
         rows = usage.get("value") if isinstance(usage, dict) and isinstance(usage.get("value"), list) else []
         for row in rows:
             label = row.get("name") if isinstance(row, dict) else None
@@ -239,7 +239,7 @@ class ResizeVm(Family):
                 if isinstance(used, int) and isinstance(limit, int) and not isinstance(used, bool) and limit - used < added:
                     raise Stop(f"the region has no room in its quota of vCPUs for {added} more")
                 return
-        raise Stop("the quota of vCPUs of the region could not be read")
+        raise Stop("the quota of vCPUs of the region could not be read", unread=True)
 
     def already(self, plan: PlanRecord, resource: dict) -> str:
         target = plan.target if isinstance(plan.target, dict) else {}
@@ -253,7 +253,7 @@ class ResizeVm(Family):
     def write(self, env: Env, plan: PlanRecord, located: Located):
         want = str((plan.target or {}).get("vmSize", ""))
         if not SIZE_NAME.fullmatch(want):
-            raise Stop("the plan names a size that is not a size name")
+            raise Stop("the request names a size that is not a size name")
         return env.azure.write(self.call(), located.url(), {"properties": {"hardwareProfile": {"vmSize": want}}})
 
     def verify(self, env: Env, plan: PlanRecord) -> Verdict:
@@ -284,12 +284,12 @@ def available_sizes(env: Env, located: Located) -> dict[str, tuple[int, int]]:
     except HttpError as error:
         if error.status in (401, 403):
             raise Stop("Azure refused to read the sizes of the machine (your account has no right to do this here). Nothing was changed.", "azure_refused") from error
-        raise Stop(f"the sizes that the machine can take could not be read ({error.status or 'no answer'})") from error
+        raise Stop(f"the sizes that the machine can take could not be read ({error.status or 'no answer'})", unread=True) from error
     except Refused as error:
-        raise Stop("the app may not read the sizes of the machine") from error
+        raise Stop("the app may not read the sizes of the machine", unread=True) from error
     rows = data.get("value") if isinstance(data, dict) and isinstance(data.get("value"), list) else None
     if rows is None:
-        raise Stop("the sizes that the machine can take could not be read")
+        raise Stop("the sizes that the machine can take could not be read", unread=True)
     sizes: dict[str, tuple[int, int]] = {}
     for row in rows:
         if not isinstance(row, dict):

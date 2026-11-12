@@ -15,6 +15,11 @@
 // Nothing here is connected to anything but the machine's own disk and network interface. The machine has no operating system, no account and no key: its OS disk is an empty disk that is
 // attached as it is (createOption Attach, no osProfile), so there is nothing on it to sign in to. Deployed only by the workflow .github/workflows/deploy-hub.yml, action "plant"
 // (AGENTS.md rule 18).
+//
+// The tags: an outside job, which is not Meternaut's, takes the tags off the unattached test disks each night at about 22:56 UTC and leaves one tag of its own. A planted disk without the tag
+// meternaut-planted is refused by the first gate of a change (cases/families/gates.py), which is the owner's line and is not loosened. So the action "plant" also puts the tags below back on
+// every planted disk and public IP address that the group holds when it runs, merged in (the step "Put the planted tags back on the planted disks and public IP addresses"; a test holds its
+// tags and these together). Approve a planted disk the same day it is planted.
 targetScope = 'resourceGroup'
 
 @description('Region of the resources.')

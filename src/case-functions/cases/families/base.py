@@ -10,7 +10,8 @@ The interface, in the order that a change goes through it:
 - `facts(env, lead, located)`: what code reads to write the plan (with the reader's token, and only for a resource that passed both gates): typed values, each checked against a pattern.
 - `plan(case, lead, facts, located, gates)`: the fields of the plan that the family decides, written by code from the facts and the cost lines: a title (a verb, an object and a place), what
   changes, what could go wrong, how to undo it, the saving with its basis, the target (the parameters of the change) and the preconditions (the facts that are read again).
-- `recheck(env, plan)`: right before the change, with the approver's token, read the resource and its locks again and stop unless every precondition still holds.
+- `recheck(env, plan)`: right before the change, with the approver's token, read the resource and its locks again and stop unless every precondition still holds. A page takes the same look
+  with the app's reader before it offers Approve (cases/precheck.py), so that it never offers a change that this check would refuse.
 - `write(env, plan, located)`: the one call, made once. Its method and address are in calls.py, the api-version is the one that Microsoft's page for the call shows.
 - `verify(env, plan)`: read the resource and say whether the change took effect: done, still being made, failed or not known. It makes no write, so the timer can run it with the reader's token.
 - `words`: what the decision brief shows for a plan of this family (the headline, the change, what is read again, the risk, the undo) is not a method of the family: it is in words.py, which
@@ -32,11 +33,15 @@ from .gates import ChangeScope, Gates
 
 
 class Stop(Exception):
-    """A check that fails before the change: the text says which, and nothing has been changed. `kind` is `stopped`, or `azure_refused` when Azure refused a read."""
+    """A check that fails before the change: the text says which, in plain words, as the end of a sentence ("Meternaut did not change the disk: <text>"), and nothing has been changed.
 
-    def __init__(self, message: str, kind: str = "stopped") -> None:
+    `kind` is `stopped`, or `azure_refused` when Azure refused a read. `unread` says that the check could not be made at all (a read failed, or Azure answered with something that cannot be used),
+    which is not a refusal: what a page that looks before it offers Approve makes of it is "not known", and never "the change cannot be made"."""
+
+    def __init__(self, message: str, kind: str = "stopped", *, unread: bool = False) -> None:
         super().__init__(message)
         self.kind = kind
+        self.unread = unread
 
 
 class Unreadable(Exception):
@@ -137,12 +142,12 @@ def locate(resource_id: str, gates: Gates, kinds: tuple[Kind, ...]) -> Located:
     """The resource of an id, found in a scope and of one of these kinds. Raises Stop when the id is not one that may be changed."""
     found = RESOURCE_ID.fullmatch(resource_id or "")
     if found is None:
-        raise Stop("the plan names a resource that is not in the one resource group, subscription and kind that a change may be made on")
+        raise Stop("the request names a resource that is not in the one resource group, subscription and kind that a change may be made on")
     subscription, group, provider, collection, name = found.groups()
     scope = gates.scope_of(subscription, group)
     kind = next((k for k in kinds if k.provider.lower() == provider.lower() and k.collection.lower() == collection.lower()), None)
     if scope is None or kind is None or not re.fullmatch(NAME, name):
-        raise Stop("the plan names a resource that is not in the one resource group, subscription and kind that a change may be made on")
+        raise Stop("the request names a resource that is not in the one resource group, subscription and kind that a change may be made on")
     return Located(scope, kind, name)
 
 
@@ -155,11 +160,11 @@ def read_resource(env: Env, located: Located, suffix: str = "", query: str = "")
             return None
         if error.status in (401, 403):
             raise Stop(refusal(error, "read the resource"), "azure_refused") from error
-        raise Stop(f"the resource could not be read ({error.status or 'no answer'})") from error
+        raise Stop(f"the resource could not be read ({error.status or 'no answer'})", unread=True) from error
     except Refused as error:
-        raise Stop("the app may not read this resource") from error
+        raise Stop("the app may not read this resource", unread=True) from error
     if not isinstance(data, dict):
-        raise Stop("Azure answered with something that is not a resource")
+        raise Stop("Azure answered with something that is not a resource", unread=True)
     return data
 
 
@@ -228,26 +233,30 @@ class Family:
         return ""
 
     def recheck(self, env: Env, plan: PlanRecord) -> tuple[Located, dict | None]:
-        """Reads the resource again and checks everything the plan states. Returns where it is and the resource, or None when it is gone already. Raises Stop when a check fails."""
+        """Reads the resource again and checks everything the plan states. Returns where it is and the resource, or None when it is gone already. Raises Stop when a check fails.
+
+        This is the one look that the runner takes right before a change (with the approver's token) and that a page takes before it offers Approve (with the app's reader, cases/precheck.py):
+        it makes no call but reads, so the same checks stand behind both. Its words are those of a person: they end the sentence "Meternaut did not change the disk: ..."."""
         located = self.locate(plan.resource_id, env.gates)
         pre = plan.preconditions if isinstance(plan.preconditions, dict) else {}
         if pre.get("family") != plan.family or str(pre.get("resourceGroup", "")).lower() != located.scope.group.lower() or str(pre.get("resourceType", located.kind.type)).lower() != located.kind.type:
-            raise Stop("the plan's own preconditions do not match what a change may be")
+            raise Stop("the details of the request do not fit the resource that it names")
         resource = self.read(env, located)
         if resource is None:
             return located, None
         if str(resource.get("id", "")).lower() != plan.resource_id.lower():
-            raise Stop("Azure answered with another resource than the one in the plan")
+            raise Stop("Azure answered with another resource than the one in the request")
         tags = resource.get("tags") if isinstance(resource.get("tags"), dict) else {}
         tag = str(pre.get("tag", ""))
         if not tag or not any(str(k).lower() == tag.lower() and str(v).strip() for k, v in tags.items()):
-            raise Stop(f"the resource does not carry the {pre.get('tag')} tag any more")
+            noun = words.noun_of(located.kind.type)
+            raise Stop(f"it no longer carries the test tag {tag}, so it cannot be told apart from a real {noun}" if tag else "the request does not name the tag that marks what Meternaut planted")
         why = env.gates.why_not_planted(tags, located.kind.type, located.name)
         if why is not None:
             raise Stop(why)
         self.check_state(env, plan, located, resource)
         if str(plan.resource_id).lower() in env.do_not_touch():
-            raise Stop("a person marked the resource do-not-touch after the plan was made")
+            raise Stop("a person marked the resource do-not-touch after the request was made")
         if self.locked(env, located):
             raise Stop("the resource or its resource group has a management lock")
         return located, resource
@@ -266,9 +275,9 @@ class Family:
                     raise Stop(refusal(error, "read the locks"), "azure_refused") from error
                 raise
             except Refused as error:
-                raise Stop("the app may not read the locks, and an unread guard counts as on") from error
+                raise Stop("this app may not read the locks, and a lock that cannot be read counts as there", unread=True) from error
             if not isinstance(data, dict) or not isinstance(data.get("value", []), list):
-                raise Stop("the locks could not be read, and an unread guard counts as on")
+                raise Stop("the locks could not be read, and a lock that cannot be read counts as there", unread=True)
             if data.get("value"):
                 return True
         return False

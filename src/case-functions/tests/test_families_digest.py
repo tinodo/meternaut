@@ -183,7 +183,7 @@ class AtTheRunner(unittest.TestCase):
         self.world.store.decisions[key] = replace(self.world.store.decisions[key], plan_digest="0" * 64)
         done = self.world.run(self.plan)
         self.assertEqual(done.action.state, "failed")
-        self.assertIn("no approval by a named approver is recorded for this exact plan", done.action.result)
+        self.assertIn("no approval by a named approver is recorded for this exact request", done.action.result)
         self.assertEqual(self.world.arm.calls[self.reads:], [])
 
     def test_a_plan_that_changes_between_the_recheck_and_the_write_is_stopped_at_the_last_check(self):
