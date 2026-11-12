@@ -16,10 +16,12 @@ Before a card goes, in this order, the first check that fails ends the try and i
 A try that was held or failed is offered again after 15 minutes, at most 12 times. A card that was sent is never sent again for the same request, and none is sent for a request whose letter went.
 
 When the flow has posted the card of a request it writes the Teams message to the queue `teams-posted`, and record_posted keeps it (a record of kind `card-posted`, which no count of letters sees). When
-that request is decided, declined, expired or withdrawn, by whatever way, the next round puts the card that replaces it (cards.closed_card) on the queue for each posted message (a record of kind
-`card-closed`, tried again like a card that failed). No check above holds it back: it tells nobody anything new.
+the request has ended (declined, expired, withdrawn, answered, or its approved change was made or was not made) the next round puts the card that replaces it (cards.closed_card, worded from what became
+of the change) on the queue for each posted message that no closing replaced yet (a record of kind `card-closed`, tried again like a card that failed, and no message that a budget counts). An approval
+that waits for the extra sign-in check, and a change that is being made or is not confirmed yet, have not ended: their card stays. No check above holds a closing back: it tells nobody anything new. A card
+that was closed is not a card that was sent for a request that is open again: that request gets a new card, which closes in its turn.
 
-`sent` means that the queue took the message; whether the person saw the card, Meternaut cannot tell, which is why the letter is the fallback. Of a try only its outcome is written: no body, no name and no
+`sent` means that the queue took the message; whether the person saw the card, or Teams replaced it, Meternaut cannot tell, which is why the letter is the fallback. Of a try only its outcome is written: no body, no name and no
 figure of the card, and its id is the id of the message.
 """
 from __future__ import annotations
@@ -35,7 +37,7 @@ from .brief import Brief, build_brief, contact_text
 from .cards import CardContext, CardError
 from .http import Client
 from .loop_config import LoopSettings
-from .mail import BUDGET_FREE_KINDS
+from .mail import BUDGET_FREE_KINDS, NOT_MESSAGES
 from .memory_store import parse, stamp
 from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, MailRecord, PlanRecord, Store
 from .people import People, Person
@@ -47,6 +49,7 @@ MAX_TRIES = 12  # and given up after this many tries
 RESULT_DAYS = 3  # the cards about a change are offered for this long after it
 APPROVAL, ADVICE, NOTICE, VERIFIED, FIRST_CONTACT = "approval-card", "advice-card", "notice-card", "verified-card", "first-contact-card"
 POSTED, CLOSED = "card-posted", "card-closed"
+WORKING = ("queued", "running", "unknown")  # an action that is not over
 FREE_KINDS = (APPROVAL, NOTICE, VERIFIED, FIRST_CONTACT)
 SUMMARY_OF = {APPROVAL: "change", ADVICE: "advice", NOTICE: "result", VERIFIED: "result", FIRST_CONTACT: "first_contact", CLOSED: "closed"}
 LETTER_OF = {APPROVAL: "approval", NOTICE: "notice", VERIFIED: "verified"}
@@ -64,6 +67,10 @@ def _short(text: object, limit: int = MAX_DETAIL) -> str:
 def _week_start(now: dt.datetime) -> dt.datetime:
     """Monday 00:00 UTC of the ISO week that holds `now`."""
     return now.replace(hour=0, minute=0, second=0, microsecond=0) - dt.timedelta(days=now.weekday())
+
+
+def _last_sent(mails: list[MailRecord], *kinds: str) -> str:
+    return max((m.sent_at for m in mails if m.kind in kinds and m.status == "sent"), default="")
 
 
 def contacts_of(people: People, reader: str = "") -> tuple[str, ...]:
@@ -123,7 +130,12 @@ class Offers:
     # -- what is due ---------------------------------------------------------------------------------------------------------------------------
 
     def _tries(self, person: Person, kind: str, plan_id: str | None) -> list[MailRecord]:
-        return [m for m in self.store.mails_since(person.oid, EPOCH) if m.kind == kind and (plan_id is None or m.plan_id == plan_id)]
+        """The tries of this kind for this request. A closed card is no sent card when the request is open again: a card counts from its last closing on, a closing from the last card on."""
+        mails = [m for m in self.store.mails_since(person.oid, EPOCH) if plan_id is None or m.plan_id == plan_id]
+        tries = [m for m in mails if m.kind == kind]
+        if kind == CLOSED:
+            return [m for m in tries if m.sent_at >= _last_sent(mails, APPROVAL, ADVICE)]
+        return [m for m in tries if m.sent_at > _last_sent(mails, CLOSED)] if kind in (APPROVAL, ADVICE) else tries
 
     def _letter_sent(self, person: Person, kind: str, plan_id: str) -> bool:
         letter = LETTER_OF.get(kind)
@@ -154,7 +166,7 @@ class Offers:
         if quiet.inside(settings, now):
             return quiet.WAITING
         if kind not in FREE_KINDS:
-            sent = [m for m in self.store.mails_since(person.oid, _week_start(now).strftime(TIME_FORMAT)) if m.status == "sent" and m.kind not in FREE_KINDS and m.kind not in BUDGET_FREE_KINDS]
+            sent = [m for m in self.store.mails_since(person.oid, _week_start(now).strftime(TIME_FORMAT)) if m.status == "sent" and m.kind not in FREE_KINDS + BUDGET_FREE_KINDS + NOT_MESSAGES]
             if len(sent) >= settings.weekly_budget:
                 return f"The weekly budget of {settings.weekly_budget} messages is reached ({len(sent)} sent since Monday)."
         return None
@@ -253,21 +265,22 @@ class Offers:
         return total
 
     def _close(self, now: dt.datetime) -> int:
-        """Replaces the card of each request that is not open any more, once for each message that the flow posted for it (cards.closed_card, with no button). Returns how many tries it made."""
+        """Replaces the card of each ended request, for each posted message that no closing replaced yet (cards.closed_card). Returns how many tries it made."""
         tries = 0
         for person in self.people.persons:
             mails = self.store.mails_since(person.oid, EPOCH)
-            done = {m.plan_id for m in mails if m.kind == CLOSED and m.status == "sent"}
-            for plan_id in {m.plan_id for m in mails if m.kind == POSTED} - done:
-                tries += self._safely("a card that closes", lambda person=person, plan_id=plan_id: self._replace(person, plan_id, now))
+            for plan_id in {m.plan_id for m in mails if m.kind == POSTED}:
+                closed = _last_sent([m for m in mails if m.plan_id == plan_id], CLOSED)
+                posted = [m for m in mails if m.kind == POSTED and m.plan_id == plan_id and m.sent_at > closed]
+                if posted:
+                    tries += self._safely("a card that closes", lambda person=person, plan_id=plan_id, posted=posted: self._replace(person, plan_id, posted, now))
         return tries
 
-    def _replace(self, person: Person, plan_id: str, now: dt.datetime) -> int:
-        plan = self.store.plan_get(plan_id)
-        if plan is None or plan.state == "open" or not self._due(person, CLOSED, plan_id):
+    def _replace(self, person: Person, plan_id: str, posted: list[MailRecord], now: dt.datetime) -> int:
+        plan, action = self.store.plan_get(plan_id), self.store.action_get(plan_id)
+        if plan is None or plan.state in ("open", "approved") or (action is not None and action.state in WORKING) or not self._due(person, CLOSED, plan_id):
             return 0
-        brief = build_brief(self.store.case_get(plan.case_id), plan, None, self.store.decisions_of_plan(plan_id), now=now)
-        posted = [m for m in self.store.mails_since(person.oid, plan.created_at) if m.kind == POSTED and m.plan_id == plan_id]
+        brief = build_brief(self.store.case_get(plan.case_id), plan, action, self.store.decisions_of_plan(plan_id), now=now)
         for m in posted:
             self._deliver(person, CLOSED, plan_id, now, lambda: cards.closed_card(brief, self._context(person, plan)), update=m.detail.split()[0])
         return len(posted)

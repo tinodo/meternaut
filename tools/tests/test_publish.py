@@ -856,16 +856,18 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-12, after the cost lines of a whole subscription or resource group, the names of subscriptions, the estimate for a disk that
-    # Azure has no cost line for and the findings that say nothing were added (358,545 bytes with 102 files, of the 14,110 more than before 6,793 are code and the rest are the words that explain it;
+    # What the archive of the sources of this repository measured on 2026-11-12, after the Teams cards were given their buttons and the way to close themselves (363,810 bytes with 103 files; 362,748 after the
+    # buttons alone), and the room that more sources may take before this test asks for a decision: 190 bytes, because those cards used the 5,000 that were left. Before them it was 358,545 bytes with 102
+    # files, after the cost lines of a whole subscription or resource group, the names of subscriptions, the estimate for a disk that Azure has no cost line for and the findings that say nothing
+    # were added (of the 14,110 more than before 6,793 are code and the rest are the words that explain it;
     # 344,390 just before, with 99 files; 340,907 on 2026-11-11, after the Teams bot was removed and the cards went onto a queue; 349,921 before that, after the approvals
     # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
     # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
-    # 92 files before them), and the room that more sources may take before this test asks for a decision. The cap of the request is 480,000 bytes and 85,000 stay free (the test below): 100,000
-    # stayed free until this growth, which no trimming of the words could give back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 77,000 above the one
-    # that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 358_500
-    SOURCES_ARCHIVE_MARGIN = 5_000
+    # 92 files before them). The cap of the request is 480,000 bytes and 85,000 stay free (the test below): 100,000
+    # stayed free until the growth of 2026-11-12, which no trimming of the words could give back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 72,000
+    # above the one that is sent now.
+    SOURCES_ARCHIVE_MEASURED = 363_800
+    SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):
         """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""

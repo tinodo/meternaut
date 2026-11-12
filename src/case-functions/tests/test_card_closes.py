@@ -11,8 +11,9 @@ from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
-from cases import cardcheck, cards, loop, offers, teamsqueue
-from cases.models import DecisionRecord, SwitchRecord
+from cases import cardcheck, cards, loop, mail, offers, teamsqueue
+from cases.approvals import ApprovalSettings, Approvals
+from cases.models import ActionRecord, DecisionRecord, SwitchRecord
 from test_cards import actions_of, brief_of, by_id, ctx_for, make_advice_plan, make_case, make_plan, texts
 
 MESSAGE, CONVERSATION = "1731331200000", "19:abc-def@unq.gbl.spaces"
@@ -23,6 +24,11 @@ CLOSED_LINE = "Decided: Declined by Anna, 5 Nov 10:30 UTC. Nothing more to do."
 def written(**changes) -> str:
     """What the flow writes to the queue teams-posted, as the Functions host hands it over (the host has decoded the base64)."""
     return json.dumps({**GOOD, **changes})
+
+
+def closings(world: cs.World) -> list[dict]:
+    """The cards that went on the queue to replace a card."""
+    return [message["card"] for message in world.queue_fake.messages() if message.get("op") == "update"]
 
 
 class TheMessageThatTheFlowWritesAfterThePost(unittest.TestCase):
@@ -55,6 +61,9 @@ class TheMessageOfACard(unittest.TestCase):
 
 class TheCardThatReplacesAnother(unittest.TestCase):
     ANNA = DecisionRecord(plan_id=cs.PLAN_ID, approver_oid=cs.ANNA, approver_name="Anna", decision="decline", at="2026-11-05T10:30:00Z", plan_code=cs.CODE)
+    APPROVED = dataclasses.replace(ANNA, decision="approve")
+    MADE = ActionRecord(plan_id=cs.PLAN_ID, case_id="c1", family="delete-disk", resource_id="r1", state="done", queued_at="2026-11-05T10:30:00Z", finished_at="2026-11-05T10:31:00Z", result="Deleted.")
+    REASON = "Azure refused to delete the disk: your account has no right to do this here. Nothing was changed."
 
     def closing(self, plan=None, **kw):
         brief = brief_of(plan=plan, may_answer=False, **kw)
@@ -69,10 +78,19 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         brief = brief_of(plan=plan, may_answer=False, decisions=[self.ANNA])
         self.assertEqual(ids["headline"]["text"], by_id(cards.result_card(brief, ctx_for(brief)))["headline"]["text"], "the headline of the request, as on every card")
 
-    def test_an_approval_and_an_answer_to_advice_use_the_words_of_the_page(self):
-        approve = dataclasses.replace(self.ANNA, decision="approve")
-        self.assertIn("Decided: Approved by Anna, 5 Nov 10:30 UTC.", self.closing(make_plan(state="consumed"), decisions=[approve])["closed"]["text"])
-        self.assertIn("Decided: Worth acting on by Anna", self.closing(make_advice_plan(state="consumed"), case=make_case(status="acknowledged"), decisions=[approve])["closed"]["text"])
+    def test_an_approval_is_worded_from_what_became_of_the_change(self):
+        made = "Decided: Approved and done by Anna, 5 Nov 10:31 UTC. Nothing more to do."
+        for state, plan_state, more, words in (("done", "consumed", {}, made), ("verified", "consumed", {}, made),
+                                               ("done", "consumed", {"verification": {"noChange": True}}, "Decided: Approved, nothing to change by Anna, 5 Nov 10:31 UTC. Nothing more to do."),
+                                               ("failed", "failed", {"error": self.REASON, "result": self.REASON}, f"Approved by Anna, not made: {cards.md(self.REASON)}")):
+            with self.subTest(state=state, more=more):
+                action = dataclasses.replace(self.MADE, state=state, **more)
+                self.assertEqual(self.closing(make_plan(state=plan_state), action=action, decisions=[self.APPROVED])["closed"]["text"], words)
+
+    def test_the_answer_to_advice_and_a_withdrawn_request_use_the_words_of_the_page(self):
+        self.assertIn("Decided: Worth acting on by Anna", self.closing(make_advice_plan(state="consumed"), case=make_case(status="acknowledged"), decisions=[self.APPROVED])["closed"]["text"])
+        not_mine = dataclasses.replace(self.ANNA, decision="not_mine")
+        self.assertIn("Decided: Withdrawn by Anna, 5 Nov 10:30 UTC.", self.closing(make_plan(state="withdrawn"), decisions=[not_mine])["closed"]["text"])
 
     def test_an_expired_request_says_expired(self):
         self.assertEqual(self.closing(make_plan(expires_at="2026-11-04T09:30:00Z"))["closed"]["text"], "Expired. Nothing more to do.")
@@ -84,10 +102,12 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         self.assertNotIn("**b**", text)
         self.assertIn("\\*\\*b\\*\\*", text)
 
-    def test_a_request_that_is_open_has_no_closing_card(self):
-        brief = brief_of(may_answer=False)
-        with self.assertRaises(cards.CardError):
-            cards.closed_card(brief, ctx_for(brief))
+    def test_a_request_that_has_not_ended_has_no_closing_card(self):
+        running = dataclasses.replace(self.MADE, state="running", finished_at=None)
+        for plan, action in ((make_plan(), None), (make_plan(state="approved"), None), (make_plan(state="consumed"), running)):
+            with self.subTest(state=plan.state, action=action and action.state), self.assertRaises(cards.CardError):
+                brief = brief_of(plan=plan, action=action, decisions=[self.APPROVED], may_answer=False)
+                cards.closed_card(brief, ctx_for(brief))
 
 
 class TheFlowAndTheAppAgreeOnTheMessages(unittest.TestCase):
@@ -208,9 +228,11 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
         self.assertEqual(len(self.fake.calls), 2)
         self.assertEqual([(m.kind, m.status) for m in self.world.tries(cs.MAYA, offers.CLOSED)], [("card-closed", "sent")])
 
-    def test_an_approval_an_answer_to_advice_and_an_expiry_close_it_too(self):
-        for make, state, decision, words in ((cs.change_plan, "approved", "approve", "Decided: Approved by Anna"), (cs.change_plan, "consumed", "approve", "Decided: Approved by Anna"),
-                                             (cs.advice_plan, "consumed", "approve", "Decided: Worth acting on by Anna"), (cs.advice_plan, "expired", None, "Expired. Nothing more to do.")):
+    def test_an_answer_to_advice_a_made_change_and_an_expiry_close_it_too(self):
+        made = ActionRecord(cs.PLAN_ID, "c1", "delete-disk", "r1", "done", "2026-11-05T10:30:00Z", finished_at="2026-11-05T10:31:00Z", result="Deleted.")
+        for make, state, decision, action, words in ((cs.change_plan, "consumed", "approve", made, "Decided: Approved and done by Anna"),
+                                                     (cs.advice_plan, "consumed", "approve", None, "Decided: Worth acting on by Anna"),
+                                                     (cs.advice_plan, "expired", None, None, "Expired. Nothing more to do.")):
             with self.subTest(state=state, plan=make.__name__):
                 world = cs.World()
                 plan = world.open_plan(make(expires_at="2026-12-01T00:00:00Z"))
@@ -218,10 +240,13 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
                 world.introduce(cs.MAYA)
                 offers.record_posted(written(), world.store, world.people, world.clock)
                 world.store.plan_put(dataclasses.replace(plan, state=state))
+                if action:
+                    world.store.action_put(action)
                 if decision:
                     world.store.decision_put(DecisionRecord(cs.PLAN_ID, cs.ANNA, "Anna", decision, "2026-11-05T10:30:00Z", cs.CODE))
-                self.assertEqual(world.run(), 1)
-                self.assertIn(words, " ".join(texts(world.queue_fake.messages()[0]["card"])))
+                world.run()
+                (card,) = closings(world)
+                self.assertIn(words, " ".join(texts(card)))
 
     def test_a_card_that_the_flow_never_reported_is_left_alone(self):
         world = cs.World()
@@ -247,6 +272,92 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
         self.world.store.switch_put(SwitchRecord(name="messages", paused=True, by="Maya", at="2026-11-05T10:00:00Z"))
         self.world.channel(cs.MAYA, paused_until="2026-12-31T00:00:00Z")
         self.assertEqual(self.world.run(), 2)
+
+    def test_a_closing_is_no_message_so_two_cards_of_advice_and_one_declined_do_not_hold_the_third(self):
+        self.assertIn(offers.CLOSED, mail.NOT_MESSAGES)
+        self.world.channel(cs.MAYA, weekly_budget=3)
+        self.world.open_plan(cs.advice_plan("p2second", case_id="c2", expires_at="2026-12-01T00:00:00Z"))
+        self.world.run()
+        self.end("declined")
+        self.assertEqual(self.world.run(), 2)
+        self.world.open_plan(cs.advice_plan("p3third", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
+        self.world.run()
+        self.assertEqual([m.status for m in self.world.tries(cs.MAYA, offers.ADVICE)], ["sent", "sent", "sent"])
+
+
+class WhenAnApprovedChangeEnds(unittest.TestCase):
+    """The card says what became of the change, and says it when the change is over: not when the approval is only recorded."""
+    REASON = "Azure refused to delete the disk: your account has no right to do this here. Nothing was changed."
+
+    def setUp(self):
+        self.world = cs.World()
+        self.fake = self.world.queue_fake
+        self.plan = self.world.open_plan(cs.change_plan(expires_at="2026-12-01T00:00:00Z", approvers=(cs.MAYA,)))
+        self.world.channel(cs.MAYA)
+        self.world.introduce(cs.MAYA)
+        self.world.run()
+        offers.record_posted(written(), self.world.store, self.world.people, self.world.clock)
+        self.world.store.decision_put(DecisionRecord(cs.PLAN_ID, cs.MAYA, "Maya", "approve", "2026-11-05T10:30:00Z", cs.CODE))
+        self.approvals = Approvals(self.world.store, ApprovalSettings(change_scopes=()), self.world.clock)
+        self.fake.calls.clear()
+
+    def move(self, plan_state: str, action_state: str, **more) -> ActionRecord:
+        self.world.store.plan_put(dataclasses.replace(self.plan, state=plan_state))
+        action = ActionRecord(cs.PLAN_ID, self.plan.case_id, self.plan.family, self.plan.resource_id, action_state, "2026-11-05T10:30:00Z", **more)
+        self.world.store.action_put(action)
+        return action
+
+    def closing(self) -> list[str]:
+        """What the next round says on the cards that it replaces, a minute later."""
+        self.world.clock.advance(minutes=1)
+        self.world.run()
+        return [by_id(card)["closed"]["text"] for card in closings(self.world)]
+
+    def test_a_change_that_azure_refused_is_closed_as_not_made_and_says_why(self):
+        self.move("failed", "failed", error=self.REASON, result=self.REASON, finished_at="2026-11-05T10:31:00Z")
+        self.assertEqual(self.closing(), [f"Approved by Maya, not made: {cards.md(self.REASON)}"])
+
+    def test_a_change_that_is_made_is_closed_as_approved_and_done(self):
+        self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
+        self.assertEqual(self.closing(), ["Decided: Approved and done by Maya, 5 Nov 10:40 UTC. Nothing more to do."])
+
+    def test_the_card_stays_while_the_change_waits_for_the_extra_check_and_closes_with_what_came_of_the_wait(self):
+        waiting = self.move("approved", "queued", step_up=True, result="The change waits until the approver has completed the check.")
+        self.assertEqual(self.closing(), [], "approved is not the end: the check may still be completed")
+        why = "The extra sign-in check that Azure asked for was not completed in time, so the change was not made. Nothing was changed."
+        self.approvals.close_waiting(self.world.store.plan_get(cs.PLAN_ID), waiting, why)
+        self.assertEqual(self.closing(), [f"Approved by Maya, not made: {cards.md(why)}"])
+
+    def test_the_card_stays_while_the_change_is_being_made_or_is_not_confirmed_yet(self):
+        for state in ("running", "unknown"):
+            with self.subTest(state=state):
+                self.move("consumed", state)
+                self.assertEqual(self.closing(), [])
+        self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
+        self.assertEqual(self.closing(), ["Decided: Approved and done by Maya, 5 Nov 10:40 UTC. Nothing more to do."])
+
+    def test_a_request_that_a_check_opened_again_has_not_lost_its_card(self):
+        waiting = self.move("approved", "queued", step_up=True)
+        self.assertEqual(self.closing(), [])
+        self.approvals.reopen(self.world.store.plan_get(cs.PLAN_ID), waiting, "Meternaut will not change this now.")
+        self.assertEqual(self.world.store.plan_get(cs.PLAN_ID).state, "open")
+        self.assertEqual((self.world.run(), self.fake.calls), (0, []), "its card was never closed, so it is neither closed now nor sent twice")
+
+    def test_a_card_that_was_closed_is_not_a_card_that_was_sent_when_the_request_is_open_again(self):
+        self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
+        self.assertEqual(self.closing(), ["Expired. Nothing more to do."])
+        self.world.store.plan_put(self.plan)
+        self.fake.calls.clear()
+        self.world.clock.advance(minutes=1)
+        self.assertEqual(self.world.run(), 1)
+        (asking,) = self.fake.messages()
+        self.assertEqual((asking["request"], "op" in asking, [a["title"] for a in actions_of(asking["card"])][0]), (cs.PLAN_ID, False, "Approve"), "a new card, with its buttons")
+        offers.record_posted(written(message="1731331299999"), self.world.store, self.world.people, self.world.clock)
+        self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
+        self.fake.calls.clear()
+        self.assertEqual(self.closing(), ["Expired. Nothing more to do."])
+        (update,) = self.fake.messages()
+        self.assertEqual(update["message"], "1731331299999", "the new card closes in its turn, and the old one is not closed again")
 
 
 if __name__ == "__main__":

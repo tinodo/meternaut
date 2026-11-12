@@ -881,7 +881,8 @@ class TheTokensAndTheCalls(unittest.TestCase):
             self.assertEqual(world.changes(), [], argv)
 
     def test_a_pipeline_is_refused_for_every_command_but_steps(self):
-        for argv in (["status"], ["create-environment", "--name", "new one"], ["managed", "--environment", ENV], LINK):
+        for argv in (["status"], ["create-environment", "--name", "new one"], ["managed", "--environment", ENV], LINK, ["test-card", "--environment", ENV, "--storage-account", ACCOUNT, "--to", "someone@example.com"],
+                     ["test-close", "--environment", ENV, "--to", "someone@example.com"]):
             world = World()
             code, out, err = world.run(argv, env={"GITHUB_ACTIONS": "true"})
             self.assertEqual(code, 1, argv)
