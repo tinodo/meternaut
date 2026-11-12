@@ -159,6 +159,10 @@ class OwnerReader:
             self._kept[key] = self._read(resource_id)
         return self._kept[key]
 
+    def events(self, resource_id: str) -> tuple[list[dict] | None, bool, str | None]:
+        """The events of the Activity Log of one resource, read once in a run: the events (None when they could not be read), whether every page was read, and the word that says why not."""
+        return self._events(resource_id)
+
     def _read(self, resource_id: str) -> tuple[list[dict] | None, bool, str | None]:
         found = RESOURCE.fullmatch(resource_id)
         if found is None:

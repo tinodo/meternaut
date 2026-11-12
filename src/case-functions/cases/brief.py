@@ -71,6 +71,13 @@ CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what i
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
 CHECK_FIRST_SHORT = "Check first: what it connects to, who owns it, and its traffic."
+# What removing a resource would do (cases/impact.py makes the digest, which the case keeps in its facts under IMPACT): the verdict, in the three words that every page, letter and card uses.
+IMPACT = "impact"
+IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
+NOT_ANALYSED = "Impact not analysed: Meternaut has no check yet for what depends on this kind of resource, so it did not look."
+SAFE_RISK = "Nothing that Meternaut could read depends on it. Some things cannot be seen from here: see Not checked."
+KEEP_RISK = "It is in use, and removing it breaks what uses it."
+HELD_REASONS = ("automation", "impact", "inuse")  # why a Watch holds a finding back and makes no request for it (cases/investigate.py)
 
 # resource type -> (what the resource is, in a sentence of a person)
 TYPE_WORDS = {
@@ -328,6 +335,21 @@ class Second:
 
 
 @dataclass(frozen=True)
+class Impact:
+    """What removing the resource would do, from the digest of its check (cases/impact.py), in the words that code wrote. `verdict` is empty when the impact was not analysed, and `line` then
+    says so; otherwise `line` is the verdict with its first reason, for a card and a letter."""
+
+    verdict: str  # safe, check, keep, or empty
+    label: str
+    reasons: tuple[str, ...]
+    rows: tuple["Fact", ...]
+    removal: tuple[str, ...]
+    undo: str
+    unchecked: str
+    line: str
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -390,6 +412,8 @@ class Brief:
     cost_scope: str = ""  # the scope of that address in words ("resource group rg-demo", "subscription contoso-dev"), for the line that holds the link
     # What to check before acting on advice about a resource that others share, or that may not be used any more (CHECK_FIRST); empty for every other request.
     check_first: tuple[str, ...] = ()
+    # What removing the resource would do (cases/impact.py): for a finding of the investigation, its check, or the line that says that none was made; None for every other request.
+    impact: Impact | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -599,9 +623,16 @@ def says_nothing(case: CaseRecord | None) -> bool:
     return kind_words(case.resource_type)[1] == "resource" and _id_like(text_of(case.resource_name, MAX_NAME))
 
 
+def held_back(case: CaseRecord | None) -> str:
+    """Why a Watch held a finding back (one of HELD_REASONS: an automation manages the resource, the impact of a deletion was not checked, or the check shows that something uses the resource),
+    and "" when it did not: no request is made for such a finding, and one that was made before and that nobody answered is taken back."""
+    held = case.learned.get("held") if case is not None and isinstance(case.learned, dict) else None
+    return held if held in HELD_REASONS else ""
+
+
 def automated(case: CaseRecord | None) -> bool:
-    """Whether a Watch held a finding back because an automation manages its resource (investigate.py): no request is made for it, and one that nobody answered is taken back."""
-    return case is not None and isinstance(case.learned, dict) and case.learned.get("held") == "automation"
+    """Whether a Watch held a finding back because an automation manages its resource (investigate.py)."""
+    return held_back(case) == "automation"
 
 
 def _advisor_headline(problem: str, scope: str, name: str, group: str, subscription_name: str, subscription: str) -> str:
@@ -659,11 +690,33 @@ def still_used(case: CaseRecord | None) -> bool:
             and (shared(case.resource_type) or _asked_delete(case) or not measured_zero(case.facts)))
 
 
+def _texts(values: object, limit: int = 240) -> tuple[str, ...]:
+    return tuple(text for text in (plain(item, limit) for item in (values if isinstance(values, list) else []) if isinstance(item, str)) if text)
+
+
+def impact_of(case: CaseRecord | None) -> Impact | None:
+    """What removing the resource of a finding of the investigation would do: its check (cases/impact.py) when one was made, and otherwise the line that says that none was. Every other case
+    has none (the waste that Meternaut plants has its own words). The digest is code's own, and it is checked again here: what is not a word of the verdict, or not a text, is left out."""
+    if case is None or case.detector != "investigation":
+        return None
+    found = case.facts.get(IMPACT) if isinstance(case.facts, dict) else None
+    if not isinstance(found, dict) or found.get("verdict") not in IMPACT_VERDICTS:
+        return Impact("", "", (), (), (), "", "", NOT_ANALYSED)
+    rows = tuple(Fact(plain(row[0], 80), plain(row[1], 240), plain(row[2], 120)) for row in found.get("rows") or [] if isinstance(row, list) and len(row) == 3 and all(isinstance(x, str) for x in row))
+    label, reasons, cannot = IMPACT_VERDICTS[found["verdict"]], _texts(found.get("reasons"))[:6], _texts(found.get("unchecked"), 120)
+    return Impact(found["verdict"], label, reasons, rows, _texts(found.get("removal"))[:3], plain(found.get("undo"), 300), f"Not checked: {'; '.join(cannot)}." if cannot else "",
+                  f"Impact: {label}." + (f" {reasons[0]}" if reasons else ""))
+
+
 def acting_risk(case: CaseRecord | None) -> Risk:
     """The risk of doing what a request suggests, which is not the risk of answering it (that changes nothing in Azure): worked out by code from the kind of resource and the evidence level. Never
-    low, because a change is at least a medium risk; high for a resource that others share when nothing measured shows that nothing uses it."""
+    low, because a change is at least a medium risk, unless the check of its impact finds that nothing that can be read depends on it; high for a resource that others share when nothing measured
+    shows that nothing uses it, and for one that the check finds in use."""
     if case is None:
         return Risk("medium", ACTING + CHANGE_RISK)
+    found = impact_of(case)
+    if found is not None and found.verdict in ("safe", "keep"):
+        return Risk("low", ACTING + SAFE_RISK) if found.verdict == "safe" else Risk("high", ACTING + KEEP_RISK)
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
@@ -673,8 +726,9 @@ def acting_risk(case: CaseRecord | None) -> Risk:
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
-    """What to check before acting on a finding that asks whether a resource is still used (CHECK_FIRST)."""
-    return CHECK_FIRST if still_used(case) else ()
+    """What to check before acting on a finding that asks whether a resource is still used (CHECK_FIRST), when its impact was not analysed: an analysis names the specific things itself."""
+    found = impact_of(case)
+    return CHECK_FIRST if still_used(case) and (found is None or not found.verdict) else ()
 
 
 def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None,
@@ -1602,7 +1656,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else ())
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None)
 
 
 def order_key(brief: Brief) -> tuple:

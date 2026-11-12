@@ -65,7 +65,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import capability, deeper, learning, library
+from . import capability, deeper, impact, learning, library
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
 from .detectors import some
 from .foundry import FunctionTool
@@ -737,6 +737,11 @@ TOOLS = {tool.name: tool for tool in (
          "and unread those that could not be read. The rows are counts and words that Meternaut kept, never a text about a resource or a person, and they are no evidence about this "
          "estate: the other tools show what is true of a resource. It takes no arguments.",
          ()),
+    Tool("impact",
+         "Shows what depends on one resource and what removing it would change, for the types that have a check: how it is linked, what points at it, who changed it last and what its use "
+         "measured, as typed facts, and a verdict (safe, check or keep) that code derived from them. The verdict is code's and not yours: use the facts to explain it and never contradict "
+         "it. A type with no check answers not-offered. Ask for it for a resource before you propose to remove or change it.",
+         (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),)),
 )}
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
@@ -829,6 +834,10 @@ class Toolbox:
         self.arm, self.subscriptions, self.now, self.notes = arm, subscriptions, now, notes
         self.memory: object | None = None  # the store of the loop, which the tools that recall read; the investigation sets it, and a run that keeps no memory has none
         self.profile: object | None = None  # what the identity can see (cases/capability.py): the investigation sets it, and `commitments` shows its four words
+        self.owners: object | None = None  # the OwnerReader of the run (cases/ownership.py), so that the Activity Log of a resource is read once for the tool `impact` and for the case; the investigation sets it
+        self.own_ids: tuple[str, ...] = ()  # the identities of Meternaut itself: a change by one of them is not an automation of somebody else
+        self._impacts: dict[str, dict | None] = {}  # lower-case id -> the digest of its impact check (cases/impact.py), made once in a run
+        self._impact_reader: impact.Reader | None = None
         self.handles: dict[str, Resource] = {}  # every resource that an answer has shown, by handle
         self.evidence: dict[str, dict] = {}  # handle -> what the answers showed about it so far (metric aggregates, cost lines, typed properties)
         self.log: list[dict] = []  # one dict per call: name, arguments, ok, chars
@@ -877,6 +886,19 @@ class Toolbox:
         no answer has shown."""
         entry = self._by_handle.get(handle)
         return (entry.sku, dict(entry.properties)) if entry is not None else (None, {})
+
+    def impact_of(self, handle: str) -> dict | None:
+        """The digest of the impact check of one resource (cases/impact.py), made once in a run, or None when its type has no check or no answer has shown the handle. For the tool `impact` and for the
+        code of a case, which makes the check itself when the Investigator did not ask for it; the sentences and the names of the digest go to people and never to a model (impact.typed)."""
+        resource = self.handles.get(handle)
+        if resource is None or not impact.has_check(resource.resource_type):
+            return None
+        key = resource.resource_id.lower()
+        if key not in self._impacts:
+            if self._impact_reader is None:
+                self._impact_reader = impact.Reader(self.arm, self.subscriptions, self.now, self.owners, self.own_ids, self.notes)
+            self._impacts[key] = impact.analyse(self._impact_reader, resource.resource_id, resource.resource_type)
+        return self._impacts[key]
 
     def call(self, name: str, arguments: dict) -> str:
         """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
@@ -1727,6 +1749,13 @@ class Toolbox:
             answer["properties"].popitem()
         self._show(entry, facts)
         return answer
+
+    def _tool_impact(self, args: dict) -> dict:
+        entry = self._entry(args["handle"])
+        found = impact.typed(self.impact_of(entry.resource.handle))
+        if found is None:
+            raise NotOffered(args["handle"])
+        return {"handle": args["handle"], **found}
 
     # -- the deeper reads: what a resource records about the data written to it, who reads and writes it, the parts inside it, a metric by dimension, commitments, cost by day ------------------
     def _offered_entry(self, handle: str, tool: str) -> _Entry:
