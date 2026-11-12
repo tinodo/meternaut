@@ -374,6 +374,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.facts(*_decision_rows(brief))
     if brief.check_first:
         doc.paragraph(brief_mod.CHECK_FIRST_SHORT)
+    if brief.impact is not None:
+        doc.paragraph(_data(brief.impact.line, 300))
     doc.button("Review and decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
     doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver

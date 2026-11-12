@@ -208,6 +208,41 @@ class ScopesOf(unittest.TestCase):
         self.assertEqual(arm_module.scopes_of(f"/subscriptions/{SUBSCRIPTION}"), [f"/subscriptions/{SUBSCRIPTION}"])
 
 
+ZONE = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/privatelink.azure-api.net"
+
+
+class TheListsOfTheImpactCheck(unittest.TestCase):
+    def test_the_dns_zone_groups_of_an_endpoint_and_the_address_records_of_a_zone_are_two_reads_of_exactly_their_addresses(self):
+        arm, script = arm_with(ok({"value": [{"name": "default"}, "not an item"]}), ok({"value": [{"name": "apim-demo"}]}))
+        self.assertEqual(arm.zone_groups(RESOURCE), [{"name": "default"}])
+        self.assertEqual(arm.zone_records(ZONE), [{"name": "apim-demo"}])
+        first, second = script.calls
+        self.assertEqual((first[0], first[1]), ("GET", f"https://management.azure.com{RESOURCE}/privateDnsZoneGroups?api-version=2026-01-01"))
+        self.assertEqual((second[0], second[1]), ("GET", f"https://management.azure.com{ZONE}/A?api-version=2018-09-01&$top=1000"))
+        self.assertEqual((first[2]["Authorization"], second[2]["Authorization"]), (f"Bearer {TOKEN}", f"Bearer {TOKEN}"))
+
+    def test_an_id_that_is_not_an_endpoint_or_a_zone_is_refused_before_any_call(self):
+        arm, script = arm_with(ok({"value": []}))
+        group = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg"
+        for method, value in ((arm.zone_groups, f"{group}/providers/Microsoft.Compute/disks/d"), (arm.zone_groups, RESOURCE.replace("pe-one", "..")), (arm.zone_groups, RESOURCE + "'"),
+                              (arm.zone_groups, RESOURCE + "/privateDnsZoneGroups/default"), (arm.zone_records, RESOURCE), (arm.zone_records, ZONE + "/virtualNetworkLinks/x"),
+                              (arm.zone_records, ZONE.replace("privatelink.azure-api.net", ".."))):
+            with self.subTest(value=value):
+                with self.assertRaises(HttpError):
+                    method(value)
+        self.assertEqual(script.calls, [])
+
+    def test_an_answer_that_is_not_a_list_is_an_error_and_a_next_link_that_leaves_azure_is_not_followed(self):
+        for answer in ({"value": "x"}, [], "text"):
+            arm, _ = arm_with(ok(answer))
+            with self.assertRaises(HttpError):
+                arm.zone_groups(RESOURCE)
+        arm, script = arm_with(ok({"value": [], "nextLink": "https://evil.example/x"}))
+        with self.assertRaises(HttpError):
+            arm.zone_records(ZONE)
+        self.assertEqual(len(script.calls), 1)
+
+
 class NothingWrites(unittest.TestCase):
     def test_the_module_only_asks_questions(self):
         import re

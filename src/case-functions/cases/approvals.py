@@ -40,9 +40,11 @@ MANAGED_BY_AUTOMATION = "held back: managed by an automation"
 # And of one that asks to delete a resource when nobody looked up who changed it, or the look could not be made (the Watch that never looks one up is the older detectors'): an unread Activity Log
 # shows nothing, and a deletion is not asked on nothing.
 NOT_CHECKED = "held back: not checked who changed it"
+# And of one that asks to delete a resource of the network that others do not share, when what depends on it was not checked to the end (cases/impact.py): nobody removes what was not looked at.
+IMPACT_NOT_CHECKED = "held back: impact not checked"
 # And of an open request that was made when a deletion could be asked on less than the rules ask for now: it is taken back when nobody has answered it.
 RULES_CHANGED = "held back: Meternaut's rules changed"
-HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "unchecked": NOT_CHECKED, "rules": RULES_CHANGED}  # the reason of cases/brief.py held_reason (and `rules`) -> the words of the History
+HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "unchecked": NOT_CHECKED, "impact": IMPACT_NOT_CHECKED, "rules": RULES_CHANGED}  # the reason of cases/brief.py held_reason (and `rules`) -> the words of the History
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
 ADVICE_OPEN_MAX = 10
