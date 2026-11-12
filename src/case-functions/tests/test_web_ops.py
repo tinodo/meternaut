@@ -9,7 +9,7 @@ from test_web_support import ACTS_ON, MAYA, NOW, OPS, OWNER, STRANGER, TINO, Con
 from cases.models import CheckRecord, StoreError, SwitchRecord, TwoPeopleRule
 from cases.people import People, Person
 
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 BUTTONS = ["Pause everything", "Pause changes", "Pause all messages", "Pause the investigation"]
 
 
@@ -39,7 +39,7 @@ class TheOperationsPage(unittest.TestCase):
             "The AI agents do not run and open no new finding. Waste that Meternaut planted itself, approvals, changes and messages go on."])
         run = self.reply.table("latest-runs").rows[0]
         self.assertEqual((run["Trigger"], run["Result"], run["Findings"], run["Proposed"], run["Needs a person"], run["Errors"]), ("timer", "OK", "3", "3", "0", "0"))
-        self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
+        self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, Meternaut makes that one change "
                       f"with their own permissions. The code makes only this change: {ACTS_ON}.", self.reply.content)
         self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/pause", "/ops/two-people", "/ops/runs", "/ops/permissions"])
 
@@ -232,7 +232,7 @@ class StandingPermissions(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.headings(1), ["Standing permissions"])
         self.assertEqual(reply.headings(2), ["What Meternaut can change in Azure"])
-        self.assertIn("Meternaut holds no permission to change Azure. A change is made only after a person approves that exact change on its own page and signs in to Azure: "
+        self.assertIn("Meternaut holds no permission to change Azure. A change is made only after a person approves that exact change on its own page: "
                       "it is made with that person's own permissions, and Azure refuses it if the person may not make it.", reply.content)
         self.assertIn(f"On its own, nothing. The code makes only this change, and only for a person who approved it: {ACTS_ON}.", reply.content)
         for gone in ("None exists.", "The runner may only", "What the runner may change"):
@@ -394,28 +394,28 @@ class WhatThePullDoes(unittest.TestCase):
     def test_a_pulled_switch_takes_the_approve_button_away_and_a_resume_brings_it_back(self):
         console = Console(decider="loop")
         console.seed()
-        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
+        self.assertTrue(console.get("/ok/plan0001").has_button(APPROVE))
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause changes"), reason="drill")
         reply = console.get("/ok/plan0001")
-        self.assertNotIn(APPROVE, reply.content)
+        self.assertFalse(reply.has_button(APPROVE))
         self.assertIn("Changes are paused here. Nothing has changed, and your OK cannot be recorded now.", reply.content)
         self.assertIn("Paused by Tino", console.get("/ops").content)
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Resume changes"))
-        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
+        self.assertTrue(console.get("/ok/plan0001").has_button(APPROVE))
 
     def test_the_switch_of_everything_takes_the_approve_button_away_too_and_the_messages_switch_does_not(self):
         console = Console(decider="loop")
         console.seed()
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause everything"))
-        self.assertNotIn(APPROVE, console.get("/ok/plan0001").content)
+        self.assertFalse(console.get("/ok/plan0001").has_button(APPROVE))
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Resume everything"))
         console.submit(console.get("/ops/pause").form("/ops/pause", has_button="Pause all messages"))
-        self.assertIn(APPROVE, console.get("/ok/plan0001").content)
+        self.assertTrue(console.get("/ok/plan0001").has_button(APPROVE))
 
 
 class TheTwoPeopleRulePage(unittest.TestCase):
     """When a change needs two people: off until the owner turns it on; the owner changes it; the hub shows it."""
-    OFF = "Off. Every change needs one approver, who signs in to Azure and approves it."
+    OFF = "Off. Every change needs one approver."
 
     def setUp(self):
         self.console = Console()
@@ -449,7 +449,7 @@ class TheTwoPeopleRulePage(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         self.assertEqual(self.console.store.rule_get(), TwoPeopleRule(min_usd_month=150.5, families=("stop-vm", "resize-vm"), by="Tino", at="2026-11-05T09:00:00Z"))
         self.assertIn("On. A change needs two people when it saves at least $150.50 a month or it is one of these: stop a virtual machine", reply.content)
-        self.assertIn("One confirms the request, and another approves it and signs in to Azure.", reply.content)
+        self.assertIn("One confirms the request, and another approves it.", reply.content)
         self.assertIn("It was last changed by Tino on Thu 5 Nov 2026 09:00 UTC (10:00 CET).", reply.content)
         self.assertEqual(reply.root.find("input", id="min_usd").attrs["value"], "150.5")
         self.assertEqual([box.attrs["value"] for box in reply.root.find_all("input") if box.attrs.get("type") == "checkbox" and "checked" in box.attrs], ["stop-vm", "resize-vm"])

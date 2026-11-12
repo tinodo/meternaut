@@ -191,7 +191,7 @@ class Approvals:
         if decision == "approve":
             known = self.store.plan_get(plan_id)
             if known is None or known.family != ADVISE:
-                return DecideResult(False, "error", "An approval is made when you sign in to Azure, not here. Nothing is approved.")
+                return DecideResult(False, "error", "A change is approved on the page of its request, not here. Nothing is approved.")
         plan, refusal = self._gate(principal, plan_id, decision, code, now)
         if refusal is not None or plan is None:
             return refusal or DecideResult(False, "error", "")
@@ -244,7 +244,7 @@ class Approvals:
                                 note=note, plan_digest=plan.digest)
         if not self.store.decision_put(record):
             return DecideResult(False, "duplicate", "You answered this request already. Your answer stands.", plan)
-        return DecideResult(True, "confirmed", "Recorded: you confirmed this request. It changes nothing. A second person has to approve it and sign in to Azure.", plan)
+        return DecideResult(True, "confirmed", "Recorded: you confirmed this request. It changes nothing. A second person has to approve it.", plan)
 
     def check_approve(self, principal: Principal, plan_id: str, code: str) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks before an approval is recorded, without a one-time token: the person, the plan's state and expiry, the switches and the plan code, and for a change that needs two
@@ -280,7 +280,7 @@ class Approvals:
         """An advise plan makes no change in Azure, so there is no sign-in to Azure for it: it is answered on its page. A plan of a change has to be sealed: its digest is there and is the
         one that its fields give (cases/families/digest.py)."""
         if plan is not None and plan.family == ADVISE:
-            return None, DecideResult(False, "refused_state", "This request makes no change in Azure, so there is nothing to sign in to. Answer it on its page. Nothing is approved.", plan)
+            return None, DecideResult(False, "refused_state", "This request makes no change in Azure, so there is no change to approve. Answer it on its page. Nothing is approved.", plan)
         if plan is not None and refusal is None:
             problem = plan_digest.problem(plan, plan.digest)
             if problem:

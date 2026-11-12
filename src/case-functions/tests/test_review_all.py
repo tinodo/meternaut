@@ -8,7 +8,7 @@ from test_web_support import DISK, MAYA, TINO, VM, Console, make_advice, make_ad
 from cases.models import Begun, DecideResult
 from cases.web import approval, router
 
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 AFTER_TWO = "You are going through your requests one by one. 2 more wait after this one, and the next opens when you have answered this one."
 AFTER_ONE = "You are going through your requests one by one. 1 more waits after this one, and the next opens when you have answered this one."
 LAST = "You are going through your requests one by one. This is the last one that waits for you."

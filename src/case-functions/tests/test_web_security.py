@@ -10,7 +10,7 @@ from cases.web import Request, handle, parse_request
 
 FORM = "application/x-www-form-urlencoded"
 LOGIN_ORIGIN = "https://login.microsoftonline.com"
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 REQUIRED = {
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'none'",
     "X-Frame-Options": "DENY",

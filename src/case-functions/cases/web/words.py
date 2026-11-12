@@ -13,7 +13,7 @@ CASE_STATUS = {
     "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
     "error": ("Error", "The finding could not be finished. A check or a model call failed."),
     "awaiting_ok": ("Waiting for an OK", "A request was made and waits for a person's OK."),
-    "approved": ("Approved", "A person approved the request and signed in to Azure. The change is being made now."),
+    "approved": ("Approved", "A person approved the request. The change is being made now."),
     "running": ("Running", "The change has started and is not confirmed yet."),
     "done": ("Done", "The change was made."),
     "failed": ("Failed", "The change failed, or it was stopped before it started."),
@@ -71,7 +71,7 @@ GUARD = GUARD_WORDS
 
 # The answers of the form, by what each is called on the button, for each kind of request (a change in Azure, or advice that changes nothing).
 ANSWER_LABEL = {
-    "change": {"approve": "Approve and sign in to Azure", "confirm": "Confirm this request", "decline": "Decline", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
+    "change": {"approve": "Approve", "confirm": "Confirm this request", "decline": "Decline", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
     "advice": {"approve": "Worth acting on", "decline": "Not worth it", "not_mine": "This is not mine", "ask": "Ask or tell", "later": "Decide later"},
 }
 # What each answer is called when it is listed afterwards.

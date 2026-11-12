@@ -86,7 +86,7 @@
   <circle cx="788" cy="1072" r="11" fill="#5C2E91"/>
   <text x="788" y="1076.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
   <rect x="60" y="1150" width="280" height="38" rx="4" fill="#0F6CBD" stroke="#0F6CBD" stroke-width="1"/>
-  <text x="200.0" y="1173.9" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Approve and sign in to Azure</text>
+  <text x="200.0" y="1173.9" font-size="14" font-weight="600" fill="#FFFFFF" text-anchor="middle">Approve</text>
   <rect x="350" y="1150" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
   <text x="490.0" y="1173.9" font-size="14" font-weight="600" fill="#242424" text-anchor="middle">Decline</text>
   <rect x="60" y="1198" width="280" height="38" rx="4" fill="#FFFFFF" stroke="#8A8886" stroke-width="1"/>
@@ -159,7 +159,7 @@
   <circle cx="841" cy="795" r="11" fill="#5C2E91"/>
   <text x="841" y="799.5" font-size="12" font-weight="700" fill="#FFFFFF" text-anchor="middle">10</text>
   <text x="860" y="799" font-size="13" font-weight="700" fill="#242424" text-anchor="start">Buttons</text>
-  <text x="860" y="819" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The first button repeats the action. All four are the same</text>
+  <text x="860" y="819" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">The first button says what it does. All four are the same</text>
   <text x="860" y="836" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">size. Decline takes one tap and an optional reason on a</text>
   <text x="860" y="853" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">second page. Ask or suggest sends a question or another</text>
   <text x="860" y="870" font-size="12" font-weight="400" fill="#5C5C5C" text-anchor="start">way back; nothing is approved. Without script each button</text>

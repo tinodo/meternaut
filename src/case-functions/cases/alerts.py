@@ -57,7 +57,7 @@ def paragraphs(code: str, detail: str, now: dt.datetime) -> list[tuple[str, str]
         ("p", "The investigation by the AI agents: it opens no new case until a person releases the switch called Investigation. Waste that Meternaut planted itself, the approval of a change, "
               "the letters and the pages go on."),
         ("h2", "What is not affected"),
-        ("p", "Meternaut holds no right to change Azure. A change is made only after a person approves it and signs in, as before."),
+        ("p", "Meternaut holds no right to change Azure. A change is made only after a person approves it, with that person's own permissions, as before."),
         ("h2", "What to do"),
         ("p", "Open the kill switch page, read the reason, and resume the switch called Investigation when you have looked at the cause."),
         ("link", "Open the kill switch page"),

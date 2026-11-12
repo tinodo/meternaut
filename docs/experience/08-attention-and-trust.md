@@ -145,7 +145,7 @@ None of this helps when a signed-in device is stolen; the approver's own Azure r
 
 Friction rises with risk ([approval classes](../design/06-security-and-governance.md#approval-classes)), and the reason to doubt comes before the reason to agree.
 
-- **Verb-plus-object labels on approvals:** "Approve and sign in to Azure", "Open the page to approve", never "Yes".
+- **Labels that say what they do on approvals:** "Approve", "Open the page to approve", never "Yes" alone; the sign-in to Azure is never on a button.
 - **"What could go wrong" is always visible.** (An invented example.) E2: "Month-end peak is 70 to 90 % processor. If it stays above 85 % for ten minutes, my safety check stops and asks you whether to restore the old size. Restoring is a new approval on the page."
 - **No bulk approve;** the approval page's Decline takes an optional reason.
 - **Two independent approvers for a purchase,** asked in parallel; neither sees the other's answer until both have decided. One directory object never fills both roles. (Invented.) E4: Tomasz and Lars.
@@ -181,7 +181,7 @@ Microsoft Research's 18 guidelines (2019) live in the [HAX Toolkit](https://www.
 
 ### Fluent 2 and Microsoft's supervision pattern
 
-[Fluent 2](https://fluent2.microsoft.design/responsible-AI/) names five principles. **Be transparent:** the four-layer label, "why you are getting this". **Set expectations:** the Hello card, ranges with a price basis, a standing permission introduced before its first run (C17). **Prevent overreliance:** the strongest objection by default, no bulk approve, two independent approvers. **Keep users in control:** choose, then give your OK. **Collect feedback:** reason chips, the Result card, Teams' thumbs. Microsoft's supervision pattern for agent requests (Approve, Reject with an optional reason, Suggest an alternative) shapes the approval page: Approve and sign in to Azure, Decline, Ask or suggest ([Learn](https://learn.microsoft.com/security/agentic-security/agentic-security-supervise-work)).
+[Fluent 2](https://fluent2.microsoft.design/responsible-AI/) names five principles. **Be transparent:** the four-layer label, "why you are getting this". **Set expectations:** the Hello card, ranges with a price basis, a standing permission introduced before its first run (C17). **Prevent overreliance:** the strongest objection by default, no bulk approve, two independent approvers. **Keep users in control:** choose, then give your OK. **Collect feedback:** reason chips, the Result card, Teams' thumbs. Microsoft's supervision pattern for agent requests (Approve, Reject with an optional reason, Suggest an alternative) shapes the approval page: Approve, Decline, Ask or suggest ([Learn](https://learn.microsoft.com/security/agentic-security/agentic-security-supervise-work)).
 
 ### Article 14(4) of the EU AI Act
 

@@ -17,7 +17,7 @@ from cases.memory_store import stamp
 from cases.models import CaseRecord, SwitchRecord
 from cases.runner import RunnerServices, change_calls
 
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 TENANT = "cccccccc-3333-4444-8555-666666666666"
 CLIENT = "dddddddd-4444-4555-8666-777777777777"
 ASSERTION_CLIENT = "eeeeeeee-5555-4666-8777-888888888888"

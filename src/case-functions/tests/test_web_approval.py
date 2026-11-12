@@ -9,7 +9,7 @@ from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, Switc
 from cases.people import People, Person
 from cases.web import approval, layout
 
-APPROVE = "Approve and sign in to Azure"
+APPROVE = "Approve"
 CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
 STATE = "state-of-the-sign-in_0123456789"
 RETURN = {"code": CODE, "state": STATE, "session_state": "a-session-state"}
@@ -61,14 +61,29 @@ class ThePage(unittest.TestCase):
         found = self.reply.facts()
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
         self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
-        self.assertTrue(found["Who does it"].startswith("You do, with your own Azure sign-in"), found["Who does it"])
-        self.assertIn("Azure checks your rights, and the change is made right then.", found["Who does it"])
+        self.assertTrue(found["Who does it"].startswith("You do, with your own permissions"), found["Who does it"])
+        self.assertIn("Azure checks your rights and the change is made right then.", found["Who does it"])
         self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
+        self.assertNotIn("sign in", found["Who does it"].lower())
         self.assertNotIn("runner", found["Who does it"].lower())
         self.assertEqual(found["Undo"], "This cannot be undone.")
         self.assertEqual(found["What could go wrong"], "If something still uses the disk, that use stops, and the data on it is lost for good. Risk: medium.")
         self.assertIn("Meternaut has not looked up who owns this resource yet.", self.reply.content)
         self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", self.reply.content)
+
+    def test_the_sign_in_is_on_no_button_and_in_no_sentence_and_who_makes_the_change_is_said_once(self):
+        for label, plan in (("one person", make_plan()), ("the first of two people", make_plan(approval_class="R3", approvers=(TINO, MAYA)))):
+            with self.subTest(label):
+                self.console.store.plan_put(plan)
+                main = self.console.get("/ok/plan0001").main
+                self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", main.text()), [])
+                self.assertEqual(main.text().count("own permissions"), 1)
+        digest = "d" * 64
+        self.console.store.plan_put(make_plan(approval_class="R3", approvers=(TINO, MAYA), digest=digest))
+        self.console.store.decision_put(make_decision(approver_oid=MAYA, approver_name="Maya", decision="confirm", plan_digest=digest))
+        second = self.console.get("/ok/plan0001")
+        self.assertIn("You approve it now.", second.facts()["Who approves"])
+        self.assertEqual(second.main.text().count("own permissions"), 1, "the line of the second person does not say it again")
 
     def test_three_chips_say_the_risk_how_sure_the_ais_are_and_what_a_change_leaves_behind(self):
         chips = [chip.text() for chip in self.reply.main.find("p", class_="chips").find_all("span")]
@@ -220,7 +235,7 @@ class ThePage(unittest.TestCase):
         reply = self.console.get("/ok/plan0001")
         self.assertEqual(reply.facts()["Who approves"], SECOND_WORDS["first"])
         self.assertTrue(reply.form("/ok/plan0001", has_button="Confirm this request"))
-        self.assertFalse(reply.form("/ok/plan0001", has_button="Confirm this request").has_button(APPROVE), "the first person confirms; the sign-in to Azure is the second person's")
+        self.assertFalse(reply.form("/ok/plan0001", has_button="Confirm this request").has_button(APPROVE), "the first person confirms; the approval is the second person's")
         self.console.store.plan_put(make_plan(approval_class="R3"))
         alone = self.console.get("/ok/plan0001")
         self.assertEqual(alone.facts()["Who approves"], SECOND_WORDS["alone"])
@@ -259,7 +274,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.forms(), [], "no form and so no button")
         self.assertEqual(reply.root.find_all("button"), [])
-        self.assertNotIn(APPROVE, reply.content)
+        self.assertNotRegex(reply.content, rf"\b{APPROVE}\b", "the word of the button is not on the page (Approved and approve are other words)")
         self.assertNotIn("Check before you approve", reply.content)
 
     def notice(self, reply):
@@ -404,11 +419,11 @@ class WhenChangesArePaused(unittest.TestCase):
                 self.console.store.switch_put(SwitchRecord(name, True, "Otto", at(minutes=-1), "drill"))
                 reply = self.console.get("/ok/plan0001")
                 self.assertEqual(reply.status, 200)
-                self.assertNotIn(APPROVE, reply.content)
+                self.assertFalse(reply.has_button(APPROVE))
                 self.assertIn(self.PAUSED, reply.content)
                 self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Decline", "This is not mine", "Ask or tell", "Decide later"])
                 self.console.store.switch_put(SwitchRecord(name))
-        self.assertIn(APPROVE, self.console.get("/ok/plan0001").content)
+        self.assertTrue(self.console.get("/ok/plan0001").has_button(APPROVE))
 
     def test_advice_is_held_by_the_full_stop_only_because_nothing_changes_in_azure_for_it(self):
         self.console.store.case_put(make_advice_case())
@@ -426,7 +441,7 @@ class WhenChangesArePaused(unittest.TestCase):
     def test_the_switch_of_the_messages_does_not_stop_an_answer(self):
         self.console.store.switch_put(SwitchRecord("messages", True, "Otto", at(minutes=-1), "drill"))
         reply = self.console.get("/ok/plan0001")
-        self.assertIn(APPROVE, reply.content)
+        self.assertTrue(reply.has_button(APPROVE))
         self.assertNotIn(self.PAUSED, reply.content)
 
     def test_a_switch_that_cannot_be_read_counts_as_pulled(self):
@@ -434,7 +449,7 @@ class WhenChangesArePaused(unittest.TestCase):
         console.seed()
         reply = console.get("/ok/plan0001")
         self.assertEqual(reply.status, 200)
-        self.assertNotIn(APPROVE, reply.content)
+        self.assertFalse(reply.has_button(APPROVE))
         self.assertIn(self.PAUSED, reply.content)
 
 
@@ -516,7 +531,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "asked": (200, "Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet."),
     "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list."),
     "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
-    "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it and sign in to Azure, with their own permissions."),
+    "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions."),
     "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
     "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
                                         "Meternaut holds no right of its own to change Azure."),
@@ -823,7 +838,7 @@ class WhatIsCheckedBeforeAnAnswerGoesOn(unittest.TestCase):
 class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
     """Approving a change that cannot be undone (a delete) asks once more, on a page of its own, before the sign-in to Azure starts. The safe button is the main one."""
 
-    YES = "Yes, delete it and sign in to Azure"
+    YES = "Yes, delete it"
 
     def setUp(self):
         self.delegate = ScriptedDelegate()
@@ -852,7 +867,9 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again"], "the undo and the risk are said once, in the notice")
         self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", main.text())
-        self.assertIn("This change cannot be undone. Nothing is changed until you confirm here and sign in to Azure.", main.text())
+        self.assertIn("This change cannot be undone. Nothing is changed until you confirm here.", main.text())
+        self.assertNotIn("sign in", main.text().lower(), "the sign-in is not on the page, and not on a button")
+        self.assertEqual(main.text().count("own permissions"), 1, "who makes the change is said once")
         self.assertNotIn("?", main.text())
 
     def test_the_safe_button_is_the_main_one_and_it_is_a_plain_link_back_to_the_request(self):

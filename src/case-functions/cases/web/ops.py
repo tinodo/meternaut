@@ -91,7 +91,7 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
               Safe("<h2>The drift check</h2>"), *_drift_section(ctx),
               Safe("<h2>What people answered before</h2>"), *_answers_section(ctx),
               Safe("<h2>What Meternaut can change in Azure</h2>"),
-              paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, they sign in to Azure and Meternaut makes that one change "
+              paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, Meternaut makes that one change "
                             "with their own permissions. The code makes only this change: {acts_on}.", acts_on=ctx.services.acts_on)),
               paragraph(link(ctx.url("/ops/permissions"), "The standing permissions"))]
     return page(ctx, "Operations", join(block(p) for p in parts), current="/ops", why=OPS_WHY)
@@ -246,7 +246,7 @@ def runs_page(ctx: Ctx) -> Response:
 def permissions(ctx: Ctx) -> Response:
     parts: list[object] = [
         head("Standing permissions", "Meternaut holds no permission to change Azure."),
-        notice("info", "", "A change is made only after a person approves that exact change on its own page and signs in to Azure: "
+        notice("info", "", "A change is made only after a person approves that exact change on its own page: "
                           "it is made with that person's own permissions, and Azure refuses it if the person may not make it."),
         paragraph("This page only shows what exists. It cannot write, change or end a permission."),
         Safe("<h2>What Meternaut can change in Azure</h2>"),
@@ -310,11 +310,11 @@ def pause_save(ctx: Ctx) -> Response:
 def rule_text(rule: TwoPeopleRule) -> str:
     """The rule in one sentence: off, or what makes a change need two people."""
     if not rule.on:
-        return "Off. Every change needs one approver, who signs in to Azure and approves it."
+        return "Off. Every change needs one approver."
     summaries = change_kinds()
     kinds = [summaries[name] for name in rule.families if name in summaries]
     parts = ([f"it saves at least {dollars(rule.min_usd_month)} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
-    return f"On. A change needs two people when {' or '.join(parts)}. One confirms the request, and another approves it and signs in to Azure."
+    return f"On. A change needs two people when {' or '.join(parts)}. One confirms the request, and another approves it."
 
 
 def _approvers(ctx: Ctx) -> int:
@@ -327,7 +327,7 @@ def two_people_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, s
     rule, ok = read(lambda: ctx.store.rule_get(), TwoPeopleRule())
     owner = ctx.principal.has("owner")  # type: ignore[union-attr]
     people = _approvers(ctx)
-    parts: list[object] = [head("Changes that need two people", "A change that is larger can need two people: one confirms the request, and another approves it and signs in to Azure. It is off until the owner turns it on.")]
+    parts: list[object] = [head("Changes that need two people", "A change that is larger can need two people: one confirms the request, and another approves it. It is off until the owner turns it on.")]
     if banner is not None:
         parts.append(banner)
     if errors:

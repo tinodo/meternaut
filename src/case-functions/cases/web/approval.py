@@ -185,7 +185,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "acknowledged":
         return show("Recorded: worth acting on", "Recorded. Nothing was changed in Azure.", history)
     if kind == "confirmed":
-        return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it and sign in to Azure, with their own permissions.", history)
+        return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions.", history)
     if kind == "asked":
         plan = _plan_of(ctx, result, plan_id)
         until = paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe("")
@@ -254,11 +254,11 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     called = called_of(plan.family)
     _, title = title_of(brief)
     back = ctx.url(f"/ok/{link_part(plan.plan_id)}")
-    yes = button(f"Yes, {called} it and sign in to Azure", name="decision", value="approve", kind="danger")
+    yes = button(f"Yes, {called} it", name="decision", value="approve", kind="danger")
     answer = form(back, hidden("code", code), hidden("nonce", nonce), hidden("note", note), hidden("confirm", "yes"),
                   fmt('<div class="acts"><a class="btn primary" href="{back}">No, go back</a>{yes}</div>', back=back, yes=yes))
     rows = [(name, value) for name, value in brief_page.consequences(brief) if name not in ("Undo", "What could go wrong")]  # the notice says both
-    body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here and sign in to Azure."),
+    body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here."),
                  notice("warning", "This cannot be undone", f"{brief.risk.text} Risk: {brief.risk.level}."), summary(rows),
                  fmt('<p class="m">{where}</p>', where=f"{brief.where.kind} {brief.where.name}, resource group {brief.where.group}, subscription {brief.where.subscription}."),
                  answer])

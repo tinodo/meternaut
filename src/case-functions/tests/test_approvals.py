@@ -218,8 +218,9 @@ class BuildPlan(unittest.TestCase):
     def test_the_plan_says_that_the_person_makes_the_change_with_their_own_permissions(self):
         item = lead()
         plan = build_plan(case_for(item), item, (OID,), NOW, SETTINGS)
-        self.assertIn("When you approve and sign in to Azure", plan.what_changes)
+        self.assertIn("When you approve, Meternaut deletes the", plan.what_changes)
         self.assertIn("with your own permissions", plan.what_changes)
+        self.assertNotIn("sign in", plan.what_changes.lower(), "the sign-in is not a part of what a person approves")
         self.assertIn("your account may not delete the resource, Azure refuses", plan.could_go_wrong)
         self.assertNotIn("writer", (plan.what_changes + plan.could_go_wrong).lower())
 
@@ -288,7 +289,7 @@ class Loop(unittest.TestCase):
         token = self.nonce()
         result = self.decide("approve", nonce=token)
         self.assertEqual((result.ok, result.kind), (False, "error"))
-        self.assertIn("when you sign in to Azure", result.message)
+        self.assertIn("approved on the page of its request, not here", result.message)
         self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "open")
         self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [])
         self.assertIsNone(self.store.action_get(self.plan.plan_id))

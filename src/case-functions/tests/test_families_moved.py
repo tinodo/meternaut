@@ -18,7 +18,7 @@ CASES = {
     "delete-disk": dict(
         kind="disk", detector="orphan-managed-disk", resource=lambda: fs.disk(sku="StandardSSD_LRS"),
         title="Delete an unattached managed disk in resource group meternaut-fam-rg",
-        what_changes=("When you approve and sign in to Azure, Meternaut deletes the disk named planted-disk-1 in resource group meternaut-fam-rg (subscription bbbbbbbb) with your own "
+        what_changes=("When you approve, Meternaut deletes the disk named planted-disk-1 in resource group meternaut-fam-rg (subscription bbbbbbbb) with your own "
                       "permissions. It changes nothing else. Right before it deletes, it reads the resource again and stops unless the resource is still unattached or unassigned, "
                       "still carries the tag that marks it as planted by Meternaut, is still in this resource group and has no management lock."),
         undo="A deleted disk cannot be restored and its data is lost. A new disk with the same name can be made, empty.",
@@ -33,7 +33,7 @@ CASES = {
     "delete-public-ip": dict(
         kind="ip", detector="orphan-public-ip", resource=lambda: fs.simple("ip"),
         title="Delete an unassigned public IP address in resource group meternaut-fam-rg",
-        what_changes=("When you approve and sign in to Azure, Meternaut deletes the public IP address named planted-ip-1 in resource group meternaut-fam-rg (subscription bbbbbbbb) with "
+        what_changes=("When you approve, Meternaut deletes the public IP address named planted-ip-1 in resource group meternaut-fam-rg (subscription bbbbbbbb) with "
                       "your own permissions. It changes nothing else. Right before it deletes, it reads the resource again and stops unless the resource is still unattached or "
                       "unassigned, still carries the tag that marks it as planted by Meternaut, is still in this resource group and has no management lock."),
         undo="A deleted public IP address cannot be restored. The address is released and may not be given again; a new one can be made.",
