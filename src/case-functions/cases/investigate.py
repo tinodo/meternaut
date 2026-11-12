@@ -33,7 +33,7 @@ from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
 from .arm import scopes_of
-from .brief import says_nothing
+from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, says_nothing, shared
 from .detectors import Context, Lead
 from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
@@ -106,7 +106,8 @@ class Finding:
     proposal: str = ""
     confidence: float = 0.0
     summary: str = ""
-    note: str | None = None  # what code says about the finding, for a person: its confidence was not a number from 0 to 1
+    note: str | None = None  # what code says about the finding, for a person: its confidence was not a number from 0 to 1, or it asked to delete and code turned that into a look
+    asked: str = ""  # the proposal that the Investigator gave, when code turned it into a look (it asked to delete)
     claimed: int = 0  # the distinct handles that the answer listed
     handles: list[str] = field(default_factory=list)  # the handles that the tools showed, in the finding's order
     cited: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -152,6 +153,7 @@ class Investigation:
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
+    held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (automation, unchecked), by reason: counted with the findings that were held back
 
     @property
     def state(self) -> str:
@@ -298,6 +300,20 @@ def _metrics(evidence: Mapping[str, dict], handle: str) -> dict[str, float | int
     return {name: aggregate["total"] for name, aggregate in _aggregates(evidence, handle).items()}
 
 
+def _quiet(aggregate: dict) -> bool:
+    """A measured zero: every total that was recorded for the measurement is a number and nil, and a value was read on at least MEASURED_DAYS days of its window. Missing data is not zero: no
+    data, a read that failed, a metric that the type does not offer and a few days of values are none of this."""
+    days = aggregate["daysWithData"]
+    return all(total is not None and total == 0 for total in aggregate["totals"]) and days is not None and days >= MEASURED_DAYS
+
+
+def _zero_only(cited: Mapping, recorded: Mapping[str, dict]) -> bool:
+    """Whether the measurements that a finding cited for one resource show that nothing used it: one of them is a measured zero (_quiet) and none of them shows anything. A measured zero does not
+    outweigh a measurement of the same resource that shows use, whatever the basis of the finding is."""
+    shown = [aggregate for name, aggregate in recorded.items() if name in cited]
+    return any(_quiet(aggregate) for aggregate in shown) and not any(_nonzero(aggregate) for aggregate in shown)
+
+
 def _properties(evidence: Mapping[str, dict], handle: str) -> dict[str, bool | int | float | str]:
     """The typed properties that the tools showed for one handle: a flag, a number or a word under a plain key path."""
     properties = _block(evidence, handle).get("properties")
@@ -360,8 +376,9 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
     """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only.
 
     An entry of metric_evidence counts when its total is one of the totals that the tools recorded for that handle and metric; the number that is kept is the tools'.
-    A claim of no usage is proved by such an entry only when every total that was recorded for the metric is nil: a short measurement that shows nil does not cancel
-    a longer one that showed something. A resource with a cited measurement that shows something, or with none that proves it, leaves a finding of no usage."""
+    A claim of no usage is proved by such an entry only when every total that was recorded for the metric is nil and a value was read on at least MEASURED_DAYS days (_quiet): a short
+    measurement that shows nil does not cancel a longer one that showed something, and no data, a failed read or a few days prove nothing. A resource with a cited measurement that shows
+    something, or with none that proves it, leaves a finding of no usage."""
     known: list[str] = []
     for handle in handles:
         if handle not in toolbox.handles:
@@ -389,8 +406,8 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
             if any(t != 0 for t in numbers):
                 contradicted.add(handle)
                 continue
-            if len(numbers) != len(shown["totals"]):
-                continue  # a measurement that was absent at some time proves nothing
+            if not _quiet(shown):
+                continue  # a measurement that was absent at some time, or that has values on too few days, proves nothing
         if len(cited[handle]) < MAX_FACT_METRICS:
             cited[handle][entry["metric"]] = total
     if finding.basis == "no-usage":
@@ -405,9 +422,23 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
 
 
 def _why_none(finding: Finding) -> str:
-    parts = [f"{n} {what}" for n, what in ((finding.unknown, "that no tool showed"), (finding.unproven, "without a cited measurement that matches the tools and shows no usage"),
+    parts = [f"{n} {what}" for n, what in ((finding.unknown, "that no tool showed"), (finding.unproven, "without a cited measurement that matches the tools and shows no usage on enough days"),
                                           (finding.repeated, "that an earlier finding has")) if n]
     return "no resource of it is left: " + (", ".join(parts) if parts else "it lists none that the tools showed")
+
+
+def _hold_delete(finding: Finding, toolbox: Toolbox) -> None:
+    """A finding is to delete only when every resource of it has a measured zero among the measurements that it cited (_quiet) and none is a resource that others share (cases/brief.py SHARED):
+    any other that asks to delete asks for a look, and says so in its note. Missing data is not zero, and a resource that others share is not deleted on a measurement alone."""
+    if finding.proposal != "delete" or not finding.handles:
+        return
+    others = any(shared(toolbox.handles[handle].resource_type) for handle in finding.handles)
+    proved = all(_zero_only(finding.cited[handle], _aggregates(toolbox.evidence, handle)) for handle in finding.handles)
+    if proved and not others:
+        return
+    finding.asked, finding.proposal = finding.proposal, "investigate"
+    said = HELD_SHARED if others else HELD_UNPROVEN
+    finding.note = f"{said}; {finding.note}" if finding.note else said
 
 
 # -- the guards and the recheck ----------------------------------------------------------------------------------------------------------------------
@@ -624,10 +655,15 @@ def _facts(finding: Finding, metrics: dict[str, float], cost: float | None, reco
     shown = recorded or {}
     units = {name: shown[name]["unit"] for name in metrics if name in shown and shown[name].get("unit")}
     days = {name: shown[name]["days"] for name in metrics if name in shown and shown[name].get("days")}
+    seen = {name: shown[name]["daysWithData"] for name in metrics if name in shown and shown[name].get("daysWithData") is not None}
     if units:
         facts["metricUnits"] = units
     if days:
         facts["metricDays"] = days
+    if seen:
+        facts["metricDaysWithData"] = seen  # the days of the window that had a value: a measured zero needs MEASURED_DAYS of them (brief.measured_zero)
+    if finding.asked:
+        facts["asked"] = finding.asked
     if listed is not None and listed >= len(metrics):
         facts["citedMetrics"] = listed
     return facts
@@ -802,6 +838,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         finding, handles, entries = parse_finding(number, raw)
         if finding.reason is None:
             _verify(finding, handles, entries, toolbox, taken)
+            _hold_delete(finding, toolbox)
             if finding.unknown and harness is not None:
                 harness.guard_failed(spec_i.name, "unknown-handle")  # an answer that cites a handle that no tool returned is a failure of the run, and a third failure trips the brake
         findings.append(finding)
@@ -963,14 +1000,25 @@ def _skeptic_step_of(shared: dict | None, finding: Finding, item: Item) -> dict 
     return dict(shared)
 
 
+def _own_ids(s: "Services") -> set[str]:
+    """The identities of Meternaut itself: the app's own and the two of the sign-in of the approvers. A write by one of them is not an automation of somebody else."""
+    ex, settings = getattr(s, "extras", None), getattr(s, "settings", None)
+    return {text.lower() for text in (getattr(settings, "client_id", ""), getattr(getattr(ex, "settings", None), "signin_client_id", ""),
+                                      getattr(getattr(ex, "settings", None), "signin_assertion_client_id", "")) if text}
+
+
 def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
-    """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py). It is shown to people and
-    never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is left out, so that the page says only what it knows."""
+    """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py), and when an application or service identity last
+    wrote to it (`automatedAt`, from every write of the Activity Log and not only the newest: a person's edit yesterday does not hide an automation's write three days ago; cases/brief.py
+    held_reason holds a finding back on it). It is shown to people and never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is
+    left out, so that the page says only what it knows."""
     reader = out.owners
+    writes = None
     try:
         if reader is None:
             reader = out.owners = OwnerReader(s.arm, s.clock())
         hint = reader.hints(lead.resource_id, lead.tags)
+        writes = reader.writes(lead.resource_id)
         # A read that was refused, that failed or that was not made (the reads of the run were used up) answers nothing: the page must then say that the lookup was not made, and not that
         # the resource has no owner.
         looked_up = hint.get("lastChangedBy") not in (UNAVAILABLE, NOT_VISIBLE)
@@ -982,10 +1030,12 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
     def real(value: object) -> str:
         return value if isinstance(value, str) and value not in sentinels else ""
 
+    own = _own_ids(s)
+    automated = max((when for when, caller in writes or [] if "@" not in caller and caller.lower() not in own), default=None)
     tags = hint.get("tags") if isinstance(hint.get("tags"), dict) else {}
     name = next((tag for tag in ("owner", "contact", "team", "manager", "createdby") if tags.get(tag)), "")
     return {"tagOwner": tags.get(name, ""), "tagName": name, "createdBy": real(hint.get("createdBy")), "createdAt": real(hint.get("createdAt")),
-            "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up}
+            "changedBy": real(hint.get("lastChangedBy")), "changedAt": real(hint.get("lastChangedAt")), "lookedUp": looked_up, "automatedAt": stamp(automated) if automated else ""}
 
 
 def _group_of(finding: Finding) -> list[Item] | None:
@@ -1085,13 +1135,14 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         past = old.learned.get("past") if old is not None and isinstance(old.learned, dict) else None
         if past and "past" not in learned:
             learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
+        owner = _owner_of(s, out, lead) if outcome.status in ("proposed", "needs_human") else {}  # a case that is dropped is never shown to anybody: it takes no lookup of the Activity Log, whose reads are few
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,
             recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd),
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
-            runs_seen=(old.runs_seen + 1) if old else 1, owner=_owner_of(s, out, lead), learned=learned,
+            runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
             subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
         if outcome.status in ("proposed", "needs_human"):
@@ -1100,8 +1151,13 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
-            elif says_nothing(record):
-                upkeep.held(h, record)
-                out.said_nothing += 1
+            else:
+                why = ex.approvals.held_why(record)  # an automation manages the resource, or nobody looked up who changed it: no request is made (cases/brief.py held_reason)
+                if why or says_nothing(record):
+                    upkeep.held(h, record, why)
+                    if why:
+                        out.held_back[why] = out.held_back.get(why, 0) + 1
+                    else:
+                        out.said_nothing += 1
     except (StoreError, ValueError) as error:
         h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))

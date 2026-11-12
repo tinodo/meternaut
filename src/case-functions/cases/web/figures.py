@@ -176,7 +176,7 @@ def series_reason(brief: Brief, case: CaseRecord | None) -> str:
 def short_title(headline: str, group: str = "") -> str:
     """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place), with "Review" for "Look at"."""
     place = f" in group {group}" if group else ""
-    text = headline[: -len(place)] if place and headline.endswith(place) else headline
+    text = headline.replace(place, "", 1) if place and place in headline else headline
     return "Review " + text[8:] if text.startswith("Look at ") else text
 
 
@@ -467,7 +467,7 @@ def chip(label: str, kind: str = "", shape: str = "square") -> Safe:
     return fmt('<span class="chip{kind}"><svg viewBox="0 0 12 12" aria-hidden="true">{shape}</svg>{label}</span>', kind=f" {kind}" if kind else "", shape=Safe(SHAPES[shape]), label=label)
 
 
-def risk_chip(level: str) -> Safe:
-    """The chip of a risk: a circle (low), a triangle (medium) or a diamond (high), and a word."""
+def risk_chip(level: str, more: str = "") -> Safe:
+    """The chip of a risk: a circle (low), a triangle (medium) or a diamond (high), and a word, with `more` after it ("High risk if you act on it")."""
     label, kind, shape, _ = RISKS.get(level, RISKS["medium"])
-    return chip(label, kind, shape)
+    return chip(label + more, kind, shape)

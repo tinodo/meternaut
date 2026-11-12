@@ -8,11 +8,13 @@ Nothing here changes Azure. It reads and writes the records of the app only.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from typing import Sequence
 
+from . import brief
 from . import costs as cost_words
-from .approvals import NOTHING_TO_SAY
+from .approvals import HELD_BACK, NOTHING_TO_SAY
 from .detectors import Lead
 from .events import History
 from .models import CaseRecord, StoreError
@@ -65,15 +67,15 @@ def refresh(store, ranked: Sequence[Lead]) -> int:
     return changed
 
 
-def held(history: History, case: CaseRecord) -> None:
-    """Says in the History that a finding was held back because it cannot say what to look at: its case stays, no request is made."""
-    history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120),
-                 reason=NOTHING_TO_SAY)
+def held(history: History, case: CaseRecord, why: str = "") -> str:
+    """Says in the History that a finding was held back, because it cannot say what to look at (`why` empty) or by a rule of cases/brief.py held_reason (`why` is its reason): its case stays, no request
+    is made. Returns the words that it said."""
+    reason = HELD_BACK.get(why, NOTHING_TO_SAY)
+    history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120), reason=reason)
+    return reason
 
 
-def take_back(ex, history: History) -> int:
-    """Takes back the open requests of the findings that cannot say what to look at and that nobody has answered (Approvals.hold_back_empty), says each in the History and returns how many."""
-    closed = ex.approvals.hold_back_empty()
-    for _, case in closed:
-        held(history, case)
-    return len(closed)
+def take_back(ex, history: History) -> Counter:
+    """Takes back the open requests of the findings that cannot say what to look at, that the rules hold back or that were made under rules that have changed, when nobody has answered them
+    (Approvals.hold_back_empty), says each in the History and returns how many there were of each reason, in the words that the History says."""
+    return Counter(held(history, case, brief.taken_back(case)) for _, case in ex.approvals.hold_back_empty())

@@ -19,7 +19,7 @@ from cases.http import HttpError
 from cases.memory_store import MemoryStore, stamp
 from cases.models import GROUP_FACT, CaseRecord, StoreError
 from cases.redact import Redactor
-from test_run_loop import Moving, estate_with, loop_for, watch
+from test_run_loop import GROUP, Moving, estate_with, loop_for, watch
 from test_web_support import make_case, make_plan
 
 OTHER = "cccccccc-3333-4444-8555-666666666666"  # a second subscription
@@ -576,7 +576,7 @@ class InTheWatch(unittest.TestCase):
         self.clock = Moving()
         self.extras = loop_for(self.clock)
         self.store = self.extras.store
-        self.estate = estate_with(planted_disk=False, endpoints=1)
+        self.estate = estate_with(planted_disk=False, endpoints=1, group=GROUP)  # in the group where a change may be made, but without the planting tag: the rules about a deletion leave it alone
         self.pe = self.estate.graph["orphan-private-endpoint"][0]["id"]
         for metric, value in (("PEBytesIn", 1000.0), ("PEBytesOut", 24.5)):
             self.estate.metrics[(self.pe.lower(), metric)] = every_day(value, skipping=[3, 4])

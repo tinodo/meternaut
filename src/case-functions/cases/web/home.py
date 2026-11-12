@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import Brief, ago_text, plain, plan_headline, things
+from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import brief_of, cases_by_id, decisions_for, effective_state, is_expired, may_answer, read
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
@@ -161,7 +161,8 @@ def _meta(ctx: Ctx, unit: Unit) -> str:
 
 
 def _chips(unit: Unit) -> Safe:
-    chips = [risk_chip(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]))]
+    acting = all(m.brief.risk.text.startswith(ACTING) for m in unit.members)
+    chips = [risk_chip(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]), IF_ACTED if acting else "")]
     if unit.figure.state != "save":
         chips.append(chip("Needs measuring"))
     elif len(unit.members) == 1:
@@ -293,15 +294,29 @@ def held_count(ctx: Ctx) -> int:
                if case.detector == INVESTIGATION and case.resource_id.lower() not in left)
 
 
+def held_by_rules(ctx: Ctx) -> int:
+    """How many of the findings that held_count counts are held back by a rule of cases/brief.py held_reason: an automation manages the resource, or nobody looked up who changed it."""
+    waiting = {p.resource_id.lower() for p in ctx.store.plans_open() if p.state == "open"}
+    return sum(1 for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status)
+               if case.detector == INVESTIGATION and case.resource_id.lower() not in waiting and held_reason(case, ctx.now))
+
+
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: nothing measured backs them yet, or the places for requests are full (approvals.py). The AIs look at them again at every search, so a person
-    is told that they exist and that nothing is dropped. A store that cannot be read says nothing here: the list above says so."""
+    """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because an automation manages the
+    resource or nobody looked up who changed it. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
+    nothing here: the list above says so."""
     held, _ = read(lambda: held_count(ctx), 0)
     if held <= 0:
         return Safe("")
-    many = held != 1
-    return details(f"Held back: {_count(held, 'finding')}", paragraph(f"No measurement backs {'them' if many else 'it'} yet, or the places for requests are full. "
-                                                                     f"The AIs look at {'them' if many else 'it'} again at the next investigation."))
+    ruled, _ = read(lambda: held_by_rules(ctx), 0)
+    ruled = min(ruled, held)
+    lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because an automation manages the resource, or because nobody has looked up who changed it. "
+                       "Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
+    rest = held - ruled
+    if rest:
+        many = rest != 1
+        lines.append(paragraph(f"No measurement backs {'them' if many else 'it'} yet, or the places for requests are full. The AIs look at {'them' if many else 'it'} again at the next investigation."))
+    return details(f"Held back: {_count(held, 'finding')}", *lines)
 
 
 def _open(ctx: Ctx) -> tuple[list[Row], bool]:

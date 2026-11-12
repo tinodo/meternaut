@@ -173,7 +173,8 @@ class TheBriefOfAdvice(unittest.TestCase):
         self.assertEqual(b.headline, "Consider changing the virtual machine oversized-vm-1 in group team-apps-rg")
         self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_CHANGE, brief.ADVICE_WHO, ""))
         self.assertEqual((b.undo.reversible, b.undo.how), (True, brief.ADVICE_UNDO))
-        self.assertEqual((b.risk.level, b.risk.text), ("low", brief.ADVICE_RISK))
+        self.assertEqual(b.risk, brief.acting_risk(self.case), "the risk is that of doing what the title suggests, and answering changes nothing in Azure")
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act on it: What depends on it can slow down or stop."))
         self.assertEqual(b.answers, ("approve", "decline", "not_mine", "ask", "later"))
         self.assertEqual(b.where.kind, "Virtual machine")
         self.assertEqual(b.where.portal_url, f"https://portal.azure.com/#resource{VM}")
@@ -293,7 +294,10 @@ class TheConfidence(unittest.TestCase):
         self.assertEqual((confidence_of(None).level, confidence_of(None).because), ("Low", "No record of the review is stored."))
 
     def test_the_notes_that_code_wrote_among_the_objections_are_not_a_doubt_of_the_second_ai(self):
-        self.assertEqual(brief.CODE_NOTES, ("no measurement backs this finding", "the Investigator gave a confidence of", "past cases like this"))
+        self.assertEqual(brief.CODE_NOTES, ("no measurement backs this finding", "the Investigator gave a confidence of", "past cases like this", "nothing measured shows that",
+                                            "others share this kind of resource"))
+        for held in (brief.HELD_UNPROVEN, brief.HELD_SHARED):
+            self.assertTrue(held.startswith(brief.CODE_NOTES[3:]), "what code notes when it turns a deletion into a look is not a doubt of the second AI")
         notes = ("no measurement backs this finding: the tools returned no number", "the Investigator gave a confidence of 0.5, under the 0.7 that a proposal needs")
         found = confidence_of(make_case(status="needs_human", objections=notes, steps=({"step": "skeptic", "ok": True},), models={"skeptic": "m"}))
         self.assertEqual(found.because, "The AI reviewers did not settle it; code read the facts itself.")
@@ -429,7 +433,8 @@ class TheSaving(unittest.TestCase):
             self.assertEqual(usd_text(bad), "")
 
     def test_the_words_of_money_never_say_that_something_was_saved(self):
-        for text in (usd_text(41.2), brief_of(make_case(), make_plan()).saving.basis, brief.WHO_ACTS, brief.ADVICE_CHANGE, brief.ADVICE_RISK):
+        advice = brief_of(make_advice_case(), make_advice(), may_answer=True)
+        for text in (usd_text(41.2), brief_of(make_case(), make_plan()).saving.basis, brief.WHO_ACTS, brief.ADVICE_CHANGE, advice.risk.text):
             self.assertNotRegex(text, r"\b(saved|saves)\b")
 
 
@@ -607,8 +612,12 @@ class TheOwner(unittest.TestCase):
         self.assertEqual(owner_of(make_case(owner={"lookedUp": True, "tagOwner": "   "})).known, False)
 
     def test_a_part_of_the_record_is_enough_and_a_key_that_is_not_known_is_left_out(self):
-        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x"})).text, "Created by bob@example.com.")
-        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z"})).text, "Last changed on 2026-10-01.")
+        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x", "lookedUp": True})).text, "Created by bob@example.com.")
+        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})).text, "Last changed on 2026-10-01.")
+
+    def test_a_tag_is_not_all_that_the_line_says_when_the_activity_log_was_not_read(self):
+        text = owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": False})).text
+        self.assertEqual(text, "Tag team: platform. Not checked: who changed it.", "an owner tag must not read as if nobody had changed the resource")
 
     def test_text_from_the_estate_is_data_and_is_made_safe_by_plain(self):
         owner = owner_of(make_case(owner={"tagOwner": "[mail me](javascript:alert(1)) https://evil.example\u202e", "createdBy": "x" * 500, "lookedUp": True}))

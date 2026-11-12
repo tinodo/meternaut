@@ -15,6 +15,7 @@ from support import APP_ROOT, ENV, NOW, RG, SUBSCRIPTION, LogCapture, Ticker, fi
 
 from cases import agents, approvals, config as cfg, decide, investigate, loop_config, people as people_mod, roles, wiring
 from cases.approvals import Approvals
+from cases.brief import HELD_UNPROVEN
 from cases.detectors import Context
 from cases.events import History
 from cases.families.gates import ChangeScope
@@ -49,12 +50,13 @@ def resource(number: int, **changes) -> Resource:
 
 
 def metrics(**totals) -> dict:
-    return {"metrics": {name: {"total": total} for name, total in totals.items()}}
+    """Evidence in which each metric has the one total and a value on every day of a window of 30: a measured zero when the total is 0."""
+    return {"metrics": {name: {"total": total, "days": 30, "days_with_data": 0 if total is None else 30} for name, total in totals.items()}}
 
 
 def recorded(**totals) -> dict:
-    """Evidence in which each metric holds every total that the tools recorded for it, in order. The last is the total of the last measurement."""
-    return {"metrics": {name: {"total": values[-1], "totals": list(values)} for name, values in totals.items()}}
+    """Evidence in which each metric holds every total that the tools recorded for it, in order. The last is the total of the last measurement, which had a value on every day of 30."""
+    return {"metrics": {name: {"total": values[-1], "totals": list(values), "days": 30, "days_with_data": 30} for name, values in totals.items()}}
 
 
 def entry(handle: str, metric: str, total) -> dict:
@@ -147,18 +149,28 @@ def agree_all(seen: dict) -> str:
 
 
 class FakeArm:
-    """The one call of Azure Resource Manager that the investigation makes itself: the locks of a scope."""
+    """The calls of Azure Resource Manager that the investigation makes itself: the locks of a scope, and the Activity Log of a resource (which shows no change unless a test sets `events`, or a
+    read that fails when it sets `log_fails`)."""
 
     def __init__(self):
         self.locks: dict[str, list[str]] = {}
         self.failing: set[str] = set()
         self.calls: list[str] = []
+        self.events: list[dict] = []
+        self.log_fails = False
+        self.log_reads = 0
 
     def locks_at(self, subscription: str, scope: str) -> list[str]:
         self.calls.append(scope.lower())
         if scope.lower() in self.failing:
             raise HttpError(403, "GET management.azure.com: 403 no right")
         return list(self.locks.get(scope.lower(), []))
+
+    def activity_events(self, subscription, since, until, *, resource_id=None, group=None, max_pages=3):
+        self.log_reads += 1
+        if self.log_fails:
+            raise HttpError(503, "GET management.azure.com: 503 try later")
+        return list(self.events), True
 
 
 def loop_for(clock, store=None, *, recheck_days=7):
@@ -381,9 +393,9 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 5,600 since the data that is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data (it was 5,400 since the
-        # learning: two sentences that say that two tools recall what was learned, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 5600)
+        # 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed (it was 5,600 since the data that
+        # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 6100)
 
     def test_the_investigator_is_told_to_cite_the_volume_and_the_readers_of_data_that_is_stored_and_not_read_and_that_a_source_it_could_not_read_is_unknown(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -744,7 +756,20 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
 
     def test_a_finding_of_no_usage_needs_a_cited_measurement_for_every_resource_that_it_keeps(self):
         parsed = verified(finding(handles=["r1", "r2"], evidence=[]), FakeToolbox())
-        self.assertEqual((parsed.handles, parsed.reason), ([], "no resource of it is left: 2 without a cited measurement that matches the tools and shows no usage"))
+        self.assertEqual((parsed.handles, parsed.reason), ([], "no resource of it is left: 2 without a cited measurement that matches the tools and shows no usage on enough days"))
+
+    def test_missing_data_is_not_zero_a_claim_of_no_usage_needs_a_value_on_at_least_20_days_of_the_window(self):
+        def block(days_with_data, total=0, **more):
+            return {"metrics": {"MetricA": {"total": total, "totals": [total], "days": 30, "days_with_data": days_with_data, **more}}}
+
+        for label, aggregate, kept in (("no day had a value", block(0, None), False), ("a value on one day", block(1), False), ("19 of 30 days", block(19), False),
+                                      ("20 of 30 days", block(20), True), ("every day", block(30), True),
+                                      ("the number of days was not recorded", {"metrics": {"MetricA": {"total": 0, "totals": [0], "days": 30}}}, False),
+                                      ("the number of days is not a number", block("30"), False)):
+            with self.subTest(case=label):
+                parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), FakeToolbox(evidence={"r1": aggregate}))
+                self.assertEqual((parsed.handles, parsed.unproven), (["r1"], 0) if kept else ([], 1))
+        self.assertEqual(investigate.MEASURED_DAYS, 20, "the chart of use asks for the same 20 of 30 days (usage.MIN_DAYS)")
 
     def test_a_short_measurement_that_shows_nil_does_not_cancel_a_longer_one_that_showed_something(self):
         toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0]), "r2": recorded(MetricA=[0, 0]), "r3": recorded(MetricA=[0, 2900]), "r4": recorded(MetricA=[0])})
@@ -770,8 +795,9 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         self.assertEqual((alone.handles, alone.unproven), ([], 1))
 
     def test_evidence_without_a_usable_list_of_totals_is_read_as_the_one_total(self):
-        for label, aggregate in (("no list", {"total": 0}), ("an empty list", {"total": 0, "totals": []}), ("a text", {"total": 0, "totals": "0"}),
-                                 ("a number", {"total": 0, "totals": 0}), ("a dict", {"total": 0, "totals": {"a": 0}})):
+        for label, aggregate in (("no list", {"total": 0, "days_with_data": 30}), ("an empty list", {"total": 0, "totals": [], "days_with_data": 30}),
+                                 ("a text", {"total": 0, "totals": "0", "days_with_data": 30}), ("a number", {"total": 0, "totals": 0, "days_with_data": 30}),
+                                 ("a dict", {"total": 0, "totals": {"a": 0}, "days_with_data": 30})):
             with self.subTest(case=label):
                 parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]), FakeToolbox(evidence={"r1": {"metrics": {"MetricA": aggregate}}}))
                 self.assertEqual((parsed.handles, parsed.cited), (["r1"], {"r1": {"MetricA": 0}}))
@@ -779,7 +805,7 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         self.assertEqual((shows_something.handles, shows_something.unproven), ([], 1))
 
     def test_a_measurement_that_was_absent_at_some_time_proves_nothing_and_does_not_contradict(self):
-        evidence = {"r1": {"metrics": {"MetricA": {"total": 0, "totals": [None, 0]}, "MetricB": {"total": 0, "totals": [0]}, "MetricC": {"total": 0, "totals": [0, "x"]}}}}
+        evidence = {"r1": {"metrics": {"MetricA": {"total": 0, "totals": [None, 0]}, "MetricB": {"total": 0, "totals": [0], "days_with_data": 30}, "MetricC": {"total": 0, "totals": [0, "x"]}}}}
         toolbox = FakeToolbox(evidence=evidence)
         parsed = verified(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0), entry("r1", "MetricC", 0), entry("r1", "MetricB", 0)]), toolbox)
         self.assertEqual((parsed.handles, parsed.cited), (["r1"], {"r1": {"MetricB": 0}}))
@@ -1099,7 +1125,8 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         results, h = self.run_with(finding(basis="low-usage", proposal="delete", confidence=1.0, evidence=[]), verdicts(("agree", (), "No reason to keep them.")))
         for name, r in results.items():
             with self.subTest(resource=name):
-                self.assertEqual((r["status"], r["recommendation"], r["confidence"], r["objections"]), ("needs_human", "delete", 1.0, [self.SAYS]))
+                self.assertEqual((r["status"], r["recommendation"], r["confidence"], r["objections"]), ("needs_human", "investigate", 1.0, [HELD_UNPROVEN, self.SAYS]),
+                                 "no measured zero: it asks for a look and not for a deletion")
                 self.assertEqual(r["summary"], "Nothing used these in the window.", "the words of the Investigator are left as they were")
         self.assertEqual((h.result.cases, h.result.proposed, h.result.needs_human, h.result.unmeasured), (2, 0, 2, 2))
 
@@ -1109,7 +1136,7 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
                 with self.subTest(basis=basis, proposal=proposal):
                     results, _ = self.run_with(finding(basis=basis, proposal=proposal, evidence=[]))
                     self.assertEqual({r["status"] for r in results.values()}, {"needs_human"})
-                    self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS,)})
+                    self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(HELD_UNPROVEN, self.SAYS) if proposal == "delete" else (self.SAYS,)})
 
     def test_the_same_findings_with_a_cited_measurement_that_matched_the_tools_can_be_proposed(self):
         for basis in ("no-usage", "low-usage", "oversized", "duplicate", "unused-feature", "commitment-misfit", "other"):
@@ -1124,29 +1151,32 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
     def test_an_entry_that_the_tools_did_not_confirm_is_no_measurement(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=3), "r2": metrics(MetricA=3)})
         wrong = [entry("r1", "MetricA", 4), entry("r2", "MetricZ", 3), entry("r9", "MetricA", 3), {"handle": "r1", "metric": "MetricA", "total": "3"}]
-        results, _ = self.run_with(finding(basis="low-usage", evidence=wrong), toolbox=toolbox)
+        results, _ = self.run_with(finding(basis="low-usage", proposal="change", evidence=wrong), toolbox=toolbox)
         self.assertEqual({r["status"] for r in results.values()}, {"needs_human"})
         self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS,)})
 
     def test_one_resource_of_a_finding_can_be_backed_and_the_other_not(self):
-        results, h = self.run_with(finding(basis="low-usage", evidence=[entry("r1", "MetricA", 0)]))
+        results, h = self.run_with(finding(basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 0)]))
         self.assertEqual({name: (r["status"], r["objections"]) for name, r in results.items()}, {"thing-1": ("proposed", []), "thing-2": ("needs_human", [self.SAYS])})
         (line,) = h.of("investigation.finding")
         self.assertEqual((line["handles"], line["unmeasured"], line["shown"]), (2, 1, 2))
         self.assertEqual(h.result.unmeasured, 1)
 
-    def test_a_delete_that_waits_for_a_person_still_shows_the_cost_lines_it_would_save_and_a_change_shows_none(self):
+    def test_a_finding_that_asks_to_delete_claims_no_saving_without_a_measured_zero_and_shows_the_cost_lines_with_one_and_a_change_shows_none(self):
         deleted, _ = self.run_with(finding(basis="low-usage", proposal="delete", evidence=[]))
-        self.assertEqual({r["monthlySavingUsd"] for r in deleted.values()}, {10.0, 20.0})
+        self.assertEqual({r["monthlySavingUsd"] for r in deleted.values()}, {None}, "a look claims no saving")
+        measured, _ = self.run_with(finding(basis="no-usage", proposal="delete"))
+        self.assertEqual({r["monthlySavingUsd"] for r in measured.values()}, {10.0, 20.0})
         changed, _ = self.run_with(finding(basis="low-usage", proposal="change", evidence=[]))
         self.assertEqual({r["monthlySavingUsd"] for r in changed.values()}, {None})
 
     def test_the_sentence_comes_before_the_objections_of_the_skeptic(self):
-        results, _ = self.run_with(finding(basis="low-usage", evidence=[]), verdicts(("disagree", ("It may be in use.", "The window is short."), "Contested.")))
+        results, _ = self.run_with(finding(basis="low-usage", proposal="change", evidence=[]), verdicts(("disagree", ("It may be in use.", "The window is short."), "Contested.")))
         self.assertEqual({tuple(r["objections"]) for r in results.values()}, {(self.SAYS, "It may be in use.", "The window is short.")})
 
     def test_the_case_in_the_store_has_the_sentence_and_is_not_proposed_and_only_an_advise_plan_is_made(self):
-        h = Harness(FakeFoundry(answer(finding(basis="low-usage", evidence=[]))), with_store=True)
+        costly = FakeToolbox([resource(n, cost_usd_30d=60.0 * n) for n in range(1, 6)])  # a change names no saving, so only a resource that costs ADVICE_MIN_USD or more gets a request
+        h = Harness(FakeFoundry(answer(finding(basis="low-usage", proposal="change", evidence=[]))), costly, with_store=True)
         h.go()
         cases = h.store.cases_recent()
         self.assertEqual({(c.status, c.objections) for c in cases}, {("needs_human", (self.SAYS,))})
@@ -1163,7 +1193,7 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         self.assertFalse([n for n in backed.notes if "no measurement" in n], backed.notes)
 
     def test_a_finding_that_the_skeptic_could_not_judge_says_the_sentence_too(self):
-        broken = FakeFoundry(answer(finding(basis="low-usage", evidence=[])))
+        broken = FakeFoundry(answer(finding(basis="low-usage", proposal="change", evidence=[])))
         broken.skeptic_error = FoundryError("the project is busy")
         h = Harness(broken)
         h.go()
@@ -1226,7 +1256,7 @@ class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.Te
                     h = self.run_with(totals, basis="no-usage", metric_evidence=evidence)
                     (line,) = h.of("investigation.finding")
                     self.assertEqual((line["kept"], line["handles"], line["unproven"]), (False, 0, 4))
-                    self.assertEqual(line["reason"], "no resource of it is left: 4 without a cited measurement that matches the tools and shows no usage")
+                    self.assertEqual(line["reason"], "no resource of it is left: 4 without a cited measurement that matches the tools and shows no usage on enough days")
                     self.assertEqual((h.result.cases, h.store.cases_recent()), (0, []))
 
     def test_an_entry_with_no_total_and_an_entry_for_a_resource_that_has_data_change_nothing(self):
@@ -1277,7 +1307,7 @@ class WhenTheConfidenceIsOutOfRange(unittest.TestCase):
         self.assertEqual(json.loads(h.foundry.inputs()[1])["findings"][0]["confidence"], 0.0)
 
     def test_the_note_comes_before_the_objections_of_the_skeptic_and_the_sentence_about_a_missing_measurement(self):
-        h = self.go(finding(confidence=85, basis="low-usage", evidence=[]), verdicts(("disagree", ("It may be in use.",), "Contested.")))
+        h = self.go(finding(confidence=85, basis="low-usage", proposal="change", evidence=[]), verdicts(("disagree", ("It may be in use.",), "Contested.")))
         self.assertEqual({tuple(r["objections"]) for r in h.of("case.result")}, {(self.NOTE, decide.NO_MEASUREMENT, "It may be in use.")})
 
     def test_a_finding_with_a_confidence_from_0_to_1_has_no_note_and_a_confidence_of_1_is_good_enough(self):
@@ -1393,12 +1423,12 @@ class WhatTheSkepticIsGiven(unittest.TestCase):
                           "costUsd30d": 30.0, "evidenceShown": 2})
         self.assertEqual(one["evidence"], [
             {"handle": "r2", "type": "microsoft.example/things", "costUsd30d": 20.0,
-             "metrics": [{"metric": "MetricA", "total": 0, "cited": True}, {"metric": "MetricC", "total": None, "cited": False}]},
+             "metrics": [{"metric": "MetricA", "total": 0, "cited": True, "days": 30, "daysWithData": 30}, {"metric": "MetricC", "total": None, "cited": False, "days": 30, "daysWithData": 0}]},
             {"handle": "r1", "type": "microsoft.example/things", "costUsd30d": 10.0,
-             "metrics": [{"metric": "MetricB", "total": 12.5, "cited": False}, {"metric": "MetricA", "total": 0, "cited": True}]}])
+             "metrics": [{"metric": "MetricB", "total": 12.5, "cited": False, "days": 30, "daysWithData": 30}, {"metric": "MetricA", "total": 0, "cited": True, "days": 30, "daysWithData": 30}]}])
 
     def test_a_measurement_with_a_total_that_is_not_nil_is_shown_first_even_when_the_agent_did_not_cite_it_and_an_absent_one_is_shown_too(self):
-        toolbox = FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": 0}, "MetricZ": {"total": 99999}, "MetricY": {"total": None}}}})
+        toolbox = FakeToolbox(evidence={"r1": {"metrics": {"MetricA": {"total": 0, "days_with_data": 30}, "MetricZ": {"total": 99999}, "MetricY": {"total": None}}}})
         seen = self.seen(Harness(FakeFoundry(answer(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]))), toolbox))
         row = seen["findings"][0]["evidence"][0]
         self.assertEqual([(m["metric"], m["total"], m["cited"]) for m in row["metrics"]], [("MetricZ", 99999, False), ("MetricA", 0, True), ("MetricY", None, False)])
@@ -1438,7 +1468,7 @@ class WhatTheSkepticIsGiven(unittest.TestCase):
         self.assertNotIn("sku", rows["r2"])
 
     def test_a_metric_a_type_a_sku_and_a_key_path_with_a_line_break_after_them_are_not_given_to_the_skeptic(self):
-        evidence = {"r1": {"metrics": {"MetricA": {"total": 0}, "MetricB\n": {"total": 5}}, "type": "microsoft.example/things\n", "sku": "Premium_LRS\n",
+        evidence = {"r1": {"metrics": {"MetricA": {"total": 0, "days_with_data": 30}, "MetricB\n": {"total": 5}}, "type": "microsoft.example/things\n", "sku": "Premium_LRS\n",
                            "properties": {"diskSizeGB\n": 1, "tier": "Premium\n", "ok": 1}}}
         toolbox = FakeToolbox([resource(1, resource_type="microsoft.example/things\n")], evidence)
         row = self.seen(Harness(FakeFoundry(answer(finding(handles=["r1"], evidence=[entry("r1", "MetricA", 0)]))), toolbox))["findings"][0]["evidence"][0]
@@ -1532,7 +1562,7 @@ class EveryResourceIsShownToTheSkeptic(unittest.TestCase):
     def test_a_big_finding_with_many_long_measurements_gets_poorer_rows_and_still_every_row(self):
         names = [f"Metric{n:02d}" + "x" * 60 for n in range(12)]
         toolbox = FakeToolbox([resource(n, cost_usd_30d=float(n)) for n in range(1, 61)], {f"r{n}": metrics(**{name: n for name in names}) for n in range(1, 61)})
-        raw = finding(handles=[f"r{n}" for n in range(1, 61)], basis="low-usage", evidence=[entry(f"r{n}", names[0], n) for n in range(1, 61)])
+        raw = finding(handles=[f"r{n}" for n in range(1, 61)], basis="low-usage", proposal="change", evidence=[entry(f"r{n}", names[0], n) for n in range(1, 61)])
         h = Harness(FakeFoundry(answer(raw)), toolbox)
         h.go()
         text = h.foundry.inputs()[1]
@@ -1775,7 +1805,8 @@ class WhatIsKept(unittest.TestCase):
 
     def test_the_facts_are_a_typed_digest_with_the_measurements_and_no_name(self):
         case = self.store.case_get(key_of(resource(2)))
-        self.assertEqual(case.facts, {"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "costUsd30d": 20.0, "finding": 1, "citedMetrics": 1})
+        self.assertEqual(case.facts, {"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "costUsd30d": 20.0, "finding": 1, "metricDays": {"MetricA": 30},
+                                      "metricDaysWithData": {"MetricA": 30}, "citedMetrics": 1})
         text = json.dumps(case.facts)
         for word in ("thing-", "rg-app", "swedencentral", SUBSCRIPTION):
             self.assertNotIn(word, text)
@@ -2223,7 +2254,7 @@ class WhenItFindsNothing(unittest.TestCase):
         self.assertEqual([(f["kept"], f["reason"]) for f in h.of("investigation.finding")], [
             (False, "it is not an object"), (False, "its basis or its proposal is not on the list"), (False, "its confidence is not a number"), (False, "it lists no handles"),
             (False, "no resource of it is left: 1 that no tool showed"),
-            (False, "no resource of it is left: 1 without a cited measurement that matches the tools and shows no usage")])
+            (False, "no resource of it is left: 1 without a cited measurement that matches the tools and shows no usage on enough days")])
         self.assertEqual(len(h.foundry.runs), 1)
 
     def test_the_tool_calls_that_failed_are_counted_in_the_note_of_the_step(self):
@@ -2501,8 +2532,8 @@ def disks_estate():
     ids = {name: estate.id_of(name).lower() for name in ("disk-a", "disk-b", "disk-c")}
     estate.cost_rows = [(SUB, 30.0, ids["disk-a"], "Storage"), (SUB, 10.0, ids["disk-b"], "Storage"), (SUB, 0.5, ids["disk-c"], "Storage")]
     estate.definitions[DISK] = [definition("MetricX", "Count", "Total")]
-    estate.series = {(ids["disk-a"], "MetricX"): [point(1, total=0), point(2, total=0)], (ids["disk-b"], "MetricX"): [point(1, total=0), point(2, total=3)],
-                     (ids["disk-c"], "MetricX"): [point(1, total=0)]}
+    quiet = [point(day, total=0) for day in range(1, 26)]  # a value on 25 of the 30 days, each nil: a measured zero
+    estate.series = {(ids["disk-a"], "MetricX"): quiet, (ids["disk-b"], "MetricX"): [*quiet[:24], point(25, total=3)], (ids["disk-c"], "MetricX"): quiet}
     return estate, real_toolbox(estate)
 
 
@@ -2591,7 +2622,7 @@ class WithTheRealToolbox(unittest.TestCase):
         seen = json.loads(foundry.inputs()[-1])["findings"][0]
         first = seen["evidence"][0]
         self.assertEqual((first["type"], first["sku"], first["costUsd30d"]), ("microsoft.compute/disks", "Premium_LRS", 30.0))
-        self.assertEqual(first["metrics"], [{"metric": "MetricX", "cited": True, "total": 0, "days": 30, "daysWithData": 2, "unit": "Count"}])
+        self.assertEqual(first["metrics"], [{"metric": "MetricX", "cited": True, "total": 0, "days": 30, "daysWithData": 25, "unit": "Count"}])
         self.assertEqual(first["properties"], {"diskSizeGB": 128, "diskState": "Unattached"})
         text = foundry.inputs()[-1]
         for name in ("disk-a", "disk-b", "disk-c", "rg-app", "swedencentral"):

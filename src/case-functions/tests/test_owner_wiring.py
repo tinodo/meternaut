@@ -50,7 +50,7 @@ class TheOwnerLineOfACase(unittest.TestCase):
         arm = Arm(([event("2026-11-06T08:00:00Z", WRITE, "maya@example.invalid", "OK"), event("2026-10-01T08:00:00Z", WRITE, "li@example.invalid", "Created")], True))
         owner = investigate._owner_of(Services(arm), investigate.Investigation(), lead({"Team": "platform", "note": "x"}))
         self.assertEqual(owner, {"tagOwner": "platform", "tagName": "team", "createdBy": "li@example.invalid", "createdAt": "2026-10-01T08:00:00Z",
-                                 "changedBy": "maya@example.invalid", "changedAt": "2026-11-06T08:00:00Z", "lookedUp": True})
+                                 "changedBy": "maya@example.invalid", "changedAt": "2026-11-06T08:00:00Z", "lookedUp": True, "automatedAt": ""})
 
     def test_the_first_of_the_owner_tags_in_the_fixed_order_is_the_one_that_is_named(self):
         owner = investigate._owner_of(Services(Arm()), investigate.Investigation(), lead({"manager": "li", "Owner": "maya", "contact": "ops@example.invalid"}))

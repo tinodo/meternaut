@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
+from .brief import CHECK_FIRST_SHORT, GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
 from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -168,6 +168,11 @@ def _gateways(brief: Brief) -> list[dict]:
     return blocks
 
 
+def _check_first(brief: Brief) -> list[dict]:
+    """What to check before acting on advice about a resource that others share, or that may not be used any more, in one line: the page has the three lines."""
+    return [_block("check-first", md(CHECK_FIRST_SHORT, 160))] if brief.check_first else []
+
+
 def _undo(brief: Brief) -> dict:
     """Whether it can be undone: one bold line when it cannot, and nothing decorative."""
     if not brief.undo.reversible:
@@ -287,7 +292,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
     body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-            *_facts(brief), *_unread(brief), *_gateways(brief), *_decision_lines(brief), *buttons]
+            *_facts(brief), *_unread(brief), *_gateways(brief), *_check_first(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 
@@ -317,7 +322,7 @@ def closed_card(brief: Brief, ctx: CardContext) -> dict:
         raise CardError("only a request that has ended has a closing card")
     by = md(outcome.by, 80)
     if outcome.state == "expired":
-        said = "Expired. Nothing more to do."
+        said = "Expired. Nothing more to do." if outcome.title == "Expired" else f"{md(outcome.title, 40)}. {md(outcome.lines[0], 200)} {md(outcome.lines[1], 80)}"
     elif outcome.state == "failed":
         said = f"Approved by {by}, not made: {md(outcome.lines[0], 200)}"
     else:

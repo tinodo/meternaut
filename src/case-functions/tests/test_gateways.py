@@ -41,7 +41,7 @@ def estate(units, peaks=None, days=14, per_unit=6.0, **changes):
     return resources, evidence
 
 
-def raw_of(count, basis="no-usage", proposal="investigate", cited=0, **changes):
+def raw_of(count, basis="low-usage", proposal="investigate", cited=0, **changes):
     handles = [f"r{n}" for n in range(1, count + 1)]
     return finding(handles=handles, basis=basis, proposal=proposal, confidence=0.8, summary="Nobody connected to these gateways in the window.",
                    evidence=[entry(handle, METRIC, cited) for handle in handles], **changes)
@@ -137,7 +137,8 @@ class WhatTheInvestigationKeeps(unittest.TestCase):
         digest = self.case.facts[gateways.KEY]
         self.assertEqual(digest, {"gateways": 7, "counted": 7, "units": 112, "target": 7, "peak": 0, "days": 14, "quiet": 7, "costUsd30d": 672.0, "savingUsd": 630.0})
         self.assertTrue(all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in digest.values()))
-        self.assertEqual(sorted(self.case.facts), sorted(["basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricUnits", "metrics", "proposal", GROUP_FACT, gateways.KEY]))
+        self.assertEqual(sorted(self.case.facts), sorted(["basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metricUnits", "metrics", "proposal", GROUP_FACT,
+                                                          gateways.KEY]))
         json.dumps(self.case.facts)
 
     def test_the_advise_plan_takes_the_figure_of_the_digest_and_code_wrote_its_words(self):

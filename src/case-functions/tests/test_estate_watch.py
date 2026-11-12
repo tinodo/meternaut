@@ -850,10 +850,9 @@ class WatchingMoreDoesNotWidenWhatMayBeChanged(unittest.TestCase):
         summary, events, _ = watch(tenant, clock=clock, extras=extras)
         self.assertEqual((summary.ok, summary.cases), (True, 1))
         (case,) = extras.store.cases_recent()
-        (plan,) = extras.store.plans_open()
-        self.assertEqual((case.subscription_id, case.status, case.plan_id), (other, "proposed", plan.plan_id))
-        self.assertEqual((plan.family, plan.subscription_id), ("advise", other), "a person reads it and can say whether it is worth acting on; nothing can be changed for it")
-        self.assertEqual([e["family"] for e in of_type(events, "plan.created")], ["advise"])
+        self.assertEqual((case.subscription_id, case.status, case.plan_id), (other, "proposed", None))
+        self.assertEqual((extras.store.plans_open(), of_type(events, "plan.created")), ([], []), "no change plan, and no deletion advice either: nobody looked up who changed it")
+        self.assertEqual([e["reason"] for e in of_type(events, "case.held")], ["held back: not checked who changed it"])
 
     def test_the_planted_disk_of_the_loop_still_gets_its_plan_when_the_watch_reads_the_whole_estate(self):
         clock = Moving()

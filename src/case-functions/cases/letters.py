@@ -367,10 +367,13 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     elif about_group:
         rows = _fact_rows(brief)
         doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well
-        doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: a letter for many resources has no room for more
+        said = _decision_rows(brief)
+        doc.facts(*said[:2], said[3])  # whose it is, that the answer changes nothing in Azure, and the risk of acting on it: a letter for many resources has no room for more
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))
+    if brief.check_first:
+        doc.paragraph(brief_mod.CHECK_FIRST_SHORT)
     doc.button("Review and decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
     doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver

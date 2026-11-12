@@ -21,7 +21,7 @@ from . import costs as cost_words
 from . import decide, detectors, evidence, guards, investigate, learning, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
-from .approvals import NOTHING_TO_SAY, is_fixture
+from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
 from .arm import Arm, scopes_of
 from .brief import says_nothing
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
@@ -78,7 +78,7 @@ class Summary:
     errors: int = 0
     tokens: int = 0
     seconds: int = 0
-    held: int = 0  # the findings held back because they cannot say what to look at (cases/upkeep.py)
+    held: int = 0  # the findings held back because they cannot say what to look at, or because an automation manages the resource (cases/upkeep.py)
 
 
 class CaseEnded(Exception):
@@ -133,8 +133,8 @@ def _when(value: object) -> dt.datetime | None:
 
 
 def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_before: int, held: list[str] | None = None) -> tuple[str, int]:
-    """One case, from the evidence to the result. Returns its status and the tokens that it used. `held` collects the ids of the cases whose request was not made because the finding cannot
-    say what to look at (cases/upkeep.py): the Watch counts them."""
+    """One case, from the evidence to the result. Returns its status and the tokens that it used. `held` collects the words of the History for each case whose request was not made because the finding
+    cannot say what to look at, or because a rule holds it back (cases/upkeep.py, cases/brief.py held_reason): the Watch counts them."""
     h, st = s.history, s.settings
     case_id = f"{h.run_id[:8]}-c{number}"
     used = 0
@@ -167,9 +167,10 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
                     record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                     h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                     ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
-                elif says_nothing(record) and held is not None:
-                    upkeep.held(h, record)
-                    held.append(record.case_id)
+                else:
+                    why = ex.approvals.held_why(record)  # the rules that hold a deletion back whichever detector made the case (cases/brief.py held_reason)
+                    if (why or says_nothing(record)) and held is not None:
+                        held.append(upkeep.held(h, record, why))
         except (StoreError, ValueError) as error:
             h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))
 
@@ -510,13 +511,14 @@ def _keep_requests_up_to_date(s: Services, ranked: Sequence[Lead], say: Callable
         say(f"the open requests could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
-def _take_back_empty(s: Services, say: Callable[[str], None]) -> int:
-    """Takes back the open requests that cannot say what to look at (cases/upkeep.py take_back) and returns how many. It never fails the run."""
+def _take_back_empty(s: Services, say: Callable[[str], None]) -> Counter:
+    """Takes back the open requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed (cases/upkeep.py take_back), and returns how many there
+    were of each reason, in the words of the History. It never fails the run."""
     try:
         return upkeep.take_back(s.extras, s.history)
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"the requests that say nothing could not be taken back ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
-        return 0
+        return Counter()
 
 
 def execute(s: Services, trigger: str) -> Summary:
@@ -685,12 +687,16 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
-    summary.held += len(held_ids) + investigation.said_nothing
+    held = Counter(held_ids)  # the words of the History for each finding that was held back by a case of this Watch
+    held[NOTHING_TO_SAY] += investigation.said_nothing
+    held.update({HELD_BACK[why]: count for why, count in investigation.held_back.items()})
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
-        summary.held += _take_back_empty(s, say)  # the requests that cannot say what to look at are taken back before the cost of the others is read
-    if summary.held:
-        say(f"{summary.held} finding{'s' if summary.held != 1 else ''} {NOTHING_TO_SAY}")
+        held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
+    summary.held += sum(held.values())
+    for reason, count in held.items():
+        if count:
+            say(f"{count} finding{'s' if count != 1 else ''} {reason}")
     read_cost_series(s, contexts, say)
     read_use_series(s, say)
     summary.tokens = tokens
