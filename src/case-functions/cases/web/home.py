@@ -282,34 +282,35 @@ def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:
     return fmt('<div class="head"><div><h1>Decisions</h1><p>{lead}</p></div>{seg}</div>', lead=lead, seg=seg)
 
 
-def held_count(ctx: Ctx) -> int:
-    """How many findings of the investigation are held back: a case that needs a person or is proposed, with no request waiting for its resource, that nobody answered lately and that
+def held_cases(ctx: Ctx) -> list[CaseRecord]:
+    """The findings of the investigation that are held back: a case that needs a person or is proposed, with no request waiting for its resource, that nobody answered lately and that
     nobody marked do-not-touch. It is the set that cases/learning.OpenQuestions gives the Investigator as the questions with no request (a test pins that the two agree); the pages know
-    the records and nothing of how they are read, so the count is made here from the records."""
+    the records and nothing of how they are read, so the set is made here from the records."""
     waiting = {p.resource_id.lower() for p in ctx.store.plans_open() if p.state == "open"}
     quiet = stamp(ctx.now - dt.timedelta(days=ADVICE_QUIET_DAYS))
     answered = {p.resource_id.lower() for p in ctx.store.plans_recent(HELD_PLANS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and p.created_at >= quiet}
     left = waiting | answered | {key.lower() for key in ctx.store.do_not_touch()}
-    return sum(1 for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status)
-               if case.detector == INVESTIGATION and case.resource_id.lower() not in left)
+    return [case for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status) if case.detector == INVESTIGATION and case.resource_id.lower() not in left]
+
+
+def held_count(ctx: Ctx) -> int:
+    """How many findings of the investigation are held back (held_cases)."""
+    return len(held_cases(ctx))
 
 
 def held_by_rules(ctx: Ctx) -> int:
-    """How many of the findings that held_count counts are held back by a rule of cases/brief.py held_reason: an automation manages the resource, or nobody looked up who changed it."""
-    waiting = {p.resource_id.lower() for p in ctx.store.plans_open() if p.state == "open"}
-    return sum(1 for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status)
-               if case.detector == INVESTIGATION and case.resource_id.lower() not in waiting and held_reason(case, ctx.now))
+    """How many of the held findings (held_cases) are held back by a rule of cases/brief.py held_reason: an automation manages the resource, or nobody looked up who changed it."""
+    return sum(1 for case in held_cases(ctx) if held_reason(case, ctx.now))
 
 
 def _held(ctx: Ctx) -> Safe:
     """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because an automation manages the
     resource or nobody looked up who changed it. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
     nothing here: the list above says so."""
-    held, _ = read(lambda: held_count(ctx), 0)
-    if held <= 0:
+    cases, _ = read(lambda: held_cases(ctx), [])
+    if not cases:
         return Safe("")
-    ruled, _ = read(lambda: held_by_rules(ctx), 0)
-    ruled = min(ruled, held)
+    held, ruled = len(cases), sum(1 for case in cases if held_reason(case, ctx.now))
     lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because an automation manages the resource, or because nobody has looked up who changed it. "
                        "Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
     rest = held - ruled

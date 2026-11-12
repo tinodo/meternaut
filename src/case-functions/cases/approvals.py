@@ -448,9 +448,9 @@ class Approvals:
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
         """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why) or that were made when a deletion
         could be asked on less than they ask for now (brief.made_under_old_rules), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
-        expired and ending now, like the requests that supersede() takes back, and the case keeps why (`learned["taken"]`: the page, the letter and the card say so in words). The case keeps
-        its status (a finding that no person has seen). A request that a person put off or asked about is theirs and stays, and so is a change that is running or done. Returns the plans that it
-        closed, each with its case."""
+        expired and ending now, like the requests that supersede() takes back, and the plan keeps why (`preconditions["takenBack"]`, written with its end: the page, the letter and the card say so in
+        words, and a case that is judged again cannot lose it). The case is not touched: it keeps its status (a finding that no person has seen). A request that a person put off or asked about is
+        theirs and stays, and so is a change that is running or done. Returns the plans that it closed, each with its case."""
         try:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
@@ -461,11 +461,8 @@ class Approvals:
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                 if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
                     continue
-                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()))
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), **({"preconditions": {**(fresh.preconditions or {}), "takenBack": why}} if why else {}))
                 self.store.plan_put(fresh)
-                if why:
-                    case = _with(case, learned={**(case.learned if isinstance(case.learned, dict) else {}), "taken": why})
-                    self.store.case_put(case)
                 closed.append((fresh, case))
             return closed
         except StoreError:
