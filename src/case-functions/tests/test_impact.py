@@ -101,7 +101,7 @@ class Azure(FakeArm):
     def graph_many(self, subscriptions, query):
         what = re.match(r"// meternaut:impact-(\w+)", query).group(1)
         if what == "one":
-            what = "endpoint" if f"'{self.pe}'" in query else "service"
+            what = "service" if f"'{SERVICE}'" in query else "endpoint"
         self._get(what)
         return [row for key, row in self.rows.items() if f"'{key}'" in query] if what in ("endpoint", "service") else self.others if what == "others" else self.mentions
 
@@ -494,6 +494,34 @@ class TheInvestigationChecksWhatItProposesToRemove(unittest.TestCase):
         (plan,) = h.store.plans_open()
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
         self.assertEqual((b.impact.verdict, b.check_first, b.risk.level), ("safe", (), "medium"))
+
+    def test_a_run_with_more_resources_than_room_checks_the_oldest_first_and_a_case_judged_again_keeps_the_digest_that_it_had(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        pes = [RUN_PE.replace("pe-apim-demo", f"pe-apim-{n}") for n in range(1, 5)]
+        azure = Azure(pes[0])
+        azure.rows.update({pe: endpoint_row(pe=pe) for pe in pes[1:]})
+
+        def run(days_later):
+            clock.now = NOW + dt.timedelta(days=days_later)
+            toolbox = FakeToolbox([resource(n, resource_id=pe, resource_type=ENDPOINTS, name=f"pe-apim-{n}", resource_group="rg-platform", cost_usd_30d=100.0 - n) for n, pe in enumerate(pes, 1)],
+                                  {f"r{n}": ABSENT for n in range(1, 5)})
+            h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2", "r3", "r4"], basis="other", proposal="delete"))), toolbox, with_store=True, clock=clock, extras=extras)
+            h.arm = h.s.arm = azure
+            azure.read.clear()
+            with mock.patch.object(investigate, "MAX_IMPACTS", 2):
+                h.go()
+            read = {case.resource_name[-1]: (case.facts.get("impact") or {}).get("readAt", "") for case in h.store.cases_recent()}
+            return read, azure.read.count("endpoint"), {case.resource_name[-1]: brief.impact_of(case).read for case in h.store.cases_recent()}
+
+        day = lambda days_later: (NOW + dt.timedelta(days=days_later)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        first, reads, _ = run(0)
+        self.assertEqual((first, reads), ({"1": day(0), "2": day(0), "3": "", "4": ""}, 2), "the room is two: the first two are checked, and the others are not analysed")
+        second, reads, said = run(8)
+        self.assertEqual((second, reads), ({"1": day(0), "2": day(0), "3": day(8), "4": day(8)}, 2), "the ones with no digest go first, and the others keep theirs")
+        self.assertEqual(said["1"], "Read on 4 Nov 2026 UTC.", "a case that is judged again keeps what was read, with the date of the read, and is not shown as not analysed")
+        third, reads, _ = run(16)
+        self.assertEqual((third, reads), ({"1": day(16), "2": day(16), "3": day(8), "4": day(8)}, 2), "then the oldest digests are read again")
 
     def test_a_kind_of_resource_without_a_check_makes_no_read_for_it_and_is_shown_as_not_analysed(self):
         azure = Azure()

@@ -33,7 +33,7 @@ from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
 from .arm import scopes_of
-from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, about_use, says_nothing, shared
+from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, IMPACT_VERDICTS, about_use, says_nothing, shared
 from .detectors import Context, Lead
 from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
@@ -64,7 +64,7 @@ SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, a
 SKEPTIC_PROPERTIES = 8  # the properties of one resource that the Skeptic sees
 SKEPTIC_CHARS = 30000  # the size of the Skeptic's input
 RESERVE_SECONDS = 120.0  # what the Investigator leaves of its time for the checks and the Skeptic, at most
-MAX_IMPACTS = 6  # the resources of one run whose impact is checked: each check takes about a dozen reads, and a resource beyond this is shown as not analysed
+MAX_IMPACTS = 6  # the resources of one run whose impact is checked: each check takes about a dozen reads. A resource beyond this keeps the digest of its earlier case, and the cases with the oldest digest or none go first
 LOG = logging.getLogger("meternaut.investigate")
 
 # What code lets through of what the tools showed, once more: a metric name, a resource type as Azure names one, a word, and the key path of a property. Each is
@@ -151,6 +151,7 @@ class Investigation:
     owners: object = None  # the OwnerReader of the run: one for all its cases, so that the reads of the Activity Log share one budget
     impact_reader: object = None  # the impact.Reader of the run: one for all its cases, with the OwnerReader above, so that the reads of the impact checks share one budget
     impacts: int = 0  # the resources whose impact was checked in this run (MAX_IMPACTS)
+    impact_due: set[str] | None = None  # the lead ids whose impact this run checks, the oldest or no digest first (_impact_due); None: any, up to MAX_IMPACTS
     profile: object = None  # the CapabilityRecord of the run (cases/capability.py): what the identity can see of the agreement and of the commitments
     # True when the harness did not let the agents run (a pulled switch, a lock that does not hold, a stored definition that differs) or stopped a run: the run of the Watch then opens no new
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
@@ -962,6 +963,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd,
                verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary)
     models = {"investigator": st.foundry_model_investigator, "skeptic": st.foundry_model_skeptic}
+    out.impact_due = _impact_due(survivors)
     number = 0
     for finding in survivors:
         group = _group_of(finding)
@@ -1043,8 +1045,9 @@ def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
 
 def _impact_of(s: "Services", out: Investigation, lead: Lead) -> dict | None:
     """The digest of the impact check of one resource (cases/impact.py), made with the reads of the run: one reader and one budget for all its cases. It is made for a resource whose type has a
-    check, at most MAX_IMPACTS times in a run, and it reads with the reader identity of the app and nothing else (the module says whose rights). Its notes go to the notes of the run."""
-    if out.impacts >= MAX_IMPACTS:
+    check that this run has room for (`_impact_due`), at most MAX_IMPACTS times in a run, and it reads with the reader identity of the app and nothing else (the module says whose rights). Its
+    notes go to the notes of the run."""
+    if out.impacts >= MAX_IMPACTS or (out.impact_due is not None and lead.lead_id not in out.impact_due):
         return None
     out.impacts += 1
     if out.impact_reader is None:
@@ -1054,6 +1057,25 @@ def _impact_of(s: "Services", out: Investigation, lead: Lead) -> dict | None:
         s.history.emit("run.note", note=clean_text(s.redact(text), 300))
     out.impact_reader.notes.clear()
     return found
+
+
+def _kept_impact(old: CaseRecord | None) -> dict | None:
+    """The digest of the impact check that the earlier case of a resource kept, for a case that this run did not check again: it says when it was read (`readAt`), and a page shows that date."""
+    found = old.facts.get(impact.KEY) if old is not None and isinstance(old.facts, dict) else None
+    return found if isinstance(found, dict) and found.get("verdict") in IMPACT_VERDICTS else None
+
+
+def _impact_due(survivors: list[Finding]) -> set[str]:
+    """The resources whose impact this run checks, at most MAX_IMPACTS: of the cases that ask for a check, those with no digest first and then those whose digest is the oldest, so that a run with
+    more of them than it has room for never starves the same ones (the order of the findings decides between equals). The others keep their earlier digest (`_kept_impact`)."""
+    asking = [item for finding in survivors if finding.proposal != "keep" and not _group_of(finding)
+              for item in finding.items if impact.has_check(item.lead.resource_type) and about_use(item.lead.facts, finding.proposal)]
+
+    def read(item: Item) -> str:
+        found = _kept_impact(item.earlier)
+        return str(found.get("readAt") or "") if found is not None else ""
+
+    return {item.lead.lead_id for item in sorted(asking, key=read)[:MAX_IMPACTS]}
 
 
 def _group_of(finding: Finding) -> list[Item] | None:
@@ -1154,7 +1176,10 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if past and "past" not in learned:
             learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
         owner = _owner_of(s, out, lead) if outcome.status in ("proposed", "needs_human") else {}  # a case that is dropped is never shown to anybody: it takes no lookup of the Activity Log, whose reads are few
-        found = _impact_of(s, out, lead) if outcome.status in ("proposed", "needs_human") and not group and impact.has_check(lead.resource_type) and about_use(lead.facts, outcome.recommendation) else None
+        # The impact of a resource that is proposed for removal: a fresh check when this run has room for it (_impact_due), else the digest that the earlier case kept, with its own date, so that a
+        # case that is judged again never loses what was read and turns into "not analysed" because other cases came first.
+        checked = outcome.status in ("proposed", "needs_human") and not group and impact.has_check(lead.resource_type) and about_use(lead.facts, outcome.recommendation)
+        found = (_impact_of(s, out, lead) or _kept_impact(old)) if checked else None
         if found is not None:
             lead = replace(lead, facts={**lead.facts, impact.KEY: found})
         record = CaseRecord(
