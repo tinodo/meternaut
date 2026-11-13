@@ -72,7 +72,7 @@ class Case(unittest.TestCase):
         client = teamsbot.new_client(way, Redactor(), transport=self.fake, sleep=lambda seconds: None)
         return teamsbot.TeamsBot(way, assertion or (lambda resource: (self.asked.append(resource), ASSERTION)[1]), client, self.clock)
 
-    def fail(self, step, *replies):
+    def script(self, step, *replies):
         self.fake.replies[step] = list(replies)
 
     def refused(self, call):
@@ -99,11 +99,11 @@ class TheTokenOfTheApp(Case):
         self.assertEqual((self.bot.token(), self.fake.steps()), (ACCESS, ["token"]), "still more than five minutes left: no second request")
         self.assertEqual(self.bot.status, 0, "no call was made")
         self.clock.advance(seconds=2)
-        self.fail("token", answer(200, {"token_type": "Bearer", "expires_in": 3599, "access_token": ACCESS + "-two"}))
+        self.script("token", answer(200, {"token_type": "Bearer", "expires_in": 3599, "access_token": ACCESS + "-two"}))
         self.assertEqual((self.bot.token(), self.fake.steps()), (ACCESS + "-two", ["token", "token"]))
 
     def test_a_token_that_lives_five_minutes_or_less_is_not_kept(self):
-        self.fail("token", answer(200, {"token_type": "Bearer", "expires_in": 300, "access_token": ACCESS}))
+        self.script("token", answer(200, {"token_type": "Bearer", "expires_in": 300, "access_token": ACCESS}))
         self.bot.token()
         self.bot.token()
         self.assertEqual(self.fake.steps(), ["token", "token"])
@@ -113,7 +113,7 @@ class TheTokenOfTheApp(Case):
                      {"token_type": "Bearer", "access_token": ACCESS + " x\n"}, ["not", "an", "object"]):
             with self.subTest(body=body):
                 self.clock.advance(minutes=5)
-                self.fail("token", answer(200, body))
+                self.script("token", answer(200, body))
                 self.assertEqual(self.refused(self.bot.token).reason, "unauthorized")
 
     def test_the_numbers_of_an_error_of_microsoft_entra_are_kept_and_nothing_of_its_text(self):
@@ -121,7 +121,7 @@ class TheTokenOfTheApp(Case):
             with self.subTest(code=code, aadsts=aadsts):
                 self.clock.advance(minutes=5)
                 description = f"AADSTS{aadsts}: the long text, with a trace id {ACCESS}" if aadsts else "the text"
-                self.fail("token", answer(status, {"error": code, "error_description": description, "error_codes": [aadsts]}))
+                self.script("token", answer(status, {"error": code, "error_description": description, "error_codes": [aadsts]}))
                 error = self.refused(self.bot.token)
                 self.assertEqual((error.step, error.reason, error.status, error.aadsts), ("token", "unauthorized", status, aadsts))
                 self.assertEqual(str(error), teamsbot.REASONS["unauthorized"])
@@ -134,17 +134,17 @@ class TheTokenOfTheApp(Case):
         self.assertEqual(self.fake.calls, [])
 
     def test_a_throttled_or_unanswered_token_request_is_waited_out(self):
-        self.fail("token", answer(429, {"error": "x"}, retry_after="120"))
+        self.script("token", answer(429, {"error": "x"}, retry_after="120"))
         self.assertEqual(self.refused(self.bot.token).reason, "throttled")
         self.clock.advance(minutes=2)
-        self.fail("token", answer(503), answer(503), answer(503))
+        self.script("token", answer(503), answer(503), answer(503))
         self.assertEqual(self.refused(self.bot.token).reason, "network")
         self.clock.advance(minutes=2)
-        self.fail("token", OSError("down"), OSError("down"), OSError("down"))
+        self.script("token", OSError("down"), OSError("down"), OSError("down"))
         self.assertEqual(self.refused(self.bot.token).reason, "network")
 
     def test_after_a_failure_no_call_is_made_for_a_minute_so_that_a_round_of_cards_waits_once(self):
-        self.fail("token", answer(401, {"error": "invalid_client"}))
+        self.script("token", answer(401, {"error": "invalid_client"}))
         first = self.refused(self.bot.token)
         calls = len(self.fake.calls)
         self.clock.advance(seconds=59)
@@ -180,7 +180,7 @@ class TheCallsOfTheBotConnector(Case):
         for step, bad in (("create", {}), ("create", {"id": "../x"}), ("create", {"id": "a b"}), ("create", {"id": "x" * 201}), ("create", ["id"]), ("send", {"id": "%2e%2e"}), ("send", {"id": 7})):
             with self.subTest(step=step, bad=bad):
                 self.fake.calls.clear()
-                self.fail(step, answer(201, bad))
+                self.script(step, answer(201, bad))
                 error = self.refused(lambda: self.bot.send(PERSON, CARD, "x"))
                 self.assertEqual((error.step, error.reason), (step, "other"))
                 self.assertNotIn("send" if step == "create" else "update", self.fake.steps())
@@ -199,7 +199,7 @@ class TheCallsOfTheBotConnector(Case):
         for replies, calls in (([answer(500), answer(201, {"id": ACTIVITY})], 1), ([OSError("lost")], 1), ([answer(502)], 1), ([answer(429, {}, retry_after="1"), answer(201, {"id": ACTIVITY})], 2)):
             with self.subTest(replies=len(replies), calls=calls):
                 self.fake.calls.clear()
-                self.fail("send", *replies)
+                self.script("send", *replies)
                 try:
                     self.bot.post(CONVERSATION, CARD, "x")
                 except teamsbot.BotError:
@@ -207,11 +207,11 @@ class TheCallsOfTheBotConnector(Case):
                 self.assertEqual(self.fake.steps(), ["send"] * calls)
 
     def test_a_replacement_and_the_creation_of_a_conversation_may_be_tried_again_for_they_change_nothing_twice(self):
-        self.fail("update", answer(503), answer(200, {"id": ACTIVITY}))
+        self.script("update", answer(503), answer(200, {"id": ACTIVITY}))
         self.bot.update(CONVERSATION, ACTIVITY, CARD, "x")
         self.assertEqual(self.fake.steps(), ["token", "update", "update"])
         self.fake.calls.clear()
-        self.fail("create", answer(502), answer(201, {"id": CONVERSATION}))
+        self.script("create", answer(502), answer(201, {"id": CONVERSATION}))
         self.assertEqual(self.bot.create(PERSON), CONVERSATION)
         self.assertEqual(self.fake.steps(), ["create", "create"])
 
@@ -247,21 +247,21 @@ class WhatEachFailureMeans(Case):
     def test_what_teams_says_is_one_plain_reason_for_the_step_that_it_said_it_to(self):
         for step, status, body, reason in self.TABLE:
             with self.subTest(step=step, status=status, reason=reason):
-                self.fail(step, *[answer(status, body, retry_after="3600")] * 3)
+                self.script(step, *[answer(status, body, retry_after="3600")] * 3)
                 error = self.refused(self.run_step(step))
                 self.assertEqual((error.step, error.reason, error.status), (step, reason, status))
 
     def test_the_words_are_plain_and_never_the_answer_of_the_service_a_token_or_an_id(self):
         for step, status, body, reason in self.TABLE:
             with self.subTest(step=step, status=status):
-                self.fail(step, *[answer(status, body, retry_after="3600")] * 3)
+                self.script(step, *[answer(status, body, retry_after="3600")] * 3)
                 text = str(self.refused(self.run_step(step)))
                 self.assertEqual(text, teamsbot.NOT_REPLACED if (step, reason) == ("update", "other") else teamsbot.REASONS[reason])
                 for hidden in (ACCESS, ASSERTION, CONVERSATION, PERSON, TENANT, APP, "Authorization", "ForbiddenOperationException", "MessageWritesBlocked", "smba", "http"):
                     self.assertNotIn(hidden, text)
 
     def test_a_guest_without_the_app_is_told_in_plain_words_that_the_letter_goes_instead(self):
-        self.fail("create", answer(403, FORBIDDEN))
+        self.script("create", answer(403, FORBIDDEN))
         self.assertEqual(str(self.refused(self.run_step("create"))), "The Teams app is not installed for this person, so no card could be sent: the e-mail letter goes instead.")
         self.assertIn("e-mail letter goes instead", teamsbot.REASONS["blocked"])
 
