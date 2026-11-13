@@ -67,7 +67,7 @@ def _data(value: object, limit: int = 300) -> str:
 def _base(base_url: str) -> str:
     base = (base_url or "").strip().rstrip("/")
     if not BASE.fullmatch(base):
-        raise ValueError("the address of the console is not like https://host")
+        raise ValueError("the address of the function app is not like https://host")
     return base
 
 

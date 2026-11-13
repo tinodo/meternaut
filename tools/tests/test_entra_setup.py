@@ -1087,7 +1087,7 @@ class TheCallsOfTheTool(unittest.TestCase):
 
 
 class TheConsoleOnThePlatformsGateway(unittest.TestCase):
-    """Behind the platform's Application Gateway the console is opened on a host name of its own (docs/proposals/07-private-by-default.md, phase 3 for the cases app). Both return addresses then name that
+    """Behind the platform's Application Gateway the function app is opened on a host name of its own (docs/proposals/07-private-by-default.md, phase 3 for the cases app). Both return addresses then name that
     host, which is the one the sign-in sends a person back to. This tool needs no new option for it: --host is the name that people open. It adds the addresses of the new host in one change and removes
     nothing, so the addresses of the app's own name, which a closed app no longer answers on, stay until a person removes them in the portal."""
 
@@ -1131,7 +1131,7 @@ class TheConsoleOnThePlatformsGateway(unittest.TestCase):
 
     def test_the_help_says_that_the_host_is_the_name_that_people_open_and_the_tool_still_makes_only_the_calls_of_its_list(self):
         source = (ROOT / "tools" / "entra-setup.py").read_text(encoding="utf-8")
-        self.assertIn("the host name that people open: the console's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name", source)
+        self.assertIn("the host name that people open: the function app's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name", source)
         self.assertIn("It only adds the addresses of the new host: the addresses of the app's own name stay", source)
         tenant = FakeTenant()
         run(["apply", *self.ARGS, "--apply", "--yes"], tenant)

@@ -27,7 +27,7 @@ SEND_HASH = "sha256-" + base64.b64encode(hashlib.sha256(SEND_SCRIPT.encode("utf-
 CSP_SEND = f"default-src 'none'; script-src '{SEND_HASH}'; style-src 'unsafe-inline'; form-action 'self' {SIGNIN_ORIGIN}; frame-ancestors 'none'; base-uri 'none'"
 # "same-origin" and not "no-referrer", on purpose. Under "no-referrer" a browser sends `Origin: null` on every form POST (Fetch standard, "append a request Origin header"), and
 # the platform's sign-in refuses an authenticated POST that carries it with an empty 403, before the app is reached: the approve button failed on 2026-11-05 (AGENTS.md rule 28).
-# "same-origin" sends the console's own origin on a POST and still sends no referrer to any other site, which is what the header is for: an address holds the request id.
+# "same-origin" sends the function app's own origin on a POST and still sends no referrer to any other site, which is what the header is for: an address holds the request id.
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "X-Frame-Options": "DENY",

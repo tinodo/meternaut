@@ -4,7 +4,7 @@
 //   timer (daily) or one control event --> Watch --> Resource Graph, Advisor, Cost Management (read only)
 //   Watch --> Detective and Skeptic (chat completions through the AI Gateway, with the app's identity and no key) --> guards in code --> one telemetry line per step --> workbook
 //
-// What it holds: one user-assigned identity (the console's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
+// What it holds: one user-assigned identity (the function app's sign-in), a plan with the function app, which has a system-assigned identity of its own (the plan is of the kind that
 // casesAppPlan names: Flex Consumption, or Basic, which is B1, Linux, always on), the subnet that the app is integrated with, two Storage queues (the control queue, and the queue of the Teams cards) in the storage account of the
 // base, the roles that connect them, a longer retention for the traces table of the workspace, and the History workbook.
 //
@@ -18,13 +18,13 @@
 // identity exists only once the app does, so its roles are made after the app, and a new estate's app starts before it has them and waits for them. `id-meternaut-console-auth`
 // stays a user-assigned identity (Microsoft documents the secretless sign-in of an App Service app only with that kind:
 // https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad#use-a-managed-identity-instead-of-a-secret) and holds no role: the
-// console's app registration trusts it through a federated credential, so that the platform's sign-in, and the console when it redeems the code of an Azure
+// function app's app registration trusts it through a federated credential, so that the platform's sign-in, and the function app when it redeems the code of an Azure
 // Resource Manager sign-in, present its token as the client assertion instead of a client secret. Nothing here gives Meternaut a right to write in Azure. When a
-// person approves a plan, the console sends that person to Microsoft Entra to sign in to Azure Resource Manager (authorization code flow with PKCE, the delegated
+// person approves a plan, the function app sends that person to Microsoft Entra to sign in to Azure Resource Manager (authorization code flow with PKCE, the delegated
 // scope https://management.azure.com/user_impersonation, no refresh token) and runs the one change with that person's token: Azure checks that person's own
 // rights, and its Activity Log names that person (docs/proposals/04-the-loop.md, docs/proposals/05-run-as-the-approver.md).
 //
-// Which plan, and why. The first cases ran on Flex Consumption. On 2026-11-05 its front end held some requests to the console for 15 to 60 seconds and answered some with "The service is
+// Which plan, and why. The first cases ran on Flex Consumption. On 2026-11-05 its front end held some requests to the function app for 15 to 60 seconds and answered some with "The service is
 // unavailable" (CHANGELOG.md), and the app moved to a Basic plan, which has no such front end and no cold start, for about 13 US dollars a month. On 2026-11-07 the owner ordered it back
 // onto Flex Consumption, which scales to zero and bills per execution: a tool that finds waste must not carry an idle plan. On 2026-11-08 the platform's front end held the web page's requests
 // again (50 to 60 seconds for most of them, and a 503 after exactly 60 seconds for some, while the app's own time was 0 seconds), the plan went to Basic, and the owner ordered Flex again the same
@@ -38,15 +38,15 @@
 // Consumption and cannot serve a Basic plan) and that subnet's network security group. Either one makes one endpoint, which goes into the endpoint subnet that the model side made.
 // The base has to exist first.
 //
-// The app has a private endpoint of its own, for the console's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
+// The app has a private endpoint of its own, for the function app's name and for the deployment site (the group `sites`, in the endpoint subnet; no private DNS zone group: the landing zone's
 // policy adds it, rule 19). The Operator uses it to publish the code since phase 2 of docs/proposals/07-private-by-default.md (the action cases runs operator/publish.sh in a container group of the
-// Operator, as the deploy identity) and to ask the app's health address once the code is published. Nobody reaches the console on the app's own name from outside the network once it is closed: people reach it on
+// Operator, as the deploy identity) and to ask the app's health address once the code is published. Nobody reaches the function app on the app's own name from outside the network once it is closed: people reach it on
 // consoleHostName, a host name on the platform's Application Gateway, which forwards to this endpoint (the objects that the platform team adds are in the same record), or, with no gateway (the owner's decision
-// of 2026-11-07) and no consoleHostName, on the app's own name from the private network, where it resolves to this endpoint. The console keeps its public
-// access until the owner closes it, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value (the parameter builder takes that value with a console host name and without one:
+// of 2026-11-07) and no consoleHostName, on the app's own name from the private network, where it resolves to this endpoint. The function app keeps its public
+// access until the owner closes it, which the parameter casesAppPublicNetworkAccess says, so that closing it is one value (the parameter builder takes that value with a function app host name and without one:
 // with none, the check of the front door runs in the Operator). The value
 // is written to the app every time and is never left empty: Learn says that for a site whose value is not set, a private endpoint switches public access off by itself, and
-// the people who approve a change reach the console from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, because a
+// the people who approve a change reach the function app from outside the network. The workflow waits until the landing zone has registered the endpoint's names before it publishes, because a
 // deployment ends with a call to the app's own host name, which does not resolve before.
 //
 // A Basic app's subnet is made once and then left alone (webSubnetExists): the landing zone's network manager puts a route table on a new subnet
@@ -112,7 +112,7 @@ param webSubnetExists bool = false
 @minLength(36)
 param scopeSubscriptions string
 
-@description('True: the Watch reads every subscription that the app\'s own system-assigned identity can read (the list that Azure Resource Manager gives it at the start of each run). A person widens or narrows that list with the read-only roles Reader and Cost Management Reader, at a subscription or at the management group above it, outside this template (AGENTS.md rule 18): this parameter grants nothing, and the one resource group where the console may run a change stays the one below. False: only scopeSubscriptions. The parameter builder (tools/environment-params.py) passes true.')
+@description('True: the Watch reads every subscription that the app\'s own system-assigned identity can read (the list that Azure Resource Manager gives it at the start of each run). A person widens or narrows that list with the read-only roles Reader and Cost Management Reader, at a subscription or at the management group above it, outside this template (AGENTS.md rule 18): this parameter grants nothing, and the one resource group where the function app may run a change stays the one below. False: only scopeSubscriptions. The parameter builder (tools/environment-params.py) passes true.')
 param scopeAllSubscriptions bool = false
 
 @description('Model of the Detective: an alias of the AI Gateway, which has the name of a model deployment of the Foundry resource of the agents (environment/models.json). The Detective calls it for a chat completion through the AI Gateway, as every model call of Meternaut goes (AGENTS.md rule 15 (c)).')
@@ -136,16 +136,16 @@ param maxCasesPerRun int = 3
 @maxValue(730)
 param historyRetentionDays int = 365
 
-@description('Client id of the console\'s app registration in Microsoft Entra. Empty: the sign-in of the console is not set up yet, and the console refuses every request (it never serves a page without it). It is also the client id of the sign-in to Azure Resource Manager that an approval starts.')
+@description('Client id of the function app\'s app registration in Microsoft Entra. Empty: the sign-in of the function app is not set up yet, and the function app refuses every request (it never serves a page without it). It is also the client id of the sign-in to Azure Resource Manager that an approval starts.')
 param consoleAppClientId string = ''
 
-@description('The people who may use the console, as JSON: [{"oid": "<directory object id>", "name": "...", "roles": ["owner", "approver", "ops"], "mail": "<address>"}]. The same list is the sign-in\'s list of allowed principals.')
+@description('The people who may use the function app, as JSON: [{"oid": "<directory object id>", "name": "...", "roles": ["owner", "approver", "ops"], "mail": "<address>"}]. The same list is the sign-in\'s list of allowed principals.')
 param consolePeople string = '[]'
 
 @description('Directory object ids of the people above: the built-in sign-in lets only these through.')
 param consoleUserObjectIds array = []
 
-@description('Whether the console and the function app take requests from the public internet: Enabled or Disabled. Enabled until the platform\'s Application Gateway forwards to the app\'s private endpoint on the console\'s host name (consoleHostName) and the owner has said so, because the people who approve then reach the console through the gateway. The code is published through the private endpoint, from a container group inside the network, whatever this value is. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
+@description('Whether the function app takes requests from the public internet: Enabled or Disabled. Enabled until the platform\'s Application Gateway forwards to the app\'s private endpoint on the function app\'s host name (consoleHostName) and the owner has said so, because the people who approve then reach the function app through the gateway. The code is published through the private endpoint, from a container group inside the network, whatever this value is. It is always written to the app and never left empty: for an app whose value is not set, a private endpoint switches public access off by itself.')
 @allowed([
   'Enabled'
   'Disabled'
@@ -155,7 +155,7 @@ param casesAppPublicNetworkAccess string = 'Enabled'
 @description('Address of the shared mailbox that the app sends its letters from. Empty: the app sends no letter.')
 param mailSender string = ''
 
-@description('The host name under which people open the console, for example the name of a listener of the platform\'s Application Gateway that forwards to this app. Empty: they open it on the app\'s own name, <function app name>.azurewebsites.net, and nothing is different from before. With a name, the setting CONSOLE_HOST (the links in the letters and the return address of the Azure sign-in) is that name, and the platform\'s sign-in reads the host of a request from the header X-Original-Host, which the Application Gateway adds, so that its own return address names the console and not the app (docs/proposals/07-private-by-default.md).')
+@description('The host name under which people open the function app, for example the name of a listener of the platform\'s Application Gateway that forwards to this app. Empty: they open it on the app\'s own name, <function app name>.azurewebsites.net, and nothing is different from before. With a name, the setting CONSOLE_HOST (the links in the letters and the return address of the Azure sign-in) is that name, and the platform\'s sign-in reads the host of a request from the header X-Original-Host, which the Application Gateway adds, so that its own return address names this host name and not the app\'s own name (docs/proposals/07-private-by-default.md).')
 param consoleHostName string = ''
 
 @description('Hours that a plan waits for a person before it expires.')
@@ -242,12 +242,12 @@ var isFlex = casesAppPlan == 'Flex'
 var integrationSubnetName = isFlex ? functionSubnetName : webSubnetName
 
 // The app takes the three settings of the sign-in to Azure (SIGNIN_TENANT_ID, SIGNIN_CLIENT_ID and OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID) together or not at all, and
-// refuses to run the loop with a part of them. Until the console's app registration exists (consoleAppClientId is empty) nobody can sign in and nobody can approve a change,
+// refuses to run the loop with a part of them. Until the function app's app registration exists (consoleAppClientId is empty) nobody can sign in and nobody can approve a change,
 // so none of the three is set; the first run of the action "cases" that has a client id sets all three.
 var signInIsSetUp = !empty(consoleAppClientId)
 
 // The address that people open and that the app writes into its letters and into the return address of the Azure sign-in (the setting CONSOLE_HOST, which the app reads as a host name and builds
-// https://<host> from): the console's host name on the platform's Application Gateway when there is one, the app's own name otherwise.
+// https://<host> from): the function app's host name on the platform's Application Gateway when there is one, the app's own name otherwise.
 var consoleHost = empty(consoleHostName) ? '${functionAppName}.azurewebsites.net' : consoleHostName
 
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
@@ -322,8 +322,8 @@ resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-0
   name: 'default'
 }
 
-// The identity that the console's app registration trusts through a federated credential, so that the app presents its token (for api://AzureADTokenExchange)
-// as the client assertion instead of a client secret: the built-in sign-in does it to sign a person in, and the console does it to redeem the code of the
+// The identity that the function app's app registration trusts through a federated credential, so that the app presents its token (for api://AzureADTokenExchange)
+// as the client assertion instead of a client secret: the built-in sign-in does it to sign a person in, and the function app does it to redeem the code of the
 // Azure Resource Manager sign-in that an approval starts. It holds no role and is used for nothing else. No identity of this app holds a right to change Azure.
 resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${workload}-console-auth'
@@ -453,7 +453,7 @@ resource functionPublishesTelemetry 'Microsoft.Authorization/roleAssignments@202
 }
 
 // The plan is of the kind that casesAppPlan says. Flex: Flex Consumption (FC1), which scales to zero and bills for the memory of an instance while it executes and for the executions, after a free
-// monthly grant, so that an idle web page costs nothing; it is named plan-<workload>-cases. Basic: B1, Linux, one instance, always on: the console, the timers and the control queue's trigger run on
+// monthly grant, so that an idle web page costs nothing; it is named plan-<workload>-cases. Basic: B1, Linux, one instance, always on: the function app, the timers and the control queue's trigger run on
 // it side by side, about 13 US dollars a month at the price list of Sweden Central (0.018 US dollars an hour), whatever it does; it is named plan-<workload>-cases-basic. The two have different names,
 // so that the action cases removes the plan of the other kind by its exact name. A plan is in the region of its subnet.
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
@@ -572,11 +572,11 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AIGATEWAY_HOST', value: aiGatewayHost }
         { name: 'MAX_CASES_PER_RUN', value: string(maxCasesPerRun) }
         { name: 'STORE_ACCOUNT_NAME', value: storage.name }
-        // The resource groups in which the console runs a change, each as <subscription id>/<resource group>, separated by commas (it refuses one anywhere else, and a resource that
+        // The resource groups in which the function app runs a change, each as <subscription id>/<resource group>, separated by commas (it refuses one anywhere else, and a resource that
         // Meternaut did not plant and tag itself anywhere): exactly the one group where Meternaut plants waste of its own. Azure allows the change only when the approving person's own
         // rights allow it: the app holds no right to change anything.
         { name: 'CHANGE_SCOPES', value: '${subscription().subscriptionId}/${resourceGroup().name}' }
-        // The sign-in to Azure Resource Manager that an approval starts: this tenant, and the console's app registration (the one of the platform's sign-in). These two and
+        // The sign-in to Azure Resource Manager that an approval starts: this tenant, and the function app's app registration (the one of the platform's sign-in). These two and
         // the identity's client id below are set together, or none of the three is (signInIsSetUp).
         { name: 'SIGNIN_TENANT_ID', value: signInIsSetUp ? tenant().tenantId : '' }
         { name: 'SIGNIN_CLIENT_ID', value: consoleAppClientId }
@@ -592,7 +592,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }
         { name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }
         { name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }
-        // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the console when it redeems the code of the
+        // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the function app when it redeems the code of the
         // Azure Resource Manager sign-in (the app registration's federated credential trusts that identity).
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
         // Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md): off while TEAMS_DELIVERY is queue. The app takes a token of the identity whose client id
@@ -631,8 +631,8 @@ resource noBasicAuthForFtp 'Microsoft.Web/sites/basicPublishingCredentialsPolici
   }
 }
 
-// The built-in sign-in of the console: every request needs a person of the tenant, and only the listed directory object ids get through. The app registration
-// trusts the identity above through a federated credential, so the sign-in holds no secret. Without a client id nothing is set up and the console refuses.
+// The built-in sign-in of the function app: every request needs a person of the tenant, and only the listed directory object ids get through. The app registration
+// trusts the identity above through a federated credential, so the sign-in holds no secret. Without a client id nothing is set up and the function app refuses.
 resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(consoleAppClientId)) {
   parent: functionApp
   name: 'authsettingsV2'
@@ -688,7 +688,7 @@ resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(cons
       // The platform's Application Gateway sends a request to this app under the app's own host name (the backend setting picks the host name from the backend address) and adds the host that
       // the visitor used in the header X-Original-Host. The sign-in builds its own return address from the host that it believes the request was made to, and without this setting that is the
       // app's own name, which a closed app does not answer on. Learn: https://learn.microsoft.com/azure/app-service/overview-app-gateway-integration#authentication-easy-auth (the property
-      // is httpSettings.forwardProxy, https://learn.microsoft.com/azure/templates/microsoft.web/sites/config-authsettingsv2). Without a console host name the sign-in keeps its default, NoProxy.
+      // is httpSettings.forwardProxy, https://learn.microsoft.com/azure/templates/microsoft.web/sites/config-authsettingsv2). Without a function app host name the sign-in keeps its default, NoProxy.
       // Nothing else of this resource needs the host: login.allowedExternalRedirectUrls is "typically only needed by Windows Store application backends" and "URLs within the current domain are
       // always implicitly allowed" (the same reference), and no other setting here names a host.
       forwardProxy: empty(consoleHostName) ? {
@@ -702,7 +702,7 @@ resource consoleSignIn 'Microsoft.Web/sites/config@2024-04-01' = if (!empty(cons
 }
 
 // The private endpoint of the app itself, in the endpoint subnet that the model side made and in the same form as the other endpoints of the project (no DNS zone group: the landing
-// zone's policy adds it, see the header). One endpoint serves the console's name and the deployment site, `<app>.scm.azurewebsites.net`. It comes after every other write to the app, as an
+// zone's policy adds it, see the header). One endpoint serves the function app's name and the deployment site, `<app>.scm.azurewebsites.net`. It comes after every other write to the app, as an
 // endpoint does on every service of the base: the connection is written to the app with an If-Match, and a change of the app at the same time would fail it.
 resource functionAppEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: 'pe-${functionAppName}'
@@ -750,7 +750,7 @@ output functionAppName string = functionApp.name
 output functionAppId string = functionApp.id
 @description('Principal id of the function app\'s system-assigned identity. It reads what two roles let it read, Reader and Cost Management Reader, on the pilot subscription or on the tenant root management group: a person gives them (environment/BOOTSTRAP.md). The Foundry resource gives it its role on the project, Foundry User, and the AI Gateway gives it AI Gateway Models User, which it uses for the chat completions of the Detective and the Skeptic. It reads no key and holds no other role.')
 output casesSystemPrincipalId string = functionApp.identity.principalId
-@description('Principal id of the identity that the console\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
+@description('Principal id of the identity that the function app\'s sign-in presents to Microsoft Entra: the federated credential of the app registration names it. It holds no role.')
 output authIdentityPrincipalId string = authIdentity.properties.principalId
 output authIdentityClientId string = authIdentity.properties.clientId
 output consoleUrl string = 'https://${consoleHost}'

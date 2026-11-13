@@ -1981,7 +1981,7 @@ class Record(unittest.TestCase):
         for words in ("ran twice on the real estate and every check passed both times", "`az login --identity` and `az group show`", "resolve to private addresses", "`api.applicationinsights.io` and `api.loganalytics.io`",
                       "A file of 400,000 bytes arrived intact", "about one to two minutes", "neither of the two fallbacks", "What is still open: the telemetry read once Application Insights is private",
                       "Publishing code to the private deployment sites is done for both apps: the Operator did it on 2026-11-06",
-                      "the check of the console's front door"):
+                      "the check of the function app's front door"):
             self.assertIn(words, section, words)
         status = self.page.split("\n")[2]
         self.assertTrue(status.startswith("**Status: decided on 2026-11-06"), status[:80])
@@ -2206,7 +2206,7 @@ class EventHubsPrivateOnlyRecord(unittest.TestCase):
                       "Only `publicNetworkAccess: Enabled => Disabled` on the namespace, besides the usual noise of tags",
                       "The read-back step printed that public network access is Disabled, local authentication is off and the private endpoint connection is Approved.",
                       "deleted it by its id and read back that it was gone. **The deploy identity may delete its own Data Sender assignment**: no hand step was needed",
-                      "The deployment site took the package (HTTP 200), `/healthz` answered 200, and the console's pages loaded in a browser check afterwards ([rule 28](../../AGENTS.md))",
+                      "The deployment site took the package (HTTP 200), `/healthz` answered 200, and the function app's pages loaded in a browser check afterwards ([rule 28](../../AGENTS.md))",
                       "**The usage app woke from zero on the private namespace**, from the control event, and ran the three copy jobs; 18 documents in the container",
                       "The Watch ran 277 seconds, with 23 tool calls, and made no new case, because of the \"judged lately\" guard",
                       "Before the flip (14:14): HTTP 200 with the service's \"Publicly Listed Services\" feed. After it (15:10): HTTP 401 with \"Ip has been prevented to connect to the endpoint\"",
@@ -2234,10 +2234,10 @@ class PublishingPhaseOneRecord(unittest.TestCase):
             self.assertIn(words, self.section, words)
         phases = self.section.split("| Phase | What | State |")[1].split("\n\n")[0]
         for words in ("done on 2026-11-06 for both apps: the usage app at the first attempt, and the cases app at the first attempt after a fix for a request that was too big ([phase 2](#publishing-code-to-the-private-apps-phase-2))",
-                      "the check of the console's front door and the cases app's health check move inside (the list of the functions does not have to: it answered for the usage app with its public access Disabled)",
+                      "the check of the function app's front door and the cases app's health check move inside (the list of the functions does not have to: it answered for the usage app with its public access Disabled)",
                       "the usage app: **done and proven on 2026-11-06** (Azure shows Disabled, anonymous requests got HTTP 403, the Operator published into the app that was already private, "
                       "the runner's list of its functions answered, and `recording-check` passed: [phase 3 for the usage app](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06))",
-                      "the cases app: when the people who approve have a network path to the console, which is the owner's decision, and its front-door check and health check move inside then"):
+                      "the cases app: when the people who approve have a network path to the function app, which is the owner's decision, and its front-door check and health check move inside then"):
             self.assertIn(words, phases, words)
         for stale in ("built on 2026-11-06 (it has no page for people", "has not run again", "| later |"):
             self.assertNotIn(stale, phases, stale)
@@ -2284,8 +2284,8 @@ class PublishingPhaseOneRecord(unittest.TestCase):
                       "and the cases app's deployment site took its package with a Kudu zip deployment (HTTP 200).",
                       "Whether the build inside the container gives the same files as the build on the runner", "the probe counted 900 files and 22.9 MB but did not compare them with the runner's package",
                       "no build made on the runner has been compared with one made in the container. **Still open.**",
-                      "Whether the console still opens from the machines of the people who use it",
-                      "The console loaded in a browser after the `cases` run of 2026-11-06, with one click on Microsoft's account picker, because the redeploy had ended the earlier session; "
+                      "Whether the function app still opens from the machines of the people who use it",
+                      "The function app loaded in a browser after the `cases` run of 2026-11-06, with one click on Microsoft's account picker, because the redeploy had ended the earlier session; "
                       "the machines of the other people who approve were not tested. **Still open** for them."):
             self.assertIn(words, self.section, words)
         for answered in ("Nothing of this phase has run in Azure.", "Whether the image has pip or `ensurepip`", "Whether the subject of the run's token matches the federated credential", "the probe and `cases` have not run with this phase",
@@ -2331,7 +2331,7 @@ class PublishingPhaseOneRecord(unittest.TestCase):
                       "Steps 1 and 2 ran on 2026-11-06: the first `recording`, which did not wait for the app's names yet, failed at the publish and was run again once they were registered, and the probe passed (above). "
                       "Step 3 was phase 2, which is done ([below](#publishing-code-to-the-private-apps-phase-2)).",
                       "a client that resolves it through the landing zone's DNS gets the private address, with or without a route to it",
-                      "After `cases`, which waits for the registration, resolve the console's name and open the console from the machine that is used for it",
+                      "After `cases`, which waits for the registration, resolve the function app's name and open the function app from the machine that is used for it",
                       "The way back is deleting the endpoint, which no workflow action does: by hand, break-glass ([rule 18](../../AGENTS.md))", "about 6.57 euros a month", "so the two cost about 13"):
             self.assertIn(words, self.section, words)
         self.assertLess(self.section.index("1. `recording`, and then `cases`."), self.section.index("2. `operator-probe`"))
@@ -2355,7 +2355,7 @@ class PublishingPhaseOneRecord(unittest.TestCase):
         self.assertIn("no Website Contributor for the Operator (it publishes as the deploy identity, which holds the right already)", decisions)
         not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
         self.assertIn("Phase 1 of publishing code ([above](#publishing-code-to-the-private-apps-phase-1)): the endpoints and the probe ran on 2026-11-06 and every check passed (what the second probe showed, above). "
-                      "The two waits and what a deployment site accepts from inside the network are in the closed list below. Open: whether the console still opens from the machines of the people who use it", not_checked)
+                      "The two waits and what a deployment site accepts from inside the network are in the closed list below. Open: whether the function app still opens from the machines of the people who use it", not_checked)
         self.assertNotIn("the probe has not run, and the first `recording` failed at the publish", not_checked)
         sources = self.page.split("## Sources")[1]
         for page in ("functions-networking-options", "functions-deployment-technologies", "overview-access-restrictions", "cli/azure/reference-index", "actions/reference/security/oidc"):
@@ -2550,7 +2550,7 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
             self.assertIn(words, defect, words)
         for words in ("**The cases app, after the fix.**", "`cases` (20:33 to 20:39) published the app from the Operator at the first attempt: the container ran 92 seconds, the file of sources was 208,046 bytes, "
                       "the sources were 54 files, the build gave 208 files and 0.5 MB zipped in 3 seconds with the hashes checked",
-                      "the deployment site took the package (HTTP 200, attempt 1 of 5), `/healthz` answered 200, the check of the console's front door passed all its lines, and the console loaded in a browser afterwards.",
+                      "the deployment site took the package (HTTP 200, attempt 1 of 5), `/healthz` answered 200, the check of the function app's front door passed all its lines, and the function app loaded in a browser afterwards.",
                       "The redeploy had ended the earlier session, so Microsoft's account picker came up once and the sign-in completed with a click; the pages then showed.",
                       "In the container's log, megabytes (of 1,048,576 bytes) are cut to one decimal, so 0.5 MB agrees with the 614,068 bytes that the runner's build of the cases package had given.",
                       "So phase 2 is done for both apps: the Kudu zip deployment from the container is seen too."):
@@ -2606,10 +2606,10 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
     def test_it_says_the_order_a_person_runs_for_the_real_estate_and_for_a_new_one_and_the_cost(self):
         order = self.section.split("**What a person runs, in order.**")[1].split("\n\n**Cost.**")[0]
         for words in ("Done on the real estate on 2026-11-06, with no hand step: `recording` and then `cases` (the second after its fix).",
-                      "Each run shows the container's lines (both names private, the sign-in, the build with its numbers, the publish), and the `cases` run the health answer and the front-door check; the console was opened once afterwards.",
+                      "Each run shows the container's lines (both names private, the sign-in, the build with its numbers, the publish), and the `cases` run the health answer and the front-door check; the function app was opened once afterwards.",
                       "Nothing more is needed for phase 2. Run the two actions again whenever the code of an app changes: each publishes from inside the network.",
                       "On a new estate: `recording`, `cases`, `operator`, and then `recording` and `cases` again. Phase 3 for the usage app is done ([below](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)); "
-                      "for the cases app it waits for the owner's decision about the console."):
+                      "for the cases app it waits for the owner's decision about the function app."):
             self.assertIn(words, order, words)
         self.assertLess(order.index("Done on the real estate"), order.index("On a new estate"))
         for stale in ("On the real estate, where the Operator exists and the apps are public:", "`cases` is the one that has not published from the Operator yet.", "Phase 3 follows when both have passed."):
@@ -2655,14 +2655,14 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
                       "Nothing is added to the deploy identity or to the Operator's identity, and no credential changes", "the probe of phase 1 showed that the federated credential `github-main`",
                       "a person decides, on the owner's word", "nothing is guessed here", "**The order changes on an estate that has no Operator.**",
                       "the order is `recording`, `cases`, `operator`, and then `recording` and `cases` again: the second round publishes.",
-                      "On the estate that has the Operator, run `recording` and then `cases`, read the list of the functions and the health answer in their summaries, and open the console once.", "**Going back**",
+                      "On the estate that has the Operator, run `recording` and then `cases`, read the list of the functions and the health answer in their summaries, and open the function app once.", "**Going back**",
                       "The cases app is. The usage app is not since its phase 3 on 2026-11-06: for it, set `USAGE_APP_PUBLIC_NETWORK_ACCESS` in `tools/environment-params.py` back to `Enabled` and run `recording` first, "
                       "because the runner cannot reach the deployment site of a private app.",
                       "**It ran on the real estate on 2026-11-06, with no hand step.**", "`recording` published the usage app from the Operator at the first attempt.",
                       "`cases` failed twice at the step that makes the container group, because its request carried more bytes of files than a container group takes; the fix builds the cases app in the container from its sources, "
                       "and the run after it published the app at the first attempt",
                       "The usage app has taken no public traffic since the same day", "and nothing is added for a person to do.",
-                      "One thing a person sees after `cases`: the redeploy ends a signed-in session of the console, so the first page afterwards shows Microsoft's account picker once, and a click completes the sign-in."):
+                      "One thing a person sees after `cases`: the redeploy ends a signed-in session of the function app, so the first page afterwards shows Microsoft's account picker once, and a click completes the sign-in."):
             self.assertIn(words, paragraph, words)
         after = page.split("\n## After it")[1].split("\n## ")[0]
         self.assertIn("On the real estate both ran on 2026-11-06 and published, and the usage app took no public traffic from then until the action `retire-old` deleted it. One yes to the whole list", after)
@@ -2830,7 +2830,7 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
             self.assertIn(words, usage, words)
         self.assertNotIn("built, not yet deployed", usage)
         cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
-        self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed and that the people who approve reach the console through the platform's Application Gateway: "
+        self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed and that the people who approve reach the function app through the platform's Application Gateway: "
                       "the code for that is built and not deployed, and the value flips in a later change, after the gateway objects exist and the owner has said yes ([phase 3 for the cases app](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed))", cases)
         self.assertNotIn("**Disabled**", cases)
 
@@ -2854,8 +2854,8 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
                       "(the publish from the Operator, the list of the functions from the runner, and the control event with its three copy jobs).",
                       "The requests were anonymous and came from a public resolver, so they show that the public address refuses, and nothing about what a machine with a route into the network sees."):
             self.assertIn(words, shows, words)
-        for words in ("The cases app keeps `Enabled` until the people who approve have a network path to the console, which is the owner's decision ([the console for people](#decisions-for-the-owner));",
-                      "the check of the console's front door and the health check of the cases app still run from the runner, and they move inside only when that app is closed.",
+        for words in ("The cases app keeps `Enabled` until the people who approve have a network path to the function app, which is the owner's decision ([the function app for people](#decisions-for-the-owner));",
+                      "the check of the function app's front door and the health check of the cases app still run from the runner, and they move inside only when that app is closed.",
                       "Application Insights and the workspace are still public: they need the owner's decision about the shared Azure Monitor private link scope ([the order of the work](#the-order-of-the-work), item 6).",
                       "**The way back** for the usage app is one value: set the constant to `Enabled` and run `recording`."):
             self.assertIn(words, still_open, words)
@@ -2883,9 +2883,9 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         not_checked = self.page.split("## Not checked")[1].split("\n## ")[0]
         open_part, closed_part = not_checked.split("**Closed by the runs of 2026-11-06**")
         for words in ("Phase 3 of publishing code for the cases app ([the usage app is done](#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)): "
-                      "the owner decided that the people who approve reach the console through the platform's Application Gateway, and the code for that is built and not deployed "
+                      "the owner decided that the people who approve reach the function app through the platform's Application Gateway, and the code for that is built and not deployed "
                       "([the section](#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed)).",
-                      "The health check of the cases app is built to run in the Operator, and the check of the console's front door to knock at the gateway's host name.",
+                      "The health check of the cases app is built to run in the Operator, and the check of the function app's front door to knock at the gateway's host name.",
                       "Application Insights and the workspace are still public. They need the owner's decision about the shared Azure Monitor private link scope",
                       "the exact limit of a request (between 466,104 and 632,656 bytes of files; the runs did not narrow it)", "the machines of the other people who approve were not tested",
                       "The two waits and what a deployment site accepts from inside the network are in the closed list below."):
@@ -2905,12 +2905,12 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         self.assertIn("The owner has to decide about the shared Azure Monitor private link scope too (as the session that coordinates the work reported on 2026-11-06): "
                       "Application Insights and the workspace are still public until then.", order)
         readme = text("README.md")
-        self.assertIn("Still open: the cases app's phase 3 (it serves the console; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
+        self.assertIn("Still open: the cases app's phase 3 (it serves the pages; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
                       "there is no gateway for it and that he reaches the private network instead: the code, the tests and the documents for both are built and nothing is deployed, "
                       "[the gateway route](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed) "
                       "and [the web page on the private network](docs/proposals/07-private-by-default.md#the-web-page-on-the-private-network-built-not-deployed)), "
                       "the telemetry read once Application Insights is private, "
-                      "and the console check; two decisions are the owner's (a public repository, and the traces of Foundry's agents).", readme)
+                      "and the function app check; two decisions are the owner's (a public repository, and the traces of Foundry's agents).", readme)
         self.assertIn("The code of both apps is published from the Operator, as the deploy identity, since 2026-11-06 ([phase 2](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-2)), "
                       "and the usage app was closed after that: anonymous requests to its public address get HTTP 403 "
                       "([phase 3 for the usage app](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-usage-app-deployed-and-proven-on-2026-11-06)).", readme)

@@ -1,7 +1,7 @@
 """The Hub runs in this repository, by hand, bound to the GitHub environment hub, and its log is public (AGENTS.md rules 18 and 37).
 
 What these tests pin: the shape of the workflow (one trigger, one job bound to the environment, the permissions, a plain checkout), the split of what the job reads (every identifier of the estate is a
-secret, which GitHub masks in a log and a summary, and only plain configuration is a variable), the step that masks what GitHub cannot know (the other case, the parts of a list and of the people of the console,
+secret, which GitHub masks in a log and a summary, and only plain configuration is a variable), the step that masks what GitHub cannot know (the other case, the parts of a list and of the people of the function app,
 the digest that ends the name of every resource, the start of the addresses of a range), the steps that mask an identity or a host the moment they have read it from Azure, and that no step prints an
 object id into the log or the summary of the run. No test calls GitHub or Azure."""
 import importlib.util

@@ -67,7 +67,7 @@ TIMEOUT_SECONDS = 120
 MAX_PAGES = 20
 PASS, FAIL, UNKNOWN = "PASS", "FAIL", "UNKNOWN"
 
-# What the repository says about names that no parameter carries: the workspace and the component of the base, the identities of the Operator and of the console's sign-in.
+# What the repository says about names that no parameter carries: the workspace and the component of the base, the identities of the Operator and of the function app's sign-in.
 WORKSPACE = "log-meternaut"
 COMPONENT = "appi-meternaut"
 OPERATOR_IDENTITY = "id-meternaut-operator"
@@ -835,9 +835,9 @@ def role_assignments(ctx: Context) -> Outcome:
         "the AI Gateway": str((ctx.read("The AI Gateway", ctx.gateway_path, GATEWAY_API).get("identity") or {}).get("principalId") or "").lower(),
     }
     try:
-        own["the console's sign-in"] = str((ctx.read("The console's identity", ctx.at(f"Microsoft.ManagedIdentity/userAssignedIdentities/{CONSOLE_IDENTITY}"), IDENTITY_API).get("properties") or {}).get("principalId") or "").lower()
+        own["the function app's sign-in"] = str((ctx.read("The function app's identity", ctx.at(f"Microsoft.ManagedIdentity/userAssignedIdentities/{CONSOLE_IDENTITY}"), IDENTITY_API).get("properties") or {}).get("principalId") or "").lower()
     except Missing:
-        own["the console's sign-in"] = ""
+        own["the function app's sign-in"] = ""
     names = {principal: who for who, principal in own.items() if principal}
     definitions: dict[str, dict] = {}
     problems = []
@@ -1019,17 +1019,17 @@ def network(ctx: Context) -> Outcome:
 def entra_console(ctx: Context) -> Outcome:
     client = ctx.options.get("console_client_id")
     if not ctx.options.get("graph") or not client:
-        return unknown("Not read: the app registration of the console is in the directory, and the identity that runs this has no right to read the directory. Run it with --graph and --console-client-id, "
+        return unknown("Not read: the app registration of the function app is in the directory, and the identity that runs this has no right to read the directory. Run it with --graph and --console-client-id, "
                        "as an identity that holds Application.Read.All.")
     try:
-        document = ctx.attempt("The app registration of the console", lambda: ctx.reader.graph(f"applications(appId='{quote(str(client))}')?$select=passwordCredentials,keyCredentials"), "Application.Read.All")
+        document = ctx.attempt("The app registration of the function app", lambda: ctx.reader.graph(f"applications(appId='{quote(str(client))}')?$select=passwordCredentials,keyCredentials"), "Application.Read.All")
     except Missing:
-        return failed("The app registration of the console is not in the directory.", closed=False)
+        return failed("The app registration of the function app is not in the directory.", closed=False)
     except CannotRead as e:
         return unknown(str(e))
     if document.get("passwordCredentials") or document.get("keyCredentials"):
-        return failed("The app registration of the console holds a secret or a certificate: it signs in with the federated credential of a managed identity alone (AGENTS.md rule 23).")
-    return passed("The app registration of the console holds no secret and no certificate.")
+        return failed("The app registration of the function app holds a secret or a certificate: it signs in with the federated credential of a managed identity alone (AGENTS.md rule 23).")
+    return passed("The app registration of the function app holds no secret and no certificate.")
 
 
 @control("I-entra-agents", "L3")
@@ -1280,8 +1280,8 @@ def parse(argv) -> argparse.Namespace:
     parser.add_argument("--accepted-deny", default=None, help="the non-compliant Deny policies that the owner knows of, as assignment/reference/type, comma separated (DRIFT_ACCEPTED_DENY); unset: not judged")
     parser.add_argument("--cases-public-access", default="", choices=("", "Enabled", "Disabled"), help="the public network access that the cases app is accepted to have (default: the constant of tools/environment-params.py)")
     parser.add_argument("--read-subscription", action="store_true", help="also read the Defender plan, which is set on the subscription (needs Reader there)")
-    parser.add_argument("--graph", action="store_true", help="also read Microsoft Graph (the console's app registration, the agent identities); needs Application.Read.All")
-    parser.add_argument("--console-client-id", default="", help="the application (client) id of the console's app registration; with --graph")
+    parser.add_argument("--graph", action="store_true", help="also read Microsoft Graph (the function app's app registration, the agent identities); needs Application.Read.All")
+    parser.add_argument("--console-client-id", default="", help="the application (client) id of the function app's app registration; with --graph")
     parser.add_argument("--only", default="", help="only these controls, comma separated")
     parser.add_argument("--json", default="", help="a file to write the JSON report to")
     parser.add_argument("--summary", default="", help="a file to append the Markdown report to (the step summary of a workflow run)")

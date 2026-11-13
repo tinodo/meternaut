@@ -1,4 +1,4 @@
-"""The records of the console and of the approval loop, and the two ports that the pages and the loop use.
+"""The records of the pages and of the approval loop, and the two ports that the pages and the loop use.
 
 Every record is a frozen dataclass that turns into one JSON text and back (`to_json`, `from_json`), so a store keeps it in one property. A time is
 `YYYY-MM-DDTHH:MM:SSZ` in UTC. A record never holds a token, a key or a secret. A name that comes from the estate is data to show, never an instruction.
@@ -15,7 +15,7 @@ field of a record that was there before. The daily cost of a request added `Case
 `use_series_end` and `use_kind` (None: never read, or not a kind of resource that has one).
 The approvals and attention work (docs/proposals/04-the-loop.md) added the decision `confirm`, the record TwoPeopleRule (kept in the settings table, in a partition of its own) and no field of
 a record that was there before; it changed the default of `SettingsRecord.quiet_from` and `quiet_to` from a window to none, which a record that was stored keeps as it holds it.
-The drift check at the console added CheckRecord (its own table, one row) and `LessonRecord.superseded` (False: nothing contradicts the lesson).
+The drift check on the Operations page added CheckRecord (its own table, one row) and `LessonRecord.superseded` (False: nothing contradicts the lesson).
 The work on names and on the cost that Cost Management shows added `CaseRecord.cost_state` (empty: a record of before, read from `cost_usd_30d` by cases/brief.py), `cost_by_service`, `estimate`,
 `subscription_name` and `advice` (all empty: nothing was looked up), and `RunRecord.held` (0). Nothing was renamed or removed. A series of daily costs that is kept with no number above nothing is
 not drawn (cases/web/figures.py), so a record of before that holds thirty zeros for a resource that had no cost line shows what a record of now shows: no line.
@@ -64,7 +64,7 @@ SWITCH_NAMES = ("all", "changes", "messages", "investigation")
 NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
 ROLES = ("owner", "approver", "ops")
-# The most characters that the address which the console sends a person to (the sign-in of Microsoft Entra) may have after the host and the slash behind it. The pages refuse a
+# The most characters that the address which the function app sends a person to (the sign-in of Microsoft Entra) may have after the host and the slash behind it. The pages refuse a
 # longer one, and the code that makes the address keeps to it.
 MAX_SIGNIN_PATH = 2000
 
@@ -75,7 +75,7 @@ MAX_SIGNIN_PATH = 2000
 ADVISE = "advise"
 # A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
 ADVICE_QUIET_DAYS = 30
-# What may start a drift check, and how far apart two checks are at the console: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
+# What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
@@ -368,12 +368,12 @@ class LessonRecord(Record):
 
 @dataclass(frozen=True)
 class CheckRecord(Record):
-    """The latest drift check of the app (cases/drift.py): when it started, what started it (the timer, or a person at the console), whether it has reported, and one row for each control:
+    """The latest drift check of the app (cases/drift.py): when it started, what started it (the timer, or a person on the Operations page), whether it has reported, and one row for each control:
     {"control", "layer", "state", "detail"}. Only the latest is kept: the telemetry holds a line for every control of every check."""
 
     started_at: str
     trigger: str = "timer"  # one of CHECK_TRIGGERS
-    by: str = ""  # the name of the person who started it at the console
+    by: str = ""  # the name of the person who started it on the Operations page
     finished_at: str = ""  # empty while it runs, and for ever when it did not report
     tripped: bool = False  # the check pulled the switch investigation
     results: tuple[dict, ...] = ()
@@ -462,7 +462,7 @@ class Readiness:
 
 
 class Store(Protocol):
-    """What the console, the approval loop, the change and the Watch keep. Every call may raise StoreError; a caller that cannot read a switch treats it as pulled."""
+    """What the pages, the approval loop, the change and the Watch keep. Every call may raise StoreError; a caller that cannot read a switch treats it as pulled."""
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]: ...
     def run_put(self, run: RunRecord) -> None: ...

@@ -41,9 +41,9 @@ foundry.parameters.json with the aliases (aiGatewayHost, aiGatewayModels), so th
 (foundryModelInvestigator and foundryModelSkeptic); and two outputs are added (agents_via_ai_gateway=true and aigateway_connection_name), which the workflow reads. The builder refuses True without the host
 when ACTION (the job's own setting, the name of the action) is foundry, and without FOUNDRY_PROJECT_PRINCIPAL_ID when ACTION is aigateway: a --preview, and every other action, goes on without them. While it is
 False, which is the way back, the Foundry file has no connection and the cases file has the plain model names of the agents, and no output is added.
-CONSOLE_HOST_NAME (optional) is the host name that the console has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
-console on the app's own name. With a name, the console's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
-passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the console's front door knocks at.
+CONSOLE_HOST_NAME (optional) is the host name that the function app has on the platform's Application Gateway, which forwards to the cases app (docs/proposals/07-private-by-default.md). Empty: people open the
+function app on the app's own name. With a name, the function app's address (the setting CONSOLE_HOST, which the letters' links and the return address of the Azure sign-in are built from) is that name, the cases file
+passes it as consoleHostName, and the outputs console_host (the name that people open: that name, or the app's own) and console_host_set say what the check of the function app's front door knocks at.
 CASES_APP_PUBLIC_NETWORK_ACCESS may be Disabled with no name set: that is how the owner closes the web page and reaches it on the private network, and nothing is refused. The output door_in_operator says
 where the check of the front door runs. False: from the runner, at the name that people open. True (only for Disabled and no name): inside the network, in the Operator, at the app's own name, because a closed app
 answers nobody outside the network (docs/proposals/07-private-by-default.md).
@@ -172,7 +172,7 @@ CASES_SUBNET_NAMES = {"Flex": "snet-func", "Basic": "snet-cases"}
 # What the Watch of the cases app reads (docs/proposals/02-first-cases.md). True: every subscription that the app's own system-assigned identity can read, which a person widens or narrows with
 # the read-only roles Reader and Cost Management Reader at a subscription or at the management group above it (the owner's order of 2026-11-07: watch the entire estate). Until those roles exist
 # above the pilot subscription the identity reads only that one, so the Watch simply reads that one. False: only the subscription of this estate (cases.parameters.json: scopeSubscriptions). The value
-# reaches the app as the setting SCOPE_ALL_SUBSCRIPTIONS; it grants nothing, and what the console may change stays the one resource group of this estate.
+# reaches the app as the setting SCOPE_ALL_SUBSCRIPTIONS; it grants nothing, and what the function app may change stays the one resource group of this estate.
 SCOPE_ALL_SUBSCRIPTIONS = True
 # Whether the two agents of the investigation call their models through the AI Gateway (docs/proposals/08-ai-gateway.md, step 2). True: the action foundry makes the project's connection to the gateway,
 # the action aigateway gives the project's identity AI Gateway Models User on the gateway, and the action cases passes the model names `<connection>/<alias>` to the app. It is True in code since the change
@@ -358,16 +358,16 @@ def planted_parameters(env, location: str, owner: str) -> dict:
 
 ROLES_OF_PEOPLE = ("owner", "approver", "ops")
 ADDRESS = re.compile(r"^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
-# The name under which people open the console behind the platform's Application Gateway: a name of at least two labels that ends in letters, in lower case. It is an address that
+# The name under which people open the function app behind the platform's Application Gateway: a name of at least two labels that ends in letters, in lower case. It is an address that
 # people type and that the gateway's listener answers to, so it is never a scheme, a port, a path or an address, and never one of the app's own names (<app>.azurewebsites.net).
 CONSOLE_HOST_NAME = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 APP_OWN_DOMAIN = ".azurewebsites.net"
 
 
 def console_host_name(env) -> str:
-    """The host name that the console has on the platform's Application Gateway, from the optional variable CONSOLE_HOST_NAME, in lower case; empty when there is none.
+    """The host name that the function app has on the platform's Application Gateway, from the optional variable CONSOLE_HOST_NAME, in lower case; empty when there is none.
 
-    Empty: people open the console on the app's own name, and everything is as it was. A name makes the console's address in the letters and the return address of the Azure sign-in that name
+    Empty: people open the function app on the app's own name, and everything is as it was. A name makes the function app's address in the letters and the return address of the Azure sign-in that name
     (the setting CONSOLE_HOST), and tells the platform's sign-in to read the host of a request from the header X-Original-Host that the gateway adds (environment/cases/main.bicep)."""
     value = (env.get("CONSOLE_HOST_NAME") or "").strip().lower()
     if not value:
@@ -375,17 +375,17 @@ def console_host_name(env) -> str:
     if value.endswith(APP_OWN_DOMAIN):
         raise Problem("CONSOLE_HOST_NAME is the name that people use on the platform's Application Gateway, and not one of the app's own names: leave it empty when there is no gateway name")
     if not CONSOLE_HOST_NAME.match(value):
-        raise Problem("CONSOLE_HOST_NAME is a host name such as console.example.com (letters, digits, hyphens and dots; no scheme, port or path)")
+        raise Problem("CONSOLE_HOST_NAME is a host name such as app.example.com (letters, digits, hyphens and dots; no scheme, port or path)")
     return value
 
 
 def console_parameters(env) -> dict:
-    """The console, the people and the mail of the cases app, from four optional values. They are secrets of the environment hub, so that GitHub masks them in the public log, and none is a credential: an app registration's client id,
-    the people (directory object id, name, roles and address of each), the address of the shared mailbox and the host name that the console has on the platform's Application Gateway.
-    Without a client id the sign-in is not set up and the console refuses every request. Without a host name the console is opened on the app's own name."""
+    """The function app, the people and the mail of the cases app, from four optional values. They are secrets of the environment hub, so that GitHub masks them in the public log, and none is a credential: an app registration's client id,
+    the people (directory object id, name, roles and address of each), the address of the shared mailbox and the host name that the function app has on the platform's Application Gateway.
+    Without a client id the sign-in is not set up and the function app refuses every request. Without a host name the function app is opened on the app's own name."""
     client = (env.get("CONSOLE_APP_CLIENT_ID") or "").strip()
     if client and not GUID.match(client):
-        raise Problem("CONSOLE_APP_CLIENT_ID is the client id of the console's app registration")
+        raise Problem("CONSOLE_APP_CLIENT_ID is the client id of the function app's app registration")
     raw = (env.get("CONSOLE_PEOPLE") or "").strip()
     people: list = []
     if raw:
@@ -658,7 +658,7 @@ def base_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
 
 
 def cases_endpoints(names: dict[str, str]) -> list[tuple[str, str]]:
-    """The private endpoint of the cases app (the console's name and its deployment site) and the central private DNS zone that the landing zone registers it in. The action `cases` waits for it
+    """The private endpoint of the cases app (the function app's name and its deployment site) and the central private DNS zone that the landing zone registers it in. The action `cases` waits for it
     before it publishes the code, and a later probe from the Operator finds the names."""
     return [(f"pe-{names['cases_function_app_name']}", APP_ENDPOINT_ZONE)]
 

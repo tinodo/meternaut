@@ -118,7 +118,7 @@ class TheOtherDocuments(unittest.TestCase):
     def test_the_bootstrap_page_names_the_two_actions_after_the_order_of_the_others(self):
         after = BOOTSTRAP.split("\n## After it\n")[1].split("\n## ")[0]
         self.assertIn("The AI Gateway has two actions, `aigateway` and `aigateway-check`, and they are not on that list either", after)
-        self.assertLess(after.index("The console behind the platform's Application Gateway is not on that list"), after.index("The AI Gateway has two actions"))
+        self.assertLess(after.index("The function app behind the platform's Application Gateway is not on that list"), after.index("The AI Gateway has two actions"))
 
     def test_rule_15_c_says_that_every_model_call_goes_through_the_ai_gateway_with_no_direct_path_and_keeps_its_history_in_one_sentence(self):
         (rule,) = [line for line in AGENTS.splitlines()
@@ -151,7 +151,7 @@ class TheOtherDocuments(unittest.TestCase):
     def test_the_changelog_has_the_entry_of_step_1_above_the_console_entry_and_says_what_it_must(self):
         headings = re.findall(r"(?m)^## (.*)$", CHANGELOG)
         self.assertEqual(headings[11], "An AI Gateway for the agents' model calls, step 1 of 2: built, not deployed — 2026-11-07")
-        self.assertTrue(headings[12].startswith("The console behind the platform's Application Gateway"), "the entry of the console change follows, as the owner's coordinator asked")
+        self.assertTrue(headings[12].startswith("The console behind the platform's Application Gateway"), "the entry of the function app change follows, as the owner's coordinator asked")
         entry = flat(CHANGELOG.split("\n## ")[12])
         for words in ("**What the owner said.**", "I LEAN STRONG TOWARDS YOU CREATING AN AI GATEWAY", "You should NOT create a DDOS PLAN.", "**What the owner has to know first: the frontend is public, and he decides whether to accept that.**",
                       "**What is built.**", "Nothing is deployed: no Azure change, no Hub run and no workflow run was made", "**What was checked.**", "**Not checked.**", "**What a person has to do, in order.**",

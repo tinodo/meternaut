@@ -1,4 +1,4 @@
-"""What the Watch, the console and the timer share when the loop is on: the store, the people, the approvals and the hook that sends a letter."""
+"""What the Watch, the pages and the timer share when the loop is on: the store, the people, the approvals and the hook that sends a letter."""
 from __future__ import annotations
 
 import datetime as dt

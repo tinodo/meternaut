@@ -3,7 +3,7 @@
 
     python tools/learning-check.py [--cases FILE] [--thresholds FILE] [--real]
 
-It replays the invented closed requests of evaluation/learning-cases.jsonl in time order. With `--real` the file is the one that the console gives (Operations, "Download the answers": the same
+It replays the invented closed requests of evaluation/learning-cases.jsonl in time order. With `--real` the file is the one that the function app gives (Operations, "Download the answers": the same
 rows, made by cases/learning.py replay_rows from the real lessons, with a `subject` that the answers about one resource share), and the report says that the requests are real; the thresholds
 are the same ones, written first. A row is one finding that a person was asked to decide: the type of the resource, the family of the plan,
 the confidence that the first AI stated, the last word of the person (and the reason of a decline), the day on which the Watch judged it (`opened`) and the day on which the request closed
@@ -50,7 +50,7 @@ from cases.families import registry  # noqa: E402
 from cases.memory_store import MemoryStore, stamp  # noqa: E402
 
 KEYS = ("id", "type", "family", "stated", "answer", "reason", "opened", "closed")
-OPTIONAL = ("note", "subject")  # a sentence for the people who read the file: nothing reads it; and the number that the requests about one resource share (the console's export gives it)
+OPTIONAL = ("note", "subject")  # a sentence for the people who read the file: nothing reads it; and the number that the requests about one resource share (the function app's export gives it)
 MAX_ROWS = 400
 MAX_DAY = 3650
 REAL_REQUESTS = "real closed requests"  # what the first item of `notMeasured` begins with: it is true of the invented set only
@@ -182,7 +182,7 @@ def frozen_decision(row: dict) -> decide.Decision:
 
 def replay(rows: list[dict]) -> list[Judged]:
     """The requests in the order in which the Watch judged them (a tie goes by id). A lesson is in the store of a judgement only when its request closed on an earlier day: a request never
-    teaches the judgement of a request that opened before it closed, and never its own. A row that has a `subject` (the console's export gives one to the requests about one resource)
+    teaches the judgement of a request that opened before it closed, and never its own. A row that has a `subject` (the function app's export gives one to the requests about one resource)
     is weighed against the later answers of its subject that were known at the judgement, as `learning.sync` does: a person who changed their mind has the last word."""
     ordered = sorted(rows, key=lambda row: (row["opened"], row["id"]))
     closing = sorted(rows, key=lambda row: (row["closed"], row["id"]))
@@ -304,7 +304,7 @@ def table(judged: list[Judged]) -> list[str]:
 
 
 def run(rows: list[dict], rules: dict, cases_name: str = CASES.name, thresholds_name: str = THRESHOLDS.name, real: bool = False) -> tuple[list[str], int]:
-    """The lines of the report and the exit code. `real` says that the rows are closed requests of the app, exported from the console, and not the invented set: the report then says so and
+    """The lines of the report and the exit code. `real` says that the rows are closed requests of the app, exported from the function app, and not the invented set: the report then says so and
     leaves out the line that says that real requests are not measured."""
     judged = replay(rows)
     numbers = measure(judged)
@@ -330,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cases", type=Path, default=CASES, help="the replay set (JSON lines)")
     parser.add_argument("--thresholds", type=Path, default=THRESHOLDS, help="the thresholds, written before the first run")
-    parser.add_argument("--real", action="store_true", help="the rows are real closed requests that the console exported (Operations, 'Download the answers'), not the invented set")
+    parser.add_argument("--real", action="store_true", help="the rows are real closed requests that the function app exported (Operations, 'Download the answers'), not the invented set")
     args = parser.parse_args(argv)
     try:
         rows, rules = parse_rows(read(args.cases)), parse_thresholds(read(args.thresholds))

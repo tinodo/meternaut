@@ -2,7 +2,7 @@
 // the level Error that begins "the run failed", "the drift check failed", "the Study failed" or "the tick failed" (the Watch also writes the History event run.failed). The Study logs a line that begins with the same
 // words at the level Warning when one source fails and its round goes on, so that one is counted only at the level Error. When something does raise, the Functions host marks the invocation as failed in the requests
 // table, which is read too. One row for each failed round, and nothing of the line: the alert's e-mail carries a count and a link, and the person who follows the link reads which round failed and why, in the
-// History of the console or in the traces of the app.
+// History of the function app or in the traces of the app.
 let rounds = dynamic(['watch-daily', 'drift-daily', 'study-weekly', 'runner-tick']);
 let raised = AppRequests
     | where Name in (rounds) or OperationName in (rounds)

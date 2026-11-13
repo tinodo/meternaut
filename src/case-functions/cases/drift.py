@@ -11,7 +11,7 @@ control is in drift_rules.py (the list of the controls, their layers and what ea
 
 A FAIL of a control that guards the agents pulls the switch `investigation` and sends one letter to the owner, through the harness's Brake (harness.py): no other switch is ever pulled,
 and a person releases it. An UNKNOWN never pulls it. The check never runs inside an agent run, never calls a model, and changes nothing but that one switch and its own result: it keeps the
-result as the latest check of the app (`CheckRecord`), which the Operations page shows. A person with the role ops can start the same check at the console (`web/ops.py`, at most once in
+result as the latest check of the app (`CheckRecord`), which the Operations page shows. A person with the role ops can start the same check on the Operations page (`web/ops.py`, at most once in
 CHECK_GAP_MINUTES for everybody, the timer's check counting too): it is `run_check("console")`, with the same reads, the same rules and the same lines.
 
 What it cannot do, said plainly: a compromised app can hide its own drift (it is the one that reads and the one that reports). The independent check of the control plane and the alert
@@ -357,7 +357,7 @@ def run_check(trigger: str = "timer", env: Mapping[str, str] | None = None, *, t
     investigation and sends one letter. `foundry` and `extras` are for a caller that has them already (a test); without them they are made from the settings of the app.
 
     The result is kept as the latest check of the app (CheckRecord): `trigger` is "timer" or "console" (a person's check, named by `by`), and `started_at` is the time that the caller
-    claimed for it, when it claimed one (the console does, so that two people cannot start two checks within the gap)."""
+    claimed for it, when it claimed one (the function app does, so that two people cannot start two checks within the gap)."""
     env = os.environ if env is None else env
     redact = Redactor()
     started = started_at or stamp(clock())  # type: ignore[arg-type]

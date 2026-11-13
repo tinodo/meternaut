@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""The sign-in of the Meternaut console, and the sign-in of the person who approves a change: one Microsoft Entra app registration that has no secret (standard library only).
+"""The sign-in of the Meternaut function app, and the sign-in of the person who approves a change: one Microsoft Entra app registration that has no secret (standard library only).
 
-    python tools/entra-setup.py check --tenant-id <id> --host <host name of the console> --identity-principal-id <id> [--assign <object id>]...
-    python tools/entra-setup.py apply --tenant-id <id> --host <host name of the console> --identity-principal-id <id> [--assign <object id>]... [--apply] [--yes]
+    python tools/entra-setup.py check --tenant-id <id> --host <host name of the function app> --identity-principal-id <id> [--assign <object id>]...
+    python tools/entra-setup.py apply --tenant-id <id> --host <host name of the function app> --identity-principal-id <id> [--assign <object id>]... [--apply] [--yes]
 
-The console is a set of web pages of the first cases' function app. A person gets in only after a Microsoft Entra sign-in that the platform does (App
+The function app of the first cases serves a set of web pages. A person gets in only after a Microsoft Entra sign-in that the platform does (App
 Service authentication), before any page code runs. That sign-in needs an app registration. This one has no client secret and no certificate (AGENTS.md
 rule 23): its only credential is a federated identity credential that trusts one user-assigned managed identity of the function app
 (https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad#use-a-managed-identity-instead-of-a-secret-preview). Only people
 who are assigned to the app can sign in.
 
-The same app registration carries a second sign-in. Meternaut holds no right to change Azure. When a person approves a plan, the console sends the person
+The same app registration carries a second sign-in. Meternaut holds no right to change Azure. When a person approves a plan, the function app sends the person
 to Microsoft Entra to sign in to Azure Resource Manager (OAuth 2.0 authorization code flow with PKCE, the delegated scope
 https://management.azure.com/user_impersonation and the OpenID Connect scopes openid and profile, no refresh token), redeems the code with the same
 federated credential (the identity presents a token for api://AzureADTokenExchange as the client assertion) and makes the one change with that person's
@@ -23,7 +23,7 @@ only as a signed-in person. The return address of the second sign-in is https://
 https://<host>/.auth/login/aad/callback.
 
 <host> is the name that people open. While the function app takes public traffic it is the app's own name, <app>.azurewebsites.net. Once the app is closed and
-the platform's Application Gateway forwards to it, it is the console's host name on that gateway (the secret CONSOLE_HOST_NAME of the environment hub): both return
+the platform's Application Gateway forwards to it, it is the function app's host name on that gateway (the secret CONSOLE_HOST_NAME of the environment hub): both return
 addresses name that host, because the sign-in sends a person back to the host that the person came on (docs/proposals/07-private-by-default.md). Run the tool
 again with the new host before the variable is set. It only adds the addresses of the new host: the addresses of the app's own name stay, shown as a note,
 until a person removes them in the portal.
@@ -45,7 +45,7 @@ The items, in order:
   1  The app registration "Meternaut console": this tenant only, ID tokens on (the platform signs in with the hybrid flow), the redirect address
      https://<host>/.auth/login/aad/callback, the permission User.Read, and no secret and no certificate. A redirect address or a permission that is
      there besides the ones of this tool is not a difference: it is shown as a note under the line and left alone.
-  2  The redirect address https://<host>/arm/return, where the sign-in of the person who approves returns to the console.
+  2  The redirect address https://<host>/arm/return, where the sign-in of the person who approves returns to the function app.
   3  The delegated permission user_impersonation of Azure Service Management, asked for by the app.
   4  Public client flows off: isFallbackPublicClient of the app registration is false or not set, so that the app is a confidential client and a sign-in
      code can be redeemed only with the credential of the app. When it is true, apply sets it to false and sends nothing else of the app with it.
@@ -61,7 +61,7 @@ an identifier, not a credential; it is a secret there so that GitHub masks it in
 
 The Teams cards (docs/proposals/13-teams-and-outlook.md) go through a private queue and a flow of Power Automate and need nothing in Microsoft Entra: replaced by the owner's ruling of 2026-11-13 (pending his
 plain yes) for the other way to deliver them (docs/proposals/20-teams-cards-through-a-bot.md), which is off until he switches it on, and for which the sub-command teams-bot below is the one thing that this tool makes besides
-the sign-in of the console.
+the sign-in of the function app.
 
     python tools/entra-setup.py teams-bot --tenant-id <id> --subscription <id> --resource-group <name> [--apply] [--yes]
 
@@ -100,7 +100,7 @@ ARM_APP_ID = "797f4846-ba00-4fd7-ba43-dac1f8f63013"
 USER_IMPERSONATION = "41094075-9dad-400e-a0bd-54e686782033"
 ARM_SCOPE = "user_impersonation"
 ARM_PERMISSION_NAME = "user_impersonation of Azure Service Management"
-# What the app registration asks for: the delegated permissions of the console's sign-in and of the approver's sign-in to Azure Resource Manager.
+# What the app registration asks for: the delegated permissions of the function app's sign-in and of the approver's sign-in to Azure Resource Manager.
 WANTED_ACCESS = (
     {"resourceAppId": GRAPH_APP_ID, "resourceAccess": [{"id": USER_READ, "type": "Scope"}]},
     {"resourceAppId": ARM_APP_ID, "resourceAccess": [{"id": USER_IMPERSONATION, "type": "Scope"}]},
@@ -337,7 +337,7 @@ def read_config(args: argparse.Namespace) -> Config:
         raise Problem("--tenant-id is required: the id of the tenant (a GUID)")
     host = (args.host or "").lower()
     if not host or not HOST.fullmatch(host):
-        raise Problem("--host is required: the host name that people open, the console's host name on the platform's Application Gateway or the function app's own name (for example func-name.azurewebsites.net)")
+        raise Problem("--host is required: the host name that people open, the function app's host name on the platform's Application Gateway or the function app's own name (for example func-name.azurewebsites.net)")
     principal = args.identity_principal_id
     if not principal or not GUID.fullmatch(principal):
         raise Problem("--identity-principal-id is required: the object (principal) id of the identity of the sign-in (a GUID)")
@@ -370,7 +370,7 @@ class Review:
     user_read: bool = True  # the delegated permission User.Read of Microsoft Graph is asked for
     impersonation: bool = True  # the delegated permission user_impersonation of Azure Service Management is asked for (it has a line of its own)
     confidential: bool = True  # public client flows are off: isFallbackPublicClient is false or not set (it has a line of its own)
-    other_addresses: list[str] = field(default_factory=list)  # redirect addresses that are not the console's: left alone
+    other_addresses: list[str] = field(default_factory=list)  # redirect addresses that are not the function app's: left alone
     other_permissions: list[tuple] = field(default_factory=list)  # (resource application id, permission id, type) that this tool does not ask for: left alone
 
     def shown(self, cfg: Config) -> list[str]:
@@ -493,7 +493,7 @@ def examine(graph: Graph, cfg: Config) -> tuple[list[Item], State]:
     state = State()
     items: list[Item] = []
     state.app = read_app(graph)
-    return_label = f"Redirect address {cfg.arm_return}, where the sign-in to Azure Resource Manager of the person who approves returns to the console"
+    return_label = f"Redirect address {cfg.arm_return}, where the sign-in to Azure Resource Manager of the person who approves returns to the function app"
     permission_label = f"Delegated permission {ARM_PERMISSION_NAME}, asked for by the app"
     public_label = "Public client flows off (isFallbackPublicClient false), so that a sign-in code is redeemed only with the credential of the app"
     if state.app is None:
@@ -558,7 +558,7 @@ def guidance(items: list[Item], state: State, cfg: Config) -> list[str]:
     if state.app is None or all(i.state == "present" for i in items if i.consent):
         return []
     return [f"A tenant administrator gives the missing consent once, for the whole tenant, by opening {consent_address(cfg.tenant, state.app['appId'])}, signing in and accepting. "
-            "The consent lets the console send the person who approves to sign in to Azure Resource Manager: the change is made with that person's own rights, "
+            "The consent lets the function app send the person who approves to sign in to Azure Resource Manager: the change is made with that person's own rights, "
             "and Meternaut gets no right of its own. Run check again afterwards."]
 
 
@@ -703,7 +703,7 @@ def apply_steps(graph: Graph, cfg: Config, state: State, out: Callable[[str], No
     if state.credential is None:
         graph.make(f"applications/{app['id']}/federatedIdentityCredentials",
                    {"name": CREDENTIAL_NAME, "issuer": cfg.issuer, "subject": cfg.principal_id, "audiences": [AUDIENCE],
-                    "description": "Lets the user-assigned identity of the console's function app sign in as this app, with no secret."})
+                    "description": "Lets the user-assigned identity of the function app sign in as this app, with no secret."})
         out("  made the federated identity credential")
     for person in cfg.people:
         if person not in state.assigned:
@@ -724,7 +724,7 @@ def apply_steps(graph: Graph, cfg: Config, state: State, out: Callable[[str], No
 # ---- the commands --------------------------------------------------------------------------------------------------------------------------------
 
 def command_check(graph: Graph, cfg: Config, out: Callable[[str], None]) -> int:
-    out(f"The sign-in of the Meternaut console, in tenant {cfg.tenant}:")
+    out(f"The sign-in of the Meternaut function app, in tenant {cfg.tenant}:")
     items, state = examine(graph, cfg)
     return 0 if report(items, state, cfg, out) else 1
 
@@ -732,7 +732,7 @@ def command_check(graph: Graph, cfg: Config, out: Callable[[str], None]) -> int:
 def command_apply(args: argparse.Namespace, graph: Graph, cfg: Config, out: Callable[[str], None], ask: Callable[[str], "str | None"], env: Mapping[str, str]) -> int:
     if args.apply and env.get("GITHUB_ACTIONS") == "true":
         raise Problem("a person who may administer Microsoft Entra runs this, never a pipeline: the workflow's identity must not hold that right (AGENTS.md rules 18 and 24)")
-    out(f"The sign-in of the Meternaut console, in tenant {cfg.tenant}:")
+    out(f"The sign-in of the Meternaut function app, in tenant {cfg.tenant}:")
     items, state = examine(graph, cfg)
     for item in items:
         out(describe(item))
@@ -999,7 +999,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     for name, text in (("check", "read only: which items are in order"), ("apply", "dry run; with --apply, make what is missing")):
         sub = commands.add_parser(name, help=text)
         sub.add_argument("--tenant-id")
-        sub.add_argument("--host", help="the host name that people open: the console's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name, for example func-name.azurewebsites.net")
+        sub.add_argument("--host", help="the host name that people open: the function app's host name on the platform's Application Gateway (the variable CONSOLE_HOST_NAME), or the function app's own name, for example func-name.azurewebsites.net")
         sub.add_argument("--identity-principal-id", help="the object id of the user-assigned identity that signs in as the app")
         sub.add_argument("--assign", action="append", help="the object id of a person who may sign in; repeat it or separate with commas")
         if name == "apply":

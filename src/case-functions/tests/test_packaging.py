@@ -81,7 +81,7 @@ class FilesOfTheAppTests(unittest.TestCase):
                 "extensions": {"http": {"routePrefix": ""}, "queues": {"batchSize": 1, "newBatchThreshold": 0, "maxDequeueCount": 5}},
             },
             "sampling is off, so that no line of the History is dropped, and the host's own chatter is off: with the token requests of the Application Insights sign-in "
-            "logged, every instance wrote about one line a second; the console's pages are at the root, with no /api in front; the control queue gives the app one message at a "
+            "logged, every instance wrote about one line a second; the pages are at the root, with no /api in front; the control queue gives the app one message at a "
             "time (one Watch at a time, as the one partition of the old control hub did) and moves a message to cases-control-poison after five tries",
         )
 
