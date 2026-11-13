@@ -97,10 +97,12 @@ jobs:
           RUBY
       - name: The Bicep templates compile and lint
         run: |
-          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep environment/aigateway/telemetry.bicep environment/governance/main.bicep environment/powerplatform/main.bicep environment/teams/main.bicep infra/budgets/*.bicep; do
+          for template in environment/main.bicep environment/base/main.bicep environment/foundry/main.bicep environment/cases/main.bicep environment/operator/main.bicep environment/aigateway/main.bicep environment/aigateway/subnet.bicep environment/aigateway/telemetry.bicep environment/governance/main.bicep environment/powerplatform/main.bicep infra/budgets/*.bicep; do
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
+          az bicep build --file environment/teams/main.bicep --stdout > /dev/null
+          az bicep lint --file environment/teams/main.bicep
       - name: The drift check of the AI security runs its own selftest, with no call to Azure
         run: python tools/drift-check.py --selftest
       - name: The parameter files fit the compiled templates
@@ -131,7 +133,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
-          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --governance environment/aigateway/contracts.json --powerplatform --teams > /dev/null
+          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --teams --governance environment/aigateway/contracts.json --powerplatform > /dev/null
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
           az bicep build --file environment/base/main.bicep --outfile "$out/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"

@@ -236,16 +236,18 @@ class TheBuilderChangesNothingWhileTheBotIsOff(unittest.TestCase):
         source = read("tools/environment-params.py")
         self.assertIn('--teams", action="store_true"', source)
         ci = read(".github/workflows/checks.yml")
-        for text in ("environment/teams/main.bicep", "--teams > /dev/null", "--label teams", "TEAMS_BOT_APP_ID: 12345678"):
+        for text in ("environment/teams/main.bicep", "--teams --governance", "--label teams", "TEAMS_BOT_APP_ID: 12345678"):
             self.assertIn(text, ci, text)
-        self.assertEqual(ci.count("environment/teams/main.bicep"), 2, "compiled and linted, and compiled for the parameter check")
+        self.assertEqual(ci.count("environment/teams/main.bicep"), 3, "compiled and linted in the step of the templates (two lines), and compiled for the parameter check")
 
 
 class TheActionsAreOfferedAndTheEnvironmentHoldsTheTwoSettings(unittest.TestCase):
-    def test_the_two_actions_are_offered_after_operator_probe_and_the_four_checks_of_the_agents_stay_the_last(self):
+    def test_the_two_actions_are_offered_after_cases_run_and_the_pins_of_the_other_options_still_hold(self):
         options = re.findall(r"(?m)^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1))
-        self.assertEqual(options[options.index("operator-probe"):options.index("operator-probe") + 4], ["operator-probe", "teams", "teams-test", "aigateway"])
+        self.assertEqual(options[options.index("cases-run"):options.index("cases-run") + 4], ["cases-run", "teams", "teams-test", "page-latency"])
         self.assertEqual((options.count("teams"), options.count("teams-test")), (1, 1))
+        self.assertEqual(options[options.index("operator-probe") + 1:options.index("operator-probe") + 3], ["aigateway", "aigateway-check"], "the pair of the AI Gateway still follows operator-probe at once")
+        self.assertEqual(options[options.index("loop-check") + 1:options.index("loop-check") + 3], ["powerplatform", "operator"])
         self.assertEqual(options[-4:], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
 
     def test_the_description_says_what_each_phase_makes_and_what_it_does_not(self):
@@ -389,10 +391,9 @@ esac
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
   *"account show"*) printf '%s' "$FAKE_TENANT" ;;
-  *"/subscriptions/$ENV_SUBSCRIPTION_ID/providers/Microsoft.Authorization/roleAssignments"*)
-    if [ "$FAKE_SUB_ROLES" = FAIL ]; then echo "ERROR: (AuthorizationFailed) denied" >&2; exit 1; fi
-    printf '%s' "$FAKE_SUB_ROLES" ;;
-  *"/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Authorization/roleAssignments"*) printf '%s' "$FAKE_GROUP_ROLES" ;;
+  *"/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Authorization/roleAssignments"*)
+    if [ "$FAKE_GROUP_ROLES" = FAIL ]; then echo "ERROR: (AuthorizationFailed) denied" >&2; exit 1; fi
+    printf '%s' "$FAKE_GROUP_ROLES" ;;
   *"channels/MsTeamsChannel"*)
     case "$*" in *properties.properties.isEnabled*) printf '%s' "$FAKE_ENABLED" ;; *properties.properties.enableCalling*) printf '%s' "$FAKE_CALLING" ;; esac ;;
   *"botServices/bot-meternaut-0123abcd?api-version=2022-09-15"*)
@@ -413,14 +414,14 @@ esac
 
     def read_back(self, **env):
         base = {"PHASE": "2", "IDENTITY_NAME": "id-meternaut-teams", "BOT_NAME": "bot-meternaut-0123abcd", "SKU": "F0", "FUNCTION_HOST": HOST, "TEAMS_BOT_APP_ID": CLIENT, "FAKE_TENANT": "99999999-8888-7777-6666-555555555555",
-                "FAKE_SUB_ROLES": "0", "FAKE_GROUP_ROLES": "0", "FAKE_ENABLED": "True", "FAKE_CALLING": "False", "FAKE_TYPE": "SingleTenant", "FAKE_APP": CLIENT.upper(), "FAKE_LOCAL": "True", "FAKE_ENDPOINT": f"https://{HOST}/api/messages",
+                "FAKE_GROUP_ROLES": "0", "FAKE_ENABLED": "True", "FAKE_CALLING": "False", "FAKE_TYPE": "SingleTenant", "FAKE_APP": CLIENT.upper(), "FAKE_LOCAL": "True", "FAKE_ENDPOINT": f"https://{HOST}/api/messages",
                 "FAKE_PRINCIPAL": PRINCIPAL, "FAKE_CLIENT": IDENTITY_CLIENT}
         return run(READ_BACK, {"az": self.READ_BACK_AZ}, **{**base, **env})
 
     def test_a_good_read_back_says_that_the_identity_holds_no_role_and_that_the_bot_is_single_tenant_and_prints_no_identifier(self):
         done, lines, _ = self.read_back()
         self.assertEqual(done.returncode, 0, said(done))
-        for words in ("The identity id-meternaut-teams holds no role assignment at the subscription, above it or below it, as the design says: 0", "The type of the bot's application (the legacy UserAssignedMSI and the deprecated MultiTenant are refused): SingleTenant.",
+        for words in ("The identity id-meternaut-teams holds no role assignment at the project's resource group, above it or below it, as the design says: 0", "The type of the bot's application (the legacy UserAssignedMSI and the deprecated MultiTenant are refused): SingleTenant.",
                       "The client id of the bot's application matches the secret TEAMS_BOT_APP_ID.", "The bot's application is in this tenant.", "Local authentication of the bot is off (disableLocalAuth): true.",
                       "The Microsoft Teams channel is enabled: true.", "Calling on the Microsoft Teams channel is off: false.", "the bot bot-meternaut-0123abcd and its Microsoft Teams channel are in Azure as the template wrote them, and the identity holds no role"):
             self.assertIn(words, done.stdout, words)
@@ -436,19 +437,17 @@ esac
         self.assertFalse([line for line in lines if "botServices" in line])
 
     def test_a_role_assignment_fails_the_run_and_the_count_is_said_without_an_id(self):
-        done, _, _ = self.read_back(FAKE_SUB_ROLES="2")
+        done, _, _ = self.read_back(FAKE_GROUP_ROLES="2")
         self.assertNotEqual(done.returncode, 0)
-        self.assertIn("holds 2 role assignment(s) at or around the subscription. It must hold none", said(done))
+        self.assertIn("holds 2 role assignment(s) at or around the project's resource group. It must hold none", said(done))
         self.assertFalse(GUID.search("\n".join(line for line in said(done).splitlines() if not line.startswith("::add-mask::"))))
 
-    def test_when_the_subscription_cannot_be_read_the_group_is_read_and_it_is_said_and_when_neither_can_the_run_fails(self):
-        done, lines, _ = self.read_back(FAKE_SUB_ROLES="FAIL")
-        self.assertEqual(done.returncode, 0, said(done))
-        self.assertIn("may not read the role assignments of the whole subscription, so they are read at the project's resource group, and above it.", done.stdout)
-        self.assertIn("holds no role assignment at the project's resource group", done.stdout)
-        done, _, _ = self.read_back(FAKE_SUB_ROLES="FAIL", FAKE_GROUP_ROLES="1")
+    def test_when_the_role_assignments_cannot_be_read_the_run_fails_and_says_that_it_is_not_known_that_there_are_none(self):
+        done, lines, _ = self.read_back(FAKE_GROUP_ROLES="FAIL")
         self.assertNotEqual(done.returncode, 0)
-        self.assertIn("holds 1 role assignment(s) at or around the project's resource group", said(done))
+        self.assertIn("The role assignments of the identity could not be read, so it is not known that it holds none.", said(done))
+        self.assertNotIn("holds no role assignment", done.stdout)
+        self.assertEqual([line for line in lines if "roleAssignments" in line and "/resourceGroups/" not in line], [], "the read stays in the project's resource group: nothing is asked of the subscription")
 
     def test_a_bot_that_is_not_what_the_template_wrote_fails_the_run_and_the_values_are_not_printed(self):
         for change, words in (({"FAKE_TYPE": "UserAssignedMSI"}, "expected SingleTenant, read UserAssignedMSI"), ({"FAKE_TYPE": "MultiTenant"}, "expected SingleTenant, read MultiTenant"), ({"FAKE_APP": "00000000-0000-4000-8000-000000000000"}, "does not match the secret TEAMS_BOT_APP_ID"),
@@ -462,7 +461,7 @@ esac
             self.assertNotIn("00000000-0000-4000-8000-000000000000", said(done))
 
     def test_the_hand_steps_are_printed_with_placeholders_for_each_phase_and_into_the_summary(self):
-        for phase, words in (("1", ("python tools/entra-setup.py teams-bot --tenant-id <tenant id> --subscription <subscription id> --resource-group " + GROUP, "no secret, no certificate, no API permission, no redirect address",
+        for phase, words in (("1", ("python tools/entra-setup.py teams-bot", "environment/BOOTSTRAP.md, step B2, has the whole command", "no secret, no certificate, no API permission, no redirect address",
                                     "registers the resource provider Microsoft.BotService once (environment/BOOTSTRAP.md, step B1)", "(phase 1 is done)")),
                              ("2", ("GLOBAL default app setup policy", "https://teams.microsoft.com/l/app/<Teams app id>", "then the action teams-test", "set the variable TEAMS_DELIVERY of the environment hub to bot", "(phase 2 is done)"))):
             done, _, _ = run(HAND_STEPS, {}, PHASE=phase)

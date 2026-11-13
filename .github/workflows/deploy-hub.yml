@@ -38,14 +38,14 @@ on:
           - foundry
           - cases
           - cases-run
+          - teams
+          - teams-test
           - page-latency
           - plant
           - loop-check
           - powerplatform
           - operator
           - operator-probe
-          - teams
-          - teams-test
           - aigateway
           - aigateway-check
           - governance
@@ -3194,18 +3194,11 @@ jobs:
             echo "::error::The identity reports no object id, so its role assignments cannot be read."
             failed=1
           else
-            assigned_at() {
-              az rest --method get --url "https://management.azure.com${1}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&%24filter=principalId%20eq%20%27${principal}%27" --query "length(value)" --output tsv 2>&1
-            }
-            where="the subscription"
-            if ! assigned=$(assigned_at "/subscriptions/$ENV_SUBSCRIPTION_ID"); then
-              echo "The deploy identity may not read the role assignments of the whole subscription, so they are read at the project's resource group, and above it."
-              where="the project's resource group"
-              if ! assigned=$(assigned_at "$group"); then
-                echo "::error::The role assignments of the identity could not be read, so it is not known that it holds none."
-                assigned=unknown
-                failed=1
-              fi
+            where="the project's resource group"
+            if ! assigned=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&%24filter=principalId%20eq%20%27${principal}%27" --query "length(value)" --output tsv 2>&1); then
+              echo "::error::The role assignments of the identity could not be read, so it is not known that it holds none."
+              assigned=unknown
+              failed=1
             fi
             if [ "$assigned" = 0 ]; then
               echo "The identity $IDENTITY_NAME holds no role assignment at $where, above it or below it, as the design says: 0 (AGENTS.md rule 29: it holds no Azure role, and no right to change Azure)."
@@ -3284,7 +3277,8 @@ jobs:
               echo "   Going back is the same in the other direction: set TEAMS_DELIVERY to queue and run cases."
             else
               echo "1. The owner runs the Microsoft Entra step with his own sign-in to the Azure CLI (never in a pipeline). It is a dry run until --apply is added:"
-              echo "     python tools/entra-setup.py teams-bot --tenant-id <tenant id> --subscription <subscription id> --resource-group $ENV_RESOURCE_GROUP"
+              echo "     python tools/entra-setup.py teams-bot"
+              echo "   with the options for the tenant, the subscription and the resource group ($ENV_RESOURCE_GROUP) that it asks for: environment/BOOTSTRAP.md, step B2, has the whole command."
               echo "   It makes the app registration Meternaut Teams (this tenant only, no secret, no certificate, no API permission, no redirect address), its service principal and one federated"
               echo "   credential for the identity id-meternaut-teams, and prints the app registration's client id to the owner's terminal only."
               echo "2. The owner stores that client id as the secret TEAMS_BOT_APP_ID of the environment hub (the tool prints the command)."
