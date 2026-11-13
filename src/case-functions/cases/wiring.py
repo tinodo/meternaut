@@ -9,6 +9,7 @@ from . import loop_config, people as people_mod
 from .approvals import Approvals, ApprovalSettings
 from .families.azure import Azure
 from .http import Client
+from .identity import Identity
 from .loop_config import LoopSettings
 from .memory_store import utc_now
 from .models import ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
@@ -32,8 +33,8 @@ class Extras:
     on_alert: Callable[[str, str], None] = lambda code, detail: None
     # What the timer calls every minute for the letters that a person's quiet hours held back and that nothing else offers again (cases/notify.waiting_hook). It never raises.
     on_tick: Callable[[], None] = lambda: None
-    # What the timer calls every minute for the Teams cards that are due (cases/offers.cards_hook): it puts them on the private queue that a flow of Power Automate reads, and returns how many
-    # tries it made. It does nothing when no queue is set. It never raises.
+    # What the timer calls every minute for the Teams cards that are due (cases/offers.cards_hook): it puts them on the private queue that a flow of Power Automate reads or, with TEAMS_DELIVERY=bot, sends
+    # them through the bot (cases/teamsbot.py), and returns how many tries it made. It does nothing when the cards are off. It never raises.
     on_cards: Callable[[], int] = lambda: 0
 
     def approvers(self) -> tuple[str, ...]:
@@ -51,7 +52,7 @@ def build_store(settings: LoopSettings, token: Callable[[str], str], redact: Cal
 
 
 def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
-                 clock: Callable[[], dt.datetime] = utc_now) -> Extras | None:
+                 clock: Callable[[], dt.datetime] = utc_now, fetch=None) -> Extras | None:
     """None when the loop is not configured. Raises LoopConfigError or PeopleError when it is configured wrongly: a half loop is not run."""
     settings = loop_config.load(env)
     if settings is None:
@@ -68,7 +69,12 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
                                                                 monotonic=monotonic, clock=clock)
         extras.on_alert = alert_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         extras.on_tick = waiting_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
-    if settings.cards_queue:
-        from .offers import cards_hook  # imported only when a queue is set: the cards are off without it
-        extras.on_cards = cards_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+    # The cards: through the queue when TEAMS_CARDS_QUEUE is set and the way is the queue (the default), through the bot when TEAMS_DELIVERY says bot and its settings are complete. A bot way that is not
+    # complete is off (loop_config.TeamsWay): no card is tried, whatever else is set, and the letters go.
+    way = settings.teams.way
+    if way == "bot" or (way == "queue" and settings.cards_queue):
+        from .offers import cards_hook  # imported only when the cards are on
+        bot_identity = {**env, "AZURE_CLIENT_ID": settings.teams.identity_client_id}
+        extras.on_cards = cards_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock,
+                                     assertion=Identity(bot_identity, sleep=sleep, **({"fetch": fetch} if fetch else {})).token if way == "bot" else None)
     return extras

@@ -871,7 +871,6 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # sent was 399,029 bytes on main and is 407,855 now, so 72,145 stay free: the floor of the test below is lowered from 80,000 to 72,000, on purpose), which no trimming of the words could give back, and the largest
     # request that is known to work (466,104 bytes, tools/operator-run.py) is still about 58,000 above the one that is sent now.
     SOURCES_ARCHIVE_MEASURED = 377_814
-    SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):
         """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""

@@ -27,10 +27,10 @@ from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
 MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
-KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello", "closed": "Closed"}
+KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello", "closed": "Closed", "test": "Test"}
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
-             "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you", "closed": "[Meternaut] A request was closed"}
+             "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you", "closed": "[Meternaut] A request was closed", "test": "[Meternaut] A test of the Teams cards"}
 ENDED = {"done": "Approved and done", "verified": "Approved and done", "unchanged": "Approved, nothing to change", "withdrawn": "Withdrawn"}
 PAGE_BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -349,6 +349,15 @@ def minimal_card(brief: Brief, ctx: CardContext) -> dict:
     waiting = brief.kind in ("change", "advice") and brief.state == "open" and bool(brief.answers)
     body = [_block("short", SHORT_CARD, weight="Bolder"), *(_link_parts(brief, ctx) if waiting else [_page_set("See the request", ctx)])]
     return _card(brief, ctx, brief.kind if waiting else "result", body, "A decision waits for you." if waiting else "What became of a request.")
+
+
+def probe_card(closed: bool = False, why: str = "You got this because the owner of Meternaut started a test of the Teams cards.", contacts: Sequence[str] = ()) -> dict:
+    """The card of the test of the way to Teams (offers.card_test): no request, no figure, no name of the estate and no button. `closed` is the card that replaces it."""
+    line = "Test card from Meternaut: nothing to do." if not closed else "Test card from Meternaut: closed, nothing to do."
+    return _finish({
+        "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"}, "fallbackText": f"{SENDER}: {line} Written by an AI.",
+        "body": [_header("test"), _block("headline", line, size="Large", weight="Bolder"), footer((), why, contacts)],
+    })
 
 
 def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You got this because you are on my list of people.") -> dict:

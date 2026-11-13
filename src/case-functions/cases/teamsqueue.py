@@ -1,6 +1,7 @@
 """A Teams card as one message on a private Storage queue, and the message that comes back: what is written, how it must fit and how it is put there.
 
-Meternaut has no bot in Teams: no Azure Bot resource, no Teams app, no app registration, no Graph permission and no endpoint that Teams calls. It puts one message on the queue `teams-cards`
+With this way, the default (TEAMS_DELIVERY=queue), Meternaut has no bot in Teams: no Azure Bot resource, no Teams app, no app registration, no Graph permission and no endpoint that Teams calls (the other way,
+cases/teamsbot.py, is replaced by the owner's ruling of 2026-11-13 (pending his plain yes)). It puts one message on the queue `teams-cards`
 (TEAMS_CARDS_QUEUE) of the storage account of the base, with the app's managed identity and no key (the app holds Storage Queue Data Contributor on the account, which takes traffic only through its
 private endpoints). A flow of Power Automate reads the queue and posts the card as the Flow bot in the chat of the person that the message names (docs/proposals/19-teams-cards-through-power-automate.md
 says what is proved and what is not).

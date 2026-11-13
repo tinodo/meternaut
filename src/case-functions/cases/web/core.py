@@ -69,7 +69,8 @@ class Services:
     front of the function app, when the platform adds one (for example `/api`): links carry it and incoming paths lose it. `drift` starts the drift check of the app now (cases/drift.py) for the person
     whose name it is given, with the time that was claimed for the check, and `lessons` gives the past answers as the rows of the learning check (cases/learning.py) in JSON lines: both are
     None where the function app cannot do that, and the page then says so. `checker` is the look that a page takes at the resource of a change before it offers Approve (cases/precheck.py): the
-    page makes no call itself, and without a checker it offers Approve as it did before.
+    page makes no call itself, and without a checker it offers Approve as it did before. `teams` gives the two sentences of the block "Teams cards" of the Operations page (which way the cards go and what
+    the last try came to: cases/offers.teams_status); without it the page has no such block.
     """
 
     store: Store
@@ -84,6 +85,7 @@ class Services:
     drift: "Callable[[str, str], object] | None" = None
     lessons: "Callable[[], str] | None" = None
     checker: Checker | None = None
+    teams: "Callable[[], tuple[str, str]] | None" = None
 
 
 class Safe(str):
