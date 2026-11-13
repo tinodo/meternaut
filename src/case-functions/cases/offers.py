@@ -411,8 +411,8 @@ def cards_hook(settings: LoopSettings, store: Store, people: People, token: Call
 
 def card_test(env: Mapping[str, str], request_id: str, *, transport=default_transport, sleep=time.sleep, monotonic=time.monotonic, clock: Callable[[], dt.datetime] = utc_now, fetch=None) -> bool:
     """The proof of the way through the bot, started by the control message `teams-card-test`: one test card (no request, no figure, no name of the estate) to the first person with the role owner,
-    replaced at once by a closing card. The History says only what came of each step (`teams.test.step`: the step, whether it worked, the HTTP status, the number of an error of Microsoft Entra and one
-    plain word for why not) and, at the end, `teams.test.finished`. It goes by the settings of the bot alone (loop_config.bot_way: the Teams settings and the sign-in settings are complete) and not by
+    replaced at once by a closing card. The History says only what came of each step (`teams.test.step`: the step, whether it worked, the HTTP status, the number of an error of Microsoft Entra, the error
+    code word of Teams (letters alone) and one plain word for why not) and, at the end, `teams.test.finished`. It goes by the settings of the bot alone (loop_config.bot_way: the Teams settings and the sign-in settings are complete) and not by
     TEAMS_DELIVERY, so that the way is proved before the delivery is switched to `bot`; it sends nothing when they are not complete, and nothing while the switch `messages` or `all` is pulled.
     It never raises."""
     redact = Redactor()
@@ -448,7 +448,7 @@ def card_test(env: Mapping[str, str], request_id: str, *, transport=default_tran
             found = work()
         except teamsbot.BotError as error:
             history.emit("teams.test.step", step=error.step, ok=False, reason=error.reason, **({"status": error.status} if error.status else {}),
-                         **({"aadsts": error.aadsts} if error.aadsts else {}))
+                         **({"aadsts": error.aadsts} if error.aadsts else {}), **({"code": error.code} if error.code else {}))
             raise
         history.emit("teams.test.step", step=name, ok=True, **({"status": bot.status} if bot.status else {}))
         return found

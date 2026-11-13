@@ -26,6 +26,7 @@ CARD = "application/vnd.microsoft.card.adaptive"
 ID = re.compile(r"(?!\.+(?:/|$))[A-Za-z0-9:@._=-]{1,200}")  # an id of Teams in an address: no escape, no slash, and never a folder that is only dots
 SAFE = re.compile(r"[A-Za-z0-9:@._=/-]+")  # every character that an address of this client may hold: no query, fragment, escape, space or backslash
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,16000}")
+CODE = re.compile(r"[A-Za-z]{3,48}")  # an error code word: letters alone, so that no id, address or text can pass for one
 MAX_ANSWER = 65536  # the answers are a few hundred bytes
 MIN_POST = 10.0  # a post that has less of the round than this is not made: with a shortened timeout a Connector that is merely slow would be taken for a lost answer, and the card would never be posted
 REFRESH = dt.timedelta(minutes=5)  # a token is asked for again when less than this is left
@@ -52,12 +53,12 @@ REASON_OF = {**{text: reason for reason, text in REASONS.items()}, **{text: reas
 
 class BotError(Exception):
     """A try that did not work, in one plain reason (a key of REASONS). `step` is token, create, send or update, `status` the HTTP status (0: none) and `aadsts` the number that Microsoft Entra
-    gave (0: none). `maybe_sent` says that the card was posted and the answer was lost or is no answer, so that the card may have arrived. The text is a plain sentence and never holds a token, an id or
-    the answer of the service."""
+    gave (0: none). `code` is the error code word of a refusal, when it is letters alone (CODE). `maybe_sent` says that the card was posted and the answer was lost or is no answer, so that the card may
+    have arrived. The text is a plain sentence and never holds a token, an id or the answer of the service."""
 
-    def __init__(self, step: str, reason: str, status: int = 0, aadsts: int = 0, maybe_sent: bool = False) -> None:
+    def __init__(self, step: str, reason: str, status: int = 0, aadsts: int = 0, maybe_sent: bool = False, code: str = "") -> None:
         super().__init__(NOT_RETRIED if maybe_sent else NOT_REPLACED if (step, reason) == ("update", "other") else (REPLACE.get(reason) if step == "update" else None) or REASONS[reason])
-        self.step, self.reason, self.status, self.aadsts, self.maybe_sent = step, reason, status, aadsts, maybe_sent
+        self.step, self.reason, self.status, self.aadsts, self.maybe_sent, self.code = step, reason, status, aadsts, maybe_sent, code if CODE.fullmatch(code) else ""
 
 
 def _failed(step: str, error: HttpError) -> BotError:
@@ -72,11 +73,12 @@ def _failed(step: str, error: HttpError) -> BotError:
         return BotError(step, "throttled" if status == 429 else "network", status, maybe_sent=lost)
     if step == "token":
         return BotError(step, "unauthorized", status, int(oauth_error(error)[1] or 0))
+    code = said.partition(f": {status} ")[2].partition(": ")[0]  # the word after the status in `<status> <code>: <message>` (http.error_text)
     if status == 403 and ("MessageWritesBlocked" in said or "ConversationBlockedByUser" in said):
-        return BotError(step, "blocked", status)
+        return BotError(step, "blocked", status, code=code)
     if status == 403 and ("ForbiddenOperationException" in said or "BotNotInConversationRoster" in said):
-        return BotError(step, "not-installed", status)
-    return BotError(step, "unauthorized" if status == 401 else "other", status)
+        return BotError(step, "not-installed", status, code=code)
+    return BotError(step, "unauthorized" if status == 401 else "other", status, code=code)
 
 
 def token_url(way: TeamsWay) -> str:
