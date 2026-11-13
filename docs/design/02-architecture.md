@@ -45,7 +45,7 @@ Two rules shape everything. **Agents never change the Azure estate**: they hold 
 | Knowledge | Atlas (Git, served from AI Search); Estate model, Lessons, ledger (Cosmos DB) ([04](04-knowledge-and-learning.md)) | Git, AI Search Basic, Cosmos DB serverless | No |
 | Data and tools | Cost lake, read tools, price simulator, planner ([05](05-data-and-integrations.md)) | Blob, DuckDB inside the `tools` Function app | No (the planner only runs what-if) |
 | Action | Action catalogue, approval service, runner, verifier, audit log, kill switches ([06](06-security-and-governance.md)) | `approvals` and `runner` Function apps; immutable Blob | **Yes: the only writer** |
-| Engagement | Teams cards, email, a small web page | A private queue and a Power Automate flow for the cards ([proposal 13](../proposals/13-teams-and-outlook.md)); the `approvals` Function app; Microsoft Graph | No |
+| Engagement | Teams cards, email, a small web page | A private queue and a Power Automate flow for the cards, or a bot that only sends ([proposal 13](../proposals/13-teams-and-outlook.md), [proposal 20](../proposals/20-teams-cards-through-a-bot.md)); the `approvals` Function app; Microsoft Graph | No |
 | Governance | The Citadel hub: contracts, quotas, safety, usage logs ([07](07-safeguards-and-drift.md)) | API Management based, in the landing zone | No |
 
 ## 3. Four Function apps, one compute family
@@ -61,7 +61,7 @@ All of our own code runs on Azure Functions (Flex Consumption, zip deployment), 
 
 **Superseded in part on 2026-11-05:** the `runner` app's identities and write roles. A change runs as the approver; see [decision 24](12-decisions.md#24-a-change-runs-as-the-approver-meternaut-holds-no-right-to-change-azure--accepted) and [proposal 05](../proposals/05-run-as-the-approver.md).
 
-**Superseded in part on 2026-11-11:** the Teams `bot` app, its public endpoint and the taps. A Teams card is a message on the private `teams-cards` queue that a Power Automate flow posts; it carries links and takes no typed answer: its buttons open pages that send the answer; see [proposal 13](../proposals/13-teams-and-outlook.md).
+**Superseded in part on 2026-11-11:** the Teams `bot` app, its public endpoint and the taps. A Teams card is a message on the private `teams-cards` queue that a Power Automate flow posts; it carries links and takes no typed answer: its buttons open pages that send the answer; see [proposal 13](../proposals/13-teams-and-outlook.md). A second way, off until the owner sets `TEAMS_DELIVERY` to `bot`, sends the card through a bot that only sends: no public endpoint, no taps ([proposal 20](../proposals/20-teams-cards-through-a-bot.md)).
 
 A workflow that waits days for a person runs no orchestration code while it waits, and a hosted-agent session is not where a person's deadline belongs, so waiting lives in workflows ([03](03-agents-and-workflows.md)). [Hosted agents](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents) · [Flex Consumption](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan)
 
@@ -76,7 +76,7 @@ A workflow that waits days for a person runs no orchestration code while it wait
 | Atlas retrieval | `atlas` tool → AI Search | Tool call is; search is internal to the tool | Managed identity |
 | Reading Azure, Graph, price APIs | `tools` → Azure and Graph | No (these are not AI traffic) | Managed identity, least privilege |
 | Writing Azure | `runner` → ARM | No (not AI traffic; guarded by the action plane) | Per-action-family identity |
-| Messages to people | E-mail: `workflows` (send step) → Graph. Teams: `workflows` → `teams-cards` queue → Power Automate flow → Teams | No | Managed identity |
+| Messages to people | E-mail: `workflows` (send step) → Graph. Teams: `workflows` → `teams-cards` queue → Power Automate flow → Teams (with the bot way: `workflows` → Bot Connector → Teams) | No | Managed identity |
 | Replies and decisions | A page → approval service → `inbound` queue → `workflows` (Respond). Nothing is taken from Teams | No | The person's Entra token |
 | Foundry IQ and other direct retrieval | Not used until routable | n/a | n/a |
 

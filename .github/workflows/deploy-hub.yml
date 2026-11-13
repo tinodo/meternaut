@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "what-if: show what the next steps would change and change nothing. model-side: the virtual network with its subnets, and the budget (the name is old, from the time when it also made a model account; it makes none now). base: the parts that the other actions build on, which are a Log Analytics workspace, an Application Insights component and a storage account, with the storage account's private endpoints and without any key; the storage account takes no public traffic (its public network access is Disabled and its private endpoints are the only way in, so from then on only the apps and the Operator reach its queue), and after its deploy the action reads that back from Azure. retire-old: delete what Meternaut does not use any more, in the project's resource group and nowhere else, and nothing else: the usage recording that was made for the calls of the owner's old API Management instance (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs ai-usage, pii-usage and usage-control), the old model account (its private endpoint, and then the account itself, which it purges so that its name and its quota are free) and the identity id-meternaut-usage; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there, and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption; it takes no input, needs no other action first and is safe to run twice. retire-event-hubs: delete the Event Hubs namespace that carried the control event of the cases app before the control message moved to a Storage queue, and its private endpoint, in the project's resource group and nowhere else: the private endpoint, then the namespace (which takes its hub cases-control and that hub's consumer group with it), then the container azure-webjobs-eventhub in the storage account, which held the namespace's checkpoints; run it only after the action cases-run has proved the queue path, because it removes the old channel; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there; it refuses to delete anything while the control queue cases-control is not there, takes no input and is safe to run twice, and on an estate that never had a namespace it finds nothing and passes. cases: the first cases, which is the function app that serves the web page and runs the Watch, on the plan that CASES_APP_PLAN in tools/environment-params.py names (Basic, which is B1 and always on, or Flex Consumption, which scales to zero and bills per execution and waits for a later try; when that value changes, the action first deletes the app of the other kind and its plan, and then makes the new ones; whatever an earlier run that stopped half way left in the way is cleared from the state that Azure shows, each thing read first and read again after, and a gateway time-out of the platform is tried again: a private endpoint of the app that is Disconnected, a plan of the other kind with no app, and the role assignments of an identity that is gone that the deploy would rewrite), on the base's network and storage, with its own system-assigned identity and one user-assigned identity for the function app's sign-in, a control queue (cases-control, in the base's storage account), a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the base and the AI Gateway first: every model call of its Detective and Skeptic goes through the gateway (AGENTS.md rule 15 (c)), so it reads the gateway's host name from the service and stops before it changes anything when the gateway is not there (a what-if previews with a placeholder). The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. With the switch set to False, which is the way back, it gives the plain model names. It publishes the app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then base, cases, operator, and then cases again. It then checks the web page's front door as loop-check does.         cases-run: start one Watch through the control queue (the Operator puts one message in it) and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. page-latency: measure how fast the web page answers, by the Operator from inside the network over the app's private endpoint and with no credential: a request to /healthz every ten seconds for the minutes of the input minutes (20 at the most), then a quiet gap and three requests after it, so that a start from zero shows; the step summary gets the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. It only reads, and it needs operator first. The rule that it serves is in docs/proposals/07-private-by-default.md (the web page on Flex Consumption). plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address, and with plant_vm a virtual machine that nothing uses, with its network interface and its OS disk) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. It also puts the planted tags back on every planted disk and public IP address that the group already holds, because an outside job strips the tags from unattached disks every night at about 22:56 UTC and the change of a planted resource is refused without its tag. loop-check: knock at the web page's front door without a sign-in and pass only when nobody gets a page: from this runner, at the name that people open, and, when the cases app takes no public traffic and no host name of a gateway is set, from inside the network, in a short-lived container group of the Operator, at the app's own name (it then needs operator first). powerplatform: the Azure side of the Teams cards (docs/proposals/19-teams-cards-through-power-automate.md), in the project's resource group and nowhere else: the subnet snet-powerplatform, which is delegated to Microsoft.PowerPlatform/enterprisePolicies and has a network security group of its own, and the enterprise policy ep-meternaut-netinjection (kind NetworkInjection, the Power Platform geography Sweden, whose one Azure region is swedencentral), which names that subnet. It makes no role, private endpoint, private DNS object, link or peering, and it links no environment: a Power Platform administrator does that with their own sign-in and tools/powerplatform.py, a tool that never runs in a pipeline. It stops before it changes anything unless the resource provider Microsoft.PowerPlatform is registered (a person registers it once) and the virtual network is there with a free /27 for the subnet (no range is invented: the owner decides what else will do). It reads whether the subnet and the policy are in Azure and makes each only while it is not there (AGENTS.md rule 27; Power Platform refuses every write to a policy that an environment is linked to), previews, deploys once, waits up to 20 minutes for the landing zone's route table on the subnet (no environment is linked before the table is there), reads both back, and prints the hand steps with placeholders only, because the log of this repository is public. It needs model-side first and is run after cases, which makes the queue teams-cards. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs base and cases to have run once, and it is run before the next cases, which is then given the project's address. The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it needs aigateway first. With the switch set to False, which is the way back, it makes no connection and leaves an existing one alone. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and two roles (Reader on the project's group, and Storage Queue Data Contributor on the control queue cases-control, which the action cases makes, so it runs after it); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The action cases publishes its code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. aigateway: refused at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows (its frontend is public and cannot be made private). When it is set: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity and for the cases app's identity (the Detective and the Skeptic call the gateway with it; the role is made once the app has an identity, which the action cases makes), with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the model names of the agents: they keep calling their model deployments until foundry and cases have run. The switch AGENTS_VIA_AI_GATEWAY is on, so it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. The order of the real run is aigateway, about ten minutes, foundry, cases, cases-run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator):         it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply. governance: the policy, the alerts and the workbook of the AI security (AGENTS.md rule 33; docs/proposals/10-ai-security-and-governance.md), in the project's resource group and nowhere else: Azure Policy at the group (the built-in policies for approved models and for model eligibility, each with the effect Audit or Deny that APPROVED_MODELS_EFFECT and MODEL_ELIGIBILITY_EFFECT in tools/environment-params.py say, no exemption and no identity, and the guardrail initiative while the tenant offers it), the alert rules (one for each signal, every 15 minutes or less often) with an action group that mails ENV_ALERT_EMAILS, the workbook Meternaut AI security, the retention of the AI Gateway's two telemetry tables, and the Foundry resource's diagnostic setting only where the landing zone has made none. It reads first and stops, saying which right, who gives it and where, when the deploy identity does not hold Resource Policy Contributor on the group or an identity of the access list (environment/aigateway/contracts.json) is not there yet; afterwards it reads the result back with tools/drift-check.py. It needs cases, foundry and operator first. gateway-telemetry: the AI Gateway's telemetry exporter, which sends the gateway's logs, traces and metrics to the project's Application Insights component with the gateway's own identity, no key and no prompt or answer; it stops before it changes anything, and says what a person does, unless the resource provider Microsoft.Monitor is registered, the component reports its OpenTelemetry endpoints (the action base turns the ingestion on while GATEWAY_TELEMETRY in tools/environment-params.py is True) and the gateway's identity holds Monitoring Metrics Publisher on the component's data collection rule (environment/BOOTSTRAP.md). It needs aigateway and base first. drift-check: read Azure and say, for each control of the AI security, PASS, FAIL or UNKNOWN (tools/drift-check.py): the Foundry resource, its deployments and guardrail, the model lifecycle, the AI Gateway's policies, models, roles and telemetry, the project's connection, the policies and their compliance, the roles and the network exposure of the group, the release that the cases app runs against main, and the lines that the app's own daily check logged. It only reads (GET requests and two queries), as the deploy identity, so the check does not rest on the app; the run fails when a control fails, and the summary says which are fail-closed. The workflow drift.yml runs the same tool with an identity of its own that can only read. agents-drift: the second reader of the drift of the agents: from inside the network, in a short-lived container group of the Operator, read the Foundry project with GET calls only (the agents with their stored definitions, the project's connections) and judge it against agents.lock.json by the rules of the app's own daily check, one line for each control; it changes nothing and needs operator, aigateway and foundry first. foundry-evals: by the Operator from inside the network, run the command of the input evals_command: probe (reads which route of the evaluations API the project answers), run (replays the invented cases of evaluation/cases.jsonl through the Investigator and evaluates the answers; every model call goes through the AI Gateway and is held to evaluation/limits.json, and the number of calls is printed), rule (prints the continuous evaluation rule) or rule-apply (makes it); it needs operator, aigateway, foundry and cases first. foundry-redteam: by the Operator from inside the network, attack a synthetic copy of the Investigator (the locked instructions, the same model alias through the same connection, no tools, made and deleted by the tool, never the production agent) with the cloud red team of Foundry or, as the fallback, with the invented attacks of evaluation/redteam-prompts.jsonl, held to evaluation/limits.json; it needs the same first. agent365-check: by the Operator from inside the network, read with Microsoft Graph and the Foundry resource whether the tenant has the Agent 365 licence, whether the agents' identities have an owner and a sponsor and whether Agent 365 logging is on, and list what a person checks in the portals;         it changes nothing."
+        description: "what-if: show what the next steps would change and change nothing. model-side: the virtual network with its subnets, and the budget (the name is old, from the time when it also made a model account; it makes none now). base: the parts that the other actions build on, which are a Log Analytics workspace, an Application Insights component and a storage account, with the storage account's private endpoints and without any key; the storage account takes no public traffic (its public network access is Disabled and its private endpoints are the only way in, so from then on only the apps and the Operator reach its queue), and after its deploy the action reads that back from Azure. retire-old: delete what Meternaut does not use any more, in the project's resource group and nowhere else, and nothing else: the usage recording that was made for the calls of the owner's old API Management instance (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs ai-usage, pii-usage and usage-control), the old model account (its private endpoint, and then the account itself, which it purges so that its name and its quota are free) and the identity id-meternaut-usage; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there, and then reads back that the function subnet snet-func is free (no app but the cases app is integrated with it), which the action cases needs only while the web page's app is on Flex Consumption; it takes no input, needs no other action first and is safe to run twice. retire-event-hubs: delete the Event Hubs namespace that carried the control event of the cases app before the control message moved to a Storage queue, and its private endpoint, in the project's resource group and nowhere else: the private endpoint, then the namespace (which takes its hub cases-control and that hub's consumer group with it), then the container azure-webjobs-eventhub in the storage account, which held the namespace's checkpoints; run it only after the action cases-run has proved the queue path, because it removes the old channel; it reads each one first, deletes it when it is there, reads back until it is gone, and says on one line for each one whether it was deleted or was not there; it refuses to delete anything while the control queue cases-control is not there, takes no input and is safe to run twice, and on an estate that never had a namespace it finds nothing and passes. cases: the first cases, which is the function app that serves the web page and runs the Watch, on the plan that CASES_APP_PLAN in tools/environment-params.py names (Basic, which is B1 and always on, or Flex Consumption, which scales to zero and bills per execution and waits for a later try; when that value changes, the action first deletes the app of the other kind and its plan, and then makes the new ones; whatever an earlier run that stopped half way left in the way is cleared from the state that Azure shows, each thing read first and read again after, and a gateway time-out of the platform is tried again: a private endpoint of the app that is Disconnected, a plan of the other kind with no app, and the role assignments of an identity that is gone that the deploy would rewrite), on the base's network and storage, with its own system-assigned identity and one user-assigned identity for the function app's sign-in, a control queue (cases-control, in the base's storage account), a longer retention of the traces and the History workbook; its Watch changes no resource of the estate (with the investigation on it also creates agents and conversations in its own Foundry project), and it needs the base and the AI Gateway first: every model call of its Detective and Skeptic goes through the gateway (AGENTS.md rule 15 (c)), so it reads the gateway's host name from the service and stops before it changes anything when the gateway is not there (a what-if previews with a placeholder). The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it gives the app the model names `aigateway/<alias>` for the agents, which name the project's connection to the AI Gateway, and needs that connection first. With the switch set to False, which is the way back, it gives the plain model names. It publishes the app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the app's private endpoint, so on an estate that has no Operator yet it deploys and stops at the publish: the order is then base, cases, operator, and then cases again. It then checks the web page's front door as loop-check does.         cases-run: start one Watch through the control queue (the Operator puts one message in it) and read its History from the telemetry, both by the Operator from inside the network: it needs operator first. page-latency: measure how fast the web page answers, by the Operator from inside the network over the app's private endpoint and with no credential: a request to /healthz every ten seconds for the minutes of the input minutes (20 at the most), then a quiet gap and three requests after it, so that a start from zero shows; the step summary gets the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. It only reads, and it needs operator first. The rule that it serves is in docs/proposals/07-private-by-default.md (the web page on Flex Consumption). plant: make waste of Meternaut's own (an unattached disk, and with plant_public_ip an unassigned public IP address, and with plant_vm a virtual machine that nothing uses, with its network interface and its OS disk) in the project's resource group,         tagged for the loop, so that the whole loop can be shown on something that belongs to nobody else. It also puts the planted tags back on every planted disk and public IP address that the group already holds, because an outside job strips the tags from unattached disks every night at about 22:56 UTC and the change of a planted resource is refused without its tag. loop-check: knock at the web page's front door without a sign-in and pass only when nobody gets a page: from this runner, at the name that people open, and, when the cases app takes no public traffic and no host name of a gateway is set, from inside the network, in a short-lived container group of the Operator, at the app's own name (it then needs operator first). powerplatform: the Azure side of the Teams cards (docs/proposals/19-teams-cards-through-power-automate.md), in the project's resource group and nowhere else: the subnet snet-powerplatform, which is delegated to Microsoft.PowerPlatform/enterprisePolicies and has a network security group of its own, and the enterprise policy ep-meternaut-netinjection (kind NetworkInjection, the Power Platform geography Sweden, whose one Azure region is swedencentral), which names that subnet. It makes no role, private endpoint, private DNS object, link or peering, and it links no environment: a Power Platform administrator does that with their own sign-in and tools/powerplatform.py, a tool that never runs in a pipeline. It stops before it changes anything unless the resource provider Microsoft.PowerPlatform is registered (a person registers it once) and the virtual network is there with a free /27 for the subnet (no range is invented: the owner decides what else will do). It reads whether the subnet and the policy are in Azure and makes each only while it is not there (AGENTS.md rule 27; Power Platform refuses every write to a policy that an environment is linked to), previews, deploys once, waits up to 20 minutes for the landing zone's route table on the subnet (no environment is linked before the table is there), reads both back, and prints the hand steps with placeholders only, because the log of this repository is public. It needs model-side first and is run after cases, which makes the queue teams-cards. foundry: the Foundry resource of the agents (the model account cannot hold projects, so this is a second resource): a project, the same models, a guardrail, one private endpoint and the connection that sends the agents' traces, with no key; it needs base and cases to have run once, and it is run before the next cases, which is then given the project's address. The switch AGENTS_VIA_AI_GATEWAY in tools/environment-params.py is on, so it also makes the project's connection to the AI Gateway, with the project's own identity and no key, and reads it back: it needs aigateway first. With the switch set to False, which is the way back, it makes no connection and leaves an existing one alone. operator: the Operator, the executor that works inside the virtual network for what the workflow cannot do from outside it once the services are private (docs/proposals/07-private-by-default.md): its identity, the subnet of its container groups and two roles (Reader on the project's group, and Storage Queue Data Contributor on the control queue cases-control, which the action cases makes, so it runs after it); it waits until the landing zone has put its route table on that subnet, and it starts nothing, so nothing is paid until a run uses it. The action cases publishes its code through it, as the deploy identity. operator-probe: run operator/probe.sh once in a short-lived container group of the Operator and print what it finds (does the identity sign in, do the names of private endpoints resolve to private addresses, which addresses can a group reach, and how does a package get in); the group is deleted at the end whatever happens, and it costs cents. It needs operator first. teams: the Azure side of Teams cards that go straight from the cases app to Teams through the Bot Connector, with an app principal (docs/proposals/20-teams-cards-through-a-bot.md), in the project's resource group and nowhere else, in two phases. Phase 1, while the secret TEAMS_BOT_APP_ID is empty: only the user-assigned identity id-meternaut-teams, and then it says that the Microsoft Entra hand step is next (tools/entra-setup.py teams-bot, which the owner runs with his own sign-in: the app registration Meternaut Teams, its service principal and one federated credential for the identity, no secret, no certificate, no API permission). Phase 2, once the secret is set: the Azure Bot resource (single tenant, free SKU, local authentication off, a notification-only bot whose endpoint is never called) and its Microsoft Teams channel; it stops before it changes anything unless the resource provider Microsoft.BotService is registered (a person registers it once), the identity and the cases app are there. After the deploy it reads everything back (the bot is single tenant and its client id matches, the channel is enabled with calling off) and reads the role assignments of the identity, which has to be none: it holds no Azure role. It makes no role, no private endpoint and no key, and it changes nothing of the cases app: the action cases attaches the identity and gives the app its settings. what-if previews it. teams-test: from inside the network, in a short-lived container group of the Operator, probe that login.microsoftonline.com and smba.trafficmanager.net answer over HTTPS (any HTTP answer proves the path), put the control message teams-card-test in the control queue (the cases app sends one test card to the owner and replaces it with a closing card), and print from the History only plain words and status classes (the token exchange, the creation of the chat, the send, the update), no id and no name; it needs operator, teams and cases first, and the app's Teams app has to be installed for the owner. aigateway: refused at its first step unless the input public_ai_gateway_requested is set, which only the owner's written request for a public AI Gateway allows (its frontend is public and cannot be made private). When it is set: the AI Gateway of the agents' model calls (Azure's AI Gateway, a preview service that is not API Management): first its subnet, which is delegated to it and made only when it is not there, and, after the landing zone's route table is on that subnet, the gateway with a system-assigned identity, a model and an alias for each model of the agents' Foundry resource, content safety on each model, and AI Gateway Models User for the Operator's identity and for the cases app's identity (the Detective and the Skeptic call the gateway with it; the role is made once the app has an identity, which the action cases makes), with no key; it needs foundry and operator first. The gateway is made on the subnet as the landing zone leaves it, so the action makes the subnet, waits for the landing zone's route table on it (20 minutes at most: when the table does not come the gateway is not made, and a second run repeats only what is missing), signs in again and then makes the gateway. Its frontend is public whatever is asked, because the service has no private frontend, so access is by Microsoft Entra ID and role assignments only. After the deploy the action applies the gateway-wide token, request and cost limits, deletes the built-in key master when the service lets it be deleted, and reads everything back; it changes nothing of the model names of the agents: they keep calling their model deployments until foundry and cases have run. The switch AGENTS_VIA_AI_GATEWAY is on, so it also gives the Foundry project's identity AI Gateway Models User on the gateway, and needs foundry to have run. The order of the real run is aigateway, about ten minutes, foundry, cases, cases-run. aigateway-check: call each alias of the AI Gateway once with the Operator's token, and once without a token and once with a wrong alias, by the Operator from inside the network (the check tool runs in a short-lived container group of the Operator):         it needs aigateway and operator first, and about ten minutes after aigateway, because a new role takes up to ten minutes to apply. governance: the policy, the alerts and the workbook of the AI security (AGENTS.md rule 33; docs/proposals/10-ai-security-and-governance.md), in the project's resource group and nowhere else: Azure Policy at the group (the built-in policies for approved models and for model eligibility, each with the effect Audit or Deny that APPROVED_MODELS_EFFECT and MODEL_ELIGIBILITY_EFFECT in tools/environment-params.py say, no exemption and no identity, and the guardrail initiative while the tenant offers it), the alert rules (one for each signal, every 15 minutes or less often) with an action group that mails ENV_ALERT_EMAILS, the workbook Meternaut AI security, the retention of the AI Gateway's two telemetry tables, and the Foundry resource's diagnostic setting only where the landing zone has made none. It reads first and stops, saying which right, who gives it and where, when the deploy identity does not hold Resource Policy Contributor on the group or an identity of the access list (environment/aigateway/contracts.json) is not there yet; afterwards it reads the result back with tools/drift-check.py. It needs cases, foundry and operator first. gateway-telemetry: the AI Gateway's telemetry exporter, which sends the gateway's logs, traces and metrics to the project's Application Insights component with the gateway's own identity, no key and no prompt or answer; it stops before it changes anything, and says what a person does, unless the resource provider Microsoft.Monitor is registered, the component reports its OpenTelemetry endpoints (the action base turns the ingestion on while GATEWAY_TELEMETRY in tools/environment-params.py is True) and the gateway's identity holds Monitoring Metrics Publisher on the component's data collection rule (environment/BOOTSTRAP.md). It needs aigateway and base first. drift-check: read Azure and say, for each control of the AI security, PASS, FAIL or UNKNOWN (tools/drift-check.py): the Foundry resource, its deployments and guardrail, the model lifecycle, the AI Gateway's policies, models, roles and telemetry, the project's connection, the policies and their compliance, the roles and the network exposure of the group, the release that the cases app runs against main, and the lines that the app's own daily check logged. It only reads (GET requests and two queries), as the deploy identity, so the check does not rest on the app; the run fails when a control fails, and the summary says which are fail-closed. The workflow drift.yml runs the same tool with an identity of its own that can only read. agents-drift: the second reader of the drift of the agents: from inside the network, in a short-lived container group of the Operator, read the Foundry project with GET calls only (the agents with their stored definitions, the project's connections) and judge it against agents.lock.json by the rules of the app's own daily check, one line for each control; it changes nothing and needs operator, aigateway and foundry first. foundry-evals: by the Operator from inside the network, run the command of the input evals_command: probe (reads which route of the evaluations API the project answers), run (replays the invented cases of evaluation/cases.jsonl through the Investigator and evaluates the answers; every model call goes through the AI Gateway and is held to evaluation/limits.json, and the number of calls is printed), rule (prints the continuous evaluation rule) or rule-apply (makes it); it needs operator, aigateway, foundry and cases first. foundry-redteam: by the Operator from inside the network, attack a synthetic copy of the Investigator (the locked instructions, the same model alias through the same connection, no tools, made and deleted by the tool, never the production agent) with the cloud red team of Foundry or, as the fallback, with the invented attacks of evaluation/redteam-prompts.jsonl, held to evaluation/limits.json; it needs the same first. agent365-check: by the Operator from inside the network, read with Microsoft Graph and the Foundry resource whether the tenant has the Agent 365 licence, whether the agents' identities have an owner and a sponsor and whether Agent 365 logging is on, and list what a person checks in the portals;         it changes nothing."
         type: choice
         required: true
         default: what-if
@@ -38,6 +38,8 @@ on:
           - foundry
           - cases
           - cases-run
+          - teams
+          - teams-test
           - page-latency
           - plant
           - loop-check
@@ -136,11 +138,17 @@ jobs:
       ENV_DNS_SERVERS: ${{ secrets.ENV_DNS_SERVERS }}
       ENV_OWNER: ${{ secrets.ENV_OWNER }}
       ENV_BUDGET_AMOUNT: ${{ vars.ENV_BUDGET_AMOUNT }}
+      # How Teams cards are delivered: queue (the Power Automate flow of proposal 19, the default, and what an unset variable reads as) or bot (straight to Teams through the Bot Connector: docs/proposals/20-teams-cards-through-a-bot.md).
+      # A plain word, so a variable. The owner switches it to bot only after the action teams-test has passed.
+      TEAMS_DELIVERY: ${{ vars.TEAMS_DELIVERY }}
       ENV_ALERT_EMAILS: ${{ secrets.ENV_ALERT_EMAILS }}
       CONSOLE_APP_CLIENT_ID: ${{ secrets.CONSOLE_APP_CLIENT_ID }}
       CONSOLE_PEOPLE: ${{ secrets.CONSOLE_PEOPLE }}
       CONSOLE_HOST_NAME: ${{ secrets.CONSOLE_HOST_NAME }}
       MAIL_SENDER: ${{ secrets.MAIL_SENDER }}
+      # The client id of the app registration Meternaut Teams, which tools/entra-setup.py teams-bot makes and prints to the owner's terminal. An identifier of the estate, so a secret and not a variable: GitHub masks a secret in
+      # this public log and does not mask a variable. Unset, it reads as an empty string, which means phase 1 of the action teams (only the identity) and no bot.
+      TEAMS_BOT_APP_ID: ${{ secrets.TEAMS_BOT_APP_ID }}
       # What the owner has accepted of the policy state at the project's group (tools/drift-check.py): the policy exemptions that he knows of, and the policies with the effect Deny that are non-compliant and that he knows of.
       # They are secrets of the environment and not files, because they name the landing zone's own policies. Unset: those two controls say UNKNOWN and print what they found, so that he can accept it; the word none accepts nothing.
       DRIFT_ACCEPTED_EXEMPTIONS: ${{ secrets.DRIFT_ACCEPTED_EXEMPTIONS }}
@@ -186,7 +194,7 @@ jobs:
             echo "::add-mask::${value,,}"
             echo "::add-mask::${value^^}"
           }
-          for value in "$ENV_SUBSCRIPTION_ID" "$AZURE_TENANT_ID" "$AZURE_CLIENT_ID" "$ENV_VNET_PREFIX" "$ENV_PE_SUBNET_PREFIX" "$ENV_OWNER" "$CONSOLE_APP_CLIENT_ID" "$CONSOLE_HOST_NAME" "$MAIL_SENDER"; do
+          for value in "$ENV_SUBSCRIPTION_ID" "$AZURE_TENANT_ID" "$AZURE_CLIENT_ID" "$ENV_VNET_PREFIX" "$ENV_PE_SUBNET_PREFIX" "$ENV_OWNER" "$CONSOLE_APP_CLIENT_ID" "$CONSOLE_HOST_NAME" "$MAIL_SENDER" "$TEAMS_BOT_APP_ID"; do
             mask "$value"
           done
           for list in "$ENV_DNS_SERVERS" "$ENV_ALERT_EMAILS" "$DRIFT_ACCEPTED_EXEMPTIONS" "$DRIFT_ACCEPTED_DENY"; do
@@ -371,10 +379,38 @@ jobs:
           echo "package_sha256=$digest" >> "$GITHUB_OUTPUT"
           echo "The release of this run: commit $commit, digest of the app's own files $digest."
 
+      - name: Read the Teams identity, which the cases app is given while it is there
+        id: teams_identity
+        if: inputs.action == 'cases' || inputs.action == 'what-if'
+        run: |
+          # The identity id-meternaut-teams is made by the action teams (docs/proposals/20-teams-cards-through-a-bot.md) and attached to the cases app by the action cases, which passes its client id on as the app's setting
+          # TEAMS_BOT_IDENTITY_CLIENT_ID. It may not be there yet (nothing here needs it while Teams cards go through the queue), and then the cases file asks for nothing. Its two ids are read, masked at once and never printed.
+          # What Azure says when the read fails is printed with every text of the shape of an id replaced (an authorization error names the caller's object id).
+          mask_ids() { sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<id>/g'; }
+          identity="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-teams"
+          if found=$(az rest --method get --url "https://management.azure.com${identity}?api-version=2023-01-31" --query "[properties.principalId, properties.clientId]" --output tsv 2>&1); then
+            client=""
+            for id in $found; do
+              if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$id"; then
+                printf '::add-mask::%s\n::add-mask::%s\n' "$id" "${id^^}"
+                client="$id"
+              fi
+            done
+            echo "client_id=$client" >> "$GITHUB_OUTPUT"
+            echo "The identity id-meternaut-teams is there; the cases app is given it and its client id."
+          elif grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+            echo "client_id=" >> "$GITHUB_OUTPUT"
+            echo "The identity id-meternaut-teams is not there (the action teams makes it): the cases app is not given it, and Teams cards go through the queue."
+          else
+            echo "::error::The identity id-meternaut-teams could not be read: $(mask_ids <<< "$found")"
+            exit 1
+          fi
+
       - name: Work out the settings
         id: params
         env:
           ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          TEAMS_BOT_IDENTITY_CLIENT_ID: ${{ steps.teams_identity.outputs.client_id }}
           BUILD_COMMIT: ${{ steps.release.outputs.build_commit }}
           PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
           ENV_NETWORK_EXISTS: ${{ steps.network.outputs.network_exists }}
@@ -922,7 +958,7 @@ jobs:
 
       - name: Find the Operator, which runs the check from inside the network
         id: operator
-        if: inputs.action == 'cases-run' || inputs.action == 'page-latency'
+        if: inputs.action == 'cases-run' || inputs.action == 'page-latency' || inputs.action == 'teams-test'
         run: |
           # The control message that starts a Watch is put in the queue, and the telemetry that says how it went is read, by the check tool running inside the network, in a container group of the Operator
           # (docs/proposals/07-private-by-default.md): the storage account has no public endpoint once the action base has deployed its template, and a request from this runner cannot reach its queue. So the Operator has to be there first.
@@ -3003,6 +3039,303 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Find out which phase of the Teams identity and bot this run is, and read what phase 2 needs from Azure
+        id: teams_facts
+        if: inputs.action == 'teams'
+        env:
+          FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}
+        run: |
+          # Two phases in one action (docs/proposals/20-teams-cards-through-a-bot.md), because of the order that the objects have to be made in, and the secret TEAMS_BOT_APP_ID of the environment hub says which one this is.
+          # Empty: phase 1, only the identity id-meternaut-teams is made, because the app registration Meternaut Teams (a hand step: tools/entra-setup.py teams-bot) has to trust that identity before it has a client id to
+          # give. Set: phase 2, which also makes the Azure Bot resource and its Microsoft Teams channel. Everything that can be known before anything is changed is read here, so that nothing is made and then left half
+          # way. This step only reads. It prints no identifier: every value that it reads is masked at once, and what it prints is plain words. What Azure says when a read fails is printed with every text of the shape of
+          # an id replaced (an authorization error names the caller's object id).
+          mask_ids() { sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<id>/g'; }
+          app_id="${TEAMS_BOT_APP_ID//[[:space:]]/}"
+          if [ -z "$app_id" ]; then
+            {
+              echo "phase=1"
+              echo "function_host="
+            } >> "$GITHUB_OUTPUT"
+            echo "Phase 1: the secret TEAMS_BOT_APP_ID of the environment hub is empty, so this run makes the identity id-meternaut-teams and nothing else. The Microsoft Entra hand step is next: the steps at the end of this run say which."
+            exit 0
+          fi
+          echo "phase=2" >> "$GITHUB_OUTPUT"
+          echo "Phase 2: the secret TEAMS_BOT_APP_ID is set, so this run also makes the Azure Bot resource and its Microsoft Teams channel."
+          if ! state=$(az provider show --namespace Microsoft.BotService --query registrationState --output tsv 2>&1); then
+            echo "::error::The registration of the resource provider Microsoft.BotService could not be read: $(mask_ids <<< "$state"). Nothing was changed."
+            exit 1
+          fi
+          if [ "$state" = "Registering" ]; then
+            echo "::error::The resource provider Microsoft.BotService is still registering in the subscription (a registration takes a few minutes). Wait until it says Registered (a person reads it with az provider show --namespace Microsoft.BotService), then run teams again. Nothing was changed."
+            exit 1
+          fi
+          if [ "$state" != "Registered" ]; then
+            echo "::error::The resource provider Microsoft.BotService is ${state:-not registered} in the subscription, and the Azure Bot resource needs it. The deploy identity cannot register it: a person who may (Contributor or Owner on the subscription) registers it once, with their own sign-in: az provider register --namespace Microsoft.BotService (environment/BOOTSTRAP.md, the section on the Teams bot). Nothing was changed."
+            exit 1
+          fi
+          echo "The resource provider Microsoft.BotService is registered."
+          identity="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-meternaut-teams"
+          if ! found=$(az rest --method get --url "https://management.azure.com${identity}?api-version=2023-01-31" --query "[properties.principalId, properties.clientId]" --output tsv 2>&1); then
+            if grep -Eqi 'NotFound|\b404\b' <<< "$found"; then
+              echo "::error::The identity id-meternaut-teams is not there, and the secret TEAMS_BOT_APP_ID is set. The federated credential of the app registration names the identity's object id, so the identity has to be made first and the app registration after it. Empty the secret, run teams (phase 1), run python tools/entra-setup.py teams-bot, and set the secret again. Nothing was changed."
+              exit 1
+            fi
+            echo "::error::The identity id-meternaut-teams could not be read: $(mask_ids <<< "$found")"
+            exit 1
+          fi
+          for id in $found; do
+            if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$id"; then printf '::add-mask::%s\n::add-mask::%s\n' "$id" "${id^^}"; fi
+          done
+          echo "The identity id-meternaut-teams is there."
+          site="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Web/sites/$FUNCTION_APP"
+          if ! host=$(az rest --method get --url "https://management.azure.com${site}?api-version=2024-04-01" --query properties.defaultHostName --output tsv 2>&1); then
+            if grep -Eqi 'NotFound|\b404\b' <<< "$host"; then
+              echo "::error::The cases app is not there. The bot's endpoint is made of its host name, so run cases first. Nothing was changed."
+              exit 1
+            fi
+            echo "::error::The cases app could not be read: $(mask_ids <<< "$host")"
+            exit 1
+          fi
+          if ! grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.azurewebsites\.net$' <<< "$host"; then
+            echo "::error::The cases app does not report a default host name that ends in .azurewebsites.net, so the bot's endpoint cannot be made. Nothing was changed."
+            exit 1
+          fi
+          printf '::add-mask::%s\n::add-mask::%s\n::add-mask::%s\n' "$host" "${host,,}" "${host^^}"
+          echo "function_host=$host" >> "$GITHUB_OUTPUT"
+          echo "The cases app reports its default host name; the bot's endpoint is made of it, and it is never printed."
+
+      - name: Work out the settings of the Teams identity and bot
+        id: teams_settings
+        if: inputs.action == 'teams'
+        env:
+          ENV_BUDGET_START: ${{ steps.budget.outputs.start }}
+          TEAMS_FUNCTION_HOST: ${{ steps.teams_facts.outputs.function_host }}
+        run: |
+          # The file of the template environment/teams/main.bicep, made by the builder in a folder of its own (--teams), so that the files of the other actions are what they were. Phase 1 is the identity alone, phase 2 adds
+          # the bot and its channel and needs the cases app's host name (the builder refuses phase 2 without it). The file is checked against the compiled template, so a setting that no template takes is found before Azure is
+          # asked. Nothing that this step prints is an identifier: the lines are names, a phase and the free SKU.
+          outputs=$(python3 tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP/teams" --teams)
+          grep -E '^teams_' <<< "$outputs" >> "$GITHUB_OUTPUT" || true
+          az bicep build --file environment/teams/main.bicep --outfile "$RUNNER_TEMP/teams.json"
+          python3 tools/environment-params.py check --params "$RUNNER_TEMP/teams/teams.parameters.json" --template "$RUNNER_TEMP/teams.json" --label teams
+          phase=$(sed -n 's/^teams_phase=//p' <<< "$outputs")
+          sku=$(sed -n 's/^teams_bot_sku=//p' <<< "$outputs")
+          if [ "$phase" = 2 ]; then
+            echo "Phase 2: the identity, the Azure Bot resource (single tenant, SKU $sku, no local authentication) and its Microsoft Teams channel."
+          else
+            echo "Phase 1: the identity alone."
+          fi
+
+      - name: What the Teams identity and bot would change
+        if: inputs.action == 'teams'
+        run: |
+          # What the template would make in the project's resource group, shown before it is made. A second run shows nothing to do. Nothing is changed here.
+          python3 tools/az-deploy.py what-if --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/teams/main.bicep --parameters "$RUNNER_TEMP/teams/teams.parameters.json"
+
+      - name: Deploy the Teams identity and bot
+        if: inputs.action == 'teams'
+        env:
+          EXPECTED_IDENTITY: ${{ steps.teams_settings.outputs.teams_identity_name }}
+        run: |
+          # The identity id-meternaut-teams (user-assigned, no role) and, in phase 2, the Azure Bot resource and its Microsoft Teams channel, in one deployment (environment/teams/main.bicep). No role assignment, private endpoint,
+          # key or Graph permission is made, and the cases app is not touched: the action cases attaches the identity and gives the app its settings. Only the name of the identity is printed back.
+          name=$(python3 tools/az-deploy.py create --subscription "$ENV_SUBSCRIPTION_ID" --resource-group "$ENV_RESOURCE_GROUP" \
+            --template environment/teams/main.bicep --parameters "$RUNNER_TEMP/teams/teams.parameters.json" \
+            --name "teams-$GITHUB_RUN_ID" --output identityName)
+          if [ "$name" != "$EXPECTED_IDENTITY" ]; then
+            echo "::error::The deployment returned the identity $name, not $EXPECTED_IDENTITY, which is the name that the read-back and tools/entra-setup.py teams-bot use. Nothing else was changed."
+            exit 1
+          fi
+          echo "The identity $name is in resource group $ENV_RESOURCE_GROUP."
+
+      - name: Sign in to Azure again for the read-back of the Teams identity and bot, because the first sign-in's credential lasts five minutes
+        if: inputs.action == 'teams'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the Teams identity and bot back from Azure, and check that the identity holds no role
+        if: inputs.action == 'teams'
+        timeout-minutes: 15
+        env:
+          PHASE: ${{ steps.teams_settings.outputs.teams_phase }}
+          IDENTITY_NAME: ${{ steps.teams_settings.outputs.teams_identity_name }}
+          BOT_NAME: ${{ steps.teams_settings.outputs.teams_bot_name }}
+          SKU: ${{ steps.teams_settings.outputs.teams_bot_sku }}
+          FUNCTION_HOST: ${{ steps.teams_facts.outputs.function_host }}
+        run: |
+          # A deployment that says Succeeded does not say that the identity and the bot came out as the template wrote them (AGENTS.md rule 19). The run fails unless the identity is there (it reports its object id: a user-assigned
+          # identity has no state of its own to read) and holds NO role assignment (it is given none, and the answer that is expected is zero, which is said) and, in phase 2, the bot is the Azure Bot kind, single tenant (the
+          # legacy type UserAssignedMSI and the deprecated MultiTenant are refused) with the client id of the app registration, has local authentication off and the endpoint that the template wrote, and the Microsoft Teams
+          # channel is enabled with calling off. A value that the service does not report is said so and is not taken for a pass where it matters. Only GET requests. No id is printed: the app registration's client id, the
+          # endpoint and the ids of the identity are compared, never shown; a name and a plain word are. What Azure says when a read fails is printed with every text of the shape of an id replaced (an authorization error
+          # names the caller's object id).
+          mask_ids() { sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/<id>/g'; }
+          group="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP"
+          identity="$group/providers/Microsoft.ManagedIdentity/userAssignedIdentities/$IDENTITY_NAME"
+          read_value() {
+            local answer
+            if ! answer=$(az rest --method get --url "https://management.azure.com${1}?api-version=${2}" --query "$3" --output tsv 2>&1); then
+              echo "::error::${1##*/} could not be read: $(mask_ids <<< "$answer")" >&2
+              return 1
+            fi
+            if [ "$answer" = None ]; then answer=""; fi
+            printf '%s' "$answer"
+          }
+          failed=0
+          check() {
+            if [ "$2" = "$3" ]; then
+              echo "$1: $3."
+            else
+              echo "::error::$1: expected $2, read ${3:-nothing}."
+              failed=1
+            fi
+          }
+          principal=$(read_value "$identity" 2023-01-31 properties.principalId)
+          client=$(read_value "$identity" 2023-01-31 properties.clientId)
+          for id in "$principal" "$client"; do
+            if grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$id"; then printf '::add-mask::%s\n::add-mask::%s\n' "$id" "${id^^}"; fi
+          done
+          if ! grep -Eq '^[0-9a-fA-F-]{36}$' <<< "$principal"; then
+            echo "::error::The identity reports no object id, so its role assignments cannot be read."
+            failed=1
+          else
+            where="the project's resource group"
+            if ! assigned=$(az rest --method get --url "https://management.azure.com/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&%24filter=principalId%20eq%20%27${principal}%27" --query "length(value)" --output tsv 2>&1); then
+              echo "::error::The role assignments of the identity could not be read, so it is not known that it holds none."
+              assigned=unknown
+              failed=1
+            fi
+            if [ "$assigned" = 0 ]; then
+              echo "The identity $IDENTITY_NAME holds no role assignment at $where, above it or below it, as the design says: 0 (AGENTS.md rule 29: it holds no Azure role, and no right to change Azure)."
+            elif [ "$assigned" != unknown ]; then
+              echo "::error::The identity $IDENTITY_NAME holds $assigned role assignment(s) at or around $where. It must hold none: nothing of this design gives it one. A person lists the role assignments of the identity with the Azure CLI and removes them."
+              failed=1
+            fi
+          fi
+          if [ "$PHASE" = 2 ]; then
+            bot="$group/providers/Microsoft.BotService/botServices/$BOT_NAME"
+            channel="$bot/channels/MsTeamsChannel"
+            check "The kind of the bot $BOT_NAME" azurebot "$(read_value "$bot" 2022-09-15 kind)"
+            check "The SKU of the bot" "$SKU" "$(read_value "$bot" 2022-09-15 sku.name)"
+            check "The type of the bot's application (the legacy UserAssignedMSI and the deprecated MultiTenant are refused)" SingleTenant "$(read_value "$bot" 2022-09-15 properties.msaAppType)"
+            app_read=$(read_value "$bot" 2022-09-15 properties.msaAppId)
+            if [ "${app_read,,}" = "${TEAMS_BOT_APP_ID,,}" ] && [ -n "$app_read" ]; then
+              echo "The client id of the bot's application matches the secret TEAMS_BOT_APP_ID."
+            else
+              echo "::error::The client id of the bot's application does not match the secret TEAMS_BOT_APP_ID."
+              failed=1
+            fi
+            tenant_read=$(read_value "$bot" 2022-09-15 properties.msaAppTenantId)
+            tenant_signed_in=$(az account show --query tenantId --output tsv)
+            if [ -n "$tenant_read" ] && [ "${tenant_read,,}" = "${tenant_signed_in,,}" ]; then
+              echo "The bot's application is in this tenant."
+            else
+              echo "::error::The bot's application is not reported to be in this tenant."
+              failed=1
+            fi
+            local_auth=$(read_value "$bot" 2022-09-15 properties.disableLocalAuth)
+            if [ -z "$local_auth" ]; then
+              echo "The service does not report disableLocalAuth (the template writes true)."
+            else
+              check "Local authentication of the bot is off (disableLocalAuth)" true "${local_auth,,}"
+            fi
+            endpoint=$(read_value "$bot" 2022-09-15 properties.endpoint)
+            if [ "$endpoint" = "https://${FUNCTION_HOST}/api/messages" ]; then
+              echo "The bot's endpoint is the cases app's route /api/messages, which the app does not have: nothing is ever received (the host name is not printed)."
+            else
+              echo "::error::The bot's endpoint is not the one that the template wrote (the value is not printed)."
+              failed=1
+            fi
+            check "The Microsoft Teams channel is enabled" true "$(read_value "$channel" 2022-09-15 properties.properties.isEnabled | tr '[:upper:]' '[:lower:]')"
+            calling=$(read_value "$channel" 2022-09-15 properties.properties.enableCalling | tr '[:upper:]' '[:lower:]')
+            if [ -z "$calling" ]; then echo "The service does not report whether calling is on (the template writes false)."; else check "Calling on the Microsoft Teams channel is off" false "$calling"; fi
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::The identity or the bot differs from its template (the lines above say how). Nothing is repaired from here."
+            exit 1
+          fi
+          if [ "$PHASE" = 2 ]; then
+            echo "The identity $IDENTITY_NAME, the bot $BOT_NAME and its Microsoft Teams channel are in Azure as the template wrote them, and the identity holds no role."
+          else
+            echo "The identity $IDENTITY_NAME is in Azure as the template wrote it, and it holds no role. The bot is made in phase 2."
+          fi
+
+      - name: The steps that a person does by hand for the Teams bot
+        if: inputs.action == 'teams'
+        env:
+          PHASE: ${{ steps.teams_settings.outputs.teams_phase }}
+        run: |
+          # The log and the summary of a run of this repository are public, so the steps are printed with placeholders for every identifier of the estate (the resource group is plain configuration).
+          # The Microsoft Entra step is a hand step of the owner's: Microsoft Entra is not Azure Resource Manager and the deploy identity holds no right there, and the tool refuses to run in a pipeline.
+          {
+            echo "### The steps that a person does by hand for the Teams bot (phase $PHASE is done)"
+            echo
+            echo '```'
+            if [ "$PHASE" = 2 ]; then
+              echo "1. A Teams administrator uploads the Teams app package to the organisation's app catalog: Teams admin center, Teams apps, Manage apps, Upload new app."
+              echo "   The owner builds the package, because he has the client id and the host that it needs, and hands the zip over: python tools/teams-app.py build --valid-domain <host of the function app>"
+              echo "   (it writes the file outside the repository and stops without the client id in TEAMS_BOT_APP_ID or without the host; the client id is an identifier and not a credential)."
+              echo "2. A Teams administrator makes the app available: add it to the GLOBAL default app setup policy (so that a guest of the tenant gets it too), or let each guest open the app's"
+              echo "   deep link https://teams.microsoft.com/l/app/<Teams app id> and add it for themselves. For the people of the tenant an app setup policy can install it for them (not for guests)."
+              echo "   A change of a policy can take hours to reach a person."
+              echo "3. Run the action cases (TEAMS_DELIVERY is still queue), then the action teams-test, which sends one test card to the owner and probes the way out to Teams."
+              echo "4. Only after teams-test has passed: set the variable TEAMS_DELIVERY of the environment hub to bot, and run the action cases once more."
+              echo "   Going back is the same in the other direction: set TEAMS_DELIVERY to queue and run cases."
+            else
+              echo "1. The owner runs the Microsoft Entra step with his own sign-in to the Azure CLI (never in a pipeline). It is a dry run until --apply is added:"
+              echo "     python tools/entra-setup.py teams-bot"
+              echo "   with the options for the tenant, the subscription and the resource group ($ENV_RESOURCE_GROUP) that it asks for: environment/BOOTSTRAP.md, step B2, has the whole command."
+              echo "   It makes the app registration Meternaut Teams (this tenant only, no secret, no certificate, no API permission, no redirect address), its service principal and one federated"
+              echo "   credential for the identity id-meternaut-teams, and prints the app registration's client id to the owner's terminal only."
+              echo "2. The owner stores that client id as the secret TEAMS_BOT_APP_ID of the environment hub (the tool prints the command)."
+              echo "3. Run the action teams again: phase 2 makes the Azure Bot resource and its Microsoft Teams channel."
+              echo "   Before that, a person registers the resource provider Microsoft.BotService once (environment/BOOTSTRAP.md, step B1)."
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Test the way out to Teams, and send one test card, from inside the network, in the Operator
+        id: teams_test
+        if: inputs.action == 'teams-test'
+        # The tool waits up to 15 minutes for the History, and the container group is given 25 (1500 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        timeout-minutes: 35
+        env:
+          STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
+          INSIGHTS_NAME: ${{ steps.params.outputs.appinsights_name }}
+          OPERATOR_IDENTITY_ID: ${{ steps.operator.outputs.identity_id }}
+          OPERATOR_CLIENT_ID: ${{ steps.operator.outputs.client_id }}
+          OPERATOR_SUBNET_ID: ${{ steps.operator.outputs.subnet_id }}
+        run: |
+          # tools/teams-check.py runs inside the network, in a container group of the Operator, because the storage account takes no public traffic and the landing zone's routing is what the test is about (docs/proposals/20-teams-cards-through-a-bot.md).
+          # It does three things in order and prints plain words only: it probes that login.microsoftonline.com and smba.trafficmanager.net answer over HTTPS (any HTTP answer, even 401 or 404, proves the path), it puts the control
+          # message teams-card-test in the control queue (the cases app sends one labelled test card to the owner and replaces it with a closing card), and it reads the History of that message from the telemetry and says, for each step,
+          # whether it went well (the token exchange, with the AADSTS code number alone when it did not; the creation of the chat, 403 for an app that is not installed or is blocked; the send; the update). No id, name or address is printed:
+          # the Hub's log is public. It loads the helpers of tools/check-helpers.py from its own folder, so the two files go into the container's secret volume. The container signs in with the Operator's own identity (no key:
+          # it holds Storage Queue Data Contributor on the control queue), and the Operator holds no right on Teams. operator/run-tool.sh runs the tool and gives its exit code.
+          insights="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Insights/components/$INSIGHTS_NAME"
+          # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
+          dns=()
+          for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
+          python3 tools/operator-run.py run --resource-group "$ENV_RESOURCE_GROUP" --name "op-teams-$GITHUB_RUN_ID" \
+            --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
+            --secret-file "teams-check.py=tools/teams-check.py" --secret-file "check-helpers.py=tools/check-helpers.py" \
+            --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
+            --env "TOOL_NAME=teams-check" --env "TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 15" \
+            "${dns[@]}" --timeout-seconds 1500 --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete any container group of the Teams test that is left
+        if: always() && steps.teams_test.outcome != 'skipped'
+        run: |
+          # The tool deletes its group at the end of every run. A step that was cancelled or killed cannot do that, so this is the second line, and it runs whenever the test step started: every group that starts with
+          # op-teams- and carries the tool's tag is deleted. Runs of this workflow never overlap (the concurrency group). Nothing else is touched.
+          python3 tools/operator-run.py cleanup --resource-group "$ENV_RESOURCE_GROUP" --prefix op-teams- --older-than-minutes 0 \
+            || echo "::warning::A container group whose name starts with op-teams- may be left in resource group $ENV_RESOURCE_GROUP. A person deletes it; it costs cents an hour."
+
       - name: What was done
         if: always()
         env:
@@ -3016,6 +3349,7 @@ jobs:
           CASES_PUBLIC_ACCESS: ${{ steps.params.outputs.cases_public_network_access }}
           CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}
           GATEWAY_TELEMETRY: ${{ steps.params.outputs.gateway_telemetry }}
+          TEAMS_PHASE: ${{ steps.teams_settings.outputs.teams_phase }}
         run: |
           {
             echo "### Hub: $ACTION, $JOB_STATUS"
@@ -3035,6 +3369,8 @@ jobs:
                 plant) echo "Part of the planted waste may exist now (an unattached disk, maybe an unassigned public IP address, maybe a virtual machine with its network interface and its OS disk) in resource group \`$ENV_RESOURCE_GROUP\`, tagged for the loop. They cost a few cents to a few dollars a month, and a planted machine about 0.04 US dollars an hour while it runs (nothing for compute once it is stopped and released). Running \`plant\` again is safe: it makes a second planting under a new name, and it puts the planted tags back on the planted disks and public IP addresses that are there already. A person who approves a plan for planted waste changes it, with that person's own permissions." ;;
                 loop-check) echo "The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal, or, with a function app host name set, the sign-in's return address did not name it, or, when the cases app takes no public traffic and no host name is set, so that the check is made from inside the network, in the Operator, the Operator is not there (run \`operator\` first) or the app's name did not resolve to a private address there. Nothing was changed. Do not hand the address to anybody until this passes." ;;
                 powerplatform) echo "Part of the Azure side of the Teams cards may exist now in resource group \`$ENV_RESOURCE_GROUP\`: the subnet \`snet-powerplatform\` with its network security group, and the enterprise policy \`ep-meternaut-netinjection\`. Neither has a price that anyone found (docs/proposals/19-teams-cards-through-power-automate.md), and no environment is linked. The step that failed says why. If the lines stop before anything was changed, they say which of these is missing: the resource provider Microsoft.PowerPlatform (a person who may registers it once: environment/BOOTSTRAP.md, the section on the Teams cards), the virtual network (run \`model-side\`), or a free range in the virtual network for the subnet, which the builder does not invent: the owner decides what else will do (the proposal, the room in the network). If the deploy of the subnet or of the policy failed, the lines say why; a policy that an environment is linked to cannot be written again, which is why the template makes it only when it is not there. If the lines stop at the wait for the landing zone's route table, the subnet and the policy are made and no environment is to be linked before the table is on the subnet: run \`powerplatform\` again later, which repeats only what is missing and waits again. If the read-back failed, the subnet or the policy differs from its template and the line says how; nothing is repaired from here. Running \`powerplatform\` again is safe." ;;
+                teams) echo "Part of the Azure side of the Teams bot may exist now in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-teams\` and, in phase 2, the Azure Bot resource and its Microsoft Teams channel. None of it costs anything that anyone found: the identity is free, and the bot is on the free SKU, on which the standard channels, Teams among them, carry an unlimited number of messages. Nothing of the cases app was changed, and Teams cards still go through the queue until the owner sets TEAMS_DELIVERY to bot. The step that failed says why. If the lines stop before anything was changed, they say which of these is missing: the resource provider Microsoft.BotService (a person who may registers it once: environment/BOOTSTRAP.md, step B1), the identity (run teams in phase 1 first: the secret TEAMS_BOT_APP_ID has to be empty then), or the cases app (run cases). If the read-back failed, the identity or the bot differs from its template, or the identity holds a role assignment, and the line says how: nothing is repaired from here. Running \`teams\` again is safe and repeats only what is missing." ;;
+                teams-test) echo "A container group named \`op-teams-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the test came, in plain words and without an identifier. A message that the Operator is not there means that \`operator\` has to be run first. A host that gave no answer at all means that the landing zone's routing does not let the Operator's subnet out to it: that is a finding about the network, and the owner decides what to ask for. A token exchange that was not ok names an AADSTS code, and the proposal says what each one means (a wrong subject, audience or issuer of the federated credential shows only here, because Microsoft accepts a wrong value when it is made). A 403 when the chat is created means that the Teams app is not installed for the owner, or that he blocked it. A History that did not arrive means that the cases app has not got the new code (run \`cases\`) or that its settings are not set. Nothing in Azure or in Teams was changed except one test card for the owner and its closing. Running \`teams-test\` again is safe." ;;
                 operator) echo "Part of the Operator may exist now: its identity \`id-meternaut-operator\`, the network security group, the subnet \`snet-ops\`, the Reader role on resource group \`$ENV_RESOURCE_GROUP\` and the Storage Queue Data Contributor role on the control queue. If the lines above say that the control queue is not there, nothing was changed: run \`base\` and \`cases\` first. If the deploy was refused at the Reader role, the condition of the deploy identity's role-assignment right does not list Reader yet (environment/BOOTSTRAP.md, the section on the Operator) and nothing else was changed; Storage Queue Data Contributor is listed already. None of it costs anything while no container group runs. Running \`operator\` again is safe and repeats only what is missing." ;;
                 operator-probe) echo "A container group named \`op-probe-$GITHUB_RUN_ID\` may have been made, and the last step of the run deletes it if the tool could not. The lines above say how far the probe came: an image that could not be pulled is the likely reason (the tool prints the group's events then), and a subnet with no way out looks the same. A run costs cents. Running \`operator-probe\` again is safe." ;;
                 aigateway) echo "Part of the AI Gateway may exist now: the subnet \`snet-aigw\` with its network security group (made first, and only when it was not there), and then the gateway \`$AIGATEWAY_NAME\` with its own identity, its provider, its models and aliases, and its roles (the Operator's, and the cases app's when the app had an identity). It is a preview service that is free while the preview lasts (the proposal gives the meter and the date), and a subnet costs nothing. The step that failed says why. If the lines stop before the subnet is made, nothing was changed: they say which of the virtual network, the Foundry resource of the agents (run \`foundry\` first), the Operator (run \`operator\` first), the region or the condition of the deploy identity's right to assign roles is missing, and for the condition a person adds AI Gateway Models User once (environment/BOOTSTRAP.md, the section on the AI Gateway). If the subnet's deploy failed, the lines say why (for example that the range is taken) and the gateway was not made. If the lines stop at the wait for the landing zone's route table, the subnet exists and the gateway is not made, because it is made on the subnet as the landing zone leaves it: nothing else was done, and running \`aigateway\` again later leaves the subnet alone and repeats only what is missing. If the deploy of the gateway was refused at a role, the condition does not list that role. If they stop at the limits, the key or the read-back, the gateway is made and the lines say which thing differs: nothing is repaired from here, and the subnet cannot be changed once the gateway is made (the way back is to delete the gateway and make another). The frontend of the gateway is public and cannot be made private. The agents were not changed by this action. Running \`aigateway\` again is safe and repeats only what is missing." ;;
@@ -3061,6 +3397,8 @@ jobs:
                 plant) echo "Waste of Meternaut's own is in resource group \`$ENV_RESOURCE_GROUP\`: an unattached disk (and, when asked, an unassigned public IP address and a virtual machine that nothing uses, with its network interface and its OS disk), tagged meternaut-planted. The next Watch finds it, and the loop takes it from there. Meternaut holds no right to delete it: the person who approves a plan for it needs the right to delete it in this group (or, for a machine or a disk, to stop it, resize it or change its tier), because the change runs with that person's own permissions. The planted tags were put back on the planted disks and public IP addresses of the group, because an outside job strips tags from unattached disks every night at about 22:56 UTC: approve a planted disk the same day it is planted." ;;
                 loop-check) echo "The function app's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed. The address that was knocked at is the function app's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set (the sign-in's return address then names it too), and the app's own name when it is not: from this runner while the app takes public traffic, and from inside the network, in the Operator, when it takes none and no host name is set (the lines above are the log of that container, and the app's name resolved there to a private address; no credential was sent)." ;;
                 powerplatform) echo "The Azure side of the Teams cards is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: the subnet \`snet-powerplatform\` is Succeeded, delegated to Microsoft.PowerPlatform/enterprisePolicies and to nothing else, behind the network security group of the template (which has no rule of its own), with no default outbound access and with the landing zone's route table on it when the landing zone puts one on this network (the action waited up to 20 minutes for it); and the enterprise policy \`ep-meternaut-netinjection\` is of kind NetworkInjection, in the Power Platform geography Sweden, with the project's virtual network and this subnet, and has a system id. Each was made only when it was not there: the landing zone's table must stay on the subnet, and Power Platform refuses every write to a policy that an environment is linked to. No role, private endpoint, private DNS object, link or peering was made, and no environment is linked. The steps that a person does by hand are above, with placeholders, because this log is public: a role for the person whose connection reads the queue, the Teams admin center, then, with their own sign-in, \`python tools/powerplatform.py\` for the environment and the link, and the import of the flow in the maker portal. The queue \`teams-cards\` is made by \`cases\`. Nothing was run in Power Platform or in Teams." ;;
+                teams) if [ "$TEAMS_PHASE" = 2 ]; then echo "The Azure side of the Teams bot is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: the identity \`id-meternaut-teams\` is there and holds NO role assignment (zero were found, which is the answer that the design needs), and the Azure Bot resource is of the kind azurebot, single tenant, on the free SKU, with the client id of the app registration, with local authentication off and a notification-only endpoint that is never called, and its Microsoft Teams channel is enabled with calling off. Nothing was run in Teams, and the cases app was not changed: it still sends Teams cards through the queue. The steps that a person does by hand are above, with placeholders, because this log is public. Next: upload the Teams app package, run \`cases\`, run \`teams-test\`, and only after it passes set TEAMS_DELIVERY to bot."; else echo "The identity \`id-meternaut-teams\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is there and holds NO role assignment (zero were found, which is the answer that the design needs). No bot is made yet. **The Microsoft Entra hand step is next:** the owner runs python tools/entra-setup.py teams-bot with his own sign-in (the steps above give the command with placeholders), stores the client id that it prints as the secret TEAMS_BOT_APP_ID of the environment hub, and runs \`teams\` again for phase 2. The cases app was not changed."; fi ;;
+                teams-test) echo "The Operator, from inside the network, probed the two hosts that the app talks to, put the control message in the queue and read the History of the test from the telemetry, with its own identity and no key; this runner put nothing in the queue and asked nothing. The lines above are plain words and status classes only: whether each host answered over HTTPS, and, for the cases app, whether the token exchange, the creation of the chat, the send and the update went well, and which AADSTS code a failed token exchange gave. The owner received one test card and then its closing card. A pass proves the path that it covers and nothing more: a card to a member of the tenant, and the behaviour of a guest's chat over time, are not proved by it. Running \`teams-test\` again is safe." ;;
                 operator) echo "The Operator is in resource group \`$ENV_RESOURCE_GROUP\`: the identity \`id-meternaut-operator\`, the subnet \`snet-ops\` (delegated to container groups, with the landing zone's route table on it when the landing zone puts one on this network) and two roles for that identity: Reader on the group, and Storage Queue Data Contributor on the control queue \`cases-control\`, and nothing else. A new role takes up to ten minutes to apply, so wait before \`cases-run\`, which puts the control message in the queue with it. No container group exists, so nothing is paid until a run uses it. The next steps are \`operator-probe\`, which shows what a container on the subnet can reach, and \`cases-run\`, which runs its check tool in the Operator." ;;
                 operator-probe) echo "The probe ran in a container group on \`snet-ops\` as the Operator's identity, and the group is deleted. The page above has one line for each check: \`ok\` and \`FAIL\` are facts about the landing zone and the network, not errors of the run. It also signed in as the deploy identity with a token of this run (which only the container group saw, as a secure value), built the cases app's libraries in the container from the lock file, and asked the cases app's deployment site for the status of a GET. docs/proposals/07-private-by-default.md says what each answer decides." ;;
                 aigateway) echo "The AI Gateway \`$AIGATEWAY_NAME\` is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: it is Succeeded, its backend subnet is \`snet-aigw\` (delegated to Microsoft.App/environments, with the landing zone's route table on it when the landing zone puts one on this network), and it has a system-assigned identity that holds Foundry User on the Foundry resource of the agents. It was made after the subnet: the action made the subnet first (or found it and left it alone), waited until the landing zone had put its route table on it, and only then made the gateway, so the gateway was made on the subnet as the landing zone left it. It has one provider, a model and an alias for each model of environment/models.json with content safety at Medium, and the gateway-wide limits of environment/aigateway/policies.json: a token limit, a request rate limit, and a cost limit for the day and one for the month, each counted for every caller alone. The Operator's identity holds AI Gateway Models User on the gateway, and so does the cases app's identity when the app had one (its Detective and Skeptic call the gateway with it). No API key was made: the service makes one named master, and the lines above say whether the service let it be deleted (a refusal is a recorded finding and not an error). THE FRONTEND OF THE GATEWAY IS PUBLIC. The service has no private frontend, and its own setting for one has no effect. A request needs a Microsoft Entra token and a role on the gateway, and there is no filter on the address (docs/proposals/08-ai-gateway.md). The agents were not changed by this action: they go through the gateway once \`foundry\` and \`cases\` have run with the switch of step 2 on. The Detective and the Skeptic call the gateway once the action \`cases\` has deployed the app, after the role has applied. A new role takes up to ten minutes to apply, and then \`aigateway-check\` calls each alias from inside the network." ;;

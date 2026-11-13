@@ -2,7 +2,7 @@
 
 **What this document answers.** What every message carries, and why; how the Recommendation card is built; what the seventeen Teams cards are for; how access changes a Recommendation; how a card is made, sent and answered; and what a card cannot do.
 
-**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow posts each Teams card, so no bot answers a tap and a card takes no typed answer. Its buttons are links to pages of the function app that send the answer, and a change that cannot be undone asks again on the card ([proposal 19](../proposals/19-teams-cards-through-power-automate.md)). The text boxes and other buttons below describe cards that a Teams app could carry, not the cards that are built.
+**Superseded in part on 2026-11-11:** the answers on a card. A Power Automate flow, or a bot that only sends, posts each Teams card, so nothing answers a tap and a card takes no typed answer. Its buttons are links to pages of the function app that send the answer, and a change that cannot be undone asks again on the card ([proposal 19](../proposals/19-teams-cards-through-power-automate.md)). The text boxes and other buttons below describe cards that a Teams app could carry, not the cards that are built.
 
 ## The layers of a message
 
@@ -224,7 +224,7 @@ Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](
 |---|---|
 | Buttons on a card | At most eight visible and four behind a toggle. Titles have at most 24 characters: a house rule so that each fits alone on a 360 px row, not a Teams limit. Teams' own card limits are in the [platform register](13-platform-register.md) |
 | Thumbs | Learn documents Teams' thumbs (`feedbackLoopEnabled`, [Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/user-feedback-controls)) per message, not for card messages: they are set where the client supports them, and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) checks whether they show on a card message. They mean only "was this useful" and never change a Recommendation |
-| Delivery | A card is one message on the `teams-cards` queue. A failure to put it there is a failed try, repeated every 15 minutes up to 12 times, and the letter still goes; the flow's limits are in the [platform register](13-platform-register.md). The app learns which message a card is, not that anyone saw it, so delivery is never promised ([proposal 13](../proposals/13-teams-and-outlook.md)) |
+| Delivery | By default a card is one message on the `teams-cards` queue. A failure to put it there is a failed try, repeated every 15 minutes up to 12 times, and the letter still goes; the flow's limits are in the [platform register](13-platform-register.md). The app learns which message a card is, not that anyone saw it, so delivery is never promised ([proposal 13](../proposals/13-teams-and-outlook.md)) |
 
 ## The life of one message
 

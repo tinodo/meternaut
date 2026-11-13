@@ -101,6 +101,8 @@ jobs:
             az bicep build --file "$template" --stdout > /dev/null
             az bicep lint --file "$template"
           done
+          az bicep build --file environment/teams/main.bicep --stdout > /dev/null
+          az bicep lint --file environment/teams/main.bicep
       - name: The drift check of the AI security runs its own selftest, with no call to Azure
         run: python tools/drift-check.py --selftest
       - name: The parameter files fit the compiled templates
@@ -124,10 +126,14 @@ jobs:
           BUILD_COMMIT: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           PACKAGE_SHA256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           AIGATEWAY_HOST: aigw-meternaut-0123abcd.swedencentral.ai.gateway.azure.com
+          TEAMS_DELIVERY: bot
+          TEAMS_BOT_APP_ID: 12345678-aaaa-bbbb-cccc-0123456789ab
+          TEAMS_BOT_IDENTITY_CLIENT_ID: 12345678-bbbb-cccc-dddd-0123456789ab
+          TEAMS_FUNCTION_HOST: func-meternaut-cases-0123abcd.azurewebsites.net
         run: |
           out="$RUNNER_TEMP/params"
           mkdir -p "$out"
-          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --governance environment/aigateway/contracts.json --powerplatform > /dev/null
+          python tools/environment-params.py build --models environment/models.json --out-dir "$out" --aigateway-policies environment/aigateway/policies.json --teams --governance environment/aigateway/contracts.json --powerplatform > /dev/null
           az bicep build --file environment/main.bicep --outfile "$out/environment.json"
           az bicep build --file environment/base/main.bicep --outfile "$out/base.json"
           az bicep build --file environment/foundry/main.bicep --outfile "$out/foundry.json"
@@ -138,6 +144,7 @@ jobs:
           az bicep build --file environment/aigateway/telemetry.bicep --outfile "$out/gateway-telemetry.json"
           az bicep build --file environment/governance/main.bicep --outfile "$out/governance.json"
           az bicep build --file environment/powerplatform/main.bicep --outfile "$out/powerplatform.json"
+          az bicep build --file environment/teams/main.bicep --outfile "$out/teams.json"
           python tools/environment-params.py check --params "$out/environment.parameters.json" --template "$out/environment.json" --label environment
           python tools/environment-params.py check --params "$out/base.parameters.json" --template "$out/base.json" --label base
           python tools/environment-params.py check --params "$out/foundry.parameters.json" --template "$out/foundry.json" --label foundry
@@ -148,3 +155,4 @@ jobs:
           python tools/environment-params.py check --params "$out/gateway-telemetry.parameters.json" --template "$out/gateway-telemetry.json" --label gateway-telemetry
           python tools/environment-params.py check --params "$out/governance.parameters.json" --template "$out/governance.json" --label governance
           python tools/environment-params.py check --params "$out/powerplatform.parameters.json" --template "$out/powerplatform.json" --label powerplatform
+          python tools/environment-params.py check --params "$out/teams.parameters.json" --template "$out/teams.json" --label teams

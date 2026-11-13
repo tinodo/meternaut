@@ -23,6 +23,15 @@ from .runner import RunnerServices, TickResult, read_calls
 
 LOG = logging.getLogger("meternaut.loop")
 LETTER_DAYS = 3  # the letters about a change are offered again for this long after it
+TEAMS_OFF_EVERY = 3600.0  # seconds between two lines that say why the bot way of the Teams cards is off
+_teams_off_said: list[float] = []  # when that was last said, in this process (the clock of the timer)
+
+
+def _say_why_teams_is_off(way: loop_config.TeamsWay, now: float, redact: Callable[[str], str]) -> None:
+    """A bot way whose settings are missing or wrong sends no card, and the letters go after twenty minutes: the reason (the names of the settings, never their values) is logged once an hour, so that a typo is found."""
+    if way.way == "off" and (not _teams_off_said or now - _teams_off_said[0] >= TEAMS_OFF_EVERY):
+        _teams_off_said[:] = [now]
+        LOG.warning(redact(way.why))
 
 
 def _offer_cards(extras: wiring.Extras, redact: Callable[[str], str]) -> None:
@@ -63,9 +72,10 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         cfg.load(env)  # the timer runs only while the settings of the app are valid
         options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
         reader = Identity(env, **options)
-        extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch)
         if extras is None:
             return None
+        _say_why_teams_is_off(settings.teams, monotonic(), redact)
         check_client = Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         reader_client = Client(allowed_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         history = History(uuid.uuid4().hex, None, clock, redact)

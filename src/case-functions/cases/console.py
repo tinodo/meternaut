@@ -81,8 +81,12 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         # The timer's check, started by a person: the same reads, rules and lines (cases/drift.py), with the time that the function app claimed for it.
         return drift.run_check("console", env, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, by=by, started_at=started_at)
 
+    def teams() -> tuple[str, str]:
+        from .offers import teams_status  # imported when the Operations page asks, so that nothing of the cards is loaded while they are off
+        return teams_status(settings, store, people, clock())
+
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker)
+                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker, teams=teams)
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":

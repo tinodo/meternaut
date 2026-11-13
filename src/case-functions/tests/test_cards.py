@@ -200,7 +200,7 @@ class TheDecisionCardOfAChange(unittest.TestCase):
             self.assertEqual(cards.SUMMARIES[kind], words)
             self.assertNotIn(NAME, cards.SUMMARIES[kind])
             self.assertNotRegex(cards.SUMMARIES[kind], r"\d")
-        self.assertFalse(hasattr(cards, "message_activity"), "no activity of a bot: the card goes on a queue, in a message that teamsqueue.py makes")
+        self.assertFalse(hasattr(cards, "message_activity"), "cards.py makes the card and no activity: the message of the queue is made in teamsqueue.py and the activity of the bot in teamsbot.py")
 
 
 class TheDecisionCardOfAdvice(unittest.TestCase):

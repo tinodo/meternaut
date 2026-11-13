@@ -5,7 +5,8 @@ When `STORE_ACCOUNT_NAME` is not set the app is the Watch alone (a run is writte
 When it is set, everything that the loop needs has to be set and valid, and the app refuses to start the loop with a part missing. The three settings of the
 sign-in to Azure are set together or not at all: without them the loop works, but nobody can approve a change (the app says so). `MAIL_SENDER` is the shared mailbox that the
 letters go from, and `TEAMS_CARDS_QUEUE` the name of the Storage queue, in the same storage account, that the Teams cards are put on (cases/teamsqueue.py): each is optional, and without
-it that way of telling a person is off.
+it that way of telling a person is off. `TEAMS_DELIVERY` (`queue`, the default, or `bot`: cases/teamsbot.py) says how a card goes to Teams; a bot way whose settings are not complete is off, and that
+never stops the loop.
 
 `CHANGE_SCOPES` is the list of Meternaut's OWN resource groups in which a change may be made: `<subscription id>/<resource group>`, separated by commas. The template gives it exactly the
 one group where Meternaut plants waste of its own. Reading more does not widen it (AGENTS.md rule 29), and nothing here lets a change reach a resource that Meternaut did not plant:
@@ -32,6 +33,12 @@ CONSOLE_HOST = "CONSOLE_HOST"
 MAIL_SENDER = "MAIL_SENDER"
 # The name of the Storage queue (in the same storage account as the records) that a flow of Power Automate reads to post the Teams cards (cases/teamsqueue.py). Not set: no card is sent.
 TEAMS_CARDS_QUEUE = "TEAMS_CARDS_QUEUE"
+# The way that a card goes to Teams: `queue` (the default) or `bot` (cases/teamsbot.py: the app's own identity, no person). The bot way needs the three settings after it and the tenant of the sign-in;
+# when one is missing or wrong the way is off, which is no card at all and the letters instead, and the Operations page says why (a half-set bot way never stops the loop).
+TEAMS_DELIVERY = "TEAMS_DELIVERY"
+TEAMS_BOT_APP_ID = "TEAMS_BOT_APP_ID"
+TEAMS_BOT_IDENTITY_CLIENT_ID = "TEAMS_BOT_IDENTITY_CLIENT_ID"
+TEAMS_SERVICE_URL = "TEAMS_SERVICE_URL"
 PLANTED_TAG = "PLANTED_TAG"
 PLAN_TTL_HOURS = "PLAN_TTL_HOURS"
 RECHECK_DAYS = "RECHECK_DAYS"
@@ -53,6 +60,38 @@ class LoopConfigError(Exception):
     """One or more settings of the loop are missing or wrong; the text lists every one."""
 
 
+# The one address that the app sends to: the Bot Connector of the public cloud, whose token request this app makes. GCC, GCC High and DoD have other addresses and are not served. The setting
+# TEAMS_SERVICE_URL is empty or this address (a missing closing slash is added): any other value turns the way off, so that the token of the bot never goes to another host.
+DEFAULT_SERVICE_URL = "https://smba.trafficmanager.net/teams/"
+
+
+@dataclass(frozen=True)
+class TeamsWay:
+    """How the Teams cards go. `way` is `queue`, `bot` or `off`; `why` is the one plain sentence that says why it is off (a bot way whose settings are missing or wrong fails closed)."""
+
+    way: str = "queue"
+    why: str = ""
+    app_id: str = ""
+    identity_client_id: str = ""
+    tenant_id: str = ""
+    service_url: str = DEFAULT_SERVICE_URL
+
+
+def _teams(env: Mapping[str, str], tenant: str | None) -> TeamsWay:
+    way = (env.get(TEAMS_DELIVERY) or "").strip().lower() or "queue"
+    if way == "queue":
+        return TeamsWay()
+    given = {name: (env.get(name) or "").strip() for name in (TEAMS_BOT_APP_ID, TEAMS_BOT_IDENTITY_CLIENT_ID, TEAMS_SERVICE_URL)}
+    url = given[TEAMS_SERVICE_URL].lower()
+    wrong = [f"{TEAMS_DELIVERY} is neither queue nor bot"] if way != "bot" else [f"{name} is not set" if not value else f"{name} is not a client id"
+                                                                                  for name, value in given.items() if name != TEAMS_SERVICE_URL and not GUID.match(value)]
+    if way == "bot":
+        wrong += ([] if tenant else [f"{SIGNIN_TENANT_ID} is not set"]) + ([] if not url or (url if url.endswith("/") else url + "/") == DEFAULT_SERVICE_URL else [f"{TEAMS_SERVICE_URL} is not the Bot Connector's address"])
+    if wrong:
+        return TeamsWay("off", f"No Teams card is tried and the letters go instead: {', '.join(wrong)}.")
+    return TeamsWay("bot", "", given[TEAMS_BOT_APP_ID].lower(), given[TEAMS_BOT_IDENTITY_CLIENT_ID].lower(), tenant or "", DEFAULT_SERVICE_URL)
+
+
 @dataclass(frozen=True)
 class LoopSettings:
     store_account: str
@@ -66,6 +105,7 @@ class LoopSettings:
     signin_client_id: str | None = None
     signin_assertion_client_id: str | None = None
     cards_queue: str | None = None  # the queue that the Teams cards are put on; None: no card is sent
+    teams: TeamsWay = TeamsWay()  # how the cards go to Teams (TEAMS_DELIVERY): the queue, the bot, or off with the reason
 
     @property
     def base_url(self) -> str:
@@ -136,4 +176,4 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
         store_account=values[STORE_ACCOUNT_NAME], change_scopes=scopes, console_host=values[CONSOLE_HOST].lower(), mail_sender=values[MAIL_SENDER] or None,
         planted_tag=values[PLANTED_TAG] or "meternaut-planted", plan_ttl_hours=ttl, recheck_days=recheck, signin_tenant_id=values[SIGNIN_TENANT_ID].lower() or None,
         signin_client_id=values[SIGNIN_CLIENT_ID].lower() or None, signin_assertion_client_id=values[SIGNIN_ASSERTION_CLIENT_ID].lower() or None,
-        cards_queue=values[TEAMS_CARDS_QUEUE] or None)
+        cards_queue=values[TEAMS_CARDS_QUEUE] or None, teams=_teams(env, values[SIGNIN_TENANT_ID].lower() or None))

@@ -89,6 +89,7 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
                            [[nowrap(ctx.when(r.started_at)), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
     parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")),
               Safe("<h2>The drift check</h2>"), *_drift_section(ctx),
+              *_teams_section(ctx),
               Safe("<h2>What people answered before</h2>"), *_answers_section(ctx),
               Safe("<h2>What Meternaut can change in Azure</h2>"),
               paragraph(fmt("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, Meternaut makes that one change "
@@ -143,6 +144,14 @@ def _drift_section(ctx: Ctx) -> list[object]:
     else:
         parts.append(form(ctx.url("/ops/drift"), hidden("nonce", ctx.nonce("drift")), fmt('<div class="acts">{b}</div>', b=button("Check now"))))
     return parts
+
+
+def _teams_section(ctx: Ctx) -> list[object]:
+    """The block "Teams cards": which way the cards go and what the last try came to, as two sentences (cases/offers.teams_status). Counts only: no name and no id."""
+    if ctx.services.teams is None:
+        return []
+    said, ok = read(ctx.services.teams, None)
+    return [Safe("<h2>Teams cards</h2>"), *([paragraph(line) for line in said] if ok and said else [paragraph("I cannot tell now which way the Teams cards go.")])]
 
 
 def _too_soon(ctx: Ctx, latest: CheckRecord | None, due: dt.datetime | None) -> Response:

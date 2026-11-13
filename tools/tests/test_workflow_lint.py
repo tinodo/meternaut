@@ -283,7 +283,8 @@ class Lint(unittest.TestCase):
             self.assertNotIn(name, wl.NEVER_VARIABLES, f"{name} is plain configuration, which stays a variable")
             self.assertEqual(self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ vars.{name} }}}}\n"), "deploy-hub.yml"), [], name)
         self.assertEqual(wl.ESTATE_SECRETS, {"AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_ALERT_EMAILS",
-                                             "CONSOLE_APP_CLIENT_ID", "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY"})
+                                             "CONSOLE_APP_CLIENT_ID", "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY",
+                                             "TEAMS_BOT_APP_ID"})  # TEAMS_BOT_APP_ID: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the client id of the app registration of the Teams bot, an identifier of the estate
         for name in sorted(wl.ESTATE_SECRETS):
             self.assertEqual(self.lint(GOOD_DEPLOY.replace("      ENV_RESOURCE_GROUP: ${{ vars.ENV_RESOURCE_GROUP }}\n", f"      ENV_RESOURCE_GROUP: ${{{{ secrets.{name} }}}}\n"), "deploy-hub.yml"), [], name)
         for stranger in ("GITHUB_TOKEN", "AZURE_CLIENT_SECRET", "GATEWAY_RESOURCE_ID", "SOME_PASSWORD"):

@@ -23,6 +23,9 @@ LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed"
 INVESTIGATION_KINDS = ("investigation.started", "investigation.finding", "investigation.finished")
 # The lines of the Study (cases\study.py): its start, a note, one line for each claim that code kept and its end.
 STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
+# The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end. Only plain words and numbers: the step, whether it worked,
+# the HTTP status, the number of an error of Microsoft Entra and one word for why not; never an id, a name, an address or a text of Teams.
+TEAMS_KINDS = ("teams.test.step", "teams.test.finished")
 
 LOGGER = logging.getLogger("meternaut.history")
 
@@ -62,7 +65,7 @@ class History:
         self.counts: Counter[str] = Counter()  # the lines written so far, by kind
 
     def emit(self, kind: str, **fields: object) -> dict:
-        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS:
+        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + TEAMS_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
         self.logger.info(self.redact(_fit(event)))

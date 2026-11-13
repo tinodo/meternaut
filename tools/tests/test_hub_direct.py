@@ -24,7 +24,8 @@ params_spec.loader.exec_module(ep)
 HUB = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
 BOOTSTRAP = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8").replace("\r\n", "\n")
 MASKS = "Mask the identifiers of the estate in this run's log"
-PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT"}
+PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT",
+                       "TEAMS_DELIVERY"}  # TEAMS_DELIVERY: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): queue or bot, a plain word and not an identifier
 
 
 def code(text):
@@ -255,6 +256,9 @@ def read_sites():
         "Read the host name of the AI Gateway from the service": ("host",),
         "The AI Gateway is there, the provider is registered, the component reports its endpoints and the gateway's identity may send to them": ("principal",),
         "Find the Operator, which runs the AI security checks from inside the network": ("client",),
+        "Find out which phase of the Teams identity and bot this run is, and read what phase 2 needs from Azure": ("id", "host"),  # the three Teams steps: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13)
+        "Read the Teams identity, which the cases app is given while it is there": ("id",),
+        "Read the Teams identity and bot back from Azure, and check that the identity holds no role": ("id",),
         "Read the host name of the AI Gateway from the service, for the drift check": ("host",),
     }
 

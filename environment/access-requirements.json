@@ -86,6 +86,20 @@
       "why": "The same for savings plans: whether the existing ones can be seen. The read lists the orders and nothing of what they cover"
     }
   ],
+  "noRights": [
+    {
+      "id": "N1",
+      "object": "The user-assigned managed identity id-meternaut-teams, attached to the function app (the Hub action teams makes it)",
+      "holds": "No Azure role, anywhere: it is given none, and the action teams reads its role assignments after every run and fails when there is one",
+      "why": "Its token for api://AzureADTokenExchange is the client assertion of the app registration N2, so that the function app can get a token for the Bot Connector with no secret and no certificate. It changes nothing in any estate: the bot only sends cards (proposal 20; replaced by the owner's ruling of 2026-11-13, his plain yes of 2026-11-13)"
+    },
+    {
+      "id": "N2",
+      "object": "The app registration Meternaut Teams (this tenant only), its service principal, and its one federated credential, which trusts N1 alone (tools/entra-setup.py teams-bot makes them)",
+      "holds": "No API permission, no consent, no redirect address, no secret and no certificate: the token that it gets is an app-only token for https://api.botframework.com/.default, which needs no permission of its own",
+      "why": "It is the Microsoft Entra application of the Azure Bot resource, so that Teams knows which application the bot is. A person who may make app registrations makes it with their own sign-in, and the tool refuses to run in a pipeline"
+    }
+  ],
   "retired": [
     {
       "id": "W1",

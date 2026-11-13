@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds the parameter files of the first environment from the deployment workflow's settings (standard library only).
 
-    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json [--governance environment/aigateway/contracts.json]] [--powerplatform] >> "$GITHUB_OUTPUT"
+    python tools/environment-params.py build --models environment/models.json --out-dir "$RUNNER_TEMP" [--preview] [--aigateway-policies environment/aigateway/policies.json [--governance environment/aigateway/contracts.json]] [--powerplatform] [--teams] >> "$GITHUB_OUTPUT"
     python tools/environment-params.py check --params "$RUNNER_TEMP/base.parameters.json" --template base.json --label base
 
 The settings are environment variables, filled by the workflow from the repository's secrets and variables, so that no
@@ -114,6 +114,19 @@ and cards_queue_name (the Storage queue that environment/cases/main.bicep makes 
 included, whether or not its files are asked for); no range is invented: a network with no free /27, or a region other than swedencentral, gets no file and a reason. ENV_PP_SUBNET_EXISTS and ENV_PP_POLICY_EXISTS
 (true or false) are what the workflow found in Azure: a subnet that is there is left alone (AGENTS.md rule 27), and a policy that is there is not written again, because Power Platform refuses every write to a
 policy that an environment is linked to.
+
+Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md) are off until the owner switches them on. While the settings below are empty the parameter files are what they were, but
+the cases template always gives the app its four settings TEAMS_* (TEAMS_DELIVERY is queue and the other three are empty), so the first run of the action cases after this change changes the function app's configuration and
+restarts it. TEAMS_DELIVERY (queue or bot;
+empty is queue) is a variable of the environment hub, TEAMS_BOT_APP_ID (the client id of the app registration "Meternaut Teams", which tools/entra-setup.py teams-bot makes) is a secret of it, and TEAMS_BOT_IDENTITY_CLIENT_ID (the
+client id of the identity id-meternaut-teams) and TEAMS_FUNCTION_HOST (the cases app's default host name) are read from Azure by the workflow; each is checked, and none is printed. The cases file carries what is set: the identity (its
+resource id is worked out here, in the project's own group) and its client id (teamsIdentityId, teamsIdentityClientId), the app registration's client id (teamsBotAppId) and, when it is not queue, the delivery (teamsDelivery), which the
+app reads as the settings TEAMS_BOT_IDENTITY_CLIENT_ID, TEAMS_BOT_APP_ID and TEAMS_DELIVERY. The action cases (and no other) refuses `bot` without the identity and the app registration, unless the build is a preview. With --teams one more file is written,
+
+    teams.parameters.json             for environment/teams/main.bicep (phase 1: the identity id-meternaut-teams alone; phase 2, with TEAMS_BOT_APP_ID: also the Azure Bot resource and its Microsoft Teams channel,
+                                      whose endpoint is made of TEAMS_FUNCTION_HOST),
+
+and these lines: teams_phase (1 or 2), teams_files, teams_identity_name, teams_bot_name, teams_bot_sku and teams_delivery.
 """
 from __future__ import annotations
 
@@ -212,6 +225,13 @@ POWERPLATFORM_GEOGRAPHY = "sweden"
 POWERPLATFORM_AZURE_REGION = "swedencentral"
 # The queue of the Teams cards (environment/cases/main.bicep makes it; the app's setting TEAMS_CARDS_QUEUE and the flow's environment variable carry the name).
 CARDS_QUEUE_NAME = "teams-cards"
+# Teams cards straight to Teams through the Bot Connector, with an app principal (docs/proposals/20-teams-cards-through-a-bot.md; environment/teams/main.bicep). Off until the owner switches it on: TEAMS_DELIVERY is
+# queue (the Power Automate flow of proposal 19) until then, and everything about the bot is written only with --teams or when its settings are given, so that no other file differs from what it was. The identity's name is the
+# template's (id-<workload>-teams) and the tool's default (tools/entra-setup.py teams-bot): a test holds the three together. The SKU F0 is the free one, and Teams is a standard channel.
+TEAMS_DELIVERIES = ("queue", "bot")
+TEAMS_IDENTITY_NAME = "id-meternaut-teams"
+TEAMS_BOT_SKU = "F0"
+FUNCTION_APP_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.azurewebsites\.net$")
 # The service's own patterns (Learn and the REST specification of Microsoft.ApiManagement/aigateways, read 2026-11-07): the gateway's name, the name of a model resource, which has
 # no dots (the deployment's name with its dots replaced by hyphens), and the name of an alias, which is the name that a caller sends and may keep its dots.
 AIGATEWAY_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,22}[a-z0-9]$")
@@ -539,6 +559,65 @@ def powerplatform_files(env: dict, location: str, owner: str, vnet: ipaddress.IP
         }),
     }
     return files, outputs
+
+
+def teams_names(subscription: str, group: str) -> dict[str, str]:
+    """The names of what the Hub action teams makes (environment/teams/main.bicep). The Azure Bot resource's name is the handle of the bot, which is global, so it carries the digest like the other names that are."""
+    return {"teams_identity_name": TEAMS_IDENTITY_NAME, "teams_bot_name": f"bot-meternaut-{digest(subscription, group)}"}
+
+
+def teams_settings(env: dict, preview: bool) -> dict[str, str]:
+    """The four settings of the Teams bot, from the workflow, each optional and checked: TEAMS_DELIVERY (queue or bot; empty is queue), TEAMS_BOT_APP_ID (the client id of the app registration "Meternaut Teams"),
+    TEAMS_BOT_IDENTITY_CLIENT_ID (the client id of the identity id-meternaut-teams, which the workflow reads from Azure) and TEAMS_FUNCTION_HOST (the cases app's default host name, which the workflow reads from Azure).
+
+    Delivery by bot needs the identity and the app registration, so the action cases (the one that gives the app its settings: ACTION is the job's own setting, as for the AI Gateway's host) refuses `bot` without
+    them, unless the build is a preview: the app would be told to send through a bot that is not there. Every other action goes on, so that a switch that is ahead of the objects never stops the actions that make them."""
+    delivery = (env.get("TEAMS_DELIVERY") or "").strip().lower() or "queue"
+    if delivery not in TEAMS_DELIVERIES:
+        raise Problem(f"TEAMS_DELIVERY is {' or '.join(TEAMS_DELIVERIES)}, not {delivery!r}: queue is the Power Automate flow, bot is straight to Teams")
+    app_id = (env.get("TEAMS_BOT_APP_ID") or "").strip().lower()
+    if app_id and not GUID.match(app_id):
+        raise Problem("TEAMS_BOT_APP_ID is the client id of the app registration Meternaut Teams (a GUID), or empty")
+    client_id = (env.get("TEAMS_BOT_IDENTITY_CLIENT_ID") or "").strip().lower()
+    if client_id and not GUID.match(client_id):
+        raise Problem("TEAMS_BOT_IDENTITY_CLIENT_ID is the client id of the identity id-meternaut-teams (a GUID), or empty")
+    host = (env.get("TEAMS_FUNCTION_HOST") or "").strip().lower()
+    if host and not FUNCTION_APP_HOST.match(host):
+        raise Problem("TEAMS_FUNCTION_HOST is the default host name of the cases app, as Azure reports it (it ends in .azurewebsites.net), or empty")
+    if delivery == "bot" and not preview and (env.get("ACTION") or "").strip() == "cases" and not (app_id and client_id):
+        raise Problem("TEAMS_DELIVERY is bot, and the bot is not set up: TEAMS_BOT_APP_ID (the secret of the environment hub) and the identity id-meternaut-teams are needed first. Run the action teams (phase 1), "
+                      "then python tools/entra-setup.py teams-bot --apply, set the secret, run teams again (phase 2), and run cases. Nothing was changed.")
+    return {"delivery": delivery, "app_id": app_id, "client_id": client_id, "host": host}
+
+
+def teams_cases_parameters(subscription: str, group: str, settings: dict[str, str]) -> dict:
+    """What the cases file gets for the Teams bot, and only what is set, so that the file is what it was while nothing is: the identity (its resource id is worked out here, in the project's own group, and its client id
+    is read from Azure by the workflow), the app registration's client id, and the delivery when it is not the default `queue`, which the template writes by itself."""
+    values: dict = {}
+    if settings["client_id"]:
+        values["teamsIdentityId"] = f"/subscriptions/{subscription.lower()}/resourceGroups/{group}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{TEAMS_IDENTITY_NAME}"
+        values["teamsIdentityClientId"] = settings["client_id"]
+    if settings["app_id"]:
+        values["teamsBotAppId"] = settings["app_id"]
+    if settings["delivery"] != "queue":
+        values["teamsDelivery"] = settings["delivery"]
+    return values
+
+
+def teams_files(subscription: str, group: str, location: str, owner: str, settings: dict[str, str], preview: bool) -> tuple[dict, dict[str, str]]:
+    """The parameter file of environment/teams/main.bicep and its outputs (the Hub action teams; docs/proposals/20-teams-cards-through-a-bot.md).
+
+    Phase 1 is the identity alone (TEAMS_BOT_APP_ID empty), phase 2 adds the Azure Bot resource and its Microsoft Teams channel, which need the app's host name (a build that is not a preview refuses phase 2 without it)."""
+    phase = "2" if settings["app_id"] else "1"
+    names = teams_names(subscription, group)
+    if phase == "2" and not settings["host"] and not preview:
+        raise Problem("TEAMS_FUNCTION_HOST is not set: the bot's endpoint is made of the cases app's host name, which the workflow reads from Azure. Run the action cases first. Nothing was changed.")
+    values: dict = {"location": location, "owner": owner, "botName": names["teams_bot_name"], "botSku": TEAMS_BOT_SKU}
+    if settings["app_id"]:
+        values["botAppId"] = settings["app_id"]
+        values["functionAppHost"] = settings["host"] or "placeholder.azurewebsites.net"
+    outputs = {"teams_phase": phase, "teams_files": "true", "teams_bot_sku": TEAMS_BOT_SKU, "teams_delivery": settings["delivery"], **names}
+    return {"teams.parameters.json": parameters(values)}, outputs
 
 
 def ai_gateway_host(env: dict, preview: bool) -> str:
@@ -875,7 +954,7 @@ def governance_files(env: dict, subscription: str, group: str, location: str, ow
 
 
 def build(env, models: list[dict], preview: bool = False, aigateway_policies: list[dict] | None = None, contracts: dict | None = None,
-          powerplatform: bool = False) -> tuple[dict[str, dict | list], dict[str, str]]:
+          powerplatform: bool = False, teams: bool = False) -> tuple[dict[str, dict | list], dict[str, str]]:
     subscription = need(env, "ENV_SUBSCRIPTION_ID")
     group = need(env, "ENV_RESOURCE_GROUP")
     location = need(env, "ENV_LOCATION")
@@ -982,6 +1061,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     if package_sha256 and not SHA256.match(package_sha256):
         raise Problem("PACKAGE_SHA256 is a SHA-256 digest: 64 hexadecimal digits")
     release = {**({"buildCommit": build_commit} if build_commit else {}), **({"packageSha256": package_sha256} if package_sha256 else {})}
+    teams_values = teams_settings(env, preview)
     outputs = {
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
@@ -1057,6 +1137,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             **console_parameters(env),
             **routed,
             **release,
+            **teams_cases_parameters(subscription, group, teams_values),
         }),
     }
     if aigateway_policies is not None:
@@ -1081,6 +1162,10 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         powerplatform_written, powerplatform_outputs = powerplatform_files(env, location, owner, vnet, taken)
         files.update(powerplatform_written)
         outputs.update(powerplatform_outputs)
+    if teams:
+        teams_written, teams_outputs = teams_files(subscription, group, location, owner, teams_values, preview)
+        files.update(teams_written)
+        outputs.update(teams_outputs)
     return files, outputs
 
 
@@ -1128,7 +1213,7 @@ def run_build(args, environ) -> int:
         models = read_models(Path(args.models))
         policies = read_aigateway_policies(Path(args.aigateway_policies), models) if args.aigateway_policies else None
         contracts = read_contracts(Path(args.governance), models, policies) if args.governance else None
-        files, outputs = build(environ, models, preview=args.preview, aigateway_policies=policies, contracts=contracts, powerplatform=args.powerplatform)
+        files, outputs = build(environ, models, preview=args.preview, aigateway_policies=policies, contracts=contracts, powerplatform=args.powerplatform, teams=args.teams)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -1151,6 +1236,7 @@ def main(argv=None, environ=None) -> int:
     build_parser.add_argument("--aigateway-policies", help="the AI Gateway's gateway-wide policies (environment/aigateway/policies.json); also writes aigateway-subnet.parameters.json, aigateway.parameters.json and aigateway-policies.json")
     build_parser.add_argument("--governance", help="the AI Gateway's access list (environment/aigateway/contracts.json), checked against the models and the policies; also writes governance.parameters.json and gateway-telemetry.parameters.json. Needs --aigateway-policies")
     build_parser.add_argument("--powerplatform", action="store_true", help="also writes powerplatform.parameters.json for environment/powerplatform/main.bicep (the subnet of Power Platform's connectors and the enterprise policy) and the lines powerplatform_* and cards_queue_name; nothing else changes")
+    build_parser.add_argument("--teams", action="store_true", help="also writes teams.parameters.json for environment/teams/main.bicep (the identity id-meternaut-teams and, with TEAMS_BOT_APP_ID, the Azure Bot resource and its Teams channel) and the lines teams_*; nothing else changes")
     check_parser = commands.add_parser("check", help="check a parameter file against a compiled template (az bicep build --outfile)")
     check_parser.add_argument("--params", required=True)
     check_parser.add_argument("--template", required=True)

@@ -121,6 +121,35 @@ class TheTimer(unittest.TestCase):
             self.tick(LOOP_ENV, HOUR + dt.timedelta(hours=1))
         self.assertEqual(purge.call_count, 2)
 
+    def test_the_timer_says_at_most_once_an_hour_why_the_bot_way_is_off_and_never_the_value_of_a_setting(self):
+        loop._teams_off_said.clear()
+        self.addCleanup(loop._teams_off_said.clear)
+        ticker, env = Ticker(), {**LOOP_ENV, "TEAMS_DELIVERY": "bot", "TEAMS_BOT_APP_ID": "a-typo-that-must-not-be-printed", "TEAMS_BOT_IDENTITY_CLIENT_ID": "", "TEAMS_SERVICE_URL": "https://evil.example/teams/"}
+
+        def tick():
+            return loop.tick(dict(env), transport=self.transport, sleep=lambda s: None, monotonic=ticker, clock=lambda: HOUR, fetch=fetch)
+        with self.assertLogs("meternaut.loop", level=logging.WARNING) as logged:
+            tick()
+            tick()
+            ticker.jump(3599)
+            tick()
+            ticker.jump(2)
+            tick()
+        said = [line for line in logged.output if "No Teams card is tried" in line]
+        self.assertEqual(len(said), 2, "once in the first hour and once after it, not at every minute")
+        for text in said:
+            self.assertIn("TEAMS_BOT_APP_ID is not a client id", text)
+            self.assertIn("TEAMS_BOT_IDENTITY_CLIENT_ID is not set", text)
+            self.assertIn("TEAMS_SERVICE_URL is not the Bot Connector's address", text)
+            self.assertNotIn("a-typo-that-must-not-be-printed", text)
+            self.assertNotIn("evil", text)
+
+    def test_the_timer_says_nothing_about_the_cards_when_they_are_on_the_queue_or_the_bot_way_is_complete(self):
+        loop._teams_off_said.clear()
+        with self.assertNoLogs("meternaut.loop", level=logging.WARNING):
+            self.tick(LOOP_ENV, HOUR)
+            self.tick({**LOOP_ENV, "TEAMS_DELIVERY": "queue"}, HOUR)
+
     def test_it_never_raises_even_when_the_store_cannot_be_reached(self):
         def down(method, url, headers, data, timeout):
             return 503, {}, b'{"odata.error":{"code":"ServerBusy","message":{"value":"busy"}}}'
