@@ -80,7 +80,7 @@
 
 ## 13. Agents draft, workflows send; recipients come from the directory · Accepted
 
-- **Decision.** A model never chooses or supplies a recipient or a link; free text never approves. A Teams card is a message on a private queue that a Power Automate flow posts: no bot, no app registration and no public endpoint ([proposal 13](../proposals/13-teams-and-outlook.md)). Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used. Cards go only to members of the directory; outsiders get plain-text e-mail.
+- **Decision.** A model never chooses or supplies a recipient or a link; free text never approves. A Teams card is a message on a private queue that a Power Automate flow posts: no bot, no app registration and no public endpoint ([proposal 13](../proposals/13-teams-and-outlook.md)); a second way, off until the owner sets `TEAMS_DELIVERY` to `bot`, is a bot that only sends and has no public endpoint either ([proposal 20](../proposals/20-teams-cards-through-a-bot.md)). Email uses an app-only mailbox with a recipient allow-list; Azure Communication Services Email is not used. Cards go only to members of the directory; outsiders get plain-text e-mail.
 - **Instead of.** Agents sending messages; approval by reply.
 - **Cost · security · reversibility.** Small · stops exfiltration by mail and forged approvals · high.
 
