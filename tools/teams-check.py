@@ -20,8 +20,9 @@ run     The probe, and then the test card: puts the control message teams-card-t
           create           the 1:1 chat with the owner (the Bot Connector's create-conversation call, with no card in it); 403 says whether the Teams app is not installed for him or is blocked
           send             the test card, posted in that chat
           update           the card replaced by the closing card
-        The test card goes to the first person of the list of people who has the role owner. When the app sent nothing at all, its last line says why in one word (the delivery is not the bot or its settings are
-        incomplete, there is no owner, a switch of the owner, messages or all, holds the cards, or its settings could not be read), and the tool says it in plain words.
+        The test card goes to the first person of the list of people who has the role owner, whatever TEAMS_DELIVERY says, so that the bot is proved before it is switched on. When the app sent nothing at all, its
+        last line says why in one word (the Teams settings or the sign-in settings of the function app are incomplete, there is no owner, a switch of the owner, messages or all, holds the cards, or its
+        settings could not be read), and the tool says it in plain words.
         What is printed is a fixed word or a number that the tool checked: no id, name, address, URL or text of the app is ever printed, because the log of the Hub is public. It fails when a host gave
         no answer, when a step was not ok, or when the History did not arrive within --minutes.
 """
@@ -65,7 +66,7 @@ REASONS = {
 }
 # What the cases app may say on the last line when no step ran at all, one plain word.
 FINISHED_REASONS = {
-    "off": "the cases app is not set to deliver through the bot (TEAMS_DELIVERY is not bot, or its Teams settings or its sign-in settings are incomplete)",
+    "off": "the Teams settings or the sign-in settings of the function app are incomplete (the action cases sets them)",
     "no-owner": "the cases app found no person with the role owner to send the test card to",
     "held": "a switch of the owner (messages or all) holds the cards",
     "other": "the cases app could not read its settings",

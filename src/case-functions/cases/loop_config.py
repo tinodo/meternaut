@@ -92,6 +92,12 @@ def _teams(env: Mapping[str, str], tenant: str | None) -> TeamsWay:
     return TeamsWay("bot", "", given[TEAMS_BOT_APP_ID].lower(), given[TEAMS_BOT_IDENTITY_CLIENT_ID].lower(), tenant or "", DEFAULT_SERVICE_URL)
 
 
+def bot_way(env: Mapping[str, str], tenant: str | None) -> TeamsWay:
+    """The bot way by the bot's own settings, whatever TEAMS_DELIVERY says: `bot`, or `off` with the reason. The test card (cases/offers.card_test) proves the way with it before the owner switches the delivery
+    to `bot`; the rules are the ones of `_teams`, which the loop uses, so that the test proves what the loop will do."""
+    return _teams({**env, TEAMS_DELIVERY: "bot"}, tenant)
+
+
 @dataclass(frozen=True)
 class LoopSettings:
     store_account: str
