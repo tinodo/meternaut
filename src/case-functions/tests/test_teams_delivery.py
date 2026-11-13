@@ -241,6 +241,14 @@ class TheCardClosesByAnUpdateOfItsActivity(unittest.TestCase):
         self.assertEqual((len(tries), {m.status for m in tries}, {m.detail for m in tries}), (offers.MAX_TRIES, {"failed"}, {teamsbot.NOT_REPLACED}))
         self.assertEqual(self.world.teams.steps().count("update"), offers.MAX_TRIES)
 
+    def test_a_card_that_cannot_be_replaced_because_the_app_is_gone_says_so_and_promises_no_letter(self):
+        end(self.world, self.plan)
+        self.world.teams.replies["update"] = [answer(403, FORBIDDEN)]
+        self.world.run()
+        (record,) = self.world.tries(cs.MAYA, offers.CLOSED)
+        self.assertEqual((record.status, record.detail), ("failed", teamsbot.REPLACE["not-installed"]))
+        self.assertNotIn("letter", record.detail)
+
     def test_a_pulled_switch_does_not_keep_a_card_open_because_it_tells_nobody_anything_new(self):
         end(self.world, self.plan)
         self.world.store.switch_put(SwitchRecord(name="messages", paused=True, by="Maya", at="2026-11-05T10:00:00Z"))
@@ -302,7 +310,8 @@ class WhenTeamsSaysNo(unittest.TestCase):
     def test_a_throttle_and_a_silence_are_failed_tries_that_say_so(self):
         self.world.teams.replies["send"] = [answer(429, {}, retry_after="3600"), OSError("lost")]
         self.world.run()
-        self.assertEqual([self.world.attempts(cs.MAYA)[0].detail, self.world.attempts(cs.ANNA)[0].detail], [teamsbot.REASONS["throttled"], teamsbot.REASONS["network"]])
+        self.assertEqual([self.world.attempts(cs.MAYA)[0].detail, self.world.attempts(cs.ANNA)[0].detail], [teamsbot.REASONS["throttled"], teamsbot.NOT_RETRIED],
+                         "a silence after the post may be a card that arrived: it says so")
 
     def test_a_try_never_holds_a_token_an_id_or_what_teams_said(self):
         self.world.teams.replies["create"] = [answer(403, FORBIDDEN)]
@@ -328,6 +337,32 @@ class WhenTeamsSaysNo(unittest.TestCase):
         on_plan(plan, case)
         self.assertEqual(graph.to(), ["maya@example.com"], "the person for whom Teams said no gets the letter, and the person whose card went gets none")
 
+    def test_a_post_whose_answer_was_lost_is_never_posted_again_and_the_letter_follows_after_twenty_minutes(self):
+        for lost in (TimeoutError("slow"), answer(502), answer(201, {})):
+            with self.subTest(lost=str(lost)[:20]):
+                world, graph = BotWorld(), Graph()
+                plan = world.open_plan(cs.change_plan(approvers=(cs.MAYA,), created_at=stamp(cs.START), expires_at="2026-12-01T00:00:00Z"))
+                world.ready(cs.MAYA)
+                env = {**LOOP_ENV, "CONSOLE_PEOPLE": PEOPLE_OF_THE_TESTS}
+                on_plan, _, _ = notify.hooks(env, loop_config.load(env), world.store, world.people, lambda resource: "tok", lambda text: text, transport=graph, sleep=lambda s: None,
+                                             monotonic=lambda: 0.0, clock=world.clock)
+                world.teams.replies["send"] = [lost]
+                for _ in range(3):
+                    world.run()
+                    world.clock.advance(minutes=offers.RETRY_MINUTES + 1)
+                self.assertEqual(world.teams.steps().count("send"), 1, "the card may have arrived: no round posts it again, and the next post would have worked")
+                (record,) = world.attempts(cs.MAYA)
+                self.assertEqual((record.status, record.detail, world.posted(cs.MAYA)), ("failed", teamsbot.NOT_RETRIED, []))
+                on_plan(plan, world.store.case_get(plan.case_id))
+                self.assertEqual(graph.to(), ["maya@example.com"], "the letter follows when the first twenty minutes are over")
+
+    def test_a_failure_before_the_post_is_tried_again_in_the_next_round(self):
+        self.world.teams.replies["create"] = [answer(503), answer(503)]
+        self.world.run()
+        self.world.clock.advance(minutes=offers.RETRY_MINUTES + 1)
+        self.world.run()
+        self.assertEqual(([m.status for m in self.world.attempts(cs.MAYA)], self.world.teams.steps().count("send"), len(self.world.posted(cs.MAYA))), (["failed", "sent"], 2, 1))
+
 
 class WhenTheSettingsAreNotComplete(unittest.TestCase):
     def way(self, **env):
@@ -340,21 +375,31 @@ class WhenTheSettingsAreNotComplete(unittest.TestCase):
         self.assertEqual(loop_config.TeamsWay().way, "queue")
 
     def test_the_bot_way_is_on_only_when_every_setting_is_there_and_right(self):
-        way = self.way(**BOT, TEAMS_SERVICE_URL=" HTTPS://smba.infra.gcc.teams.microsoft.com/teams/ ")
-        self.assertEqual((way.way, way.why, way.app_id, way.identity_client_id, way.tenant_id, way.service_url), ("bot", "", APP, IDENTITY, TENANT, "https://smba.infra.gcc.teams.microsoft.com/teams/"))
+        way = self.way(**BOT, TEAMS_SERVICE_URL=" HTTPS://SMBA.trafficmanager.net/teams ")
+        self.assertEqual((way.way, way.why, way.app_id, way.identity_client_id, way.tenant_id, way.service_url), ("bot", "", APP, IDENTITY, TENANT, "https://smba.trafficmanager.net/teams/"),
+                         "the one address that is allowed, in any case and without its last slash, is the address of the public cloud")
         self.assertEqual(self.way(**{**BOT, "TEAMS_DELIVERY": "BOT"}).service_url, "https://smba.trafficmanager.net/teams/", "the default is the public cloud")
 
     def test_a_missing_or_wrong_part_turns_the_way_off_with_one_plain_sentence_and_never_stops_the_loop(self):
+        wrong = "TEAMS_SERVICE_URL is not the Bot Connector's address"
         for change, said in (({"TEAMS_BOT_APP_ID": ""}, "TEAMS_BOT_APP_ID is not set"), ({"TEAMS_BOT_IDENTITY_CLIENT_ID": ""}, "TEAMS_BOT_IDENTITY_CLIENT_ID is not set"),
                              ({"TEAMS_BOT_APP_ID": "not a guid"}, "TEAMS_BOT_APP_ID is not a client id"), ({"TEAMS_BOT_IDENTITY_CLIENT_ID": "x" * 36}, "TEAMS_BOT_IDENTITY_CLIENT_ID is not a client id"),
-                             ({"TEAMS_SERVICE_URL": "http://smba.trafficmanager.net/teams/"}, "TEAMS_SERVICE_URL is not an https address"), ({"TEAMS_SERVICE_URL": "https://smba.trafficmanager.net/"}, "TEAMS_SERVICE_URL"),
-                             ({"TEAMS_SERVICE_URL": "https://smba.trafficmanager.net:8443/teams/"}, "TEAMS_SERVICE_URL"), ({"TEAMS_SERVICE_URL": "https://evil/teams/"}, "TEAMS_SERVICE_URL"),
+                             ({"TEAMS_SERVICE_URL": "http://smba.trafficmanager.net/teams/"}, wrong), ({"TEAMS_SERVICE_URL": "https://smba.trafficmanager.net/"}, wrong),
+                             ({"TEAMS_SERVICE_URL": "https://smba.trafficmanager.net:8443/teams/"}, wrong), ({"TEAMS_SERVICE_URL": "https://evil/teams/"}, wrong),
                              ({"TEAMS_DELIVERY": "banana"}, "TEAMS_DELIVERY is neither queue nor bot")):
             with self.subTest(change=change):
                 way = self.way(**{**BOT, **change})
                 self.assertEqual(way.way, "off")
                 self.assertTrue(way.why.startswith("No Teams card is tried and the letters go instead: ") and said in way.why and way.why.endswith("."), way.why)
                 self.assertNotIn("\n", way.why)
+
+    def test_the_address_of_the_bot_connector_is_one_that_is_allowed_and_not_one_that_has_a_shape(self):
+        for url in ("https://evil.example/teams/", "https://smba.trafficmanager.net.evil.example/teams/", "https://login.microsoftonline.com/teams/", "https://smba.trafficmanager.net/teams/x/",
+                    "https://user@smba.trafficmanager.net/teams/", "https://smba.trafficmanager.net/teams/?a=b", "https://smba.infra.gcc.teams.microsoft.com/teams/", "https://smba.infra.gov.teams.microsoft.us/teams/",
+                    "https://smba.infra.dod.teams.microsoft.us/teams/"):
+            with self.subTest(url=url):
+                way = self.way(**BOT, TEAMS_SERVICE_URL=url)
+                self.assertEqual((way.way, "TEAMS_SERVICE_URL is not the Bot Connector's address" in way.why, url in way.why, "evil" in way.why), ("off", True, False, False), "the value is never printed")
 
     def test_the_tenant_of_the_sign_in_is_needed_and_the_sign_in_is_not_made_up_for_it(self):
         env = {k: v for k, v in {**LOOP_ENV, **BOT}.items() if k not in SIGNIN}
@@ -429,6 +474,39 @@ class TheWiringOfTheWays(unittest.TestCase):
         self.assertEqual(world.teams.steps(), ["token", "create", "send"])
 
 
+class ASlowBotConnectorHoldsBackNothing(unittest.TestCase):
+    """The round of cards runs before the letters in the same minute: the bot has 25 seconds for its calls (offers.ROUND_SECONDS), and what does not fit waits for the next round."""
+
+    def slow(self, seconds):
+        self.world, self.now = BotWorld(), [1000.0]
+        self.world.bot.client.monotonic = lambda: self.now[0]
+        fast = self.world.bot.client.transport
+
+        def transport(method, url, headers, data, timeout):
+            self.now[0] += seconds
+            return fast(method, url, headers, data, timeout)
+        self.world.bot.client.transport = transport
+        self.world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
+        self.world.ready(cs.MAYA, cs.ANNA)
+
+    def test_a_card_that_does_not_fit_in_the_time_of_the_round_waits_for_the_next_round_and_uses_up_no_try(self):
+        self.slow(10.0)
+        self.world.run()
+        self.assertEqual((self.world.teams.steps(), len(self.world.posted(cs.MAYA)), self.world.tries(cs.ANNA)), (["token", "create", "send"], 1, []))
+        self.world.run()
+        self.assertEqual((self.world.teams.steps(), len(self.world.posted(cs.ANNA))), (["token", "create", "send", "create", "send"], 1))
+        self.assertEqual(offers.ROUND_SECONDS, 25)
+
+    def test_a_post_that_the_time_of_the_round_did_not_allow_is_not_a_card_that_may_have_arrived(self):
+        self.slow(13.0)
+        self.world.run()
+        (record,) = self.world.attempts(cs.MAYA)
+        self.assertEqual((record.status, record.detail, self.world.teams.steps(), self.world.tries(cs.ANNA)), ("failed", teamsbot.REASONS["network"], ["token", "create"], []))
+        self.world.clock.advance(minutes=offers.RETRY_MINUTES + 1)
+        self.world.run()
+        self.assertEqual(([m.status for m in self.world.attempts(cs.MAYA)], len(self.world.posted(cs.MAYA))), (["failed", "sent"], 1), "the next round tries again, for no post was made")
+
+
 class TheBlockOfTheOperationsPage(unittest.TestCase):
     def setUp(self):
         self.world = BotWorld()
@@ -470,6 +548,11 @@ class TheBlockOfTheOperationsPage(unittest.TestCase):
         self.world.clock.advance(minutes=20)
         self.world.teams.replies["token"] = []
         self.world.teams.replies["create"] = [OSError("x")] * 3
+        self.world.run()
+        self.assertEqual(self.status()[1], "Last result: no answer from Teams.")
+
+    def test_a_card_that_may_have_arrived_is_told_as_no_answer_from_teams(self):
+        self.world.teams.replies["send"] = [OSError("x")] * 2
         self.world.run()
         self.assertEqual(self.status()[1], "Last result: no answer from Teams.")
 
@@ -609,6 +692,12 @@ class TheTestCard(unittest.TestCase):
                 lines, passed = read(env, before)
                 self.assertFalse(passed)
                 self.assertIn(f"The cases app sent nothing: {check.FINISHED_REASONS[reason]}.", lines[-1])
+
+    def test_a_card_that_cannot_be_made_after_the_token_and_the_conversation_still_ends_the_test_with_its_last_line(self):
+        with mock.patch.object(cards, "probe_card", side_effect=cards.CardError("the card is wrong")):
+            ok, events, _ = self.run_test()
+        self.assertEqual((ok, self.teams.steps(), [(e["type"], e.get("step"), e["ok"], e.get("reason")) for e in events]),
+                         (False, ["token", "create"], [("teams.test.step", "token", True, None), ("teams.test.step", "create", True, None), ("teams.test.finished", None, False, "other")]))
 
     def test_a_loop_that_is_not_set_up_is_one_plain_word_and_never_a_crash(self):
         with LogCapture() as capture:

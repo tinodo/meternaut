@@ -19,12 +19,16 @@ NETWORK_ERRORS = (OSError, TimeoutError, urllib.error.URLError)
 
 
 class IdentityError(Exception):
-    """The platform gave no token. The text says why, and never holds a token."""
+    """The platform gave no token. The text says why, and never holds a token. `transient` is true when the endpoint gave no answer, or 429 or 5xx, on every try: it may answer later."""
+
+    transient = False
 
 
-def _failure(problem: str, tries: int) -> IdentityError:
+def _failure(problem: str, tries: int, transient: bool = False) -> IdentityError:
     """The error of the last try. It says how many tries were made when there was more than one."""
-    return IdentityError(f"the managed identity endpoint {problem}" + (f" after {tries} tries" if tries > 1 else ""))
+    error = IdentityError(f"the managed identity endpoint {problem}" + (f" after {tries} tries" if tries > 1 else ""))
+    error.transient = transient
+    return error
 
 
 def default_fetch(url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:
@@ -61,6 +65,7 @@ class Identity:
         if self.client_id:
             url += f"&client_id={quote(self.client_id, safe='')}"
         headers = {"X-IDENTITY-HEADER": self.header, "Accept": "application/json"}
+        definitive = False
         for tries, pause in enumerate((0, *PAUSES_SECONDS), start=1):  # the first try has no pause
             if tries > 1:
                 self.sleep(pause)
@@ -73,8 +78,9 @@ class Identity:
                     return self._accept(resource, body, tries)
                 problem, cause = f"answered {status}", None
                 if status != 429 and not (500 <= status <= 599):
+                    definitive = True
                     break
-        raise _failure(problem, tries) from cause
+        raise _failure(problem, tries, not definitive) from cause
 
     def _accept(self, resource: str, body: bytes, tries: int) -> str:
         try:

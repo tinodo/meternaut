@@ -37,7 +37,6 @@ import functools
 import logging
 import time
 import uuid
-from collections import Counter
 from typing import Callable, Mapping
 
 from . import cardlinks, cards, loop_config, people as people_mod, quiet, switches, teamsbot, teamsqueue, wiring
@@ -57,6 +56,7 @@ LOG = logging.getLogger("meternaut.teams.offers")
 EPOCH = "2000-01-01T00:00:00Z"
 RETRY_MINUTES = 15  # a card that was not sent is offered again after this long
 MAX_TRIES = 12  # and given up after this many tries
+ROUND_SECONDS = 25  # the bot's time for the calls of one round: the letters follow the cards in the same minute, and a slow Bot Connector must not hold them back
 RESULT_DAYS = 3  # the cards about a change are offered for this long after it
 APPROVAL, ADVICE, NOTICE, VERIFIED, FIRST_CONTACT = "approval-card", "advice-card", "notice-card", "verified-card", "first-contact-card"
 POSTED, CLOSED = "card-posted", "card-closed"
@@ -86,6 +86,11 @@ def _last_sent(mails: list[MailRecord], *kinds: str) -> str:
     return max((m.sent_at for m in mails if m.kind in kinds and m.status == "sent"), default="")
 
 
+def _spent(tries: list[MailRecord]) -> bool:
+    """True when the tries are used up, or when one of them may have put the card in Teams (a post whose answer was lost: teamsbot.NOT_RETRIED): that card is not posted again, and the letter follows."""
+    return len(tries) >= MAX_TRIES or any(m.detail == teamsbot.NOT_RETRIED for m in tries)
+
+
 def contacts_of(people: People, reader: str = "") -> tuple[str, ...]:
     """The people who are responsible for Meternaut, for the last line of a card: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
     address, in plain text. A card names the first of them, and never the person who reads it (`reader` is that person's object id) when somebody else is listed, as the page and the letters do."""
@@ -112,6 +117,8 @@ class Offers:
         record, and the round goes on."""
         tries = 0
         now = self.clock()
+        if self.bot is not None:
+            self.bot.client.deadline = self.bot.client.monotonic() + ROUND_SECONDS
         try:
             for plan in self.store.plans_open():
                 if plan.state != "open" or parse(plan.expires_at) <= now:
@@ -157,7 +164,7 @@ class Offers:
     def _due(self, person: Person, kind: str, plan_id: str | None) -> bool:
         """True when a card of this kind is to be tried now: none was sent, the last try is old enough, the tries are not used up, and no letter went for the same request."""
         tries = self._tries(person, kind, plan_id)
-        if any(m.status == "sent" for m in tries) or len(tries) >= MAX_TRIES or (plan_id is not None and self._letter_sent(person, kind, plan_id)):
+        if any(m.status == "sent" for m in tries) or _spent(tries) or (plan_id is not None and self._letter_sent(person, kind, plan_id)):
             return False
         return not tries or self.clock() - parse(max(m.sent_at for m in tries)) >= dt.timedelta(minutes=RETRY_MINUTES)
 
@@ -188,7 +195,7 @@ class Offers:
         """The card that says who writes, before the first card of a request goes to a person who chose Teams. Returns (the tries made, whether the card of the request may go now): it may when the person
         was told already (by this card or by the letter) or when the tries of this card are used up (the card of the request tells them itself), and not before the next try."""
         told = any(m.status == "sent" and m.kind in (FIRST_CONTACT, "first_contact") for m in self.store.mails_since(person.oid, EPOCH))
-        if told or len(self._tries(person, FIRST_CONTACT, None)) >= MAX_TRIES:
+        if told or _spent(self._tries(person, FIRST_CONTACT, None)):
             return 0, True
         if not self._due(person, FIRST_CONTACT, None):
             return 0, False
@@ -342,6 +349,8 @@ class Offers:
         """The card goes to the person through the bot (cases/teamsbot.py), or replaces the activity `update` in `conversation`. What came of it is written as the outcome, in the plain words of
         teamsbot.REASONS; a card of a request that waits is kept at once with the activity and the conversation, so that it can be replaced when the request ends."""
         delivery_id, note = self.ids(), ""
+        if self.bot.late():  # type: ignore[union-attr]
+            return "failed"  # the time of this round is used up: nothing is written, so that waiting uses up no try, and the card goes in the next round
         try:
             try:
                 card = make_card()
@@ -447,6 +456,9 @@ def card_test(env: Mapping[str, str], request_id: str, *, transport=default_tran
         step("update", lambda: bot.update(conversation, activity, cards.probe_card(True, contacts=contacts), summary))
     except teamsbot.BotError:
         return finish(False)
+    except Exception as error:  # noqa: BLE001 (the card could not be made, or anything else: the History still gets its last line)
+        LOG.error(redact(f"the test of the Teams cards failed: {type(error).__name__}"))
+        return finish(False, reason="other")
     return finish(True)
 
 

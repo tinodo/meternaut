@@ -12,6 +12,7 @@ import cardsupport as cs
 from cases import cards, http, teamsbot
 from cases.delegated import ASSERTION_RESOURCE, ASSERTION_TYPE
 from cases.http import Refused
+from cases.identity import Identity
 from cases.loop_config import TeamsWay
 from cases.redact import Redactor
 
@@ -153,6 +154,43 @@ class TheTokenOfTheApp(Case):
         self.clock.advance(seconds=2)
         self.assertEqual((self.bot.token(), len(self.fake.calls)), (ACCESS, calls + 1))
 
+    def test_a_token_that_is_still_valid_is_used_when_a_new_one_cannot_be_had_and_no_card_fails_for_it(self):
+        self.bot.token()
+        self.clock.advance(seconds=3599 - 200)  # inside the last five minutes: a new one is asked for, and the Microsoft Entra ID service is down
+        self.script("token", answer(503), answer(503), answer(503))
+        self.assertEqual(self.bot.token(), ACCESS)
+        asked = self.fake.steps().count("token")
+        self.clock.advance(seconds=30)
+        self.assertEqual((self.bot.token(), self.fake.steps().count("token")), (ACCESS, asked), "for a minute after the failure nothing is asked for, and the token that is valid is used")
+        self.clock.advance(seconds=31)
+        self.script("token", answer(200, {"token_type": "Bearer", "expires_in": 3599, "access_token": ACCESS + "-two"}))
+        self.assertEqual(self.bot.token(), ACCESS + "-two")
+
+    def test_a_token_that_has_expired_is_not_used_when_a_new_one_cannot_be_had(self):
+        self.bot.token()
+        self.clock.advance(seconds=3600)
+        self.script("token", answer(503), answer(503), answer(503))
+        self.assertEqual(self.refused(self.bot.token).reason, "network")
+
+    def test_an_expiry_that_is_not_a_plain_number_does_not_crash_and_the_token_is_not_kept(self):
+        for seconds in ("\u00b2", "\u0663\u0665\u0669\u0669", "\uff13\uff15\uff19\uff19", "3.5", "-5", "", None, True, [3599]):
+            with self.subTest(seconds=seconds):
+                self.fake.calls.clear()
+                self.script("token", *[answer(200, {"token_type": "Bearer", "expires_in": seconds, "access_token": ACCESS})] * 2)
+                self.assertEqual((self.bot.token(), self.bot.token(), self.fake.steps()), (ACCESS, ACCESS, ["token", "token"]))
+
+    def test_a_managed_identity_that_did_not_answer_is_no_answer_and_one_that_refused_is_a_wrong_identity(self):
+        def identity(status):
+            return Identity({"IDENTITY_ENDPOINT": "http://localhost:8081/msi/token", "IDENTITY_HEADER": "h"}, fetch=lambda url, headers, timeout: (status, b""), sleep=lambda seconds: None).token
+
+        def lost(url, headers, timeout):
+            raise TimeoutError("slow")
+        for token, reason in ((identity(503), "network"), (identity(429), "network"), (Identity({"IDENTITY_ENDPOINT": "http://localhost:8081/msi/token", "IDENTITY_HEADER": "h"}, fetch=lost,
+                                                                                                    sleep=lambda seconds: None).token, "network"), (identity(400), "unauthorized"), (identity(404), "unauthorized")):
+            with self.subTest(reason=reason):
+                error = self.refused(self.make(assertion=token).token)
+                self.assertEqual((error.reason, str(error), self.fake.calls), (reason, teamsbot.REASONS[reason], []))
+
 
 class TheCallsOfTheBotConnector(Case):
     def test_the_conversation_is_made_with_the_object_id_of_the_person_and_the_card_is_posted_in_it(self):
@@ -221,6 +259,62 @@ class TheCallsOfTheBotConnector(Case):
         self.bot.update(CONVERSATION, ACTIVITY, CARD, "x")
         self.assertEqual(self.bot.status, 200)
 
+    def test_a_412_is_tried_again_for_the_calls_that_can_be_repeated_and_not_for_the_post_of_a_card(self):
+        self.script("create", answer(412), answer(201, {"id": CONVERSATION}))
+        self.script("update", answer(412), answer(200, {"id": ACTIVITY}))
+        self.assertEqual(self.bot.create(PERSON), CONVERSATION)
+        self.bot.update(CONVERSATION, ACTIVITY, CARD, "x")
+        self.assertEqual(self.fake.steps(), ["token", "create", "create", "update", "update"])
+        self.fake.calls.clear()
+        self.script("send", answer(412), answer(201, {"id": ACTIVITY}))
+        error = self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
+        self.assertEqual((error.reason, error.status, error.maybe_sent, self.fake.steps()), ("network", 412, False, ["send"]), "a 412 says that the card was not taken: the next round tries again")
+
+    def test_a_401_of_the_bot_connector_drops_the_token_so_that_the_next_call_asks_for_a_new_one(self):
+        self.bot.create(PERSON)
+        self.script("send", answer(401, {"message": "Authorization has been denied for this request."}))
+        self.assertEqual(self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x")).reason, "unauthorized")
+        self.script("token", answer(200, {"token_type": "Bearer", "expires_in": 3599, "access_token": ACCESS + "-two"}))
+        self.bot.post(CONVERSATION, CARD, "x")
+        self.assertEqual(self.fake.steps(), ["token", "create", "send", "token", "send"])
+        self.assertEqual(self.fake.calls[-1]["headers"]["Authorization"], f"Bearer {ACCESS}-two")
+
+
+class WhenTheAnswerOfAPostIsLost(Case):
+    """A card whose post was sent and whose answer is no answer (no answer at all, a 5xx, a 2xx without an id) may have arrived: the error says so, and nobody posts it again."""
+
+    def post(self, *replies):
+        self.bot.token()
+        self.script("send", *replies)
+        return self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
+
+    def test_a_post_without_a_usable_answer_may_have_arrived_and_is_made_once(self):
+        for reply in (answer(500), answer(502), answer(504), OSError("lost"), TimeoutError("slow"), answer(201, {}), answer(201, {"id": "../x"}), answer(200, b"not json")):
+            with self.subTest(reply=str(reply)[:30]):
+                self.fake.calls.clear()
+                error = self.post(*[reply] * 3)
+                self.assertEqual((error.step, error.maybe_sent, str(error), teamsbot.REASON_OF[str(error)], self.fake.steps().count("send")), ("send", True, teamsbot.NOT_RETRIED, "network", 1))
+
+    def test_a_post_that_was_refused_or_not_made_may_not_have_arrived(self):
+        for reply in (answer(429, {}, retry_after="3600"), answer(403, FORBIDDEN), answer(400, {"error": {"code": "BadArgument"}}), answer(401), answer(412)):
+            with self.subTest(reply=str(reply)[:30]):
+                error = self.post(*[reply] * 3)
+                self.assertEqual((error.maybe_sent, str(error) == teamsbot.NOT_RETRIED), (False, False))
+
+    def test_a_post_that_was_not_started_for_the_time_of_the_round_is_used_up_may_not_have_arrived(self):
+        self.bot.token()
+        self.bot.client.deadline = self.bot.client.monotonic() - 1
+        self.assertTrue(self.bot.late())
+        error = self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
+        self.assertEqual((error.maybe_sent, error.reason, self.fake.steps()), (False, "network", ["token"]))
+
+    def test_no_other_step_may_have_put_a_card_in_teams(self):
+        self.bot.token()
+        for step, reply in (("create", answer(503)), ("create", OSError("lost")), ("create", answer(201, {})), ("update", answer(503)), ("update", OSError("lost")), ("update", answer(200, b"x"))):
+            with self.subTest(step=step, reply=str(reply)[:30]):
+                self.script(step, *[reply] * 3)
+                self.assertFalse(self.refused({"create": lambda: self.bot.create(PERSON), "update": lambda: self.bot.update(CONVERSATION, ACTIVITY, CARD, "x")}[step]).maybe_sent)
+
 
 FORBIDDEN = {"error": {"code": "ForbiddenOperationException", "message": "Bot is not installed in user's personal scope"}}
 ROSTER = {"error": {"code": "BotNotInConversationRoster", "message": "The bot is not part of the conversation roster."}}
@@ -238,6 +332,7 @@ class WhatEachFailureMeans(Case):
         ("update", 404, None, "other"), ("update", 400, {"error": {"code": "BadArgument"}}, "other"), ("update", 403, FORBIDDEN, "not-installed"),
         ("create", 429, None, "throttled"), ("send", 429, None, "throttled"), ("update", 429, None, "throttled"),
         ("create", 500, None, "network"), ("send", 503, None, "network"), ("update", 504, None, "network"),
+        ("create", 412, None, "network"), ("send", 412, None, "network"), ("update", 412, None, "network"),
     )
 
     def run_step(self, step):
@@ -255,8 +350,10 @@ class WhatEachFailureMeans(Case):
         for step, status, body, reason in self.TABLE:
             with self.subTest(step=step, status=status):
                 self.script(step, *[answer(status, body, retry_after="3600")] * 3)
-                text = str(self.refused(self.run_step(step)))
-                self.assertEqual(text, teamsbot.NOT_REPLACED if (step, reason) == ("update", "other") else teamsbot.REASONS[reason])
+                error = self.refused(self.run_step(step))
+                text = str(error)
+                self.assertEqual(text, teamsbot.NOT_RETRIED if error.maybe_sent else teamsbot.NOT_REPLACED if (step, reason) == ("update", "other")
+                                 else (teamsbot.REPLACE.get(reason) if step == "update" else None) or teamsbot.REASONS[reason])
                 for hidden in (ACCESS, ASSERTION, CONVERSATION, PERSON, TENANT, APP, "Authorization", "ForbiddenOperationException", "MessageWritesBlocked", "smba", "http"):
                     self.assertNotIn(hidden, text)
 
@@ -269,7 +366,18 @@ class WhatEachFailureMeans(Case):
         self.assertEqual(sorted(teamsbot.REASONS), ["blocked", "network", "not-installed", "other", "throttled", "unauthorized"])
         self.assertEqual({teamsbot.REASON_OF[text] for text in teamsbot.REASONS.values()}, set(teamsbot.REASONS))
         self.assertEqual(teamsbot.REASON_OF[teamsbot.NOT_REPLACED], "other")
-        self.assertTrue(all(len(text) < 240 for text in (*teamsbot.REASONS.values(), teamsbot.NOT_REPLACED)), "a record keeps at most 240 characters of a detail")
+        self.assertEqual({teamsbot.REASON_OF[text] for text in teamsbot.REPLACE.values()}, {"not-installed", "blocked"})
+        self.assertEqual(teamsbot.REASON_OF[teamsbot.NOT_RETRIED], "network")
+        self.assertTrue(all(len(text) < 240 for text in (*teamsbot.REASONS.values(), *teamsbot.REPLACE.values(), teamsbot.NOT_REPLACED, teamsbot.NOT_RETRIED)), "a record keeps at most 240 characters of a detail")
+
+    def test_a_card_that_cannot_be_replaced_does_not_promise_a_letter_which_belongs_to_a_card_that_could_not_be_sent(self):
+        for reason, body in (("not-installed", FORBIDDEN), ("blocked", WRITES_BLOCKED)):
+            with self.subTest(reason=reason):
+                self.script("update", answer(403, body))
+                text = str(self.refused(self.run_step("update")))
+                self.assertEqual((text, teamsbot.REASON_OF[text]), (teamsbot.REPLACE[reason], reason))
+                self.assertNotIn("letter", text)
+                self.assertNotIn("could be sent", text)
 
     def test_a_call_that_the_list_refuses_is_a_refusal_and_not_a_crash(self):
         way = TeamsWay("bot", "", APP, IDENTITY, TENANT, "https://smba.infra.gcc.teams.microsoft.com/teams/")

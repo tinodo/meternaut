@@ -60,9 +60,9 @@ class LoopConfigError(Exception):
     """One or more settings of the loop are missing or wrong; the text lists every one."""
 
 
+# The one address that the app sends to: the Bot Connector of the public cloud, whose token request this app makes. GCC, GCC High and DoD have other addresses and are not served. The setting
+# TEAMS_SERVICE_URL is empty or this address (a missing closing slash is added): any other value turns the way off, so that the token of the bot never goes to another host.
 DEFAULT_SERVICE_URL = "https://smba.trafficmanager.net/teams/"
-# The service URL of the Bot Connector: https, a host name, one path segment and a closing slash. The token goes only to this host.
-SERVICE_URL = re.compile(r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/[a-z0-9-]{1,32}/$")
 
 
 @dataclass(frozen=True)
@@ -82,14 +82,14 @@ def _teams(env: Mapping[str, str], tenant: str | None) -> TeamsWay:
     if way == "queue":
         return TeamsWay()
     given = {name: (env.get(name) or "").strip() for name in (TEAMS_BOT_APP_ID, TEAMS_BOT_IDENTITY_CLIENT_ID, TEAMS_SERVICE_URL)}
-    url = given[TEAMS_SERVICE_URL].lower() or DEFAULT_SERVICE_URL
+    url = given[TEAMS_SERVICE_URL].lower()
     wrong = [f"{TEAMS_DELIVERY} is neither queue nor bot"] if way != "bot" else [f"{name} is not set" if not value else f"{name} is not a client id"
                                                                                   for name, value in given.items() if name != TEAMS_SERVICE_URL and not GUID.match(value)]
     if way == "bot":
-        wrong += ([] if tenant else [f"{SIGNIN_TENANT_ID} is not set"]) + ([] if SERVICE_URL.match(url) else [f"{TEAMS_SERVICE_URL} is not an https address of a host and one folder"])
+        wrong += ([] if tenant else [f"{SIGNIN_TENANT_ID} is not set"]) + ([] if not url or (url if url.endswith("/") else url + "/") == DEFAULT_SERVICE_URL else [f"{TEAMS_SERVICE_URL} is not the Bot Connector's address"])
     if wrong:
         return TeamsWay("off", f"No Teams card is tried and the letters go instead: {', '.join(wrong)}.")
-    return TeamsWay("bot", "", given[TEAMS_BOT_APP_ID].lower(), given[TEAMS_BOT_IDENTITY_CLIENT_ID].lower(), tenant or "", url)
+    return TeamsWay("bot", "", given[TEAMS_BOT_APP_ID].lower(), given[TEAMS_BOT_IDENTITY_CLIENT_ID].lower(), tenant or "", DEFAULT_SERVICE_URL)
 
 
 @dataclass(frozen=True)
