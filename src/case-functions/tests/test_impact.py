@@ -29,6 +29,7 @@ ZONE = f"/subscriptions/{SUB}/resourceGroups/rg-dns/providers/Microsoft.Network/
 OTHER = f"/subscriptions/{SUB}/resourceGroups/rg-platform/providers/Microsoft.Network/privateEndpoints/pe-apim-other"
 RUN_PE = f"{RG}/rg-platform/providers/Microsoft.Network/privateEndpoints/pe-apim-demo"  # the same endpoint in the subscription of the runs of the investigation
 IP, OTHER_IP = "10.20.0.5", "10.20.0.6"
+NIC_HIT = {"type": "microsoft.network/networkinterfaces", "n": 1}  # the endpoint's own network interface holds its address: the search that works lists it
 OWN = "99999999-8888-7777-6666-555555555555"
 AUTOMATION = "aaaaaaaa-1111-4222-8333-444444444444"
 UNANALYSED = brief.NOT_ANALYSED
@@ -73,17 +74,22 @@ def written(days_ago, caller):
 
 class Azure(FakeArm):
     """A fake of everything that the impact check reads: Resource Graph, the two lists of Azure Resource Manager, Azure Monitor and the Activity Log. By default the endpoint is Disconnected, the
-    service says so, another endpoint to the service is approved, one DNS record holds only its address, nothing mentions it, nobody changed it and no traffic was counted in 30 days.
-    `fail` maps the name of a read (endpoint, service, others, mentions, dns, zone, traffic) to the status that it answers with."""
+    service says so, another endpoint to the service is approved, one DNS record holds only its address, nothing mentions it (but its own network interface does), nobody changed it, the Activity
+    Log was read to its end and no traffic was counted in 30 days. `fail` maps the name of a read (endpoint, service, others, mentions, dns, zone, traffic) to the status that it answers with."""
 
     def __init__(self, pe=PE):
         super().__init__()
         self.pe = pe
         self.rows = {pe: endpoint_row(pe=pe), SERVICE: service_row(pe=pe)}
-        self.others, self.mentions, self.groups, self.records = [other_row()], [], [zone_group()], {ZONE: [a_record("apim-demo", IP)]}
+        self.others, self.mentions, self.groups, self.records = [other_row()], [NIC_HIT], [zone_group()], {ZONE: [a_record("apim-demo", IP)]}
         self.points = {"PEBytesIn": days(0), "PEBytesOut": days(0)}
         self.fail: dict[str, int] = {}
         self.read: list[str] = []
+        self.log_complete = True
+
+    def activity_events(self, subscription, since, until, *, resource_id=None, group=None, max_pages=3):
+        events, _ = super().activity_events(subscription, since, until, resource_id=resource_id, group=group, max_pages=max_pages)
+        return events, self.log_complete
 
     def _get(self, what):
         self.read.append(what)
@@ -120,7 +126,7 @@ def arrange(state="Disconnected", *, theirs=None, public="Enabled", others=True,
         azure.rows[PE], azure.rows[SERVICE] = endpoint_row(state), service_row(theirs or state, public)
         azure.others = [other_row()] if others else []
         azure.points = {"PEBytesIn": days(0) if points is None else points, "PEBytesOut": days(0) if points is None else points}
-        azure.mentions, azure.events = list(mentions), list(events)
+        azure.mentions, azure.events = [NIC_HIT, *mentions], list(events)
     return apply
 
 
@@ -142,8 +148,10 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertEqual(rows["Public access of the service"][0], "Enabled")
         self.assertEqual(rows["Other endpoints to the service"][0], "1 (1 approved)")
         self.assertEqual(rows["DNS records of the endpoint"][0], "apim-demo")
-        self.assertEqual(rows["Last change"], ["No change found in the part of the Activity Log that was read", "Activity Log"])
+        self.assertEqual(rows["Last change"], ["No change found in the 90 days before Meternaut read it", "Activity Log"])
         self.assertTrue(all(row[2] for row in found["rows"]), "every fact says where it was read")
+        self.assertEqual(rows["Things that mention its addresses"][0], "None", "the search found the endpoint's own network interface, so a miss of other things is a result")
+        self.assertEqual(found["readAt"], "2026-11-04T12:00:00Z", "the digest says when it was read, in UTC")
         self.assertEqual(found["unchecked"], list(impact.NEVER_SEEN), "what the reads cannot see is always said, whatever they found")
         self.assertIn("a policy or a template makes it again", found["unchecked"][0])
         self.assertEqual(found["undo"], impact.UNDO)
@@ -178,11 +186,11 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         found, _ = check(azure)
         self.assertEqual(found["verdict"], "check")
         self.assertIn("Something else mentions its addresses (routetables (1), networksecuritygroups (2)): check that it does not rely on this endpoint.", found["reasons"])
-        self.assertIn("An application or service identity changed it 3 days ago: an automation may manage it and make it again.", found["reasons"])
+        self.assertIn("An application or service identity changed it on 1 Nov 2026 UTC: an automation may manage it and make it again.", found["reasons"])
         rows = {row[0]: row[1] for row in found["rows"]}
         self.assertEqual(rows["Things that mention its addresses"], "routetables (1), networksecuritygroups (2)")
-        self.assertTrue(rows["Last change"].startswith("3 days ago, by an application or service identity (id "), rows["Last change"])
-        self.assertTrue(rows["Last change"].endswith("; 1 change in 90 days"), rows["Last change"])
+        self.assertTrue(rows["Last change"].startswith("1 Nov 2026 UTC, by an application or service identity (id "), rows["Last change"])
+        self.assertTrue(rows["Last change"].endswith("; 1 change in the 90 days before Meternaut read it"), rows["Last change"])
 
     def test_a_read_that_failed_is_never_none_so_the_verdict_is_never_safe_and_the_line_says_what_was_not_checked(self):
         for what, label in (("endpoint", "the endpoint itself"), ("service", "the service that it points at"), ("others", "the other endpoints to the service"),
@@ -201,6 +209,94 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
                     self.assertEqual((found["complete"], found["verdict"] == "safe"), (False, False))
                     self.assertIn(f"{label} ({how})", found["unchecked"])
                     self.assertIn("Not everything could be read (see Not checked), so this cannot be called safe.", found["reasons"])
+                    row = {"others": "Other endpoints to the service", "dns": "DNS records of the endpoint", "mentions": "Things that mention its addresses"}.get(what)
+                    if row:
+                        self.assertEqual({r[0]: r[1] for r in found["rows"]}[row], f"Not known ({how})", "a read that failed is never none or 0 in the table either")
+
+    def test_a_log_that_was_read_in_part_is_not_complete_and_never_safe(self):
+        for label, events in (("no change in the part that was read", []), ("a person's change in it", [written(1, "alice@example.com")])):
+            with self.subTest(case=label):
+                azure = Azure()
+                azure.events, azure.log_complete = events, False
+                found, _ = check(azure)
+                self.assertEqual((found["verdict"], found["complete"]), ("check", False), found["reasons"])
+                self.assertIn("its changes in the Activity Log (only part of the 90 days was read)", found["unchecked"])
+                self.assertIn("the part of the 90 days that was read", {row[0]: row[1] for row in found["rows"]}["Last change"])
+        azure = Azure()
+        azure.events = [written(1, "alice@example.com")]
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["complete"]), ("safe", True), "the whole log, with nobody but a person in it, is safe")
+        self.assertNotIn("Activity Log", " ".join(found["unchecked"][:-3]))
+
+    def test_an_endpoint_with_no_address_that_could_be_read_is_not_searched_and_never_safe(self):
+        azure = Azure()
+        azure.rows[PE]["properties"]["customDnsConfigs"], azure.groups = [], []
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["complete"], "mentions" in azure.read), ("check", False, False), "nothing was searched, so nothing was found")
+        self.assertEqual({row[0]: row[1] for row in found["rows"]}["Things that mention its addresses"], "Not searched")
+        self.assertIn("the addresses of the endpoint (none could be read, so nothing could be searched for)", found["unchecked"])
+        self.assertNotIn("Nothing that Azure Resource Graph lists mentions its addresses.", found["reasons"])
+        azure = Azure()
+        azure.rows[PE]["properties"]["customDnsConfigs"] = [{"fqdn": "x.example.net", "ipAddresses": [f"10.20.0.{number}" for number in range(1, 9)]}]
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], "mentions" in azure.read), ("check", True))
+        self.assertIn("the addresses of the endpoint (only 6 of its 8 were searched for)", found["unchecked"], "an address that was left out of the search is not one that nothing mentions")
+
+    def test_a_service_that_cannot_be_seen_is_not_a_service_with_nothing_to_say(self):
+        azure = Azure()
+        del azure.rows[SERVICE]
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["complete"], found["facts"]["service"]), ("check", False, "unseen"))
+        self.assertIn("the service that it points at (it could not be seen: it may be in a subscription that Meternaut cannot read)", found["unchecked"])
+        self.assertEqual({row[0]: row[1] for row in found["rows"]}["What the service says about it"], "The service could not be seen")
+        facts = {"state": "disconnected", "service": "unseen", "serviceSays": "unknown", "publicAccess": "unknown", "othersApproved": 1, "traffic": "zero", "changedBy": "none", "changedAt": "",
+                 "complete": True, "searched": True}
+        verdict, reasons = impact._judge(facts, "")
+        self.assertNotIn("Another endpoint to the same service is approved.", reasons, "what an unseen service says is not known, so what rests on it is not a reason")
+        self.assertIn("Another endpoint to the same service is approved.", impact._judge({**facts, "service": "seen"}, "")[1])
+
+    def test_a_search_that_does_not_find_the_endpoints_own_network_interface_cannot_be_trusted(self):
+        self.assertNotIn("networkinterfaces", impact.MENTIONS, "the query leaves no interface out: the endpoint's own one is the positive control")
+        azure = Azure()
+        azure.mentions = []
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["complete"]), ("check", False))
+        self.assertIn("what mentions its addresses (the search did not find the endpoint's own network interface, so its answer cannot be trusted)", found["unchecked"])
+        self.assertNotIn("Nothing that Azure Resource Graph lists mentions its addresses.", found["reasons"])
+        self.assertTrue({row[0]: row[1] for row in found["rows"]}["Things that mention its addresses"].startswith("Not known (the search did not find"))
+        azure.mentions = [{"type": "Microsoft.Network/networkInterfaces", "n": 2}]
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["facts"]["mentions"]), ("safe", 0), "the interfaces are the control and no mention: whatever the case of the type")
+        azure.mentions = [{"type": "microsoft.network/routetables", "n": 1}]
+        found, _ = check(azure)
+        self.assertEqual(found["verdict"], "check")
+        self.assertEqual({row[0]: row[1] for row in found["rows"]}["Things that mention its addresses"], "routetables (1)", "a hit is listed even when the control missed: a hit is a fact")
+
+    def test_what_a_person_reads_of_a_state_is_what_learn_says_of_it(self):
+        # Learn: only an approved endpoint can send traffic; the owner of the service can change the state later (so a rejected endpoint may have carried traffic); a denied connection cannot be
+        # approved again. None of the sentences claims the opposite.
+        self.assertEqual(impact.STATE_SAYS["rejected"], "The owner of the service rejected it, so it cannot carry traffic now: only an approved endpoint can.")
+        for state, text in impact.STATE_SAYS.items():
+            with self.subTest(state=state):
+                self.assertNotRegex(text, r"never|again|could approve", "a rejected endpoint may have carried traffic, and Learn says that a denied connection cannot be approved again")
+        azure = Azure()
+        arrange("Rejected", events=[written(40, "alice@example.com")])(azure)
+        found, _ = check(azure)
+        self.assertEqual((found["verdict"], found["reasons"][0]), ("safe", impact.STATE_SAYS["rejected"]))
+        self.assertIn("Microsoft says that such an endpoint becomes informative and should be deleted for cleanup.", impact.STATE_SAYS["disconnected"])
+
+    def test_the_words_hold_dates_and_never_yesterday_because_a_page_may_be_opened_days_after_the_read(self):
+        azure = Azure()
+        arrange(events=[written(1, "alice@example.com")])(azure)
+        found, _ = check(azure)
+        last = {row[0]: row[1] for row in found["rows"]}["Last change"]
+        self.assertEqual(last, "3 Nov 2026 UTC, by alice@example.com; 1 change in the 90 days before Meternaut read it")
+        later = impact.Reader(azure, [SUBSCRIPTION], NOW + dt.timedelta(days=5), own=[OWN])
+        again = impact.analyse(later, azure.pe, ENDPOINTS)
+        self.assertEqual({row[0]: row[1] for row in again["rows"]}["Last change"], last, "the same words five days later: the date of the write, not how long ago")
+        self.assertEqual((found["readAt"], again["readAt"]), ("2026-11-04T12:00:00Z", "2026-11-09T12:00:00Z"))
+        for text in (*found["reasons"], *(row[1] for row in found["rows"])):
+            self.assertNotRegex(text, r"(?i)yesterday|today|days ago|last 30 days")
 
     def test_no_data_for_the_traffic_is_not_zero_and_a_few_days_are_not_a_measurement(self):
         for label, points, expected in (("no data", [], "unmeasured"), ("ten days of nil", days(0, 10), "unmeasured"), ("twenty days of nil", days(0, 20), "zero"), ("a little", days(1, 3), "some")):
@@ -213,7 +309,7 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         azure.points = {"PEBytesIn": days(0), "PEBytesOut": []}
         found, _ = check(azure)
         self.assertEqual(found["facts"]["traffic"], "unmeasured", "one metric without data is not a zero of the endpoint")
-        self.assertTrue({row[0]: row[1] for row in found["rows"]}["Traffic in the last 30 days"].startswith("Not measured"))
+        self.assertTrue({row[0]: row[1] for row in found["rows"]}["Traffic in the 30 days before it was read"].startswith("Not measured"))
 
     def test_the_best_connection_counts_and_a_connection_that_names_no_service_that_can_be_read_is_not_checked(self):
         azure = Azure()
@@ -288,7 +384,7 @@ class WhatAPersonReads(unittest.TestCase):
             self.assertIn(line, text)
         (table,) = [t for t in reply.main.find_all("table") if t.find("caption").attrs.get("id") == "impact"]
         rows = {row.find("th").text(): [cell.text() for cell in row.find_all("td")] for row in table.find_all("tr")[1:]}
-        self.assertEqual(rows["Traffic in the last 30 days"][1], "Azure Monitor")
+        self.assertEqual(rows["Traffic in the 30 days before it was read"][1], "Azure Monitor")
         self.assertEqual(len(rows), 8)
         self.assertEqual(reply.main.find("p", class_="chips").text(), "Medium risk if you act on it Low confidence Answering changes nothing in Azure")
         self.assertEqual(reply.facts()["What could go wrong"], f"If you act on it: {brief.SAFE_RISK} Risk: medium.")

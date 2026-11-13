@@ -164,6 +164,11 @@ class OwnerReader:
         events, _, _ = self._events(resource_id)
         return None if events is None else changes(events)
 
+    def complete(self, resource_id: str) -> bool:
+        """Whether every page of the Activity Log of the resource was read: False when only part of the 90 days was read (`writes` then shows only the newest writes) and when none was."""
+        events, complete, _ = self._events(resource_id)
+        return events is not None and complete
+
     def _read(self, resource_id: str) -> tuple[list[dict] | None, bool, str | None]:
         found = RESOURCE.fullmatch(resource_id)
         if found is None:

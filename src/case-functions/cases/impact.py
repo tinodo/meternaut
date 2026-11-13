@@ -32,28 +32,35 @@ WINDOW = 30  # the days of traffic that are read
 MAX_ADDRESSES = 6
 MAX_ZONES = 3
 MAX_NAMES = 4  # the names of DNS records that a sentence lists
+STAMP = "%Y-%m-%dT%H:%M:%SZ"  # the time of a write and of the read, in UTC
 STATES = ("approved", "pending", "rejected", "disconnected")  # what a connection of a private endpoint can be, the best first
 ENDPOINTS = "microsoft.network/privateendpoints"
 USE_METRICS = ("PEBytesIn", "PEBytesOut")
 NEVER_SEEN = ("whether a policy or a template makes it again", "name servers and firewall rules that Azure Resource Graph does not list", "anything in a subscription that Meternaut cannot read")
 LABELS = {"endpoint": "the endpoint itself", "service": "the service that it points at", "others": "the other endpoints to the service", "mentions": "what mentions its addresses",
-          "dns": "the DNS zone groups of the endpoint", "zone": "the records of its DNS zone", "traffic": "its traffic", "log": "its changes in the Activity Log"}
+          "addresses": "the addresses of the endpoint", "dns": "the DNS zone groups of the endpoint", "zone": "the records of its DNS zone", "traffic": "its traffic",
+          "log": "its changes in the Activity Log"}
+WORDS = {NOT_VISIBLE: "not visible with this access", UNAVAILABLE: "the read failed"}  # what a read that failed says; any other word of `failed` is its own plain reason
+# What a person reads of the state of a connection is what Learn says of it ("What is a private endpoint?" and "Manage Azure private endpoints", read on 2026-11-13): only an approved endpoint can send
+# traffic, and the owner of the service can change the state later, so a rejected endpoint may have carried traffic before. Learn also says that a connection that was denied cannot be approved
+# again, so no sentence here says that the owner could.
 STATE_SAYS = {
     "approved": "It is approved, so it can carry traffic.",
     "pending": "It waits for the owner of the service to approve it: somebody asked for it, and removing it drops that request.",
-    "rejected": "The owner of the service rejected it, so it never carried traffic.",
-    "disconnected": "The owner of the service disconnected it, so it cannot carry traffic. Microsoft calls such an endpoint informational and says to delete it as a clean-up.",
+    "rejected": "The owner of the service rejected it, so it cannot carry traffic now: only an approved endpoint can.",
+    "disconnected": "The owner of the service removed the connection, so the endpoint cannot carry traffic. Microsoft says that such an endpoint becomes informative and should be deleted for cleanup.",
     "unknown": "Its connection state could not be read.",
 }
 UNDO = ("Make the endpoint again in the same subnet, for the same service, and ask the owner of the service to approve it. Then add its DNS zone group, so that the records come back. "
         "Its addresses may be different.")
+NIC = "microsoft.network/networkinterfaces"
 # Queries start with the line that marks them as this app's own (the logs and the tests tell them by it).
 ONE = "// meternaut:impact-one\nresources\n| where id =~ '{id}'\n| project id, name, properties"
 OTHERS = ("// meternaut:impact-others\nresources\n| where type =~ 'microsoft.network/privateendpoints' and id !~ '{pe}'\n"
           "| where tostring(properties.privateLinkServiceConnections) contains '{service}' or tostring(properties.manualPrivateLinkServiceConnections) contains '{service}'\n"
           "| project id, name, properties")
-MENTIONS = ("// meternaut:impact-mentions\nresources\n| where id !~ '{pe}' and type !in~ ('microsoft.network/networkinterfaces')\n| where {any}\n"
-            "| summarize n = count() by type")
+# No network interface is left out: the endpoint's own interface holds its address, so a search that works lists it (the check that the search can be trusted), and `_private_endpoint` does not count it.
+MENTIONS = ("// meternaut:impact-mentions\nresources\n| where id !~ '{pe}'\n| where {any}\n| summarize n = count() by type")
 
 
 def _list(value: object) -> list[dict]:
@@ -177,36 +184,47 @@ def _traffic(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str
     return "unmeasured", "Not measured: the read failed" if "traffic" in failed else f"Not measured: Azure Monitor gave a value on {max(days)} of {WINDOW} days, and {MEASURED_DAYS} are needed"
 
 
-def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str, int | None, str]:
-    """Who changed the endpoint, as ("none" | "person" | "meternaut" | "automation", the days since the write that says so, the words for a person), from every write of its Activity Log: an
-    automation if any write of the 90 days is by an identity that is no person and not Meternaut's own (its caller is an id, which names no person), else the newest write."""
+def _day(value: dt.datetime | str) -> str:
+    """A day as a person reads it, always the day in UTC and never "yesterday": a page may be opened days after the read."""
+    moment = dt.datetime.strptime(value, STAMP) if isinstance(value, str) else value
+    return f"{moment.day} {moment:%b %Y} UTC"
+
+
+def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str, str, str]:
+    """Who changed the endpoint, as ("none" | "person" | "meternaut" | "automation", the time of the write that says so, the words for a person), from every write of its Activity Log: an
+    automation if any write of the 90 days is by an identity that is no person and not Meternaut's own (its caller is an id, which names no person), else the newest write. The log is read in
+    pages, newest first, and at most a few of them: when they did not reach the end, only part of the 90 days was read, and the check is not complete. The words hold the date of the write and no
+    "yesterday", because a page may be opened days after the read."""
     writes = reader.owners.writes(endpoint)
     if writes is None:
         failed["log"] = UNAVAILABLE
-        return "none", None, "Not read: the Activity Log could not be read"
+        return "none", "", "Not read: the Activity Log could not be read"
+    whole = reader.owners.complete(endpoint)
+    if not whole:
+        failed["log"] = "only part of the 90 days was read"
+    span = "the 90 days before Meternaut read it" if whole else "the part of the 90 days that was read"
     if not writes:
-        return "none", None, "No change found in the part of the Activity Log that was read"
+        return "none", "", f"No change found in {span}"
 
     def kind(caller: str) -> str:
         return "person" if "@" in caller else "meternaut" if caller.lower() in reader.own else "automation"
 
     moment, caller = next(((when, who) for when, who in writes if kind(who) == "automation"), writes[0])
     by = kind(caller)
-    days = max(0, (reader.now - moment).days)
-    when = "Today" if days == 0 else "Yesterday" if days == 1 else f"{days} days ago"
-    return by, days, f"{when}, by {'Meternaut' if by == 'meternaut' else who_text(caller)}; {len(writes)} change{'s' if len(writes) != 1 else ''} in 90 days"
+    return by, moment.strftime(STAMP), f"{_day(moment)}, by {'Meternaut' if by == 'meternaut' else who_text(caller)}; {len(writes)} change{'s' if len(writes) != 1 else ''} in {span}"
 
 
 def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     """The verdict and its reasons from the facts. Keep: the endpoint is in use (it is approved and carries traffic, or it is the only private way to a service that takes nothing public).
-    Safe: it is disconnected or rejected, every read worked and nothing points at it or manages it. Check first: anything else, with each thing that is unsettled as a sentence."""
+    Safe: it is disconnected or rejected, every read worked and nothing points at it or manages it. Check first: anything else, with each thing that is unsettled as a sentence. A good reason is
+    listed only when it was read: "nothing mentions its addresses" needs a search that could be trusted, and "another endpoint is approved" needs a service that was seen."""
     state, use = f["state"], f["traffic"]
     keep: list[str] = []
     check: list[str] = []
     good: list[str] = [STATE_SAYS[state]] if state in ("rejected", "disconnected") else []
     if state == "approved":
         if use == "some":
-            keep.append("It carries traffic: Azure Monitor counted some in the last 30 days.")
+            keep.append("It carries traffic: Azure Monitor counted some in the 30 days before Meternaut read it.")
         if not f["othersApproved"] and f["publicAccess"] == "disabled":
             keep.append("It is the only approved private way to the service, and the service does not accept public traffic.")
         if not keep:
@@ -218,14 +236,14 @@ def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     if state in ("rejected", "disconnected"):
         if f["serviceSays"] in ("approved", "pending"):
             check.append(f"The service lists it as {f['serviceSays']}, not as {state}: the two disagree.")
-        if f["othersApproved"]:
+        if f["othersApproved"] and f["service"] == "seen":
             good.append("Another endpoint to the same service is approved.")
     if things:
         check.append(f"Something else mentions its addresses ({things}): check that it does not rely on this endpoint.")
-    elif state in ("rejected", "disconnected"):
+    elif state in ("rejected", "disconnected") and f["searched"]:
         good.append("Nothing that Azure Resource Graph lists mentions its addresses.")
     if f["changedBy"] == "automation":
-        check.append(f"An application or service identity changed it {'today' if not f['changedDays'] else str(f['changedDays']) + ' days ago'}: an automation may manage it and make it again.")
+        check.append(f"An application or service identity changed it on {_day(f['changedAt'])}: an automation may manage it and make it again.")
     if not f["complete"]:
         check.append("Not everything could be read (see Not checked), so this cannot be called safe.")
     if keep:
@@ -238,7 +256,8 @@ def _removal(f: dict, names: Sequence[str], zones: Sequence[str]) -> list[str]:
     if f["state"] == "approved":
         traffic = ("Clients that use it must use another approved endpoint: their DNS decides which one they reach." if f["othersApproved"] else
                    "Clients lose their private way to the service, and use its public address if it accepts public traffic." if f["publicAccess"] == "enabled" else
-                   "Clients lose their private way to the service, and cannot reach it.")
+                   "Clients lose their private way to the service, and cannot reach it." if f["publicAccess"] == "disabled" else
+                   "Clients lose their private way to the service. Whether they can still reach it depends on its public access, which Meternaut could not read.")
     else:
         traffic = "Nothing carries traffic through it yet, and the request to connect is withdrawn." if f["state"] == "pending" else "No traffic changes: it cannot carry any."
     dns = (f"Azure removes its DNS records ({', '.join(sorted(names)[:MAX_NAMES])}{' and more' if len(names) > MAX_NAMES else ''}) from {', '.join(zones[:MAX_ZONES]) or 'the zone'}"
@@ -265,34 +284,50 @@ def _private_endpoint(reader: Reader, endpoint: str) -> dict:
     if service:
         found = reader.graph(failed, "service", ONE.format(id=service))
         seen = "seen" if found else "unseen"
+        if not found:  # a service in a subscription that the app cannot read gives no row: that is not a service with nothing to say, and it is the usual shape of a shared service
+            failed.setdefault("service", "it could not be seen: it may be in a subscription that Meternaut cannot read")
         theirs = _props(found[0]) if found else {}
         said = _theirs(theirs, endpoint)
         public = str(theirs.get("publicNetworkAccess") or "").strip().lower()
         rivals = [(plain(_dict(item).get("name"), 80), _best([link[1] for link in _connections(_props(item)) if link[0].lower() == service.lower()]))
                   for item in reader.graph(failed, "others", OTHERS.format(pe=endpoint, service=service))]
     names, sharing, zones = _dns(reader, failed, endpoint, mine)
-    found_types = reader.graph(failed, "mentions", MENTIONS.format(pe=endpoint, any=" or ".join(f"tostring(properties) has '{ip}'" for ip in sorted(mine)[:MAX_ADDRESSES]))) if mine else []
-    things = ", ".join(f"{item['type'].rsplit('/', 1)[-1]} ({item['n']})" for item in found_types if isinstance(item.get("n"), int) and isinstance(item.get("type"), str))
-    by, days, changed = _change(reader, failed, endpoint)
+    if not mine or len(mine) > MAX_ADDRESSES:
+        failed["addresses"] = f"only {MAX_ADDRESSES} of its {len(mine)} were searched for" if mine else "none could be read, so nothing could be searched for"
+    hits = reader.graph(failed, "mentions", MENTIONS.format(pe=endpoint, any=" or ".join(f"tostring(properties) has '{ip}'" for ip in sorted(mine)[:MAX_ADDRESSES]))) if mine else []
+    found_types = [item for item in hits if isinstance(item.get("n"), int) and isinstance(item.get("type"), str)]
+    if mine and "mentions" not in failed and not any(item["type"].lower() == NIC for item in found_types):  # the endpoint's own interface holds its address: a search that misses it misses things
+        failed["mentions"] = "the search did not find the endpoint's own network interface, so its answer cannot be trusted"
+    found_types = [item for item in found_types if item["type"].lower() != NIC]
+    things = ", ".join(f"{item['type'].rsplit('/', 1)[-1]} ({item['n']})" for item in found_types)
+    by, changed_at, changed = _change(reader, failed, endpoint)
     use, traffic = _traffic(reader, failed, endpoint)
     states = Counter(other for _, other in rivals)
     f = {"state": state, "service": seen, "serviceSays": said, "publicAccess": public if public in ("enabled", "disabled") else "unknown", "others": len(rivals),
-         "othersApproved": states["approved"], "dnsNames": len(names), "dnsShared": len(sharing), "mentions": sum(item["n"] for item in found_types if isinstance(item.get("n"), int)),
-         "traffic": use, "changedBy": by, "changedDays": days, "complete": not failed}
+         "othersApproved": states["approved"], "dnsNames": len(names), "dnsShared": len(sharing), "mentions": sum(item["n"] for item in found_types), "searched": not {"addresses", "mentions"} & failed.keys(),
+         "traffic": use, "changedBy": by, "changedAt": changed_at, "complete": not failed}
+
+    def gap(what: str, value: str) -> str:
+        """A read that failed, or that was not made, is never "none": the row says so."""
+        return f"Not known ({WORDS.get(failed[what], failed[what])})" if what in failed else value
+
+    why = failed.get("mentions") or failed.get("addresses") or ""
     rows = [["State that the endpoint reports", (f"{state.capitalize()}{': ' + links[0][2] if links[0][2] else ''}" if len(links) == 1 else
                                                  f"{state.capitalize()} at best, of {len(links)} connections ({', '.join(link[1] for link in links)})") if links else "Not read",
              "Azure Resource Graph: the endpoint"],
             ["What the service says about it", {"unlisted": "It does not list this endpoint", "unknown": "It gives no list of its endpoints"}.get(said, said.capitalize()) if seen == "seen"
              else "The service could not be seen" if seen == "unseen" else "No service is named", "Azure Resource Graph: the service"],
             ["Public access of the service", f["publicAccess"].capitalize() if f["publicAccess"] != "unknown" else "Not stated", "Azure Resource Graph: the service"],
-            ["Other endpoints to the service", f"{len(rivals)}" + (f" ({', '.join(f'{count} {word}' for word, count in sorted(states.items()))})" if rivals else ""), "Azure Resource Graph"],
-            ["DNS records of the endpoint", (", ".join(sorted(names)[:MAX_NAMES]) + (f"; {len(sharing)} also hold the addresses of others" if sharing else "")) if names else "None found",
+            ["Other endpoints to the service", gap("others", f"{len(rivals)}" + (f" ({', '.join(f'{count} {word}' for word, count in sorted(states.items()))})" if rivals else "")) if service else "Not read",
+             "Azure Resource Graph"],
+            ["DNS records of the endpoint", gap("dns", (", ".join(sorted(names)[:MAX_NAMES]) + (f"; {len(sharing)} also hold the addresses of others" if sharing else "")) if names else "None found"),
              "Azure Resource Manager: its DNS zone groups and their zones"],
-            ["Things that mention its addresses", things or "None", "Azure Resource Graph"], ["Last change", changed, "Activity Log"], ["Traffic in the last 30 days", traffic, "Azure Monitor"]]
+            ["Things that mention its addresses", things or ("None" if f["searched"] else "Not searched" if not mine else f"Not known ({WORDS.get(why, why)})"), "Azure Resource Graph"],
+            ["Last change", changed, "Activity Log"], ["Traffic in the 30 days before it was read", traffic, "Azure Monitor"]]
     verdict, reasons = _judge(f, things)
-    unchecked = [*(f"{LABELS[what]} ({'not visible with this access' if word == NOT_VISIBLE else 'the read failed'})" for what, word in failed.items()), *NEVER_SEEN]
-    return {"verdict": verdict, "complete": f["complete"], "reasons": reasons[:6], "rows": [[plain(cell, 240) for cell in row] for row in rows], "removal": _removal(f, sorted(names), zones),
-            "undo": UNDO, "unchecked": unchecked, "facts": f}
+    unchecked = [*(f"{LABELS[what]} ({WORDS.get(word, word)})" for what, word in failed.items()), *NEVER_SEEN]
+    return {"verdict": verdict, "complete": f["complete"], "readAt": reader.now.astimezone(dt.timezone.utc).strftime(STAMP), "reasons": reasons[:6],
+            "rows": [[plain(cell, 240) for cell in row] for row in rows], "removal": _removal(f, sorted(names), zones), "undo": UNDO, "unchecked": unchecked, "facts": f}
 
 
 CHECKS: dict[str, Callable[[Reader, str], dict]] = {ENDPOINTS: _private_endpoint}
@@ -304,12 +339,13 @@ def has_check(rtype: object) -> bool:
 
 
 def analyse(reader: Reader, resource_id: str, rtype: object) -> dict | None:
-    """The digest of the check of one resource, or None when its type has no check. It never raises: a fault of the check is a digest that says that it is not complete."""
+    """The digest of the check of one resource, or None when its type has no check. It never raises: a fault of the check is a digest that says that it is not complete. Every digest says
+    when it was read (`readAt`, UTC): a page may be opened days later, and a person reads the verdict as of that day."""
     check = CHECKS.get(rtype.strip().lower()) if isinstance(rtype, str) else None
     if check is None or not _id(resource_id):
         return None
     try:
         return check(reader, resource_id)
     except Exception:  # noqa: BLE001 (a check never stops an investigation)
-        return {"verdict": "check", "complete": False, "reasons": ["The check could not be made."], "rows": [], "removal": [], "undo": "", "unchecked": list(NEVER_SEEN),
-                "facts": {"complete": False}}
+        return {"verdict": "check", "complete": False, "readAt": reader.now.astimezone(dt.timezone.utc).strftime(STAMP), "reasons": ["The check could not be made."], "rows": [], "removal": [],
+                "undo": "", "unchecked": list(NEVER_SEEN), "facts": {"complete": False}}

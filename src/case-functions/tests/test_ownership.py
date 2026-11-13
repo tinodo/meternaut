@@ -157,6 +157,13 @@ class TheReader(unittest.TestCase):
         reader = ow.OwnerReader(Arm(error=IdentityError("no token")), NOW)
         self.assertEqual(reader.hints(VM)["lastChangedBy"], ow.UNAVAILABLE)
 
+    def test_the_writes_say_whether_the_whole_window_was_read_and_a_log_that_was_not_read_is_not_complete(self):
+        found = [event("2026-11-06T08:00:00Z", WRITE)]
+        for answer, error, whole in (((found, True), None, True), ((found, False), None, False), (None, HttpError(503, "boom"), False)):
+            reader = ow.OwnerReader(Arm(answer, error), NOW)
+            self.assertEqual((reader.writes(VM) is not None, reader.complete(VM)), (error is None, whole), (answer, error))
+        self.assertFalse(ow.OwnerReader(Arm(), NOW).complete("x"), "a scope that is not a resource is not read")
+
     def test_a_scope_that_is_not_the_id_of_a_resource_is_not_read(self):
         arm = Arm()
         for bad in ("", "x", f"/subscriptions/{SUB}", "/subscriptions/x/resourceGroups/rg/providers/a/b/c"):
