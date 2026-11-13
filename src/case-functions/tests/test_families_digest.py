@@ -27,7 +27,7 @@ from test_runner import challenge
 TENANT = "cccccccc-1111-4222-8333-444444444444"
 CLIENT = "dddddddd-1111-4222-8333-444444444444"
 ASSERTION_CLIENT = "eeeeeeee-1111-4222-8333-444444444444"
-SIGNIN = SigninSettings(TENANT, CLIENT, ASSERTION_CLIENT, "console.example.test")
+SIGNIN = SigninSettings(TENANT, CLIENT, ASSERTION_CLIENT, "app.example.test")
 VERIFIER, NONCE, CODE, ACCESS = "v" * 43, "n" * 22, "C" * 40, "access-token-of-the-person-" + "A" * 40
 CHECKED = frozenset(field.name for field in dataclasses.fields(PlanRecord)) - set(plan_digest.EXCLUDED)
 

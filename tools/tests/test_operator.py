@@ -2905,7 +2905,7 @@ class BothAppsArePublishedAndTheUsageAppIsPrivateRecord(unittest.TestCase):
         self.assertIn("The owner has to decide about the shared Azure Monitor private link scope too (as the session that coordinates the work reported on 2026-11-06): "
                       "Application Insights and the workspace are still public until then.", order)
         readme = text("README.md")
-        self.assertIn("Still open: the cases app's phase 3 (it serves the function app; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
+        self.assertIn("Still open: the cases app's phase 3 (it serves the pages; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that "
                       "there is no gateway for it and that he reaches the private network instead: the code, the tests and the documents for both are built and nothing is deployed, "
                       "[the gateway route](docs/proposals/07-private-by-default.md#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed) "
                       "and [the web page on the private network](docs/proposals/07-private-by-default.md#the-web-page-on-the-private-network-built-not-deployed)), "

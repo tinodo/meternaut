@@ -98,14 +98,14 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
 
 
 def _next_check(latest: CheckRecord | None, now: dt.datetime) -> dt.datetime | None:
-    """When the next check may start at the console, or None when one may start now: CHECK_GAP_MINUTES after the latest check began, whoever started it."""
+    """When the next check may start, or None when one may start now: CHECK_GAP_MINUTES after the latest check began, whoever started it."""
     began = parse_time(latest.started_at) if latest is not None else None
     due = None if began is None else began + dt.timedelta(minutes=CHECK_GAP_MINUTES)
     return due if due is not None and due > utc(now) else None
 
 
 def _started_by(latest: CheckRecord) -> str:
-    return f"by {latest.by}" if latest.trigger == "console" and latest.by else "by the timer" if latest.trigger == "timer" else "at the console"
+    return f"by {latest.by}" if latest.trigger == "console" and latest.by else "by the timer" if latest.trigger == "timer" else "by a person"
 
 
 def _drift_result(ctx: Ctx, latest: CheckRecord) -> list[object]:
@@ -137,7 +137,7 @@ def _drift_section(ctx: Ctx) -> list[object]:
     parts += _drift_result(ctx, latest) if latest is not None else [paragraph("No check is recorded yet.")]
     due = _next_check(latest, ctx.now)
     if ctx.services.drift is None:
-        parts.append(paragraph("This console cannot start a check."))
+        parts.append(paragraph("This function app cannot start a check."))
     elif due is not None:
         parts.append(paragraph(fmt("The next check can start {when}. At most one check starts in {gap} minutes, whoever asks.", when=ctx.when(stamp(due)), gap=CHECK_GAP_MINUTES)))
     else:
@@ -160,7 +160,7 @@ def drift_run(ctx: Ctx) -> Response:
                             "Open the page again and use the form there.", back=BACK, why=DRIFT_WHY)
     run = ctx.services.drift
     if run is None:
-        return message_page(ctx, 503, "The check cannot be started here", "This console is not set up to run the check. Nothing was started.", back=BACK, why=DRIFT_WHY)
+        return message_page(ctx, 503, "The check cannot be started here", "This function app is not set up to run the check. Nothing was started.", back=BACK, why=DRIFT_WHY)
     latest = ctx.store.check_latest()
     due = _next_check(latest, ctx.now)
     if due is not None:
@@ -177,7 +177,7 @@ def _answers_section(ctx: Ctx) -> list[object]:
     parts: list[object] = [paragraph("A developer can replay what people answered before against the thresholds that were written first, with the learning check. The file has one row for each "
                                      "closed request: the kind of resource, the kind of request, how sure the first AI was and the answer. It holds no name of a person and no name of a resource.")]
     if ctx.services.lessons is None:
-        return parts + [paragraph("This console cannot make the file.")]
+        return parts + [paragraph("This function app cannot make the file.")]
     return parts + [form(ctx.url("/ops/answers"), hidden("nonce", ctx.nonce("answers")), fmt('<div class="acts">{b}</div>', b=button("Download the answers")))]
 
 
@@ -188,7 +188,7 @@ def answers_export(ctx: Ctx) -> Response:
                             "Open the page again and use the form there.", back=BACK, why=OPS_WHY)
     make = ctx.services.lessons
     if make is None:
-        return message_page(ctx, 503, "The file cannot be made here", "This console is not set up to make it. Nothing was changed.", back=BACK, why=OPS_WHY)
+        return message_page(ctx, 503, "The file cannot be made here", "This function app is not set up to make it. Nothing was changed.", back=BACK, why=OPS_WHY)
     return respond(200, make(), content_type=TEXT, headers={"Content-Disposition": 'attachment; filename="meternaut-answers.jsonl"'})
 
 

@@ -106,7 +106,7 @@ class TheFrontDoor(unittest.TestCase):
         self.assertEqual(answer.status_code, 500)
         self.assertEqual(answer.body, b"Something went wrong. Nothing was changed.")
         self.assertNotIn(b"STORE_ACCOUNT_NAME", answer.body)
-        self.assertIn("the console failed", logged.output[0])
+        self.assertIn("the function app failed", logged.output[0])
 
     def test_a_people_list_that_is_wrong_fails_plainly_too(self):
         answer = self.handle(Req("/", headers={PRINCIPAL: OID}), {**SIGNED_IN, "CONSOLE_PEOPLE": "not json"})

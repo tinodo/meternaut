@@ -1,4 +1,4 @@
-"""The settings of the loop that follows a case: the store, the resource groups where a change may be made, the sign-in to Azure, the people, the console and the Teams cards.
+"""The settings of the loop that follows a case: the store, the resource groups where a change may be made, the sign-in to Azure, the people, the function app and the Teams cards.
 They are optional as a whole.
 
 When `STORE_ACCOUNT_NAME` is not set the app is the Watch alone (a run is written to the History and to nothing else), which is what it was before the loop.

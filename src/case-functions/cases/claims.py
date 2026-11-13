@@ -1,6 +1,6 @@
 """The claims challenge of Azure Resource Manager, read strictly.
 
-A person who signed in without the multifactor check can use the console, but a create, update or delete then reaches Azure Resource Manager with a token that lacks it.
+A person who signed in without the multifactor check can use the pages, but a create, update or delete then reaches Azure Resource Manager with a token that lacks it.
 Azure answers 401 with a `www-authenticate` header: the scheme Bearer, the error `insufficient_claims` and a `claims` directive that holds a claims request (JSON, in base64).
 The client has to send the person back to Microsoft Entra with that claims request and try again (Microsoft Learn: "Claims challenges, claims requests and client
 capabilities"). The header comes from outside, so nothing of it is used unless it passes every rule below. Anything else is an ordinary refusal.

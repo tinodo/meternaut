@@ -924,11 +924,11 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         self.assertEqual(len(re.findall(r"(?m)^az ", steps[3])), 2)
         self.assertRegex(steps[3], r"(?m)^az network public-ip show ")
         self.assertRegex(steps[3], r"(?m)^az network dns record-set cname set-record .* --if-none-match$")
-        self.assertIn("python tools/console-check.py door --host $console --expect signin", steps[4])
+        self.assertIn("python tools/console-check.py door --host $hostName --expect signin", steps[4])
         self.assertNotIn("--proxied", steps[4], "the sign-in does not know the host yet, so its return address is not asked for")
         self.assertIn("python tools/entra-setup.py check", steps[5])
         self.assertIn("python tools/entra-setup.py apply", steps[5])
-        self.assertIn("gh secret set CONSOLE_HOST_NAME --env hub --repo $repo --body $console", steps[6])
+        self.assertIn("gh secret set CONSOLE_HOST_NAME --env hub --repo $repo --body $hostName", steps[6])
         code = "\n".join(line for line in record.split("\n") if not line.startswith("#"))
         for word in (r"\bdelete\b", r"\bupdate\b", r"\bpurge\b", r"az role", r"private-dns", r"dns zone", r"--force", r"az group", r"az resource", r"application-gateway stop", r"application-gateway start", r"restart",
                      r"--yes", r"az login", r"az account"):
@@ -991,7 +991,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
 
     def test_the_status_the_state_table_the_order_of_the_work_the_not_checked_list_and_the_other_pages_say_the_same(self):
         status = self.page.split("\n")[2]
-        self.assertIn("The owner then decided that the cases app, which also serves the function app, is closed too and that people reach the function app only through the platform's Application Gateway; the code, the tests "
+        self.assertIn("The owner then decided that the cases app, which also serves the pages, is closed too and that people reach the pages only through the platform's Application Gateway; the code, the tests "
                       "and the documents for that are built, nothing is deployed, and the app is still public", status)
         self.assertNotIn("built, not yet deployed", status)
         state = section_of(self.page, "## The rule and the state")
@@ -1011,7 +1011,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       text("docs/proposals/05-run-as-the-approver.md"))
         readme = text("README.md")
         self.assertIn("(the cases app is to be closed, its web page reached on the private network and its front door checked from inside the network, which is built and not deployed; the gateway route that was built before is unused)", readme)
-        self.assertIn("it serves the function app; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that there is no gateway for it "
+        self.assertIn("it serves the pages; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that there is no gateway for it "
                       "and that he reaches the private network instead", readme)
 
     def test_the_bootstrap_page_has_the_section_between_phase_2_and_the_end_and_names_the_variable_the_hand_steps_and_the_way_back(self):

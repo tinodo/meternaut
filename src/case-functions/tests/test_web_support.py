@@ -27,7 +27,7 @@ DISK = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Compute
 ACTS_ON = "delete an unattached disk or public IP address in resource group meternaut-test-rg"
 SIGNIN_URL = "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-from-the-delegate"
 MODELS = ("model-detective-x", "model-skeptic-y")
-HOST = "console.example.test"
+HOST = "app.example.test"
 
 TINO = "aaaaaaaa-1111-4222-8333-444444444444"  # owner, approver and ops
 MAYA = "11111111-2222-3333-4444-555555555555"  # approver only

@@ -617,7 +617,7 @@ class TheDriftCheckAtTheConsole(unittest.TestCase):
     def test_a_console_that_cannot_run_the_check_says_so_and_the_page_still_shows_the_latest_one(self):
         console = Console()
         reply = console.get("/ops")
-        self.assertIn("This console cannot start a check.", reply.content)
+        self.assertIn("This function app cannot start a check.", reply.content)
         self.assertNotIn("/ops/drift", [f.action for f in reply.forms()])
         refused = console.post("/ops/drift", {"nonce": console.store.nonce_new(TINO, "drift")})
         self.assertEqual(refused.status, 503)
@@ -659,7 +659,7 @@ class ThePastAnswers(unittest.TestCase):
 
     def test_a_console_that_cannot_make_it_says_so(self):
         console = Console()
-        self.assertIn("This console cannot make the file.", console.get("/ops").content)
+        self.assertIn("This function app cannot make the file.", console.get("/ops").content)
         self.assertEqual(console.post("/ops/answers", {"nonce": console.store.nonce_new(TINO, "answers")}).status, 503)
 
     def test_the_page_says_what_the_file_holds_and_leaves_out_the_words_of_the_design(self):

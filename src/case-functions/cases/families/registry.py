@@ -47,7 +47,7 @@ def candidates(detector: str, resource_type: str, recommendation: str | None) ->
 
 
 def acts_on(planted_tag: str, scopes: tuple[ChangeScope, ...]) -> str:
-    """What the console says that Meternaut changes, in one sentence, made from the registry and the scopes so that it is never typed by hand a second time."""
+    """What the function app says that Meternaut changes, in one sentence, made from the registry and the scopes so that it is never typed by hand a second time."""
     groups = " and ".join(scope.group for scope in scopes)
     kinds = "; ".join(family.summary for family in REGISTRY)
     return (f"one of these, on a resource that Meternaut planted itself, that carries the tag {planted_tag} and is in resource group {groups}, and nowhere else: {kinds}")

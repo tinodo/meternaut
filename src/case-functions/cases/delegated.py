@@ -3,7 +3,7 @@
 Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorization code flow with PKCE for a web app, with a delegated permission:
 
 1. The approve form is checked (the person, the plan, its code, the switches, the one-time token of the form). Nothing is recorded yet. The person is sent to
-   Microsoft Entra with the console's own app registration, the scope `user_impersonation` of Azure Resource Manager and no `offline_access`, so that no
+   Microsoft Entra with the function app's own app registration, the scope `user_impersonation` of Azure Resource Manager and no `offline_access`, so that no
    refresh token exists. A `state` (one use, bound to the person, the plan and the digest of the plan, kept on the server for ten minutes), a PKCE verifier and a nonce are
    made. The digest is the SHA-256 of every field of the plan but its state (cases/families/digest.py).
 2. Entra sends the person back to `/arm/return`. The `state` is used once, and only by the person it was made for.
@@ -16,7 +16,7 @@ Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorizatio
    Azure carries out later is `running` when the person's request ends, and the timer settles it by reading. Azure checks the person's own rights, and the Activity Log shows the person.
    A check that refuses the change before anything is written (the resource is not as the request says, a lock, a pause, a read that failed) does not use the approval: the request is open
    again, and the page of what came of it says so in plain words. A new approval is a new one, with a new sign-in and the tokens of that.
-5. A person who signed in without the multifactor check that a change needs can use the console, but Azure answers the write with a claims challenge (HTTP 401 and a
+5. A person who signed in without the multifactor check that a change needs can use the pages, but Azure answers the write with a claims challenge (HTTP 401 and a
    `www-authenticate` header that asks for more claims). That is a step-up and not a refusal: nothing was changed, the plan stays approved and its action waits in the
    queue. The person is sent to Microsoft Entra once more, with the claims request that Azure gave, in a new state with a new PKCE verifier and a new nonce. The return of
    that second sign-in records no second approval: it checks that the approval is recorded and the action waits, redeems the code, checks the ID token as before and makes
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 LOGIN_HOST = "login.microsoftonline.com"
 ARM_SCOPE = "https://management.azure.com/user_impersonation"
 # `profile` is asked for on purpose: the identity token holds the person's object id (`oid`) only with it, and the object id is what ties the person who is signed in
-# to this console to the person who signs in to Azure.
+# to this function app to the person who signs in to Azure.
 SCOPES = f"openid profile {ARM_SCOPE}"
 ASSERTION_RESOURCE = "api://AzureADTokenExchange"
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -73,7 +73,7 @@ STEP_UP_SENT = "Azure asks for an extra sign-in check. You go to Microsoft Entra
 
 @dataclass(frozen=True)
 class SigninSettings:
-    """What the sign-in to Azure needs: the tenant, the console's own app registration, the identity that presents its assertion, and the console's host."""
+    """What the sign-in to Azure needs: the tenant, the function app's own app registration, the identity that presents its assertion, and the function app's host."""
 
     tenant_id: str
     client_id: str
@@ -129,7 +129,7 @@ def new_pkce(token: Callable[[int], str] = secrets.token_urlsafe) -> tuple[str, 
 
 
 def authorize_url(settings: SigninSettings, state: str, challenge: str, nonce: str, hint: str = "", claims: str = "") -> str:
-    """The address of the sign-in at Microsoft Entra. The redirect address is the console's own and is registered on the app registration.
+    """The address of the sign-in at Microsoft Entra. The redirect address is the function app's own and is registered on the app registration.
 
     `claims` is the claims request that Azure gave in a claims challenge (JSON text). It goes in the `claims` parameter, encoded like every other value."""
     query = {"client_id": settings.client_id, "response_type": "code", "redirect_uri": settings.redirect_uri, "response_mode": "query", "scope": SCOPES,
@@ -167,7 +167,7 @@ def explain(error: str, aadsts: str) -> str:
     if aadsts in USED:
         return "The sign-in took too long, or its code was used already. Open the request and press Approve again. Nothing is approved."
     if aadsts in SETUP:
-        return (f"Microsoft Entra did not accept the console's own set-up (AADSTS{aadsts}): the redirect address or the federated identity credential of the app "
+        return (f"Microsoft Entra did not accept this function app's own set-up (AADSTS{aadsts}): the redirect address or the federated identity credential of the app "
                 "registration is not right. This is a fault of the set-up and not of yours. Nothing is approved.")
     named = " (" + ", ".join(part for part in (error, f"AADSTS{aadsts}" if aadsts else "") if part) + ")" if error or aadsts else ""
     return f"Microsoft Entra did not give a token{named}. Nothing is approved."
@@ -398,15 +398,15 @@ class Delegation:
         assert settings is not None
         tenant = settings.tenant_id.lower()
         if str(claims.get("oid", "")).lower() != principal.oid.lower():
-            return "You signed in to Azure with another account than the one that is signed in to this console. Nothing is approved. Use the same account."
+            return "You signed in to Azure with another account than the one that is signed in to this function app. Nothing is approved. Use the same account."
         if str(claims.get("tid", "")).lower() != tenant:
-            return "You signed in to Azure in another tenant than the one of this console. Nothing is approved."
+            return "You signed in to Azure in another tenant than the one of this function app. Nothing is approved."
         if str(claims.get("aud", "")).lower() != settings.client_id.lower() or not secrets.compare_digest(str(claims.get("nonce", "")).encode("utf-8"), nonce.encode("utf-8")):
             return "This sign-in does not belong to the request that started it. Nothing is approved."
         expires = claims.get("exp")
         fresh = isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > self.approvals.clock().timestamp()
         if str(claims.get("iss", "")).lower() != f"https://{LOGIN_HOST}/{tenant}/v2.0" or not fresh:
-            return "The identity token of the sign-in is not one that this console accepts. Nothing is approved."
+            return "The identity token of the sign-in is not one that this function app accepts. Nothing is approved."
         return ""
 
 

@@ -35,7 +35,7 @@ from .web.common import may_answer
 LOG = logging.getLogger("meternaut.notify")
 EPOCH = "2000-01-01T00:00:00Z"
 RETRY_MINUTES = 15  # a letter that was not sent is offered again after this long
-MAX_TRIES = 12  # and given up after this many tries: the record of each try says why, and the console shows the plan whatever happened to the letter
+MAX_TRIES = 12  # and given up after this many tries: the record of each try says why, and the pages show the plan whatever happened to the letter
 TEAMS_FIRST_MINUTES = 20  # the card of a person who chose Teams has this long to go before the letter does
 WAITING_DAYS = 7  # a letter that quiet hours held back is looked for this long
 UNKNOWN_HOURS = 2  # a result that is not known is told after it has stayed so this long: most are known within minutes, by the checks that follow a change
