@@ -1,8 +1,10 @@
 import json
 import re
+import socket
 import threading
 import unittest
 import urllib.error
+from http.client import RemoteDisconnected
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
@@ -396,7 +398,7 @@ class Deadline(unittest.TestCase):
             c, script, _ = timed(ok(), now=now, deadline=100.0)
             with self.assertRaises(http.HttpError) as raised:
                 c.request("GET", LOCKS)
-            self.assertEqual((raised.exception.status, script.calls), (0, []))
+            self.assertEqual((raised.exception.status, raised.exception.unsent, script.calls), (0, True, []), "no call was started: nothing left the app")
             self.assertIn("deadline", str(raised.exception))
 
     def test_the_timeout_of_a_call_never_reaches_past_the_deadline_and_is_never_less_than_a_second(self):
@@ -528,6 +530,21 @@ class Errors(unittest.TestCase):
         self.assertEqual(raised.exception.status, 0)
         self.assertNotIn(KEY, str(raised.exception))
         self.assertIn("network error: OSError", str(raised.exception))
+
+    def test_an_error_says_whether_the_request_never_left(self):
+        # urllib raises URLError only while the connection is made and the request is sent out (DNS, refused, TLS, the tunnel of a proxy): what is raised when the answer is awaited or read is not it.
+        for failure, unsent in ((urllib.error.URLError(ConnectionRefusedError()), True), (urllib.error.URLError(socket.gaierror(-2, "no such host")), True),
+                                (urllib.error.URLError(TimeoutError("timed out")), True), (TimeoutError("slow"), False), (RemoteDisconnected("closed"), False),
+                                (ConnectionResetError("reset"), False), (OSError("x"), False)):
+            with self.subTest(failure=repr(failure)[:50]):
+                c, script, _ = client(failure)
+                with self.assertRaises(http.HttpError) as raised:
+                    c.request("GET", LOCKS, retries=0)
+                self.assertEqual((raised.exception.status, raised.exception.unsent, len(script.calls)), (0, unsent, 1))
+        c, _, _ = client((503, {}, b"{}"))
+        with self.assertRaises(http.HttpError) as raised:
+            c.request("GET", LOCKS, retries=0)
+        self.assertEqual((raised.exception.status, raised.exception.unsent, http.HttpError(500, "x").unsent), (503, False, False), "an answer, even a 5xx, is a request that arrived")
 
 
 class TheChallengeOfAnAnswer(unittest.TestCase):

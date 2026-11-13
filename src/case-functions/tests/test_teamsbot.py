@@ -3,7 +3,11 @@
 The token endpoint of Microsoft Entra and the Bot Connector are one fake transport; nothing touches a network. Every id is invented.
 """
 import json
+import socket
+import ssl
 import unittest
+import urllib.error
+from http.client import RemoteDisconnected
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
@@ -11,7 +15,7 @@ import cardsupport as cs
 from cases import cards, http, teamsbot
 from cases.delegated import ASSERTION_RESOURCE, ASSERTION_TYPE
 from cases.http import Refused
-from cases.identity import Identity
+from cases.identity import Identity, IdentityError
 from cases.loop_config import TeamsWay
 from cases.redact import Redactor
 
@@ -153,6 +157,33 @@ class TheTokenOfTheApp(Case):
         self.clock.advance(seconds=2)
         self.assertEqual((self.bot.token(), len(self.fake.calls)), (ACCESS, calls + 1))
 
+    def test_the_minute_without_a_call_counts_from_the_end_of_the_failure_and_not_from_its_start(self):
+        asked = []
+
+        def stalls(resource):
+            asked.append(resource)
+            self.clock.advance(seconds=52)  # the platform's identity endpoint gave no answer for 52 seconds
+            error = IdentityError("the managed identity endpoint gave no answer (TimeoutError) after 3 tries")
+            error.transient = True
+            raise error
+        bot = self.make(assertion=stalls)
+        first = self.refused(bot.token)
+        self.clock.advance(seconds=30)  # 82 seconds after the start of the failure and 30 after its end
+        self.assertIs(self.refused(bot.token), first)
+        self.assertEqual(len(asked), 1, "the later cards of the round do not stall again")
+        self.clock.advance(seconds=31)
+        self.refused(bot.token)
+        self.assertEqual(len(asked), 2, "a minute after the end of the failure the identity is asked again")
+
+    def test_the_identity_is_given_the_time_that_is_left_of_the_round_and_none_without_a_round(self):
+        given = []
+        bot = self.make(assertion=lambda resource, within=None: (given.append(within), ASSERTION)[1])
+        bot.token()
+        bot.client.monotonic, bot.client.deadline = (lambda: 100.0), 125.0
+        self.clock.advance(hours=2)
+        bot.token()
+        self.assertEqual(given, [None, 25.0])
+
     def test_a_token_that_is_still_valid_is_used_when_a_new_one_cannot_be_had_and_no_card_fails_for_it(self):
         self.bot.token()
         self.clock.advance(seconds=3599 - 200)  # inside the last five minutes: a new one is asked for, and the Microsoft Entra ID service is down
@@ -288,7 +319,8 @@ class WhenTheAnswerOfAPostIsLost(Case):
         return self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
 
     def test_a_post_without_a_usable_answer_may_have_arrived_and_is_made_once(self):
-        for reply in (answer(500), answer(502), answer(504), OSError("lost"), TimeoutError("slow"), answer(201, {}), answer(201, {"id": "../x"}), answer(200, b"not json")):
+        for reply in (answer(500), answer(502), answer(504), OSError("lost"), TimeoutError("slow"), RemoteDisconnected("closed"), ConnectionResetError("reset"), answer(201, {}), answer(201, {"id": "../x"}),
+                      answer(200, b"not json")):
             with self.subTest(reply=str(reply)[:30]):
                 self.fake.calls.clear()
                 error = self.post(*[reply] * 3)
@@ -300,11 +332,45 @@ class WhenTheAnswerOfAPostIsLost(Case):
                 error = self.post(*[reply] * 3)
                 self.assertEqual((error.maybe_sent, str(error) == teamsbot.NOT_RETRIED), (False, False))
 
+    def test_a_post_that_could_not_connect_was_never_sent_and_is_tried_again(self):
+        # urllib raises URLError while the connection is made (no such host, refused, a certificate that is not accepted), so the request never left: the card may be posted by the next round
+        for failure in (urllib.error.URLError(ConnectionRefusedError()), urllib.error.URLError(socket.gaierror(-2, "no such host")), urllib.error.URLError(ssl.SSLCertVerificationError("no")),
+                        urllib.error.URLError(TimeoutError("timed out"))):
+            with self.subTest(failure=repr(failure.reason)[:40]):
+                self.fake.calls.clear()
+                error = self.post(*[failure] * 3)
+                self.assertEqual((error.maybe_sent, error.reason, str(error), self.fake.steps().count("send")), (False, "network", teamsbot.REASONS["network"], 1))
+
     def test_a_post_that_was_not_started_for_the_time_of_the_round_is_used_up_may_not_have_arrived(self):
         self.bot.token()
         self.bot.client.deadline = self.bot.client.monotonic() - 1
         self.assertTrue(self.bot.late())
         error = self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
+        self.assertEqual((error.maybe_sent, error.reason, self.fake.steps()), (False, "network", ["token"]))
+
+    def test_a_post_that_would_get_less_than_ten_seconds_is_not_made_so_that_a_slow_connector_is_not_taken_for_a_lost_answer(self):
+        self.bot.token()
+        self.bot.client.monotonic = lambda: 100.0
+        for left in (9.9, 0.5):
+            with self.subTest(left=left):
+                self.bot.client.deadline = 100.0 + left
+                error = self.refused(lambda: self.bot.post(CONVERSATION, CARD, "x"))
+                self.assertEqual((error.step, error.reason, error.maybe_sent, str(error), self.fake.steps()), ("send", "network", False, teamsbot.REASONS["network"], ["token"]))
+        for left in (10.0, 24.0):
+            with self.subTest(left=left):
+                self.bot.client.deadline = 100.0 + left
+                self.assertEqual(self.bot.post(CONVERSATION, CARD, "x"), ACTIVITY)
+        self.assertEqual(self.fake.steps(), ["token", "send", "send"])
+
+    def test_the_time_that_the_token_took_counts_for_the_post(self):
+        now = [100.0]
+
+        def slow(resource, within=None):
+            now[0] += 20
+            return ASSERTION
+        bot = self.make(assertion=slow)
+        bot.client.monotonic, bot.client.deadline = (lambda: now[0]), 125.0
+        error = self.refused(lambda: bot.post(CONVERSATION, CARD, "x"))
         self.assertEqual((error.maybe_sent, error.reason, self.fake.steps()), (False, "network", ["token"]))
 
     def test_no_other_step_may_have_put_a_card_in_teams(self):
@@ -313,6 +379,36 @@ class WhenTheAnswerOfAPostIsLost(Case):
             with self.subTest(step=step, reply=str(reply)[:30]):
                 self.script(step, *[reply] * 3)
                 self.assertFalse(self.refused({"create": lambda: self.bot.create(PERSON), "update": lambda: self.bot.update(CONVERSATION, ACTIVITY, CARD, "x")}[step]).maybe_sent)
+
+
+class TheTimeOfARound(Case):
+    """The client has a deadline for a round (cases/offers.py gives it): `late` says that nothing is started any more, unless a failure of the token is remembered, which is the one answer that every card of the
+    round gets at once, so that each card has its try written and none of them stalls the next round again."""
+
+    @staticmethod
+    def broken(resource, within=None):
+        raise IdentityError("the managed identity endpoint answered 404")
+
+    def test_a_round_whose_time_is_used_up_is_late_and_a_client_without_a_round_never(self):
+        self.assertFalse(self.bot.late())
+        self.bot.client.monotonic, self.bot.client.deadline = (lambda: 100.0), 125.0
+        self.assertFalse(self.bot.late())
+        self.bot.client.deadline = 100.0
+        self.assertTrue(self.bot.late())
+
+    def test_a_token_that_failed_in_the_round_leaves_every_card_the_same_failure_at_once(self):
+        bot = self.make(assertion=self.broken)
+        bot.client.monotonic, bot.client.deadline = (lambda: 100.0), 100.0
+        self.assertTrue(bot.late())
+        first = self.refused(bot.token)
+        self.assertFalse(bot.late(), "the card is tried, gets the failure that is remembered and has its try written")
+        self.assertIs(self.refused(lambda: bot.send(PERSON, CARD, "x")), first)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_token_that_was_had_does_not_make_a_round_that_is_used_up_any_less_late(self):
+        self.bot.token()
+        self.bot.client.monotonic, self.bot.client.deadline = (lambda: 100.0), 100.0
+        self.assertTrue(self.bot.late())
 
 
 FORBIDDEN = {"error": {"code": "ForbiddenOperationException", "message": "Bot is not installed in user's personal scope"}}

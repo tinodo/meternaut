@@ -27,6 +27,7 @@ ID = re.compile(r"(?!\.+(?:/|$))[A-Za-z0-9:@._=-]{1,200}")  # an id of Teams in 
 SAFE = re.compile(r"[A-Za-z0-9:@._=/-]+")  # every character that an address of this client may hold: no query, fragment, escape, space or backslash
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,16000}")
 MAX_ANSWER = 65536  # the answers are a few hundred bytes
+MIN_POST = 10.0  # a post that has less of the round than this is not made: with a shortened timeout a Connector that is merely slow would be taken for a lost answer, and the card would never be posted
 REFRESH = dt.timedelta(minutes=5)  # a token is asked for again when less than this is left
 DOWN = dt.timedelta(minutes=1)  # after a token that failed nothing is asked for this long, so that a round of cards waits once and not for every card
 RETRY_ONLY = frozenset({429})  # a card that may have been posted is not posted again
@@ -62,12 +63,12 @@ class BotError(Exception):
 def _failed(step: str, error: HttpError) -> BotError:
     """What an answer that is not a success means: Teams says in the text of its 403 whether the app is not installed for the person or the person blocked or removed it (Learn, "Send proactive
     messages"), a 401 or any refusal of the token endpoint is the identity, a 429, a 412 or a 5xx or no answer is waited out, and the rest is a refusal. A post whose answer was lost (no answer after the
-    call was made, a 5xx, a 2xx that is no answer) may have been carried out: `maybe_sent`."""
+    request left the app, a 5xx, a 2xx that is no answer) may have been carried out: `maybe_sent`. A request that never left (no time, no connection: `error.unsent`) was not."""
     status, said = error.status, str(error)
     if 200 <= status < 300:
         return BotError(step, "other", status, maybe_sent=step == "send")
     if status in (0, 412, 429) or status >= 500:
-        lost = step == "send" and (status >= 500 or (status == 0 and "deadline" not in said))
+        lost = step == "send" and (status >= 500 or (status == 0 and not error.unsent))
         return BotError(step, "throttled" if status == 429 else "network", status, maybe_sent=lost)
     if step == "token":
         return BotError(step, "unauthorized", status, int(oauth_error(error)[1] or 0))
@@ -108,15 +109,16 @@ def _activity(card: dict, summary: str) -> dict:
 
 
 class TeamsBot:
-    def __init__(self, way: TeamsWay, assertion: Callable[[str], str], client: Client, clock: Callable[[], dt.datetime]) -> None:
-        """`assertion` gives the token of the managed identity for a resource (identity.Identity.token of the identity TEAMS_BOT_IDENTITY_CLIENT_ID)."""
+    def __init__(self, way: TeamsWay, assertion: Callable[..., str], client: Client, clock: Callable[[], dt.datetime]) -> None:
+        """`assertion` gives the token of the managed identity for a resource (identity.Identity.token of the identity TEAMS_BOT_IDENTITY_CLIENT_ID); while the client has the deadline of a round it is given
+        the seconds that are left of it as `within`."""
         self.way, self.assertion, self.client, self.clock = way, assertion, client, clock
         self.status = 0  # the HTTP status of the last call that a step made; 0 when it made none
         self._token: tuple[str, dt.datetime] | None = None
         self._down: tuple[dt.datetime, BotError] | None = None
 
     def token(self) -> str:
-        """The token of the bot, kept until REFRESH before it expires, and used until it does expire when a new one cannot be had. After a failure the same failure is given for DOWN, without a call."""
+        """The token of the bot, kept until REFRESH before it expires, and used until it does expire when a new one cannot be had. After a failure the same failure is given for DOWN from its end, without a call."""
         now, self.status = self.clock(), 0
         cached = self._token if self._token and self._token[1] > now else None
         if cached and cached[1] - now > REFRESH:
@@ -128,15 +130,16 @@ class TeamsBot:
         try:
             self._token = self._fetch(now)
         except BotError as error:
-            self._down = (now, error)
+            self._down = (self.clock(), error)  # the end of the failure: an identity that stalled for a minute would leave no shield if this were the start
             if cached:
                 return cached[0]
             raise
         return self._token[0]
 
     def _fetch(self, now: dt.datetime) -> tuple[str, dt.datetime]:
+        left = self.client.remaining()
         try:
-            proof = self.assertion(ASSERTION_RESOURCE)
+            proof = self.assertion(ASSERTION_RESOURCE, **({} if left is None else {"within": left}))
         except Exception as error:  # noqa: BLE001 (the platform gave no token: the identity is not attached or its client id is wrong, or its endpoint did not answer)
             raise BotError("token", "network" if getattr(error, "transient", False) else "unauthorized") from None
         form = {"grant_type": "client_credentials", "client_id": self.way.app_id, "client_assertion_type": ASSERTION_TYPE, "client_assertion": proof, "scope": SCOPE}
@@ -160,9 +163,10 @@ class TeamsBot:
             raise BotError(step, "other") from None
 
     def late(self) -> bool:
-        """True when the time of this round is used up (the deadline of the client): no call is started, and the card waits for the next round."""
+        """True when the time of this round is used up (the deadline of the client): no call is started, and the card waits for the next round. Not while the failure of a token is remembered: a card that is
+        tried then gets that failure at once, has its try written and waits its fifteen minutes, so that the next round does not meet the same failure at every card."""
         left = self.client.remaining()
-        return left is not None and left <= 0
+        return self._down is None and left is not None and left <= 0
 
     def _id(self, step: str, answer: object) -> str:
         found = answer.get("id") if isinstance(answer, dict) else None
@@ -182,10 +186,14 @@ class TeamsBot:
         return self._id("create", self._call("create", "POST", f"{self.way.service_url}v3/conversations", headers={"Authorization": f"Bearer {self.token()}"}, body=body, retry_statuses=TRANSIENT))
 
     def post(self, conversation: str, card: dict, summary: str) -> str:
-        """Posts the card in the conversation and returns the id of the activity. Only a 429 is tried again: a card that may have gone is not posted twice."""
+        """Posts the card in the conversation and returns the id of the activity. Only a 429 is tried again: a card that may have gone is not posted twice. A post that has less than MIN_POST seconds of the
+        round is not made (the card was not posted, and the next round makes the conversation again, which Teams answers with the same one)."""
         url = self._url("send", conversation)
-        return self._id("send", self._call("send", "POST", url, headers={"Authorization": f"Bearer {self.token()}"}, body=_activity(card, summary), retry_statuses=RETRY_ONLY,
-                                           retry_network=False))
+        headers = {"Authorization": f"Bearer {self.token()}"}
+        left = self.client.remaining()
+        if left is not None and left < MIN_POST:
+            raise BotError("send", "network")
+        return self._id("send", self._call("send", "POST", url, headers=headers, body=_activity(card, summary), retry_statuses=RETRY_ONLY, retry_network=False))
 
     def send(self, oid: str, card: dict, summary: str) -> tuple[str, str]:
         """(the conversation, the activity) of a card that was posted to the person."""

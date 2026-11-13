@@ -7,14 +7,17 @@ import dataclasses
 import importlib.util
 import json
 import re
+import socket
 import sys
 import unittest
+import urllib.error
 from dataclasses import dataclass, field
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
 from cases import cardcheck, cards, control, events as history, loop_config, notify, offers, teamsbot, wiring
+from cases.identity import IdentityError
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, DecisionRecord, MailRecord, SwitchRecord
 from cases.redact import Redactor
@@ -40,7 +43,7 @@ class BotWorld(cs.World):
     def __post_init__(self) -> None:
         super().__post_init__()
         client = teamsbot.new_client(WAY, Redactor(), transport=self.teams, sleep=lambda seconds: None)
-        self.bot = teamsbot.TeamsBot(WAY, lambda resource: ASSERTION, client, self.clock)
+        self.bot = teamsbot.TeamsBot(WAY, lambda resource, within=None: ASSERTION, client, self.clock)
         self.offers = offers.Offers(self.store, self.people, None, cs.BASE, self.clock, Redactor(), bot=self.bot)
 
     def posted(self, oid: str = cs.MAYA) -> list[MailRecord]:
@@ -363,6 +366,15 @@ class WhenTeamsSaysNo(unittest.TestCase):
         self.world.run()
         self.assertEqual(([m.status for m in self.world.attempts(cs.MAYA)], self.world.teams.steps().count("send"), len(self.world.posted(cs.MAYA))), (["failed", "sent"], 2, 1))
 
+    def test_a_post_that_could_not_connect_is_tried_again_in_the_next_round_and_is_no_card_that_may_have_arrived(self):
+        self.world.teams.replies["send"] = [urllib.error.URLError(ConnectionRefusedError()), urllib.error.URLError(socket.gaierror(-2, "no such host"))]
+        self.world.run()
+        self.assertEqual([[(m.status, m.detail) for m in self.world.attempts(oid)] for oid in (cs.MAYA, cs.ANNA)], [[("failed", teamsbot.REASONS["network"])]] * 2)
+        self.assertEqual(self.world.teams.steps().count("send"), 2, "one post for each card of the round")
+        self.world.clock.advance(minutes=offers.RETRY_MINUTES + 1)
+        self.world.run()
+        self.assertEqual(([[m.status for m in self.world.attempts(oid)] for oid in (cs.MAYA, cs.ANNA)], len(self.world.posted(cs.MAYA)), len(self.world.posted(cs.ANNA))), ([["failed", "sent"]] * 2, 1, 1))
+
 
 class WhenTheSettingsAreNotComplete(unittest.TestCase):
     def way(self, **env):
@@ -464,7 +476,7 @@ class TheWiringOfTheWays(unittest.TestCase):
         world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
         world.ready(cs.MAYA)
         with mock.patch.object(wiring, "Identity") as identity:
-            identity.return_value.token = lambda resource: ASSERTION
+            identity.return_value.token = lambda resource, within=None: ASSERTION
             extras, _ = self.extras(ENV, transport=world.teams)
         extras.on_cards.__self__.store = world.store
         extras.on_cards.__self__.people = world.people
@@ -477,34 +489,61 @@ class TheWiringOfTheWays(unittest.TestCase):
 class ASlowBotConnectorHoldsBackNothing(unittest.TestCase):
     """The round of cards runs before the letters in the same minute: the bot has 25 seconds for its calls (offers.ROUND_SECONDS), and what does not fit waits for the next round."""
 
-    def slow(self, seconds):
+    def slow(self, seconds, **steps):
+        """A world whose calls take `seconds` of a clock that the test holds (the step that a name says, `steps`, takes what it says)."""
         self.world, self.now = BotWorld(), [1000.0]
         self.world.bot.client.monotonic = lambda: self.now[0]
-        fast = self.world.bot.client.transport
+        self.fast = self.world.bot.client.transport
 
         def transport(method, url, headers, data, timeout):
-            self.now[0] += seconds
-            return fast(method, url, headers, data, timeout)
+            answer = self.fast(method, url, headers, data, timeout)
+            self.now[0] += steps.get(self.world.teams.calls[-1]["step"], seconds)
+            return answer
         self.world.bot.client.transport = transport
         self.world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
         self.world.ready(cs.MAYA, cs.ANNA)
 
     def test_a_card_that_does_not_fit_in_the_time_of_the_round_waits_for_the_next_round_and_uses_up_no_try(self):
-        self.slow(10.0)
+        self.slow(1.0, send=24.0)
         self.world.run()
         self.assertEqual((self.world.teams.steps(), len(self.world.posted(cs.MAYA)), self.world.tries(cs.ANNA)), (["token", "create", "send"], 1, []))
         self.world.run()
         self.assertEqual((self.world.teams.steps(), len(self.world.posted(cs.ANNA))), (["token", "create", "send", "create", "send"], 1))
         self.assertEqual(offers.ROUND_SECONDS, 25)
 
-    def test_a_post_that_the_time_of_the_round_did_not_allow_is_not_a_card_that_may_have_arrived(self):
-        self.slow(13.0)
+    def test_a_post_that_would_get_less_than_ten_seconds_is_not_made_and_the_next_round_tries_the_card_again(self):
+        self.slow(1.0, create=17.0)
         self.world.run()
-        (record,) = self.world.attempts(cs.MAYA)
-        self.assertEqual((record.status, record.detail, self.world.teams.steps(), self.world.tries(cs.ANNA)), ("failed", teamsbot.REASONS["network"], ["token", "create"], []))
+        self.assertEqual(self.world.teams.steps(), ["token", "create", "create"], "no post: the time that is left of the round is less than a post is given")
+        self.assertEqual([[(m.status, m.detail) for m in self.world.attempts(oid)] for oid in (cs.MAYA, cs.ANNA)], [[("failed", teamsbot.REASONS["network"])]] * 2,
+                         "a card that was not posted is not a card that may have arrived")
+        self.world.bot.client.transport = self.fast
         self.world.clock.advance(minutes=offers.RETRY_MINUTES + 1)
         self.world.run()
-        self.assertEqual(([m.status for m in self.world.attempts(cs.MAYA)], len(self.world.posted(cs.MAYA))), (["failed", "sent"], 1), "the next round tries again, for no post was made")
+        self.assertEqual(([[m.status for m in self.world.attempts(oid)] for oid in (cs.MAYA, cs.ANNA)], self.world.teams.steps().count("send"), len(self.world.posted(cs.MAYA))),
+                         ([["failed", "sent"]] * 2, 2, 1), "the conversation is made again, which Teams answers with the same one, and the card is posted once")
+
+    def test_an_identity_that_stalls_costs_one_stall_for_the_round_and_every_due_card_its_try(self):
+        self.slow(0.0)
+        asked = []
+
+        def stalls(resource, within=None):
+            asked.append(within)
+            took = 52.0 if within is None else min(52.0, within)  # the real identity gives up when the time that it was given is used up
+            self.now[0] += took
+            self.world.clock.advance(seconds=took)
+            error = IdentityError("the managed identity endpoint gave no answer (TimeoutError) after 3 tries")
+            error.transient = True
+            raise error
+        self.world.bot.assertion = stalls
+        self.world.run()
+        self.assertEqual(asked, [25.0], "the identity is given the time of the round, and only the first card asks it")
+        self.assertEqual(self.now[0] - 1000.0, 25.0, "the letters that follow the cards in the same minute wait for the round and not for the stall")
+        self.assertEqual([[m.detail for m in self.world.attempts(oid)] for oid in (cs.MAYA, cs.ANNA)], [[teamsbot.REASONS["network"]]] * 2, "every due card has its try, so the next round does not ask again")
+        self.assertEqual(self.world.teams.calls, [])
+        self.world.clock.advance(minutes=1)
+        self.world.run()
+        self.assertEqual(len(asked), 1, "nothing is due before the tries are fifteen minutes old")
 
 
 class TheBlockOfTheOperationsPage(unittest.TestCase):
