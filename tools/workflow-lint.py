@@ -54,7 +54,7 @@ DEPLOY_ENVIRONMENT = "hub"
 # The identifiers of the owner's estate that the Hub reads. The log and the summary of a run of a public repository are public, GitHub masks a secret in both and does not mask a variable, so each is a secret of the
 # environment. None is a credential (an identifier, an address or a list of them), and the Hub reads no secret that is not in this list. ENV_SUBSCRIPTION_ID is the name that the job gives the subscription's secret.
 ESTATE_SECRETS = {"AZURE_CLIENT_ID", "AZURE_TENANT_ID", "AZURE_SUBSCRIPTION_ID", "ENV_VNET_PREFIX", "ENV_PE_SUBNET_PREFIX", "ENV_DNS_SERVERS", "ENV_OWNER", "ENV_ALERT_EMAILS", "CONSOLE_APP_CLIENT_ID",
-                  "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY"}
+                  "CONSOLE_PEOPLE", "CONSOLE_HOST_NAME", "MAIL_SENDER", "DRIFT_ACCEPTED_EXEMPTIONS", "DRIFT_ACCEPTED_DENY", "TEAMS_BOT_APP_ID"}
 NEVER_VARIABLES = ESTATE_SECRETS | {"ENV_SUBSCRIPTION_ID"}
 # What only a called workflow has: the `job` context's view of its own file's repository and commit. The Hub is not called, so its steps use the plain `github` context (github.sha, github.repository), which is this
 # repository at the run's commit.

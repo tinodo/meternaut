@@ -190,6 +190,25 @@ param investigateMaxCalls int = 40
 @maxValue(600)
 param investigateMaxSeconds int = 600
 
+@description('Resource id of the user-assigned identity id-meternaut-teams, which the Hub action teams makes (environment/teams/main.bicep) and the workflow reads from Azure. Empty: the identity is not attached to the app. The identity holds no role (docs/proposals/20-teams-cards-through-a-bot.md).')
+param teamsIdentityId string = ''
+
+@description('Client id of that identity: the setting TEAMS_BOT_IDENTITY_CLIENT_ID, which tells the app which of its identities to take the token of the bot from. Empty with the identity.')
+param teamsIdentityClientId string = ''
+
+@description('Client id of the app registration "Meternaut Teams" (the secret TEAMS_BOT_APP_ID of the environment hub). Empty until the owner has made it.')
+param teamsBotAppId string = ''
+
+@description('How a Teams card is delivered: queue (the message on the Storage queue and the Power Automate flow of proposal 19: the default) or bot (straight to Teams through the Bot Connector, proposal 20). The owner switches it to bot after the action teams-test has passed.')
+@allowed([
+  'queue'
+  'bot'
+])
+param teamsDelivery string = 'queue'
+
+@description('The service URL of the Bot Connector that the app sends to (Teams, in Europe or elsewhere: the one that Learn gives for proactive messages).')
+param teamsServiceUrl string = 'https://smba.trafficmanager.net/teams/'
+
 var tags = {
   workload: workload
   component: 'cases'
@@ -480,9 +499,11 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   tags: tags
   identity: {
     type: 'SystemAssigned, UserAssigned'
-    userAssignedIdentities: {
+    userAssignedIdentities: union({
       '${authIdentity.id}': {}
-    }
+    }, empty(teamsIdentityId) ? {} : {
+      '${teamsIdentityId}': {}
+    })
   }
   properties: {
     serverFarmId: plan.id
@@ -529,7 +550,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: isFlex ? null : 'Disabled'
       appSettings: concat(basicOnlyAppSettings, [
         // No client id in the connections and no AZURE_CLIENT_ID: a connection without one uses the app's system-assigned identity, which is the identity that the roles
-        // above are for. The sign-in's identity (below) is the one user-assigned identity that the app has, and it is named by its own setting.
+        // above are for. The sign-in's identity (below) is a user-assigned identity of the app, and it is named by its own setting; so is the Teams identity, which holds no role.
         { name: 'AzureWebJobsStorage__credential', value: 'managedidentity' }
         { name: 'AzureWebJobsStorage__blobServiceUri', value: storage.properties.primaryEndpoints.blob }
         { name: 'AzureWebJobsStorage__queueServiceUri', value: storage.properties.primaryEndpoints.queue }
@@ -574,6 +595,12 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the console when it redeems the code of the
         // Azure Resource Manager sign-in (the app registration's federated credential trusts that identity).
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
+        // Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md): off while TEAMS_DELIVERY is queue. The app takes a token of the identity whose client id
+        // is TEAMS_BOT_IDENTITY_CLIENT_ID for api://AzureADTokenExchange, exchanges it for a token of the app registration TEAMS_BOT_APP_ID, and sends to TEAMS_SERVICE_URL. No secret, no key, no role.
+        { name: 'TEAMS_DELIVERY', value: teamsDelivery }
+        { name: 'TEAMS_BOT_APP_ID', value: teamsBotAppId }
+        { name: 'TEAMS_BOT_IDENTITY_CLIENT_ID', value: teamsIdentityClientId }
+        { name: 'TEAMS_SERVICE_URL', value: teamsServiceUrl }
       ], buildSettings)
     }
   }

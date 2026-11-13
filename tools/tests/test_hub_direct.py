@@ -24,7 +24,8 @@ params_spec.loader.exec_module(ep)
 HUB = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8").replace("\r\n", "\n")
 BOOTSTRAP = (ROOT / "environment" / "BOOTSTRAP.md").read_text(encoding="utf-8").replace("\r\n", "\n")
 MASKS = "Mask the identifiers of the estate in this run's log"
-PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT"}
+PLAIN_CONFIGURATION = {"ENV_RESOURCE_GROUP", "ENV_LOCATION", "ENV_BUDGET_AMOUNT",
+                       "TEAMS_DELIVERY"}  # TEAMS_DELIVERY: replaced by the owner's ruling of 2026-11-13 (pending his plain yes): queue or bot, a plain word and not an identifier
 
 
 def code(text):
