@@ -856,9 +856,12 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-13, after the impact check of a private endpoint was added on top of the words sweep and the findings of its review were fixed (377,812 bytes
-    # with 104 files, on an LF copy with the real build script, which is 8,826 more than the 368,986 with 103 files of main after the sweep; the request sent is 407,855 bytes and 72,145 stay free), and the room that
-    # more sources may take before this test asks for a decision: 200 bytes. Main measured 368,986 after the function app was no longer called by its old name in the messages, the comments and the docstrings of the code
+    # What the archive of the sources of this repository measured on 2026-11-13, after the bot way of the Teams cards (cases/teamsbot.py and the rounds of cases/offers.py that use it, his plain yes of 2026-11-13) was
+    # added on top of the impact check: 383,763 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 5,944 more than the 377,819 that the same method gives for main (the
+    # 377,814 below was recorded for it: 5 bytes of the dates in the headers); the request sent is 413,806 bytes (9,149 for this script and 20,894 for operator/publish.sh) and 66,194 stay free. The room that more sources
+    # may take before this test asks for a decision is 200 bytes. Before the bot way the archive measured 377,814 bytes with 104 files, after the impact check of a private endpoint was added on top of the words sweep and the
+    # findings of its review were fixed (8,826 more than the 368,986 with 103 files of main after the sweep; the request sent was 407,855 bytes and 72,145 stayed free). Main measured 368,986 after the function app was
+    # no longer called by its old name in the messages, the comments and the docstrings of the code
     # (45 fewer than the 369,031 of the day before). On 2026-11-12 it measured, after the reason of a request that Meternaut took back was kept on its plan (369,031 bytes with 103 files, which is 219 more
     # than the 368,812 after the rules about a deletion were made one place that every path passes, and the requests that were open under the old rules are taken back; 5,002 more than the 363,810 after
     # the Teams cards were given their buttons and the way to close themselves; 362,748 after the buttons alone). Before them it was 358,545 bytes with 102
@@ -867,10 +870,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # 344,390 just before, with 99 files; 340,907 on 2026-11-11, after the Teams bot was removed and the cards went onto a queue; 349,921 before that, after the approvals
     # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
     # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
-    # 92 files before them). The cap of the request is 480,000 bytes. 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back, and 80,000 until the impact check (the request
-    # sent was 399,029 bytes on main and is 407,855 now, so 72,145 stay free: the floor of the test below is lowered from 80,000 to 72,000, on purpose), which no trimming of the words could give back, and the largest
-    # request that is known to work (466,104 bytes, tools/operator-run.py) is still about 58,000 above the one that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 377_814
+    # 92 files before them). The cap of the request is 480,000 bytes. 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back, 80,000 until the impact check (the request
+    # sent was 399,029 bytes on main before it and 407,855 after it, so 72,145 stayed free) and 72,000 until the bot way: the request sent is 413,806 bytes now, so 66,194 stay free, and the floor of the test below is
+    # lowered from 72,000 to 66,000, on purpose. No trimming of the words gave that room back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 52,000 above the one
+    # that is sent now.
+    SOURCES_ARCHIVE_MEASURED = 383_763
 
     def sources_archive(self, fresh=False):
         """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""
@@ -926,9 +930,9 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
         self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left: raise the ceiling on purpose, with the new measure")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_72000_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_66000_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 72_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
+        self.assertLessEqual(sent, 480_000 - 66_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
 
     def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
         data = self.sources_archive()
