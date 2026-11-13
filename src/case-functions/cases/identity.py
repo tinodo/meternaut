@@ -49,13 +49,16 @@ class Identity:
         self.fetch, self.clock, self.sleep = fetch, clock, sleep
         self._cache: dict[str, tuple[str, float]] = {}
 
-    def token(self, resource: str) -> str:
+    def token(self, resource: str, within: float | None = None) -> str:
         """The token for the resource, from the cache while it has more than REFRESH_SECONDS left.
 
         The platform's endpoint can answer slowly just after the host started, so a request that failed for a passing reason is made again: 3 tries in all,
         each with a timeout of 15 s, with a pause of 2 s before the second try and 5 s before the third. The worst case is about 15+2+15+5+15 = 52 s.
         Only a network failure (a timeout, a lost or refused connection), HTTP 429 and HTTP 5xx are tried again.
-        Any other refusal, a missing endpoint and an answer without a token end it at once."""
+        Any other refusal, a missing endpoint and an answer without a token end it at once.
+
+        `within` is the seconds that the caller can wait in all (the round of the Teams cards): no try starts when they are used up, a try waits no longer than what is left of them and no pause is taken
+        that would reach past them. The error is then one that may pass."""
         cached = self._cache.get(resource)
         if cached and cached[1] - self.clock() > REFRESH_SECONDS:
             return cached[0]
@@ -65,12 +68,17 @@ class Identity:
         if self.client_id:
             url += f"&client_id={quote(self.client_id, safe='')}"
         headers = {"X-IDENTITY-HEADER": self.header, "Accept": "application/json"}
-        definitive = False
-        for tries, pause in enumerate((0, *PAUSES_SECONDS), start=1):  # the first try has no pause
-            if tries > 1:
+        end = None if within is None else self.clock() + within
+        problem, cause, definitive, tries = "was not asked: no time was left", None, False, 0
+        for pause in (0, *PAUSES_SECONDS):  # the first try has no pause
+            left = None if end is None else end - self.clock() - pause
+            if left is not None and left <= 0:
+                break
+            if tries:
                 self.sleep(pause)
+            tries += 1
             try:
-                status, body = self.fetch(url, headers, TRY_TIMEOUT_SECONDS)
+                status, body = self.fetch(url, headers, TRY_TIMEOUT_SECONDS if left is None else max(1.0, min(TRY_TIMEOUT_SECONDS, left)))
             except NETWORK_ERRORS as error:
                 problem, cause = f"gave no answer ({type(error).__name__})", error
             else:

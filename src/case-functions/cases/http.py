@@ -53,13 +53,17 @@ class HttpError(Exception):
     """A call that failed. `status` is 0 when no answer arrived. The text never holds a header or a secret.
 
     `challenge` is the `www-authenticate` header of a 401 or a 403, as it came and cut at MAX_CHALLENGE characters, for the one reader that may use it (the claims
-    challenge of the runner). It is never part of the text of the error, so it reaches no log, no History line and no page."""
+    challenge of the runner). It is never part of the text of the error, so it reaches no log, no History line and no page.
 
-    def __init__(self, status: int, message: str, retry_after: float | None = None, challenge: str = "") -> None:
+    `unsent` is true when the request never left the app: no time was left for it, or the connection could not be made (urllib raises URLError only while it connects and sends the request out; what
+    comes when the answer is awaited or read is another error). A call that failed so can be made again without a risk of doing it twice."""
+
+    def __init__(self, status: int, message: str, retry_after: float | None = None, challenge: str = "", unsent: bool = False) -> None:
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
         self.challenge = challenge
+        self.unsent = unsent
 
 
 class Refused(Exception):
@@ -289,11 +293,13 @@ class Client:
         while True:
             left = self.remaining()
             if left is not None and left <= 0:
-                raise HttpError(0, f"{method} {urlsplit(url).netloc}: the deadline of the run was reached")
+                raise HttpError(0, f"{method} {urlsplit(url).netloc}: the deadline of the run was reached", unsent=True)
+            unsent = False
             try:
                 status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)))
             except (OSError, TimeoutError, HTTPException, urllib.error.URLError) as error:
                 status, answer_headers, answer = 0, {}, self.redact(f"network error: {type(error).__name__}").encode()
+                unsent = isinstance(error, urllib.error.URLError)
             if 200 <= status < 300:
                 return Response(status, answer_headers, answer)
             wait = retry_after(answer_headers) if status == 429 else None
@@ -307,4 +313,4 @@ class Client:
                     attempt += 1
                     continue
             message = answer.decode("utf-8", "replace") if status == 0 else error_text(status, answer, self.redact)
-            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait, challenge_of(status, answer_headers))
+            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait, challenge_of(status, answer_headers), unsent)
