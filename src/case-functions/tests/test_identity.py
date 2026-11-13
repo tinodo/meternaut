@@ -238,6 +238,50 @@ class TriesAgain(Rig):
         self.assertIs(Identity(ENV).sleep, time.sleep)
 
 
+class WithTheTimeOfTheCaller(Rig):
+    """A caller that can wait only so long (the round of the Teams cards) gives the identity that time: no try starts when it is used up, a try waits no longer than what is left and no pause is
+    taken that reaches past it. The error then says that the endpoint may answer later."""
+
+    def stalls(self, within):
+        """The error of an endpoint that never answers (every try waits out its timeout), the (time, timeout) of every try and the time that all of it took."""
+        now, tried = [0.0], []
+
+        def fetch(url, headers, timeout):
+            tried.append((now[0], timeout))
+            now[0] += timeout
+            raise TimeoutError("slow")
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            now[0] += seconds
+        with self.assertRaises(IdentityError) as raised:
+            Identity(ENV, fetch=fetch, clock=lambda: now[0], sleep=sleep).token("r", within=within)
+        return raised.exception, tried, now[0]
+
+    def test_the_tries_and_the_pauses_stay_within_the_time_and_the_error_is_one_that_may_pass(self):
+        error, tried, took = self.stalls(25)
+        self.assertEqual((tried, self.sleeps, took, error.transient), ([(0.0, 15), (17.0, 8)], [2], 25.0, True))
+        self.assertEqual(str(error), "the managed identity endpoint gave no answer (TimeoutError) after 2 tries")
+
+    def test_without_the_time_nothing_is_made_and_the_error_is_one_that_may_pass(self):
+        for within in (0, -3):
+            self.sleeps.clear()
+            error, tried, took = self.stalls(within)
+            self.assertEqual((tried, self.sleeps, took, error.transient), ([], [], 0.0, True), within)
+            self.assertEqual(str(error), "the managed identity endpoint was not asked: no time was left")
+
+    def test_a_try_waits_at_least_a_second_and_at_most_what_is_left(self):
+        for within, timeout in ((3, 3), (0.4, 1.0), (60, 15)):
+            with self.subTest(within=within):
+                identity, fetch = self.identity(good())
+                identity.token("r", within=within)
+                self.assertEqual([t for _, _, t in fetch.calls], [timeout])
+
+    def test_a_caller_that_names_no_time_gets_the_tries_and_pauses_of_before(self):
+        error, fetch = self.fails(TimeoutError("slow"))
+        self.assertEqual(([t for _, _, t in fetch.calls], self.sleeps, str(error)), ([15, 15, 15], [2, 5], "the managed identity endpoint gave no answer (TimeoutError) after 3 tries"))
+
+
 class OnTheWire(Rig):
     """The tries through the real fetch, with the opening of the connection replaced: no call leaves the test."""
 
