@@ -427,6 +427,29 @@ class WhenTheSettingsAreNotComplete(unittest.TestCase):
                          ["TEAMS_DELIVERY", "TEAMS_BOT_APP_ID", "TEAMS_BOT_IDENTITY_CLIENT_ID", "TEAMS_SERVICE_URL"])
         self.assertEqual(loop_config.DEFAULT_SERVICE_URL, "https://smba.trafficmanager.net/teams/")
 
+    def test_the_loop_stays_on_the_queue_whatever_the_settings_of_the_bot_say_and_the_test_has_a_way_of_its_own(self):
+        ids = {name: value for name, value in BOT.items() if name != "TEAMS_DELIVERY"}
+        bad = {"TEAMS_BOT_APP_ID": "garbage", "TEAMS_BOT_IDENTITY_CLIENT_ID": "", "TEAMS_SERVICE_URL": "https://evil.example/teams/"}
+        for env in (ids, {**ids, "TEAMS_DELIVERY": "queue"}, bad, {**bad, "TEAMS_DELIVERY": "queue"}):
+            with self.subTest(env=sorted(env.values())):
+                self.assertEqual((self.way(**env), loop_config._teams({**LOOP_ENV, **env}, TENANT)), (loop_config.TeamsWay(), loop_config.TeamsWay()), "the way of the loop is the queue, and the bot is not looked at")
+        for delivery, loop in ((None, "queue"), ("queue", "queue"), ("bot", "bot"), ("banana", "off")):
+            env = {**ids, **({} if delivery is None else {"TEAMS_DELIVERY": delivery})}
+            with self.subTest(delivery=delivery):
+                way = loop_config.bot_way(env, TENANT)
+                self.assertEqual((way.way, way.why, way.app_id, way.identity_client_id, way.tenant_id, way.service_url), ("bot", "", APP, IDENTITY, TENANT, loop_config.DEFAULT_SERVICE_URL))
+                self.assertEqual(self.way(**env).way, loop, "the same settings: the loop's way is what it was")
+
+    def test_the_way_of_the_test_has_the_rules_of_the_bot_way_of_the_loop_and_says_what_is_wrong_in_the_same_words(self):
+        for change in ({"TEAMS_BOT_APP_ID": ""}, {"TEAMS_BOT_IDENTITY_CLIENT_ID": "x" * 36}, {"TEAMS_SERVICE_URL": "https://evil.example/teams/"}, {"TEAMS_BOT_APP_ID": "", "TEAMS_BOT_IDENTITY_CLIENT_ID": ""}):
+            for delivery in (None, "queue", "banana"):
+                env = {**BOT, **change, **({} if delivery is None else {"TEAMS_DELIVERY": delivery})}
+                with self.subTest(change=sorted(change), delivery=delivery):
+                    before = dict(env)
+                    way = loop_config.bot_way(env, TENANT)
+                    self.assertEqual((way.way, way, env), ("off", self.way(**{**BOT, **change}), before), "the words of the loop's own bot way, and the settings are left alone")
+        self.assertEqual((loop_config.bot_way(BOT, None).way, "SIGNIN_TENANT_ID is not set" in loop_config.bot_way(BOT, None).why), ("off", True))
+
 
 class TheWiringOfTheWays(unittest.TestCase):
     def extras(self, env, transport=None, fetch=None):
@@ -633,7 +656,9 @@ class TheTestCard(unittest.TestCase):
         return 200, json.dumps({"access_token": ASSERTION, "expires_on": "4102444800"}).encode()
 
     def run_test(self, env=None, request_id=None):
+        """Runs the test card with the settings of ENV and `env` on top; a setting whose value in `env` is None is not set at all."""
         env = {**ENV, "CONSOLE_PEOPLE": LOOP_ENV["CONSOLE_PEOPLE"], "IDENTITY_ENDPOINT": "http://localhost:8081/msi/token", "IDENTITY_HEADER": "h", **(env or {})}
+        env = {name: value for name, value in env.items() if value is not None}
         with mock.patch.object(wiring, "build_store", return_value=self.store), LogCapture() as capture:
             ok = offers.card_test(env, request_id or self.ID, transport=self.teams, sleep=lambda s: None, monotonic=lambda: 0.0, clock=self.clock, fetch=self.fetch)
         return ok, capture.events(), "\n".join(capture.messages())
@@ -687,16 +712,47 @@ class TheTestCard(unittest.TestCase):
         (step, finished) = [e for e in capture.events() if e["type"].startswith("teams.test")]
         self.assertEqual((step["step"], step["ok"], step["reason"], "status" in step, finished["ok"]), ("token", False, "unauthorized", False, False))
 
-    def test_it_sends_nothing_unless_the_bot_way_is_on_and_the_owner_is_there_and_no_switch_is_pulled(self):
+    DELIVERIES = (None, "", "queue", " Queue ", "bot", "BOT", "banana")  # not set, the default, the way of the loop, the way that the test proves, and a typo
+
+    def fresh(self):
+        self.teams.calls, self.teams.replies, self.asked, self.store = [], {}, [], MemoryStore(self.clock)
+
+    def test_the_test_ignores_what_teams_delivery_says_so_that_the_bot_is_proved_before_it_is_switched_on(self):
+        for delivery in self.DELIVERIES:
+            with self.subTest(delivery=delivery):
+                self.fresh()
+                ok, events, _ = self.run_test({"TEAMS_DELIVERY": delivery})
+                self.assertEqual((ok, self.teams.steps(), [(e["type"], e["ok"]) for e in events][-1]), (True, ["token", "create", "send", "update"], ("teams.test.finished", True)))
+                self.assertEqual((self.teams.form()["client_id"], json.loads(self.teams.calls[1]["data"])["members"]), (APP, [{"id": self.OWNER}]), "the app registration of the bot and the owner")
+                self.assertTrue(any(f"client_id={IDENTITY}" in url for url in self.asked), "the identity of the bot gave the assertion, whatever the delivery is")
+
+    def test_the_address_of_the_bot_connector_may_be_empty_and_is_the_one_that_is_allowed_either_way(self):
+        for url in (None, "", " HTTPS://SMBA.trafficmanager.net/teams "):
+            with self.subTest(url=url):
+                self.fresh()
+                ok, _, _ = self.run_test({"TEAMS_DELIVERY": "queue", "TEAMS_SERVICE_URL": url})
+                self.assertEqual((ok, {call["url"].rsplit("/v3/", 1)[0] for call in self.teams.calls[1:]}), (True, {"https://smba.trafficmanager.net/teams"}))
+
+    def test_a_setting_of_the_bot_that_is_missing_or_wrong_is_off_whatever_the_delivery_says_and_nothing_at_all_is_called(self):
+        no_sign_in = {name: None for name in SIGNIN}
+        for change in ({"TEAMS_BOT_APP_ID": ""}, {"TEAMS_BOT_APP_ID": "not a guid"}, {"TEAMS_BOT_IDENTITY_CLIENT_ID": None}, {"TEAMS_BOT_IDENTITY_CLIENT_ID": "x" * 36},
+                       {"TEAMS_SERVICE_URL": "http://smba.trafficmanager.net/teams/"}, {"TEAMS_SERVICE_URL": "https://evil.example/teams/"}, no_sign_in):
+            for delivery in self.DELIVERIES:
+                with self.subTest(change=sorted(change), delivery=delivery):
+                    self.fresh()
+                    ok, events, _ = self.run_test({**change, "TEAMS_DELIVERY": delivery})
+                    self.assertEqual((ok, [(e["type"], e["ok"], e.get("reason")) for e in events], self.teams.calls, self.asked), (False, [("teams.test.finished", False, "off")], [], []))
+
+    def test_a_switch_that_is_pulled_and_a_missing_owner_stop_the_test_whatever_the_delivery_says(self):
         no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
-        pull = (lambda: self.store.switch_put(SwitchRecord(name="all", paused=True, by="Ops", at="2026-11-05T10:00:00Z")))
-        for env, reason, before in (({"TEAMS_DELIVERY": "queue"}, "off", None), ({"TEAMS_BOT_APP_ID": ""}, "off", None), ({"CONSOLE_PEOPLE": no_owner}, "no-owner", None), ({}, "held", pull)):
-            with self.subTest(reason=reason, env=sorted(env)):
-                self.teams.calls, self.store = [], MemoryStore(self.clock)
-                if before:
-                    before()
-                ok, events, _ = self.run_test(env)
-                self.assertEqual((ok, [(e["type"], e["ok"], e.get("reason")) for e in events], self.teams.calls), (False, [("teams.test.finished", False, reason)], []))
+        for delivery in self.DELIVERIES:
+            for env, reason, switch in (({}, "held", "messages"), ({}, "held", "all"), ({"CONSOLE_PEOPLE": no_owner}, "no-owner", None)):
+                with self.subTest(delivery=delivery, reason=reason, switch=switch):
+                    self.fresh()
+                    if switch:
+                        self.store.switch_put(SwitchRecord(name=switch, paused=True, by="Ops", at="2026-11-05T10:00:00Z"))
+                    ok, events, _ = self.run_test({**env, "TEAMS_DELIVERY": delivery})
+                    self.assertEqual((ok, [(e["type"], e["ok"], e.get("reason")) for e in events], self.teams.calls, self.asked), (False, [("teams.test.finished", False, reason)], [], []))
 
     def test_the_check_of_the_pipeline_reads_what_the_test_writes(self):
         """tools/teams-check.py, which the Hub action teams-test runs in the Operator, reads these History lines: the kinds, the steps and the words of the reasons are the same on both sides."""
@@ -726,7 +782,7 @@ class TheTestCard(unittest.TestCase):
                 self.assertTrue(any(check.STEP_TITLES[step] in line and "NOT ok" in line and said in line and check.REASONS[reason] in line for line in lines), lines)
         no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
         pull = (lambda: self.store.switch_put(SwitchRecord(name="all", paused=True, by="Ops", at="2026-11-05T10:00:00Z")))
-        for env, before, reason in (({"TEAMS_DELIVERY": "queue"}, None, "off"), ({"CONSOLE_PEOPLE": no_owner}, None, "no-owner"), ({}, pull, "held"), ({"CONSOLE_PEOPLE": "not json"}, None, "other")):
+        for env, before, reason in (({"TEAMS_BOT_APP_ID": ""}, None, "off"), ({"CONSOLE_PEOPLE": no_owner}, None, "no-owner"), ({}, pull, "held"), ({"CONSOLE_PEOPLE": "not json"}, None, "other")):
             with self.subTest(reason=reason):
                 lines, passed = read(env, before)
                 self.assertFalse(passed)

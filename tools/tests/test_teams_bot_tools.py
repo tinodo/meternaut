@@ -556,8 +556,8 @@ class TheTeamsTest(unittest.TestCase):
         self.assertIn("The end of the test did not arrive in the telemetry. Has the cases app the new code", out)
 
     def test_when_no_step_ran_the_last_line_says_why_in_one_fixed_word_and_nothing_else_is_printed(self):
-        for reason, words in (("off", "the cases app is not set to deliver through the bot"), ("no-owner", "the cases app found no person with the role owner"), ("held", "a switch of the owner (messages or all) holds the cards"),
-                              ("other", "the cases app could not read its settings")):
+        for reason, words in (("off", "the Teams settings or the sign-in settings of the function app are incomplete"), ("no-owner", "the cases app found no person with the role owner"),
+                              ("held", "a switch of the owner (messages or all) holds the cards"), ("other", "the cases app could not read its settings")):
             code, out, _ = self.go(self.World(self, [], finished_extra={"reason": reason}), self.OPEN)
             self.assertEqual(code, 1, reason)
             self.assertIn(f"The cases app sent nothing: {words}", out)
@@ -568,6 +568,13 @@ class TheTeamsTest(unittest.TestCase):
         self.assertIn("The cases app sent nothing, for another reason.", out)
         for secret in ("person@example.com", "11111111-2222", "abcdefghijklmnop"):
             self.assertNotIn(secret, out)
+
+    def test_the_word_off_blames_the_settings_of_the_bot_and_never_the_delivery_because_the_test_ignores_what_teams_delivery_says(self):
+        said = tc.FINISHED_REASONS["off"]
+        self.assertEqual(("TEAMS_DELIVERY" in said, "delivery" in said.lower(), "not set to deliver" in said), (False, False, False))
+        self.assertIn("the Teams settings or the sign-in settings of the function app are incomplete", said)
+        source = (ROOT / "tools" / "teams-check.py").read_text(encoding="utf-8")
+        self.assertEqual([text for text in ("the delivery is not", "TEAMS_DELIVERY is not") if text in source], [], "no sentence of the tool says that the delivery has to be bot")
 
     def test_the_queue_refusing_the_message_stops_the_run_with_a_plain_error_and_only_a_pipeline_may_send(self):
         code, out, err = self.go(self.World(self, self.GOOD, queue_status=403), self.OPEN)

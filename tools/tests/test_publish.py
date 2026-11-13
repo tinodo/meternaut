@@ -856,8 +856,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-13, after the bot way of the Teams cards (cases/teamsbot.py and the rounds of cases/offers.py that use it, his plain yes of 2026-11-13) was
-    # added on top of the impact check: 385,428 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 7,609 more than the 377,819 that the same method gives for main (the
+    # What the archive of the sources of this repository measured on 2026-11-13, after the test card of the Teams bot was made to go by the bot's own settings and not by TEAMS_DELIVERY (loop_config.bot_way and the lines of
+    # offers.card_test that use it): 385,605 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 158 more than the 385,447 that the same method gives for the tree before it
+    # (the number moves by a few dozen bytes with the time that the files carry, and with a second time on some of them); the request sent is 415,648 bytes and 64,352 stay free, above the floor of the test below
+    # (64,000), which is not lowered. Before that change it measured, after the bot way of the Teams cards (cases/teamsbot.py and
+    # the rounds of cases/offers.py that use it, his plain yes of 2026-11-13) was added on top of the impact check: 385,428 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 7,609 more than the 377,819 that the same method gives for main (the
     # 377,814 that was recorded for main is 5 less, and the date that the files carry moves the number by a few dozen bytes either way, which the margin below covers); the request sent is 415,471 bytes (9,149 for this
     # script and 20,894 for operator/publish.sh) and 64,529 stay free. The first version of the bot way measured 383,763; the fixes that three reviews asked for (no second card for a post whose answer was lost, the
     # one address of the Bot Connector that is accepted, the time of a round, a token that is kept) added 1,041, and the fixes of a fourth review (a post that could not connect is tried again, the identity gets the
@@ -874,10 +877,10 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
     # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
     # 92 files before them). The cap of the request is 480,000 bytes. 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back, 80,000 until the impact check (the request
-    # sent was 399,029 bytes on main before it and 407,855 after it, so 72,145 stayed free) and 72,000 until the bot way: the request sent is 415,471 bytes now, so 64,529 stay free, and the floor of the test below is
+    # sent was 399,029 bytes on main before it and 407,855 after it, so 72,145 stayed free) and 72,000 until the bot way: the request sent was 415,471 bytes then, so 64,529 stayed free, and the floor of the test below was
     # lowered from 72,000 to 64,000, on purpose. No trimming of the words gave that room back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 50,000 above the one
     # that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 385_428
+    SOURCES_ARCHIVE_MEASURED = 385_605
     SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):

@@ -28,10 +28,11 @@ With TEAMS_DELIVERY=bot (cases/teamsbot.py; the queue stays the default) the sam
 queue: `sent` then means that Teams accepted the card, the record `card-posted` is written at once with the activity and the conversation (and the word `bot`, so that a card is replaced only by the way that
 posted it), and a card is replaced by an update of that activity. A person for whom Teams says that the app is not installed, or that it was blocked, is a failed try with that plain reason, tried again
 at most as often as any other, and the other approvers go on; the letter follows after the twenty minutes as ever. A bot way whose settings are missing or wrong is off: no card is tried (loop_config.TeamsWay).
-AGENTS.md rule 25 (no bot) is replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13) for this way, and nothing here runs unless TEAMS_DELIVERY says bot.
+AGENTS.md rule 25 (no bot) is replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13) for this way, and nothing here runs unless TEAMS_DELIVERY says bot, except the test card (card_test), which goes by the settings of the bot alone.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import functools
 import logging
@@ -411,8 +412,9 @@ def cards_hook(settings: LoopSettings, store: Store, people: People, token: Call
 def card_test(env: Mapping[str, str], request_id: str, *, transport=default_transport, sleep=time.sleep, monotonic=time.monotonic, clock: Callable[[], dt.datetime] = utc_now, fetch=None) -> bool:
     """The proof of the way through the bot, started by the control message `teams-card-test`: one test card (no request, no figure, no name of the estate) to the first person with the role owner,
     replaced at once by a closing card. The History says only what came of each step (`teams.test.step`: the step, whether it worked, the HTTP status, the number of an error of Microsoft Entra and one
-    plain word for why not) and, at the end, `teams.test.finished`. It sends nothing unless the way is the bot and its settings are complete, and nothing while the switch `messages` or `all` is
-    pulled. It never raises."""
+    plain word for why not) and, at the end, `teams.test.finished`. It goes by the settings of the bot alone (loop_config.bot_way: the Teams settings and the sign-in settings are complete) and not by
+    TEAMS_DELIVERY, so that the way is proved before the delivery is switched to `bot`; it sends nothing when they are not complete, and nothing while the switch `messages` or `all` is pulled.
+    It never raises."""
     redact = Redactor()
     history = History(uuid.uuid4().hex, request_id, clock, redact)
 
@@ -422,8 +424,10 @@ def card_test(env: Mapping[str, str], request_id: str, *, transport=default_tran
 
     try:
         settings = loop_config.load(env)
-        if settings is None or settings.teams.way != "bot":
+        way = loop_config.bot_way(env, settings.signin_tenant_id) if settings else None
+        if way is None or way.way != "bot":
             return finish(False, reason="off")
+        settings = dataclasses.replace(settings, teams=way)
         people = people_mod.load(env)
         owner = next(iter(people.with_role("owner")), None)
         if owner is None:
