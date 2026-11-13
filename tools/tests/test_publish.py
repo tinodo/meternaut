@@ -867,7 +867,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # 92 files before them). The cap of the request is 480,000 bytes and 80,000 stay free (the test below): 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back
     # (the request sent is 399,074 bytes now, 5,221 more than the 393,853 of main before the rules, and 80,926 stay free), which no trimming of the words could give back, and the largest request that is known to work
     # (466,104 bytes, tools/operator-run.py) is still about 67,000 above the one that is sent now.
-    # The bot way of the Teams cards (cases/teamsbot.py and the rounds of cases/offers.py that use it; it replaces rule 25 only by the owner's ruling of 2026-11-13, pending his plain yes) made the archive
+    # The bot way of the Teams cards (cases/teamsbot.py and the rounds of cases/offers.py that use it; replaced by the owner's ruling of 2026-11-13 (pending his plain yes), for rule 25 says that Meternaut has no bot) made the archive
     # 374,898 bytes with 104 files, 5,867 more than the 369,031 above: measured as the difference of two builds with this script, of the LF files of main and of this branch, with one time on every file, so
     # that the CRLF files of a machine do not count. The request sent is 404,941 bytes then (9,149 for this script and 20,894 for operator/publish.sh), and 75,059 stay free: the room that the test below asks
     # for is 75,000 now, and whoever merges second measures again after the rebase.
