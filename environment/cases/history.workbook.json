@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Meternaut history\n\nWhat Meternaut did, step by step: every run, every lead it found, every case it took up and what each model said. It is read from the telemetry of the cases app and kept for a year. Figures are Cost Management cost lines in US dollars, not invoices. A saving is computed by code, never by a model. Nothing on this page changes Azure.\n\nIf a table says \"Query failed\" or \"could not connect to server\": the portal reads this data from your browser, and a network that resolves the Azure Monitor query addresses to a private IP address (for example a corporate VPN) cannot reach it. That is the network, not the query. The Meternaut console shows the same runs and cases from its own records, and works from any network that can reach the console."
+        "json": "## Meternaut history\n\nWhat Meternaut did, step by step: every run, every lead it found, every case it took up and what each model said. It is read from the telemetry of the cases app and kept for a year. Figures are Cost Management cost lines in US dollars, not invoices. A saving is computed by code, never by a model. Nothing on this page changes Azure.\n\nIf a table says \"Query failed\" or \"could not connect to server\": the portal reads this data from your browser, and a network that resolves the Azure Monitor query addresses to a private IP address (for example a corporate VPN) cannot reach it. That is the network, not the query. The Meternaut function app shows the same runs and cases from its own records, and works from any network that can reach the function app."
       },
       "name": "intro"
     },

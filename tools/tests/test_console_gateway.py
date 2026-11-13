@@ -1,5 +1,5 @@
-"""The console behind the platform's Application Gateway (docs/proposals/07-private-by-default.md, phase 3 for the cases app): what the parameter builder, the cases template and the steps of the
-deploy workflow do with the console's host name, and what the documents say about it. Self-contained, as the other test files are: it loads what it tests and has its own helpers."""
+"""The function app behind the platform's Application Gateway (docs/proposals/07-private-by-default.md, phase 3 for the cases app): what the parameter builder, the cases template and the steps of the
+deploy workflow do with the function app's host name, and what the documents say about it. Self-contained, as the other test files are: it loads what it tests and has its own helpers."""
 import contextlib
 import importlib.util
 import io
@@ -76,7 +76,7 @@ def outputs(out):
 
 
 class TheConsoleHostNameInTheParameterBuilder(unittest.TestCase):
-    """The optional variable CONSOLE_HOST_NAME: empty, everything is as it was; with a name it is the console's address."""
+    """The optional variable CONSOLE_HOST_NAME: empty, everything is as it was; with a name it is the function app's address."""
 
     def test_without_a_name_the_console_is_opened_on_the_apps_own_name_and_the_app_stays_open_as_it_was(self):
         with mock.patch.object(ep, "CASES_APP_PUBLIC_NETWORK_ACCESS", "Enabled"):
@@ -120,7 +120,7 @@ class TheConsoleHostNameInTheParameterBuilder(unittest.TestCase):
         for given in bad:
             code, out, err, files = build(CONSOLE_HOST_NAME=given)
             self.assertEqual((code, out, files), (2, "", {}), given)
-            self.assertIn("CONSOLE_HOST_NAME is a host name such as console.example.com", err, given)
+            self.assertIn("CONSOLE_HOST_NAME is a host name such as app.example.com", err, given)
 
     def test_one_of_the_apps_own_names_is_refused_because_it_is_the_name_of_no_gateway(self):
         for given in ("func-meternaut-cases-0a1b2c3d.azurewebsites.net", "FUNC-X.AZUREWEBSITES.NET", "func-x.scm.azurewebsites.net", "func-x.privatelink.azurewebsites.net"):
@@ -199,7 +199,7 @@ class TheCasesTemplateAndTheConsoleHostName(unittest.TestCase):
 
     def test_the_name_is_an_optional_string_that_is_empty_by_default_and_the_parameter_file_fits_it(self):
         self.assertRegex(self.source, r"(?m)^param consoleHostName string = ''$")
-        self.assertRegex(self.source, r"(?m)^@description\('The host name under which people open the console, [^\n]+'\)\nparam consoleHostName string = ''$")
+        self.assertRegex(self.source, r"(?m)^@description\('The host name under which people open the function app, [^\n]+'\)\nparam consoleHostName string = ''$")
         declared = {m.group(1): m.group(2) for m in re.finditer(r"(?m)^param (\w+) (\w+)", self.source)}
         self.assertEqual(declared["consoleHostName"], "string")
         _, _, _, files = build()
@@ -208,9 +208,9 @@ class TheCasesTemplateAndTheConsoleHostName(unittest.TestCase):
     def test_the_console_s_address_is_the_name_when_there_is_one_and_the_apps_own_name_when_there_is_none_and_one_setting_takes_it(self):
         self.assertIn("var consoleHost = empty(consoleHostName) ? '${functionAppName}.azurewebsites.net' : consoleHostName", self.code)
         self.assertEqual(re.findall(r"\{ name: 'CONSOLE_HOST', value: (.+?) \}", self.code), ["consoleHost"])
-        self.assertEqual(self.code.count("name: 'CONSOLE_HOST'"), 1, "no other place gives the console's address a value")
-        self.assertIn("output consoleUrl string = 'https://${consoleHost}'", self.code, "the output that names the console's address names the one that people open")
-        self.assertNotIn("defaultHostName", self.code, "nothing takes the app's own name from the platform: the console's address is the variable above")
+        self.assertEqual(self.code.count("name: 'CONSOLE_HOST'"), 1, "no other place gives the function app's address a value")
+        self.assertIn("output consoleUrl string = 'https://${consoleHost}'", self.code, "the output that names the function app's address names the one that people open")
+        self.assertNotIn("defaultHostName", self.code, "nothing takes the app's own name from the platform: the function app's address is the variable above")
         self.assertNotIn("name: 'CONSOLE_HOST', value: '${functionAppName}", self.code)
 
     def test_the_sign_in_reads_the_host_from_the_header_that_the_gateway_adds_and_only_when_there_is_a_name(self):
@@ -480,10 +480,10 @@ class TheCleanupOfTheHealthCheckGroup(unittest.TestCase):
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheKnockAtTheConsolesFrontDoor(unittest.TestCase):
-    """The step that knocks at the front door from the runner, run with bash against a stand-in for python3: it knocks at the name that people open (the console's host name on the platform's Application
+    """The step that knocks at the front door from the runner, run with bash against a stand-in for python3: it knocks at the name that people open (the function app's host name on the platform's Application
     Gateway when there is one, the app's own name when the app takes public traffic). It does not run for a closed app with no host name: the Operator's step below does that check."""
 
-    TITLE = "Knock at the console's front door"
+    TITLE = "Knock at the function app's front door"
     APP_NAME = "func-meternaut-cases-0a1b2c3d.azurewebsites.net"
     PROLOGUE = "sleep() { :; }\n"
 
@@ -527,7 +527,7 @@ class TheKnockAtTheConsolesFrontDoor(unittest.TestCase):
         done, calls = self.knock(fails=99)
         self.assertEqual((done.returncode, len(calls)), (1, 5))
         self.assertIn("The front door did not answer as expected (attempt 5 of 5).", done.stdout)
-        self.assertIn("::error::The console's front door is not shut as it should be.", done.stdout)
+        self.assertIn("::error::The function app's front door is not shut as it should be.", done.stdout)
         done, calls = self.knock(fails=2)
         self.assertEqual((done.returncode, len(calls)), (0, 3))
 
@@ -731,7 +731,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
         self.assertEqual((cc.TRIES, cc.TIMEOUT), (3, 60))
 
     def test_the_step_runs_for_loop_check_and_cases_only_when_the_check_is_made_inside_the_network_and_the_runners_step_runs_in_every_other_case(self):
-        runner, operator = step_condition("Knock at the console's front door"), step_condition(self.TITLE)
+        runner, operator = step_condition("Knock at the function app's front door"), step_condition(self.TITLE)
         for action in ("what-if", "model-side", "base", "retire-old", "foundry", "cases", "cases-run", "plant", "loop-check", "operator", "operator-probe", "aigateway", "aigateway-check"):
             for inside in ("true", "false"):
                 on_runner, in_operator = evaluates(runner, action, inside), evaluates(operator, action, inside)
@@ -769,7 +769,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
 
     def test_the_steps_sit_in_this_order_after_the_runners_door_and_before_the_steps_of_the_operator_and_the_summary(self):
         names = re.findall(r"(?m)^      - name: (.+)$", WORKFLOW)
-        order = ["Knock at the console's front door", self.TITLE, self.CLEANUP, "The control queue that the Operator is given a role on is there", "What was done"]
+        order = ["Knock at the function app's front door", self.TITLE, self.CLEANUP, "The control queue that the Operator is given a role on is there", "What was done"]
         positions = [names.index(name) for name in order]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(positions[1], positions[0] + 1)
@@ -844,7 +844,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "That value flips in a later change, after the gateway objects exist and the owner has said yes"):
             self.assertIn(words, self.section, words)
         decisions = section_of(self.page, "## Decisions for the owner")
-        self.assertIn("**The console for people (decided on 2026-11-06).**", decisions)
+        self.assertIn("**The function app for people (decided on 2026-11-06).**", decisions)
         self.assertIn("The owner chose neither.", decisions)
         self.assertNotIn("Until the owner says which, the cases app stays public", self.page)
 
@@ -857,8 +857,8 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "at most 60 tries of at most 15 seconds, ten seconds apart", "With `--private` the name has to resolve to a private address inside the network",
                       "The container signs in as the Operator's own identity and holds no token of the deploy identity.", "Its two files are about 33 KB (the tool also measures the web page's answering time since 2026-11-07), far below the 480,000 bytes that a request takes",
                       "A fresh sign-in comes before the step", "a step after it deletes any group that is left (the prefix is `op-health-`)",
-                      "*The check of the front door* knocks at the console's host name when there is one.", "so the check is of the path that people take",
-                      "never a page: for every path of the console, for `/arm/return` with and without a code, and with a made-up sign-in header",
+                      "*The check of the front door* knocks at the function app's host name when there is one.", "so the check is of the path that people take",
+                      "never a page: for every path of the function app, for `/arm/return` with and without a code, and with a made-up sign-in header",
                       "(`redirect_uri`, or `post_login_redirect_uri` when the redirect is the sign-in's own)", "Without a host name the check knocks at the app's own name, as before.",
                       "*A closed app with no host name.* The runner has no address to knock at then, because a closed app answers nobody outside the network. The parameter builder takes that combination (it refused it until 2026-11-07)",
                       "and the check of the front door runs inside the network, in the Operator, at the app's own name",
@@ -888,8 +888,8 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         for words in ("Learn says that it inserts the six headers into all requests, so the header is there whether or not the host is overridden.",
                       "Learn recommends the opposite for a reverse proxy, which is to preserve the host.", "This change follows the platform's pattern and names the other way next, so that the owner can choose it."):
             self.assertIn(words, differs, words)
-        other = self.section.split("**The other way, which Learn recommends, and why it is not chosen.**")[1].split("**What this does to the security of the console.**")[0]
-        for words in ("attach `<console host name>` to the cases app as a custom domain, validate it with a TXT record", "the free managed certificate cannot be used behind a proxy",
+        other = self.section.split("**The other way, which Learn recommends, and why it is not chosen.**")[1].split("**What this does to the security of the function app.**")[0]
+        for words in ("attach `<function app host name>` to the cases app as a custom domain, validate it with a TXT record", "the free managed certificate cannot be used behind a proxy",
                       "The sign-in then needs no `forwardProxy`.", "What it costs:", "What it gives:", "It is not chosen because the platform's other apps use the override"):
             self.assertIn(words, other, words)
 
@@ -898,10 +898,10 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         rows = [line for line in objects.split("\n") if line.startswith("| ") and not line.startswith(("| Object", "|---"))]
         self.assertEqual([row.split(" | ")[0] for row in rows], ["| HTTPS listener", "| Backend pool", "| Backend setting", "| Custom probe", "| Routing rule", "| DNS record"])
         joined = "\n".join(rows)
-        for words in ("The gateway's public frontend IP configuration, port 443, the console's host name, and the platform's certificate", "One target: the cases app's own name, `<cases app name>.azurewebsites.net`",
+        for words in ("The gateway's public frontend IP configuration, port 443, the function app's host name, and the platform's certificate", "One target: the cases app's own name, `<cases app name>.azurewebsites.net`",
                       "HTTPS, port 443, the host name picked from the backend address, the probe below, no cookie affinity (the app sets none), and the platform's usual request timeout",
                       "HTTPS, the host name taken from the backend setting, the path `/healthz`, healthy only when the status is 200", "A basic rule for the listener, with the pool and the setting, and a priority that no other rule has",
-                      "One CNAME record set for the console's host name in the platform owner's public zone, pointing to the gateway's public name", "Meternaut creates no zone ([rule 19](../../AGENTS.md))",
+                      "One CNAME record set for the function app's host name in the platform owner's public zone, pointing to the gateway's public name", "Meternaut creates no zone ([rule 19](../../AGENTS.md))",
                       "The default probe would count the redirect to the sign-in as healthy"):
             self.assertIn(words, joined, words)
         self.assertIn("Two more things are not objects of the gateway: the return addresses in Microsoft Entra (item 4 above), and the repository variable.", objects)
@@ -960,7 +960,7 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
         for words in ("1. The owner says yes in plain words, to each of the five gateway objects, the DNS record, the return addresses and the variable.",
                       "The health of the new pool is read (step 3). It has to say Healthy. Anything else is the first answer to the question that is not proven below, whether the gateway reaches the app's private endpoint "
                       "through the hub, and the work stops here with nothing else changed.", "a restart stops every site behind it, so that is the platform team's decision",
-                      "Now the whole path has been shown with no change to the app", "the browser check of [rule 28](../../AGENTS.md) through the console's host name",
+                      "Now the whole path has been shown with no change to the app", "the browser check of [rule 28](../../AGENTS.md) through the function app's host name",
                       "8. Only then, in a change of its own and after the owner's yes: `CASES_APP_PUBLIC_NETWORK_ACCESS` is set to `Disabled`, the test that pins it is changed with it, and `cases` runs once more."):
             self.assertIn(words, order, words)
         way_back = self.section.split("**The way back** is one constant and one run")[1].split("**Cost.**")[0]
@@ -985,33 +985,33 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "a certificate from a private authority would make it fail with a certificate error, and it would say so",
                       "Whether the sign-in redirects as Learn describes when `forwardProxy` is `Custom`", "Only the first real sign-in shows this.", "`login.allowedExternalRedirectUrls`",
                       "What the gateway does with an `X-Original-Host` that the client sends.", "Whether the sign-in refuses an authenticated POST through the gateway with an empty 403 ([rule 28](../../AGENTS.md)).",
-                      "20 seconds by default", "Whether the list of the app's four functions", "WebSockets are not used. The console's content security policy is `default-src 'none'`"):
+                      "20 seconds by default", "Whether the list of the app's four functions", "WebSockets are not used. The function app's content security policy is `default-src 'none'`"):
             self.assertIn(words, unproven, words)
         self.assertIn("default-src 'none'", text("src/case-functions/cases/web/layout.py"), "the policy that the record cites")
 
     def test_the_status_the_state_table_the_order_of_the_work_the_not_checked_list_and_the_other_pages_say_the_same(self):
         status = self.page.split("\n")[2]
-        self.assertIn("The owner then decided that the cases app, which also serves the console, is closed too and that people reach the console only through the platform's Application Gateway; the code, the tests "
+        self.assertIn("The owner then decided that the cases app, which also serves the function app, is closed too and that people reach the function app only through the platform's Application Gateway; the code, the tests "
                       "and the documents for that are built, nothing is deployed, and the app is still public", status)
         self.assertNotIn("built, not yet deployed", status)
         state = section_of(self.page, "## The rule and the state")
         cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("**Enabled**, until phase 3 for this app. The owner decided on 2026-11-06 that the app is closed", cases)
         breaks = section_of(self.page, "## What private access breaks")
-        for lead in ("| Checking the console's access |", "| People using the console |"):
+        for lead in ("| Checking the function app's access |", "| People using the function app |"):
             row = [line for line in breaks.split("\n") if line.startswith(lead)][0]
             self.assertIn("#publishing-code-to-the-private-apps-phase-3-for-the-cases-app-the-console-behind-the-platforms-application-gateway-built-not-deployed", row)
         order = section_of(self.page, "## The order of the work")
-        self.assertIn("The console stays public until the gateway objects exist and the owner has said yes.", order)
+        self.assertIn("The function app stays public until the gateway objects exist and the owner has said yes.", order)
         not_checked = section_of(self.page, "## Not checked")
         self.assertIn("None of it has run. The section lists what is not proven", not_checked)
         self.assertIn("Read on 2026-11-06 for phase 3 of the cases app:", self.page.split("\n## Sources", 1)[1])
-        self.assertIn("People open them on the app's own name, or, once the app is closed, on the console's host name on the platform's Application Gateway", text("docs/proposals/04-the-loop.md"))
-        self.assertIn("That host name is the console's host name on the platform's Application Gateway when the secret `CONSOLE_HOST_NAME` of the environment `hub` is set, and the app's own name when it is not",
+        self.assertIn("People open them on the app's own name, or, once the app is closed, on the function app's host name on the platform's Application Gateway", text("docs/proposals/04-the-loop.md"))
+        self.assertIn("That host name is the function app's host name on the platform's Application Gateway when the secret `CONSOLE_HOST_NAME` of the environment `hub` is set, and the app's own name when it is not",
                       text("docs/proposals/05-run-as-the-approver.md"))
         readme = text("README.md")
         self.assertIn("(the cases app is to be closed, its web page reached on the private network and its front door checked from inside the network, which is built and not deployed; the gateway route that was built before is unused)", readme)
-        self.assertIn("it serves the console; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that there is no gateway for it "
+        self.assertIn("it serves the function app; the owner decided on 2026-11-06 that the people who approve reach it through the platform's Application Gateway, and on 2026-11-07 that there is no gateway for it "
                       "and that he reaches the private network instead", readme)
 
     def test_the_bootstrap_page_has_the_section_between_phase_2_and_the_end_and_names_the_variable_the_hand_steps_and_the_way_back(self):
@@ -1025,10 +1025,10 @@ class TheDocumentsOfTheConsoleBehindTheGateway(unittest.TestCase):
                       "2. Step 3: the health of the new pool must say Healthy.", "6. Only then, in a change of its own and on the owner's yes", "**Going back** is one constant and one run",
                       "`gh secret delete CONSOLE_HOST_NAME --env hub --repo <owner>/<repository>`", "**What is not proven.** None of it has run."):
             self.assertIn(words, self.bootstrap_section, words)
-        self.assertIn("A fourth, optional one, `CONSOLE_HOST_NAME`, is the host name of the console on the platform's Application Gateway", self.bootstrap)
+        self.assertIn("A fourth, optional one, `CONSOLE_HOST_NAME`, is the host name of the function app on the platform's Application Gateway", self.bootstrap)
         after = self.bootstrap.split("\n## After it")[1].split("\n## ")[0]
-        self.assertIn("The console behind the platform's Application Gateway is not on that list: each object on the gateway, the DNS record and the return addresses need their own plain-word yes, and it is built and not deployed", after)
-        self.assertLess(after.index("One yes to the whole list"), after.index("The console behind the platform's Application Gateway is not on that list"))
+        self.assertIn("The function app behind the platform's Application Gateway is not on that list: each object on the gateway, the DNS record and the return addresses need their own plain-word yes, and it is built and not deployed", after)
+        self.assertLess(after.index("One yes to the whole list"), after.index("The function app behind the platform's Application Gateway is not on that list"))
 
     def test_the_changelog_entry_follows_the_one_of_the_ai_gateway_and_says_what_was_said_built_checked_and_left_open_and_the_older_entry_is_as_it_was(self):
         headings = re.findall(r"(?m)^## .+$", self.changelog)
@@ -1183,7 +1183,7 @@ class TheDocumentsOfTheWebPageOnThePrivateNetwork(unittest.TestCase):
         cases = [line for line in state.split("\n") if line.startswith("| Cases function app (")][0]
         self.assertIn("On 2026-11-07 he decided against the gateway: he flips the value himself, in a change of its own, when he can reach the private address, and the check of the front door runs in the Operator", cases)
         breaks = section_of(self.page, "## What private access breaks")
-        row = [line for line in breaks.split("\n") if line.startswith("| Checking the console's access |")][0]
+        row = [line for line in breaks.split("\n") if line.startswith("| Checking the function app's access |")][0]
         self.assertIn("With no gateway (the owner's decision of 2026-11-07) and no host name, the check of the front door runs in the Operator too, at the app's own name", row)
         decisions = section_of(self.page, "## Decisions for the owner")
         self.assertIn("**Decided differently on 2026-11-07:** no gateway for the web page; the owner reaches the private network, and the cases app is closed when he says so and his workstation reaches the "
@@ -1235,7 +1235,7 @@ class TheWorkflowTellsTheSameStory(unittest.TestCase):
     def test_the_summary_of_a_cases_run_says_which_address_was_knocked_at_and_that_the_health_check_ran_inside_the_network(self):
         (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", WORKFLOW)
         for words in ("the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint",
-                      "The console's front door is knocked at from this runner, on the console's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set",
+                      "The function app's front door is knocked at from this runner, on the function app's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set",
                       "(the check then also asks that the sign-in's return address names it), and on the app's own name when it is not",
                       "when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator "
                       "asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there)",
@@ -1245,7 +1245,7 @@ class TheWorkflowTellsTheSameStory(unittest.TestCase):
         self.assertNotIn("The app stays public in this phase.", finished, "after the owner closes the app the summary must not say that it is public: it says what the constant says")
         (failed,) = re.findall(r"(?m)^\s+cases\) echo \"(Part of the first cases may exist now.*?)\" ;;$", WORKFLOW)
         for words in ("If they stop at the step that waits for the app to answer, the app was given its code and did not answer on `/healthz` from inside the network",
-                      "If they stop at the front door, the console's address got something that it should not, or, when the cases app takes no public traffic and no host name is set, so that the check is made from "
+                      "If they stop at the front door, the function app's address got something that it should not, or, when the cases app takes no public traffic and no host name is set, so that the check is made from "
                       "inside the network, in the Operator, the Operator is not there (run `operator`, and then `cases` again) or the app's name did not resolve to a private address there: the lines say which"):
             self.assertIn(words.replace("`", "\\`"), failed)
         self.assertNotIn("there is no address to knock at", failed)
@@ -1254,11 +1254,11 @@ class TheWorkflowTellsTheSameStory(unittest.TestCase):
 
     def test_the_summaries_of_loop_check_say_where_the_front_door_was_knocked_at_and_what_a_stop_means(self):
         (failed, finished) = re.findall(r"(?m)^\s+loop-check\) echo \"(.*?)\" ;;$", WORKFLOW)
-        self.assertIn("The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal, or, with a console host name set, the sign-in's "
+        self.assertIn("The front door was not shut as it should be: a request without a sign-in got something other than a sign-in or the app's refusal, or, with a function app host name set, the sign-in's "
                       "return address did not name it, or, when the cases app takes no public traffic and no host name is set, so that the check is made from inside the network, in the Operator, the Operator is "
                       "not there (run \\`operator\\` first) or the app's name did not resolve to a private address there. Nothing was changed.", failed)
         self.assertNotIn("no address to knock at", failed)
-        for words in ("The console's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed.",
+        for words in ("The function app's front door is shut: without a sign-in nobody gets a page (the return address of the Azure sign-in included), and a made-up sign-in header is not believed.",
                       "and the app's own name when it is not: from this runner while the app takes public traffic, and from inside the network, in the Operator, when it takes none and no host name is set "
                       "(the lines above are the log of that container, and the app's name resolved there to a private address; no credential was sent)"):
             self.assertIn(words, finished)

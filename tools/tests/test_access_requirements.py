@@ -52,7 +52,7 @@ DEPLOYER_IDENTITY = "meternaut-deploy-sc-uami"
 DEPLOYER_ACTIONS = ["Microsoft.ApiManagement/service/read", "Microsoft.ApiManagement/service/write", "Microsoft.Resources/deployments/*", "Microsoft.Insights/components/read"]
 # What the first cases of an earlier version needed to read a key of the gateway: the file no longer has this role (it is retired, W7), so the test makes it the way that version did.
 KEY_READER_ACTIONS = ["Microsoft.ApiManagement/service/subscriptions/read", "Microsoft.ApiManagement/service/subscriptions/listSecrets/action"]
-# What the first version of the console left behind: the file no longer has this role, so the test makes it the way that version did.
+# What the first version of the function app left behind: the file no longer has this role, so the test makes it the way that version did.
 RETIRED_ROLE = "Meternaut waste remover"
 RETIRED_ROLE_ID = "00000000-0000-0000-0000-0000000000a3"
 RETIRED_IDENTITY = "id-meternaut-runner"
@@ -171,7 +171,7 @@ class FakeAz:
                                  "principal": principal, "role_id": role_id, "scope": scope})
 
     def leave_the_writer(self, identity=True, orphans=1, below=0):
-        """What the first version of the console left: the writer's role, its assignment to the identity, the assignments of identities that were deleted
+        """What the first version of the function app left: the writer's role, its assignment to the identity, the assignments of identities that were deleted
         since (Azure keeps them) and, optionally, assignments on resources in the group."""
         self.roles[RETIRED_ROLE] = retired_definition()
         if identity:
@@ -1276,7 +1276,7 @@ class Grant(unittest.TestCase):
 
 
 class Retire(unittest.TestCase):
-    """What the first version of the console left behind: the writer's role, its assignments (also those of an identity that was deleted) and its identity.
+    """What the first version of the function app left behind: the writer's role, its assignments (also those of an identity that was deleted) and its identity.
     The user-assigned identities of the two apps hold nothing here (the next class is about them), so their five items are gone."""
 
     def left(self, **options):

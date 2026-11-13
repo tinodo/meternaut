@@ -402,7 +402,7 @@ var rules = [
   {
     name: 'timer-round-failed'
     display: 'Cases app: a timer round failed'
-    text: 'A timer round of the cases app failed: the daily Watch, the daily drift check, the weekly Study or the one-minute tick logged an error line that says so, or the host marked its run as failed. Open the History in the console, or the traces of the app in Application Insights.'
+    text: 'A timer round of the cases app failed: the daily Watch, the daily drift check, the weekly Study or the one-minute tick logged an error line that says so, or the host marked its run as failed. Open the History in the function app, or the traces of the app in Application Insights.'
     severity: 2
     frequency: 'PT1H'
     window: 'PT1H'

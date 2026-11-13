@@ -357,7 +357,7 @@ def console_host_name(env) -> str:
     if value.endswith(APP_OWN_DOMAIN):
         raise Problem("CONSOLE_HOST_NAME is the name that people use on the platform's Application Gateway, and not one of the app's own names: leave it empty when there is no gateway name")
     if not CONSOLE_HOST_NAME.match(value):
-        raise Problem("CONSOLE_HOST_NAME is a host name such as console.example.com (letters, digits, hyphens and dots; no scheme, port or path)")
+        raise Problem("CONSOLE_HOST_NAME is a host name such as app.example.com (letters, digits, hyphens and dots; no scheme, port or path)")
     return value
 
 
