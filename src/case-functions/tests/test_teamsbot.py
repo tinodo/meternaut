@@ -412,9 +412,24 @@ class TheTimeOfARound(Case):
 
 
 FORBIDDEN = {"error": {"code": "ForbiddenOperationException", "message": "Bot is not installed in user's personal scope"}}
+BAD_ARGUMENT = {"error": {"code": "BadArgument", "message": "Bot is not installed in user's personal scope"}}  # the answer that a Microsoft Q&A thread (2025-01-06) shows for a guest whose personal scope has no app
 ROSTER = {"error": {"code": "BotNotInConversationRoster", "message": "The bot is not part of the conversation roster."}}
 BLOCKED_BY_USER = {"error": {"code": "ConversationBlockedByUser", "message": "User blocked the conversation with the bot."}}
 WRITES_BLOCKED = {"errorCode": 209, "message": "{\n  \"subCode\": \"MessageWritesBlocked\",\n  \"details\": \"Thread is blocked from message writes.\",\n  \"errorCode\": null\n}"}
+# What the code word of an answer is (BotError.code): the part after the status, up to the first `: ` (cases/http.error_text writes `<status> <code>: <message>`), and only when it is letters alone, 3 to 48 of them.
+CODES = (
+    (BAD_ARGUMENT, "BadArgument"), ({"error": {"code": "BadArgument"}}, "BadArgument"), (FORBIDDEN, "ForbiddenOperationException"), (ROSTER, "BotNotInConversationRoster"), (BLOCKED_BY_USER, "ConversationBlockedByUser"),
+    ({"error": {"code": "Err", "message": "x"}}, "Err"), ({"error": {"code": "A" * 48, "message": "x"}}, "A" * 48), ({"error": {"code": "lowercase", "message": "x"}}, "lowercase"),
+    # no code: a message alone (in the error or not), an empty body, a body that is not JSON, and the answer of a block, whose message is a text with a JSON in it
+    ({"message": "Authorization has been denied for this request."}, ""), ({"error": {"message": "Bot is not installed in user's personal scope"}}, ""), (None, ""), (b"", ""),
+    (b"<html><body>Forbidden</body></html>", ""), (b"Access denied for this request", ""), (b"[1, 2]", ""), (WRITES_BLOCKED, ""), ({"statusCode": 403}, ""), ({"error": {}}, ""),
+    # a code that is not letters alone is dropped: digits, a hyphen, a dot, an underscore, a space, a colon, too short, too long, a GUID, an address, an e-mail address, letters of another alphabet
+    ({"error": {"code": "Error42", "message": "x"}}, ""), ({"error": {"code": "Bad-Argument", "message": "x"}}, ""), ({"error": {"code": "Bad.Argument", "message": "x"}}, ""),
+    ({"error": {"code": "Bad_Argument", "message": "x"}}, ""), ({"error": {"code": "Bad Argument", "message": "x"}}, ""), ({"error": {"code": "Er", "message": "x"}}, ""),
+    ({"error": {"code": "A" * 49, "message": "x"}}, ""), ({"error": {"code": TENANT, "message": "x"}}, ""), ({"error": {"code": "https://smba.trafficmanager.net/teams", "message": "x"}}, ""),
+    ({"error": {"code": "person@example.com", "message": "x"}}, ""), ({"error": {"code": "Forbiddén", "message": "x"}}, ""), ({"error": {"code": "Привет", "message": "x"}}, ""),
+    ({"error": {"code": "ＢadArgument", "message": "x"}}, ""), ({"error": {"code": "Bad\nArgument", "message": "x"}}, ""), ({"error": {"code": 403, "message": "x"}}, ""),
+)
 
 
 class WhatEachFailureMeans(Case):
@@ -456,6 +471,33 @@ class WhatEachFailureMeans(Case):
         self.script("create", answer(403, FORBIDDEN))
         self.assertEqual(str(self.refused(self.run_step("create"))), "The Teams app is not installed for this person, so no card could be sent: the e-mail letter goes instead.")
         self.assertIn("e-mail letter goes instead", teamsbot.REASONS["blocked"])
+
+    def test_the_code_word_of_a_refusal_is_kept_only_when_it_is_letters_alone_and_the_sentence_stays_the_plain_one(self):
+        for body, code in CODES:
+            for step, status in (("create", 403), ("send", 403), ("update", 403), ("create", 401), ("send", 400), ("update", 404)):
+                with self.subTest(step=step, status=status, body=str(body)[:50]):
+                    self.script(step, *[answer(status, body)] * 3)
+                    error = self.refused(self.run_step(step))
+                    self.assertEqual(error.code, code)
+                    self.assertEqual(str(error), str(teamsbot.BotError(step, error.reason, status)), "the code is never part of the sentence")
+
+    def test_a_refusal_that_teams_does_not_know_yet_is_other_and_says_its_code_word(self):
+        self.script("create", answer(403, BAD_ARGUMENT))
+        error = self.refused(self.run_step("create"))
+        self.assertEqual((error.step, error.reason, error.status, error.code), ("create", "other", 403, "BadArgument"), "no word is added to the classes until the real words are known")
+
+    def test_the_token_step_keeps_its_number_and_has_no_code_word(self):
+        for body in ({"error": "invalid_client", "error_description": "AADSTS700213: x"}, {"error": {"code": "BadArgument", "message": "x"}}):
+            with self.subTest(body=str(body)[:40]):
+                self.clock.advance(minutes=5)
+                self.script("token", answer(400, body))
+                error = self.refused(self.bot.token)
+                self.assertEqual((error.step, error.reason, error.code, error.aadsts), ("token", "unauthorized", "", 700213 if "error_description" in body else 0))
+
+    def test_a_bot_error_has_a_code_only_when_it_is_given_one_that_is_letters_alone(self):
+        found = [teamsbot.BotError("create", "other", 403, code=code).code for code in ("BadArgument", "Bad Argument", TENANT, "A" * 49, "")]
+        self.assertEqual(([teamsbot.BotError("create", "other", 403).code], found), ([""], ["BadArgument", "", "", "", ""]))
+        self.assertEqual(str(teamsbot.BotError("create", "other", 403, code="BadArgument")), teamsbot.REASONS["other"])
 
     def test_the_reasons_have_a_sentence_each_that_the_operations_page_can_read_back(self):
         self.assertEqual(sorted(teamsbot.REASONS), ["blocked", "network", "not-installed", "other", "throttled", "unauthorized"])

@@ -522,8 +522,8 @@ class TheTeamsTest(unittest.TestCase):
 
     def test_nothing_that_the_app_wrote_is_printed_except_fixed_words_and_checked_numbers(self):
         hostile = "Bearer abcdefghijklmnop 11111111-2222-3333-4444-555555555555 person@example.com https://smba.trafficmanager.net/teams/v3/conversations/19:abc"
-        steps = [{"step": "token", "ok": False, "status": 400, "aadsts": 70011, "reason": hostile, "text": hostile, "note": hostile, "url": hostile},
-                 {"step": "create", "ok": False, "status": "403 " + hostile, "reason": hostile, "aadsts": hostile}]
+        steps = [{"step": "token", "ok": False, "status": 400, "aadsts": 70011, "reason": hostile, "text": hostile, "note": hostile, "url": hostile, "code": hostile},
+                 {"step": "create", "ok": False, "status": "403 " + hostile, "reason": hostile, "aadsts": hostile, "code": hostile}]
         code, out, _ = self.go(self.World(self, steps), self.OPEN)
         self.assertEqual(code, 1)
         for secret in ("abcdefghijklmnop", "person@example.com", "11111111-2222", "19:abc", "Bearer", "v3/conversations"):
@@ -568,6 +568,28 @@ class TheTeamsTest(unittest.TestCase):
         self.assertIn("The cases app sent nothing, for another reason.", out)
         for secret in ("person@example.com", "11111111-2222", "abcdefghijklmnop"):
             self.assertNotIn(secret, out)
+
+    def test_the_error_code_word_of_microsoft_is_printed_only_when_it_is_letters_alone_and_nothing_else_of_its_answer_is(self):
+        def printed(extra, step="create", **fields):
+            steps = [{"step": "token", "ok": True}, {"step": step, "ok": False, "reason": "other", **fields, **extra}] if step != "token" else [{"step": "token", "ok": False, **fields, **extra}]
+            code, out, _ = self.go(self.World(self, steps), self.OPEN)
+            self.assertEqual(code, 1)
+            return out
+        title = "Create the 1:1 chat with the owner: NOT ok"
+        self.assertIn(f"{title} (HTTP 403, 4xx; Microsoft's error code: BadArgument); another reason.", printed({"code": "BadArgument"}, status=403))
+        self.assertIn(f"{title} (Microsoft's error code: BadArgument); another reason.", printed({"code": "BadArgument"}), "the code is not tied to a status")
+        self.assertIn("NOT ok (AADSTS700213, HTTP 401, 4xx; Microsoft's error code: BadArgument)", printed({"code": "BadArgument"}, step="token", status=401, aadsts=700213, reason="unauthorized"))
+        for word in ("Err", "A" * 48, "lowercase"):
+            self.assertIn(f"(HTTP 403, 4xx; Microsoft's error code: {word});", printed({"code": word}, status=403), word)
+        shown = ("Bad-Argument", "Bad.Argument", "Bad_Argument", "Bad Argument", "11111111-2222-3333-4444-555555555555", "https://smba.trafficmanager.net/teams/", "person@example.com", "Forbiddén", "Привет",
+                 "ＢadArgument", "A" * 49)
+        for code in (*shown, "Error42", "42", "Er", "BadArgument\n", " BadArgument", "BadArgument ", "", 403, 4.5, True, None, ["BadArgument"], {"code": "BadArgument"}):
+            with self.subTest(code=code):
+                out = printed({"code": code}, status=403)
+                self.assertIn(f"{title} (HTTP 403, 4xx); another reason.", out)
+                self.assertNotIn("error code", out)
+                if code in shown:
+                    self.assertNotIn(code, out)
 
     def test_the_word_off_blames_the_settings_of_the_bot_and_never_the_delivery_because_the_test_ignores_what_teams_delivery_says(self):
         said = tc.FINISHED_REASONS["off"]

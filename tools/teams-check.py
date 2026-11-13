@@ -20,17 +20,20 @@ run     The probe, and then the test card: puts the control message teams-card-t
           create           the 1:1 chat with the owner (the Bot Connector's create-conversation call, with no card in it); 403 says whether the Teams app is not installed for him or is blocked
           send             the test card, posted in that chat
           update           the card replaced by the closing card
+        A step that Teams or the Bot Connector refused also says Microsoft's error code word, which is how a refusal that nobody listed is found: only when it is letters alone (3 to 48 of them, checked here
+        again, because the History is not trusted), so that no id, address or text of the answer can pass for it.
         The test card goes to the first person of the list of people who has the role owner, whatever TEAMS_DELIVERY says, so that the bot is proved before it is switched on. When the app sent nothing at all, its
         last line says why in one word (the Teams settings or the sign-in settings of the function app are incomplete, there is no owner, a switch of the owner, messages or all, holds the cards, or its
         settings could not be read), and the tool says it in plain words.
-        What is printed is a fixed word or a number that the tool checked: no id, name, address, URL or text of the app is ever printed, because the log of the Hub is public. It fails when a host gave
-        no answer, when a step was not ok, or when the History did not arrive within --minutes.
+        What is printed is a fixed word or a number or a code word that the tool checked: no id, name, address, URL or text of the app or of Microsoft's answer is ever printed, because the log of the Hub is public.
+        It fails when a host gave no answer, when a step was not ok, or when the History did not arrive within --minutes.
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
+import re
 import socket
 import ssl
 import sys
@@ -78,6 +81,8 @@ STEP_TITLES = {
     "update": "Replace the test card with the closing card",
 }
 PROBE_SECONDS = 15
+# Microsoft's error code word, as the app keeps it (cases/teamsbot.CODE): printed only when it is this again, because the History is not trusted and the log of the Hub is public.
+CODE_WORD = re.compile(r"[A-Za-z]{3,48}")
 
 
 def status_word(status: int) -> str:
@@ -181,8 +186,12 @@ def step_line(step: str, event: dict | None) -> tuple[str, bool]:
         detail.append(f"AADSTS{code}")
     if status:
         detail.append(f"HTTP {status}, {status_word(status)}")
+    shown = ", ".join(detail)
+    word = event.get("code")
+    if isinstance(word, str) and CODE_WORD.fullmatch(word):
+        shown += ("; " if shown else "") + f"Microsoft's error code: {word}"
     reason = event.get("reason") if event.get("reason") in REASONS else "other"
-    return f"{title}: NOT ok" + (f" ({', '.join(detail)})" if detail else "") + f"; {REASONS[reason]}.", False
+    return f"{title}: NOT ok" + (f" ({shown})" if shown else "") + f"; {REASONS[reason]}.", False
 
 
 def result_lines(events: list[dict]) -> tuple[list[str], bool]:

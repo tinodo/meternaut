@@ -24,7 +24,7 @@ from cases.redact import Redactor
 from support import REPO_ROOT, LogCapture, fixed_clock
 from test_control import FakeMessage, Recorder
 from test_notify import ENV as LOOP_ENV, Graph
-from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, CONVERSATION, FORBIDDEN, IDENTITY, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
+from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, BAD_ARGUMENT, CODES, CONVERSATION, FORBIDDEN, IDENTITY, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
 from test_web_support import Console
 
 SIGNIN = {"SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": "44444444-aaaa-4bbb-8ccc-000000000004", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": "55555555-aaaa-4bbb-8ccc-000000000005"}
@@ -645,7 +645,7 @@ class TheBlockOfTheOperationsPage(unittest.TestCase):
 class TheTestCard(unittest.TestCase):
     OWNER = "aaaaaaaa-1111-4222-8333-444444444444"  # the owner of test_notify.ENV
     ID = "a" * 32
-    ALLOWED = {"v", "ts", "runId", "requestId", "type", "step", "ok", "status", "aadsts", "reason"}
+    ALLOWED = {"v", "ts", "runId", "requestId", "type", "step", "ok", "status", "aadsts", "code", "reason"}
 
     def setUp(self):
         self.teams, self.clock, self.asked = FakeTeams(), cs.Moving(), []
@@ -701,6 +701,38 @@ class TheTestCard(unittest.TestCase):
                 self.assertEqual({k: v for k, v in steps[-1].items() if k in ("step", "ok", "reason", "status", "aadsts")}, {"step": step, "ok": False, **fields})
                 self.assertEqual((last["type"], last["ok"]), ("teams.test.finished", False))
                 self.assertEqual(self.teams.steps()[-1], step, "nothing is called after the step that failed")
+
+    def test_a_step_that_teams_refused_says_the_code_word_that_teams_gave_and_nothing_else_of_its_answer(self):
+        for body, code in CODES:
+            with self.subTest(body=str(body)[:50]):
+                self.fresh()
+                self.teams.replies = {"create": [answer(403, body)]}
+                ok, events, text = self.run_test()
+                (line,) = [e for e in events if e["type"] == "teams.test.step" and e["step"] == "create"]
+                self.assertEqual((ok, line["ok"], line["status"], line.get("code"), "code" in line), (False, False, 403, code or None, bool(code)))
+                self.assertLessEqual(set(line), self.ALLOWED)
+                self.assertNotRegex(text, r"https?:|@|[0-9a-f]{8}-[0-9a-f]{4}-|personal scope|Bot is not|Authorization has been|Access denied|html|subCode")
+
+    def test_the_token_step_says_its_number_and_no_code_word_and_a_step_that_went_well_none_either(self):
+        for body in ({"error": "invalid_client", "error_description": "AADSTS700213: x"}, {"error": {"code": "BadArgument", "message": "x"}}):
+            with self.subTest(body=str(body)[:40]):
+                self.fresh()
+                self.teams.replies = {"token": [answer(400, body)]}
+                _, events, _ = self.run_test()
+                self.assertEqual(("code" in events[0], events[0].get("aadsts")), (False, 700213 if "error_description" in body else None))
+        self.fresh()
+        _, events, _ = self.run_test()
+        self.assertEqual([e for e in events if "code" in e], [])
+
+    def test_the_card_of_a_request_that_teams_refuses_for_a_code_that_is_not_known_keeps_the_plain_reason_and_no_code(self):
+        world = BotWorld()
+        world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
+        world.ready(cs.MAYA)
+        world.teams.replies["create"] = [answer(403, BAD_ARGUMENT)]
+        world.run()
+        (record,) = world.attempts()
+        self.assertEqual((record.status, record.detail), ("failed", teamsbot.REASONS["other"]))
+        self.assertNotIn("BadArgument", json.dumps([dataclasses.asdict(m) for m in world.store.mails]), "the records of the real cards are what they were")
 
     def test_a_step_that_made_no_call_has_no_status(self):
         self.teams.replies = {}
@@ -780,6 +812,11 @@ class TheTestCard(unittest.TestCase):
                 lines, passed = read(**{step: [answer(status, body, retry_after="3600")] * 3})
                 self.assertFalse(passed)
                 self.assertTrue(any(check.STEP_TITLES[step] in line and "NOT ok" in line and said in line and check.REASONS[reason] in line for line in lines), lines)
+        lines, passed = read(create=[answer(403, BAD_ARGUMENT)])
+        self.assertFalse(passed)
+        self.assertTrue(any(check.STEP_TITLES["create"] in line and "NOT ok (HTTP 403, 4xx; Microsoft's error code: BadArgument); " + check.REASONS["other"] in line for line in lines), lines)
+        lines, _ = read(create=[answer(403, {"error": {"code": TENANT, "message": "x"}})])
+        self.assertEqual([line for line in lines if "error code" in line], [], "a code that is not letters alone is never printed")
         no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
         pull = (lambda: self.store.switch_put(SwitchRecord(name="all", paused=True, by="Ops", at="2026-11-05T10:00:00Z")))
         for env, before, reason in (({"TEAMS_BOT_APP_ID": ""}, None, "off"), ({"CONSOLE_PEOPLE": no_owner}, None, "no-owner"), ({}, pull, "held"), ({"CONSOLE_PEOPLE": "not json"}, None, "other")):
