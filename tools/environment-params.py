@@ -116,7 +116,7 @@ included, whether or not its files are asked for); no range is invented: a netwo
 policy that an environment is linked to.
 
 Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md) are off until the owner switches them on. While the settings below are empty the parameter files are what they were, but
-the cases template always gives the app its four settings TEAMS_* (TEAMS_DELIVERY is queue and the other three are empty), so the first run of the action cases after this change changes the function app's configuration and
+the cases template always gives the app its four settings TEAMS_* (TEAMS_DELIVERY is queue, the two client ids are empty until the bot is made, and TEAMS_SERVICE_URL is the one address of the Bot Connector), so the first run of the action cases after this change changes the function app's configuration and
 restarts it. TEAMS_DELIVERY (queue or bot;
 empty is queue) is a variable of the environment hub, TEAMS_BOT_APP_ID (the client id of the app registration "Meternaut Teams", which tools/entra-setup.py teams-bot makes) is a secret of it, and TEAMS_BOT_IDENTITY_CLIENT_ID (the
 client id of the identity id-meternaut-teams) and TEAMS_FUNCTION_HOST (the cases app's default host name) are read from Azure by the workflow; each is checked, and none is printed. The cases file carries what is set: the identity (its

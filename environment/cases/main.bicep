@@ -600,7 +600,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
         // Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md): off while TEAMS_DELIVERY is queue. The app takes a token of the identity whose client id
         // is TEAMS_BOT_IDENTITY_CLIENT_ID for api://AzureADTokenExchange, exchanges it for a token of the app registration TEAMS_BOT_APP_ID, and sends to TEAMS_SERVICE_URL. No secret, no key, no role.
-        // The four settings are always written (TEAMS_DELIVERY is queue and the other three are empty while the bot is off): the parameter files of the other actions are what they were, but the first
+        // The four settings are always written (TEAMS_DELIVERY is queue, the two client ids are empty until the bot is made, and TEAMS_SERVICE_URL is the one address of the Bot Connector while the bot is off): the parameter files of the other actions are what they were, but the first
         // run of the action cases after they were added changes the app's configuration, and the platform restarts the app for it.
         { name: 'TEAMS_DELIVERY', value: teamsDelivery }
         { name: 'TEAMS_BOT_APP_ID', value: teamsBotAppId }
