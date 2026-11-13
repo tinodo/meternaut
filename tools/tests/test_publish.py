@@ -858,7 +858,8 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
 
     # What the archive of the sources of this repository measured on 2026-11-13, after the bot way of the Teams cards (cases/teamsbot.py and the rounds of cases/offers.py that use it, his plain yes of 2026-11-13) was
     # added on top of the impact check: 383,763 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 5,944 more than the 377,819 that the same method gives for main (the
-    # 377,814 below was recorded for it: 5 bytes of the dates in the headers); the request sent is 413,806 bytes (9,149 for this script and 20,894 for operator/publish.sh) and 66,194 stay free. The room that more sources
+    # 377,814 that was recorded for main is 5 less, and the date that the files carry moves the number by a few dozen bytes either way, which the margin below covers); the request sent is 413,806 bytes (9,149 for this
+    # script and 20,894 for operator/publish.sh) and 66,194 stay free. The room that more sources
     # may take before this test asks for a decision is 200 bytes. Before the bot way the archive measured 377,814 bytes with 104 files, after the impact check of a private endpoint was added on top of the words sweep and the
     # findings of its review were fixed (8,826 more than the 368,986 with 103 files of main after the sweep; the request sent was 407,855 bytes and 72,145 stayed free). Main measured 368,986 after the function app was
     # no longer called by its old name in the messages, the comments and the docstrings of the code
@@ -875,6 +876,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # lowered from 72,000 to 66,000, on purpose. No trimming of the words gave that room back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 52,000 above the one
     # that is sent now.
     SOURCES_ARCHIVE_MEASURED = 383_763
+    SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):
         """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""
