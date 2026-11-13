@@ -45,7 +45,8 @@ on:
           - operator
           - operator-probe
           - teams
-          - teams-test          - aigateway
+          - teams-test
+          - aigateway
           - aigateway-check
           - governance
           - gateway-telemetry
@@ -3209,7 +3210,7 @@ jobs:
             if [ "$assigned" = 0 ]; then
               echo "The identity $IDENTITY_NAME holds no role assignment at $where, above it or below it, as the design says: 0 (AGENTS.md rule 29: it holds no Azure role, and no right to change Azure)."
             elif [ "$assigned" != unknown ]; then
-              echo "::error::The identity $IDENTITY_NAME holds $assigned role assignment(s) at or around $where. It must hold none: nothing of this design gives it one. A person finds them with az role assignment list and removes them."
+              echo "::error::The identity $IDENTITY_NAME holds $assigned role assignment(s) at or around $where. It must hold none: nothing of this design gives it one. A person lists the role assignments of the identity with the Azure CLI and removes them."
               failed=1
             fi
           fi

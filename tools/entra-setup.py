@@ -59,8 +59,20 @@ The items, in order:
 At the end it prints the client id of the app registration: that is the secret CONSOLE_APP_CLIENT_ID of the environment hub, which the template reads (a client id is
 an identifier, not a credential; it is a secret there so that GitHub masks it in the public log). The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 
-The Teams cards (docs/proposals/13-teams-and-outlook.md) need nothing in Microsoft Entra: Meternaut puts them on a private queue, a flow of Power Automate posts them, and no app registration,
-no permission and no Teams app is made for them. This tool makes the sign-in of the console and nothing else.
+The Teams cards (docs/proposals/13-teams-and-outlook.md) go through a private queue and a flow of Power Automate and need nothing in Microsoft Entra: replaced by the owner's ruling of 2026-11-13 (pending his
+plain yes) for the other way to deliver them (docs/proposals/20-teams-cards-through-a-bot.md), which is off until he switches it on, and for which the sub-command teams-bot below is the one thing that this tool makes besides
+the sign-in of the console.
+
+    python tools/entra-setup.py teams-bot --tenant-id <id> --subscription <id> --resource-group <name> [--apply] [--yes]
+
+teams-bot  The app registration of the Teams bot: "Meternaut Teams", this tenant only, with no secret, no certificate, no API permission, no redirect address and no consent, its service principal in
+           the tenant (without one Teams reports AADSTS7000229, "missing service principal in the tenant"), and ONE federated identity credential: issuer https://login.microsoftonline.com/<tenant id>/v2.0, subject
+           the object (principal) id of the user-assigned identity id-meternaut-teams, which the Hub action teams made and which the tool reads with the signed-in person's own rights, audience
+           api://AzureADTokenExchange. The identity and the app registration have to be in the same tenant. A wrong subject or audience is accepted when the credential is made and fails only at the first
+           token exchange, so the proof is the Hub action teams-test. It is a HAND STEP of the owner's, a dry run unless --apply is given, and it refuses to run in a pipeline, even as a dry run: its output
+           names the client id of the app registration, which goes to the terminal of the person alone. It makes only what is missing, so a second run changes nothing and says so, it never makes a secret or a
+           certificate, it removes nothing (a stray credential, address or permission is shown and a person removes it in the portal), and after it has made anything it reads everything back: no password, no key,
+           exactly one federated credential with the right values. It prints the client id and the command that stores it as the secret TEAMS_BOT_APP_ID of the environment hub.
 """
 from __future__ import annotations
 
@@ -469,11 +481,11 @@ def consented(grants: list[dict], resource_id: str | None, scope: str) -> bool:
                                      and scope in str(g.get("scope", "")).split() for g in grants)
 
 
-def read_app(graph: Graph) -> dict | None:
+def read_app(graph: Graph, name: str = APP_NAME, select: str = APP_SELECT) -> dict | None:
     """The one app registration of that name, or None. Two of them stop the tool: it cannot tell which one is Meternaut's."""
-    apps = graph.pages(lookup("applications", "displayName", APP_NAME, APP_SELECT))
+    apps = graph.pages(lookup("applications", "displayName", name, select))
     if len(apps) > 1:
-        raise Problem(f"{len(apps)} app registrations are called {APP_NAME}: remove the ones that are not Meternaut's, then run this again")
+        raise Problem(f"{len(apps)} app registrations are called {name}: remove the ones that are not Meternaut's, then run this again")
     return apps[0] if apps else None
 
 
@@ -756,6 +768,227 @@ def command_apply(args: argparse.Namespace, graph: Graph, cfg: Config, out: Call
     return 0 if report(items, state, cfg, out) else 1
 
 
+# ---- the Teams bot's app registration (docs/proposals/20-teams-cards-through-a-bot.md) -----------------------------------------------------------------
+
+TEAMS_APP_NAME = "Meternaut Teams"
+TEAMS_CREDENTIAL_NAME = "meternaut-teams-bot"
+TEAMS_IDENTITY_NAME = "id-meternaut-teams"
+TEAMS_REPOSITORY = "tinodo/meternaut"
+TEAMS_APP_SELECT = APP_SELECT + ",spa,publicClient"
+ARM = "https://management.azure.com"
+IDENTITY_API = "2023-01-31"
+GROUP_NAME = re.compile(r"[A-Za-z0-9._()-]{1,90}")
+IDENTITY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+REPOSITORY = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}")
+REFUSED_IN = ("GITHUB_ACTIONS", "TF_BUILD")
+
+
+@dataclass(frozen=True)
+class TeamsConfig:
+    tenant: str
+    subscription: str
+    group: str
+    identity: str
+    repository: str
+
+    @property
+    def issuer(self) -> str:
+        return f"https://login.microsoftonline.com/{self.tenant}/v2.0"
+
+    @property
+    def identity_url(self) -> str:
+        return (f"{ARM}/subscriptions/{self.subscription}/resourceGroups/{self.group}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{self.identity}"
+                f"?api-version={IDENTITY_API}")
+
+
+@dataclass
+class TeamsState:
+    app: dict | None = None
+    principal: dict | None = None
+    credentials: list[dict] = field(default_factory=list)
+
+
+def read_teams_config(args: argparse.Namespace) -> TeamsConfig:
+    tenant = args.tenant_id
+    if not tenant or not GUID.fullmatch(tenant):
+        raise Problem("--tenant-id is required: the id of the tenant (a GUID)")
+    subscription = args.subscription
+    if not subscription or not GUID.fullmatch(subscription):
+        raise Problem("--subscription is required: the subscription of the project (a GUID), where the identity id-meternaut-teams is")
+    group = args.resource_group
+    if not group or not GROUP_NAME.fullmatch(group):
+        raise Problem("--resource-group is required: the project's resource group")
+    if not IDENTITY_NAME.fullmatch(args.identity_name or ""):
+        raise Problem("--identity-name is the name of the user-assigned identity")
+    if not REPOSITORY.fullmatch(args.repository or ""):
+        raise Problem("--repository is owner/name, for example tinodo/meternaut")
+    return TeamsConfig(tenant.lower(), subscription.lower(), group, args.identity_name, args.repository)
+
+
+def read_identity(runner: Callable[[list[str]], tuple[int, str, str]], cfg: TeamsConfig) -> str:
+    """The object (principal) id of the user-assigned identity, read from Azure Resource Manager with the signed-in person's own rights. It has to be in this tenant: the app registration and the identity are
+    in one tenant, or the token exchange cannot work."""
+    code, text, error = runner(["rest", "--method", "get", "--url", cfg.identity_url, "--query", "{principalId: properties.principalId, tenantId: properties.tenantId}", "--output", "json"])
+    if code != 0:
+        if re.search(r"NotFound|ResourceNotFound|\b404\b|could not be found", error, re.I):
+            raise Problem(f"the identity {cfg.identity} is not in resource group {cfg.group}: run the Hub action teams (phase 1) first, which makes it. Nothing was changed")
+        raise Problem(f"the identity {cfg.identity} could not be read with your sign-in to the Azure CLI: {first_line(error)}")
+    try:
+        found = json.loads(text)
+    except ValueError:
+        found = None
+    principal = found.get("principalId") if isinstance(found, dict) else None
+    tenant = found.get("tenantId") if isinstance(found, dict) else None
+    if not isinstance(principal, str) or not GUID.fullmatch(principal):
+        raise Problem(f"Azure Resource Manager gave no object id for the identity {cfg.identity}")
+    if not isinstance(tenant, str) or tenant.lower() != cfg.tenant:
+        raise Problem(f"the identity {cfg.identity} is not in tenant {cfg.tenant}: the app registration and the identity have to be in the same tenant, and the federated credential would never work. Nothing was changed")
+    return principal
+
+
+def teams_problems(app: dict) -> tuple[list[str], list[str]]:
+    """What is wrong with an app registration of that name that is there: what only a person can settle before anything is made (a secret, a certificate, another audience), and what is there besides and is left
+    alone (an address, a permission, public client flows), which is a difference all the same, because this design has none of them."""
+    blocking, besides = [], []
+    if app.get("signInAudience") != THIS_TENANT_ONLY:
+        blocking.append(f"it signs in {app.get('signInAudience') or 'nobody'}, and it must be this tenant only ({THIS_TENANT_ONLY})")
+    if app.get("passwordCredentials") or app.get("keyCredentials"):
+        blocking.append("it holds a secret or a certificate: remove it in the portal, the bot has none (AGENTS.md rule 23)")
+    addresses = [str(u) for part in ("web", "spa", "publicClient") for u in ((app.get(part) or {}).get("redirectUris") or [])]
+    if addresses:
+        besides.append(f"{len(addresses)} redirect {plural(len(addresses), 'address', 'addresses')}: the bot has none, and a person removes them in the portal")
+    if permissions_of(app):
+        besides.append(f"{len(permissions_of(app))} API {plural(len(permissions_of(app)), 'permission', 'permissions')}: the bot has none, and a person removes them in the portal")
+    if app.get("isFallbackPublicClient") not in (None, False):
+        besides.append("public client flows are on: a person switches them off in the portal")
+    return blocking, besides
+
+
+def teams_credential_matches(credential: dict, cfg: TeamsConfig, principal_id: str) -> bool:
+    """The issuer, the subject and the audience are exactly what the design says. The subject is compared as written, in the case that Azure gave: Microsoft Entra compares it with the case."""
+    return credential.get("issuer") == cfg.issuer and credential.get("subject") == principal_id and (credential.get("audiences") or []) == [AUDIENCE]
+
+
+def examine_teams(graph: Graph, cfg: TeamsConfig, principal_id: str) -> tuple[list[Item], TeamsState]:
+    state, items = TeamsState(), []
+    state.app = read_app(graph, TEAMS_APP_NAME, TEAMS_APP_SELECT)
+    if state.app is None:
+        items.append(Item(f"App registration {TEAMS_APP_NAME}", "missing", "this tenant only, no secret, no certificate, no API permission, no redirect address"))
+    else:
+        blocking, besides = teams_problems(state.app)
+        items.append(Item(f"App registration {TEAMS_APP_NAME}", "differs" if blocking or besides else "present", "; ".join(blocking + besides), blocking=bool(blocking)))
+        found = graph.pages(lookup("servicePrincipals", "appId", state.app["appId"], "id,appId"))
+        state.principal = found[0] if found else None
+        state.credentials = graph.pages(f"applications/{state.app['id']}/federatedIdentityCredentials")
+    items.append(Item("Its service principal in this tenant (without it Teams reports AADSTS7000229)", "present" if state.principal else "missing"))
+    wanted = f"issuer {cfg.issuer}, subject the object id of {cfg.identity}, audience {AUDIENCE}"
+    matching = [c for c in state.credentials if teams_credential_matches(c, cfg, principal_id)]
+    if state.app is None or not state.credentials:
+        items.append(Item("Federated identity credential for the identity", "missing", wanted))
+    elif len(state.credentials) == 1 and matching:
+        items.append(Item("Federated identity credential for the identity (exactly one, with the right values)", "present"))
+    elif matching:
+        items.append(Item("Federated identity credential for the identity", "differs",
+                          f"the right one is there, and {len(state.credentials) - 1} other federated {plural(len(state.credentials) - 1, 'credential', 'credentials')} too: the design has exactly one. "
+                          "This tool removes nothing: a person removes the others in the portal (Certificates and secrets, Federated credentials)"))
+    else:
+        items.append(Item("Federated identity credential for the identity", "differs",
+                          f"{len(state.credentials)} federated {plural(len(state.credentials), 'credential is', 'credentials are')} there and none has the right values ({wanted}). This tool removes nothing: "
+                          "a person removes the stale one in the portal (Certificates and secrets, Federated credentials), and runs this again"))
+    return items, state
+
+
+def teams_plan(state: TeamsState, cfg: TeamsConfig, principal_id: str) -> list[str]:
+    steps = []
+    if state.app is None:
+        steps.append(f"POST applications: make the app registration {TEAMS_APP_NAME} (this tenant only, no secret, no certificate, no API permission, no redirect address)")
+    if state.principal is None:
+        steps.append("POST servicePrincipals: make its service principal in this tenant")
+    if not state.credentials:
+        steps.append(f"POST applications/<the app>/federatedIdentityCredentials: subject the object id of {cfg.identity}, issuer {cfg.issuer}, audience {AUDIENCE}")
+    return steps
+
+
+def teams_apply(graph: Graph, cfg: TeamsConfig, state: TeamsState, principal_id: str, out: Callable[[str], None]) -> None:
+    app = state.app
+    if app is None:
+        app = graph.make("applications", {"displayName": TEAMS_APP_NAME, "signInAudience": THIS_TENANT_ONLY, "isFallbackPublicClient": False,
+                                          "description": "Sends the cards of Meternaut to Teams through the Bot Connector. No secret, no certificate, no permission: it is trusted by one managed identity."})
+        out(f"  made the app registration {TEAMS_APP_NAME}")
+    if state.principal is None:
+        graph.make("servicePrincipals", {"appId": app["appId"]})
+        out("  made its service principal in this tenant")
+    if not state.credentials:
+        graph.make(f"applications/{app['id']}/federatedIdentityCredentials",
+                   {"name": TEAMS_CREDENTIAL_NAME, "issuer": cfg.issuer, "subject": principal_id, "audiences": [AUDIENCE],
+                    "description": f"Lets the user-assigned identity {cfg.identity} sign in as this app, with no secret, to send Teams cards through the Bot Connector."})
+        out("  made the federated identity credential")
+
+
+def teams_report(items: list[Item], state: TeamsState, cfg: TeamsConfig, out: Callable[[str], None]) -> bool:
+    """The lines, the client id (to this terminal alone) with the command that stores it, and whether every item is in order."""
+    for item in items:
+        out(describe(item))
+    done = sum(1 for i in items if i.state == "present")
+    out(f"{done} of {len(items)} in order.")
+    if state.app:
+        client = state.app["appId"]
+        out(f"Client id of the app registration (shown here, on your terminal, and nowhere else): {client}")
+        out("Store it as the secret TEAMS_BOT_APP_ID of the environment hub. It is an identifier of the estate, so it is a secret there and not a variable: GitHub masks a secret in the public log of the Hub")
+        out("and does not mask a variable. The command (it keeps the value out of the history of your shell when it asks for it, so paste the client id when it does):")
+        out(f"  gh secret set TEAMS_BOT_APP_ID --env hub --repo {cfg.repository}")
+    return done == len(items)
+
+
+def command_teams_bot(args: argparse.Namespace, runner: Callable[[list[str]], tuple[int, str, str]], graph: Graph, hide: Hider, out: Callable[[str], None],
+                      ask: Callable[[str], "str | None"], env: Mapping[str, str]) -> int:
+    if any(env.get(name) for name in REFUSED_IN):
+        raise Problem("a person runs this with their own sign-in, never a pipeline: its output names the client id of the app registration, and the deploy identity must not hold a right in Microsoft Entra "
+                      "(AGENTS.md rules 18 and 24)")
+    cfg = read_teams_config(args)
+    principal_id = read_identity(runner, cfg)
+    hide.add(principal_id)
+    out(f"The app registration of the Teams bot, in tenant {cfg.tenant}:")
+    items, state = examine_teams(graph, cfg, principal_id)
+    if any(i.blocking for i in items):
+        for item in items:
+            out(describe(item))
+        out("Nothing can be changed until the lines above that say DIFFERS with a secret, a certificate or another audience are settled by a person.")
+        return 1
+    steps = teams_plan(state, cfg, principal_id)
+    if not steps:
+        out("Nothing to make, and nothing was changed." if all(i.state == "present" for i in items) else "Nothing that this tool can make is missing, and nothing was changed.")
+        return teams_final(items, state, cfg, out)
+    for item in items:
+        out(describe(item))
+    out(f"{len(steps)} change(s) would be made, and nothing else:")
+    for step in steps:
+        out(f"  {step}")
+    if not args.apply:
+        out("This was a dry run. Run again with --apply to make them.")
+        return 1
+    if not args.yes:
+        answer = ask(f"Make these {len(steps)} change(s) in tenant {cfg.tenant}? Type yes: ")
+        if answer is None:
+            raise Problem("--apply needs --yes when there is no terminal to ask in")
+        if answer.strip().lower() != "yes":
+            raise Problem("nothing was changed")
+    teams_apply(graph, cfg, state, principal_id, out)
+    out("Reading everything back:")
+    items, state = examine_teams(graph, cfg, principal_id)
+    return teams_final(items, state, cfg, out)
+
+
+def teams_final(items: list[Item], state: TeamsState, cfg: TeamsConfig, out: Callable[[str], None]) -> int:
+    """The read-back after a change, or the report of a second run: the lines, the client id, and the proof that the app has no secret and no certificate and exactly one credential."""
+    in_order = teams_report(items, state, cfg, out)
+    if state.app is not None:
+        out(f"Read back: {len(state.app.get('passwordCredentials') or [])} passwords, {len(state.app.get('keyCredentials') or [])} keys and {len(state.credentials)} federated "
+            f"{plural(len(state.credentials), 'credential', 'credentials')} on the app registration.")
+    out("Whether the federated credential really works is not known until the first token exchange: run the Hub action teams-test.")
+    return 0 if in_order else 1
+
+
 def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int, str, str]] = run_az, transport: Http = default_http,
          sleep: Callable[[float], None] = time.sleep, out: Callable[[str], None] = print, ask: Callable[[str], "str | None"] | None = None,
          env: Mapping[str, str] | None = None) -> int:
@@ -772,9 +1005,19 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
         if name == "apply":
             sub.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
             sub.add_argument("--yes", action="store_true", help="do not ask first")
+    teams = commands.add_parser("teams-bot", help="the app registration Meternaut Teams, its service principal and its federated credential for the identity id-meternaut-teams; dry run unless --apply")
+    teams.add_argument("--tenant-id")
+    teams.add_argument("--subscription", help="the subscription of the project, where the identity id-meternaut-teams is")
+    teams.add_argument("--resource-group", help="the project's resource group")
+    teams.add_argument("--identity-name", default=TEAMS_IDENTITY_NAME, help=f"the user-assigned identity that the Hub action teams made (default {TEAMS_IDENTITY_NAME})")
+    teams.add_argument("--repository", default=TEAMS_REPOSITORY, help=f"the repository whose environment hub takes the secret, for the command that is printed (default {TEAMS_REPOSITORY})")
+    teams.add_argument("--apply", action="store_true", help="make the changes (the default is a dry run)")
+    teams.add_argument("--yes", action="store_true", help="do not ask first")
     args = parser.parse_args(argv)
     hide = Hider()
     try:
+        if args.command == "teams-bot":
+            return command_teams_bot(args, runner, Graph(Tokens(runner, args.tenant_id or "", hide), transport, sleep), hide, out, ask, env)
         cfg = read_config(args)
         graph = Graph(Tokens(runner, cfg.tenant, hide), transport, sleep)
         if args.command == "check":

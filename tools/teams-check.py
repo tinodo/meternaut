@@ -17,9 +17,11 @@ run     The probe, and then the test card: puts the control message teams-card-t
         and writes one History line for each step of that to its telemetry (kinds teams.test.step and teams.test.finished). The tool reads those lines and prints, for each step, whether it went well:
           token exchange   the managed identity's token for api://AzureADTokenExchange, exchanged for a token of the app registration for https://api.botframework.com/.default; when it did not, only the
                            number after AADSTS, which is how a wrong subject, audience or issuer of the federated credential shows (Microsoft accepts a wrong value when it is made)
-          create           the 1:1 chat with the owner, with the card in it (the Bot Connector's create-conversation call); 403 says whether the Teams app is not installed for him or is blocked
-          send             only when the creation did not carry the card
+          create           the 1:1 chat with the owner (the Bot Connector's create-conversation call, with no card in it); 403 says whether the Teams app is not installed for him or is blocked
+          send             the test card, posted in that chat
           update           the card replaced by the closing card
+        The test card goes to the first person of the list of people who has the role owner. When the app sent nothing at all, its last line says why in one word (the delivery is not the bot or its settings are
+        incomplete, there is no owner, a switch of the owner, messages or all, holds the cards, or its settings could not be read), and the tool says it in plain words.
         What is printed is a fixed word or a number that the tool checked: no id, name, address, URL or text of the app is ever printed, because the log of the Hub is public. It fails when a host gave
         no answer, when a step was not ok, or when the History did not arrive within --minutes.
 """
@@ -61,10 +63,17 @@ REASONS = {
     "network": "there was no answer: the way out is blocked, or the name did not resolve",
     "other": "another reason",
 }
+# What the cases app may say on the last line when no step ran at all, one plain word.
+FINISHED_REASONS = {
+    "off": "the cases app is not set to deliver through the bot (TEAMS_DELIVERY is not bot, or its Teams settings or its sign-in settings are incomplete)",
+    "no-owner": "the cases app found no person with the role owner to send the test card to",
+    "held": "a switch of the owner (messages or all) holds the cards",
+    "other": "the cases app could not read its settings",
+}
 STEP_TITLES = {
     "token": "Token exchange (the identity's token for the app registration's token for the Bot Connector)",
-    "create": "Create the chat with the owner, with the test card in it",
-    "send": "Send the test card",
+    "create": "Create the 1:1 chat with the owner",
+    "send": "Send the test card in that chat",
     "update": "Replace the test card with the closing card",
 }
 PROBE_SECONDS = 15
@@ -161,7 +170,7 @@ def step_line(step: str, event: dict | None) -> tuple[str, bool]:
     """One step of the test as one line, and whether it went well. Only a fixed word and numbers that were checked are used; the app's own text is never printed."""
     title = STEP_TITLES[step]
     if event is None:
-        return (f"{title}: not needed, the creation of the chat carried the card." if step == "send" else f"{title}: not tried, or its History line did not arrive."), step == "send"
+        return f"{title}: not tried, or its History line did not arrive.", False
     status = whole_number(event.get("status"), 100, 599)
     if event.get("ok") is True:
         return f"{title}: ok" + (f" (HTTP {status}, {status_word(status)})" if status else "") + ".", True
@@ -176,7 +185,7 @@ def step_line(step: str, event: dict | None) -> tuple[str, bool]:
 
 
 def result_lines(events: list[dict]) -> tuple[list[str], bool]:
-    """The test as lines, and whether it passed: every step that the app tried went well, the token exchange and the creation were tried, and the end arrived and says ok."""
+    """The test as lines, and whether it passed: all four steps (the token exchange, the creation of the chat, the send and the update) went well, and the end arrived and says ok."""
     by_step = {e.get("step"): e for e in events if e["type"] == KIND_STEP and e.get("step") in STEPS}
     finished = next((e for e in events if e["type"] == KIND_END), None)
     lines, passed = [], finished is not None and finished.get("ok") is True
@@ -186,6 +195,9 @@ def result_lines(events: list[dict]) -> tuple[list[str], bool]:
         passed = passed and good
     if finished is None:
         lines.append("  The end of the test did not arrive in the telemetry. Has the cases app the new code (the action cases), and are its Teams settings set? Its History lines arrive a few minutes late.")
+    elif finished.get("reason") is not None and not by_step:
+        reason = finished.get("reason") if finished.get("reason") in FINISHED_REASONS else None
+        lines.append(f"  The cases app sent nothing: {FINISHED_REASONS[reason]}." if reason else "  The cases app sent nothing, for another reason.")
     elif finished.get("ok") is not True:
         lines.append("  The cases app says that the test did not end well.")
     return lines, passed
