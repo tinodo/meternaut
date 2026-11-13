@@ -77,6 +77,9 @@ class FakeTenant:
         self.principals = [{"id": GRAPH_PRINCIPAL, "appId": es.GRAPH_APP_ID}, {"id": ARM_PRINCIPAL, "appId": es.ARM_APP_ID}]
         self.calls, self.token_requests, self.errors, self.page_size, self.counter = [], [], [], None, 0
         self.refused_consent = {}
+        self.sp_follows = False  # whether the enterprise application takes the new name when the app registration is renamed
+        self.stale_reads = 0  # how many reads by client id still show the old name after a rename (a write that is not seen yet)
+        self.stale = {}
 
     def new_id(self):
         self.counter += 1
@@ -102,13 +105,19 @@ class FakeTenant:
 
     def existing_everything(self, people=(PERSON,)):
         app = self.existing_app()
-        principal = {"id": self.new_id(), "appId": app["appId"], "appRoleAssignmentRequired": True}
+        principal = {"id": self.new_id(), "appId": app["appId"], "displayName": app["displayName"], "appRoleAssignmentRequired": True}
         self.principals.append(principal)
         self.credentials[app["id"]] = [{"name": es.CREDENTIAL_NAME, "issuer": f"https://login.microsoftonline.com/{TENANT}/v2.0", "subject": IDENTITY,
                                         "audiences": [es.AUDIENCE]}]
         self.assigned[principal["id"]] = [{"principalId": p} for p in people]
         self.grants.append({"clientId": principal["id"], "consentType": "AllPrincipals", "resourceId": GRAPH_PRINCIPAL, "scope": "User.Read"})
         self.grants.append({"clientId": principal["id"], "consentType": "AllPrincipals", "resourceId": ARM_PRINCIPAL, "scope": "user_impersonation"})
+        return app, principal
+
+    def made_before_the_rename(self, people=(PERSON,)):
+        """What the tool made while the app registration and its enterprise application were still called by the old name."""
+        app, principal = self.existing_everything(people)
+        app["displayName"] = principal["displayName"] = es.FORMER_APP_NAME
         return app, principal
 
     def made_by_the_first_version(self, people=(PERSON,)):
@@ -140,13 +149,27 @@ class FakeTenant:
         filtered = lambda items: [i for i in items if self.filter_matches(query.get("$filter"), i)]  # noqa: E731
         if route == "applications":
             if method == "GET":
-                return self.answer(200, {"value": [self.selected(a, query.get("$select")) for a in filtered(self.apps)]})
+                shown = []
+                for app in filtered(self.apps):
+                    app = dict(app)
+                    left = self.stale.get(app["id"])
+                    if left and left[1] > 0 and (query.get("$filter") or "").startswith("appId eq"):
+                        app["displayName"], left[1] = left[0], left[1] - 1
+                    shown.append(self.selected(app, query.get("$select")))
+                return self.answer(200, {"value": shown})
             app = dict(data, id=self.new_id(), appId=self.new_id(), passwordCredentials=[], keyCredentials=[])
             self.apps.append(app)
             return self.answer(201, app)
         found = match(r"applications/([0-9a-f-]+)")
         if found and method == "PATCH":
             app = next(a for a in self.apps if a["id"] == found.group(1))
+            if "displayName" in data and data["displayName"] != app["displayName"]:
+                if self.stale_reads:
+                    self.stale[app["id"]] = [app["displayName"], self.stale_reads]
+                if self.sp_follows:
+                    for principal in self.principals:
+                        if principal["appId"] == app["appId"]:
+                            principal["displayName"] = data["displayName"]
             app.update(data)
             return self.answer(204)
         found = match(r"applications/([0-9a-f-]+)/federatedIdentityCredentials")
@@ -157,8 +180,9 @@ class FakeTenant:
             return self.answer(201, data)
         if route == "servicePrincipals":
             if method == "GET":
-                return self.answer(200, {"value": filtered(self.principals)})
-            principal = dict(data, id=self.new_id())
+                return self.answer(200, {"value": [self.selected(p, query.get("$select")) for p in filtered(self.principals)]})
+            made_for = next((a for a in self.apps if a["appId"] == data.get("appId")), None)
+            principal = dict(data, id=self.new_id(), displayName=made_for["displayName"] if made_for else None)  # an enterprise application starts with the name of its app registration
             self.principals.append(principal)
             return self.answer(201, principal)
         found = match(r"servicePrincipals/([0-9a-f-]+)")
@@ -682,7 +706,7 @@ class Apply(unittest.TestCase):
         calls = [(m, r) for m, r, _ in tenant.calls]
         patch_at = calls.index(("PATCH", f"applications/{app['id']}"))
         self.assertEqual(calls[patch_at - 1], ("GET", "applications"), "the call before the write is the read of the app registration")
-        self.assertEqual(calls.count(("GET", "applications")), 3, "the first read, the read before the write, and the check afterwards")
+        self.assertEqual(calls.count(("GET", "applications")), 6, "the first read, the read before the write, and the check afterwards: each asks for the app registration under its name and under its former name")
 
     def test_an_app_registration_that_is_gone_or_holds_a_secret_when_it_is_read_again_is_not_changed(self):
         tenant = FakeTenant()
@@ -961,6 +985,195 @@ class Apply(unittest.TestCase):
         self.assertIn("0 of 9 in order.", out)
 
 
+class TheName(unittest.TestCase):
+    """The app registration and its enterprise application are called Meternaut: the name on the Microsoft sign-in screen. Until 2026-11-13 they had another name. The tool finds a
+    registration that still has it, says what it would rename, and with --apply sends the display name alone, reads it back and renames the enterprise application if it did not follow."""
+
+    OLD, NEW = "Meternaut console", "Meternaut"
+
+    def test_the_new_name_is_the_one_that_is_made_and_the_old_one_is_only_looked_for(self):
+        self.assertEqual((es.APP_NAME, es.FORMER_APP_NAME), (self.NEW, self.OLD))
+        self.assertEqual(es.app_body(TheUnions.CFG)["displayName"], self.NEW)
+        self.assertEqual(es.CREDENTIAL_NAME, "meternaut-console-auth", "the name of the federated credential is not a display name and stays")
+        for select in (es.APP_SELECT, es.PRINCIPAL_SELECT):
+            self.assertIn("displayName", select.split(","), "Microsoft Graph sends only what $select names: a name that is not asked for looks like no name")
+        tenant = FakeTenant()
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((tenant.apps[0]["displayName"], tenant.principals[-1]["displayName"]), (self.NEW, self.NEW))
+        self.assertNotIn(self.OLD, json.dumps(tenant.writes()), "nothing that is written has the old name")
+        self.assertIn("would rename 'Meternaut console' to 'Meternaut'", " ".join(es.__doc__.split()), "the help says what the dry run says")
+
+    def test_a_registration_with_the_new_name_is_found_and_nothing_is_renamed(self):
+        tenant = FakeTenant()
+        tenant.existing_everything()
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, tenant.writes(), "Nothing to make." in out, "rename" in out), (0, [], True, False))
+
+    def test_a_registration_with_the_old_name_is_found_and_check_says_what_differs_and_writes_nothing(self):
+        tenant = FakeTenant()
+        tenant.made_before_the_rename()
+        code, out, err, _ = run(["check", *ARGS], tenant)
+        self.assertEqual((code, err, tenant.writes()), (1, "", []))
+        self.assertRegex(out, r"DIFFERS +App registration Meternaut \(client id ")
+        self.assertRegex(out, r"DIFFERS +Enterprise application Meternaut, assignment required")
+        self.assertEqual(out.count("it is called 'Meternaut console' and is to be called 'Meternaut': apply renames it (the display name alone is sent)"), 2)
+        self.assertIn("7 of 9 in order.", out, "the two names are the only things that differ")
+
+    def test_one_registration_of_each_name_stops_the_tool_and_so_do_two_of_one_name(self):
+        for names, words in (((self.NEW, self.OLD), "one app registration is called Meternaut and another Meternaut console: the tool cannot tell which one is Meternaut's sign-in"),
+                             ((self.OLD, self.OLD), "2 app registrations are called Meternaut console: remove the ones that are not Meternaut's"),
+                             ((self.NEW, self.NEW), "2 app registrations are called Meternaut: remove the ones that are not Meternaut's")):
+            tenant = FakeTenant()
+            for name in names:
+                tenant.existing_app(displayName=name)
+            code, _, err, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+            self.assertEqual((code, tenant.writes()), (1, []), names)
+            self.assertIn(words, err)
+
+    def test_the_dry_run_says_that_it_would_rename_and_writes_nothing(self):
+        tenant = FakeTenant()
+        app, principal = tenant.made_before_the_rename()
+        code, out, _, _ = run(["apply", *ARGS], tenant)
+        self.assertEqual(code, 1)
+        self.assertIn("1 change(s) would be made, and nothing else", out)
+        self.assertIn(f"PATCH applications/{app['id']}: would rename 'Meternaut console' to 'Meternaut'. Only the display name is sent: no redirect address, no credential and no permission", out)
+        self.assertIn(f"The enterprise application is read again afterwards, and when its name has not followed it is renamed too (PATCH servicePrincipals/{principal['id']}, the display name alone)", out)
+        self.assertIn("This was a dry run", out)
+        self.assertEqual(tenant.writes(), [])
+
+    def test_apply_sends_the_display_name_alone_reads_it_back_and_renames_the_enterprise_application_that_did_not_follow(self):
+        tenant = FakeTenant()
+        app, principal = tenant.made_before_the_rename()
+        code, out, err, sleeps = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, err, sleeps), (0, "", []), out)
+        self.assertEqual(tenant.writes(), [("PATCH", f"applications/{app['id']}", {"displayName": self.NEW}), ("PATCH", f"servicePrincipals/{principal['id']}", {"displayName": self.NEW})])
+        self.assertEqual((app["displayName"], principal["displayName"]), (self.NEW, self.NEW))
+        self.assertIn("renamed the app registration from 'Meternaut console' to 'Meternaut': the display name alone was sent, and Microsoft Graph shows the new name", out)
+        self.assertIn("the enterprise application's name did not follow, so it was renamed too, from 'Meternaut console' to 'Meternaut': the display name alone was sent", out)
+        self.assertIn("9 of 9 in order.", out)
+        calls = [(method, route) for method, route, _ in tenant.calls]
+        at = calls.index(("PATCH", f"applications/{app['id']}"))
+        self.assertEqual(calls[at + 1:at + 3], [("GET", "applications"), ("GET", "servicePrincipals")], "the new name is read back, and then the enterprise application is read")
+
+    def test_an_enterprise_application_that_followed_is_left_alone(self):
+        tenant = FakeTenant()
+        tenant.sp_follows = True
+        app, principal = tenant.made_before_the_rename()
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(tenant.writes(), [("PATCH", f"applications/{app['id']}", {"displayName": self.NEW})])
+        self.assertIn("the enterprise application's name followed: it is called 'Meternaut' too", out)
+        self.assertNotIn("did not follow", out)
+
+    def test_a_second_run_changes_nothing_and_says_so(self):
+        for follows in (False, True):
+            tenant = FakeTenant()
+            tenant.sp_follows = follows
+            tenant.made_before_the_rename()
+            run(["apply", *ARGS, "--apply", "--yes"], tenant)
+            before, kept = len(tenant.writes()), copy.deepcopy((tenant.apps, tenant.principals))
+            code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+            self.assertEqual((code, len(tenant.writes()), "Nothing to make." in out, "rename" in out), (0, before, True, False), follows)
+            self.assertEqual((tenant.apps, tenant.principals), kept)
+            code, out, _, _ = run(["check", *ARGS], tenant)
+            self.assertEqual((code, "9 of 9 in order." in out), (0, True))
+
+    def test_an_enterprise_application_with_another_name_is_renamed_alone_when_the_registration_has_the_name_already(self):
+        tenant = FakeTenant()
+        _, principal = tenant.existing_everything()
+        principal["displayName"] = self.OLD
+        code, out, _, _ = run(["apply", *ARGS], tenant)
+        self.assertEqual(code, 1)
+        self.assertIn("1 change(s) would be made, and nothing else", out)
+        self.assertIn(f"PATCH servicePrincipals/{principal['id']}: would rename 'Meternaut console' to 'Meternaut'. Only the display name is sent", out)
+        self.assertEqual(tenant.writes(), [])
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(tenant.writes(), [("PATCH", f"servicePrincipals/{principal['id']}", {"displayName": self.NEW})])
+        self.assertIn("renamed the enterprise application from 'Meternaut console' to 'Meternaut': the display name alone was sent", out)
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, len(tenant.writes()), "Nothing to make." in out), (0, 1, True))
+
+    def test_the_name_goes_first_and_alone_and_what_else_is_missing_is_a_change_of_its_own(self):
+        tenant = FakeTenant()
+        app, principal = tenant.made_before_the_rename()
+        app["web"]["redirectUris"] = [CALLBACK]
+        principal["appRoleAssignmentRequired"] = False
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 0, out)
+        writes = tenant.writes()
+        self.assertEqual(writes[0], ("PATCH", f"applications/{app['id']}", {"displayName": self.NEW}))
+        self.assertEqual((writes[1][:2], sorted(writes[1][2])), (("PATCH", f"applications/{app['id']}"), ["web"]), "the redirect address goes in a change that carries no name")
+        self.assertEqual(writes[2:], [("PATCH", f"servicePrincipals/{principal['id']}", {"displayName": self.NEW}),
+                                       ("PATCH", f"servicePrincipals/{principal['id']}", {"appRoleAssignmentRequired": True})], "the name that did not follow, and then the rest")
+        self.assertEqual(app["web"]["redirectUris"], [CALLBACK, ARM_RETURN])
+
+    def test_nothing_but_the_two_names_changes(self):
+        tenant = FakeTenant()
+        tenant.made_before_the_rename()
+
+        def without_names(state):
+            return [[{key: value for key, value in item.items() if key != "displayName"} for item in group] for group in state[:2]] + list(state[2:])
+
+        before = copy.deepcopy((tenant.apps, tenant.principals, tenant.credentials, tenant.assigned, tenant.grants))
+        run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        after = (tenant.apps, tenant.principals, tenant.credentials, tenant.assigned, tenant.grants)
+        self.assertEqual(without_names(after), without_names(before), "no redirect address, credential, permission, assignment or consent was touched")
+        self.assertEqual([item["displayName"] for item in tenant.apps + tenant.principals[2:]], [self.NEW, self.NEW])
+
+    def test_a_secret_or_a_certificate_stops_everything_before_the_name_is_changed(self):
+        tenant = FakeTenant()
+        app, _ = tenant.made_before_the_rename()
+        app["passwordCredentials"] = [{"keyId": "x"}]
+        code, out, _, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, tenant.writes(), app["displayName"]), (1, [], self.OLD))
+        self.assertIn("Nothing can be changed until", out)
+
+    def test_a_pipeline_changes_no_name(self):
+        tenant = FakeTenant()
+        app, principal = tenant.made_before_the_rename()
+        code, _, err, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant, env={"GITHUB_ACTIONS": "true"})
+        self.assertEqual((code, tenant.calls, (app["displayName"], principal["displayName"])), (1, [], (self.OLD, self.OLD)))
+        self.assertIn("never a pipeline", err)
+
+    def test_a_refusal_of_the_rename_stops_at_once_and_the_enterprise_application_is_not_touched(self):
+        tenant = FakeTenant()
+        app, principal = tenant.made_before_the_rename()
+        tenant.errors.append(("PATCH", "applications/", 403, {"error": {"code": "Authorization_RequestDenied", "message": "Insufficient privileges to complete the operation."}}))
+        code, _, err, _ = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual(code, 1)
+        self.assertIn("Microsoft Graph refused: 403 Authorization_RequestDenied", err)
+        self.assertEqual([(method, route.split("/")[0]) for method, route, _ in tenant.writes()], [("PATCH", "applications")], "the one change that was refused, and nothing after it")
+        self.assertEqual((app["displayName"], principal["displayName"]), (self.OLD, self.OLD))
+
+    def test_a_name_that_is_not_seen_at_once_is_read_again_after_a_pause_and_one_that_is_never_seen_stops_the_run(self):
+        tenant = FakeTenant()
+        tenant.stale_reads = 2
+        tenant.made_before_the_rename()
+        code, out, _, sleeps = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, sleeps), (0, [es.READY_SECONDS, es.READY_SECONDS]), out)
+        self.assertEqual(len(tenant.writes()), 2, "one name for the registration, one for the enterprise application: no change is sent twice")
+        tenant = FakeTenant()
+        tenant.stale_reads = 99
+        app, principal = tenant.made_before_the_rename()
+        code, _, err, sleeps = run(["apply", *ARGS, "--apply", "--yes"], tenant)
+        self.assertEqual((code, len(sleeps)), (1, es.READY_TRIES - 1))
+        self.assertIn("the new name 'Meternaut' was sent, and Microsoft Graph still shows the app registration as 'Meternaut console'. Nothing else was changed", err)
+        self.assertEqual([route.split("/")[0] for _, route, _ in tenant.writes()], ["applications"], "the enterprise application waits for the next run")
+        self.assertEqual(principal["displayName"], self.OLD)
+
+    def test_every_call_of_a_rename_is_on_the_list_and_none_deletes(self):
+        for follows in (False, True):
+            tenant = FakeTenant()
+            tenant.sp_follows = follows
+            tenant.made_before_the_rename()
+            run(["apply", *ARGS, "--apply", "--yes"], tenant)
+            self.assertNotIn("DELETE", {call[0] for call in tenant.calls})
+            for method, route, _ in tenant.calls:
+                self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), f"{method} {route}")
+
+
 class TheUnions(unittest.TestCase):
     CFG = es.Config(TENANT, HOST, IDENTITY, (PERSON,))
 
@@ -1061,7 +1274,7 @@ class TheCallsOfTheTool(unittest.TestCase):
             self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), f"{method} {route}")
 
     def test_no_run_of_the_new_version_sends_a_delete_or_asks_for_anything_that_the_old_one_did_not(self):
-        for prepare in (lambda t: None, lambda t: t.made_by_the_first_version(), lambda t: t.existing_everything(), with_strays,
+        for prepare in (lambda t: None, lambda t: t.made_by_the_first_version(), lambda t: t.existing_everything(), with_strays, lambda t: t.made_before_the_rename(),
                         lambda t: t.existing_everything()[0].update(isFallbackPublicClient=True)):
             tenant = FakeTenant()
             prepare(tenant)
@@ -1071,7 +1284,7 @@ class TheCallsOfTheTool(unittest.TestCase):
                 self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), f"{method} {route}")
 
     def test_nothing_that_was_in_the_tenant_before_a_run_is_gone_after_it(self):
-        for prepare in (lambda t: t.made_by_the_first_version(), with_strays):
+        for prepare in (lambda t: t.made_by_the_first_version(), with_strays, lambda t: t.made_before_the_rename()):
             tenant = FakeTenant()
             app, _ = prepare(tenant)
             before = {"addresses": list(app["web"]["redirectUris"]), "permissions": es.permissions_of(app), "grants": [dict(g) for g in tenant.grants]}
