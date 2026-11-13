@@ -65,7 +65,14 @@ HELD_SHARED = "others share this kind of resource, so this asks for a look and n
 # A finding that an automation manages is held back: the Activity Log names a write within this many days by an identity that is no person and not Meternaut's own. A finding that asks to delete
 # a resource whose Activity Log was not read is held back as well: an unread log shows nothing, and nothing is not "nobody changed it".
 AUTOMATION_DAYS = 14
-HELD_REASONS = ("automation", "unchecked")
+# And a finding that asks to delete a resource of the network that others do not share is held back when what depends on it was not checked to the end (cases/impact.py): `impact`.
+HELD_REASONS = ("automation", "unchecked", "impact")
+# What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
+IMPACT = "impact"
+IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
+NOT_ANALYSED = "Impact not analysed: Meternaut did not look at what depends on it."
+SAFE_RISK = "Nothing that Meternaut could read depends on it, and it could not read everything."
+KEEP_RISK = "It is in use, and removing it breaks what uses it."
 # The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card.
 ACTING = "If you act on it: "
 IF_ACTED = " if you act on it"  # what the chip of such a risk adds to its word: "High risk if you act on it"
@@ -77,7 +84,8 @@ NOT_MEASURED = "Not measured: no measurement is cited for this finding, so nothi
 NOT_LOOKED_UP = "Not checked: who changed it."
 TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now.",
               "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
-              "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty), in a sentence
+              "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
+              "impact": "Meternaut took this request back: nobody checked what depends on the resource."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -339,6 +347,22 @@ class Second:
 
 
 @dataclass(frozen=True)
+class Impact:
+    """What removing a resource would do, from the check of cases/impact.py in the words of a page, a card and a letter: `verdict` is a key of IMPACT_VERDICTS ("" when nothing was analysed), `rows`
+    what was read with where it was read, `removal` what happens to traffic and DNS, `unchecked` the line "Not checked: ..." ("" when everything was read), `line` the one line of a card and a letter,
+    `read` the sentence that says when it was read ("" when nothing was analysed): a page may be opened days after the read, and the verdict is as of that day."""
+
+    verdict: str
+    reasons: tuple[str, ...]
+    rows: tuple[tuple[str, str, str], ...]
+    removal: tuple[str, ...]
+    undo: str
+    unchecked: str
+    line: str
+    read: str = ""
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -401,6 +425,8 @@ class Brief:
     cost_scope: str = ""  # the scope of that address in words ("resource group rg-demo", "subscription contoso-dev"), for the line that holds the link
     # What to check before acting on advice about a resource that others share, or that may not be used any more (CHECK_FIRST); empty for every other request.
     check_first: tuple[str, ...] = ()
+    # What removing the resource would do (impact_of); None for every request that is not advice about the use of a resource.
+    impact: Impact | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -613,7 +639,8 @@ def says_nothing(case: CaseRecord | None) -> bool:
 def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
     """Why no request is made for a finding, or one that was made is taken back (one of HELD_REASONS), and "" when none is held. `automation`: the Activity Log names a write within AUTOMATION_DAYS days
     by an identity that is no person (the owner record keeps the newest, `automatedAt`; a record from before it has only the last change). `unchecked`: the finding asks to delete the resource and who
-    changed it was not looked up, or could not be (a read that failed, or a run whose reads were used up, or a Watch that never looks it up). The caller exempts what Meternaut planted."""
+    changed it was not looked up, or could not be (a read that failed, or a run whose reads were used up, or a Watch that never looks it up). `impact`: the finding still asks to delete a resource of
+    the network (a measured zero, and a kind that others do not share) and the check of what depends on it was not made to the end (cases/impact.py). The caller exempts what Meternaut planted."""
     if case is None:
         return ""
     owner = case.owner if isinstance(case.owner, dict) else {}
@@ -622,7 +649,9 @@ def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
     if when is not None and _utc(now) - when <= dt.timedelta(days=AUTOMATION_DAYS):
         return "automation"
     about_a_resource = advice_of(case) is None and not cost_words.is_container(case.resource_id)  # a recommendation of Advisor, or about a whole subscription or group, is not the deletion of a resource
-    return "unchecked" if about_a_resource and _asked_delete(case) and not owner.get("lookedUp") else ""
+    if about_a_resource and _asked_delete(case) and not owner.get("lookedUp"):
+        return "unchecked"
+    return "impact" if about_a_resource and case.recommendation == "delete" and needs_impact(case.resource_type) and not shared(case.resource_type) and measured_zero(case.facts) and not _checked(case.facts) else ""
 
 
 def taken_back(plan: PlanRecord | None, case: CaseRecord | None = None) -> str:
@@ -660,6 +689,46 @@ def shared(rtype: object) -> bool:
     return isinstance(rtype, str) and rtype.strip().lower().startswith(SHARED)
 
 
+def needs_impact(rtype: object) -> bool:
+    """Whether a proposal to delete a resource of this type needs a check of what depends on it to the end (cases/impact.py): a resource of the network, and any that others share."""
+    return isinstance(rtype, str) and (rtype.strip().lower().startswith("microsoft.network/") or shared(rtype))
+
+
+def _impact_digest(facts: object) -> dict | None:
+    """The digest of the impact check that a case keeps in its facts, or None when it holds none that has a verdict of IMPACT_VERDICTS."""
+    found = facts.get(IMPACT) if isinstance(facts, Mapping) else None
+    return found if isinstance(found, dict) and found.get("verdict") in IMPACT_VERDICTS else None
+
+
+def _checked(facts: object) -> bool:
+    """Whether the impact check of a case read everything that it asks (a read that failed, or one that was not made, is not a check)."""
+    found = _impact_digest(facts)
+    return found is not None and found.get("complete") is True
+
+
+def impact_of(case: CaseRecord | None) -> Impact | None:
+    """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
+    model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding."""
+    if case is None or not _idle(case) or unread_of(case) is not None or gateways_of(case) is not None:
+        return None
+    found = _impact_digest(case.facts)
+    if found is None:
+        return Impact("", (), (), (), "", "", NOT_ANALYSED)
+
+    def lines(key: str, limit: int) -> tuple[str, ...]:
+        value = found.get(key)
+        return tuple(text for text in (text_of(item, limit) for item in value if isinstance(item, str)) if text) if isinstance(value, list) else ()
+
+    rows = found.get("rows")
+    rows = tuple((text_of(row[0], 60), text_of(row[1], 240), text_of(row[2], 90)) for row in rows if isinstance(row, list) and len(row) == 3) if isinstance(rows, list) else ()
+    reasons, missing = lines("reasons", 240), lines("unchecked", 160)
+    first = reasons[0].partition(". ")[0].rstrip(".") + "." if reasons else ""  # a card and a letter have room for the first sentence of the first reason: the page has them all
+    when = parse_time(found.get("readAt"))
+    read = f"Read on {when.day} {when:%b %Y} UTC." if when else "The date that it was read is not known."  # the date of the read, in UTC: nothing here says "today" or "yesterday"
+    return Impact(found["verdict"], reasons, rows, lines("removal", 400), text_of(found.get("undo"), 300), f"Not checked: {'; '.join(missing)}." if missing else "",
+                  f"Impact: {IMPACT_VERDICTS[found['verdict']]}. {read} {first}".strip() + ("" if found.get("complete") is True else " Part of it could not be read."), read)
+
+
 def measured_zero(facts: object) -> bool:
     """Whether the facts of a finding hold a measurement that shows that nothing used the resource: a total of nil over a window that had a value on at least MEASURED_DAYS days, and no cited
     measurement of it that shows anything (a deletion needs that none of its cited totals is above nil). No data, a read that failed and a few days are not a measurement."""
@@ -675,10 +744,15 @@ def _asked_delete(case: CaseRecord) -> bool:
     return case.recommendation == "delete" or facts.get("asked") == "delete"
 
 
+def about_use(facts: object, recommendation: object) -> bool:
+    """Whether a finding of the investigation says that a resource is not used, or asks to delete it (its recommendation, or what its facts say it was asked)."""
+    found = facts if isinstance(facts, Mapping) else {}
+    return recommendation == "delete" or found.get("asked") == "delete" or found.get("basis") in USE_BASES
+
+
 def _idle(case: CaseRecord) -> bool:
     """Whether a finding of the investigation says that a resource is not used, or asked to delete it."""
-    facts = case.facts if isinstance(case.facts, dict) else {}
-    return case.detector == "investigation" and (_asked_delete(case) or facts.get("basis") in USE_BASES)
+    return case.detector == "investigation" and about_use(case.facts, case.recommendation)
 
 
 def proposal_of(case: CaseRecord | None) -> str | None:
@@ -701,6 +775,9 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     low, because a change is at least a medium risk; high for a resource that others share when nothing measured shows that nothing uses it."""
     if case is None:
         return Risk("medium", ACTING + CHANGE_RISK)
+    verdict = (_impact_digest(case.facts) or {}).get("verdict")  # what the check of what depends on it found outranks the guess from the kind of resource
+    if verdict in ("safe", "keep"):
+        return Risk("medium" if verdict == "safe" else "high", ACTING + (SAFE_RISK if verdict == "safe" else KEEP_RISK))  # a change is never a low risk: the reads cannot see everything
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
@@ -710,8 +787,8 @@ def acting_risk(case: CaseRecord | None) -> Risk:
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
-    """What to check before acting on a finding that asks whether a resource is still used (CHECK_FIRST)."""
-    return CHECK_FIRST if still_used(case) else ()
+    """What to check before acting on a finding that asks whether a resource is still used (CHECK_FIRST), unless the impact check made that: its reasons say what to check."""
+    return CHECK_FIRST if still_used(case) and _impact_digest(case.facts) is None else ()
 
 
 def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None,
@@ -1644,7 +1721,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else ())
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None)
 
 
 def order_key(brief: Brief) -> tuple:

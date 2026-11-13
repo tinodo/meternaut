@@ -28,6 +28,9 @@ SCOPE = rf"/subscriptions/{GUID}(?:/resourceGroups/[A-Za-z0-9._()-]{{1,90}}(?:/p
 GROUP = rf"/subscriptions/{GUID}/resourceGroups/[A-Za-z0-9._()-]{{1,90}}"
 WORKSPACE = rf"{GROUP}/providers/Microsoft\.OperationalInsights/workspaces/[A-Za-z0-9][A-Za-z0-9-]{{2,61}}[A-Za-z0-9]"
 AI_ACCOUNT = rf"{GROUP}/providers/Microsoft\.CognitiveServices/accounts/[A-Za-z0-9][A-Za-z0-9._-]{{0,63}}"
+# A private endpoint and a private DNS zone, whose own lists (the DNS zone groups of the endpoint, the address records of the zone) the impact check reads (cases/impact.py).
+ENDPOINT = rf"{GROUP}/providers/Microsoft\.Network/privateEndpoints/[A-Za-z0-9._()~-]{{1,100}}"
+DNS_ZONE = rf"{GROUP}/providers/Microsoft\.Network/privateDnsZones/[A-Za-z0-9._()~-]{{1,100}}"
 # The query API of Azure Monitor Logs (Learn, "Request format for the Azure Monitor Logs query API"): the public endpoint, whose token is asked for the audience below. A workspace is named
 # there by its id (a GUID, the customerId of the workspace), and the one POST of it asks a question.
 LOG_ANALYTICS_HOST = "api.loganalytics.azure.com"
@@ -124,7 +127,7 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
     call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
     question: a query). The one GET of /subscriptions lists the subscriptions that the app's own identity can read (scope.py): the Reader role covers it (R1 of
     environment/access-requirements.json), and the address has no part after it. The GET of one subscription (/subscriptions/<id>, nothing after the id) gives its display name, with the same role. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
-    searches, the deployments of an account, the activity log, the diagnostic settings of a resource) and never a resource as such: a GET of one resource would read any of its properties."""
+    searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
@@ -144,6 +147,8 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         ("GET", re.compile(arm + WORKSPACE + "/savedSearches", re.I)),
         ("GET", re.compile(arm + WORKSPACE + r"/providers/Microsoft\.SecurityInsights/alertRules", re.I)),
         ("GET", re.compile(arm + AI_ACCOUNT + "/deployments", re.I)),
+        ("GET", re.compile(arm + ENDPOINT + "/privateDnsZoneGroups", re.I)),
+        ("GET", re.compile(arm + DNS_ZONE + "/A", re.I)),
         ("POST", re.compile(re.escape(f"https://{LOG_ANALYTICS_HOST}/v1/workspaces/") + GUID + "/query", re.I)),
         # What the capability profile reads (cases/capability.py): the first page of the lists of billing accounts, reservation orders and savings plan orders that the identity may see, and
         # one line of the price sheet of a subscription. Each address is the list itself, never one account or one order.

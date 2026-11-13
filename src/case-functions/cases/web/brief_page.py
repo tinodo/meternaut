@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, COULD_NOT_LOOK, IF_ACTED, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -27,6 +27,7 @@ INVESTIGATION = "investigation"  # the detector of the cases that the Watch's ow
 STEP_HEADERS = ["Step", "Model", "Tokens in", "Tokens out", "Milliseconds", "Result", "Note"]
 PAUSED = PAUSED_CHANGES
 MONEY = Safe('<p class="m">Money is in US dollars, and a year is twelve times the month.</p>')
+VERDICT_CHIPS = {"safe": ("low", "circle"), "check": ("mid", "triangle"), "keep": ("high", "diamond")}  # the colour and the shape of the verdict of the impact check
 
 
 # -- the parts of the page ------------------------------------------------------------------------------------------------------------------------
@@ -191,6 +192,23 @@ def _options(brief: Brief) -> Safe:
     return join([Safe("<h2>What you could do</h2>"), fmt("<ol>{rows}</ol>", rows=join(rows)), paragraph(OPTIONS_END)])
 
 
+def _impact(brief: Brief) -> Safe:
+    """What removing the resource would do (cases/impact.py): the verdict that code derived from the facts, its reasons, what was read and where it was read, what happens to traffic and DNS, how
+    to undo it, and what was not checked. No AI writes any of it. A finding whose kind of resource has no check says in one line that nothing was analysed."""
+    found = brief.impact
+    if found is None:
+        return Safe("")
+    if not found.verdict:
+        return join([Safe("<h2>Impact</h2>"), paragraph(found.line)])
+    rows = [[name, value, fmt('<span class="muted">{source}</span>', source=source)] for name, value, source in found.rows]
+    parts: list[object] = [Safe("<h2>Impact</h2>"), paragraph(chip(IMPACT_VERDICTS[found.verdict], *VERDICT_CHIPS[found.verdict])), paragraph(found.read, "muted"), items(found.reasons)]
+    parts += [table("impact", "What was read, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)] if rows else []
+    parts += [Safe("<h3>If it is removed</h3>"), items(found.removal)] if found.removal else []
+    parts += [Safe("<h3>How to undo it</h3>"), paragraph(found.undo)] if found.undo else []
+    parts += [paragraph(found.unchecked, "muted")] if found.unchecked else []
+    return join(block(part) for part in parts)
+
+
 def _check_first(brief: Brief) -> Safe:
     """What to check before acting on advice about a resource that others share, or that may not be used any more: what it connects to, who owns it and its traffic, in the words of code."""
     if not brief.check_first:
@@ -323,7 +341,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         parts.append(_ai_words(case))
         parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT)}  # what code made of the estate is in the evidence above, and no AI saw it
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))
         parts.append(join([paragraph("These guards fired. A guard stops a finding from becoming a request, and no model can lift it."),
@@ -351,7 +369,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)
     elif brief.state == "open" and plan is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2><p>Only the people who are named for this request can answer it.</p></section>')
-    reading = join(block(part) for part in (_measured(brief), _options(brief), _check_first(brief), _why(brief), _whose(brief)))
+    reading = join(block(part) for part in (_impact(brief), _measured(brief), _options(brief), _check_first(brief), _why(brief), _whose(brief)))
     parts.append(fmt('<div class="cols{solo}"><div>{reading}</div>{side}</div>', solo="" if side is not None else " solo", reading=reading, side=side if side is not None else Safe("")))
     parts.append(_details(ctx, brief, case, plan, action))
     return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=brief.models or None, why=why or "you opened a request that Meternaut made", wide=True)

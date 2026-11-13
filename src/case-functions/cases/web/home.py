@@ -299,7 +299,8 @@ def held_count(ctx: Ctx) -> int:
 
 
 def held_by_rules(ctx: Ctx) -> int:
-    """How many of the held findings (held_cases) are held back by a rule of cases/brief.py held_reason: an automation manages the resource, or nobody looked up who changed it."""
+    """How many of the held findings (held_cases) are held back by a rule of cases/brief.py held_reason: an automation manages the resource, nobody looked up who changed it, or what depends on it
+    was not checked."""
     return sum(1 for case in held_cases(ctx) if held_reason(case, ctx.now))
 
 
@@ -311,8 +312,8 @@ def _held(ctx: Ctx) -> Safe:
     if not cases:
         return Safe("")
     held, ruled = len(cases), sum(1 for case in cases if held_reason(case, ctx.now))
-    lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because an automation manages the resource, or because nobody has looked up who changed it. "
-                       "Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
+    lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because an automation manages the resource, because nobody has looked up who changed it, or because "
+                       "what depends on it was not checked. Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
     rest = held - ruled
     if rest:
         many = rest != 1
