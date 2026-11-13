@@ -284,7 +284,7 @@ def command_build(args, environ, out) -> int:
     domains = [d.strip().lower() for d in (args.valid_domain or [])] or ([found["CONSOLE_HOST_NAME"].strip().lower()] if found["CONSOLE_HOST_NAME"] else [])
     problem = next((d for d in domains if not DOMAIN.match(d)), None)
     if problem is not None:
-        raise Problem("a valid domain is a host name such as console.example.com, with no scheme, no path and no wildcard")
+        raise Problem("a valid domain is a host name such as pages.example.com, with no scheme, no path and no wildcard")
     folder = outside_the_repository(Path(args.out) if args.out else Path(tempfile.gettempdir()) / "meternaut-teams-app")
     files = package_files(bot_id.lower(), sorted(set(domains)))
     problems = check_manifest(json.loads(files["manifest.json"]), files)

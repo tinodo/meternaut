@@ -28,7 +28,7 @@ With TEAMS_DELIVERY=bot (cases/teamsbot.py; the queue stays the default) the sam
 queue: `sent` then means that Teams accepted the card, the record `card-posted` is written at once with the activity and the conversation (and the word `bot`, so that a card is replaced only by the way that
 posted it), and a card is replaced by an update of that activity. A person for whom Teams says that the app is not installed, or that it was blocked, is a failed try with that plain reason, tried again
 at most as often as any other, and the other approvers go on; the letter follows after the twenty minutes as ever. A bot way whose settings are missing or wrong is off: no card is tried (loop_config.TeamsWay).
-AGENTS.md rule 25 (no bot) is replaced by the owner's ruling of 2026-11-13 (pending his plain yes) for this way, and nothing here runs unless TEAMS_DELIVERY says bot.
+AGENTS.md rule 25 (no bot) is replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13) for this way, and nothing here runs unless TEAMS_DELIVERY says bot.
 """
 from __future__ import annotations
 

@@ -4,19 +4,21 @@ person, the letter that follows, the settings that fail closed, the block of the
 The Bot Connector and Microsoft Entra are one fake transport (test_teamsbot.py), the stores are in memory, the clock is moved by the tests. Every id is invented.
 """
 import dataclasses
+import importlib.util
 import json
 import re
+import sys
 import unittest
 from dataclasses import dataclass, field
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
-from cases import cardcheck, cards, control, loop_config, memory_store, notify, offers, teamsbot, wiring
+from cases import cardcheck, cards, control, events as history, loop_config, memory_store, notify, offers, teamsbot, wiring
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, DecisionRecord, MailRecord, SwitchRecord
 from cases.redact import Redactor
-from support import LogCapture, fixed_clock
+from support import REPO_ROOT, LogCapture, fixed_clock
 from test_control import FakeMessage, Recorder
 from test_notify import ENV as LOOP_ENV, Graph
 from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, CONVERSATION, FORBIDDEN, IDENTITY, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
@@ -573,6 +575,41 @@ class TheTestCard(unittest.TestCase):
                     before()
                 ok, events, _ = self.run_test(env)
                 self.assertEqual((ok, [(e["type"], e["ok"], e.get("reason")) for e in events], self.teams.calls), (False, [("teams.test.finished", False, reason)], []))
+
+    def test_the_check_of_the_pipeline_reads_what_the_test_writes(self):
+        """tools/teams-check.py, which the Hub action teams-test runs in the Operator, reads these History lines: the kinds, the steps and the words of the reasons are the same on both sides."""
+        spec = importlib.util.spec_from_file_location("teams_check_of_the_app_tests", REPO_ROOT / "tools" / "teams-check.py")
+        check = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = check
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(check)
+        self.assertEqual((check.KIND_STEP, check.KIND_END, check.JOB, check.EVENT_PREFIX, set(check.REASONS)), (*history.TEAMS_KINDS, control.TEAMS_JOB, history.EVENT_PREFIX, set(teamsbot.REASONS)))
+
+        def read(env=None, before=None, **replies):
+            self.teams.replies, self.teams.calls, self.store = replies, [], MemoryStore(self.clock)
+            if before:
+                before()
+            _, _, text = self.run_test(env)
+            return check.result_lines([e for e in map(check.parse_event, text.splitlines()) if e and e["requestId"] == self.ID])
+
+        lines, passed = read()
+        self.assertTrue(passed, lines)
+        denied = {"error": "invalid_client", "error_description": "AADSTS700213: x"}
+        for step, status, body, reason, said in (("create", 403, FORBIDDEN, "not-installed", ""), ("send", 403, WRITES_BLOCKED, "blocked", ""), ("create", 401, None, "unauthorized", ""),
+                                                 ("send", 429, None, "throttled", ""), ("update", 404, None, "other", ""), ("create", 503, None, "network", ""),
+                                                 ("token", 400, denied, "unauthorized", "AADSTS700213")):
+            with self.subTest(step=step, status=status):
+                lines, passed = read(**{step: [answer(status, body, retry_after="3600")] * 3})
+                self.assertFalse(passed)
+                self.assertTrue(any(check.STEP_TITLES[step] in line and "NOT ok" in line and said in line and check.REASONS[reason] in line for line in lines), lines)
+        no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
+        pull = (lambda: self.store.switch_put(SwitchRecord(name="all", paused=True, by="Ops", at="2026-11-05T10:00:00Z")))
+        for env, before, reason in (({"TEAMS_DELIVERY": "queue"}, None, "off"), ({"CONSOLE_PEOPLE": no_owner}, None, "no-owner"), ({}, pull, "held"), ({"CONSOLE_PEOPLE": "not json"}, None, "other")):
+            with self.subTest(reason=reason):
+                lines, passed = read(env, before)
+                self.assertFalse(passed)
+                self.assertIn(f"The cases app sent nothing: {check.FINISHED_REASONS[reason]}.", lines[-1])
+
     def test_a_loop_that_is_not_set_up_is_one_plain_word_and_never_a_crash(self):
         with LogCapture() as capture:
             self.assertFalse(offers.card_test({}, self.ID, transport=self.teams, clock=self.clock))

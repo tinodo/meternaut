@@ -140,7 +140,7 @@ class TheTemplatesReadNothingOutsideTheirOwnGroup(unittest.TestCase):
         self.assertEqual(names, ["environment/aigateway/main.bicep", "environment/aigateway/subnet.bicep", "environment/aigateway/telemetry.bicep", "environment/base/main.bicep", "environment/cases/main.bicep",
                                  "environment/cases/planted.bicep", "environment/foundry/main.bicep", "environment/governance/main.bicep", "environment/main.bicep", "environment/operator/main.bicep",
                                  "environment/powerplatform/main.bicep",
-                                 "environment/teams/main.bicep",  # replaced by the owner's ruling of 2026-11-13 (pending his plain yes): the Teams bot's template, looked at: it reads nothing outside the project's group and its identity holds no role
+                                 "environment/teams/main.bicep",  # replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams bot's template, looked at: it reads nothing outside the project's group and its identity holds no role
                                  "infra/budgets/rg-budget.bicep"], "a new template is added to this list on purpose, after it was looked at for what it reads")
         for name in (n for n in names if n.startswith("environment/")):
             self.assertIn(name, WORKFLOW + CHECKS, f"{name}: a template that no workflow compiles")

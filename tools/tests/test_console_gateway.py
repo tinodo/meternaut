@@ -778,7 +778,7 @@ class TheFrontDoorOfAClosedAppIsKnockedAtInsideTheNetwork(unittest.TestCase):
             self.assertEqual(names.count(name), 1, name)
         self.assertLess(names.index("Sign in to Azure a fourth time for the check of the cases, because the third sign-in's credential lasts five minutes too"), names.index(self.TITLE),
                         "a fresh credential: the check follows the fourth sign-in of the action cases by a few quick steps, and the first sign-in of the action loop-check by a few as well")
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 13, "(13, replaced by the owner's ruling of 2026-11-13 (pending his plain yes): the read-back of the Teams identity and bot is one more; it was 12) no sign-in was added for the front door: the runner makes the container group with the credential of the sign-in before it (the thirteen are those of the other actions: the AI security's two read-backs are two of them, the read-back of Power Platform's subnet and policy is one, and the read-back of the Teams identity and bot is one)")
+        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 13, "(13, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the read-back of the Teams identity and bot is one more; it was 12) no sign-in was added for the front door: the runner makes the container group with the credential of the sign-in before it (the thirteen are those of the other actions: the AI security's two read-backs are two of them, the read-back of Power Platform's subnet and policy is one, and the read-back of the Teams identity and bot is one)")
 
     def test_the_names_in_the_new_steps_say_web_page_and_the_old_word_is_in_no_new_text(self):
         for name in (self.TITLE, self.CLEANUP):

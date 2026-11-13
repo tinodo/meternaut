@@ -299,20 +299,20 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
             return code, lines, err.getvalue(), data
 
     def test_the_package_holds_the_manifest_and_the_two_icons_and_prints_only_its_path_and_its_size(self):
-        code, lines, _, data = self.build({"TEAMS_BOT_APP_ID": self.CLIENT, "CONSOLE_HOST_NAME": "console.example.com"})
+        code, lines, _, data = self.build({"TEAMS_BOT_APP_ID": self.CLIENT, "CONSOLE_HOST_NAME": "pages.example.com"})
         self.assertEqual(code, 0)
         self.assertEqual(len(lines), 1)
         self.assertRegex(lines[0], r"^Wrote .*meternaut-teams-app\.zip \(\d+ bytes\)\.$")
         self.assertEqual(int(re.search(r"\((\d+) bytes\)", lines[0]).group(1)), len(data))
         self.assertNotIn(self.CLIENT, lines[0])
-        self.assertNotIn("console.example.com", lines[0])
+        self.assertNotIn("pages.example.com", lines[0])
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             self.assertEqual(sorted(archive.namelist()), ["color.png", "manifest.json", "outline.png"])
             manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(ta.check_manifest(manifest, {n: archive.read(n) for n in archive.namelist()}), [])
         self.assertEqual(manifest["bots"], [{"botId": self.CLIENT, "scopes": ["personal"], "isNotificationOnly": True, "supportsFiles": False}])
         self.assertEqual((manifest["manifestVersion"], manifest["name"]["short"], manifest["id"]), ("1.30", "Meternaut", "f3a9efc4-ae3e-4d9a-a71c-b11d0f2d00f5"))
-        self.assertEqual(manifest["validDomains"], ["console.example.com"], "the host that the buttons of a card open")
+        self.assertEqual(manifest["validDomains"], ["pages.example.com"], "the host that the buttons of a card open")
         self.assertTrue(manifest["developer"]["websiteUrl"].startswith("https://github.com/tinodo/meternaut"))
 
     def test_the_same_bytes_come_out_every_time_and_the_icons_are_the_sizes_that_teams_asks_for(self):
@@ -336,7 +336,7 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("outside the repository", err)
         self.assertFalse((ROOT / "local" / "teams-package-test").exists())
-        for domain in ("https://console.example.com", "*.example.com", "console"):
+        for domain in ("https://pages.example.com", "*.example.com", "pages"):
             code, _, err, _ = self.build({"TEAMS_BOT_APP_ID": self.CLIENT}, ["--valid-domain", domain])
             self.assertEqual(code, 1, domain)
             self.assertIn("a valid domain is a host name", err)
@@ -344,9 +344,9 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
     def test_the_client_id_may_come_from_a_file_and_only_the_two_keys_are_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "hub-local.env"
-            path.write_text(f"# a comment\nAZURE_TENANT_ID=11111111-2222-3333-4444-555555555555\nexport TEAMS_BOT_APP_ID='{self.CLIENT}'\nCONSOLE_HOST_NAME=\"console.example.com\"\nbroken line\n", encoding="utf-8")
+            path.write_text(f"# a comment\nAZURE_TENANT_ID=11111111-2222-3333-4444-555555555555\nexport TEAMS_BOT_APP_ID='{self.CLIENT}'\nCONSOLE_HOST_NAME=\"pages.example.com\"\nbroken line\n", encoding="utf-8")
             found = ta.read_env_file(path)
-            self.assertEqual(found, {"TEAMS_BOT_APP_ID": self.CLIENT, "CONSOLE_HOST_NAME": "console.example.com"}, "no other line is read or kept")
+            self.assertEqual(found, {"TEAMS_BOT_APP_ID": self.CLIENT, "CONSOLE_HOST_NAME": "pages.example.com"}, "no other line is read or kept")
             code, lines, _, data = self.build({}, ["--env-file", str(path)])
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(zipfile.ZipFile(io.BytesIO(data)).read("manifest.json"))["bots"][0]["botId"], self.CLIENT)
@@ -360,7 +360,7 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
         self.assertTrue(any("may lead to untrusted content" in line for line in lines))
 
     def manifest(self):
-        return ta.manifest(self.CLIENT, ["console.example.com"])
+        return ta.manifest(self.CLIENT, ["pages.example.com"])
 
     def test_the_rules_that_can_be_checked_offline_each_fail_when_they_are_broken(self):
         self.assertEqual(ta.check_manifest(self.manifest()), [])
