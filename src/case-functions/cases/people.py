@@ -1,4 +1,4 @@
-"""The people that the console and the mail know: the directory object id of each, the roles, and the address that a letter goes to.
+"""The people that the function app and the mail know: the directory object id of each, the roles, and the address that a letter goes to.
 
 They come from one setting, `CONSOLE_PEOPLE`: a JSON list such as
 `[{"oid": "<object id>", "name": "Tino", "roles": ["owner", "approver", "ops"], "mail": "name@example.com"}]`.

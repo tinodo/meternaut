@@ -214,7 +214,7 @@ PROXY = "console.example.net"
 
 
 class Proxied:
-    """The console behind a reverse proxy, the platform's Application Gateway: the platform's sign-in redirects, and `named` is the host that its return address names.
+    """The function app behind a reverse proxy, the platform's Application Gateway: the platform's sign-in redirects, and `named` is the host that its return address names.
 
     `form` is how the redirect looks. "entra": straight to Microsoft Entra, with redirect_uri. "own": the sign-in's own address, with post_login_redirect_uri.
     "path": the same, with a return address that is a path. "bare": the sign-in's own address and no return address at all."""
@@ -241,7 +241,7 @@ class Proxied:
 
 
 class TheDoorBehindAReverseProxy(unittest.TestCase):
-    """The front door that people use once the cases app is closed is the console's host name on the platform's Application Gateway. The sign-in of the app builds its return address from the
+    """The front door that people use once the cases app is closed is the function app's host name on the platform's Application Gateway. The sign-in of the app builds its return address from the
     host that it believes the request was made to, so the check also asks that the address names the proxy's name: a sign-in that returns to the app's own name sends a person to a name that
     a closed app cannot answer on."""
 

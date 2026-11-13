@@ -380,7 +380,7 @@ class TheTool(unittest.TestCase):
 
 
 class TheRealRequests(unittest.TestCase):
-    """The check on the closed requests of the app: the console's file is read by the same tool, with the same thresholds, and a later answer about the same resource has the last word."""
+    """The check on the closed requests of the app: the function app's file is read by the same tool, with the same thresholds, and a later answer about the same resource has the last word."""
 
     def lessons(self):
         """A store in memory with the closed requests of one resource type: six resources declined as still needed, the same six approved later, and three requests of other resources."""

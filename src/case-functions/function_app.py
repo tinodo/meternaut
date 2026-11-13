@@ -56,7 +56,7 @@ def cards_posted(msg: func.QueueMessage) -> None:
     loop.card_posted(msg)
 
 
-# Every page of the console. The platform's sign-in stands in front of it (anonymous here means "no function key": a key would be a secret), and the
+# Every page of the function app. The platform's sign-in stands in front of it (anonymous here means "no function key": a key would be a secret), and the
 # app refuses every request unless that sign-in is on.
 @app.function_name(name="console")
 @app.route(route="{*route}", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)

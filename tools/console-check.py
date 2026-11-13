@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Reads the front door of the console, with no sign-in, and says whether it is shut; waits for the app's health address from inside the network; and measures how fast it answers.
+"""Reads the front door of the function app, with no sign-in, and says whether it is shut; waits for the app's health address from inside the network; and measures how fast it answers.
 
     python tools/console-check.py door --host <name> [--expect signin|refuse] [--proxied] [--private] [--summary FILE]
     python tools/console-check.py health --host <name>.azurewebsites.net [--tries 60] [--interval 10] [--timeout 15] [--private]
     python tools/console-check.py latency --host <name>.azurewebsites.net --private --minutes N --interval S [--idle-minutes M] [--after-idle K] [--timeout 75]
 
-door    The console serves a person only after Microsoft Entra has signed them in, and the app refuses every request when that sign-in is not set up. This
+door    The function app serves a person only after Microsoft Entra has signed them in, and the app refuses every request when that sign-in is not set up. This
         check makes the requests that an anonymous visitor (or a script) would make and passes only when none of them gets a page:
 
   - /healthz answers 200 with the word ok, because a probe has no sign-in;
@@ -15,7 +15,7 @@ door    The console serves a person only after Microsoft Entra has signed them i
   - the same request with a made-up sign-in header (x-ms-client-principal-id) is not served either: the platform's sign-in has to overwrite it, or the app
     has to refuse it. That is asked of /, of /ok/<id> and of /arm/return with a code and a state, the page that takes a value from the address.
 
-        --host is the name that people open: the console's host name behind the platform's Application Gateway when there is one (the Hub workflow reads it
+        --host is the name that people open: the function app's host name behind the platform's Application Gateway when there is one (the Hub workflow reads it
         from the secret CONSOLE_HOST_NAME of the environment hub), the app's own name otherwise. With --proxied it is the name of a reverse proxy, and a redirect to the
         sign-in has to carry that name too: the return address that the platform's sign-in builds (redirect_uri, or post_login_redirect_uri when the redirect is
         the sign-in's own) must name --host and not the app's own name, which a closed app cannot answer on. A redirect that shows no return address with a host
@@ -376,7 +376,7 @@ def main(argv=None, get: Callable[..., "tuple[int, dict, bytes]"] | None = None,
     print("\n".join(lines), file=out)
     if args.summary:
         with open(args.summary, "a", encoding="utf-8") as handle:
-            handle.write("### The console's front door\n\n```\n" + "\n".join(lines) + "\n```\n\n"
+            handle.write("### The function app's front door\n\n```\n" + "\n".join(lines) + "\n```\n\n"
                          + ("Nobody gets a page without a sign-in.\n" if passed else "**A request got something that it should not.**\n"))
     return 0 if passed else 1
 

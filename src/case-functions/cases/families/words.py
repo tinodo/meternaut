@@ -234,7 +234,7 @@ class Shown:
     # The change ends the cost of the resource (a delete, a stop), so that cost lines which show none afterwards are the aim. A change that only lowers the cost (a resize, a change of tier)
     # leaves the resource billing: for it a missing cost line is a line that is not in yet, never "no cost", and a family has to say so to be read the other way.
     cost_ends: bool = False
-    summary: str = ""  # what the family does in one phrase, as the console says it ("delete an unattached managed disk"); the registry checks that it is the family's own
+    summary: str = ""  # what the family does in one phrase, as the function app says it ("delete an unattached managed disk"); the registry checks that it is the family's own
 
 
 SHOWN: dict[str, Shown] = {

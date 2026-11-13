@@ -74,10 +74,10 @@ def handle(request: Request, services: Services) -> Response:
     try:
         return secured(_handle(request, services))
     except StoreError as error:
-        LOG.warning("console: the store failed (status %s)", error.status)
+        LOG.warning("web: the store failed (status %s)", error.status)
         return secured(_fault(request, services, 503, "I cannot reach my records", "Try again in a few minutes."))
     except Exception as error:  # noqa: BLE001 (a page must never show a trace)
-        LOG.warning("console: %s", type(error).__name__)
+        LOG.warning("web: %s", type(error).__name__)
         return secured(_fault(request, services, 500, "Something went wrong on my side", "Try again in a few minutes."))
 
 

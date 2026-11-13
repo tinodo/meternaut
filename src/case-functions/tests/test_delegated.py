@@ -32,7 +32,7 @@ GROUP = "meternaut-sc-rg"
 TENANT = "cccccccc-1111-4222-8333-444444444444"
 CLIENT = "dddddddd-1111-4222-8333-444444444444"
 ASSERTION_CLIENT = "eeeeeeee-1111-4222-8333-444444444444"
-HOST = "console.example.test"
+HOST = "app.example.test"
 SETTINGS = SigninSettings(TENANT, CLIENT, ASSERTION_CLIENT, HOST)
 APPROVAL = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),))
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
@@ -659,7 +659,7 @@ class ReturningFromTheSignIn(Flow):
                 self.claims = good_claims(**claims)
                 result = self.whole()
                 self.assertEqual((result.ok, result.kind), (False, "signin_failed"))
-                self.assertIn("not one that this console accepts", result.message)
+                self.assertIn("not one that this function app accepts", result.message)
                 self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [])
                 self.assertEqual(self.azure.calls, [])
 

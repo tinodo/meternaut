@@ -684,7 +684,7 @@ class Cases(unittest.TestCase):
         self.assertIn("reserved: true", plan)
         body = self.found["functionApp"][1]
         self.assertIn("kind: 'functionapp,linux'", body)
-        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "the app's own identity, and the one that only presents the console's sign-in")
+        self.assertIn("type: 'SystemAssigned, UserAssigned'", body, "the app's own identity, and the one that only presents the function app's sign-in")
         self.assertEqual(re.findall(r"'\$\{(\w+)\.id\}': \{\}", body), ["authIdentity"], "the only user-assigned identity of the app")
         self.assertIn("virtualNetworkSubnetId: resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetworkName, integrationSubnetName)", body)
         self.assertIn("vnetRouteAllEnabled: isFlex ? null : false", body, "only the private ranges go through the subnet, as for the Flex app that this replaced")
@@ -742,7 +742,7 @@ class Cases(unittest.TestCase):
 
     def test_the_console_signs_people_in_with_a_federated_credential_and_holds_no_secret(self):
         body = self.found["consoleSignIn"][1]
-        self.assertIn("if (!empty(consoleAppClientId))", self.source, "nothing is set up, and the console refuses, until there is an app registration")
+        self.assertIn("if (!empty(consoleAppClientId))", self.source, "nothing is set up, and the function app refuses, until there is an app registration")
         self.assertIn("requireAuthentication: true", body)
         self.assertIn("unauthenticatedClientAction: 'RedirectToLoginPage'", body)
         self.assertIn("clientSecretSettingName: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID'", body)
@@ -785,7 +785,7 @@ class Cases(unittest.TestCase):
         for older in ("CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID"):
             self.assertNotIn(older, self.code, f"{older} is replaced by the list of the groups where a change may be made")
         # The app takes the three settings of the sign-in to Azure together or not at all (src/case-functions/cases/loop_config.py), and the Watch fails with a part of them:
-        # until the console's app registration exists none is set.
+        # until the function app's app registration exists none is set.
         self.assertIn("var signInIsSetUp = !empty(consoleAppClientId)", self.code)
         self.assertIn("{ name: 'SIGNIN_TENANT_ID', value: signInIsSetUp ? tenant().tenantId : '' }", self.code)
         self.assertIn("{ name: 'SIGNIN_CLIENT_ID', value: consoleAppClientId }", self.code)
@@ -848,7 +848,7 @@ class Cases(unittest.TestCase):
 
 
 class FunctionAppEndpoints(unittest.TestCase):
-    """The private endpoint of the function app (the cases app and the console): in the endpoint subnet, with no DNS of its own, and written after every other write to the app. The usage app, which had
+    """The private endpoint of the function app (the cases app): in the endpoint subnet, with no DNS of its own, and written after every other write to the app. The usage app, which had
     one of the same kind, was removed on 2026-11-07."""
 
     TEMPLATES = ("environment/cases/main.bicep",)
@@ -902,7 +902,7 @@ class FunctionAppEndpoints(unittest.TestCase):
 
     def test_the_summary_of_cases_says_that_the_code_is_not_published_before_the_names_of_the_apps_endpoint_are_registered_and_what_a_stop_at_the_wait_means(self):
         workflow = text(".github/workflows/deploy-hub.yml")
-        self.assertIn("and a private endpoint of its own for the console and its deployment site (the sub-resource \\`sites\\`), which the landing zone has registered in its central zone: the code is not "
+        self.assertIn("and a private endpoint of its own for the function app and its deployment site (the sub-resource \\`sites\\`), which the landing zone has registered in its central zone: the code is not "
                       "published before that, so that a later probe finds the names. The app's public network access is \\`$CASES_PUBLIC_ACCESS\\` (the constant "
                       "CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py).", workflow)
         self.assertIn("If they stop at the wait for the landing zone's policy, the app and its endpoint are made and the app was not given its code: the lines say that the endpoint is not registered yet.", workflow)
@@ -1468,7 +1468,7 @@ class CasesWorkflow(unittest.TestCase):
     def test_the_summary_says_that_meternaut_holds_no_right_to_change_azure_and_that_a_person_s_approval_runs_the_change_with_that_person_s_permissions(self):
         block = self.step("What was done")
         (finished,) = re.findall(r"(?m)^\s+cases\) echo \"(The first cases are in resource group.*?)\" ;;$", block)
-        for words in ("its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \\`id-meternaut-console-auth\\`, which only presents the console's sign-in to Microsoft Entra and holds no role)",
+        for words in ("its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \\`id-meternaut-console-auth\\`, which only presents the function app's sign-in to Microsoft Entra and holds no role)",
                       "Meternaut holds no right to change Azure", "to sign in to Azure Resource Manager", "with that person's own permissions", "its Activity Log names that person",
                       "The app no longer carries the user-assigned identity that it used before, \\`id-meternaut-cases\\`. This workflow does not remove that identity: a person does, "
                       "in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that)"):
@@ -1482,11 +1482,11 @@ class CasesWorkflow(unittest.TestCase):
             self.assertNotIn(word, self.text, word)
 
     def test_the_front_door_is_knocked_at_by_its_own_action_and_after_every_cases_run_with_no_credential_and_no_write(self):
-        block = self.step("Knock at the console's front door")
+        block = self.step("Knock at the function app's front door")
         self.assertIn("if: steps.params.outputs.door_in_operator != 'true' && (inputs.action == 'loop-check' || inputs.action == 'cases')", block,
                       "from the runner, except for a closed app with no host name: the next step, inside the network, checks that one")
         for word in ("CONSOLE_HOST: ${{ steps.params.outputs.console_host }}", "CONSOLE_HOST_SET: ${{ steps.params.outputs.console_host_set }}"):
-            self.assertIn(word, block, "the address that is knocked at comes from the settings step: the console's host name, or the app's own name when there is none")
+            self.assertIn(word, block, "the address that is knocked at comes from the settings step: the function app's host name, or the app's own name when there is none")
         self.assertNotIn("CASES_PUBLIC_ACCESS", block, "the step does not look at the app's public access any more: the condition of the step keeps the closed app for the Operator's step")
         self.assertNotIn("NOT CHECKED", block)
         self.assertNotIn("FUNCTION_APP", block)
@@ -2102,7 +2102,7 @@ class FoundryHandStep(unittest.TestCase):
         self.assertEqual(self.lines[0], "function az { $PSNativeCommandArgumentPassing = 'Legacy'; & 'C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe' -IBm azure.cli @args }",
                          "PowerShell 7.3 and later escape the quotes of an argument themselves, so the function asks for the older way, which Windows PowerShell 5.1 and PowerShell 7.1 have")
         self.assertNotIn("'\\\"'", self.script, "no backslash before a quote: Windows PowerShell 5.1 does not take it")
-        self.assertTrue(self.script.isascii(), "commands that are copied into a console hold plain characters only")
+        self.assertTrue(self.script.isascii(), "commands that are copied into a terminal hold plain characters only")
 
     def test_the_section_says_what_the_read_back_checks_including_the_endpoint_the_pages_and_the_time_limit(self):
         for words in ("the project reports an endpoint and it is the address that the cases app is given", "(a list is read to its last page)",
@@ -2534,7 +2534,7 @@ class OperatorWorkflow(unittest.TestCase):
         self.assertEqual(names[-1:], ["$CASES_APP.azurewebsites.net"], "the app has a private endpoint, so its name must resolve to a private address")
         self.assertEqual(names, ["$STORAGE_ACCOUNT.queue.core.windows.net", "$STORAGE_ACCOUNT.blob.core.windows.net", "$FOUNDRY_ACCOUNT.services.ai.azure.com", "$CASES_APP.azurewebsites.net"],
                          "the storage account's queue and blob names, the Foundry resource and the app: no namespace, no Cosmos DB account and no old model account any more")
-        self.assertIn("https://$CASES_APP.azurewebsites.net/healthz", script, "the console's health address needs no sign-in")
+        self.assertIn("https://$CASES_APP.azurewebsites.net/healthz", script, "the function app's health address needs no sign-in")
 
     def test_the_digest_is_the_one_that_the_decision_record_names_and_nothing_in_the_workflow_makes_or_deletes_a_container_group_itself(self):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
@@ -2787,7 +2787,7 @@ class OperatorHandStep(unittest.TestCase):
         self.assertEqual(order, sorted(order))
         self.assertIn("-ne 'yes') { throw 'Stopped. Nothing was changed.' }", self.script)
         self.assertGreaterEqual(self.script.count("if ($LASTEXITCODE -ne 0) { throw"), 5)
-        self.assertTrue(self.script.isascii(), "commands that are copied into a console hold plain characters only")
+        self.assertTrue(self.script.isascii(), "commands that are copied into a terminal hold plain characters only")
 
     def test_the_text_says_what_the_deploy_identity_already_covers_what_it_does_not_and_the_two_hand_steps(self):
         for words in ("Microsoft.ContainerInstance/containerGroups/*", "Microsoft.Network/virtualNetworks/subnets/join/action", "Microsoft.ManagedIdentity/userAssignedIdentities/assign/action",

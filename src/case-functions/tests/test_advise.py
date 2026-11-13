@@ -33,7 +33,7 @@ from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Co
 CHANGE_GROUP = "meternaut-sc-rg"
 SCOPES = (ChangeScope(SUB, CHANGE_GROUP),)
 SETTINGS = ApprovalSettings(change_scopes=SCOPES, ttl_hours=72)
-SIGNIN = SigninSettings("cccccccc-1111-4222-8333-444444444444", "dddddddd-1111-4222-8333-444444444444", "eeeeeeee-1111-4222-8333-444444444444", "console.example.test")
+SIGNIN = SigninSettings("cccccccc-1111-4222-8333-444444444444", "dddddddd-1111-4222-8333-444444444444", "eeeeeeee-1111-4222-8333-444444444444", "app.example.test")
 BOTH = Principal(TINO, "Tino", ("owner", "approver", "ops"))
 APPROVER = Principal(MAYA, "Maya", ("approver",))
 OWNER_ONLY = Principal(OWNER, "Olga", ("owner",))

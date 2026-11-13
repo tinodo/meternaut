@@ -564,7 +564,7 @@ class FirstCases(unittest.TestCase):
     def test_the_queue_and_the_one_identity_are_the_ones_the_template_makes(self):
         _, lines = self.build()
         self.assertIn("var controlQueueName = '" + lines["cases_queue_name"] + "'", self.CASES)
-        self.assertIn("name: 'id-${workload}-console-auth'", self.CASES, "the one user-assigned identity of the template: the console's sign-in")
+        self.assertIn("name: 'id-${workload}-console-auth'", self.CASES, "the one user-assigned identity of the template: the function app's sign-in")
         self.assertNotIn("id-${workload}-cases", self.CASES, "the user-assigned identity that the app's system-assigned one replaced is not made any more")
         self.assertNotIn("cases_identity_name", lines)
 

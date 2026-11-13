@@ -1,4 +1,4 @@
-"""The console: the HTTP front of the pages. It builds what the pages need from the settings, refuses unless the platform's sign-in is on, and hands the request on.
+"""The HTTP front of the function app's pages. It builds what the pages need from the settings, refuses unless the platform's sign-in is on, and hands the request on.
 
 The platform's built-in sign-in (Microsoft Entra, with a federated credential and no secret) stands in front of every route but /healthz, and it adds the
 headers that say who the person is. If it is not on, those headers could be made up by anybody, so the app refuses every request (503) and serves nothing
@@ -36,7 +36,7 @@ def sign_in_is_on(env: Mapping[str, str]) -> bool:
 
 
 def build_services(env: Mapping[str, str], *, transport=default_transport, sleep=time.sleep, monotonic=time.monotonic, clock=utc_now, fetch=None) -> "web.Services":
-    """The pages' services from the settings. Raises when the loop or the people are not set up: a console without them serves nothing."""
+    """The pages' services from the settings. Raises when the loop or the people are not set up: the function app without them serves nothing."""
     settings = loop_config.load(env)
     if settings is None:
         raise loop_config.LoopConfigError("the loop is not configured")
@@ -78,7 +78,7 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
     written_by = (watch.model_detective, watch.model_skeptic) + ((watch.foundry_model_investigator, watch.foundry_model_skeptic) if watch.investigate else ())
 
     def drift_now(by: str, started_at: str) -> object:
-        # The timer's check, started by a person: the same reads, rules and lines (cases/drift.py), with the time that the console claimed for it.
+        # The timer's check, started by a person: the same reads, rules and lines (cases/drift.py), with the time that the function app claimed for it.
         return drift.run_check("console", env, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, by=by, started_at=started_at)
 
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
@@ -112,5 +112,5 @@ def handle(req, response_cls: Callable, env: Mapping[str, str] | None = None, **
         answer = web.handle(request, services(env, **options))
         return response_cls(body=answer.body, status_code=answer.status, headers=dict(answer.headers))
     except Exception as error:  # noqa: BLE001 (a page that fails says nothing about why)
-        LOG.error(Redactor()(f"the console failed: {type(error).__name__}: {error}"))
+        LOG.error(Redactor()(f"the function app failed: {type(error).__name__}: {error}"))
         return _plain(response_cls, 500, "Something went wrong. Nothing was changed.")
