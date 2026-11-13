@@ -91,7 +91,7 @@
       "id": "N1",
       "object": "The user-assigned managed identity id-meternaut-teams, attached to the function app (the Hub action teams makes it)",
       "holds": "No Azure role, anywhere: it is given none, and the action teams reads its role assignments after every run and fails when there is one",
-      "why": "Its token for api://AzureADTokenExchange is the client assertion of the app registration N2, so that the function app can get a token for the Bot Connector with no secret and no certificate. It changes nothing in any estate: the bot only sends cards (proposal 20; replaced by the owner's ruling of 2026-11-13, pending his plain yes)"
+      "why": "Its token for api://AzureADTokenExchange is the client assertion of the app registration N2, so that the function app can get a token for the Bot Connector with no secret and no certificate. It changes nothing in any estate: the bot only sends cards (proposal 20; replaced by the owner's ruling of 2026-11-13, his plain yes of 2026-11-13)"
     },
     {
       "id": "N2",

@@ -1,6 +1,6 @@
 # Teams cards through Power Automate: no bot, no app registration, no public endpoint — a decision record
 
-> **Proposal 20 replaces this one once the bot is proven** ([Teams cards through a bot](20-teams-cards-through-a-bot.md): a draft that is off by default, replaced by the owner's ruling of 2026-11-13 (pending his plain yes)). Until then this page is the design that runs.
+> **Proposal 20 replaces this one once the bot is proven** ([Teams cards through a bot](20-teams-cards-through-a-bot.md): a draft that is off by default, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13)). Until then this page is the design that runs.
 
 **Status: decided by the owner on 2026-11-11, and run the same day: a test card and three real requests of the app reached his Teams chat through this path.** The subnet and the enterprise policy were made by the Hub action `powerplatform` on GitHub, the environment was linked with `tools/powerplatform.py`, and the two connections and the flow were made with the API commands of the same tool, because the maker portal refuses a person who is a guest of the tenant (the owner is one; see "When the maker portal refuses you"). The flow's import as a solution in the maker portal has never been done. What the run proved and what it did not is at the end. Every Microsoft fact below names its page and was read on 2026-11-11 (the facts of the sections on the buttons and on closing the card, on 2026-11-12). The buttons and the closing of the card were built on 2026-11-12 and have not run yet.
 

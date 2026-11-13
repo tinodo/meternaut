@@ -271,7 +271,7 @@ class TheActionsAreOfferedAndTheEnvironmentHoldsTheTwoSettings(unittest.TestCase
         bootstrap = read("environment/BOOTSTRAP.md")
         for words in ("`TEAMS_BOT_APP_ID` is a **secret**", "`TEAMS_DELIVERY` is a **variable**", "| B1 |", "| B5 |", "**The order.**", "**Going back:**", "global default app setup policy"):
             self.assertIn(words, bootstrap, words)
-        self.assertIn("(#added-on-2026-11-13-for-the-teams-bot-built-not-deployed-pending-the-owners-plain-yes)", bootstrap)
+        self.assertIn("(#added-on-2026-11-13-for-the-teams-bot-built-not-deployed-the-owners-plain-yes-of-2026-11-13)", bootstrap)
         self.assertNotIn("TEAMS_BOT_ENABLED", bootstrap, "the switch of the earlier bot is gone, and the new one is TEAMS_DELIVERY")
         masks = code_of("Mask the identifiers of the estate in this run's log")
         self.assertIn('"$TEAMS_BOT_APP_ID"', masks)

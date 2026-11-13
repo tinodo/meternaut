@@ -67,8 +67,8 @@ The items, in order:
 At the end it prints the client id of the app registration: that is the secret CONSOLE_APP_CLIENT_ID of the environment hub, which the template reads (a client id is
 an identifier, not a credential; it is a secret there so that GitHub masks it in the public log). The Azure CLI is `az`, or the command in the variable AZ (for example "C:\\path\\python.exe" -IBm azure.cli).
 
-The Teams cards (docs/proposals/13-teams-and-outlook.md) go through a private queue and a flow of Power Automate and need nothing in Microsoft Entra: replaced by the owner's ruling of 2026-11-13 (pending his
-plain yes) for the other way to deliver them (docs/proposals/20-teams-cards-through-a-bot.md), which is off until he switches it on, and for which the sub-command teams-bot below is the one thing that this tool makes besides
+The Teams cards (docs/proposals/13-teams-and-outlook.md) go through a private queue and a flow of Power Automate and need nothing in Microsoft Entra: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13)
+for the other way to deliver them (docs/proposals/20-teams-cards-through-a-bot.md), which is off until he switches it on, and for which the sub-command teams-bot below is the one thing that this tool makes besides
 the sign-in of the function app.
 
     python tools/entra-setup.py teams-bot --tenant-id <id> --subscription <id> --resource-group <name> [--apply] [--yes]

@@ -22,7 +22,7 @@ KEY_WORDS = ("listSecrets", "primaryKey")
 # else (the test of its calls below holds the list, and the one DELETE of http.py's list of calls is that conversation). Everything else asks questions: a GET, or a POST that asks for
 # a query result, a completion or a token. The Teams cards are one POST of a message to a private Storage queue of the loop's storage account (teamsqueue.py), on a list of calls of its own: it
 # changes nothing in Azure, and it is read by a flow of Power Automate, not by this app. With TEAMS_DELIVERY=bot (teamsbot.py, on a list of calls of its own too) a card is posted to a person in Teams with a
-# POST and replaced with a PUT of the Bot Connector: that changes a message in Teams and nothing in Azure (replaced by the owner's ruling of 2026-11-13 (pending his plain yes); it was the flow's alone).
+# POST and replaced with a PUT of the Bot Connector: that changes a message in Teams and nothing in Azure (replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13); it was the flow's alone).
 WRITERS = {"store.py": {"PUT", "DELETE"}, "calls.py": {"PUT", "DELETE", "PATCH", "/deallocate"}, "foundry.py": {"DELETE"}, "http.py": {"DELETE"}, "teamsbot.py": {"PUT"}}
 WRITE_WORDS = ('"PUT"', '"DELETE"', '"PATCH"', "/delete", "/write", "/deallocate", "/resize", "/restart", "regeneratePrimaryKey")
 
@@ -162,7 +162,8 @@ class WhatTheAppIs(unittest.TestCase):
                          ["https://storage.azure.com/", "https://{account}.queue.core.windows.net/{queue}/messages", "https://{account}.queue.core.windows.net/{queue}/messages?messagettl={TTL_SECONDS}"],
                          "the address of the token's resource, and the one address of the one call: no other host")
         for name in ("bot", "connector", "references", "botauth", "teams"):
-            self.assertFalse((APP_ROOT / "cases" / f"{name}.py").exists(), f"there is no {name}.py: the one module of a Teams client is teamsbot.py (replaced by the owner's ruling of 2026-11-13 (pending his plain yes): Meternaut has no bot in Teams)")
+            self.assertFalse((APP_ROOT / "cases" / f"{name}.py").exists(), f"there is no {name}.py: Meternaut has no bot that receives anything, and teamsbot.py, which only sends, is the one module of a Teams client")
+        self.assertEqual(sorted(path.name for path in (APP_ROOT / "cases").glob("*bot*.py")), ["teamsbot.py"], "the one module with a bot in its name is teamsbot.py")
         self.assertFalse((APP_ROOT / "teams_function_app.py").exists())
 
     def test_the_store_never_talks_to_resource_manager_and_the_runner_never_to_the_table_service(self):

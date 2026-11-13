@@ -290,7 +290,7 @@ class WorkOutTheFoundrySettings(unittest.TestCase):
 
     def test_the_actions_of_the_workflow_are_the_ones_without_the_three_that_made_objects_on_the_instance(self):
         self.assertEqual(self.ACTIONS, ["what-if", "model-side", "base", "retire-old", "retire-event-hubs", "foundry", "cases", "cases-run",
-                                        "teams", "teams-test",  # teams and teams-test: replaced by the owner's ruling of 2026-11-13 (pending his plain yes): the Teams bot, off until TEAMS_DELIVERY is bot
+                                        "teams", "teams-test",  # teams and teams-test: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams bot, off until TEAMS_DELIVERY is bot
                                         "page-latency", "plant", "loop-check", "powerplatform", "operator", "operator-probe",
                                         "aigateway", "aigateway-check", "governance", "gateway-telemetry", "drift-check", "agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
         for retired in ("gateway-prepare", "gateway", "contract", "recording", "recording-check"):
