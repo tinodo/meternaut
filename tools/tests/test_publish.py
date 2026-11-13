@@ -856,9 +856,10 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources of this repository measured on 2026-11-13, after the function app was no longer called by its old name in the messages, the comments and the docstrings of the code (368,986 bytes
-    # with 103 files, which is 45 fewer than the 369,031 of the day before; the request sent is 399,029 bytes and 80,971 stay free), and the room that more sources may take before this test asks for a decision:
-    # 200 bytes. On 2026-11-12 it measured, after the reason of a request that Meternaut took back was kept on its plan (369,031 bytes with 103 files, which is 219 more
+    # What the archive of the sources of this repository measured on 2026-11-13, after the impact check of a private endpoint was added on top of the words sweep and the findings of its review were fixed (377,812 bytes
+    # with 104 files, on an LF copy with the real build script, which is 8,826 more than the 368,986 with 103 files of main after the sweep; the request sent is 407,855 bytes and 72,145 stay free), and the room that
+    # more sources may take before this test asks for a decision: 200 bytes. Main measured 368,986 after the function app was no longer called by its old name in the messages, the comments and the docstrings of the code
+    # (45 fewer than the 369,031 of the day before). On 2026-11-12 it measured, after the reason of a request that Meternaut took back was kept on its plan (369,031 bytes with 103 files, which is 219 more
     # than the 368,812 after the rules about a deletion were made one place that every path passes, and the requests that were open under the old rules are taken back; 5,002 more than the 363,810 after
     # the Teams cards were given their buttons and the way to close themselves; 362,748 after the buttons alone). Before them it was 358,545 bytes with 102
     # files, after the cost lines of a whole subscription or resource group, the names of subscriptions, the estimate for a disk that Azure has no cost line for and the findings that say nothing
@@ -866,10 +867,10 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # 344,390 just before, with 99 files; 340,907 on 2026-11-11, after the Teams bot was removed and the cards went onto a queue; 349,921 before that, after the approvals
     # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
     # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
-    # 92 files before them). The cap of the request is 480,000 bytes and 80,000 stay free (the test below): 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back
-    # (the request sent was 399,074 bytes on 2026-11-12, 5,221 more than the 393,853 of main before the rules, and 80,926 stayed free), which no trimming of the words could give back, and the largest request that is known to work
-    # (466,104 bytes, tools/operator-run.py) is still about 67,000 above the one that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 368_986
+    # 92 files before them). The cap of the request is 480,000 bytes. 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back, and 80,000 until the impact check (the request
+    # sent was 399,029 bytes on main and is 407,855 now, so 72,145 stay free: the floor of the test below is lowered from 80,000 to 72,000, on purpose), which no trimming of the words could give back, and the largest
+    # request that is known to work (466,104 bytes, tools/operator-run.py) is still about 58,000 above the one that is sent now.
+    SOURCES_ARCHIVE_MEASURED = 377_814
     SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):
