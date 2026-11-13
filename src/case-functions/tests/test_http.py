@@ -57,8 +57,9 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 24, "nineteen, the four reads of the capability profile (cases/capability.py) and the read of the display name of one subscription")
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 21 + ["POST"] * 3)
+        self.assertEqual(len(plain), 26, "nineteen, the four reads of the capability profile (cases/capability.py), the read of the display name of one subscription and the two lists of the impact check "
+                                         "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone)")
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 23 + ["POST"] * 3)
         for method, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
                             pattern.pattern)
@@ -212,6 +213,31 @@ class TheList(unittest.TestCase):
             ("GET", f"{arm}/subscriptions/not-a-subscription?api-version=2022-12-01"),
             ("GET", f"{arm}/subscriptions/{SUBSCRIPTION}x?api-version=2022-12-01"),
             ("GET", "https://management.azure.com.evil.example/subscriptions/" + SUBSCRIPTION),
+        ]
+        for method, url in refused:
+            with self.assertRaises(http.Refused, msg=f"{method} {url}"):
+                c.request(method, url)
+        self.assertEqual(len(script.calls), 2, "nothing else left the app")
+
+    def test_the_two_lists_of_the_impact_check_are_reads_of_exactly_two_addresses_and_nothing_around_them(self):
+        # The impact check of a private endpoint (cases/impact.py) reads, with the reader identity of the app, the DNS zone groups of the endpoint and the address records of a private DNS zone.
+        group = f"https://management.azure.com/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-net/providers/Microsoft.Network"
+        reads = (f"{group}/privateEndpoints/pe-demo/privateDnsZoneGroups?api-version=2026-01-01", f"{group}/privateDnsZones/privatelink.example.net/A?api-version=2018-09-01&$top=1000")
+        c, script, _ = client(ok())
+        for url in reads:
+            c.request("GET", url)
+        self.assertEqual(len(script.calls), 2)
+        refused = [(method, url) for url in reads for method in ("POST", "PUT", "PATCH", "DELETE")] + [
+            ("GET", f"{group}/privateEndpoints/pe-demo?api-version=2026-01-01"),
+            ("GET", f"{group}/privateEndpoints/pe-demo/privateDnsZoneGroups/default?api-version=2026-01-01"),
+            ("GET", f"{group}/privateEndpoints/pe-demo/privateLinkServiceConnections?api-version=2026-01-01"),
+            ("GET", f"{group}/privateDnsZones/privatelink.example.net?api-version=2018-09-01"),
+            ("GET", f"{group}/privateDnsZones/privatelink.example.net/A/gw?api-version=2018-09-01"),
+            ("GET", f"{group}/privateDnsZones/privatelink.example.net/ALL?api-version=2018-09-01"),
+            ("GET", f"{group}/privateDnsZones/privatelink.example.net/virtualNetworkLinks?api-version=2020-06-01"),
+            ("GET", f"{group}/privateEndpoints/pe-demo/../x/privateDnsZoneGroups"),
+            ("GET", f"{group.replace('Microsoft.Network', 'Microsoft.Storage')}/privateEndpoints/pe-demo/privateDnsZoneGroups"),
+            ("GET", f"{group.replace('https', 'http')}/privateEndpoints/pe-demo/privateDnsZoneGroups"),
         ]
         for method, url in refused:
             with self.assertRaises(http.Refused, msg=f"{method} {url}"):

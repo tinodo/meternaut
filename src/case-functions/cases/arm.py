@@ -1,6 +1,6 @@
 """Read-only calls to Azure Resource Manager and to the Logs query API: Resource Graph, Cost Management, Advisor, management locks, Azure Monitor metrics, the pricing settings of
 Microsoft Defender for Cloud, and the reads of the investigation's deeper tools (a Log Analytics workspace, its tables, its usage records and its readers, the deployments of an AI
-services account, the diagnostic settings of a resource, the activity log, the platform's own purchase recommendations).
+services account, the diagnostic settings of a resource, the activity log, the DNS records of a private endpoint, the platform's own purchase recommendations).
 
 Nothing here writes. The POSTs ask a question (a query), and `http.Client` refuses every other call. Every read cites the page of Microsoft Learn that it was written from.
 """
@@ -13,7 +13,7 @@ import threading
 from typing import Callable, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
-from .http import AI_ACCOUNT, ARM_HOST, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError
+from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError
 from .identity import IdentityError
 
 ARM = f"https://{ARM_HOST}"
@@ -33,6 +33,8 @@ WORKBOOKS_API = "2023-06-01"  # Learn, "Workbooks - List By Subscription": the c
 SENTINEL_API = "2025-09-01"  # Learn, "Alert Rules - List" (Microsoft Sentinel)
 DEPLOYMENTS_API = "2026-09-01"  # Learn, the template reference of Microsoft.CognitiveServices/accounts/deployments lists it as the latest version that is not a preview
 ACTIVITY_API = "2015-04-01"  # Learn, "Activity Logs - List"
+DNS_GROUPS_API = "2026-01-01"  # Learn, "Private Dns Zone Groups - List" (Microsoft.Network/privateEndpoints/privateDnsZoneGroups)
+DNS_RECORDS_API = "2018-09-01"  # Learn, "Record Sets - List By Type" (Microsoft.Network/privateDnsZones, type A)
 BENEFITS_API = "2026-06-01"  # Learn, "Benefit Recommendations - List"
 RESERVATIONS_API = "2024-08-01"  # Learn, "Reservation Recommendations - List" (Microsoft.Consumption)
 # The reads of the capability profile (cases/capability.py), each the first page of a list that holds only what the identity may see, or one read of the price sheet.
@@ -55,6 +57,8 @@ SUBSCRIPTION_PAGES = 30  # the pages of the list of subscriptions that are follo
 SCOPE_ID = re.compile(SCOPE, re.I)
 WORKSPACE_ID = re.compile(WORKSPACE, re.I)
 AI_ACCOUNT_ID = re.compile(AI_ACCOUNT, re.I)
+ENDPOINT_ID = re.compile(ENDPOINT, re.I)
+DNS_ZONE_ID = re.compile(DNS_ZONE, re.I)
 GROUP_NAME = re.compile(r"[A-Za-z0-9._()-]{1,90}")
 WORKSPACE_GUID = re.compile(GUID)
 GROUP_SCOPE = re.compile(r"^(/subscriptions/[^/]+/resourceGroups/[^/]+)", re.I)
@@ -574,6 +578,18 @@ class Arm:
         if not AI_ACCOUNT_ID.fullmatch(resource_id) or {".", ".."} & set(resource_id.split("/")):
             raise HttpError(0, "the scope is not the id of an AI services account")
         return self._pages(resource_id.split("/")[2], f"{ARM}{resource_id}/deployments?api-version={DEPLOYMENTS_API}", "Microsoft.CognitiveServices")
+
+    def zone_groups(self, endpoint_id: str) -> list[dict]:
+        """The DNS zone groups of one private endpoint (Learn, "Private Dns Zone Groups - List"): the zones that it keeps records in, and the record sets that it made there."""
+        if not ENDPOINT_ID.fullmatch(endpoint_id) or {".", ".."} & set(endpoint_id.split("/")):
+            raise HttpError(0, "the scope is not the id of a private endpoint")
+        return self._pages(endpoint_id.split("/")[2], f"{ARM}{endpoint_id}/privateDnsZoneGroups?api-version={DNS_GROUPS_API}", "Microsoft.Network")
+
+    def zone_records(self, zone_id: str) -> list[dict]:
+        """The address records (type A) of one private DNS zone (Learn, "Record Sets - List By Type"), each with its addresses."""
+        if not DNS_ZONE_ID.fullmatch(zone_id) or {".", ".."} & set(zone_id.split("/")):
+            raise HttpError(0, "the scope is not the id of a private DNS zone")
+        return self._pages(zone_id.split("/")[2], f"{ARM}{zone_id}/A?api-version={DNS_RECORDS_API}&$top=1000", "Microsoft.Network")
 
     def activity_events(self, subscription: str, since: dt.datetime, until: dt.datetime, *, resource_id: str | None = None, group: str | None = None,
                         max_pages: int = 3) -> tuple[list[dict], bool]:

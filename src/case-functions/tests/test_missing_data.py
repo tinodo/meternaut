@@ -433,7 +433,7 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
                                                 owner={"lookedUp": True, "automatedAt": recent}))
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
-        self.assertIn("1 finding is held back because an automation manages the resource, or because nobody has looked up who changed it.", content)
+        self.assertIn("1 finding is held back because an automation manages the resource, because nobody has looked up who changed it, or because what depends on it was not checked.", content)
         self.assertNotIn("No measurement backs", content, "this one is held for another reason, and the page does not say that nothing measured backs it")
         console.store.case_put(make_advice_case(case_id="case4001", resource_id=f"{PE}-b", resource_name="endpoint-b", plan_id=None, recommendation="investigate", owner={"lookedUp": True}))
         content = console.get("/").content

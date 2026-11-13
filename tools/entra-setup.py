@@ -41,15 +41,23 @@ apply   A dry run: prints what is there and what it would make. With --apply it 
         removes anything that is there. The one thing that it turns off is public client flows, and only when they are on. It stops before it changes
         anything when the app holds a secret or a certificate, or is not for this tenant only: a person removes or fixes that.
 
+The name. The app registration and its enterprise application are called "Meternaut": that is the name on the Microsoft sign-in screen ("Sign in to
+Meternaut") and in the Microsoft Entra admin center. Until 2026-11-13 they were called "Meternaut console". The tool finds the app registration under either
+name (two that it cannot tell apart stop it), and a new one is made as "Meternaut". When the one that is there has the old name, the dry run says "would
+rename 'Meternaut console' to 'Meternaut'". With --apply the tool sends the display name alone (no redirect address, no credential, no permission), reads it
+back, reads the enterprise application, and renames that too when its name did not follow. A second run changes nothing and says so.
+
 The items, in order:
-  1  The app registration "Meternaut console": this tenant only, ID tokens on (the platform signs in with the hybrid flow), the redirect address
+  1  The app registration "Meternaut": this tenant only, ID tokens on (the platform signs in with the hybrid flow), the redirect address
      https://<host>/.auth/login/aad/callback, the permission User.Read, and no secret and no certificate. A redirect address or a permission that is
-     there besides the ones of this tool is not a difference: it is shown as a note under the line and left alone.
+     there besides the ones of this tool is not a difference: it is shown as a note under the line and left alone. An app registration that is still
+     called "Meternaut console" differs in its name alone: apply renames it.
   2  The redirect address https://<host>/arm/return, where the sign-in of the person who approves returns to the function app.
   3  The delegated permission user_impersonation of Azure Service Management, asked for by the app.
   4  Public client flows off: isFallbackPublicClient of the app registration is false or not set, so that the app is a confidential client and a sign-in
      code can be redeemed only with the credential of the app. When it is true, apply sets it to false and sends nothing else of the app with it.
-  5  Its enterprise application (service principal), with "assignment required" on: nobody gets in who is not assigned.
+  5  Its enterprise application (service principal), called "Meternaut" like the app registration, with "assignment required" on: nobody gets in who is
+     not assigned.
   6  The federated identity credential: issuer https://login.microsoftonline.com/<tenant id>/v2.0, subject the object id of the identity, audience
      api://AzureADTokenExchange.
   7  One assignment for each --assign object id (the people who may sign in).
@@ -107,7 +115,11 @@ WANTED_ACCESS = (
 )
 WANTED_PERMISSIONS = {(r["resourceAppId"], a["id"], a["type"]) for r in WANTED_ACCESS for a in r["resourceAccess"]}
 APP_SELECT = "id,appId,displayName,signInAudience,isFallbackPublicClient,web,requiredResourceAccess,passwordCredentials,keyCredentials"
-APP_NAME = "Meternaut console"
+PRINCIPAL_SELECT = "id,appId,displayName,appRoleAssignmentRequired"
+# The name of the app registration and of its enterprise application: the name on the Microsoft sign-in screen. The tool finds an app registration that still has the name that it had
+# until 2026-11-13 and renames it; nothing new is made with that name.
+APP_NAME = "Meternaut"
+FORMER_APP_NAME = "Meternaut console"
 CREDENTIAL_NAME = "meternaut-console-auth"
 AUDIENCE = "api://AzureADTokenExchange"
 THIS_TENANT_ONLY = "AzureADMyOrg"
@@ -422,6 +434,7 @@ class Review:
 class State:
     app: dict | None = None
     review: Review = field(default_factory=Review)
+    old_name: str = ""  # the name that the app registration has now, when it is not the one it is to have
     principal: dict | None = None
     credential: dict | None = None
     assigned: set[str] = field(default_factory=set)
@@ -481,8 +494,33 @@ def consented(grants: list[dict], resource_id: str | None, scope: str) -> bool:
                                      and scope in str(g.get("scope", "")).split() for g in grants)
 
 
-def read_app(graph: Graph, name: str = APP_NAME, select: str = APP_SELECT) -> dict | None:
-    """The one app registration of that name, or None. Two of them stop the tool: it cannot tell which one is Meternaut's."""
+def other_name(thing: dict) -> str:
+    """The name that an app registration or an enterprise application has now, when it is not the name that it is to have; empty when it is."""
+    name = thing.get("displayName")
+    return "" if name == APP_NAME else (str(name) if name else "(none)")
+
+
+def renaming(old: str) -> str:
+    return f"it is called '{old}' and is to be called '{APP_NAME}': apply renames it (the display name alone is sent)"
+
+
+def read_app(graph: Graph) -> dict | None:
+    """The one app registration that is Meternaut's sign-in: found under its name, or under the name that it had until 2026-11-13 (apply renames it). Two that have
+    one name, or one of each name, stop the tool: it cannot tell which one is Meternaut's."""
+    found: list[dict] = []
+    for name in (APP_NAME, FORMER_APP_NAME):
+        apps = graph.pages(lookup("applications", "displayName", name, APP_SELECT))
+        if len(apps) > 1:
+            raise Problem(f"{len(apps)} app registrations are called {name}: remove the ones that are not Meternaut's, then run this again")
+        found += apps
+    if len(found) > 1:
+        raise Problem(f"one app registration is called {APP_NAME} and another {FORMER_APP_NAME}: the tool cannot tell which one is Meternaut's sign-in. "
+                      "Remove the one that is not, then run this again")
+    return found[0] if found else None
+
+
+def read_named_app(graph: Graph, name: str, select: str) -> dict | None:
+    """The one app registration of that name, or None (the Teams bot's). Two of them stop the tool: it cannot tell which one is Meternaut's."""
     apps = graph.pages(lookup("applications", "displayName", name, select))
     if len(apps) > 1:
         raise Problem(f"{len(apps)} app registrations are called {name}: remove the ones that are not Meternaut's, then run this again")
@@ -503,7 +541,8 @@ def examine(graph: Graph, cfg: Config) -> tuple[list[Item], State]:
         items.append(Item(public_label, "missing", "made with the app registration, as a confidential client"))
     else:
         state.review = review_app(state.app, cfg)
-        problems = state.review.blocking + state.review.shown(cfg)
+        state.old_name = other_name(state.app)
+        problems = state.review.blocking + ([renaming(state.old_name)] if state.old_name else []) + state.review.shown(cfg)
         items.append(Item(f"App registration {APP_NAME} (client id {state.app['appId']})", "differs" if problems else "present", "; ".join(problems),
                           blocking=bool(state.review.blocking), notes=state.review.notes))
         items.append(Item(return_label, "present" if state.review.arm_return else "missing"))
@@ -511,14 +550,18 @@ def examine(graph: Graph, cfg: Config) -> tuple[list[Item], State]:
         items.append(Item(public_label, "present" if state.review.confidential else "missing",
                           "" if state.review.confidential else "the app registration allows public client flows (isFallbackPublicClient is true), so a sign-in code could be "
                                                                "redeemed without a credential: apply switches it off"))
-        found = graph.pages(lookup("servicePrincipals", "appId", state.app["appId"], "id,appId,appRoleAssignmentRequired"))
+        found = graph.pages(lookup("servicePrincipals", "appId", state.app["appId"], PRINCIPAL_SELECT))
         state.principal = found[0] if found else None
+    principal_label = f"Enterprise application {APP_NAME}, assignment required"
     if state.principal is None:
-        items.append(Item("Enterprise application, assignment required", "missing", "made with the app registration"))
-    elif state.principal.get("appRoleAssignmentRequired") is not True:
-        items.append(Item("Enterprise application, assignment required", "differs", "assignment is not required: anybody in the tenant could sign in"))
+        items.append(Item(principal_label, "missing", "made with the app registration"))
     else:
-        items.append(Item("Enterprise application, assignment required", "present"))
+        principal_problems = []
+        if state.principal.get("appRoleAssignmentRequired") is not True:
+            principal_problems.append("assignment is not required: anybody in the tenant could sign in")
+        if other_name(state.principal):
+            principal_problems.append(renaming(other_name(state.principal)))
+        items.append(Item(principal_label, "differs" if principal_problems else "present", "; ".join(principal_problems)))
     if state.app is not None:
         state.credential = credential_of(graph, state.app, cfg)
     items.append(Item("Federated identity credential for the identity of the sign-in", "present" if state.credential else "missing",
@@ -637,15 +680,24 @@ def plan(items: list[Item], state: State, cfg: Config) -> list[str]:
     if state.app is None:
         steps.append(f"POST applications: make the app registration {APP_NAME} (this tenant only, redirect addresses {cfg.callback} and {cfg.arm_return}, ID tokens on, "
                      f"User.Read and {ARM_PERMISSION_NAME}, no secret, public client flows off)")
-    elif state.review.fixable(cfg):
-        lists = state.review.web_missing or state.review.access_missing
-        steps.append(f"PATCH applications/{state.app['id']}: " + "; ".join(state.review.fixable(cfg))
-                     + (". Every redirect address and permission that is there is sent back with it: nothing is removed" if lists
-                        else ". Public client flows are switched off and nothing else of the app is sent"))
+    else:
+        if state.old_name:
+            then = (f". The enterprise application is read again afterwards, and when its name has not followed it is renamed too (PATCH servicePrincipals/{state.principal['id']}, "
+                    "the display name alone)" if state.principal is not None else "")
+            steps.append(f"PATCH applications/{state.app['id']}: would rename '{state.old_name}' to '{APP_NAME}'. Only the display name is sent: no redirect address, "
+                         f"no credential and no permission{then}")
+        if state.review.fixable(cfg):
+            lists = state.review.web_missing or state.review.access_missing
+            steps.append(f"PATCH applications/{state.app['id']}: " + "; ".join(state.review.fixable(cfg))
+                         + (". Every redirect address and permission that is there is sent back with it: nothing is removed" if lists
+                            else ". Public client flows are switched off and nothing else of the app is sent"))
     if state.principal is None:
         steps.append("POST servicePrincipals: make its enterprise application, assignment required")
-    elif state.principal.get("appRoleAssignmentRequired") is not True:
-        steps.append(f"PATCH servicePrincipals/{state.principal['id']}: assignment required")
+    else:
+        if state.principal.get("appRoleAssignmentRequired") is not True:
+            steps.append(f"PATCH servicePrincipals/{state.principal['id']}: assignment required")
+        if other_name(state.principal) and not state.old_name:
+            steps.append(f"PATCH servicePrincipals/{state.principal['id']}: would rename '{other_name(state.principal)}' to '{APP_NAME}'. Only the display name is sent")
     if state.credential is None:
         steps.append(f"POST applications/<the app>/federatedIdentityCredentials: subject {cfg.principal_id}, issuer {cfg.issuer}, audience {AUDIENCE}")
     steps += [f"POST servicePrincipals/<the enterprise application>/appRoleAssignedTo: {person}" for person in cfg.people if person not in state.assigned]
@@ -671,12 +723,43 @@ def give_consent(graph: Graph, client_id: str, resource_id: str, scope: str, nam
     out(f"  gave the administrator's consent for {name}")
 
 
+def rename_app(graph: Graph, app: dict, old: str, out: Callable[[str], None]) -> None:
+    """The display name of the app registration, alone, in one change; then read back until Microsoft Entra shows it (a write may take a moment to be seen)."""
+    graph.send("PATCH", f"applications/{app['id']}", {"displayName": APP_NAME})
+    shown = ""
+    for attempt in range(1, READY_TRIES + 1):
+        found = graph.pages(lookup("applications", "appId", app["appId"], "id,appId,displayName"))
+        shown = str(found[0].get("displayName", "")) if found else ""
+        if shown == APP_NAME:
+            out(f"  renamed the app registration from '{old}' to '{APP_NAME}': the display name alone was sent, and Microsoft Graph shows the new name")
+            return
+        if attempt < READY_TRIES:
+            graph.sleep(READY_SECONDS)
+    raise Problem(f"the new name '{APP_NAME}' was sent, and Microsoft Graph still shows the app registration as '{shown}'. Nothing else was changed: run this again in a few minutes")
+
+
+def follow_name(graph: Graph, app: dict, out: Callable[[str], None]) -> dict | None:
+    """After the app registration was renamed: read its enterprise application, and when its name did not follow, rename it too (the display name alone)."""
+    found = graph.pages(lookup("servicePrincipals", "appId", app["appId"], PRINCIPAL_SELECT))
+    if not found:
+        return None
+    principal = found[0]
+    old = other_name(principal)
+    if not old:
+        out(f"  the enterprise application's name followed: it is called '{APP_NAME}' too")
+        return principal
+    graph.send("PATCH", f"servicePrincipals/{principal['id']}", {"displayName": APP_NAME})
+    out(f"  the enterprise application's name did not follow, so it was renamed too, from '{old}' to '{APP_NAME}': the display name alone was sent")
+    return {**principal, "displayName": APP_NAME}
+
+
 def apply_steps(graph: Graph, cfg: Config, state: State, out: Callable[[str], None]) -> None:
     app = state.app
+    renamed = False
     if app is None:
         app = graph.make("applications", app_body(cfg))
         out(f"  made the app registration {APP_NAME} (client id {app['appId']})")
-    elif state.review.fixable(cfg):
+    elif state.old_name or state.review.fixable(cfg):
         # The person may have been asked a minute ago: what somebody else added since then must survive too, so the lists are read again right before the write.
         current = read_app(graph)
         if current is None or current.get("id") != app["id"]:
@@ -684,6 +767,9 @@ def apply_steps(graph: Graph, cfg: Config, state: State, out: Callable[[str], No
         review = review_app(current, cfg)
         if review.blocking:
             raise Problem(f"the app registration changed while this ran and now {'; '.join(review.blocking)}: nothing was changed")
+        if other_name(current):
+            rename_app(graph, app, other_name(current), out)
+            renamed = True
         changes = app_changes(current, cfg)
         if changes:
             graph.send("PATCH", f"applications/{app['id']}", changes)
@@ -691,15 +777,21 @@ def apply_steps(graph: Graph, cfg: Config, state: State, out: Callable[[str], No
                 out(f"  changed the app registration: {'; '.join(review.lacking(cfg))}{left_alone(review)}")
             if not review.confidential:
                 out("  switched public client flows off (isFallbackPublicClient was true)")
-        else:
+        elif not renamed:
             out("  the app registration was in order already")
     principal = state.principal
+    if renamed and principal is not None:
+        principal = follow_name(graph, app, out)
     if principal is None:
         principal = graph.make("servicePrincipals", {"appId": app["appId"], "appRoleAssignmentRequired": True})
         out("  made the enterprise application, assignment required")
-    elif principal.get("appRoleAssignmentRequired") is not True:
-        graph.send("PATCH", f"servicePrincipals/{principal['id']}", {"appRoleAssignmentRequired": True})
-        out("  switched assignment required on")
+    else:
+        if principal.get("appRoleAssignmentRequired") is not True:
+            graph.send("PATCH", f"servicePrincipals/{principal['id']}", {"appRoleAssignmentRequired": True})
+            out("  switched assignment required on")
+        if other_name(principal):
+            graph.send("PATCH", f"servicePrincipals/{principal['id']}", {"displayName": APP_NAME})
+            out(f"  renamed the enterprise application from '{other_name(principal)}' to '{APP_NAME}': the display name alone was sent")
     if state.credential is None:
         graph.make(f"applications/{app['id']}/federatedIdentityCredentials",
                    {"name": CREDENTIAL_NAME, "issuer": cfg.issuer, "subject": cfg.principal_id, "audiences": [AUDIENCE],
@@ -871,7 +963,7 @@ def teams_credential_matches(credential: dict, cfg: TeamsConfig, principal_id: s
 
 def examine_teams(graph: Graph, cfg: TeamsConfig, principal_id: str) -> tuple[list[Item], TeamsState]:
     state, items = TeamsState(), []
-    state.app = read_app(graph, TEAMS_APP_NAME, TEAMS_APP_SELECT)
+    state.app = read_named_app(graph, TEAMS_APP_NAME, TEAMS_APP_SELECT)
     if state.app is None:
         items.append(Item(f"App registration {TEAMS_APP_NAME}", "missing", "this tenant only, no secret, no certificate, no API permission, no redirect address"))
     else:

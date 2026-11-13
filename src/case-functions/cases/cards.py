@@ -173,6 +173,11 @@ def _check_first(brief: Brief) -> list[dict]:
     return [_block("check-first", md(CHECK_FIRST_SHORT, 160))] if brief.check_first else []
 
 
+def _impact(brief: Brief) -> list[dict]:
+    """What removing the resource would do, in one line: the verdict that code derived and its first reason, or that nothing was analysed. The page has the facts, what was not checked and how to undo it."""
+    return [_block("impact", md(brief.impact.line, 340))] if brief.impact is not None else []
+
+
 def _undo(brief: Brief) -> dict:
     """Whether it can be undone: one bold line when it cannot, and nothing decorative."""
     if not brief.undo.reversible:
@@ -292,7 +297,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
     body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-            *_facts(brief), *_unread(brief), *_gateways(brief), *_check_first(brief), *_decision_lines(brief), *buttons]
+            *_facts(brief), *_unread(brief), *_gateways(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 

@@ -281,7 +281,7 @@ class TheTeamsBotStepOfTheEntraTool(unittest.TestCase):
         run(ARGS + ["--apply", "--yes"], entra)
         for method, route, _ in entra.calls:
             self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), (method, route))
-        self.assertEqual(es.APP_NAME, "Meternaut console")
+        self.assertEqual(es.APP_NAME, "Meternaut", "the sign-in app registration keeps its own name, which is not the Teams app's")
         self.assertEqual(es.TEAMS_APP_NAME, "Meternaut Teams")
         self.assertEqual(es.TEAMS_IDENTITY_NAME, "id-meternaut-teams", "the name that the template and the parameter builder use")
 
