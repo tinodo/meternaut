@@ -276,14 +276,38 @@ class TheTeamsBotStepOfTheEntraTool(unittest.TestCase):
             self.assertIn(word, err)
             self.assertEqual(entra.calls, [])
 
-    def test_the_calls_that_it_sends_are_calls_of_the_existing_list_and_the_other_sub_commands_are_untouched(self):
+    def test_the_calls_that_it_sends_are_its_own_six_and_the_other_sub_commands_are_untouched(self):
         entra = FakeEntra()
         run(ARGS + ["--apply", "--yes"], entra)
+        self.assertGreater(len(entra.calls), 3)
         for method, route, _ in entra.calls:
-            self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.CALLS), (method, route))
+            self.assertTrue(any(m == method and p.fullmatch(route) for m, p in es.TEAMS_CALLS), (method, route))
+        self.assertEqual(len(es.TEAMS_CALLS), 6)
+        self.assertEqual({m for m, _ in es.TEAMS_CALLS}, {"GET", "POST"}, "no PATCH and no DELETE")
+        self.assertLessEqual({(m, p.pattern) for m, p in es.TEAMS_CALLS}, {(m, p.pattern) for m, p in es.CALLS}, "nothing that the sign-in's list does not have already")
         self.assertEqual(es.APP_NAME, "Meternaut", "the sign-in app registration keeps its own name, which is not the Teams app's")
         self.assertEqual(es.TEAMS_APP_NAME, "Meternaut Teams")
         self.assertEqual(es.TEAMS_IDENTITY_NAME, "id-meternaut-teams", "the name that the template and the parameter builder use")
+
+    def test_in_this_mode_a_patch_a_delete_an_assignment_and_a_consent_are_refused_before_anything_is_sent(self):
+        entra = FakeEntra()
+        graph = es.Graph(es.Tokens(entra.az, TENANT, es.Hider()), entra.transport, lambda s: None, es.TEAMS_CALLS)
+        one = "00000000-0000-4000-8000-000000000001"
+        for method, route in (("PATCH", f"applications/{one}"), ("PATCH", f"servicePrincipals/{one}"), ("DELETE", f"applications/{one}"), ("DELETE", f"applications/{one}/federatedIdentityCredentials"),
+                              ("GET", f"servicePrincipals/{one}/appRoleAssignedTo"), ("POST", f"servicePrincipals/{one}/appRoleAssignedTo"), ("GET", "oauth2PermissionGrants"),
+                              ("POST", "oauth2PermissionGrants"), ("POST", f"applications/{one}/addPassword"), ("GET", "users")):
+            with self.subTest(call=f"{method} {route}"), self.assertRaises(es.Problem):
+                graph.send(method, route, {})
+        self.assertEqual(entra.calls, [], "refused before the token was asked for and before a request was made")
+
+    def test_the_sub_command_takes_its_own_list_and_not_the_one_of_the_sign_in(self):
+        entra = FakeEntra()
+        reads_only = (("GET", re.compile(r"applications")), ("GET", re.compile(r"servicePrincipals")))
+        with mock.patch.object(es, "TEAMS_CALLS", reads_only):
+            code, _, err = run(ARGS + ["--apply", "--yes"], entra)
+        self.assertEqual(code, 1)
+        self.assertIn("is not one of the calls that this tool sends", err)
+        self.assertEqual(entra.writes(), [], "the list that CALLS holds would have let these writes through")
 
 
 class ThePackageOfTheTeamsApp(unittest.TestCase):
@@ -311,7 +335,8 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
             manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(ta.check_manifest(manifest, {n: archive.read(n) for n in archive.namelist()}), [])
         self.assertEqual(manifest["bots"], [{"botId": self.CLIENT, "scopes": ["personal"], "isNotificationOnly": True, "supportsFiles": False}])
-        self.assertEqual((manifest["manifestVersion"], manifest["name"]["short"], manifest["id"]), ("1.30", "Meternaut", "f3a9efc4-ae3e-4d9a-a71c-b11d0f2d00f5"))
+        self.assertEqual((manifest["manifestVersion"], manifest["name"]["short"], manifest["id"]), ("1.30", "Meternaut (AI)", "f3a9efc4-ae3e-4d9a-a71c-b11d0f2d00f5"))
+        self.assertTrue(manifest["name"]["short"].endswith(" (AI)") and len(manifest["name"]["short"]) <= 30, "the name of a sender ends in (AI): AGENTS.md rule 13 (d)")
         self.assertEqual(manifest["validDomains"], ["pages.example.com"], "the host that the buttons of a card open")
         self.assertTrue(manifest["developer"]["websiteUrl"].startswith("https://github.com/tinodo/meternaut"))
 
@@ -374,7 +399,7 @@ class ThePackageOfTheTeamsApp(unittest.TestCase):
             self.assertTrue(any(text in p for p in ta.check_manifest(manifest)), key)
         changes = [
             (lambda m: m["developer"].update(name="x" * 33), "developer.name"), (lambda m: m["developer"].update(privacyUrl="http://example.com/p"), "developer.privacyUrl"),
-            (lambda m: m["developer"].update(termsOfUseUrl=""), "developer.termsOfUseUrl"), (lambda m: m["name"].update(short="x" * 31), "name.short"), (lambda m: m["name"].update(full="Meternaut"), "name.short and name.full"),
+            (lambda m: m["developer"].update(termsOfUseUrl=""), "developer.termsOfUseUrl"), (lambda m: m["name"].update(short="x" * 31), "name.short"), (lambda m: m["name"].update(full="Meternaut (AI)"), "name.short and name.full"),
             (lambda m: m["description"].update(short="x" * 81), "description.short is 1 to 80"), (lambda m: m["description"].update(full="x" * 4001), "description.full"),
             (lambda m: m["description"].update(full="Intro. " + m["description"]["short"]), "description.short is not repeated"),
             (lambda m: m["bots"][0].update(botId="x"), "botId"), (lambda m: m["bots"][0].update(scopes=["personal", "team"]), "scope is personal"), (lambda m: m["bots"][0].update(isNotificationOnly=False), "notification only"),

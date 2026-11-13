@@ -115,7 +115,9 @@ included, whether or not its files are asked for); no range is invented: a netwo
 (true or false) are what the workflow found in Azure: a subnet that is there is left alone (AGENTS.md rule 27), and a policy that is there is not written again, because Power Platform refuses every write to a
 policy that an environment is linked to.
 
-Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md) are off until the owner switches them on, and nothing changes while the settings below are empty. TEAMS_DELIVERY (queue or bot;
+Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md) are off until the owner switches them on. While the settings below are empty the parameter files are what they were, but
+the cases template always gives the app its four settings TEAMS_* (TEAMS_DELIVERY is queue and the other three are empty), so the first run of the action cases after this change changes the function app's configuration and
+restarts it. TEAMS_DELIVERY (queue or bot;
 empty is queue) is a variable of the environment hub, TEAMS_BOT_APP_ID (the client id of the app registration "Meternaut Teams", which tools/entra-setup.py teams-bot makes) is a secret of it, and TEAMS_BOT_IDENTITY_CLIENT_ID (the
 client id of the identity id-meternaut-teams) and TEAMS_FUNCTION_HOST (the cases app's default host name) are read from Azure by the workflow; each is checked, and none is printed. The cases file carries what is set: the identity (its
 resource id is worked out here, in the project's own group) and its client id (teamsIdentityId, teamsIdentityClientId), the app registration's client id (teamsBotAppId) and, when it is not queue, the delivery (teamsDelivery), which the

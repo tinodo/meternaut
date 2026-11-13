@@ -1245,7 +1245,7 @@ class TheUnions(unittest.TestCase):
 
 class TheCallsOfTheTool(unittest.TestCase):
     # The names of the sub-command teams-bot (replaced by the owner's ruling of 2026-11-13, his plain yes of 2026-11-13): tests/test_teams_bot_tools.py tests them.
-    TEAMS_BOT_NAMES = {"TEAMS_APP_NAME", "TEAMS_APP_SELECT", "TEAMS_CREDENTIAL_NAME", "TEAMS_IDENTITY_NAME", "TEAMS_REPOSITORY", "TeamsConfig", "TeamsState", "command_teams_bot", "examine_teams", "read_teams_config",
+    TEAMS_BOT_NAMES = {"TEAMS_APP_NAME", "TEAMS_APP_SELECT", "TEAMS_CALLS", "TEAMS_CREDENTIAL_NAME", "TEAMS_IDENTITY_NAME", "TEAMS_REPOSITORY", "TeamsConfig", "TeamsState", "command_teams_bot", "examine_teams", "read_teams_config",
                        "teams_apply", "teams_credential_matches", "teams_final", "teams_plan", "teams_problems", "teams_report"}
 
     def test_nothing_is_deleted_and_no_secret_is_made(self):

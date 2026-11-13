@@ -117,7 +117,7 @@ class TheTemplateMakesTheIdentityAndTheBotAndNothingElse(unittest.TestCase):
         code = code_lines(TEMPLATE)
         for line in ("resource bot 'Microsoft.BotService/botServices@2022-09-15' = if (botIsWanted) {", "kind: 'azurebot'", "location: 'global'", "msaAppType: 'SingleTenant'", "msaAppId: botAppId",
                      "msaAppTenantId: tenant().tenantId", "disableLocalAuth: true", "endpoint: 'https://${functionAppHost}/api/messages'", "var botIsWanted = !empty(botAppId)",
-                     "param botSku string = 'F0'"):
+                     "param botSku string = 'F0'", "displayName: 'Meternaut (AI)'"):
             self.assertIn(line, code, line)
         self.assertNotIn("UserAssignedMSI", code, "the legacy type")
         self.assertNotIn("MultiTenant", code, "the deprecated type")
@@ -167,6 +167,7 @@ class TheCasesTemplateGetsTheFourSettingsAndTheIdentityAndNothingMore(unittest.T
                      "param teamsBotAppId string = ''", "{ name: 'TEAMS_DELIVERY', value: teamsDelivery }", "{ name: 'TEAMS_SERVICE_URL', value: teamsServiceUrl }"):
             self.assertIn(line, code, line)
         self.assertIn("@allowed([\n  'queue'\n  'bot'\n])\nparam teamsDelivery", CASES)
+        self.assertIn("@allowed([\n  'https://smba.trafficmanager.net/teams/'\n])\nparam teamsServiceUrl", CASES, "the one address that the app accepts (cases/loop_config.py DEFAULT_SERVICE_URL, tools/teams-check.py HOSTS)")
 
     def test_the_identity_is_attached_only_when_it_is_given_and_the_one_of_the_sign_in_stays(self):
         code = code_lines(CASES)
@@ -332,6 +333,15 @@ class TheStepsFollowTheOrderThatKeepsTheObjectsConsistent(unittest.TestCase):
             self.assertIn(text, script, text)
         self.assertNotIn("UserAssignedMSI", script.replace("(the legacy UserAssignedMSI and the deprecated MultiTenant are refused)", ""), "the legacy type is only named in the words that refuse it")
 
+    def test_the_identity_is_never_asked_for_a_state_that_it_does_not_have(self):
+        """A user-assigned identity answers a GET (2023-01-31) with its client id, its object id and its tenant under properties, and no provisioningState (Learn, Microsoft.ManagedIdentity/userAssignedIdentities):
+        a check of one would fail every run of `teams` after a deployment that went well."""
+        for name in (IDENTITY_STEP, FACTS, READ_BACK):
+            self.assertNotIn("provisioningState", code_of(name), name)
+        self.assertEqual(sorted(re.findall(r'read_value "\$identity" 2023-01-31 ([A-Za-z.]+)', code_of(READ_BACK))), ["properties.clientId", "properties.principalId"])
+        for name in (IDENTITY_STEP, FACTS):
+            self.assertIn('--query "[properties.principalId, properties.clientId]"', code_of(name), name)
+
     def test_the_same_azure_login_is_pinned_and_no_new_secret_beyond_the_client_id_is_read(self):
         self.assertEqual(set(re.findall(r"\bsecrets\.([A-Za-z_]+)", "\n".join(line for line in WORKFLOW.splitlines() if not line.lstrip().startswith("#")))), wl.ESTATE_SECRETS)
         self.assertRegex(step(LOGIN), r"uses: azure/login@[0-9a-f]{40} # v[\d.]+\n")
@@ -342,12 +352,16 @@ class TheScriptsRunWithStandIns(unittest.TestCase):
     FACTS_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
 case "$*" in
-  *"provider show"*) printf '%s' "$FAKE_PROVIDER" ;;
+  *"provider show"*)
+    if [ "$FAKE_PROVIDER" = DENIED ]; then echo "$FAKE_DENIED" >&2; exit 1; fi
+    printf '%s' "$FAKE_PROVIDER" ;;
   *"userAssignedIdentities/id-meternaut-teams?api-version=2023-01-31"*)
     if [ "$FAKE_IDENTITY" = NOTFOUND ]; then echo "ERROR: (ResourceNotFound) not found" >&2; exit 1; fi
+    if [ "$FAKE_IDENTITY" = DENIED ]; then echo "$FAKE_DENIED" >&2; exit 1; fi
     printf '%s\\t%s\\n' "$FAKE_PRINCIPAL" "$FAKE_CLIENT" ;;
   *"/providers/Microsoft.Web/sites/"*)
     if [ "$FAKE_SITE" = NOTFOUND ]; then echo "ERROR: (ResourceNotFound) not found" >&2; exit 1; fi
+    if [ "$FAKE_SITE" = DENIED ]; then echo "$FAKE_DENIED" >&2; exit 1; fi
     printf '%s' "$FAKE_SITE" ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
 esac
@@ -379,6 +393,7 @@ esac
 
     def test_phase_two_stops_before_anything_is_changed_and_says_what_is_missing(self):
         for env, words in (({"FAKE_PROVIDER": "NotRegistered"}, "The resource provider Microsoft.BotService is NotRegistered"), ({"FAKE_PROVIDER": ""}, "is not registered in the subscription"),
+                           ({"FAKE_PROVIDER": "Registering"}, "is still registering in the subscription (a registration takes a few minutes). Wait until it says Registered"),
                            ({"FAKE_IDENTITY": "NOTFOUND"}, "The identity id-meternaut-teams is not there, and the secret TEAMS_BOT_APP_ID is set"), ({"FAKE_SITE": "NOTFOUND"}, "The cases app is not there"),
                            ({"FAKE_SITE": "not-a-host"}, "does not report a default host name")):
             done, _, out = self.facts(TEAMS_BOT_APP_ID=CLIENT, **env)
@@ -386,28 +401,73 @@ esac
             self.assertIn(words, said(done))
             self.assertIn("Nothing was changed.", said(done))
             self.assertNotIn("function_host=", out)
+        done, _, _ = self.facts(TEAMS_BOT_APP_ID=CLIENT, FAKE_PROVIDER="Registering")
+        self.assertNotIn("register it once", said(done), "a provider that is registering is not asked to be registered again")
 
+    DENIED = (f"ERROR: (AuthorizationFailed) The client '{PRINCIPAL}' with object id '{PRINCIPAL}' does not have authorization to perform action 'Microsoft.Web/sites/read' "
+              f"over scope '/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}' or the scope is invalid.")
+
+    def test_what_azure_says_when_a_read_fails_is_printed_with_every_id_replaced(self):
+        for what, env in (("the provider", {"FAKE_PROVIDER": "DENIED"}), ("the identity", {"FAKE_IDENTITY": "DENIED"}), ("the cases app", {"FAKE_SITE": "DENIED"})):
+            done, _, out = self.facts(TEAMS_BOT_APP_ID=CLIENT, FAKE_DENIED=self.DENIED, **env)
+            self.assertNotEqual(done.returncode, 0, what)
+            self.assertIn("<id>", said(done), what)
+            self.assertFalse(GUID.search("\n".join(line for line in said(done).splitlines() if not line.startswith("::add-mask::"))), f"{what}: an id of the estate was printed")
+            self.assertIn("does not have authorization to perform action", said(done), "the rest of what Azure said is kept")
+
+    IDENTITY_AZ = """#!/bin/bash
+echo "az $*" >> "$FAKE_LOG"
+case "$FAKE_IDENTITY" in
+  there) printf '%s\\t%s\\n' "$FAKE_PRINCIPAL" "$FAKE_CLIENT" ;;
+  NOTFOUND) echo "ERROR: (ResourceNotFound) not found" >&2; exit 1 ;;
+  *) echo "$FAKE_DENIED" >&2; exit 1 ;;
+esac
+"""
+
+    def test_the_read_of_the_identity_for_cases_masks_the_ids_it_reads_and_prints_what_azure_says_without_an_id(self):
+        base = {"ACTION": "cases", "FAKE_PRINCIPAL": PRINCIPAL, "FAKE_CLIENT": IDENTITY_CLIENT, "FAKE_DENIED": self.DENIED}
+        done, _, out = run(IDENTITY_STEP, {"az": self.IDENTITY_AZ}, **{**base, "FAKE_IDENTITY": "there"})
+        self.assertEqual(done.returncode, 0, said(done))
+        self.assertIn("client_id=" + IDENTITY_CLIENT, out)
+        self.assertIn(f"::add-mask::{IDENTITY_CLIENT}", done.stdout)
+        done, _, out = run(IDENTITY_STEP, {"az": self.IDENTITY_AZ}, **{**base, "FAKE_IDENTITY": "NOTFOUND"})
+        self.assertEqual((done.returncode, out), (0, "client_id=\n"), "not there is an answer: the app is not given the identity")
+        done, _, _ = run(IDENTITY_STEP, {"az": self.IDENTITY_AZ}, **{**base, "FAKE_IDENTITY": "DENIED"})
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("<id>", said(done))
+        self.assertFalse(GUID.search("\n".join(line for line in said(done).splitlines() if not line.startswith("::add-mask::"))))
+
+    # What the real API answers (Learn, GET of an identity at 2023-01-31: clientId, principalId and tenantId under properties and nothing else; the bot and its channel: the properties of their templates). The
+    # query that the script sends is matched whole: a property that the service does not have answers None, as the Azure CLI does, so a wrong path of a property fails the run as it would live.
     READ_BACK_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
+url=""; query=""
+for argument in "$@"; do
+  if [ "$previous" = --url ]; then url="$argument"; fi
+  if [ "$previous" = --query ]; then query="$argument"; fi
+  previous="$argument"
+done
 case "$*" in
   *"account show"*) printf '%s' "$FAKE_TENANT" ;;
   *"/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Authorization/roleAssignments"*)
     if [ "$FAKE_GROUP_ROLES" = FAIL ]; then echo "ERROR: (AuthorizationFailed) denied" >&2; exit 1; fi
     printf '%s' "$FAKE_GROUP_ROLES" ;;
   *"channels/MsTeamsChannel"*)
-    case "$*" in *properties.properties.isEnabled*) printf '%s' "$FAKE_ENABLED" ;; *properties.properties.enableCalling*) printf '%s' "$FAKE_CALLING" ;; esac ;;
+    case "$query" in properties.properties.isEnabled) printf '%s' "$FAKE_ENABLED" ;; properties.properties.enableCalling) printf '%s' "$FAKE_CALLING" ;; *) printf None ;; esac ;;
   *"botServices/bot-meternaut-0123abcd?api-version=2022-09-15"*)
-    case "$*" in
-      *" kind "*|*"--query kind"*) printf '%s' azurebot ;;
-      *sku.name*) printf '%s' F0 ;;
-      *msaAppType*) printf '%s' "$FAKE_TYPE" ;;
-      *msaAppId*) printf '%s' "$FAKE_APP" ;;
-      *msaAppTenantId*) printf '%s' "$FAKE_TENANT" ;;
-      *disableLocalAuth*) printf '%s' "$FAKE_LOCAL" ;;
-      *properties.endpoint*) printf '%s' "$FAKE_ENDPOINT" ;;
+    case "$query" in
+      kind) printf '%s' azurebot ;;
+      sku.name) printf '%s' F0 ;;
+      properties.msaAppType) printf '%s' "$FAKE_TYPE" ;;
+      properties.msaAppId) printf '%s' "$FAKE_APP" ;;
+      properties.msaAppTenantId) printf '%s' "$FAKE_TENANT" ;;
+      properties.disableLocalAuth) printf '%s' "$FAKE_LOCAL" ;;
+      properties.endpoint) printf '%s' "$FAKE_ENDPOINT" ;;
+      *) printf None ;;
     esac ;;
   *"userAssignedIdentities/id-meternaut-teams?api-version=2023-01-31"*)
-    case "$*" in *provisioningState*) printf '%s' Succeeded ;; *properties.principalId*) printf '%s' "$FAKE_PRINCIPAL" ;; *properties.clientId*) printf '%s' "$FAKE_CLIENT" ;; esac ;;
+    if [ -n "$FAKE_DENIED" ]; then echo "$FAKE_DENIED" >&2; exit 1; fi
+    case "$query" in properties.principalId) printf '%s' "$FAKE_PRINCIPAL" ;; properties.clientId) printf '%s' "$FAKE_CLIENT" ;; properties.tenantId) printf '%s' "$FAKE_TENANT" ;; *) printf None ;; esac ;;
   *) echo "unexpected az call: $*" >&2; exit 9 ;;
 esac
 """
@@ -435,6 +495,17 @@ esac
         self.assertEqual(done.returncode, 0, said(done))
         self.assertIn("The identity id-meternaut-teams is in Azure as the template wrote it, and it holds no role. The bot is made in phase 2.", done.stdout)
         self.assertFalse([line for line in lines if "botServices" in line])
+        self.assertFalse([line for line in lines if "provisioningState" in line], "a user-assigned identity has no state to read")
+
+    def test_an_identity_that_reports_no_object_id_fails_the_run_and_what_azure_says_when_it_cannot_be_read_is_printed_without_an_id(self):
+        done, _, _ = self.read_back(FAKE_PRINCIPAL="")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("The identity reports no object id, so its role assignments cannot be read.", said(done))
+        done, _, _ = self.read_back(FAKE_DENIED=self.DENIED)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("<id>", said(done))
+        self.assertIn("does not have authorization to perform action", said(done))
+        self.assertFalse(GUID.search("\n".join(line for line in said(done).splitlines() if not line.startswith("::add-mask::"))))
 
     def test_a_role_assignment_fails_the_run_and_the_count_is_said_without_an_id(self):
         done, _, _ = self.read_back(FAKE_GROUP_ROLES="2")

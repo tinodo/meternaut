@@ -88,7 +88,7 @@ resource bot 'Microsoft.BotService/botServices@2022-09-15' = if (botIsWanted) {
   }
   tags: tags
   properties: {
-    displayName: 'Meternaut'
+    displayName: 'Meternaut (AI)'
     description: 'AI-written recommendations for Azure cost savings. A person approves every change. It only sends cards and never receives anything.'
     endpoint: 'https://${functionAppHost}/api/messages'
     msaAppId: botAppId

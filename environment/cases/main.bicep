@@ -206,7 +206,10 @@ param teamsBotAppId string = ''
 ])
 param teamsDelivery string = 'queue'
 
-@description('The service URL of the Bot Connector that the app sends to (Teams, in Europe or elsewhere: the one that Learn gives for proactive messages).')
+@description('The service URL of the Bot Connector that the app sends to: the one of the public cloud, which Learn gives for proactive messages. It is the only value that the app accepts, because the token request is made to the public cloud alone (GCC, GCC High and DoD have other addresses and are not served).')
+@allowed([
+  'https://smba.trafficmanager.net/teams/'
+])
 param teamsServiceUrl string = 'https://smba.trafficmanager.net/teams/'
 
 var tags = {
@@ -597,6 +600,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID', value: signInIsSetUp ? authIdentity.properties.clientId : '' }
         // Teams cards straight to Teams through the Bot Connector (docs/proposals/20-teams-cards-through-a-bot.md): off while TEAMS_DELIVERY is queue. The app takes a token of the identity whose client id
         // is TEAMS_BOT_IDENTITY_CLIENT_ID for api://AzureADTokenExchange, exchanges it for a token of the app registration TEAMS_BOT_APP_ID, and sends to TEAMS_SERVICE_URL. No secret, no key, no role.
+        // The four settings are always written (TEAMS_DELIVERY is queue and the other three are empty while the bot is off): the parameter files of the other actions are what they were, but the first
+        // run of the action cases after they were added changes the app's configuration, and the platform restarts the app for it.
         { name: 'TEAMS_DELIVERY', value: teamsDelivery }
         { name: 'TEAMS_BOT_APP_ID', value: teamsBotAppId }
         { name: 'TEAMS_BOT_IDENTITY_CLIENT_ID', value: teamsIdentityClientId }

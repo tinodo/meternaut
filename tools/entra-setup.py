@@ -79,7 +79,8 @@ teams-bot  The app registration of the Teams bot: "Meternaut Teams", this tenant
            api://AzureADTokenExchange. The identity and the app registration have to be in the same tenant. A wrong subject or audience is accepted when the credential is made and fails only at the first
            token exchange, so the proof is the Hub action teams-test. It is a HAND STEP of the owner's, a dry run unless --apply is given, and it refuses to run in a pipeline, even as a dry run: its output
            names the client id of the app registration, which goes to the terminal of the person alone. It makes only what is missing, so a second run changes nothing and says so, it never makes a secret or a
-           certificate, it removes nothing (a stray credential, address or permission is shown and a person removes it in the portal), and after it has made anything it reads everything back: no password, no key,
+           certificate, it removes nothing (a stray credential, address or permission is shown and a person removes it in the portal), its Graph calls are the six of TEAMS_CALLS (a GET and a POST of applications, of service principals and of the federated
+           credentials of the app) and no other, so that it cannot change, remove, assign or consent, and after it has made anything it reads everything back: no password, no key,
            exactly one federated credential with the right values. It prints the client id and the command that stores it as the secret TEAMS_BOT_APP_ID of the environment hub.
 """
 from __future__ import annotations
@@ -137,6 +138,13 @@ CALLS = (
     ("GET", re.compile(r"servicePrincipals")), ("POST", re.compile(r"servicePrincipals")), ("PATCH", re.compile(rf"servicePrincipals/{OBJECT}")),
     ("GET", re.compile(rf"servicePrincipals/{OBJECT}/appRoleAssignedTo")), ("POST", re.compile(rf"servicePrincipals/{OBJECT}/appRoleAssignedTo")),
     ("GET", re.compile(r"oauth2PermissionGrants")), ("POST", re.compile(r"oauth2PermissionGrants")),
+)
+# What the sub-command teams-bot may send, and nothing more: it reads and makes an app registration, its service principal and one federated credential. It changes nothing that is there (no PATCH), removes
+# nothing, makes no assignment and no consent (CALLS above is the list of the sign-in of the function app and has all of those).
+TEAMS_CALLS = (
+    ("GET", re.compile(r"applications")), ("POST", re.compile(r"applications")),
+    ("GET", re.compile(rf"applications/{OBJECT}/federatedIdentityCredentials")), ("POST", re.compile(rf"applications/{OBJECT}/federatedIdentityCredentials")),
+    ("GET", re.compile(r"servicePrincipals")), ("POST", re.compile(r"servicePrincipals")),
 )
 NOT_READY = re.compile(r"valid application object|does not exist|not found|replicat", re.I)
 TOKEN_SHAPES = (re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{3,}"), re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"))
@@ -248,14 +256,14 @@ class Failed(Exception):
 
 
 class Graph:
-    """Calls to Microsoft Graph with the signed-in person's token. Only the calls of CALLS can be sent."""
+    """Calls to Microsoft Graph with the signed-in person's token. Only the calls of its list can be sent: CALLS for the sign-in of the function app, TEAMS_CALLS for the sub-command teams-bot."""
 
-    def __init__(self, token: Tokens, transport: Http = default_http, sleep: Callable[[float], None] = time.sleep) -> None:
-        self.token, self.transport, self.sleep = token, transport, sleep
+    def __init__(self, token: Tokens, transport: Http = default_http, sleep: Callable[[float], None] = time.sleep, calls: tuple = CALLS) -> None:
+        self.token, self.transport, self.sleep, self.calls = token, transport, sleep, calls
 
     def send(self, method: str, path: str, body: dict | None = None) -> dict:
         route = path.split("?", 1)[0]
-        if not any(m == method and p.fullmatch(route) for m, p in CALLS):
+        if not any(m == method and p.fullmatch(route) for m, p in self.calls):
             raise Problem(f"{method} {route} is not one of the calls that this tool sends")
         headers = {"Authorization": f"Bearer {self.token()}", "Accept": "application/json"}
         data = None
@@ -1109,7 +1117,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], tuple[int,
     hide = Hider()
     try:
         if args.command == "teams-bot":
-            return command_teams_bot(args, runner, Graph(Tokens(runner, args.tenant_id or "", hide), transport, sleep), hide, out, ask, env)
+            return command_teams_bot(args, runner, Graph(Tokens(runner, args.tenant_id or "", hide), transport, sleep, TEAMS_CALLS), hide, out, ask, env)
         cfg = read_config(args)
         graph = Graph(Tokens(runner, cfg.tenant, hide), transport, sleep)
         if args.command == "check":
