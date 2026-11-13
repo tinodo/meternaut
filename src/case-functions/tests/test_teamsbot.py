@@ -2,7 +2,6 @@
 
 The token endpoint of Microsoft Entra and the Bot Connector are one fake transport; nothing touches a network. Every id is invented.
 """
-import datetime as dt
 import json
 import unittest
 from unittest import mock

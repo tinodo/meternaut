@@ -14,7 +14,7 @@ from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
-from cases import cardcheck, cards, control, events as history, loop_config, memory_store, notify, offers, teamsbot, wiring
+from cases import cardcheck, cards, control, events as history, loop_config, notify, offers, teamsbot, wiring
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, DecisionRecord, MailRecord, SwitchRecord
 from cases.redact import Redactor

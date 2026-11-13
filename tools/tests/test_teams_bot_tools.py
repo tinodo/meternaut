@@ -480,7 +480,7 @@ class TheTeamsTest(unittest.TestCase):
             self.now += seconds
 
     def go(self, world, fetcher, argv=None, env=None):
-        lines, errors = [], io.StringIO()
+        errors = io.StringIO()
         argv = argv or ["run", "--storage-account", "stmeternautfn0123abcd", "--insights", self.INSIGHTS, "--minutes", "3"]
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", **(env or {})}), contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(errors):
             code = tc.main(argv, azure=world.azure(), fetcher=fetcher)
@@ -573,7 +573,7 @@ class TheTeamsTest(unittest.TestCase):
         code, out, err = self.go(self.World(self, self.GOOD, queue_status=403), self.OPEN)
         self.assertEqual(code, 1)
         self.assertIn("putting the control message in the queue answered 403", err)
-        lines, errors = [], io.StringIO()
+        errors = io.StringIO()
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}), contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
             code = tc.main(["run", "--storage-account", "stmeternautfn0123abcd", "--insights", self.INSIGHTS], azure=self.World(self, self.GOOD).azure(), fetcher=self.OPEN)
         self.assertEqual(code, 1)
