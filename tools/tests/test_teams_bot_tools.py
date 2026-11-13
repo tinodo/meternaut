@@ -531,8 +531,8 @@ class TheTeamsTest(unittest.TestCase):
         self.assertIn("The end of the test did not arrive in the telemetry. Has the cases app the new code", out)
 
     def test_when_no_step_ran_the_last_line_says_why_in_one_fixed_word_and_nothing_else_is_printed(self):
-        for reason, words in (("off", "the cases app is not set to deliver through the bot"), ("no-owner", "found no person with the role owner"), ("held", "a switch of the owner (messages or all) holds the cards"),
-                              ("other", "could not read its settings")):
+        for reason, words in (("off", "the cases app is not set to deliver through the bot"), ("no-owner", "the cases app found no person with the role owner"), ("held", "a switch of the owner (messages or all) holds the cards"),
+                              ("other", "the cases app could not read its settings")):
             code, out, _ = self.go(self.World(self, [], finished_extra={"reason": reason}), self.OPEN)
             self.assertEqual(code, 1, reason)
             self.assertIn(f"The cases app sent nothing: {words}", out)

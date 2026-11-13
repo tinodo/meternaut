@@ -126,7 +126,9 @@ class TheStepsFollowTheOrderThatKeepsTheRouteTableOnTheSubnet(unittest.TestCase)
         names = self.names()
         positions = [names.index(name) for name in CHAIN]
         self.assertEqual(positions, list(range(positions[0], positions[0] + len(CHAIN))), "no step of another action is in between")
-        self.assertEqual(names[positions[-1] + 1], "What was done", "the summary is the step after the last: the hand steps are printed before it")
+        # The Teams bot's chain follows this one (replaced by the owner's ruling of 2026-11-13, pending his plain yes), and the summary follows that.
+        self.assertIn(names[positions[-1] + 1], ("What was done", "Find out which phase of the Teams identity and bot this run is, and read what phase 2 needs from Azure"),
+                      "the summary is the step after the last, or the first step of the Teams bot: the hand steps are printed before it")
         self.assertEqual(len(re.findall(r"inputs\.action == 'powerplatform'", WORKFLOW)), 9, "and no other step names the action: the shared steps are the same for every action")
 
     def test_the_shared_steps_are_not_changed_for_the_action_so_that_every_other_action_gets_the_files_and_reads_that_it_got_before(self):

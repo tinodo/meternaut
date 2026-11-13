@@ -463,7 +463,7 @@ esac
 
     def test_the_hand_steps_are_printed_with_placeholders_for_each_phase_and_into_the_summary(self):
         for phase, words in (("1", ("python tools/entra-setup.py teams-bot --tenant-id <tenant id> --subscription <subscription id> --resource-group " + GROUP, "no secret, no certificate, no API permission, no redirect address",
-                                    "az provider register --namespace Microsoft.BotService", "(phase 1 is done)")),
+                                    "registers the resource provider Microsoft.BotService once (environment/BOOTSTRAP.md, step B1)", "(phase 1 is done)")),
                              ("2", ("GLOBAL default app setup policy", "https://teams.microsoft.com/l/app/<Teams app id>", "then the action teams-test", "set the variable TEAMS_DELIVERY of the environment hub to bot", "(phase 2 is done)"))):
             done, _, _ = run(HAND_STEPS, {}, PHASE=phase)
             self.assertEqual(done.returncode, 0, said(done))
@@ -493,7 +493,7 @@ esac
                       "only after it passes set TEAMS_DELIVERY to bot"):
             self.assertIn(words, two, words)
         failed = self.summary("teams", "failure", "2")
-        for words in ("**The run did not finish.**", "Part of the Azure side of the Teams bot may exist now", "az provider register --namespace Microsoft.BotService", "Teams cards still go through the queue until the owner sets TEAMS_DELIVERY to bot",
+        for words in ("**The run did not finish.**", "Part of the Azure side of the Teams bot may exist now", "a person who may registers it once: environment/BOOTSTRAP.md, step B1", "Teams cards still go through the queue until the owner sets TEAMS_DELIVERY to bot",
                       "Running `teams` again is safe"):
             self.assertIn(words, failed, words)
         test = self.summary("teams-test", "success")

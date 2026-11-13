@@ -256,6 +256,9 @@ def read_sites():
         "Read the host name of the AI Gateway from the service": ("host",),
         "The AI Gateway is there, the provider is registered, the component reports its endpoints and the gateway's identity may send to them": ("principal",),
         "Find the Operator, which runs the AI security checks from inside the network": ("client",),
+        "Find out which phase of the Teams identity and bot this run is, and read what phase 2 needs from Azure": ("id", "host"),  # the three Teams steps: replaced by the owner's ruling of 2026-11-13 (pending his plain yes)
+        "Read the Teams identity, which the cases app is given while it is there": ("id",),
+        "Read the Teams identity and bot back from Azure, and check that the identity holds no role": ("id",),
         "Read the host name of the AI Gateway from the service, for the drift check": ("host",),
     }
 

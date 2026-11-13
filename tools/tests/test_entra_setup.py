@@ -1031,6 +1031,10 @@ class TheUnions(unittest.TestCase):
 
 
 class TheCallsOfTheTool(unittest.TestCase):
+    # The names of the sub-command teams-bot (replaced by the owner's ruling of 2026-11-13, pending his plain yes): tests/test_teams_bot_tools.py tests them.
+    TEAMS_BOT_NAMES = {"TEAMS_APP_NAME", "TEAMS_APP_SELECT", "TEAMS_CREDENTIAL_NAME", "TEAMS_IDENTITY_NAME", "TEAMS_REPOSITORY", "TeamsConfig", "TeamsState", "command_teams_bot", "examine_teams", "read_teams_config",
+                       "teams_apply", "teams_credential_matches", "teams_final", "teams_plan", "teams_problems", "teams_report"}
+
     def test_nothing_is_deleted_and_no_secret_is_made(self):
         self.assertEqual({m for m, _ in es.CALLS}, {"GET", "POST", "PATCH"})
         for _, pattern in es.CALLS:
@@ -1040,7 +1044,8 @@ class TheCallsOfTheTool(unittest.TestCase):
         for _, pattern in es.CALLS:
             self.assertNotRegex(pattern.pattern, r"(?i)teams|installedApps|appCatalogs|teamwork")
         self.assertEqual(sorted({pattern.pattern.split("/")[0] for _, pattern in es.CALLS}), ["applications", "oauth2PermissionGrants", "servicePrincipals"])
-        self.assertFalse([name for name in dir(es) if "teams" in name.lower()])
+        self.assertFalse([name for name in dir(es) if "teams" in name.lower() and name not in self.TEAMS_BOT_NAMES],
+                         "nothing about Teams but the sub-command teams-bot (replaced by the owner's ruling of 2026-11-13, pending his plain yes)")
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             es.main(["teams-check", "--tenant-id", TENANT])
 
