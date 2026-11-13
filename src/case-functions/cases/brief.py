@@ -349,7 +349,8 @@ class Second:
 @dataclass(frozen=True)
 class Impact:
     """What removing a resource would do, from the check of cases/impact.py in the words of a page, a card and a letter: `verdict` is a key of IMPACT_VERDICTS ("" when nothing was analysed), `rows`
-    what was read with where it was read, `removal` what happens to traffic and DNS, `unchecked` the line "Not checked: ..." ("" when everything was read), `line` the one line of a card and a letter."""
+    what was read with where it was read, `removal` what happens to traffic and DNS, `unchecked` the line "Not checked: ..." ("" when everything was read), `line` the one line of a card and a letter,
+    `read` the sentence that says when it was read ("" when nothing was analysed): a page may be opened days after the read, and the verdict is as of that day."""
 
     verdict: str
     reasons: tuple[str, ...]
@@ -358,6 +359,7 @@ class Impact:
     undo: str
     unchecked: str
     line: str
+    read: str = ""
 
 
 @dataclass(frozen=True)
@@ -721,8 +723,10 @@ def impact_of(case: CaseRecord | None) -> Impact | None:
     rows = tuple((text_of(row[0], 60), text_of(row[1], 240), text_of(row[2], 90)) for row in rows if isinstance(row, list) and len(row) == 3) if isinstance(rows, list) else ()
     reasons, missing = lines("reasons", 240), lines("unchecked", 160)
     first = reasons[0].partition(". ")[0].rstrip(".") + "." if reasons else ""  # a card and a letter have room for the first sentence of the first reason: the page has them all
+    when = parse_time(found.get("readAt"))
+    read = f"Read on {when.day} {when:%b %Y} UTC." if when else "The date that it was read is not known."  # the date of the read, in UTC: nothing here says "today" or "yesterday"
     return Impact(found["verdict"], reasons, rows, lines("removal", 400), text_of(found.get("undo"), 300), f"Not checked: {'; '.join(missing)}." if missing else "",
-                  f"Impact: {IMPACT_VERDICTS[found['verdict']]}. {first}".strip() + ("" if found.get("complete") is True else " Part of it could not be read."))
+                  f"Impact: {IMPACT_VERDICTS[found['verdict']]}. {read} {first}".strip() + ("" if found.get("complete") is True else " Part of it could not be read."), read)
 
 
 def measured_zero(facts: object) -> bool:

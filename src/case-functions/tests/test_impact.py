@@ -2,6 +2,7 @@
 
 AGENTS.md rules 26, 29 and 30: no AI makes, sees or argues the verdict; the app has no write right, and a read that fails is never "nothing found". Everything here is invented: a fake of Azure answers.
 """
+import dataclasses
 import datetime as dt
 import re
 import unittest
@@ -11,6 +12,7 @@ from unittest import mock
 
 import support  # noqa: F401  (it puts the app on the path)
 from support import NOW, RG, SUBSCRIPTION, LogCapture
+from test_decisions import SAFE_GUARDS, lead as detector_lead
 from test_held_back import finding as held_case, request_for, watch as run_watch
 from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer, finding, metrics, resource
 from test_letters import BASE, CONTACTS, PERSON
@@ -19,7 +21,7 @@ from test_run_loop import Moving, loop_for
 from test_unread import page_of, walk_blocks
 from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case
 
-from cases import brief, cards, impact, investigate, letters, stake
+from cases import brief, cards, evidence, impact, investigate, learning, letters, stake
 from cases.approvals import IMPACT_NOT_CHECKED
 from cases.arm import MetricPoint
 from cases.http import HttpError
@@ -380,6 +382,7 @@ class WhatAPersonReads(unittest.TestCase):
         self.assertNotIn("Check first", reply.headings(2), "the reasons say what to check, not the general list")
         self.assertEqual([h for h in reply.headings(3) if h.startswith(("If it is", "How to"))], ["If it is removed", "How to undo it"])
         self.assertIn("Safe to remove", text)
+        self.assertIn("Read on 4 Nov 2026 UTC.", text, "the page says when it was read: it may be opened days later")
         for line in (*found["reasons"], *found["removal"], found["undo"], "Not checked: " + "; ".join(found["unchecked"]) + "."):
             self.assertIn(line, text)
         (table,) = [t for t in reply.main.find_all("table") if t.find("caption").attrs.get("id") == "impact"]
@@ -408,7 +411,7 @@ class WhatAPersonReads(unittest.TestCase):
                 found = digest_of(verdict)
                 case = case_with(found)
                 plan = endpoint_plan(case, saving_usd_month=None)
-                line = f"Impact: {label}. {found['reasons'][0].partition('. ')[0]}"
+                line = f"Impact: {label}. Read on 4 Nov 2026 UTC. {found['reasons'][0].partition('. ')[0]}"
                 b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
                 self.assertEqual(b.impact.line, line if line.endswith(".") else line + ".")
                 texts = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))}
@@ -417,6 +420,25 @@ class WhatAPersonReads(unittest.TestCase):
                 self.assertIn(b.impact.line, letter.text)
                 self.assertLessEqual(len(b.impact.line.split()), 30, "a letter has little room: the line holds the verdict and the first sentence of the first reason")
                 self.assertNotIn("console", letter.text.lower())
+
+    def test_every_line_says_when_it_was_read_and_a_digest_with_no_date_says_that_it_is_not_known(self):
+        found = digest_of("check")
+        case = case_with(found)
+        plan = endpoint_plan(case, saving_usd_month=None)
+        lines = {brief.build_brief(case, plan, now=now, may_answer=True).impact.line for now in (WEB_NOW, WEB_NOW + dt.timedelta(days=9))}
+        self.assertEqual(len(lines), 1, "the words do not depend on the day that the page is opened")
+        shown = brief.impact_of(case)
+        self.assertEqual((shown.read, shown.line.startswith("Impact: Check first. Read on 4 Nov 2026 UTC. ")), ("Read on 4 Nov 2026 UTC.", True))
+        undated = brief.impact_of(case_with({key: value for key, value in found.items() if key != "readAt"}))
+        self.assertEqual((undated.read, undated.line.startswith("Impact: Check first. The date that it was read is not known. ")), ("The date that it was read is not known.", True))
+
+    def test_the_details_do_not_say_that_an_ai_saw_what_only_code_worked_out(self):
+        case = case_with(digest_of("safe"))
+        case = dataclasses.replace(case, facts={**case.facts, "gateways": {"gateways": 2, "counted": 5}})
+        reply, _ = page_of(case, endpoint_plan(case, saving_usd_month=None))
+        self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"})
+        self.assertNotIn("readAt", reply.content, "the digest is not printed as a row of raw JSON anywhere on the page")
+        self.assertEqual(sorted(case.facts), ["asked", "basis", "finding", "gateways", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
 
     def test_an_unfinished_check_says_so_in_the_line_of_the_card_and_the_letter(self):
         azure = Azure()
@@ -529,6 +551,33 @@ class TheInvestigationChecksWhatItProposesToRemove(unittest.TestCase):
                 self.assertEqual(brief.held_reason(case, NOW), held)
         self.assertTrue(brief.needs_impact("Microsoft.Network/loadBalancers") and brief.needs_impact(ENDPOINTS) and brief.needs_impact("microsoft.apimanagement/service"))
         self.assertFalse(brief.needs_impact("microsoft.compute/disks") or brief.needs_impact(None) or brief.needs_impact(5))
+
+
+class NoAIIsGivenTheDigest(unittest.TestCase):
+    """The digest is made after both AIs have judged, and nothing that a model is given or a replay is made of is made from the facts of a case (AGENTS.md rule 30: no AI makes, sees or argues it)."""
+
+    def test_the_inputs_of_the_two_agents_hold_none_of_it_and_neither_do_the_other_ways_in(self):
+        h = watch_endpoint(Azure(RUN_PE))
+        (case,) = h.store.cases_recent()
+        found = case.facts["impact"]
+        said = [text for text in (*found["reasons"], *found["removal"], *found["unchecked"], found["undo"], *(cell for row in found["rows"] for cell in row)) if len(text) > 25]
+        self.assertGreater(len(said), 10)
+        sent = h.foundry.inputs()
+        self.assertEqual(len(sent), 2, "the Investigator and the Skeptic")
+        for text in said:
+            self.assertEqual([payload for payload in sent if text in payload], [], text)
+        # a later run: the rows of the Skeptic are made from the tools, never from the facts of a lead or of a case, even when those hold the digest
+        toolbox = FakeToolbox([resource(1, resource_id=RUN_PE, resource_type=ENDPOINTS, name="pe-apim-demo")], {"r1": ABSENT})
+        held = investigate._lead(toolbox.handles["r1"], dict(case.facts), 70.0, None)
+        text, _ = investigate._skeptic_input([investigate.Finding(number=1, basis="other", proposal="delete", items=[investigate.Item("r1", held, {"MetricA": 0}, shown=True)])], toolbox)
+        self.assertEqual(([item for item in said if item in text], '"impact"' in text), ([], False))
+        # the typed case of the older detectors refuses a text that is no word of its vocabulary, so a digest in the facts of a lead stops before any prompt is made
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.case_dto(1, detector_lead(facts={"impact": found}), SAFE_GUARDS)
+        # what the learning keeps and replays is buckets of typed values and the open questions that the Investigator may recall carry no text of a case
+        signals = learning.signals_of(case)
+        self.assertTrue(set(signals) <= set(learning.SIGNAL_KEYS) and not [item for item in said if item in str(signals)])
+        self.assertEqual([field.name for field in dataclasses.fields(learning.OpenQuestion)], ["resource_id", "resource_type", "runs_seen", "days_open", "confidence", "request"])
 
 
 class AnOpenRequestToDeleteAResourceWhoseImpactNobodyCheckedIsTakenBack(unittest.TestCase):

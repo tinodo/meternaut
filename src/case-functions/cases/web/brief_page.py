@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, COULD_NOT_LOOK, IF_ACTED, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -201,7 +201,7 @@ def _impact(brief: Brief) -> Safe:
     if not found.verdict:
         return join([Safe("<h2>Impact</h2>"), paragraph(found.line)])
     rows = [[name, value, fmt('<span class="muted">{source}</span>', source=source)] for name, value, source in found.rows]
-    parts: list[object] = [Safe("<h2>Impact</h2>"), paragraph(chip(IMPACT_VERDICTS[found.verdict], *VERDICT_CHIPS[found.verdict])), items(found.reasons)]
+    parts: list[object] = [Safe("<h2>Impact</h2>"), paragraph(chip(IMPACT_VERDICTS[found.verdict], *VERDICT_CHIPS[found.verdict])), paragraph(found.read, "muted"), items(found.reasons)]
     parts += [table("impact", "What was read, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)] if rows else []
     parts += [Safe("<h3>If it is removed</h3>"), items(found.removal)] if found.removal else []
     parts += [Safe("<h3>How to undo it</h3>"), paragraph(found.undo)] if found.undo else []
@@ -341,7 +341,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         parts.append(_ai_words(case))
         parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT)}  # what code made of the estate is in the evidence above, and no AI saw it
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))
         parts.append(join([paragraph("These guards fired. A guard stops a finding from becoming a request, and no model can lift it."),
