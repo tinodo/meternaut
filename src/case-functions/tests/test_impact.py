@@ -299,6 +299,12 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertEqual((found["readAt"], again["readAt"]), ("2026-11-04T12:00:00Z", "2026-11-09T12:00:00Z"))
         for text in (*found["reasons"], *(row[1] for row in found["rows"])):
             self.assertNotRegex(text, r"(?i)yesterday|today|days ago|last 30 days")
+        arrange(events=[written(1, "alice@example.com"), written(40, AUTOMATION)])(azure)
+        found, _ = check(azure)
+        self.assertEqual({row[0]: row[1] for row in found["rows"]}["Last change"].split(", by ")[0:1] + [found["facts"]["changedAt"]], ["3 Nov 2026 UTC", "2026-09-25T12:00:00Z"],
+                         "the row says the newest write, and the automation's older one is named as such")
+        self.assertIn("; an application or service identity wrote on 25 Sep 2026 UTC; 2 changes in the 90 days before Meternaut read it", {row[0]: row[1] for row in found["rows"]}["Last change"])
+        self.assertIn("An application or service identity changed it on 25 Sep 2026 UTC: an automation may manage it and make it again.", found["reasons"])
 
     def test_no_data_for_the_traffic_is_not_zero_and_a_few_days_are_not_a_measurement(self):
         for label, points, expected in (("no data", [], "unmeasured"), ("ten days of nil", days(0, 10), "unmeasured"), ("twenty days of nil", days(0, 20), "zero"), ("a little", days(1, 3), "some")):
@@ -448,6 +454,14 @@ class WhatAPersonReads(unittest.TestCase):
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
         self.assertTrue(b.impact.line.endswith(" Part of it could not be read."), b.impact.line)
         self.assertEqual(b.impact.unchecked, "Not checked: its traffic (the read failed); " + "; ".join(impact.NEVER_SEEN) + ".")
+        longest = {**found, "reasons": ["Something else mentions its addresses (" + ", ".join(f"routetables{n} ({n})" for n in range(30)) + "): check that it does not rely on this endpoint."]}
+        case = case_with(longest)
+        plan = endpoint_plan(case, saving_usd_month=None)
+        b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
+        self.assertGreater(len(b.impact.line), 300, "the first sentence is cut at 240 characters and the line is longer than a letter once allowed")
+        texts = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))}
+        self.assertTrue(texts["impact"].endswith("Part of it could not be read."), "the caveat is the last thing that a card or a letter may lose")
+        self.assertIn(b.impact.line, letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS).text)
 
     def test_a_finding_whose_kind_has_no_check_or_whose_check_was_not_made_says_that_nothing_was_analysed_and_keeps_the_general_list(self):
         case = case_with(None)

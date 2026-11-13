@@ -1060,14 +1060,14 @@ def _impact_of(s: "Services", out: Investigation, lead: Lead) -> dict | None:
 
 
 def _kept_impact(old: CaseRecord | None) -> dict | None:
-    """The digest of the impact check that the earlier case of a resource kept, for a case that this run did not check again: it says when it was read (`readAt`), and a page shows that date."""
+    """The digest that the earlier case of a resource kept, for a case that this run did not check again: it says when it was read, and a page shows that date."""
     found = old.facts.get(impact.KEY) if old is not None and isinstance(old.facts, dict) else None
     return found if isinstance(found, dict) and found.get("verdict") in IMPACT_VERDICTS else None
 
 
 def _impact_due(survivors: list[Finding]) -> set[str]:
-    """The resources whose impact this run checks, at most MAX_IMPACTS: of the cases that ask for a check, those with no digest first and then those whose digest is the oldest, so that a run with
-    more of them than it has room for never starves the same ones (the order of the findings decides between equals). The others keep their earlier digest (`_kept_impact`)."""
+    """The resources whose impact this run checks, at most MAX_IMPACTS: of the cases that ask for a check, those with no digest first and then the oldest digest, so that nothing is starved (the
+    order of the findings decides between equals). The others keep their earlier digest (`_kept_impact`)."""
     asking = [item for finding in survivors if finding.proposal != "keep" and not _group_of(finding)
               for item in finding.items if impact.has_check(item.lead.resource_type) and about_use(item.lead.facts, finding.proposal)]
 
@@ -1176,8 +1176,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if past and "past" not in learned:
             learned["past"] = past  # a case judged again while its request is still open keeps the line of the past that the request was made with (no second request writes it)
         owner = _owner_of(s, out, lead) if outcome.status in ("proposed", "needs_human") else {}  # a case that is dropped is never shown to anybody: it takes no lookup of the Activity Log, whose reads are few
-        # The impact of a resource that is proposed for removal: a fresh check when this run has room for it (_impact_due), else the digest that the earlier case kept, with its own date, so that a
-        # case that is judged again never loses what was read and turns into "not analysed" because other cases came first.
+        # The impact of a resource that is proposed for removal: a fresh check when this run has room (_impact_due), else the digest of the earlier case, with its own date.
         checked = outcome.status in ("proposed", "needs_human") and not group and impact.has_check(lead.resource_type) and about_use(lead.facts, outcome.recommendation)
         found = (_impact_of(s, out, lead) or _kept_impact(old)) if checked else None
         if found is not None:

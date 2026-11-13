@@ -41,9 +41,8 @@ LABELS = {"endpoint": "the endpoint itself", "service": "the service that it poi
           "addresses": "the addresses of the endpoint", "dns": "the DNS zone groups of the endpoint", "zone": "the records of its DNS zone", "traffic": "its traffic",
           "log": "its changes in the Activity Log"}
 WORDS = {NOT_VISIBLE: "not visible with this access", UNAVAILABLE: "the read failed"}  # what a read that failed says; any other word of `failed` is its own plain reason
-# What a person reads of the state of a connection is what Learn says of it ("What is a private endpoint?" and "Manage Azure private endpoints", read on 2026-11-13): only an approved endpoint can send
-# traffic, and the owner of the service can change the state later, so a rejected endpoint may have carried traffic before. Learn also says that a connection that was denied cannot be approved
-# again, so no sentence here says that the owner could.
+# Learn ("What is a private endpoint?", "Manage Azure private endpoints", read on 2026-11-13): only an approved endpoint sends traffic; the owner can change the state later, so a rejected endpoint
+# may have carried traffic; a denied connection cannot be approved again, so no sentence says that the owner could.
 STATE_SAYS = {
     "approved": "It is approved, so it can carry traffic.",
     "pending": "It waits for the owner of the service to approve it: somebody asked for it, and removing it drops that request.",
@@ -59,7 +58,7 @@ ONE = "// meternaut:impact-one\nresources\n| where id =~ '{id}'\n| project id, n
 OTHERS = ("// meternaut:impact-others\nresources\n| where type =~ 'microsoft.network/privateendpoints' and id !~ '{pe}'\n"
           "| where tostring(properties.privateLinkServiceConnections) contains '{service}' or tostring(properties.manualPrivateLinkServiceConnections) contains '{service}'\n"
           "| project id, name, properties")
-# No network interface is left out: the endpoint's own interface holds its address, so a search that works lists it (the check that the search can be trusted), and `_private_endpoint` does not count it.
+# No interface is left out: the endpoint's own interface holds its address, so a search that works lists it (the control), and it is not counted as a mention.
 MENTIONS = ("// meternaut:impact-mentions\nresources\n| where id !~ '{pe}'\n| where {any}\n| summarize n = count() by type")
 
 
@@ -193,8 +192,7 @@ def _day(value: dt.datetime | str) -> str:
 def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str, str, str]:
     """Who changed the endpoint, as ("none" | "person" | "meternaut" | "automation", the time of the write that says so, the words for a person), from every write of its Activity Log: an
     automation if any write of the 90 days is by an identity that is no person and not Meternaut's own (its caller is an id, which names no person), else the newest write. The log is read in
-    pages, newest first, and at most a few of them: when they did not reach the end, only part of the 90 days was read, and the check is not complete. The words hold the date of the write and no
-    "yesterday", because a page may be opened days after the read."""
+    pages, newest first, and at most a few: when they stop early only part of the 90 days was read, and the check is not complete. Dates are absolute: a page may be opened days after the read."""
     writes = reader.owners.writes(endpoint)
     if writes is None:
         failed["log"] = UNAVAILABLE
@@ -209,15 +207,18 @@ def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str,
     def kind(caller: str) -> str:
         return "person" if "@" in caller else "meternaut" if caller.lower() in reader.own else "automation"
 
-    moment, caller = next(((when, who) for when, who in writes if kind(who) == "automation"), writes[0])
-    by = kind(caller)
-    return by, moment.strftime(STAMP), f"{_day(moment)}, by {'Meternaut' if by == 'meternaut' else who_text(caller)}; {len(writes)} change{'s' if len(writes) != 1 else ''} in {span}"
+    def who(write: tuple[dt.datetime, str]) -> str:
+        return f"{_day(write[0])}, by {'Meternaut' if kind(write[1]) == 'meternaut' else who_text(write[1])}"
+
+    found = next((write for write in writes if kind(write[1]) == "automation"), writes[0])
+    more = f"; an application or service identity wrote on {_day(found[0])}" if found != writes[0] else ""  # the row says the newest write: an automation's older one is the second thing that it says
+    return kind(found[1]), found[0].strftime(STAMP), f"{who(writes[0])}{more}; {len(writes)} change{'s' if len(writes) != 1 else ''} in {span}"
 
 
 def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     """The verdict and its reasons from the facts. Keep: the endpoint is in use (it is approved and carries traffic, or it is the only private way to a service that takes nothing public).
     Safe: it is disconnected or rejected, every read worked and nothing points at it or manages it. Check first: anything else, with each thing that is unsettled as a sentence. A good reason is
-    listed only when it was read: "nothing mentions its addresses" needs a search that could be trusted, and "another endpoint is approved" needs a service that was seen."""
+    listed only when it was read (a search that could be trusted, a service that was seen)."""
     state, use = f["state"], f["traffic"]
     keep: list[str] = []
     check: list[str] = []
@@ -326,8 +327,8 @@ def _private_endpoint(reader: Reader, endpoint: str) -> dict:
             ["Last change", changed, "Activity Log"], ["Traffic in the 30 days before it was read", traffic, "Azure Monitor"]]
     verdict, reasons = _judge(f, things)
     unchecked = [*(f"{LABELS[what]} ({WORDS.get(word, word)})" for what, word in failed.items()), *NEVER_SEEN]
-    return {"verdict": verdict, "complete": f["complete"], "readAt": reader.now.astimezone(dt.timezone.utc).strftime(STAMP), "reasons": reasons[:6],
-            "rows": [[plain(cell, 240) for cell in row] for row in rows], "removal": _removal(f, sorted(names), zones), "undo": UNDO, "unchecked": unchecked, "facts": f}
+    return {"verdict": verdict, "complete": f["complete"], "reasons": reasons[:6], "rows": [[plain(cell, 240) for cell in row] for row in rows], "removal": _removal(f, sorted(names), zones),
+            "undo": UNDO, "unchecked": unchecked, "facts": f}
 
 
 CHECKS: dict[str, Callable[[Reader, str], dict]] = {ENDPOINTS: _private_endpoint}
@@ -339,13 +340,14 @@ def has_check(rtype: object) -> bool:
 
 
 def analyse(reader: Reader, resource_id: str, rtype: object) -> dict | None:
-    """The digest of the check of one resource, or None when its type has no check. It never raises: a fault of the check is a digest that says that it is not complete. Every digest says
-    when it was read (`readAt`, UTC): a page may be opened days later, and a person reads the verdict as of that day."""
+    """The digest of the check of one resource, or None when its type has no check. It never raises: a fault of the check is a digest that says that it is not complete. It says when it was read
+    (`readAt`, UTC): a page may be opened days later."""
     check = CHECKS.get(rtype.strip().lower()) if isinstance(rtype, str) else None
     if check is None or not _id(resource_id):
         return None
+    at = reader.now.astimezone(dt.timezone.utc).strftime(STAMP)
     try:
-        return check(reader, resource_id)
+        return {**check(reader, resource_id), "readAt": at}
     except Exception:  # noqa: BLE001 (a check never stops an investigation)
-        return {"verdict": "check", "complete": False, "readAt": reader.now.astimezone(dt.timezone.utc).strftime(STAMP), "reasons": ["The check could not be made."], "rows": [], "removal": [],
-                "undo": "", "unchecked": list(NEVER_SEEN), "facts": {"complete": False}}
+        return {"verdict": "check", "complete": False, "readAt": at, "reasons": ["The check could not be made."], "rows": [], "removal": [], "undo": "", "unchecked": list(NEVER_SEEN),
+                "facts": {"complete": False}}

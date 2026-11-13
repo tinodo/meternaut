@@ -175,7 +175,7 @@ def _check_first(brief: Brief) -> list[dict]:
 
 def _impact(brief: Brief) -> list[dict]:
     """What removing the resource would do, in one line: the verdict that code derived and its first reason, or that nothing was analysed. The page has the facts, what was not checked and how to undo it."""
-    return [_block("impact", md(brief.impact.line, 320))] if brief.impact is not None else []
+    return [_block("impact", md(brief.impact.line, 340))] if brief.impact is not None else []
 
 
 def _undo(brief: Brief) -> dict:
