@@ -26,7 +26,7 @@ CARD = "application/vnd.microsoft.card.adaptive"
 ID = re.compile(r"(?!\.+(?:/|$))[A-Za-z0-9:@._=-]{1,200}")  # an id of Teams in an address: no escape, no slash, and never a folder that is only dots
 SAFE = re.compile(r"[A-Za-z0-9:@._=/-]+")  # every character that an address of this client may hold: no query, fragment, escape, space or backslash
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,16000}")
-CODE = re.compile(r"[A-Za-z]{3,48}")  # the error code of an answer of Teams: letters alone, so that no id, address or text can pass for one
+CODE = re.compile(r"[A-Za-z]{3,48}")  # an error code word: letters alone, so that no id, address or text can pass for one
 MAX_ANSWER = 65536  # the answers are a few hundred bytes
 MIN_POST = 10.0  # a post that has less of the round than this is not made: with a shortened timeout a Connector that is merely slow would be taken for a lost answer, and the card would never be posted
 REFRESH = dt.timedelta(minutes=5)  # a token is asked for again when less than this is left
@@ -53,8 +53,8 @@ REASON_OF = {**{text: reason for reason, text in REASONS.items()}, **{text: reas
 
 class BotError(Exception):
     """A try that did not work, in one plain reason (a key of REASONS). `step` is token, create, send or update, `status` the HTTP status (0: none) and `aadsts` the number that Microsoft Entra
-    gave (0: none). `code` is the error code word that Teams gave for a refusal, and only when it is letters alone (CODE): empty when there is none or it is anything else. `maybe_sent` says that the card was
-    posted and the answer was lost or is no answer, so that the card may have arrived. The text is a plain sentence and never holds a token, an id, a code or the answer of the service."""
+    gave (0: none). `code` is the error code word of a refusal, when it is letters alone (CODE). `maybe_sent` says that the card was posted and the answer was lost or is no answer, so that the card may
+    have arrived. The text is a plain sentence and never holds a token, an id or the answer of the service."""
 
     def __init__(self, step: str, reason: str, status: int = 0, aadsts: int = 0, maybe_sent: bool = False, code: str = "") -> None:
         super().__init__(NOT_RETRIED if maybe_sent else NOT_REPLACED if (step, reason) == ("update", "other") else (REPLACE.get(reason) if step == "update" else None) or REASONS[reason])
@@ -63,9 +63,8 @@ class BotError(Exception):
 
 def _failed(step: str, error: HttpError) -> BotError:
     """What an answer that is not a success means: Teams says in the text of its 403 whether the app is not installed for the person or the person blocked or removed it (Learn, "Send proactive
-    messages"), a 401 or any refusal of the token endpoint is the identity, a 429, a 412 or a 5xx or no answer is waited out, and the rest is a refusal. A refusal keeps the error code word of the answer for the
-    test card (BotError.code). A post whose answer was lost (no answer after the request left the app, a 5xx, a 2xx that is no answer) may have been carried out: `maybe_sent`. A request that never left
-    (no time, no connection: `error.unsent`) was not."""
+    messages"), a 401 or any refusal of the token endpoint is the identity, a 429, a 412 or a 5xx or no answer is waited out, and the rest is a refusal. A post whose answer was lost (no answer after the
+    request left the app, a 5xx, a 2xx that is no answer) may have been carried out: `maybe_sent`. A request that never left (no time, no connection: `error.unsent`) was not."""
     status, said = error.status, str(error)
     if 200 <= status < 300:
         return BotError(step, "other", status, maybe_sent=step == "send")
@@ -74,7 +73,7 @@ def _failed(step: str, error: HttpError) -> BotError:
         return BotError(step, "throttled" if status == 429 else "network", status, maybe_sent=lost)
     if step == "token":
         return BotError(step, "unauthorized", status, int(oauth_error(error)[1] or 0))
-    code = said.partition(f": {status} ")[2].partition(": ")[0]  # http.error_text writes `<method> <host>: <status> <code>: <message>`: the word after the status, and nothing of the message
+    code = said.partition(f": {status} ")[2].partition(": ")[0]  # the word after the status in `<status> <code>: <message>` (http.error_text)
     if status == 403 and ("MessageWritesBlocked" in said or "ConversationBlockedByUser" in said):
         return BotError(step, "blocked", status, code=code)
     if status == 403 and ("ForbiddenOperationException" in said or "BotNotInConversationRoster" in said):
