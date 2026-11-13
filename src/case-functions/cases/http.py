@@ -173,13 +173,14 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def default_transport(method: str, url: str, headers: Mapping[str, str], data: bytes | None, timeout: float) -> tuple[int, Mapping[str, str], bytes]:
+def default_transport(method: str, url: str, headers: Mapping[str, str], data: bytes | None, timeout: float, limit: int | None = None) -> tuple[int, Mapping[str, str], bytes]:
+    """One call. `limit` caps the bytes of the answer that are read (a client that asks for a small answer sets it); without it the whole answer is read."""
     request = urllib.request.Request(url, data=data, headers=dict(headers), method=method)
     try:
         with _OPENER.open(request, timeout=timeout) as response:  # noqa: S310 (the address was checked against the list)
-            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read(limit)
     except urllib.error.HTTPError as error:
-        return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read()
+        return error.code, {k.lower(): v for k, v in error.headers.items()}, error.read(limit)
 
 
 QUOTA_RESETS = re.compile(r"^(\d{1,3}):([0-5]?\d):([0-5]?\d(?:\.\d{1,7})?)$")

@@ -15,7 +15,7 @@ import uuid
 from typing import Callable, Mapping
 
 from . import config as cfg
-from . import delegated, drift, learning, loop_config, people as people_mod, precheck, runner, web, wiring
+from . import delegated, drift, learning, loop_config, offers, people as people_mod, precheck, runner, web, wiring
 from .approvals import Approvals
 from .events import History
 from .families import registry
@@ -82,7 +82,8 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         return drift.run_check("console", env, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch, by=by, started_at=started_at)
 
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker)
+                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker,
+                        teams=lambda: offers.teams_status(settings, store, people, clock()))
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":

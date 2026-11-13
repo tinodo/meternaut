@@ -23,24 +23,35 @@ that was closed is not a card that was sent for a request that is open again: th
 
 `sent` means that the queue took the message; whether the person saw the card, or Teams replaced it, Meternaut cannot tell, which is why the letter is the fallback. Of a try only its outcome is written: no body, no name and no
 figure of the card, and its id is the id of the message.
+
+With TEAMS_DELIVERY=bot (cases/teamsbot.py; the queue stays the default) the same rounds send each card straight to the person through the Bot Connector, with the app's own identity, and nothing goes on the
+queue: `sent` then means that Teams accepted the card, the record `card-posted` is written at once with the activity and the conversation (and the word `bot`, so that a card is replaced only by the way that
+posted it), and a card is replaced by an update of that activity. A person for whom Teams says that the app is not installed, or that it was blocked, is a failed try with that plain reason, tried again
+at most as often as any other, and the other approvers go on; the letter follows after the twenty minutes as ever. A bot way whose settings are missing or wrong is off: no card is tried (loop_config.TeamsWay).
+AGENTS.md rule 25 (no bot) is replaced by the owner's ruling of 2026-11-13 (pending his plain yes) for this way, and nothing here runs unless TEAMS_DELIVERY says bot.
 """
 from __future__ import annotations
 
 import datetime as dt
 import functools
 import logging
+import time
 import uuid
-from typing import Callable
+from collections import Counter
+from typing import Callable, Mapping
 
-from . import cardlinks, cards, quiet, switches, teamsqueue
+from . import cardlinks, cards, loop_config, people as people_mod, quiet, switches, teamsbot, teamsqueue, wiring
 from .brief import Brief, build_brief, contact_text
 from .cards import CardContext, CardError
-from .http import Client
+from .events import History
+from .http import Client, default_transport
+from .identity import Identity
 from .loop_config import LoopSettings
 from .mail import BUDGET_FREE_KINDS, NOT_MESSAGES
-from .memory_store import parse, stamp
+from .memory_store import parse, stamp, utc_now
 from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, MailRecord, PlanRecord, Store
 from .people import People, Person
+from .redact import Redactor
 
 LOG = logging.getLogger("meternaut.teams.offers")
 EPOCH = "2000-01-01T00:00:00Z"
@@ -49,8 +60,10 @@ MAX_TRIES = 12  # and given up after this many tries
 RESULT_DAYS = 3  # the cards about a change are offered for this long after it
 APPROVAL, ADVICE, NOTICE, VERIFIED, FIRST_CONTACT = "approval-card", "advice-card", "notice-card", "verified-card", "first-contact-card"
 POSTED, CLOSED = "card-posted", "card-closed"
+BOT = "bot"  # the last word of the detail of a `card-posted` record that the bot made
 WORKING = ("queued", "running", "unknown")  # an action that is not over
 FREE_KINDS = (APPROVAL, NOTICE, VERIFIED, FIRST_CONTACT)
+CARD_KINDS = (*FREE_KINDS, ADVICE, CLOSED)
 SUMMARY_OF = {APPROVAL: "change", ADVICE: "advice", NOTICE: "result", VERIFIED: "result", FIRST_CONTACT: "first_contact", CLOSED: "closed"}
 LETTER_OF = {APPROVAL: "approval", NOTICE: "notice", VERIFIED: "verified"}
 SWITCHES = ("messages", "all")
@@ -88,9 +101,9 @@ def may_answer(principal, plan: PlanRecord) -> bool:
 
 
 class Offers:
-    def __init__(self, store: Store, people: People, queue: teamsqueue.CardQueue, base_url: str, clock: Callable[[], dt.datetime], redact: Callable[[str], str],
-                 ids: Callable[[], str] = lambda: uuid.uuid4().hex[:12]) -> None:
-        self.store, self.people, self.queue, self.base_url, self.clock, self.redact, self.ids = store, people, queue, base_url, clock, redact, ids
+    def __init__(self, store: Store, people: People, queue: teamsqueue.CardQueue | None, base_url: str, clock: Callable[[], dt.datetime], redact: Callable[[str], str],
+                 ids: Callable[[], str] = lambda: uuid.uuid4().hex[:12], bot: teamsbot.TeamsBot | None = None) -> None:
+        self.store, self.people, self.queue, self.base_url, self.clock, self.redact, self.ids, self.bot = store, people, queue, base_url, clock, redact, ids, bot
 
     # -- the round -----------------------------------------------------------------------------------------------------------------------------
 
@@ -281,9 +294,14 @@ class Offers:
         if plan is None or plan.state in ("open", "approved") or (action is not None and action.state in WORKING) or not self._due(person, CLOSED, plan_id):
             return 0
         brief = build_brief(self.store.case_get(plan.case_id), plan, action, self.store.decisions_of_plan(plan_id), now=now)
+        tried = 0
         for m in posted:
-            self._deliver(person, CLOSED, plan_id, now, lambda: cards.closed_card(brief, self._context(person, plan)), update=m.detail.split()[0])
-        return len(posted)
+            parts = m.detail.split()
+            if (parts[2:] == [BOT]) != (self.bot is not None):
+                continue  # a card that the other way posted is replaced by that way or not at all
+            tried += 1
+            self._deliver(person, CLOSED, plan_id, now, lambda: cards.closed_card(brief, self._context(person, plan)), update=parts[0], conversation=parts[1] if len(parts) > 1 else "")
+        return tried
 
     def _message(self, person: Person, kind: str, delivery_id: str, make_card: Callable[[], dict], make_short: Callable[[], dict] | None, **extra: object) -> tuple[str | None, str]:
         """(the text of the message, a note for the record), or (None, why not). The address is the one that the list of people holds, and nothing else; a card that is too big for its message is
@@ -303,9 +321,11 @@ class Offers:
             return None, f"The card could not be made: {_short(self.redact(str(error)))}"
 
     def _deliver(self, person: Person, kind: str, plan_id: str | None, now: dt.datetime, make_card: Callable[[], dict], make_short: Callable[[], dict] | None = None,
-                 update: str | None = None) -> str:
+                 update: str | None = None, conversation: str = "") -> str:
         """Makes the message, puts it on the queue and writes what came of it. Returns `sent` or `failed`. The card of a request that waits carries the request, so that the flow can say which message it
-        posted; `update` (a Teams message id) makes it a card that replaces that message."""
+        posted; `update` (a Teams message id) makes it a card that replaces that message. With the bot way (`conversation` is the one that holds the message) the card goes straight to Teams instead."""
+        if self.bot is not None:
+            return self._deliver_bot(person, kind, plan_id, now, make_card, make_short, update, conversation)
         delivery_id = self.ids()
         extra = {"request": plan_id} if kind in (APPROVAL, ADVICE) else {"update": update} if update else {}
         text, note = self._message(person, kind, delivery_id, make_card, make_short, **extra)
@@ -317,6 +337,38 @@ class Offers:
         self._record(person, kind, plan_id, now, status, f"{note} {put.detail}".strip(), delivery_id)
         return status
 
+    def _deliver_bot(self, person: Person, kind: str, plan_id: str | None, now: dt.datetime, make_card: Callable[[], dict], make_short: Callable[[], dict] | None, update: str | None,
+                     conversation: str) -> str:
+        """The card goes to the person through the bot (cases/teamsbot.py), or replaces the activity `update` in `conversation`. What came of it is written as the outcome, in the plain words of
+        teamsbot.REASONS; a card of a request that waits is kept at once with the activity and the conversation, so that it can be replaced when the request ends."""
+        delivery_id, note = self.ids(), ""
+        try:
+            try:
+                card = make_card()
+            except cards.CardTooLarge:
+                if make_short is None:
+                    raise
+                card, note = make_short(), SHORT_SENT
+            summary = cards.SUMMARIES[SUMMARY_OF[kind]]
+            if update:
+                self.bot.update(conversation, update, card, summary)  # type: ignore[union-attr]
+            else:
+                conversation, update = self.bot.send(person.oid, card, summary)  # type: ignore[union-attr]
+        except CardError as error:
+            self._record(person, kind, plan_id, now, "failed", f"The card could not be made: {_short(self.redact(str(error)))}", delivery_id)
+            return "failed"
+        except teamsbot.BotError as error:
+            self._record(person, kind, plan_id, now, "failed", str(error), delivery_id)
+            return "failed"
+        self._record(person, kind, plan_id, now, "sent", f"{note} {teamsbot.SENT}".strip(), delivery_id)
+        if kind in (APPROVAL, ADVICE):
+            try:
+                self.store.mail_put(MailRecord(mail_id=self.ids(), oid=person.oid, kind=POSTED, subject="A card was posted", sent_at=stamp(now), status="posted", plan_id=plan_id,
+                                               detail=f"{update} {conversation} {BOT}"))
+            except Exception as error:  # noqa: BLE001 (the card is out: it cannot be replaced later, and that is all)
+                LOG.error(self.redact(f"the ids of a posted card could not be kept: {type(error).__name__}"))
+        return "sent"
+
     def _record(self, person: Person, kind: str, plan_id: str | None, now: dt.datetime, status: str, detail: str, mail_id: str | None = None) -> int:
         record = MailRecord(mail_id=mail_id or self.ids(), oid=person.oid, kind=kind, subject=cards.SUMMARIES[SUMMARY_OF[kind]], sent_at=stamp(now), status=status, plan_id=plan_id,
                             detail=_short(detail))
@@ -327,15 +379,97 @@ class Offers:
         return 1
 
 
+def build_bot(settings: LoopSettings, assertion: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic, clock: Callable[[], dt.datetime]) -> teamsbot.TeamsBot:
+    """The bot of the settings (TEAMS_DELIVERY=bot, complete): `assertion` is the token of the managed identity of the bot for a resource, and the client has a list of calls of its own."""
+    client = teamsbot.new_client(settings.teams, redact, transport=transport, sleep=sleep, monotonic=monotonic)
+    return teamsbot.TeamsBot(settings.teams, assertion, client, clock)
+
+
 def cards_hook(settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
-               clock: Callable[[], dt.datetime]) -> Callable[[], int]:
-    """What the timer calls every minute when the queue is set (TEAMS_CARDS_QUEUE): one round of cards, which returns how many tries it made. It never raises. The queue is in the storage
-    account of the records, and its client has a list of calls of its own that holds the one POST of a message to that queue."""
+               clock: Callable[[], dt.datetime], assertion: Callable[[str], str] | None = None) -> Callable[[], int]:
+    """What the timer calls every minute when the cards are on: one round of cards, which returns how many tries it made. It never raises. The way is the queue (TEAMS_CARDS_QUEUE, in the storage
+    account of the records, with a client of its own whose list of calls holds the one POST of a message to that queue) or, when the settings say TEAMS_DELIVERY=bot and `assertion` is the token of the
+    bot's identity, the bot (build_bot)."""
+    if settings.teams.way == "bot" and assertion is not None:
+        return Offers(store, people, None, settings.base_url, clock, redact, bot=build_bot(settings, assertion, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)).run
     if not settings.cards_queue:
         raise ValueError("no queue is set for the cards")
     client = Client(teamsqueue.queue_calls(settings.store_account, settings.cards_queue), redact, transport=transport, sleep=sleep, monotonic=monotonic)
     queue = teamsqueue.CardQueue(client, token, settings.store_account, settings.cards_queue, redact, clock)
     return Offers(store, people, queue, settings.base_url, clock, redact).run
+
+
+def card_test(env: Mapping[str, str], request_id: str, *, transport=default_transport, sleep=time.sleep, monotonic=time.monotonic, clock: Callable[[], dt.datetime] = utc_now, fetch=None) -> bool:
+    """The proof of the way through the bot, started by the control message `teams-card-test`: one test card (no request, no figure, no name of the estate) to the first person with the role owner,
+    replaced at once by a closing card. The History says only what came of each step (`teams.test.step`: the step, whether it worked, the HTTP status, the number of an error of Microsoft Entra and one
+    plain word for why not) and, at the end, `teams.test.finished`. It sends nothing unless the way is the bot and its settings are complete, and nothing while the switch `messages` or `all` is
+    pulled. It never raises."""
+    redact = Redactor()
+    history = History(uuid.uuid4().hex, request_id, clock, redact)
+
+    def finish(ok: bool, **why: object) -> bool:
+        history.emit("teams.test.finished", ok=ok, **why)
+        return ok
+
+    try:
+        settings = loop_config.load(env)
+        if settings is None or settings.teams.way != "bot":
+            return finish(False, reason="off")
+        people = people_mod.load(env)
+        owner = next(iter(people.with_role("owner")), None)
+        if owner is None:
+            return finish(False, reason="no-owner")
+        options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
+        store = wiring.build_store(settings, Identity(env, **options).token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        if switches.pulled(store, *SWITCHES):
+            return finish(False, reason="held")
+        assertion = Identity({**env, "AZURE_CLIENT_ID": settings.teams.identity_client_id}, **options).token
+        bot = build_bot(settings, assertion, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        contacts, summary = contacts_of(people, owner.oid), cards.SUMMARIES["test"]
+    except Exception as error:  # noqa: BLE001 (a control message is not tried again: the History says that it did not run)
+        LOG.error(redact(f"the test of the Teams cards could not start: {type(error).__name__}"))
+        return finish(False, reason="other")
+
+    def step(name: str, work: Callable[[], object]) -> object:
+        try:
+            found = work()
+        except teamsbot.BotError as error:
+            history.emit("teams.test.step", step=error.step, ok=False, reason=error.reason, **({"status": error.status} if error.status else {}),
+                         **({"aadsts": error.aadsts} if error.aadsts else {}))
+            raise
+        history.emit("teams.test.step", step=name, ok=True, **({"status": bot.status} if bot.status else {}))
+        return found
+
+    try:
+        step("token", bot.token)
+        conversation = str(step("create", lambda: bot.create(owner.oid)))
+        activity = str(step("send", lambda: bot.post(conversation, cards.probe_card(contacts=contacts), summary)))
+        step("update", lambda: bot.update(conversation, activity, cards.probe_card(True, contacts=contacts), summary))
+    except teamsbot.BotError:
+        return finish(False)
+    return finish(True)
+
+
+def teams_status(settings: LoopSettings, store: Store, people: People, now: dt.datetime) -> tuple[str, str]:
+    """The two sentences of the block "Teams cards" of the Operations page: which way the cards go, and what the last try came to. Counts only: no name and no id."""
+    way = settings.teams
+    went = {"bot": "The cards go straight to Teams through the Bot Connector, with the identity of the function app.", "off": way.why}.get(
+        way.way, "The cards go on a queue that a flow of Power Automate reads and posts." if settings.cards_queue else "The Teams cards are off: no queue is set.")
+    try:
+        since = stamp(now - dt.timedelta(days=RESULT_DAYS))
+        latest = [max(tries, key=lambda m: m.sent_at) for tries in ([m for m in store.mails_since(p.oid, since) if m.kind in CARD_KINDS and m.status in ("sent", "failed")]
+                                                                      for p in people.persons) if tries]
+    except Exception as error:  # noqa: BLE001 (the page says that it cannot tell)
+        LOG.error(f"the last result of the Teams cards could not be read: {type(error).__name__}")
+        return went, "Last result: it cannot be read now."
+    if not latest:
+        return went, f"Last result: no card was tried in the last {RESULT_DAYS} days."
+
+    def reason_of(m: MailRecord) -> str:
+        return "ok" if m.status == "sent" else teamsbot.REASON_OF.get(m.detail, "other")
+    newest, refused = reason_of(max(latest, key=lambda m: m.sent_at)), sum(reason_of(m) in ("not-installed", "blocked") for m in latest)
+    said = {"ok": "ok", "unauthorized": "identity error", "network": "no answer from Teams", "throttled": "Teams asked the function app to slow down", "other": "the last card was not sent"}
+    return went, "Last result: " + (said.get(newest) or f"the Teams app is not installed for, or blocked by, {refused} approver{'' if refused == 1 else 's'}") + "."
 
 
 def record_posted(text: str, store: Store, people: People, clock: Callable[[], dt.datetime]) -> str:

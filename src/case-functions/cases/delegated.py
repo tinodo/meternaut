@@ -185,7 +185,7 @@ def explain_stepup(error: str, aadsts: str) -> str:
     return f"Microsoft Entra did not complete it{named}."
 
 
-def _oauth_error(error: HttpError) -> tuple[str, str]:
+def oauth_error(error: HttpError) -> tuple[str, str]:
     """The error name and the AADSTS number in the text of a failed call to the token endpoint (http.error_text keeps those two and nothing else)."""
     found = re.search(r": \d{3} ([a-z_]{3,40})(?: AADSTS(\d{3,7}))?\s*$", str(error))
     return (found.group(1), found.group(2) or "") if found else ("", "")
@@ -213,7 +213,7 @@ class TokenClient:
         except HttpError as error:
             if error.status == 0:
                 raise SigninError("Microsoft Entra did not answer. Nothing is approved. Try again in a few minutes.") from error
-            raise SigninError(explain(*_oauth_error(error))) from error
+            raise SigninError(explain(*oauth_error(error))) from error
         except Refused as error:
             raise SigninError("This app may not call that address. This is a fault on my side. Nothing is approved.") from error
         access, ident = (answer.get("access_token"), answer.get("id_token")) if isinstance(answer, dict) else (None, None)

@@ -63,7 +63,7 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         cfg.load(env)  # the timer runs only while the settings of the app are valid
         options = {"sleep": sleep, **({"fetch": fetch} if fetch else {})}
         reader = Identity(env, **options)
-        extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        extras = wiring.build_extras(env, reader.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock, fetch=fetch)
         if extras is None:
             return None
         check_client = Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
