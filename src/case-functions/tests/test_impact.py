@@ -275,17 +275,49 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertEqual({row[0]: row[1] for row in found["rows"]}["Things that mention its addresses"], "routetables (1)", "a hit is listed even when the control missed: a hit is a fact")
 
     def test_what_a_person_reads_of_a_state_is_what_learn_says_of_it(self):
-        # Learn: only an approved endpoint can send traffic; the owner of the service can change the state later (so a rejected endpoint may have carried traffic); a denied connection cannot be
-        # approved again. None of the sentences claims the opposite.
+        # Learn: only an approved endpoint can send traffic, and the owner of the service can change the state later (so a rejected endpoint may have carried traffic). Learn does not settle whether a
+        # rejected connection can be approved again: "Manage Azure private endpoints" says that a connection that was denied cannot be, and two troubleshooting pages say, for Rejected, to ask the
+        # owner to approve it. So no sentence says either.
         self.assertEqual(impact.STATE_SAYS["rejected"], "The owner of the service rejected it, so it cannot carry traffic now: only an approved endpoint can.")
         for state, text in impact.STATE_SAYS.items():
             with self.subTest(state=state):
-                self.assertNotRegex(text, r"never|again|could approve", "a rejected endpoint may have carried traffic, and Learn says that a denied connection cannot be approved again")
+                self.assertNotRegex(text, r"never|again|could approve|can't be approved|cannot be approved", "a rejected endpoint may have carried traffic, and Learn does not say whether the owner can approve it again")
         azure = Azure()
         arrange("Rejected", events=[written(40, "alice@example.com")])(azure)
         found, _ = check(azure)
         self.assertEqual((found["verdict"], found["reasons"][0]), ("safe", impact.STATE_SAYS["rejected"]))
         self.assertIn("Microsoft says that such an endpoint becomes informative and should be deleted for cleanup.", impact.STATE_SAYS["disconnected"])
+
+    def test_traffic_in_the_window_of_a_rejected_or_disconnected_endpoint_names_its_real_state_and_may_have_come_before_the_change(self):
+        for state in ("Disconnected", "Rejected"):
+            with self.subTest(state=state):
+                azure = Azure()
+                arrange(state, points=days(3))(azure)
+                found, _ = check(azure)
+                word = state.lower()
+                self.assertEqual((found["verdict"], found["complete"]), ("check", True), "traffic means that it is not safe to remove")
+                self.assertEqual(found["reasons"], [f"Azure Monitor counted traffic in the 30 days before Meternaut read it, and the endpoint is {word} now: the connection may have changed inside those 30 days, "
+                                                    "so something may have used it until then."])
+                self.assertNotRegex(" ".join(found["reasons"]), r"although|disagree")
+                self.assertEqual("disconnected" in " ".join(found["reasons"]), state == "Disconnected", "a rejected endpoint is not called disconnected")
+
+    def test_the_public_access_of_a_service_that_was_not_read_is_not_known_and_is_not_just_not_stated(self):
+        def row(azure):
+            return {name: value for name, value, _ in check(azure)[0]["rows"]}["Public access of the service"]
+
+        failed = Azure()
+        failed.fail["service"] = 503
+        refused = Azure()
+        refused.fail["service"] = 403
+        unseen = Azure()
+        del unseen.rows[SERVICE]
+        nameless = Azure()
+        nameless.rows[PE]["properties"]["manualPrivateLinkServiceConnections"] = []
+        silent = Azure()
+        del silent.rows[SERVICE]["properties"]["publicNetworkAccess"]
+        self.assertEqual([row(azure) for azure in (failed, refused, unseen, nameless, silent, Azure())],
+                         ["Not known (the service could not be read)", "Not known (the service could not be read)", "Not known (the service could not be seen)", "Not known (no service is named)",
+                          "Not stated", "Enabled"], "a service that says nothing is 'Not stated'; a service that was not read says that it is not known")
 
     def test_the_words_hold_dates_and_never_yesterday_because_a_page_may_be_opened_days_after_the_read(self):
         azure = Azure()

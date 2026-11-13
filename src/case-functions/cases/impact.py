@@ -41,8 +41,8 @@ LABELS = {"endpoint": "the endpoint itself", "service": "the service that it poi
           "addresses": "the addresses of the endpoint", "dns": "the DNS zone groups of the endpoint", "zone": "the records of its DNS zone", "traffic": "its traffic",
           "log": "its changes in the Activity Log"}
 WORDS = {NOT_VISIBLE: "not visible with this access", UNAVAILABLE: "the read failed"}  # what a read that failed says; any other word of `failed` is its own plain reason
-# Learn ("What is a private endpoint?", "Manage Azure private endpoints", read on 2026-11-13): only an approved endpoint sends traffic; the owner can change the state later, so a rejected endpoint
-# may have carried traffic; a denied connection cannot be approved again, so no sentence says that the owner could.
+# Learn ("What is a private endpoint?", "Manage Azure private endpoints", read on 2026-11-13): only an approved endpoint sends traffic, and the owner can change the state later, so a rejected endpoint
+# may have carried traffic. Learn does not settle whether the owner can approve a rejected connection again (its pages say both), so no sentence here says either.
 STATE_SAYS = {
     "approved": "It is approved, so it can carry traffic.",
     "pending": "It waits for the owner of the service to approve it: somebody asked for it, and removing it drops that request.",
@@ -233,7 +233,7 @@ def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     elif state in ("pending", "unknown"):
         check.append(STATE_SAYS[state])
     elif use == "some":
-        check.append("Azure Monitor counted traffic although it is disconnected: the readings disagree.")
+        check.append(f"Azure Monitor counted traffic in the 30 days before Meternaut read it, and the endpoint is {state} now: the connection may have changed inside those 30 days, so something may have used it until then.")
     if state in ("rejected", "disconnected"):
         if f["serviceSays"] in ("approved", "pending"):
             check.append(f"The service lists it as {f['serviceSays']}, not as {state}: the two disagree.")
@@ -318,7 +318,9 @@ def _private_endpoint(reader: Reader, endpoint: str) -> dict:
              "Azure Resource Graph: the endpoint"],
             ["What the service says about it", {"unlisted": "It does not list this endpoint", "unknown": "It gives no list of its endpoints"}.get(said, said.capitalize()) if seen == "seen"
              else "The service could not be seen" if seen == "unseen" else "No service is named", "Azure Resource Graph: the service"],
-            ["Public access of the service", f["publicAccess"].capitalize() if f["publicAccess"] != "unknown" else "Not stated", "Azure Resource Graph: the service"],
+            ["Public access of the service", f["publicAccess"].capitalize() if f["publicAccess"] != "unknown" else "Not stated" if seen == "seen" else
+             f"Not known ({('the service could not be read' if failed.get('service') in WORDS else 'the service could not be seen') if seen == 'unseen' else 'no service is named'})",
+             "Azure Resource Graph: the service"],
             ["Other endpoints to the service", gap("others", f"{len(rivals)}" + (f" ({', '.join(f'{count} {word}' for word, count in sorted(states.items()))})" if rivals else "")) if service else "Not read",
              "Azure Resource Graph"],
             ["DNS records of the endpoint", gap("dns", (", ".join(sorted(names)[:MAX_NAMES]) + (f"; {len(sharing)} also hold the addresses of others" if sharing else "")) if names else "None found"),
