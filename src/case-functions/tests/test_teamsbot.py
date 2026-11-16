@@ -412,7 +412,8 @@ class TheTimeOfARound(Case):
 
 
 FORBIDDEN = {"error": {"code": "ForbiddenOperationException", "message": "Bot is not installed in user's personal scope"}}
-BAD_ARGUMENT = {"error": {"code": "BadArgument", "message": "Bot is not installed in user's personal scope"}}  # the answer that a Microsoft Q&A thread (2025-01-06) shows for a guest whose personal scope has no app
+BAD_ARGUMENT = {"error": {"code": "BadArgument", "message": "Bot is not installed in user's personal scope"}}  # the answer that a Microsoft Q&A thread (2025-01-06) shows for a guest whose personal scope has no app, and that the live test of 2026-11-16 got
+INVALID_USER = {"error": {"code": "BadArgument", "message": "Invalid user id"}}  # the same code word with other words: a refusal that the app does not list
 ROSTER = {"error": {"code": "BotNotInConversationRoster", "message": "The bot is not part of the conversation roster."}}
 BLOCKED_BY_USER = {"error": {"code": "ConversationBlockedByUser", "message": "User blocked the conversation with the bot."}}
 WRITES_BLOCKED = {"errorCode": 209, "message": "{\n  \"subCode\": \"MessageWritesBlocked\",\n  \"details\": \"Thread is blocked from message writes.\",\n  \"errorCode\": null\n}"}
@@ -432,8 +433,9 @@ CODES = (
 )
 SENTENCE = "Bot is not installed in user's personal scope"
 LONG = "a" * 201  # http.error_text cuts a message at 200 characters, so a longer one reaches the client as its first 200
+SLOW_DOWN = "Slow down and try again later"  # plain words that a refusal would keep, in an answer where the app only waits (a 429, a 412 or a 5xx) or in no answer
 # What the message of an answer is (BotError.detail): the text after `<code>: ` of `<status> <code>: <message>` (cases/http.error_text), or the whole text when there is no code word, and only when it is plain words:
-# an ASCII letter first, then ASCII letters, spaces and a little punctuation, 3 to 200 characters, so that no id, address, URL, number or non-ASCII letter can pass for a sentence.
+# an ASCII letter first, then ASCII letters, spaces and a little punctuation, 3 to 200 characters: no digit, slash, at-sign or non-ASCII letter can pass, and a name or a host name in letters can.
 DETAILS = (
     (BAD_ARGUMENT, SENTENCE), (FORBIDDEN, SENTENCE), (ROSTER, "The bot is not part of the conversation roster."), (BLOCKED_BY_USER, "User blocked the conversation with the bot."),
     ({"error": {"code": "Err", "message": "Not"}}, "Not"), ({"error": {"code": "lowercase", "message": "Not allowed: ask an administrator"}}, "Not allowed: ask an administrator"),
@@ -442,6 +444,9 @@ DETAILS = (
     # a message alone (in the error or not, or a plain text that is not JSON), also one that holds a colon
     ({"message": "Authorization has been denied for this request."}, "Authorization has been denied for this request."), ({"error": {"message": SENTENCE}}, SENTENCE),
     ({"error": {"message": "Not allowed: ask an administrator"}}, "Not allowed: ask an administrator"), (b"Access denied for this request", "Access denied for this request"),
+    # what the pattern cannot tell from plain words: a host name in letters, and a GUID whose digits are all a to f
+    ({"error": {"code": "BadArgument", "message": "host.example.net"}}, "host.example.net"),
+    ({"error": {"code": "BadArgument", "message": "abcdefab-abcd-abcd-abcd-abcdefabcdef"}}, "abcdefab-abcd-abcd-abcd-abcdefabcdef"),
     # no message: a code word alone or with an empty or too short message, no body, an empty body, a body that is not words, a JSON that is not an object, no error at all
     ({"error": {"code": "BadArgument"}}, ""), ({"error": {"code": "BadArgument", "message": ""}}, ""), ({"error": {"code": "BadArgument", "message": "No"}}, ""), (None, ""), (b"", ""),
     (b"<html><body>Forbidden</body></html>", ""), (b"[1, 2]", ""), (WRITES_BLOCKED, ""), ({"statusCode": 403}, ""), ({"error": {}}, ""),
@@ -462,10 +467,14 @@ class WhatEachFailureMeans(Case):
     TABLE = (
         # (step, status, body, reason): what Teams says, and the one plain word for it
         ("create", 403, FORBIDDEN, "not-installed"), ("send", 403, FORBIDDEN, "not-installed"), ("create", 403, ROSTER, "not-installed"),
+        ("create", 403, BAD_ARGUMENT, "not-installed"), ("send", 403, BAD_ARGUMENT, "not-installed"), ("update", 403, BAD_ARGUMENT, "not-installed"),
         ("send", 403, WRITES_BLOCKED, "blocked"), ("send", 403, BLOCKED_BY_USER, "blocked"), ("create", 403, WRITES_BLOCKED, "blocked"),
         ("create", 401, {"message": "Authorization has been denied for this request."}, "unauthorized"), ("send", 401, None, "unauthorized"),
         ("create", 403, {"error": {"code": "NotEnoughPermissions", "message": "x"}}, "other"), ("send", 403, None, "other"), ("create", 404, None, "other"), ("send", 400, {"error": {"code": "BadArgument"}}, "other"),
         ("update", 404, None, "other"), ("update", 400, {"error": {"code": "BadArgument"}}, "other"), ("update", 403, FORBIDDEN, "not-installed"),
+        # the sentence of the live test says "not installed" at a 403 and at no other status, and other words with the same code word are another reason
+        ("create", 403, INVALID_USER, "other"), ("send", 403, INVALID_USER, "other"), ("update", 403, INVALID_USER, "other"),
+        ("create", 400, BAD_ARGUMENT, "other"), ("send", 404, BAD_ARGUMENT, "other"), ("update", 400, BAD_ARGUMENT, "other"), ("update", 404, BAD_ARGUMENT, "other"), ("create", 401, BAD_ARGUMENT, "unauthorized"),
         ("create", 429, None, "throttled"), ("send", 429, None, "throttled"), ("update", 429, None, "throttled"),
         ("create", 500, None, "network"), ("send", 503, None, "network"), ("update", 504, None, "network"),
         ("create", 412, None, "network"), ("send", 412, None, "network"), ("update", 412, None, "network"),
@@ -508,10 +517,25 @@ class WhatEachFailureMeans(Case):
                     self.assertEqual(str(error), str(teamsbot.BotError(step, error.reason, status)), "the code is never part of the sentence")
 
     def test_a_refusal_that_teams_does_not_know_yet_is_other_and_says_its_code_word(self):
-        self.script("create", answer(403, BAD_ARGUMENT))
+        self.script("create", answer(403, INVALID_USER))
         error = self.refused(self.run_step("create"))
         self.assertEqual((error.step, error.reason, error.status, error.code), ("create", "other", 403, "BadArgument"), "no word is added to the classes until the real words are known")
-        self.assertEqual(error.detail, SENTENCE, "and the message of Teams is kept apart, for the History of the test card")
+        self.assertEqual(error.detail, "Invalid user id", "and the message of Teams is kept apart, for the History of the test card")
+
+    def test_the_sentence_that_the_live_test_got_for_an_app_that_is_not_installed_is_that_reason_at_a_403_with_its_code_word_and_words_kept(self):
+        for step, words in (("create", teamsbot.REASONS["not-installed"]), ("send", teamsbot.REASONS["not-installed"]), ("update", teamsbot.REPLACE["not-installed"])):
+            with self.subTest(step=step):
+                self.script(step, answer(403, BAD_ARGUMENT))
+                error = self.refused(self.run_step(step))
+                self.assertEqual((error.step, error.reason, error.status, error.code, error.detail, str(error)), (step, "not-installed", 403, "BadArgument", SENTENCE, words))
+        for message in ("THE APP IS NOT INSTALLED for this user", "The app is Not Installed", "not installed"):
+            with self.subTest(message=message):
+                self.script("create", answer(403, {"error": {"code": "BadArgument", "message": message}}))
+                self.assertEqual(self.refused(self.run_step("create")).reason, "not-installed", "in any case")
+        for status in (400, 401, 404, 500):
+            with self.subTest(status=status):
+                self.script("create", *[answer(status, BAD_ARGUMENT)] * 3)
+                self.assertNotEqual(self.refused(self.run_step("create")).reason, "not-installed", "a 403 only")
 
     def test_the_message_of_a_refusal_is_kept_only_when_it_is_plain_words_and_the_sentence_stays_the_plain_one(self):
         for body, detail in DETAILS:
@@ -522,6 +546,24 @@ class WhatEachFailureMeans(Case):
                     self.assertEqual(error.detail, detail)
                     self.assertEqual(error.args, (str(teamsbot.BotError(step, error.reason, status)),), "the message is never part of the sentence")
                     self.assertFalse(detail and detail in str(error))
+
+    def test_the_message_of_teams_is_not_kept_when_the_app_only_waits_or_gets_no_answer_whatever_the_words(self):
+        self.assertTrue(teamsbot.DETAIL.fullmatch(SLOW_DOWN), "these are words that a refusal keeps")
+        for body in ({"error": {"code": "BadArgument", "message": SLOW_DOWN}}, {"error": {"message": SLOW_DOWN}}, {"message": SLOW_DOWN}, SLOW_DOWN.encode()):
+            self.script("create", answer(403, body))
+            self.assertEqual(self.refused(self.run_step("create")).detail, SLOW_DOWN, "the same words in a refusal are kept")
+            for step in ("create", "send", "update"):
+                for status, reason in ((429, "throttled"), (412, "network"), (503, "network")):
+                    with self.subTest(step=step, status=status, body=str(body)[:50]):
+                        self.script(step, *[answer(status, body, retry_after="3600")] * 3)
+                        error = self.refused(self.run_step(step))
+                        self.assertEqual((error.step, error.reason, error.status, error.code, error.detail), (step, reason, status, "", ""))
+        for step in ("create", "send", "update"):
+            for reply in (answer(0, SLOW_DOWN.encode()), OSError(SLOW_DOWN), TimeoutError(SLOW_DOWN)):
+                with self.subTest(step=step, reply=str(reply)[:50]):
+                    self.script(step, *[reply] * 3)
+                    error = self.refused(self.run_step(step))
+                    self.assertEqual((error.step, error.reason, error.status, error.code, error.detail), (step, "network", 0, "", ""))
 
     def test_a_bot_error_has_a_detail_only_when_it_is_plain_words(self):
         kept = ("Bot", "a" * 200, SENTENCE, "He said “no”, \"no\" and it's not (really) in-scope; why? Because: it’s a test!", "Not allowed: ask an administrator", "A.b-c")

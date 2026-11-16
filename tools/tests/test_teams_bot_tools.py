@@ -591,8 +591,9 @@ class TheTeamsTest(unittest.TestCase):
                 if code in shown:
                     self.assertNotIn(code, out)
 
-    def test_the_sentence_of_teams_is_never_printed_and_one_fixed_sentence_says_where_it_is_only_for_a_code_word_that_the_app_did_not_list(self):
-        plain = "Bot is not installed in user's personal scope"
+    def test_the_sentence_of_teams_is_never_printed_and_one_fixed_sentence_says_where_it_is_after_a_refusal_that_is_another_reason_or_a_401_but_never_at_the_token(self):
+        plain = "Invalid user id"
+        live = "Bot is not installed in user's personal scope"
         hostile = "Maya Fictional maya@example.com 11111111-2222-3333-4444-555555555555 https://smba.trafficmanager.net/teams/v3/conversations/19:abc Bearer abcdefghijklmnop"
 
         def printed(extra, step="create", **fields):
@@ -603,7 +604,7 @@ class TheTeamsTest(unittest.TestCase):
         title = "Create the 1:1 chat with the owner: NOT ok"
         said = tc.SENTENCE_IN_HISTORY
         self.assertEqual((said.count(". "), said.endswith("."), "private History of the function app" in said, "teams.test.step" in said, "field detail" in said), (0, True, True, True, True), "one sentence")
-        private = ("personal scope", "Maya", "Fictional", "maya@example.com", "11111111-2222", "v3/conversations", "19:abc", "Bearer", "abcdefghijklmnop")
+        private = (plain, live, "personal scope", "Maya", "Fictional", "maya@example.com", "11111111-2222", "v3/conversations", "19:abc", "Bearer", "abcdefghijklmnop")
         for detail in (plain, hostile, "", None, 42, ["x"], {"detail": plain}, plain * 5):
             with self.subTest(detail=str(detail)[:30]):
                 out = printed({"code": "BadArgument", "detail": detail}, status=403, reason="other")
@@ -611,27 +612,43 @@ class TheTeamsTest(unittest.TestCase):
                 self.assertEqual(out.count(said), 1, "once for the step")
                 for text in private:
                     self.assertNotIn(text, out)
-        for reason in ("not-installed", "blocked", "unauthorized", "throttled", "network"):
+        for reason in ("not-installed", "blocked", "throttled", "network"):
             with self.subTest(reason=reason):
                 out = printed({"code": "BadArgument", "detail": plain}, status=403, reason=reason)
                 self.assertIn(f"{title} (HTTP 403, 4xx; Microsoft's error code: BadArgument); {tc.REASONS[reason]}.", out)
-                self.assertNotIn(said, out, "the app listed this refusal")
-                self.assertNotIn("personal scope", out)
+                self.assertNotIn(said, out, "the app said what this is")
+                self.assertNotIn(plain, out)
+        out = printed({"code": "BadArgument", "detail": live}, status=403, reason="not-installed")
+        self.assertIn(f"{title} (HTTP 403, 4xx; Microsoft's error code: BadArgument); the Teams app is not installed for the owner.\n", out + "\n", "the line of the live test: a listed refusal, in plain words and no more")
+        self.assertNotIn(said, out)
+        self.assertNotIn("personal scope", out)
         for code in (None, "", "Error42", "Bad_Argument", "Er", 403, hostile):
             with self.subTest(code=str(code)[:30]):
                 out = printed({"code": code, "detail": plain}, status=403, reason="other")
-                self.assertIn(f"{title} (HTTP 403, 4xx); another reason.", out)
-                self.assertNotIn(said, out, "no code word, nothing to look for")
-                self.assertNotIn("personal scope", out)
+                self.assertIn(f"{title} (HTTP 403, 4xx); another reason. {said}\n", out + "\n", "the sentence does not need a code word")
+                self.assertNotIn(plain, out)
+        for step in ("create", "send", "update"):
+            for reason, status in (("other", 403), ("other", 404), ("unauthorized", 401)):
+                for code in ("BadArgument", None):
+                    with self.subTest(step=step, reason=reason, status=status, code=code):
+                        out = printed({"code": code, "detail": plain}, step=step, status=status, reason=reason)
+                        shown = f"HTTP {status}, 4xx" + ("; Microsoft's error code: BadArgument" if code else "")
+                        self.assertIn(f"{tc.STEP_TITLES[step]}: NOT ok ({shown}); {tc.REASONS[reason]}. {said}\n", out + "\n")
+                        self.assertEqual(out.count(said), 1, "once for the step")
+                        self.assertNotIn(plain, out)
+        out = printed({"detail": plain}, status=403)
+        self.assertIn(f"{title} (HTTP 403, 4xx); another reason. {said}\n", out + "\n", "a step with no reason at all is another reason")
         out = printed({"code": "BadArgument", "detail": plain}, status=403, reason=hostile)
         self.assertIn(f"{title} (HTTP 403, 4xx; Microsoft's error code: BadArgument); another reason. {said}", out, "a reason that is not one of the words is another reason")
         self.assertNotIn("Maya", out)
-        out = printed({"code": "BadArgument", "detail": plain}, step="token", status=400, aadsts=700213, reason="other")
-        self.assertNotIn(said, out, "the token step has no sentence of Teams: its number is all there is")
-        self.assertNotIn("personal scope", out)
+        for reason in ("other", "unauthorized", hostile, None):
+            with self.subTest(token_reason=str(reason)[:30]):
+                out = printed({"code": "BadArgument", "detail": plain, **({"reason": reason} if reason else {})}, step="token", status=400, aadsts=700213)
+                self.assertNotIn(said, out, "the token step has no sentence of Teams: its number is all there is")
+                self.assertNotIn(plain, out)
         code, out, _ = self.go(self.World(self, [*self.GOOD[:1], {"step": "create", "ok": True, "status": 201, "detail": plain, "code": "BadArgument"}, *self.GOOD[2:]]), self.OPEN)
         self.assertEqual(code, 0, out)
-        self.assertNotIn("personal scope", out)
+        self.assertNotIn(plain, out)
         self.assertNotIn(said, out)
         source = (ROOT / "tools" / "teams-check.py").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"""(?:get\(|\[)\s*["']detail["']""", source), [], "the tool never reads the field: what it prints cannot hold it")

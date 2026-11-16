@@ -27,7 +27,7 @@ ID = re.compile(r"(?!\.+(?:/|$))[A-Za-z0-9:@._=-]{1,200}")  # an id of Teams in 
 SAFE = re.compile(r"[A-Za-z0-9:@._=/-]+")  # every character that an address of this client may hold: no query, fragment, escape, space or backslash
 TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{20,16000}")
 CODE = re.compile(r"[A-Za-z]{3,48}")  # an error code word: letters alone, so that no id, address or text can pass for one
-DETAIL = re.compile(r"[A-Za-z][A-Za-z ',.:;()?!\"\u2019\u201c\u201d-]{2,199}")  # the message of a refusal, as plain words: no digit, slash, at-sign or symbol, which an id, address, URL or number would need
+DETAIL = re.compile(r"[A-Za-z][A-Za-z ',.:;()?!\"\u2019\u201c\u201d-]{2,199}")  # the message of a refusal, as plain words: no digit, slash or at-sign; a name or a host name in letters can still pass
 MAX_ANSWER = 65536  # the answers are a few hundred bytes
 MIN_POST = 10.0  # a post that has less of the round than this is not made: with a shortened timeout a Connector that is merely slow would be taken for a lost answer, and the card would never be posted
 REFRESH = dt.timedelta(minutes=5)  # a token is asked for again when less than this is left
@@ -54,7 +54,7 @@ REASON_OF = {**{text: reason for reason, text in REASONS.items()}, **{text: reas
 
 class BotError(Exception):
     """A try that did not work, in one plain reason (a key of REASONS). `step` is token, create, send or update, `status` the HTTP status (0: none) and `aadsts` the number that Microsoft Entra
-    gave (0: none). `code` is the error code word of a refusal, when it is letters alone (CODE), and `detail` its message, when it is plain words (DETAIL), for the private History of the test card only.
+    gave (0: none). `code` is the error code word of a refusal, when it is letters alone (CODE), and `detail` its message, when it is plain words (DETAIL), for the test card's private History only.
     `maybe_sent` says that the card was posted and the answer was lost or is no answer, so that the card may
     have arrived. The text is a plain sentence and never holds a token, an id or the answer of the service."""
 
@@ -80,7 +80,7 @@ def _failed(step: str, error: HttpError) -> BotError:
     seen = {"code": code, "detail": message if CODE.fullmatch(code) else rest}
     if status == 403 and ("MessageWritesBlocked" in said or "ConversationBlockedByUser" in said):
         return BotError(step, "blocked", status, **seen)
-    if status == 403 and ("ForbiddenOperationException" in said or "BotNotInConversationRoster" in said):
+    if status == 403 and ("ForbiddenOperationException" in said or "BotNotInConversationRoster" in said or "not installed" in said.lower()):
         return BotError(step, "not-installed", status, **seen)
     return BotError(step, "unauthorized" if status == 401 else "other", status, **seen)
 
