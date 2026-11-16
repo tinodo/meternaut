@@ -64,7 +64,7 @@ The owner is a guest (B2B) of the tenant. Microsoft says that a bot that an *app
 | The way out is blocked | A host gives no answer in the probe, and the token step reports "network". | Ask the landing zone's owners for the two hosts; this is a finding, and the owner decides. |
 | Teams slows the app down | 429. | The app tries again later; a burst of cards is the cause. |
 
-When Teams or the Bot Connector refuses a step, `teams-test` also shows the error code word that Microsoft gave (letters only: no id, address or text of its answer is ever printed), which is how a refusal that is not in this table is found.
+When Teams or the Bot Connector refuses a step, `teams-test` also shows the error code word that Microsoft gave (letters only: no id, address or text of its answer is ever printed), which is how a refusal that is not in this table is found. The sentence that Teams gave with its refusal is kept, when it is plain words (letters, spaces and a little punctuation, never a digit), in the private History of the function app (the line `teams.test.step`, field `detail`) and never in the public log, which says only where to read it.
 
 ## What is not proved until `teams-test` has run
 

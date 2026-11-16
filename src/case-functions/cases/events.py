@@ -23,8 +23,10 @@ LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed"
 INVESTIGATION_KINDS = ("investigation.started", "investigation.finding", "investigation.finished")
 # The lines of the Study (cases\study.py): its start, a note, one line for each claim that code kept and its end.
 STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
-# The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end. Only plain words and numbers: the step, whether it worked,
-# the HTTP status, the number of an error of Microsoft Entra, the error code word of Teams (letters alone) and one word for why not; never an id, a name, an address or a text of Teams.
+# The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end: the step, whether it worked, the HTTP status, the number of an error
+# of Microsoft Entra, the error code word of Teams (letters alone) and one word for why not. A step that Teams refused may also hold `detail`, the message of its refusal, only when it is plain words (letters, spaces
+# and a little punctuation: cases/teamsbot.DETAIL), so never an id, an address, a URL or a number, though it could hold a name in letters. It is for this private History alone: no log of the Hub prints it
+# (tools/teams-check.py), and real cards write no such line (their record keeps one plain reason).
 TEAMS_KINDS = ("teams.test.step", "teams.test.finished")
 
 LOGGER = logging.getLogger("meternaut.history")
