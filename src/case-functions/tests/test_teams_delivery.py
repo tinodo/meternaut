@@ -24,7 +24,7 @@ from cases.redact import Redactor
 from support import REPO_ROOT, LogCapture, fixed_clock
 from test_control import FakeMessage, Recorder
 from test_notify import ENV as LOOP_ENV, Graph
-from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, BAD_ARGUMENT, CODES, CONVERSATION, DETAILS, FORBIDDEN, IDENTITY, SENTENCE, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
+from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, BAD_ARGUMENT, CODES, CONVERSATION, DETAILS, FORBIDDEN, IDENTITY, INVALID_USER, SENTENCE, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
 from test_web_support import Console
 
 SIGNIN = {"SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": "44444444-aaaa-4bbb-8ccc-000000000004", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": "55555555-aaaa-4bbb-8ccc-000000000005"}
@@ -286,6 +286,15 @@ class WhenTeamsSaysNo(unittest.TestCase):
         (maya,), (anna,) = self.world.attempts(cs.MAYA), self.world.attempts(cs.ANNA)
         self.assertEqual((maya.status, maya.detail), ("failed", teamsbot.REASONS["not-installed"]))
         self.assertEqual((anna.status, len(self.world.posted(cs.ANNA)), self.world.posted(cs.MAYA)), ("sent", 1, []))
+
+    def test_the_words_that_the_live_test_got_are_a_person_without_the_app_too_and_the_records_hold_none_of_them(self):
+        self.world.teams.replies["create"] = [answer(403, BAD_ARGUMENT)]
+        self.assertEqual(self.world.run(), 2)
+        (maya,), (anna,) = self.world.attempts(cs.MAYA), self.world.attempts(cs.ANNA)
+        self.assertEqual((maya.status, maya.detail, anna.status), ("failed", teamsbot.REASONS["not-installed"], "sent"))
+        text = json.dumps([dataclasses.asdict(m) for m in self.world.store.mails])
+        for hidden in ("BadArgument", "personal scope"):
+            self.assertNotIn(hidden, text)
 
     def test_a_person_who_blocked_the_app_is_told_apart_and_gets_no_posted_record(self):
         self.world.teams.replies["send"] = [answer(403, WRITES_BLOCKED)]
@@ -756,14 +765,14 @@ class TheTestCard(unittest.TestCase):
         world = BotWorld()
         world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
         world.ready(cs.MAYA)
-        world.teams.replies["create"] = [answer(403, BAD_ARGUMENT)]
+        world.teams.replies["create"] = [answer(403, INVALID_USER)]
         with LogCapture() as capture:
             world.run()
         (record,) = world.attempts()
         self.assertEqual((record.status, record.detail), ("failed", teamsbot.REASONS["other"]))
         kept = json.dumps([dataclasses.asdict(m) for m in world.store.mails]) + "\n".join(capture.messages())
         self.assertNotIn("BadArgument", kept, "the records of the real cards are what they were")
-        self.assertNotIn("personal scope", kept, "and neither the records nor the log of a real card hold the sentence that Teams gave")
+        self.assertNotIn("Invalid user id", kept, "and neither the records nor the log of a real card hold the sentence that Teams gave")
 
     def test_a_step_that_made_no_call_has_no_status(self):
         self.teams.replies = {}
@@ -836,20 +845,24 @@ class TheTestCard(unittest.TestCase):
         lines, passed = read()
         self.assertTrue(passed, lines)
         denied = {"error": "invalid_client", "error_description": "AADSTS700213: x"}
-        for step, status, body, reason, said in (("create", 403, FORBIDDEN, "not-installed", ""), ("send", 403, WRITES_BLOCKED, "blocked", ""), ("create", 401, None, "unauthorized", ""),
-                                                 ("send", 429, None, "throttled", ""), ("update", 404, None, "other", ""), ("create", 503, None, "network", ""),
-                                                 ("token", 400, denied, "unauthorized", "AADSTS700213")):
+        for step, status, body, reason, said, pointer in (("create", 403, FORBIDDEN, "not-installed", "", False), ("send", 403, WRITES_BLOCKED, "blocked", "", False), ("create", 401, None, "unauthorized", "", True),
+                                                          ("send", 429, None, "throttled", "", False), ("update", 404, None, "other", "", True), ("create", 503, None, "network", "", False),
+                                                          ("token", 400, denied, "unauthorized", "AADSTS700213", False)):
             with self.subTest(step=step, status=status):
                 lines, passed = read(**{step: [answer(status, body, retry_after="3600")] * 3})
                 self.assertFalse(passed)
                 self.assertTrue(any(check.STEP_TITLES[step] in line and "NOT ok" in line and said in line and check.REASONS[reason] in line for line in lines), lines)
                 self.assertNotIn("personal scope", "\n".join(lines), "what the app keeps as `detail` is never printed")
-                self.assertNotIn(check.SENTENCE_IN_HISTORY, "\n".join(lines), "no sentence for a refusal that the app listed or that has no code word")
+                self.assertEqual(check.SENTENCE_IN_HISTORY in "\n".join(lines), pointer, "the sentence that says where Teams' own sentence is comes after another reason or a 401, never at the token or for a reason that the app listed")
         lines, passed = read(create=[answer(403, BAD_ARGUMENT)])
         self.assertFalse(passed)
-        self.assertTrue(any(check.STEP_TITLES["create"] in line and "NOT ok (HTTP 403, 4xx; Microsoft's error code: BadArgument); " + check.REASONS["other"] in line for line in lines), lines)
-        self.assertTrue(any(line.endswith(f"{check.REASONS['other']}. {check.SENTENCE_IN_HISTORY}") for line in lines), "an unlisted code word comes with the one sentence that says where Teams' own sentence is")
+        self.assertIn(f"  {check.STEP_TITLES['create']}: NOT ok (HTTP 403, 4xx; Microsoft's error code: BadArgument); {check.REASONS['not-installed']}.", lines, "the words of the live test: a listed refusal, said in plain words and no more")
+        self.assertNotIn(check.SENTENCE_IN_HISTORY, "\n".join(lines))
         self.assertNotIn("personal scope", "\n".join(lines), "the History line of the app carries the sentence, and the tool does not print it")
+        lines, passed = read(create=[answer(403, INVALID_USER)])
+        self.assertFalse(passed)
+        self.assertIn(f"  {check.STEP_TITLES['create']}: NOT ok (HTTP 403, 4xx; Microsoft's error code: BadArgument); {check.REASONS['other']}. {check.SENTENCE_IN_HISTORY}", lines, "a refusal that the app did not list comes with the one sentence")
+        self.assertNotIn("Invalid user id", "\n".join(lines), "the History line of the app carries the sentence, and the tool does not print it")
         lines, _ = read(create=[answer(403, {"error": {"code": TENANT, "message": "x"}})])
         self.assertEqual([line for line in lines if "error code" in line], [], "a code that is not letters alone is never printed")
         no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
