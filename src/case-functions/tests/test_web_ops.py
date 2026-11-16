@@ -41,7 +41,7 @@ class TheOperationsPage(unittest.TestCase):
         self.assertEqual((run["Trigger"], run["Result"], run["Findings"], run["Proposed"], run["Needs a person"], run["Errors"]), ("timer", "OK", "3", "3", "0", "0"))
         self.assertIn("On its own, nothing: Meternaut holds no right to change Azure. When a person approves a change, Meternaut makes that one change "
                       f"with their own permissions. The code makes only this change: {ACTS_ON}.", self.reply.content)
-        self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/pause", "/ops/two-people", "/ops/runs", "/ops/permissions"])
+        self.assertEqual([l for l in self.reply.links() if l.startswith("/ops")], ["/ops", "/ops/savings", "/ops/pause", "/ops/two-people", "/ops/runs", "/ops/savings", "/ops/permissions"])
 
     def test_the_state_of_a_pulled_switch_is_in_words(self):
         self.console.store.switch_put(SwitchRecord("changes", True, "Otto", at(minutes=-5), "drill"))

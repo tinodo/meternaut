@@ -10,9 +10,10 @@ from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, De
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
-from .layout import code, nowrap, paragraph, summary
+from .layout import code, kpi, nowrap, paragraph, summary
 
 T = TypeVar("T")
+MORE = " Not complete: there may be more."  # ends a tile's note when its figure was read in part
 
 
 def read(fn: Callable[[], T], default: T) -> tuple[T, bool]:
@@ -41,6 +42,26 @@ def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, acti
     (look_at): when it says that the change would be refused, the brief has no answer that approves."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
     return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready)
+
+
+def verified_brief(ctx: Ctx, plan: PlanRecord | None, action: ActionRecord | None) -> Brief | None:
+    """The brief of a change whose saving Cost Management confirmed (the level Verified), or None: what code measured after the change, never what was expected."""
+    if plan is None or action is None or action.state != "verified":
+        return None
+    brief = brief_of(ctx, plan, None, action=action)
+    return brief if brief.saving.level == "Verified" and brief.saving.monthly else None
+
+
+def counted(n: int, noun: str) -> str:
+    return f"{n:,} {noun}{'' if n == 1 else 's'}"
+
+
+def measured_tile(total: float, count: int, lower: bool = False) -> Safe:
+    """The tile "Saving measured": what Cost Management confirmed after changes; `lower` when what was read may be only a part of them."""
+    if total <= 0:
+        return kpi("Saving measured", "—", "", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change." + (MORE if lower else ""))
+    note = f"{dollars(total)} a month, confirmed by Cost Management after {counted(count, 'change')}."
+    return kpi("Saving measured", a_year(total) + ("+" if lower else ""), "a year", note + (MORE if lower else ""), True)
 
 
 def look_at(ctx: Ctx, plan: PlanRecord) -> Readiness | None:
@@ -190,15 +211,20 @@ def confidence(value: object) -> str:
     return f"{value:.2f}" if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else "none"
 
 
+def figure_cell(label: str, monthly: float, note: str, lead: str = "") -> Safe:
+    """A figure in a cell: the year, then its level, the month and its basis (rule 13)."""
+    return fmt('{lead}{year} a year<br><span class="muted">{label}. {month} a month. {note}</span>', lead=lead, year=a_year(monthly), label=label, month=dollars(monthly), note=note)
+
+
 def saving_cell(ctx: Ctx, case: CaseRecord) -> Safe:
     """What a finding would save, said as the pages of the guide say it and from the same code: the figure a year, then its level, the month and its basis; or what it costs; or why no
-    figure can be shown. A figure never stands without its level and its basis (rule 13)."""
+    figure can be shown."""
     brief = brief_of(ctx, None, case)
     figure = figure_for([brief], [cost_of(brief, case)])
     note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
     if figure.monthly is None:
         return fmt('{label}<br><span class="muted">{note}</span>', label=figure.label, note=note)
-    return fmt('{year} a year<br><span class="muted">{label}. {month} a month. {note}</span>', year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note)
+    return figure_cell(figure.label, figure.monthly, note)
 
 
 CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "What it would save", "Last updated", "Page"]

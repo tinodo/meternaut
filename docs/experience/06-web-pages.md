@@ -14,6 +14,7 @@ Every page is a render of the decision brief, which lets a stranger answer eight
 | **What I know about your resources** `/me/notes` | Owners | Read, edit, expire and delete notes; do-not-touch marks | Nothing |
 | **Settings** `/me/settings` | Each person | Channel, quiet hours, the most messages a week, "Pause messages"; export and delete | Nothing |
 | **Operations** `/ops`, `/ops/runs` | The platform team | The switches, the runs and the cases | Never: no message links here |
+| **Savings found** `/ops/savings` | The platform team and the owner | Every saving that was found, by what became of it | Never: no message links here |
 | **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 

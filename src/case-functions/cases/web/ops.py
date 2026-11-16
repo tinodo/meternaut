@@ -87,7 +87,7 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
     else:
         parts.append(table("latest-runs", "The five latest runs, newest first", LATEST_RUNS,
                            [[nowrap(ctx.when(r.started_at)), r.trigger, run_result(r), count(r.cases), count(r.proposed), count(r.needs_human), count(r.errors)] for r in runs]))
-    parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")),
+    parts += [paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")), paragraph(link(ctx.url("/ops/savings"), "Every saving that was found")),
               Safe("<h2>The drift check</h2>"), *_drift_section(ctx),
               *_teams_section(ctx),
               Safe("<h2>What people answered before</h2>"), *_answers_section(ctx),

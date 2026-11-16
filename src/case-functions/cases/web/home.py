@@ -15,7 +15,8 @@ from typing import Mapping, Sequence
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import brief_of, cases_by_id, decisions_for, effective_state, is_expired, may_answer, read
+from .common import (brief_of, cases_by_id, counted as _count, decisions_for, effective_state, is_expired, may_answer, measured_tile, read,
+                     verified_brief)
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
                       use_block)
@@ -246,10 +247,6 @@ def _lane(ctx: Ctx, anchor: str, title: str, blurb: str, units: Sequence[Unit], 
                title=title, blurb=blurb, first=first, items=items)
 
 
-def _count(n: int, noun: str) -> str:
-    return f"{n} {noun}{'' if n == 1 else 's'}"
-
-
 def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
     saves = [u for u in units if u.figure.state == "save"]
     costs = [u for u in units if u.figure.state == "cost" and u.figure.counts]
@@ -258,10 +255,7 @@ def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
              if saves else kpi("Ready to save", "—", "", "No saving is known yet."))
     under = (kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year", f"{_count(len(costs), 'decision')} · saving not measured. Cost Management, 30 days.")  # type: ignore[misc]
              if costs else kpi("Cost under review", "—", "", "Nothing is under review."))
-    total, count = measured
-    done = (kpi("Saving measured", a_year(total), "a year", f"{dollars(total)} a month, confirmed by Cost Management after {_count(count, 'change')}.", True)
-            if total > 0 else kpi("Saving measured", "—", "", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change."))
-    return kpis(ready, under, done)
+    return kpis(ready, under, measured_tile(*measured))
 
 
 def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:
@@ -358,11 +352,9 @@ def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, Actio
     """What Cost Management confirmed after the changes of this person's requests, a month, and after how many changes: what code measured, never what was expected."""
     total, count = 0.0, 0
     for plan in plans:
-        action = actions.get(plan.plan_id)
-        if action is not None and action.state == "verified" and may_answer(ctx.principal, plan):  # type: ignore[arg-type]
-            saving = brief_of(ctx, plan, None, action=action).saving
-            if saving.level == "Verified" and saving.monthly:
-                total, count = total + saving.monthly, count + 1
+        brief = verified_brief(ctx, plan, actions.get(plan.plan_id)) if may_answer(ctx.principal, plan) else None  # type: ignore[arg-type]
+        if brief is not None:
+            total, count = total + brief.saving.monthly, count + 1  # type: ignore[operator]
     return total, count
 
 
