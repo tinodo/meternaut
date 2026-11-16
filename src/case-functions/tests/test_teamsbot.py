@@ -430,6 +430,32 @@ CODES = (
     ({"error": {"code": "person@example.com", "message": "x"}}, ""), ({"error": {"code": "Forbiddén", "message": "x"}}, ""), ({"error": {"code": "Привет", "message": "x"}}, ""),
     ({"error": {"code": "ＢadArgument", "message": "x"}}, ""), ({"error": {"code": "Bad\nArgument", "message": "x"}}, ""), ({"error": {"code": 403, "message": "x"}}, ""),
 )
+SENTENCE = "Bot is not installed in user's personal scope"
+LONG = "a" * 201  # http.error_text cuts a message at 200 characters, so a longer one reaches the client as its first 200
+# What the message of an answer is (BotError.detail): the text after `<code>: ` of `<status> <code>: <message>` (cases/http.error_text), or the whole text when there is no code word, and only when it is plain words:
+# an ASCII letter first, then ASCII letters, spaces and a little punctuation, 3 to 200 characters, so that no id, address, URL, number or non-ASCII letter can pass for a sentence.
+DETAILS = (
+    (BAD_ARGUMENT, SENTENCE), (FORBIDDEN, SENTENCE), (ROSTER, "The bot is not part of the conversation roster."), (BLOCKED_BY_USER, "User blocked the conversation with the bot."),
+    ({"error": {"code": "Err", "message": "Not"}}, "Not"), ({"error": {"code": "lowercase", "message": "Not allowed: ask an administrator"}}, "Not allowed: ask an administrator"),
+    ({"error": {"code": "BadArgument", "message": "He said “no”, \"no\" and it's not (really) in-scope; why? Because: it’s a test!"}}, "He said “no”, \"no\" and it's not (really) in-scope; why? Because: it’s a test!"),
+    ({"error": {"code": "BadArgument", "message": LONG}}, "a" * 200), ({"error": {"code": "BadArgument", "message": "a" * 200}}, "a" * 200),
+    # a message alone (in the error or not, or a plain text that is not JSON), also one that holds a colon
+    ({"message": "Authorization has been denied for this request."}, "Authorization has been denied for this request."), ({"error": {"message": SENTENCE}}, SENTENCE),
+    ({"error": {"message": "Not allowed: ask an administrator"}}, "Not allowed: ask an administrator"), (b"Access denied for this request", "Access denied for this request"),
+    # no message: a code word alone or with an empty or too short message, no body, an empty body, a body that is not words, a JSON that is not an object, no error at all
+    ({"error": {"code": "BadArgument"}}, ""), ({"error": {"code": "BadArgument", "message": ""}}, ""), ({"error": {"code": "BadArgument", "message": "No"}}, ""), (None, ""), (b"", ""),
+    (b"<html><body>Forbidden</body></html>", ""), (b"[1, 2]", ""), (WRITES_BLOCKED, ""), ({"statusCode": 403}, ""), ({"error": {}}, ""),
+    # a message that is not plain words is dropped whole: a digit, an address or a URL (a colon and a slash), a GUID, an e-mail address, an underscore, any other symbol, a letter of another alphabet or
+    # an accent, and a first character that is not an ASCII letter (the line breaks and tabs of a message are made spaces by http.error_text)
+    ({"error": {"code": "BadArgument", "message": "The bot was blocked 3 times"}}, ""), ({"error": {"code": "BadArgument", "message": "See https://aka.ms/teams for help"}}, ""),
+    ({"error": {"code": "BadArgument", "message": f"User {TENANT} is not known"}}, ""), ({"error": {"code": "BadArgument", "message": "Ask person@example.com for help"}}, ""),
+    ({"error": {"code": "BadArgument", "message": "The bot_id is wrong"}}, ""), ({"error": {"code": "BadArgument", "message": "Not allowed here (see the % sign)"}}, ""),
+    *[({"error": {"code": "BadArgument", "message": f"Not allowed {char} here"}}, "") for char in "/\\@%=_[]<>{}|&*#$+~^`…—‘Ø"],
+    ({"error": {"code": "BadArgument", "message": "Forbiddén for this person"}}, ""), ({"error": {"code": "BadArgument", "message": "Привет"}}, ""), ({"error": {"code": "BadArgument", "message": "ＢadArgument"}}, ""),
+    ({"error": {"code": "BadArgument", "message": "(Not) allowed"}}, ""), ({"error": {"code": "BadArgument", "message": "\"Not\" allowed"}}, ""), ({"error": {"code": "BadArgument", "message": "- Not allowed"}}, ""),
+    ({"error": {"code": "Bad_Argument", "message": "Not allowed"}}, ""), ({"error": {"code": "Error42", "message": "Not allowed"}}, ""), ({"error": {"code": TENANT, "message": "Not allowed"}}, ""),
+    ({"error": {"code": 403, "message": SENTENCE}}, ""),
+)
 
 
 class WhatEachFailureMeans(Case):
@@ -485,14 +511,34 @@ class WhatEachFailureMeans(Case):
         self.script("create", answer(403, BAD_ARGUMENT))
         error = self.refused(self.run_step("create"))
         self.assertEqual((error.step, error.reason, error.status, error.code), ("create", "other", 403, "BadArgument"), "no word is added to the classes until the real words are known")
+        self.assertEqual(error.detail, SENTENCE, "and the message of Teams is kept apart, for the History of the test card")
+
+    def test_the_message_of_a_refusal_is_kept_only_when_it_is_plain_words_and_the_sentence_stays_the_plain_one(self):
+        for body, detail in DETAILS:
+            for step, status in (("create", 403), ("send", 403), ("update", 403), ("create", 401), ("send", 400), ("update", 404)):
+                with self.subTest(step=step, status=status, body=str(body)[:50]):
+                    self.script(step, *[answer(status, body)] * 3)
+                    error = self.refused(self.run_step(step))
+                    self.assertEqual(error.detail, detail)
+                    self.assertEqual(error.args, (str(teamsbot.BotError(step, error.reason, status)),), "the message is never part of the sentence")
+                    self.assertFalse(detail and detail in str(error))
+
+    def test_a_bot_error_has_a_detail_only_when_it_is_plain_words(self):
+        kept = ("Bot", "a" * 200, SENTENCE, "He said “no”, \"no\" and it's not (really) in-scope; why? Because: it’s a test!", "Not allowed: ask an administrator", "A.b-c")
+        dropped = ("", "Ab", "a" * 201, "1 bot", " Bot", "(Bot) is here", "-Bot", "'Bot' is here", "Bot 1", "Bot/Bot", "Bot\\Bot", "Bot@Bot", "Bot%", "Bot=1", "Bot_Bot", "Bot[1]", "Bot<1>", "Bot{1}", "Bot\nBot",
+                   "Bot\tBot", "Bot\r\n", "Forbiddén", "Привет", "ＢotBot", "Bot…", "Bot—Bot", "Bot‘s", TENANT, "https://smba.trafficmanager.net/teams", "person@example.com")
+        self.assertEqual([teamsbot.BotError("create", "other", 403, detail=text).detail for text in kept], list(kept))
+        self.assertEqual({teamsbot.BotError("create", "other", 403, detail=text).detail for text in dropped}, {""})
+        self.assertEqual(teamsbot.BotError("create", "other", 403).detail, "")
+        self.assertEqual(teamsbot.BotError("create", "other", 403, detail=SENTENCE).args, (teamsbot.REASONS["other"],))
 
     def test_the_token_step_keeps_its_number_and_has_no_code_word(self):
-        for body in ({"error": "invalid_client", "error_description": "AADSTS700213: x"}, {"error": {"code": "BadArgument", "message": "x"}}):
+        for body in ({"error": "invalid_client", "error_description": "AADSTS700213: x"}, {"error": {"code": "BadArgument", "message": "x"}}, {"error": {"code": "BadArgument", "message": SENTENCE}}):
             with self.subTest(body=str(body)[:40]):
                 self.clock.advance(minutes=5)
                 self.script("token", answer(400, body))
                 error = self.refused(self.bot.token)
-                self.assertEqual((error.step, error.reason, error.code, error.aadsts), ("token", "unauthorized", "", 700213 if "error_description" in body else 0))
+                self.assertEqual((error.step, error.reason, error.code, error.detail, error.aadsts), ("token", "unauthorized", "", "", 700213 if "error_description" in body else 0))
 
     def test_a_bot_error_has_a_code_only_when_it_is_given_one_that_is_letters_alone(self):
         found = [teamsbot.BotError("create", "other", 403, code=code).code for code in ("BadArgument", "Bad Argument", TENANT, "A" * 49, "")]

@@ -21,7 +21,8 @@ run     The probe, and then the test card: puts the control message teams-card-t
           send             the test card, posted in that chat
           update           the card replaced by the closing card
         A step that Teams or the Bot Connector refused also says Microsoft's error code word, which is how a refusal that nobody listed is found: only when it is letters alone (3 to 48 of them, checked here
-        again, because the History is not trusted), so that no id, address or text of the answer can pass for it.
+        again, because the History is not trusted), so that no id, address or text of the answer can pass for it. For a refusal that the app did not list (the reason "another reason") the line ends with one
+        fixed sentence that says where Teams' own sentence is: the History line of the app may hold it as `detail`, in plain words, and this tool never reads that field, so it is never printed here.
         The test card goes to the first person of the list of people who has the role owner, whatever TEAMS_DELIVERY says, so that the bot is proved before it is switched on. When the app sent nothing at all, its
         last line says why in one word (the Teams settings or the sign-in settings of the function app are incomplete, there is no owner, a switch of the owner, messages or all, holds the cards, or its
         settings could not be read), and the tool says it in plain words.
@@ -83,6 +84,9 @@ STEP_TITLES = {
 PROBE_SECONDS = 15
 # Microsoft's error code word, as the app keeps it (cases/teamsbot.CODE): printed only when it is this again, because the History is not trusted and the log of the Hub is public.
 CODE_WORD = re.compile(r"[A-Za-z]{3,48}")
+# The one sentence after the code word of a refusal that the app did not list (the reason "other"): where the message of Teams is. The History line may hold it as `detail` (cases/teamsbot.DETAIL: plain words), and
+# this tool never reads that field, so that no word of it, a name for one, can reach a public log.
+SENTENCE_IN_HISTORY = "The sentence that Teams gave is not printed here; when it is plain words it is in the private History of the function app (event teams.test.step, field detail)."
 
 
 def status_word(status: int) -> str:
@@ -187,11 +191,12 @@ def step_line(step: str, event: dict | None) -> tuple[str, bool]:
     if status:
         detail.append(f"HTTP {status}, {status_word(status)}")
     shown = ", ".join(detail)
-    word = event.get("code")
+    reason = event.get("reason") if event.get("reason") in REASONS else "other"
+    word, unlisted = event.get("code"), False
     if isinstance(word, str) and CODE_WORD.fullmatch(word):
         shown += ("; " if shown else "") + f"Microsoft's error code: {word}"
-    reason = event.get("reason") if event.get("reason") in REASONS else "other"
-    return f"{title}: NOT ok" + (f" ({shown})" if shown else "") + f"; {REASONS[reason]}.", False
+        unlisted = reason == "other" and step != "token"
+    return f"{title}: NOT ok" + (f" ({shown})" if shown else "") + f"; {REASONS[reason]}." + (f" {SENTENCE_IN_HISTORY}" if unlisted else ""), False
 
 
 def result_lines(events: list[dict]) -> tuple[list[str], bool]:

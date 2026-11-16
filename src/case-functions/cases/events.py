@@ -23,8 +23,9 @@ LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed"
 INVESTIGATION_KINDS = ("investigation.started", "investigation.finding", "investigation.finished")
 # The lines of the Study (cases\study.py): its start, a note, one line for each claim that code kept and its end.
 STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
-# The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end. Only plain words and numbers: the step, whether it worked,
-# the HTTP status, the number of an error of Microsoft Entra, the error code word of Teams (letters alone) and one word for why not; never an id, a name, an address or a text of Teams.
+# The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end: the step, whether it worked, the HTTP status, the number of an error
+# of Microsoft Entra, the error code word of Teams (letters alone), one word for why not and, for a refusal, `detail`: Teams' message, only when it is plain words (cases/teamsbot.DETAIL: letters, spaces and a
+# little punctuation, so no id, address or number, though a name could pass). For this private History alone: tools/teams-check.py never prints it, and real cards write no such line.
 TEAMS_KINDS = ("teams.test.step", "teams.test.finished")
 
 LOGGER = logging.getLogger("meternaut.history")

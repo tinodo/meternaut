@@ -24,7 +24,7 @@ from cases.redact import Redactor
 from support import REPO_ROOT, LogCapture, fixed_clock
 from test_control import FakeMessage, Recorder
 from test_notify import ENV as LOOP_ENV, Graph
-from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, BAD_ARGUMENT, CODES, CONVERSATION, FORBIDDEN, IDENTITY, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
+from test_teamsbot import ACCESS, ACTIVITY, APP, ASSERTION, BAD_ARGUMENT, CODES, CONVERSATION, DETAILS, FORBIDDEN, IDENTITY, SENTENCE, TENANT, WAY, WRITES_BLOCKED, FakeTeams, answer
 from test_web_support import Console
 
 SIGNIN = {"SIGNIN_TENANT_ID": TENANT, "SIGNIN_CLIENT_ID": "44444444-aaaa-4bbb-8ccc-000000000004", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID": "55555555-aaaa-4bbb-8ccc-000000000005"}
@@ -645,7 +645,7 @@ class TheBlockOfTheOperationsPage(unittest.TestCase):
 class TheTestCard(unittest.TestCase):
     OWNER = "aaaaaaaa-1111-4222-8333-444444444444"  # the owner of test_notify.ENV
     ID = "a" * 32
-    ALLOWED = {"v", "ts", "runId", "requestId", "type", "step", "ok", "status", "aadsts", "code", "reason"}
+    ALLOWED = {"v", "ts", "runId", "requestId", "type", "step", "ok", "status", "aadsts", "code", "detail", "reason"}
 
     def setUp(self):
         self.teams, self.clock, self.asked = FakeTeams(), cs.Moving(), []
@@ -661,7 +661,8 @@ class TheTestCard(unittest.TestCase):
         env = {name: value for name, value in env.items() if value is not None}
         with mock.patch.object(wiring, "build_store", return_value=self.store), LogCapture() as capture:
             ok = offers.card_test(env, request_id or self.ID, transport=self.teams, sleep=lambda s: None, monotonic=lambda: 0.0, clock=self.clock, fetch=self.fetch)
-        return ok, capture.events(), "\n".join(capture.messages())
+        self.messages = capture.messages()
+        return ok, capture.events(), "\n".join(self.messages)
 
     def test_it_sends_one_test_card_to_the_owner_and_replaces_it_with_a_closing_card(self):
         ok, events, text = self.run_test()
@@ -711,7 +712,34 @@ class TheTestCard(unittest.TestCase):
                 (line,) = [e for e in events if e["type"] == "teams.test.step" and e["step"] == "create"]
                 self.assertEqual((ok, line["ok"], line["status"], line.get("code"), "code" in line), (False, False, 403, code or None, bool(code)))
                 self.assertLessEqual(set(line), self.ALLOWED)
-                self.assertNotRegex(text, r"https?:|@|[0-9a-f]{8}-[0-9a-f]{4}-|personal scope|Bot is not|Authorization has been|Access denied|html|subCode")
+                elsewhere = text.replace(json.dumps(line["detail"])[1:-1], "") if "detail" in line else text  # the one place for the plain words of the message is the `detail` of this line
+                self.assertNotRegex(elsewhere, r"https?:|@|[0-9a-f]{8}-[0-9a-f]{4}-|personal scope|Bot is not|Authorization has been|Access denied|html|subCode")
+
+    @staticmethod
+    def strings_of(body):
+        """Every text that an answer of the fake carries, to look for in the log."""
+        if isinstance(body, dict):
+            return [text for value in body.values() for text in TheTestCard.strings_of(value)]
+        return [body.decode("utf-8")] if isinstance(body, bytes) else [body] if isinstance(body, str) else []
+
+    def test_a_step_that_teams_refused_keeps_the_plain_words_of_its_message_in_its_line_of_the_history_and_in_no_other_line_of_the_log(self):
+        for body, detail in DETAILS:
+            with self.subTest(body=str(body)[:50]):
+                self.fresh()
+                self.teams.replies = {"create": [answer(403, body)]}
+                ok, events, text = self.run_test()
+                (line,) = [e for e in events if e["type"] == "teams.test.step" and e["step"] == "create"]
+                self.assertEqual((ok, line.get("detail"), "detail" in line), (False, detail or None, bool(detail)))
+                self.assertLessEqual(set(line), self.ALLOWED)
+                self.assertEqual([e["type"] for e in events if "detail" in e], ["teams.test.step"] * bool(detail), "no other line of the test carries it")
+                escaped = json.dumps(detail)[1:-1]
+                carrying = [message for message in self.messages if detail and escaped in message]
+                self.assertEqual(len(carrying), bool(detail), "one line of the log holds the sentence, and it is the one of the step")
+                self.assertTrue(all(message.startswith(history.EVENT_PREFIX) and '"type":"teams.test.step"' in message for message in carrying), carrying)
+                elsewhere = text.replace(escaped, "") if detail else text
+                for said in self.strings_of(body):
+                    self.assertFalse(len(said) > 12 and said != line.get("code") and said in elsewhere, f"{said!r} is in the log")
+                self.assertNotRegex(elsewhere, r"https?:|@|[0-9a-f]{8}-[0-9a-f]{4}-|bot_id|% sign|blocked 3|html|subCode")
 
     def test_the_token_step_says_its_number_and_no_code_word_and_a_step_that_went_well_none_either(self):
         for body in ({"error": "invalid_client", "error_description": "AADSTS700213: x"}, {"error": {"code": "BadArgument", "message": "x"}}):
@@ -729,10 +757,13 @@ class TheTestCard(unittest.TestCase):
         world.open_plan(cs.advice_plan(expires_at="2026-12-01T00:00:00Z"))
         world.ready(cs.MAYA)
         world.teams.replies["create"] = [answer(403, BAD_ARGUMENT)]
-        world.run()
+        with LogCapture() as capture:
+            world.run()
         (record,) = world.attempts()
         self.assertEqual((record.status, record.detail), ("failed", teamsbot.REASONS["other"]))
-        self.assertNotIn("BadArgument", json.dumps([dataclasses.asdict(m) for m in world.store.mails]), "the records of the real cards are what they were")
+        kept = json.dumps([dataclasses.asdict(m) for m in world.store.mails]) + "\n".join(capture.messages())
+        self.assertNotIn("BadArgument", kept, "the records of the real cards are what they were")
+        self.assertNotIn("personal scope", kept, "and neither the records nor the log of a real card hold the sentence that Teams gave")
 
     def test_a_step_that_made_no_call_has_no_status(self):
         self.teams.replies = {}
@@ -812,9 +843,13 @@ class TheTestCard(unittest.TestCase):
                 lines, passed = read(**{step: [answer(status, body, retry_after="3600")] * 3})
                 self.assertFalse(passed)
                 self.assertTrue(any(check.STEP_TITLES[step] in line and "NOT ok" in line and said in line and check.REASONS[reason] in line for line in lines), lines)
+                self.assertNotIn("personal scope", "\n".join(lines), "what the app keeps as `detail` is never printed")
+                self.assertNotIn(check.SENTENCE_IN_HISTORY, "\n".join(lines), "no sentence for a refusal that the app listed or that has no code word")
         lines, passed = read(create=[answer(403, BAD_ARGUMENT)])
         self.assertFalse(passed)
         self.assertTrue(any(check.STEP_TITLES["create"] in line and "NOT ok (HTTP 403, 4xx; Microsoft's error code: BadArgument); " + check.REASONS["other"] in line for line in lines), lines)
+        self.assertTrue(any(line.endswith(f"{check.REASONS['other']}. {check.SENTENCE_IN_HISTORY}") for line in lines), "an unlisted code word comes with the one sentence that says where Teams' own sentence is")
+        self.assertNotIn("personal scope", "\n".join(lines), "the History line of the app carries the sentence, and the tool does not print it")
         lines, _ = read(create=[answer(403, {"error": {"code": TENANT, "message": "x"}})])
         self.assertEqual([line for line in lines if "error code" in line], [], "a code that is not letters alone is never printed")
         no_owner = json.dumps([{"oid": cs.OMAR, "name": "Omar", "roles": ["ops"], "mail": "omar@example.com"}])
