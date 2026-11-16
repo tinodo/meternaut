@@ -19,7 +19,7 @@ REQUIRED = {
     "Cache-Control": "no-store",
 }
 GET_PATHS = ["/", "/ok/plan0001", "/ok/plan0002", "/why/case0001", "/why/case0002", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs",
-             "/ops/runs?run=run00001", "/ops/permissions", "/ops/pause"]
+             "/ops/runs?run=run00001", "/ops/permissions", "/ops/savings", "/ops/pause"]
 # The addresses outside the function app that a page may hold: the page of the resource in the Azure portal, made from a resource id that code checked, and Cost analysis of its subscription or resource
 # group in the same portal, made from the id of the subscription and, when there is one, the name of a resource group that can be one. Each at most once, on a brief page only.
 PORTAL = re.compile(r"^https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}$")

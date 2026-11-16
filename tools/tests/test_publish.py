@@ -856,6 +856,10 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
+    # What the archive of the sources measured on 2026-11-16, after the page Savings found was added and the review of it was answered (cases/web/savings.py, and what the Decisions page shares with it in common.py): 388,401 bytes
+    # with 106 files (the median of six runs, 388,370 to 388,487: the build copies the files, so the zip carries the time of the run), on an LF copy (git archive with core.eol=lf and one time on every file, --mtime) with the
+    # real build script, which is 2,361 more than the 386,040 that the same method gives for main before it (386,003 to 386,060 in six runs; 386,067 was recorded for it); the request sent is 418,444 bytes and 61,556 stay free.
+    # That is under the floor of 63,600 that held until now, so the floor of the test below is lowered to 61,250, on purpose, to keep the room over the jitter that it had (about 300 bytes); the code and its words were shortened once before that. Before it:
     # What the archive of the sources of this repository measured on 2026-11-16, after the test card of the Teams bot was given the message of a refusal (BotError.detail, which the History of the test carries when it is
     # plain words, and the words around it): 386,067 bytes with 105 files, on an LF copy (git archive with core.eol=lf and one time on every file, --mtime) with the real build script, which is 253 more than the 385,814 that
     # the same method gives for main before it (with the time of each commit on the files the two numbers are 385,872 and 386,147: the number moves by a few dozen bytes with that time, and the 385,779 below was measured
@@ -886,7 +890,7 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
     # sent was 399,029 bytes on main before it and 407,855 after it, so 72,145 stayed free) and 72,000 until the bot way: the request sent was 415,471 bytes then, so 64,529 stayed free, and the floor of the test below was
     # lowered from 72,000 to 64,000, on purpose. No trimming of the words gave that room back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 50,000 above the one
     # that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 386_067
+    SOURCES_ARCHIVE_MEASURED = 388_401
     SOURCES_ARCHIVE_MARGIN = 200
 
     def sources_archive(self, fresh=False):
@@ -943,9 +947,9 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
         self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left: raise the ceiling on purpose, with the new measure")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_63600_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_61250_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 63_600, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
+        self.assertLessEqual(sent, 480_000 - 61_250, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
 
     def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
         data = self.sources_archive()

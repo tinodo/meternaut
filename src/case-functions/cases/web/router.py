@@ -10,7 +10,7 @@ import re
 from typing import Callable
 
 from ..models import StoreError
-from . import approval, history, home, notebook, notes, ops, settings
+from . import approval, history, home, notebook, notes, ops, savings, settings
 from .core import FORM_TYPE, ID, Ctx, Request, Response, Services, utc
 from .layout import TEXT, denied, message_page, respond, secured
 
@@ -44,6 +44,7 @@ ROUTES: tuple[tuple[str, str, Handler, tuple[str, ...]], ...] = (
     ("GET", "/ops", ops.hub, ("ops",)),
     ("GET", "/ops/runs", ops.runs_page, ("ops",)),
     ("GET", "/ops/permissions", ops.permissions, ("ops", "owner")),
+    ("GET", "/ops/savings", savings.savings_page, ("ops", "owner")),
     ("POST", "/ops/pause", ops.pause_save, ("ops",)),
     ("GET", "/ops/pause", ops.pause_page, ("ops",)),
     ("GET", "/ops/two-people", ops.two_people_page, ("ops", "owner")),

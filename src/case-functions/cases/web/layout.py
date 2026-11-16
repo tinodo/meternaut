@@ -44,6 +44,7 @@ NAV = (
     ("/history", "History", ()),
     ("/me/settings", "Settings", ()),
     ("/ops", "Operations", ("ops",)),
+    ("/ops/savings", "Savings found", ("ops", "owner")),
 )
 
 

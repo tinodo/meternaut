@@ -94,7 +94,7 @@ def gallery() -> dict:
                                             use_kind="vm-cpu"))  # a machine: its request page shows the chart of its use, with a gap on the last day
     console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005"))
     for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
-                 "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
+                 "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/savings", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
     # The pages that a button on a Teams card opens: the one that sends the answer by itself, for a delete that the card asked about, for a decline and for advice, and the one for a button that
     # cannot be used.
@@ -174,6 +174,7 @@ def gallery() -> dict:
     pages["history degraded"] = degraded.get("/history")
     pages["ops degraded"] = degraded.get("/ops")
     pages["runs degraded"] = degraded.get("/ops/runs")
+    pages["savings degraded"] = degraded.get("/ops/savings")
     pages["pause degraded"] = degraded.get("/ops/pause")
     return pages
 
