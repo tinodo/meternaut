@@ -130,7 +130,7 @@ def escalation_of(env: Mapping[str, str], problems: list[str]) -> EscalationSett
     """The ladder's settings: a value that is wrong is a problem, and the default is used. `off` is refused in plain words: a request that waits is never left alone."""
     to = (env.get(ESCALATE_TO) or "").strip().lower() or "contacts"
     if to == "off":
-        problems.append(f"{ESCALATE_TO} cannot be off: a request that nobody answers is always passed on (AGENTS.md rule 38); use contacts or managers")
+        problems.append(f"{ESCALATE_TO} cannot be off: a request that nobody answers is always passed on (AGENTS.md rule 38), so use contacts or managers")
     elif to not in ("contacts", "managers"):
         problems.append(f"{ESCALATE_TO} is neither contacts nor managers")
     raw_days, days = (env.get(ESCALATION_DAYS) or "").strip(), EscalationSettings.days

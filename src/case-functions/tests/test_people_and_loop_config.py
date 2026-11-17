@@ -101,7 +101,9 @@ class LoadLoopSettings(unittest.TestCase):
         settings = loop_config.load(FULL)
         self.assertEqual((settings.store_account, scopes_of(settings)), ("stexample", ((SUBSCRIPTION, "rg-meternaut"),)))
         self.assertEqual((settings.console_host, settings.base_url), ("func-example.azurewebsites.net", "https://func-example.azurewebsites.net"))
-        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.recheck_days), (None, "meternaut-planted", 72, 7))
+        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.recheck_days), (None, "meternaut-planted", 7))
+        self.assertEqual((settings.escalation.to, settings.escalation.days, settings.escalation.repeat_days, settings.escalation.tag, settings.escalation.snoozes, settings.escalation.snooze_days),
+                         ("contacts", (3, 7, 14, 21), 7, "escalation", 3, 7), "the ladder asks the contacts until the owner turns managers on")
         self.assertEqual((settings.signin_tenant_id, settings.signin_client_id, settings.signin_assertion_client_id), (None, None, None), "no sign-in unless it is set")
 
     def test_the_sign_in_is_read_in_lower_case(self):
@@ -109,8 +111,12 @@ class LoadLoopSettings(unittest.TestCase):
         self.assertEqual((settings.signin_tenant_id, settings.signin_client_id, settings.signin_assertion_client_id), (TENANT.lower(), APP, ASSERTION))
 
     def test_the_optional_settings_are_read(self):
-        settings = loop_config.load({**FULL, "MAIL_SENDER": "meternaut-ai@example.com", "PLANTED_TAG": "planted", "PLAN_TTL_HOURS": "24", "RECHECK_DAYS": "3"})
-        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.plan_ttl_hours, settings.recheck_days), ("meternaut-ai@example.com", "planted", 24, 3))
+        settings = loop_config.load({**FULL, "MAIL_SENDER": "meternaut-ai@example.com", "PLANTED_TAG": "planted", "RECHECK_DAYS": "3", "ESCALATE_TO": "Managers", "ESCALATION_DAYS": "2,5,9,12",
+                                     "ESCALATION_REPEAT_DAYS": "5", "ESCALATION_TAG": "boss", "ESCALATION_DENY": "A@Example.com, @blocked.example", "ESCALATION_SNOOZES": "1", "ESCALATION_SNOOZE_DAYS": "2"})
+        self.assertEqual((settings.mail_sender, settings.planted_tag, settings.recheck_days), ("meternaut-ai@example.com", "planted", 3))
+        ladder = settings.escalation
+        self.assertEqual((ladder.to, ladder.managers, ladder.days, ladder.repeat_days, ladder.tag, ladder.deny, ladder.snoozes, ladder.snooze_days),
+                         ("managers", True, (2, 5, 9, 12), 5, "boss", ("a@example.com", "@blocked.example"), 1, 2))
 
     def test_the_settings_of_the_old_writer_and_the_delay_are_not_read_and_do_not_break_the_start(self):
         settings = loop_config.load({**FULL, "WRITER_RESOURCE_GROUP": "x", "WRITER_SUBSCRIPTION_ID": "x", "WRITER_CLIENT_ID": "x", "APPROVAL_DELAY_SECONDS": "5"})
@@ -164,9 +170,16 @@ class LoadLoopSettings(unittest.TestCase):
             ("MAIL_SENDER", "not an address", "an address"),
             ("MAIL_SENDER", "meternaut+ai@example.com", "an address"),
             ("PLANTED_TAG", "has space", "a tag name"),
-            ("PLAN_TTL_HOURS", "0", "between 1 and 336"),
-            ("PLAN_TTL_HOURS", "337", "between 1 and 336"),
-            ("PLAN_TTL_HOURS", "many", "not a whole number"),
+            ("ESCALATE_TO", "off", "cannot be off"),
+            ("ESCALATE_TO", "nobody", "neither contacts nor managers"),
+            ("ESCALATION_DAYS", "3,7,14", "four days"),
+            ("ESCALATION_DAYS", "3,3,14,21", "each later than the one before"),
+            ("ESCALATION_DAYS", "3,7,14,400", "from 1 to 365"),
+            ("ESCALATION_DAYS", "soon", "four whole numbers"),
+            ("ESCALATION_TAG", "has space", "a tag name"),
+            ("ESCALATION_REPEAT_DAYS", "0", "between 1 and 90"),
+            ("ESCALATION_SNOOZES", "11", "between 0 and 10"),
+            ("ESCALATION_SNOOZE_DAYS", "31", "between 1 and 30"),
             ("RECHECK_DAYS", "0", "between 1 and 90"),
             ("RECHECK_DAYS", "91", "between 1 and 90"),
         ):
@@ -185,8 +198,16 @@ class LoadLoopSettings(unittest.TestCase):
 
     def test_all_the_problems_are_in_one_message(self):
         with self.assertRaises(loop_config.LoopConfigError) as raised:
-            loop_config.load({**FULL, "CHANGE_SCOPES": "x", "PLAN_TTL_HOURS": "0", "MAIL_SENDER": "x"})
+            loop_config.load({**FULL, "CHANGE_SCOPES": "x", "ESCALATE_TO": "off", "MAIL_SENDER": "x"})
         self.assertEqual(str(raised.exception).count(";"), 2)
+
+    def test_a_request_that_waits_is_never_left_alone_so_the_ladder_cannot_be_switched_off(self):
+        # AGENTS.md rule 38: `off` is refused in plain words, and the old setting of a time to expire does not exist any more.
+        with self.assertRaises(loop_config.LoopConfigError) as raised:
+            loop_config.load({**FULL, "ESCALATE_TO": "off"})
+        self.assertIn("always passed on", str(raised.exception))
+        self.assertFalse(hasattr(loop_config, "PLAN_TTL_HOURS"))
+        self.assertEqual(loop_config.load({**FULL, "PLAN_TTL_HOURS": "1"}).escalation, loop_config.EscalationSettings(), "an old setting that is still set changes nothing")
 
 
 if __name__ == "__main__":
