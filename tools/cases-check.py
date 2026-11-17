@@ -358,9 +358,33 @@ STUDY_ADVICE = (
     ("the Scholar gave no answer", "The Scholar's run did not end well: the note says why (a model call that the AI Gateway refused, a limit, or a time-out). Check the AI Gateway's limits and that the app's identity holds AI Gateway Models User."),
     ("the survey or the re-read of the claims could not be made", "The app could not read the estate or its store of claims: check its read roles (Reader and Cost Management Reader) and its roles on the storage account."),
 )
-NO_NETWORK = ("The documentation could not be reached from the app's network. The landing zone's firewall, or its DNS, has to let the app's subnet reach learn.microsoft.com, azure.microsoft.com and "
-              "prices.azure.com on port 443. Meternaut opens nothing itself: the platform team decides.")
+NO_NETWORK = ("No page could be read, and every call of the page reader was unavailable, so the app's network may not let the documentation through. The landing zone's firewall, or its DNS, has to let "
+              "the app's subnet reach learn.microsoft.com, azure.microsoft.com and prices.azure.com on port 443. Meternaut opens nothing itself: the platform team decides.")
+NO_PAGES = ("No page could be read, although the Scholar asked for some. The notes above say how the calls of the page reader ended; a network that does not let the documentation through is only one cause, "
+            "and it shows as every call unavailable.")
 NO_CALLS = "The Scholar made no call of the page reader: the model did not use its one tool. Check the model of the Scholar and the AI Gateway."
+# The notes of the Study that a public log shows are the words that the app wrote itself, and nothing that follows them in brackets: the text of an error of Azure or of Foundry can name a resource.
+STUDY_NOTE_WORDS = (
+    "the Study is switched off", "no Foundry endpoint is set", "no store keeps the claims, so there is nothing to study for", "the switch all or the switch investigation is pulled, or cannot be read",
+    "no kind of resource waits to be studied", "the survey or the re-read of the claims could not be made", "the Scholar could not be made ready", "the Scholar gave no answer that could be read",
+    "the Scholar gave no answer",
+)
+STUDY_NOTE_COUNTS = re.compile(r"claims thrown away: (?:[a-z]+ [0-9]+(?:, )?)+|[0-9]+ of [0-9]+ calls of the page reader were refused or failed(?: \((?:[a-z-]+ [0-9]+(?:, )?)+\))?")
+NOT_SHOWN = "a note that is not shown in a public log; it is in the History, in the app's telemetry"
+UNAVAILABLE_ONLY = re.compile(r"calls of the page reader were refused or failed \(unavailable [0-9]+\)")
+
+
+def study_note(text) -> str:
+    """A note of the Study as a public log shows it: the fixed words of the app, with the counts that it writes, and nothing else; the rest of a note is in the History."""
+    said = clean(text, 1_000)
+    if STUDY_NOTE_COUNTS.fullmatch(said):
+        return said
+    for words in STUDY_NOTE_WORDS:
+        if said == words:
+            return words
+        if said.startswith(words + " ("):
+            return words + " (what follows is not shown in a public log)"
+    return NOT_SHOWN if said else ""
 NOT_ARRIVED = ("that the message was put in the queue (the lines above say so); that the cases app is running and has the code of the Study (run cases: its functions include study-weekly); "
                "that the queue cases-control-poison holds no message; and that its telemetry reaches its Application Insights.")
 
@@ -403,11 +427,11 @@ def study_lines(request_id: str, events: list[dict], minutes: float) -> tuple[li
         lines.append(f"  Lines that the end counts and the telemetry has not delivered: {', '.join(late)}.")
     notes: list[str] = []
     for text in [e.get("note") for e in events if e["type"] == "study.note"] + [finished.get("note")]:
-        shown = public(text)
+        shown = study_note(text)
         if shown and shown not in notes:
             notes.append(shown)
     if notes:
-        lines.append("  Notes of the run (the app's own words, with every identifier masked):")
+        lines.append("  Notes of the run (the app's own words only; the detail of an error is not shown in a public log):")
         lines.extend(f"    - {text}" for text in notes[:12])
         if len(notes) > 12:
             lines.append(f"    ... and {len(notes) - 12} more, in the History.")
@@ -420,7 +444,8 @@ def study_lines(request_id: str, events: list[dict], minutes: float) -> tuple[li
         lines.append("  Nothing waited to be studied: every kind of resource of the estate has a claim that is current or a mark that it was studied.")
     elif pages == 0:
         passed = False
-        checks.append(NO_NETWORK if (whole(finished.get("toolCalls")) or 0) > 0 else NO_CALLS)
+        asked = (whole(finished.get("toolCalls")) or 0) > 0
+        checks.append((NO_NETWORK if any(UNAVAILABLE_ONLY.search(note) for note in notes) else NO_PAGES) if asked else NO_CALLS)
     elif whole(finished.get("kept")) == 0:
         lines.append("  No claim was kept: the quotes did not hold, or the pages held nothing worth filing. The notes say how many claims were thrown away, and why.")
     if passed:

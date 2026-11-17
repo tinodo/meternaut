@@ -82,7 +82,7 @@ class TheActionIsOfferedOnceAndRunsInTheOperatorAfterTheFunctionsAreListed(unitt
         sentence = description.split(" study-run: ")[1].split(" page-latency: ")[0]
         for words in ("the Operator puts the control message of the job study in it", "from inside the network", "the same container script and the same tool as cases-run", "it needs operator first",
                       "the variable STUDY of the environment hub is on and cases has been run", "counts and plain words only", "the pages read", "the claims kept and thrown away",
-                      "with every identifier masked", "STUDY is off, the Scholar was not made, the documentation could not be reached from the app's network, or no line arrived",
+                      "in the app's own words only", "STUDY is off, the Scholar was not made, no page could be read, or no line arrived",
                       "It changes nothing in the estate"):
             self.assertIn(words, sentence, words)
         self.assertNotIn('"', sentence, "the description is one quoted value on one line")
@@ -182,8 +182,8 @@ class TheActionIsOfferedOnceAndRunsInTheOperatorAfterTheFunctionsAreListed(unitt
                       "this runner put nothing in the queue and read no telemetry.", "\\`operator\\` has to be run first", "without \\`study-weekly\\`", "run \\`cases\\`",
                       "\\`STUDY is off in the app\\` means that the variable STUDY of the environment hub is not on, or that \\`cases\\` has not been run since it was set.",
                       "\\`The Scholar was not made\\` means that the Foundry project refused the agent or that its stored definition is not the one in the lock (\\`agents-drift\\` says which).",
-                      "\\`The documentation could not be reached from the app's network\\` means that the landing zone's firewall, or its DNS, does not let the app's subnet reach learn.microsoft.com",
-                      "on port 443: Meternaut opens nothing itself, and the platform team decides.", "The Study changes no resource of the estate", "Running \\`study-run\\` again is safe."):
+                      "\\`No page could be read\\` with every call of the page reader unavailable means that the app's network may not let the app's subnet reach learn.microsoft.com",
+                      "on port 443 (the landing zone's firewall, or its DNS): Meternaut opens nothing itself, and the platform team decides.", "The Study changes no resource of the estate", "Running \\`study-run\\` again is safe."):
             self.assertIn(words, failed, words)
         for words in ("The Operator, from inside the network, put the control message of the job study in the queue and read the telemetry, with its own identity and no key; this runner put nothing in the queue",
                       "as counts and plain words with every identifier masked", "it is context for the Investigator and moves no finding, no figure and no proposal", "no resource of the estate was changed",

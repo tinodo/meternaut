@@ -790,7 +790,7 @@ class TheStudy(unittest.TestCase):
         self.assertEqual(code, 0, "the end says that it ran well; what the telemetry lost is said, not hidden")
         self.assertIn("the telemetry has not delivered: study.claim: 0 of 3", out)
 
-    def test_a_hostile_note_is_printed_with_every_identifier_masked_and_cannot_start_a_command_or_run_long(self):
+    def test_a_note_that_is_not_the_apps_own_words_is_not_printed_and_cannot_start_a_command_or_run_long(self):
         hostile = [f"could not read /subscriptions/{GUID_IN_A_NOTE}/resourceGroups/rg-secret/providers/Microsoft.Compute/disks/disk-secret (HTTP 403)",
                    "the group resourceGroups/rg-secret and resource group rg-secret2 and rg-secret3 were read",
                    f"object {GUID_IN_A_NOTE.upper()} and {GUID_IN_A_NOTE} are in the text",
@@ -802,16 +802,27 @@ class TheStudy(unittest.TestCase):
                            note=f"the survey or the re-read of the claims could not be made (the client {GUID_IN_A_NOTE} has no right over /subscriptions/{GUID_IN_A_NOTE})")
         code, out, _, _, _ = self.go([telemetry(events)])
         self.assertEqual(code, 1)
-        for secret in (GUID_IN_A_NOTE, GUID_IN_A_NOTE.upper(), "rg-secret", "disk-secret", "func-meternaut-cases-0123abcd", "stexample", "aif-x", "Microsoft.Compute"):
+        for secret in (GUID_IN_A_NOTE, GUID_IN_A_NOTE.upper(), "rg-secret", "disk-secret", "func-meternaut-cases-0123abcd", "stexample", "aif-x", "Microsoft.Compute", "management.azure.com", "HTTP 403"):
             self.assertNotIn(secret, out, secret)
-        for kept in ("<id>", "<resource id>", "<host>", "management.azure.com", "learn.microsoft.com", "HTTP 403"):
-            self.assertIn(kept, out, kept)
+        self.assertIn(cc.NOT_SHOWN, out)
+        self.assertIn("the survey or the re-read of the claims could not be made (what follows is not shown in a public log)", out)
         for printed in out.splitlines():
             self.assertFalse(printed.lstrip().startswith("::"), printed)
             self.assertNotIn("##[", printed)
             self.assertNotIn("```", printed)
             self.assertNotIn("\x1b", printed)
             self.assertLessEqual(len(printed), 700, printed[:80])
+
+    def test_the_apps_own_words_and_counts_are_shown_and_what_follows_them_is_not(self):
+        for same in ("the Study is switched off", "claims thrown away: quote 1, cap 2", "3 of 3 calls of the page reader were refused or failed (unavailable 3)",
+                     "2 of 5 calls of the page reader were refused or failed (unavailable 1, not-text 1)"):
+            self.assertEqual(cc.study_note(same), same)
+        self.assertEqual(cc.study_note("the Scholar gave no answer (Foundry response failed: HTTP 429 for /subscriptions/x)"), "the Scholar gave no answer (what follows is not shown in a public log)")
+        self.assertEqual(cc.study_note("the Scholar gave no answer that could be read (x)"), "the Scholar gave no answer that could be read (what follows is not shown in a public log)")
+        for other in ("FoundryError: Resource group 'rg-secret' could not be found.", "claims thrown away: quote 1 and rg-secret", "the Study is switched off and rg-secret", "the Scholar gave no answerx (rg-secret)"):
+            self.assertEqual(cc.study_note(other), cc.NOT_SHOWN, other)
+        self.assertEqual(cc.study_note(""), "")
+        self.assertEqual(cc.study_note(None), "")
 
     def test_a_number_that_is_not_a_number_is_never_printed(self):
         code, out, _, _, _ = self.go([telemetry(a_study(seconds="::error::x", tokens=True, types="9" * 40, kept=-1, pages=2.5, toolCalls=None, state="RAN!"))])
@@ -848,17 +859,24 @@ class TheStudy(unittest.TestCase):
             self.assertIn(advice, out, note)
             self.assertIn("What to check:", out)
 
-    def test_a_study_that_ran_and_read_no_page_says_that_the_documentation_could_not_be_reached_and_what_the_network_has_to_allow(self):
+    def test_a_study_that_ran_and_read_no_page_says_so_and_blames_the_network_only_when_every_call_was_unavailable(self):
         no_pages = [e for e in a_study(pages=0, kept=0, studied=0, toolCalls=6) if e["type"] != "study.claim"]
         code, out, _, _, _ = self.go([telemetry(no_pages)])
         self.assertEqual(code, 1)
-        for text in ("Pages read: 0; tool calls of the page reader: 6.", "The documentation could not be reached from the app's network",
-                     "learn.microsoft.com, azure.microsoft.com and prices.azure.com on port 443", "Meternaut opens nothing itself", "The Study did not pass."):
+        for text in ("Pages read: 0; tool calls of the page reader: 6.", "No page could be read, although the Scholar asked for some", "The Study did not pass."):
             self.assertIn(text, out)
+        self.assertNotIn("Meternaut opens nothing itself", out, "zero pages alone do not show that the network is closed")
+        for note, network in (("6 of 6 calls of the page reader were refused or failed (unavailable 6)", True), ("6 of 6 calls of the page reader were refused or failed (unavailable 4, not-text 2)", False)):
+            code, out, _, _, _ = self.go([telemetry(no_pages[:1] + [event("study.note", note=note)] + no_pages[1:])])
+            self.assertEqual(code, 1)
+            self.assertEqual("every call of the page reader was unavailable" in out, network, note)
+            if network:
+                for text in ("learn.microsoft.com, azure.microsoft.com and prices.azure.com on port 443", "Meternaut opens nothing itself"):
+                    self.assertIn(text, out)
         code, out, _, _, _ = self.go([telemetry([e for e in a_study(pages=0, kept=0, studied=0, toolCalls=0) if e["type"] != "study.claim"])])
         self.assertEqual(code, 1)
         self.assertIn("The Scholar made no call of the page reader", out)
-        self.assertNotIn("could not be reached", out)
+        self.assertNotIn("No page could be read", out)
 
     def test_a_study_with_nothing_waiting_passes_and_says_so_and_one_that_read_pages_and_kept_nothing_passes_and_says_so(self):
         nothing = [e for e in a_study(types=0, studied=0, kept=0, rejected=0, rechecked=0, toolCalls=0, pages=0, note="no kind of resource waits to be studied") if e["type"] != "study.claim"]
@@ -957,7 +975,7 @@ class TheStudy(unittest.TestCase):
         source = (ROOT / "src" / "case-functions" / "cases" / "study.py").read_text(encoding="utf-8")
         for name in ("state", "ok", "types", "studied", "kept", "rejected", "rechecked", "stale", "toolCalls", "pages", "tokens", "seconds", "note", "trigger", "maxTypes", "maxPages", "maxSeconds",
                      "maxTokens", "claimKind"):
-            self.assertIn(f"{name}=", source, name)
+            self.assertRegex(source, rf"(?<![A-Za-z_]){name}=", name)
         self.assertIn("study-weekly", cc.FUNCTIONS, "the list that is waited for before the message is sent holds the function of the Study")
 
     def test_public_masks_what_identifies_the_estate_and_leaves_plain_words(self):
