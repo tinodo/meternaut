@@ -912,7 +912,9 @@ class PastAThousandPlansNoHeldRequestIsLost(Base):
         console.use(approvals)
         self.assertEqual(len(console.get(SAVINGS).table("held-automation").rows), 1)
         self.assertEqual([href for href in console.get("/").links() if "/why/k-" in href], ["/why/k-automation"])
-        self.assertEqual(len(listed(desk(console).sent[0][1]["body"]["content"])), 1)
+        sent = desk(console).sent
+        self.assertEqual(len(sent), 1, "the letter is written")
+        self.assertEqual(len(listed(sent[0][1]["body"]["content"])), 1)
 
 
 class TwoCasesOfOneResourceGetOneHeldRequest(unittest.TestCase):
