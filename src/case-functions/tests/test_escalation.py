@@ -392,6 +392,28 @@ class TheWeeklyLetter(unittest.TestCase):
         self.assertEqual(world.mail.calls, [])
 
 
+class TheHeldFindingDoesNotWait(unittest.TestCase):
+    @staticmethod
+    def held_world():
+        world = World()
+        world.store.plan_put(dataclasses.replace(world.store.plan_get("p1"), state="held", preconditions={"family": "advise", "caseStatus": "needs_human", "held": "automation"}))
+        return world
+
+    def test_nobody_is_asked_about_a_held_finding_so_the_ladder_makes_no_step_and_sends_nothing(self):
+        world = self.held_world()
+        for _ in range(40):
+            world.clock.advance(days=1)
+            world.tick()
+        self.assertEqual((world.steps(), world.mail.calls), ([], []))
+
+    def test_it_has_no_waiting_block_and_is_not_among_the_requests_that_wait(self):
+        world = self.held_world()
+        world.clock.advance(days=30)
+        shown = brief_mod.build_brief(world.store.case_get("c1"), world.store.plan_get("p1"), None, (), now=world.clock.now)
+        self.assertIsNone(shown.waiting)
+        self.assertEqual(world.store.plans_open(), [])
+
+
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):
     def test_the_person_of_the_list_with_no_address_is_never_a_target_and_the_deny_list_is_kept_in_the_settings(self):
         silent = Person(CONTACT, "Cora", ("escalation",), "")
