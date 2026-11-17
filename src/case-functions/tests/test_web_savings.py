@@ -482,7 +482,7 @@ class TheSavingsOfAzureAdvisor(unittest.TestCase):
         self.assertIn("Saves, Scenario", row["Saving a year"])
         self.assertIn("$1,800", row["Saving a year"], "1,200 and 600 a year, each once")
         self.assertNotIn("Expected", row["Saving a year"])
-        self.assertIn("Azure Advisor's own estimates, added up", console.get(PATH).content.replace("&#x27;", "'"))
+        self.assertIn("Azure Advisor's own estimate of the smallest of its variants", console.get(PATH).content.replace("&#x27;", "'"))
 
     def test_a_finding_that_advisor_also_names_is_counted_with_its_own_figure_and_advisors_is_not_added_to_it(self):
         console = Console()

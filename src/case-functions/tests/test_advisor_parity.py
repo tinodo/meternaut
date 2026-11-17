@@ -1,7 +1,8 @@
 """Every cost recommendation of Azure Advisor is a finding of Meternaut with Advisor's own figure (cases/advisor.py, docs/proposals/22-advisor-first-class.md).
 
 No test calls Azure. The recommendations are invented, in the shapes that Advisor gave for a real estate when they were read (keys and counts only): 18 virtual machine
-reservations, 4 savings plans, 6 Cosmos DB reservations and 3 disks, in two subscriptions. The fakes are those of the other tests of the Watch.
+reservations, 4 savings plans, 6 Cosmos DB reservations and 3 disks, in two subscriptions. Advisor lists the same purchase for each term and each look-back, so the 31 are
+9 decisions, and the figures here are invented to tell the variants of one decision, the decisions and the alternatives apart. The fakes are those of the other tests of the Watch.
 """
 import datetime as dt
 import hashlib
@@ -13,6 +14,7 @@ from unittest import mock
 from support import NOW, SUBSCRIPTION, disk_row
 from test_estate_watch import Tenant, of_type, sub_id, watch
 from test_run_loop import GROUP, PLANTED, Moving, loop_for
+from test_web_savings import rows_of
 from test_web_support import MAYA, TINO, Console, make_case, make_decision, make_plan
 
 from cases import advisor, brief as brief_mod, cards, detectors, investigate, letters
@@ -25,6 +27,8 @@ VM, SAVINGS_PLAN, COSMOS, DISKS = "84b1a508-0000-4000-8000-000000000001", "89515
 SOLUTION = {VM: "Buy virtual machine reserved instances to save money over pay-as-you-go costs", SAVINGS_PLAN: "Consider a Compute Savings Plan to save money over pay-as-you-go costs",
             COSMOS: "Buy Azure Cosmos DB reserved capacity to save money", DISKS: "Delete unattached managed disks to reduce costs"}
 CATEGORY = {VM: "Reservations", SAVINGS_PLAN: "SavingsPlan", COSMOS: "Reservations", DISKS: "IdleResources"}
+D2S, D2ALS = "Standard_D2s_v6", "Standard_D2als_v6"
+TERMS, LOOKBACKS = ("P1Y", "P3Y"), (7, 30, 60)
 
 
 def rec(type_id: str, sub: str, n: int, annual: float | None = None, resource: str | None = None, **extended) -> dict:
@@ -34,15 +38,14 @@ def rec(type_id: str, sub: str, n: int, annual: float | None = None, resource: s
     if type_id == DISKS:
         props.update({"armRegionName": "swedencentral", "productName": "Standard HDD Managed Disks"})
     else:
-        props.update({"savingsCurrency": "USD", "scope": "Single", "subId": sub, "term": "P1Y" if n % 2 else "P3Y", "lookbackPeriod": ("7", "30", "60")[n // 2 % 3]})
+        props.update({"savingsCurrency": "USD", "scope": "Single", "subId": sub, "term": "P1Y", "lookbackPeriod": "30"})
         if type_id == SAVINGS_PLAN:
-            props.update({"sku": "Compute_Savings_Plan", "commitment": "0.098", "lookbackPeriod": "30"})
+            props.update({"sku": "Compute_Savings_Plan", "commitment": "0.098"})
         elif type_id == COSMOS:
             props.update({"sku": "Cosmos_DB_100_RUs", "displaySKU": "100 RU/s", "qty": "6", "displayQty": "6", "region": "All", "displayRegion": "All", "reservedResourceType": "cosmosdb"})
         else:
-            big = n % 3 == 0
-            props.update({"sku": "Standard_D2als_v6" if big else "Standard_D2s_v6", "displaySKU": "x", "qty": "2" if big else "1", "displayQty": "x", "region": "swedencentral",
-                          "location": "swedencentral", "reservedResourceType": "virtualmachines", "targetResourceCount": "1", "vmSize": "x"})
+            props.update({"sku": D2S, "displaySKU": "x", "qty": "1", "displayQty": "x", "region": "swedencentral", "location": "swedencentral", "reservedResourceType": "virtualmachines",
+                          "targetResourceCount": "1", "vmSize": "x"})
     props.update(extended)
     about = resource or f"/subscriptions/{sub}"
     return {"id": f"{about}/providers/Microsoft.Advisor/recommendations/{n}", "name": hashlib.sha256(f"{type_id}{sub}{n}".encode()).hexdigest(), "type": "Microsoft.Advisor/recommendations",
@@ -52,17 +55,29 @@ def rec(type_id: str, sub: str, n: int, annual: float | None = None, resource: s
                            "extendedProperties": props}}
 
 
+def variants(type_id: str, sub: str, base: float, first: int, lookbacks: tuple = LOOKBACKS, **extended) -> list[dict]:
+    """One purchase as Advisor lists it: once for each term and each look-back, the figure growing with both. The smallest is the base times 1.07, the largest the base times 3.2 (three years, 60 days)."""
+    return [rec(type_id, sub, first + i, annual=round(base * (2 if term == "P3Y" else 1) * (1 + lookback / 100), 2), term=term, lookbackPeriod=str(lookback), **extended)
+            for i, (term, lookback) in enumerate((t, b) for t in TERMS for b in lookbacks)]
+
+
 def disk_id(name: str, sub: str = SUBSCRIPTION) -> str:
     return f"/subscriptions/{sub}/resourceGroups/rg-app/providers/Microsoft.Compute/disks/{name}"
 
 
 def the_list() -> tuple[dict, float]:
-    """The invented list, by subscription, and what Advisor's figures add up to a year: 14 + 4 virtual machine reservations, 2 + 2 savings plans, 6 for Cosmos DB, 3 disks."""
-    mine = [rec(VM, SUBSCRIPTION, n) for n in range(14)] + [rec(SAVINGS_PLAN, SUBSCRIPTION, n) for n in range(2)] + [rec(COSMOS, SUBSCRIPTION, n) for n in range(6)]
+    """The invented list, by subscription, and what all its figures add up to a year if every variant were counted (it is what the first version stated): in the first subscription two virtual
+    machine decisions (two sizes) and one for Cosmos DB, 6 variants each, a savings plan of 2 and 3 disks; in the second one virtual machine decision and a savings plan. 31 recommendations, 9 decisions."""
+    mine = (variants(VM, SUBSCRIPTION, 300.0, 0, sku=D2S, qty="2") + variants(VM, SUBSCRIPTION, 200.0, 10, sku=D2ALS) + variants(COSMOS, SUBSCRIPTION, 50.0, 20)
+            + variants(SAVINGS_PLAN, SUBSCRIPTION, 400.0, 30, lookbacks=(30,)))
     mine += [rec(DISKS, SUBSCRIPTION, n, annual=18.42, resource=disk_id(f"disk-{n}")) for n in range(3)]
-    theirs = [rec(VM, SUB_B, n) for n in range(4)] + [rec(SAVINGS_PLAN, SUB_B, n) for n in range(2)]
-    every = mine + theirs
-    return {SUBSCRIPTION: mine, SUB_B: theirs}, sum(float(r["properties"]["extendedProperties"]["annualSavingsAmount"]) for r in every)
+    theirs = variants(VM, SUB_B, 250.0, 0, sku=D2S) + variants(SAVINGS_PLAN, SUB_B, 450.0, 30, lookbacks=(30,))
+    return {SUBSCRIPTION: mine, SUB_B: theirs}, sum(float(r["properties"]["extendedProperties"]["annualSavingsAmount"]) for r in mine + theirs)
+
+
+# What an honest reading of that list counts a year: in the first subscription the reservations (321.0 + 214.0 + 53.5) beat the savings plan (520.0), which is an alternative; in the second
+# the savings plan (585.0) beats the reservation (267.5); and the 3 disks (18.42 each).
+COUNTED = 321.0 + 214.0 + 53.5 + 585.0 + 3 * 18.42
 
 
 def estate(advisor_of=None) -> Tenant:
@@ -88,8 +103,8 @@ class Watched:
     def cases(self, detector: str = ADVISOR):
         return [case for case in self.store.cases_recent() if case.detector == detector]
 
-    def case(self, kind: str, sub: str = SUBSCRIPTION):
-        (found,) = [case for case in self.cases() if case.subscription_id == sub and case.facts["advisor"]["type"] == kind]
+    def case(self, kind: str, sub: str = SUBSCRIPTION, sku: str | None = None):
+        (found,) = [case for case in self.cases() if case.subscription_id == sub and case.facts["advisor"]["type"] == kind and (sku is None or case.facts["advisor"]["rows"][0][0] == sku)]
         return found
 
 
@@ -106,8 +121,8 @@ class TheLeads(unittest.TestCase):
         self.assertEqual([lead.lead_id for lead in again], [lead.lead_id for lead in leads], "and the same recommendation is the same lead at every Watch")
 
     def test_a_lead_keeps_every_number_and_word_of_the_recommendation_as_typed_values_and_advisors_sentences_in_none_of_them(self):
-        lead = detectors.advisor_lead(rec(VM, SUBSCRIPTION, 3, annual=1200.0), SUBSCRIPTION)
-        self.assertEqual(lead.advisor, {"type": VM, "sub": "Reservations", "sku": "Standard_D2als_v6", "qty": 2, "region": "swedencentral", "term": "P1Y", "annual": 1200.0,
+        lead = detectors.advisor_lead(rec(VM, SUBSCRIPTION, 3, annual=1200.0, sku=D2ALS, qty="2"), SUBSCRIPTION)
+        self.assertEqual(lead.advisor, {"type": VM, "sub": "Reservations", "sku": D2ALS, "qty": 2, "region": "swedencentral", "term": "P1Y", "annual": 1200.0,
                                         "currency": "USD", "lookback": 30, "scope": "Single"})
         self.assertEqual((lead.advisor_saving_usd, lead.facts["impact"], lead.facts["recommendationType"]), (100.0, "high", VM))
         self.assertNotIn("Advisor wrote", json.dumps([lead.facts, lead.advisor]))
@@ -129,77 +144,101 @@ class TheCasesOfTheWatch(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.watched = Watched().run()
-        cls.lists, cls.annual = the_list()
+        cls.lists, cls.raw = the_list()
 
-    def test_the_thirty_one_recommendations_are_eight_cases_one_for_each_subscription_type_and_sub_category_and_one_for_each_disk(self):
+    def decision(self, kind, sub=SUBSCRIPTION, sku=None):
+        return self.watched.case(kind, sub, sku)
+
+    def test_the_thirty_one_recommendations_are_nine_decisions_and_each_has_a_case_and_none_is_lost(self):
         cases = self.watched.cases()
-        self.assertEqual(len(cases), 8)
+        self.assertEqual(len(cases), 9)
         self.assertEqual(sorted((c.subscription_id == SUBSCRIPTION, c.facts["advisor"]["type"], c.facts["advisor"]["n"]) for c in cases),
-                         sorted([(True, VM, 14), (True, SAVINGS_PLAN, 2), (True, COSMOS, 6), (False, VM, 4), (False, SAVINGS_PLAN, 2)] + [(True, DISKS, 1)] * 3))
+                         sorted([(True, VM, 6), (True, VM, 6), (True, COSMOS, 6), (True, SAVINGS_PLAN, 2), (False, VM, 6), (False, SAVINGS_PLAN, 2)] + [(True, DISKS, 1)] * 3))
         self.assertEqual({c.status for c in cases}, {"needs_human"})
         self.assertEqual(sum(c.facts["advisor"]["n"] for c in cases), 31, "none lost and none counted twice")
 
-    def test_the_figures_add_up_to_what_advisor_says_a_year_divided_by_twelve_for_each_recommendation(self):
+    def test_variants_that_differ_only_by_term_and_look_back_are_one_decision_and_a_different_target_is_another(self):
+        small, big = self.decision(VM, sku=D2S), self.decision(VM, sku=D2ALS)
+        self.assertEqual((small.facts["advisor"]["n"], big.facts["advisor"]["n"]), (6, 6))
+        self.assertEqual({(row[0], row[1], row[2]) for row in small.facts["advisor"]["rows"]}, {(D2S, 2, "swedencentral")})
+        self.assertEqual({(row[3], row[6]) for row in small.facts["advisor"]["rows"]}, {(t, b) for t in TERMS for b in LOOKBACKS}, "every term and every look-back is a row")
+        self.assertNotEqual(small.case_id, big.case_id)
+
+    def test_the_figure_of_a_decision_is_its_smallest_variant_and_its_range_is_kept(self):
+        said = self.decision(VM, sku=D2S).facts["advisor"]
+        self.assertEqual((said["usd"], said["low"], said["high"]), (321.0, 321.0, 960.0))
+        self.assertEqual([row[4] for row in said["rows"]], sorted(row[4] for row in said["rows"]), "the smallest first")
+        self.assertEqual(month(self.decision(VM, sku=D2S)), round(321.0 / 12, 2))
+
+    def test_the_commitments_of_one_subscription_that_cover_the_same_spend_are_alternatives_and_only_the_larger_is_counted(self):
+        mine = [self.decision(VM, sku=D2S), self.decision(VM, sku=D2ALS), self.decision(COSMOS), self.decision(SAVINGS_PLAN)]
+        self.assertEqual([case.facts["advisor"]["usd"] for case in mine], [321.0, 214.0, 53.5, 0.0], "the reservations (588.5) beat the savings plan (520)")
+        self.assertEqual([case.facts["advisor"]["alt"] for case in mine], ["", "", "", "reservations"])
+        self.assertEqual(self.decision(SAVINGS_PLAN).facts["advisor"]["low"], 520.0, "an alternative keeps its own figures")
+        theirs = [self.decision(VM, SUB_B), self.decision(SAVINGS_PLAN, SUB_B)]
+        self.assertEqual([case.facts["advisor"]["usd"] for case in theirs], [0.0, 585.0], "in the other subscription the savings plan is larger")
+        self.assertEqual(theirs[0].facts["advisor"]["alt"], "savings plan")
+
+    def test_the_disks_are_not_alternatives_of_anything_and_stay_as_they_were(self):
+        disks = [c for c in self.watched.cases() if c.facts["advisor"]["type"] == DISKS]
+        self.assertEqual([c.facts["advisor"]["usd"] for c in disks], [18.42] * 3)
+        self.assertEqual(len({c.resource_id for c in disks}), 3)
+
+    def test_what_every_surface_counts_is_the_same_honest_figure_and_not_the_sum_of_every_variant(self):
+        self.assertAlmostEqual(sum(case.facts["advisor"]["usd"] for case in self.watched.cases()), COUNTED, places=2)
+        self.assertLess(COUNTED * 5, self.raw, "the first version stated every variant: about six times too much")
         stated = sum(month(case) for case in self.watched.cases())
-        self.assertAlmostEqual(stated, self.annual / 12, delta=0.01 * 8)
+        self.assertAlmostEqual(stated, COUNTED / 12, delta=0.005 * 9)
         plans = [plan for plan in self.store_plans() if plan.family == ADVISE]
-        self.assertAlmostEqual(sum(plan.saving_usd_month for plan in plans), self.annual / 12, delta=0.01 * 8)
+        self.assertAlmostEqual(sum(plan.saving_usd_month or 0.0 for plan in plans), COUNTED / 12, delta=0.005 * 9)
+        results = [e for e in of_type(self.watched.events, "case.result") if e["detector"] == ADVISOR]
+        self.assertAlmostEqual(sum(e["monthlySavingUsd"] or 0.0 for e in results), COUNTED / 12, delta=0.005 * 9)
 
     def store_plans(self):
         return self.watched.store.plans_open()
 
-    def test_each_case_has_one_request_and_the_requests_of_one_subscription_do_not_hold_each_other_back(self):
+    def test_each_decision_has_one_request_and_an_alternative_has_one_too_so_that_a_person_can_decide_on_each(self):
         plans = self.store_plans()
-        self.assertEqual(len(plans), 8)
+        self.assertEqual(len(plans), 9)
         self.assertEqual({plan.case_id for plan in plans}, {case.case_id for case in self.watched.cases()})
-        self.assertEqual(len(of_type(self.watched.events, "plan.created")), 8)
-
-    def test_a_group_keeps_at_most_twelve_rows_and_says_how_many_more_and_what_they_add_up_to(self):
-        digest = self.watched.case(VM).facts["advisor"]
-        every = sorted((float(r["properties"]["extendedProperties"]["annualSavingsAmount"]) for r in self.lists[SUBSCRIPTION] if r["properties"]["recommendationTypeId"] == VM), reverse=True)
-        self.assertEqual((len(digest["rows"]), digest["more"]), (12, 2))
-        self.assertEqual([row[4] for row in digest["rows"]], every[:12], "the largest first")
-        self.assertAlmostEqual(digest["moreUsd"], sum(every[12:]))
-        self.assertAlmostEqual(digest["usd"], sum(every))
-        self.assertEqual({row[5] for row in digest["rows"]}, {"USD"})
+        self.assertEqual(len(of_type(self.watched.events, "plan.created")), 9)
 
     def test_a_row_says_the_sku_the_quantity_the_region_the_term_the_saving_a_year_the_look_back_and_the_scope(self):
-        (row,) = [r for r in self.watched.case(SAVINGS_PLAN, SUB_B).facts["advisor"]["rows"] if r[3] == "P3Y"]
+        (row,) = [r for r in self.decision(SAVINGS_PLAN, SUB_B).facts["advisor"]["rows"] if r[3] == "P3Y"]
         self.assertEqual([row[0], row[3], row[5], row[6], row[7]], ["Compute_Savings_Plan", "P3Y", "USD", 30, "Single"])
 
     def test_the_impact_that_advisor_gives_is_kept_as_a_typed_fact(self):
-        self.assertEqual(self.watched.case(VM).facts["impact"], "high")
+        self.assertEqual(self.decision(VM, sku=D2S).facts["impact"], "high")
         self.assertEqual({c.facts["impact"] for c in self.watched.cases() if c.facts["advisor"]["type"] == DISKS}, {"medium"})
 
-    def test_the_figure_is_a_scenario_that_says_it_is_advisors_own_and_that_the_rows_can_be_alternatives(self):
-        case = self.watched.case(VM)
+    def test_the_figure_is_a_scenario_that_says_it_is_advisors_own_and_that_only_the_smallest_variant_is_counted(self):
+        case = self.decision(VM, sku=D2S)
         plan = next(p for p in self.store_plans() if p.case_id == case.case_id)
         said = brief_mod.build_brief(case, plan, now=NOW)
         self.assertEqual((said.saving.level, round(said.saving.monthly, 2)), ("Scenario", month(case)))
-        self.assertIn("Azure Advisor", said.saving.basis)
+        self.assertIn("smallest of its variants", said.saving.basis)
         self.assertIn("alternatives", said.saving.basis)
 
     def test_the_history_says_each_case_with_its_figure_and_that_nothing_was_judged_by_a_model(self):
         results = [e for e in of_type(self.watched.events, "case.result") if e["detector"] == ADVISOR]
-        self.assertEqual(len(results), 8)
-        self.assertAlmostEqual(sum(e["monthlySavingUsd"] for e in results), self.annual / 12, delta=0.01 * 8)
+        self.assertEqual(len(results), 9)
         self.assertEqual(self.watched.tenant.chat_calls(), [], "Advisor's own claims are not judged by the models")
         self.assertEqual(len(of_type(self.watched.events, "lead.found")), 31)
-        self.assertEqual((self.watched.summary.leads, self.watched.summary.cases, self.watched.summary.needs_human), (31, 8, 8))
+        self.assertEqual((self.watched.summary.leads, self.watched.summary.cases, self.watched.summary.needs_human), (31, 9, 9))
+        self.assertEqual(sum("an alternative, none counted" in e["summary"] for e in results), 2)
 
 
 class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
-    def test_a_recommendation_in_another_currency_is_counted_and_not_added_and_the_history_says_so(self):
-        lists, annual = the_list()
-        lists[SUB_B][0] = rec(VM, SUB_B, 0, annual=999.0, savingsCurrency="EUR")
+    def test_a_variant_in_another_currency_is_counted_and_not_added_and_the_history_says_so(self):
+        lists, _ = the_list()
+        lists[SUBSCRIPTION][12] = rec(COSMOS, SUBSCRIPTION, 20, annual=999.0, savingsCurrency="EUR", term="P1Y", lookbackPeriod="7")
         watched = Watched(estate(lists)).run()
-        case = watched.case(VM, SUB_B)
-        digest = case.facts["advisor"]
-        self.assertEqual((digest["n"], digest["added"], digest["skipped"], digest["currencies"]), (4, 3, 1, ["EUR"]))
-        self.assertAlmostEqual(digest["usd"], sum(float(r["properties"]["extendedProperties"]["annualSavingsAmount"]) for r in lists[SUB_B][1:4]))
+        digest = watched.case(COSMOS).facts["advisor"]
+        self.assertEqual((digest["n"], digest["added"], digest["skipped"], digest["currencies"]), (6, 5, 1, ["EUR"]))
+        self.assertEqual((digest["low"], digest["usd"]), (65.0, 65.0), "the smallest variant in dollars is counted: the one in euros is not changed into dollars")
         self.assertTrue(any(r[5] == "EUR" and r[4] == 999.0 for r in digest["rows"]), "its row is there, with its own figure and currency")
         self.assertTrue(any("not added" in e["note"] and "EUR" in e["note"] for e in of_type(watched.events, "run.note")))
-        self.assertAlmostEqual(sum(month(c) for c in watched.cases()), (annual - 300.0) / 12, delta=0.1)
+        self.assertAlmostEqual(sum(month(c) for c in watched.cases()), (COUNTED - 53.5 + 65.0) / 12, delta=0.05)
 
     def test_a_disk_that_names_no_currency_is_read_in_dollars_only_when_the_cost_lines_of_the_subscription_are(self):
         dollars = Watched().run()
@@ -209,10 +248,9 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         other = Watched(euros).run()
         disks = [c for c in other.cases() if c.facts["advisor"]["type"] == DISKS]
         self.assertEqual(([c.facts["advisor"]["skipped"] for c in disks], [month(c) for c in disks]), ([1, 1, 1], [0.0, 0.0, 0.0]))
-        self.assertEqual(len(other.store.plans_open()), 8, "a recommendation without a figure in dollars is still a request")
+        self.assertEqual(len(other.store.plans_open()), 9, "a recommendation without a figure in dollars is still a request")
 
     def test_a_recommendation_that_says_neither_a_problem_nor_a_solution_still_makes_a_request_with_words_of_code(self):
-        lists, _ = the_list()
         bare = rec(VM, SUB_B, 9)
         bare["properties"]["shortDescription"] = {}
         watched = Watched(estate({SUBSCRIPTION: [], SUB_B: [bare]})).run()
@@ -228,21 +266,24 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         ran = investigate.Investigation(ran=True)
         with mock.patch.object(investigate, "investigate", return_value=ran):
             watched.run()
-        self.assertEqual(len([p for p in watched.store.plans_open() if p.case_id.startswith("k") and not p.case_id.startswith("kopen")]), 8)
+        self.assertEqual(len([p for p in watched.store.plans_open() if p.case_id.startswith("k") and not p.case_id.startswith("kopen")]), 9)
         self.assertFalse([e for e in of_type(watched.events, "case.held")])
 
     def test_the_next_watch_makes_no_second_request_for_a_request_that_is_open_and_keeps_the_cases_up_to_date(self):
         watched = Watched().run()
         first = {plan.plan_id for plan in watched.store.plans_open()}
         lists, _ = the_list()
-        lists[SUBSCRIPTION].append(rec(VM, SUBSCRIPTION, 40, annual=5000.0))
+        lists[SUBSCRIPTION].append(rec(VM, SUBSCRIPTION, 40, annual=100.0, sku=D2S, qty="2", term="P1Y", lookbackPeriod="90"))
         watched.tenant.advisor_of = lists
         watched.clock.advance(days=1)
         watched.run()
         self.assertEqual({plan.plan_id for plan in watched.store.plans_open()}, first)
-        self.assertEqual(len(watched.cases()), 8)
-        self.assertEqual(watched.case(VM).facts["advisor"]["n"], 15)
-        self.assertEqual(watched.case(VM).runs_seen, 2)
+        self.assertEqual(len(watched.cases()), 9)
+        said = watched.case(VM, sku=D2S).facts["advisor"]
+        self.assertEqual((said["n"], said["low"]), (7, 100.0), "a new variant is a row of the decision, and it is the smallest now")
+        self.assertEqual((said["usd"], said["alt"], watched.case(SAVINGS_PLAN).facts["advisor"]["usd"]), (0.0, "savings plan", 520.0),
+                         "the reservations (367.5) are now smaller than the savings plan (520): the alternative that is counted moves while the requests wait")
+        self.assertEqual(watched.case(VM, sku=D2S).runs_seen, 2)
         self.assertEqual((watched.summary.cases, of_type(watched.events, "case.result")), (0, []), "a request that waits is not announced again, and the Watch does not count it as made")
 
     def test_what_a_person_declined_is_not_asked_again_for_a_month_and_the_other_requests_of_the_subscription_stay(self):
@@ -254,10 +295,49 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         watched.clock.advance(days=3)
         watched.run()
         self.assertEqual(watched.case(COSMOS).status, "declined", "a person's answer is not undone by a Watch")
-        self.assertEqual(len(watched.store.plans_open()), 7)
+        self.assertEqual(len(watched.store.plans_open()), 8)
         watched.clock.advance(days=31)
         watched.run()
         self.assertEqual((watched.case(COSMOS).status, len([p for p in watched.store.plans_open() if p.case_id == case.case_id])), ("needs_human", 1))
+
+
+class WhatIsOneDecisionAndWhatIsNot(unittest.TestCase):
+    def cases_of(self, lists):
+        return sorted((c.facts["advisor"]["n"], c.facts["advisor"]["usd"], c.facts["advisor"]["alt"]) for c in Watched(estate({SUBSCRIPTION: [], SUB_B: lists})).run().cases())
+
+    def test_a_decision_with_one_variant_counts_that_figure(self):
+        self.assertEqual(self.cases_of([rec(VM, SUB_B, 0, annual=480.0)]), [(1, 480.0, "")])
+
+    def test_a_recommendation_that_names_no_term_or_no_look_back_is_its_own_decision_and_is_never_merged_by_a_guess(self):
+        whole = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,))
+        no_back, no_term = rec(VM, SUB_B, 50, annual=40.0, term="P1Y", lookbackPeriod=""), rec(VM, SUB_B, 51, annual=30.0, term="")
+        found = self.cases_of(whole + [no_back, no_term])
+        self.assertEqual(sorted(n for n, _, _ in found), [1, 1, 2], "the two of one decision, and the two that cannot be told by their term and look-back, each alone")
+
+    def test_the_same_product_in_another_quantity_is_an_alternative_and_only_the_larger_is_counted(self):
+        two = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), qty="2")
+        three = variants(VM, SUB_B, 150.0, 10, lookbacks=(7,), qty="3")
+        self.assertEqual(self.cases_of(two + three), [(2, 0.0, "reservations"), (2, 160.5, "")])
+
+    def test_a_different_product_is_another_decision_and_both_are_counted(self):
+        a, b = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), sku=D2S), variants(VM, SUB_B, 100.0, 10, lookbacks=(7,), sku=D2ALS)
+        self.assertEqual(self.cases_of(a + b), [(2, 107.0, ""), (2, 107.0, "")])
+
+    def test_a_recommendation_about_a_resource_that_overlaps_another_about_the_same_resource_counts_the_larger(self):
+        disk = disk_id("disk-0", SUB_B)
+        self.assertEqual(self.cases_of([rec(DISKS, SUB_B, 0, annual=20.0, resource=disk), rec(DISKS, SUB_B, 1, annual=30.0, resource=disk)]), [(2, 30.0, "")])
+
+
+class TheSavingsFoundPageCountsTheHonestFigure(unittest.TestCase):
+    def test_savings_found_adds_up_what_the_decisions_count_and_an_alternative_adds_nothing(self):
+        watched = Watched().run()
+        row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
+        self.assertEqual(row["Findings"], "9")
+        self.assertIn("Saves, Scenario", row["Saving a year"])
+        self.assertIn(f"${round(12 * sum(month(c) for c in watched.cases())):,}", row["Saving a year"])
+        self.assertAlmostEqual(12 * sum(month(c) for c in watched.cases()), COUNTED, delta=0.06 * 9)
+        raw = the_list()[1]
+        self.assertNotIn(f"${round(raw):,}", row["Saving a year"], "not the sum of every variant")
 
 
 class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
@@ -333,7 +413,7 @@ class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
         watched.run()
         closed, ended = watched.store.plan_get("pold"), watched.store.case_get("kold")
         self.assertEqual((closed.state, closed.preconditions["takenBack"], ended.status), ("expired", "advisor", "expired"))
-        self.assertEqual(len(watched.store.plans_open()), 8)
+        self.assertEqual(len(watched.store.plans_open()), 9)
         self.assertIn(brief_mod.TAKEN_BACK["advisor"], brief_mod.build_brief(ended, closed, now=NOW).outcome.lines)
         self.assertTrue(any("earlier request" in e["note"] and "closed" in e["note"] for e in of_type(watched.events, "run.note")))
 
@@ -355,24 +435,34 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.watched = Watched().run()
-        cls.case = cls.watched.case(VM)
+        cls.case = cls.watched.case(VM, sku=D2S)
         cls.plan = next(plan for plan in cls.watched.store.plans_open() if plan.case_id == cls.case.case_id)
         cls.year = brief_mod.usd_text(cls.case.facts["advisor"]["usd"])
         cls.page = Console(store=cls.watched.store).get(f"/ok/{cls.plan.plan_id}")
 
-    def test_the_page_shows_the_sum_twelve_rows_and_the_rest_with_their_sum_at_the_level_scenario(self):
+    def test_the_page_shows_the_one_decision_with_its_variants_the_smallest_counted_the_range_and_that_they_are_alternatives(self):
         reply = self.page
         self.assertEqual((reply.status, reply.problems), (200, []))
         table = reply.table("advisor")
-        self.assertEqual((table.headers, len(table.rows)), (brief_mod.ADVISOR_COLUMNS, 12))
-        first = table.rows[0]
-        self.assertEqual((first["What"], first["Where"], first["For how long"], first["Applies to"]), ("Standard_D2s_v6 × 1", "swedencentral", "1 year", "one subscription"))
-        self.assertRegex(first["Saves a year"], r"^\$[0-9,]+\.00$")
-        self.assertRegex(first["Looked back"], r"^[0-9]+ days$")
-        self.assertIn(f"Its figures add up to {self.year} a year", reply.content)
-        self.assertIn(f"and 2 more, {brief_mod.usd_text(self.case.facts['advisor']['moreUsd'])} a year", reply.content)
-        self.assertIn("Saves, Scenario", reply.content)
-        self.assertIn("the rows can be alternatives or overlap, so buying saves less than the sum", reply.content)
+        self.assertEqual((table.headers, len(table.rows)), (["For how long", "Saves a year", "Looked back"], 6), "what is the same in every variant is said once, in the sentence")
+        self.assertEqual([(row["For how long"], row["Saves a year"], row["Looked back"]) for row in (table.rows[0], table.rows[-1])],
+                         [("1 year", "$321.00", "7 days"), ("3 years", "$960.00", "60 days")], "the smallest first")
+        text = reply.content.replace("&#x27;", "'")
+        self.assertIn("6 variants of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and look-back", text)
+        self.assertIn(f"they are alternatives, and Meternaut counts the smallest: {self.year} a year", text)
+        self.assertIn("The largest is $960.00 a year with a term of 3 years", text)
+        self.assertIn("Saves, Scenario", text)
+        self.assertIn("smallest of its variants: they are alternatives, and only one is bought", text)
+        self.assertNotIn("add up to", text)
+
+    def test_the_page_of_an_alternative_says_what_is_counted_instead_and_counts_nothing_for_itself(self):
+        case = self.watched.case(SAVINGS_PLAN)
+        plan = next(p for p in self.watched.store.plans_open() if p.case_id == case.case_id)
+        text = Console(store=self.watched.store).get(f"/ok/{plan.plan_id}").content.replace("&#x27;", "'")
+        self.assertIn("Advisor lists another purchase for this subscription that saves more (reservations)", text)
+        self.assertIn("nothing is added for this request", text)
+        self.assertNotIn("Saves, Scenario", text)
+        self.assertEqual(brief_mod.build_brief(case, plan, now=NOW).saving.monthly, None)
 
     def test_the_page_says_the_order_of_work_that_nothing_was_checked_and_that_meternaut_does_not_buy(self):
         content = self.page.content

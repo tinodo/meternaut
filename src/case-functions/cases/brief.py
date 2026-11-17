@@ -86,7 +86,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
               "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
-              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each kind of recommendation has its own now."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
+              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -1281,7 +1281,9 @@ ADVISOR_ROWS = 12
 ADVISOR_COLUMNS = ["What", "Where", "For how long", "Saves a year", "Looked back", "Applies to"]
 TERM = re.compile(r"^P([0-9]{1,2})([YM])$")
 ADVISOR_BASIS = "Azure Advisor's own estimate: no cost line of this resource backs it"
-ADVISOR_BASIS_MANY = "Azure Advisor's own estimates, added up: the rows can be alternatives or overlap, so buying saves less than the sum"
+ADVISOR_BASIS_MANY = "Azure Advisor's own estimate of the smallest of its variants: they are alternatives, and only one is bought"
+ADVISOR_BASIS_OVERLAP = "Azure Advisor's own estimate of the largest of its recommendations about one resource: they overlap, so only one counts"
+ADVISOR_ALT = ("Advisor lists another purchase for this subscription that saves more ({alt}). You buy one or the other, so only the larger is counted, and nothing is added for this request.")
 ADVISOR_SURE = "Azure Advisor's own estimate. No AI and no check by code looked at it, and Meternaut has not checked that what it covers will keep running."
 ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
                  "and a discount lowers the rate and does not remove waste.")
@@ -1334,7 +1336,18 @@ def _commitment(case: CaseRecord | None) -> bool:
 
 def _advisor_basis(case: CaseRecord | None) -> str:
     found = advisor_digest(case)
-    return ADVISOR_BASIS_MANY if found is not None and found["n"] > 1 else ADVISOR_BASIS
+    return (ADVISOR_BASIS_MANY if _commitment(case) else ADVISOR_BASIS_OVERLAP) if found is not None and found["n"] > 1 else ADVISOR_BASIS
+
+
+def _advisor_missing(case: CaseRecord | None) -> str:
+    """Why a case that holds Advisor's recommendations has no figure counted: Advisor offers another purchase that saves more, and only the larger is counted."""
+    found = advisor_digest(case)
+    return ADVISOR_ALT.format(alt=text_of(found.get("alt"), 40)) if found is not None and found.get("alt") else ""
+
+
+def _term_text(term: object) -> str:
+    ended = TERM.match(str(term))
+    return f"{int(ended.group(1))} {'year' if ended.group(2) == 'Y' else 'month'}{'' if int(ended.group(1)) == 1 else 's'}" if ended else ""
 
 
 def _advisor_row(row: object) -> tuple[str, ...] | None:
@@ -1342,35 +1355,50 @@ def _advisor_row(row: object) -> tuple[str, ...] | None:
     if not isinstance(row, list) or len(row) != 8:
         return None
     sku, qty, region, term, annual, currency, lookback, scope = row
-    figure, ended = _figure(annual), TERM.match(str(term))
-    years = f"{int(ended.group(1))} {'year' if ended.group(2) == 'Y' else 'month'}{'' if int(ended.group(1)) == 1 else 's'}" if ended else ""
+    figure = _figure(annual)
     money = "No figure" if figure is None else (usd_text(figure) if currency == "USD" else f"{number_text(figure)} {text_of(currency, 3) or 'in no currency'}, not added")
     scope_text = {"single": "one subscription", "shared": "all subscriptions"}.get(str(scope).lower(), text_of(scope, 40))
     what = text_of(sku, 64) + (f" × {qty}" if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else "")
     back = days_text(lookback) if isinstance(lookback, int) and not isinstance(lookback, bool) else ""
-    return (what, text_of(region, 40), years, money, back, scope_text)
+    return (what, text_of(region, 40), _term_text(term), money, back, scope_text)
 
 
 def advisor_of(case: CaseRecord | None) -> Advisor | None:
-    """What Advisor says in a case: its figures added up, its first rows, how many more there are, and what was not added up. A case that Advisor made is "Azure Advisor lists", and a case that an
-    older check of Meternaut or the investigation made is "Azure Advisor also says so": the case keeps its own figure, and this one is not added to it."""
+    """What Advisor says in a case. The variants of one purchase (they differ by term and look-back) are alternatives, so the case counts the smallest and says the range; recommendations about one
+    resource overlap, so it counts the largest; a commitment that Advisor offers in another way that saves more is counted instead (`alt`), and this case counts nothing. A case that Advisor made is
+    "Azure Advisor lists", and one that an older check or the investigation made is "Azure Advisor also says so": it keeps its own figure, and this one is not added to it."""
     found = advisor_digest(case)
     if found is None or case is None:
         return None
     rows = tuple(row for row in (_advisor_row(item) for item in found["rows"][:ADVISOR_ROWS]) if row)
-    shown = [n for n in range(len(ADVISOR_COLUMNS)) if any(row[n] for row in rows)]  # a column that Advisor filled for none of the rows is left out
+    cells = list(zip(*rows)) or [()] * len(ADVISOR_COLUMNS)
+    shown = [n for n in range(len(ADVISOR_COLUMNS)) if any(cells[n]) and (n == 3 or len(rows) == 1 or len(set(cells[n])) > 1)]  # what is the same in every row is said once, in the sentence
+    same = ", ".join(cells[n][0] for n in range(len(ADVISOR_COLUMNS)) if cells[n] and cells[n][0] and n not in shown)
     columns, rows = tuple(ADVISOR_COLUMNS[n] for n in shown), tuple(tuple(row[n] for n in shown) for row in rows)
-    count, usd, left = found["n"], _figure(found["usd"]) or 0.0, _whole(found.get("more"))
-    many = f"{number_text(count)} recommendation{'' if count == 1 else 's'}"
-    rates = "based on your own rates and usage" if _commitment(case) else "at retail rates, so your own rates are not in it"
-    said = f"Azure Advisor lists {many} here" if case.detector == "advisor-cost" else f"Azure Advisor also says so, with {many}"
-    money = f"{'Its figure is' if count == 1 else 'Its figures add up to'} {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}." if usd > 0 else "None of them has a figure in dollars."
+    count, usd, low, high = found["n"], _figure(found["usd"]) or 0.0, _figure(found.get("low")) or 0.0, _figure(found.get("high")) or 0.0
+    alt, left, commit = text_of(found.get("alt"), 40), _whole(found.get("more")), _commitment(case)
+    top = _term_text(found["rows"][-1][3]) if not left and isinstance(found["rows"][-1], list) and len(found["rows"][-1]) == 8 else ""
+    many = f"{number_text(count)} {'variant' if commit else 'recommendation'}{'' if count == 1 else 's'}"
+    rates = "based on your own rates and usage" if commit else "at retail rates, so your own rates are not in it"
+    what = f"{many} of one purchase{f' ({same})' if same else ''} that differ by term and look-back" if commit and count > 1 else many
+    if alt:
+        money = ADVISOR_ALT.format(alt=alt)
+    elif usd <= 0:
+        money = "None of them has a figure in dollars."
+    elif count == 1:
+        money = f"Its figure is {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}."
+    elif commit:
+        money = (f"You buy one of them, so they are alternatives, and Meternaut counts the smallest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}. "
+                 f"The largest is {usd_text(high)} a year{f' with a term of {top}' if top else ''}.")
+    else:
+        money = f"They overlap, so Meternaut counts the largest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}."
     skipped = _whole(found.get("skipped"))
     kinds = [text_of(item, 3) for item in found.get("currencies", []) if isinstance(item, str)] if isinstance(found.get("currencies"), list) else []
     note = (f"{number_text(skipped)} of the {number_text(count)} {'was' if skipped == 1 else 'were'} counted and not added up: Advisor gave no figure in dollars"
             f"{' (' + ', '.join(kinds) + ')' if kinds else ''}, and Meternaut does not change it into dollars.") if skipped else ""
-    rest = f"and {number_text(left)} more, {usd_text(_figure(found.get('moreUsd')) or 0.0)} a year" if left else ""
-    return Advisor(f"{said}. {money}", f"{many}, {usd_text(usd)} a year added up" if usd > 0 else many, columns, rows, rest, note)
+    line = (f"{many}, none counted: an alternative" if alt else many if usd <= 0 else f"{many}, {usd_text(usd)} a year" + (f" counted (the {'smallest' if commit else 'largest'})" if count > 1 else ""))
+    who = "Azure Advisor lists" if case.detector == "advisor-cost" else "Azure Advisor also says so, with"
+    return Advisor(f"{who} {what}. {money}", line, columns, rows, f"and {number_text(left)} more variants" if left else "", note)
 
 
 def advisor_options(case: CaseRecord | None) -> tuple[Option, ...]:
@@ -1497,8 +1525,8 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         specific = False
         if fam is not None and fam.no_figure:
             why, specific = fam.no_figure, True
-        elif _unread_missing(case) or _gateways_missing(case):
-            why, specific = _unread_missing(case) or _gateways_missing(case), True
+        elif _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case):
+            why, specific = _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case), True
         return Saving(None, "", "", None, why, specific)
     if waiting is None:
         waiting = round(figure / 30, 2)

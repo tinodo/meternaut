@@ -1,12 +1,13 @@
 """Azure Advisor's cost recommendations as cases (docs/proposals/22-advisor-first-class.md): made by code from Advisor's own typed values, and never judged by a model.
 
-A recommendation about a whole subscription (a reservation, a savings plan) is a row of the one case for its subscription, type and sub-category, which holds the sum and the first rows. A
-recommendation about one resource is a case for that resource, or a row of the case that an older check of Meternaut or the investigation made for it: one case, one request.
-Nothing here changes Azure. It reads the list that the Watch read, and writes the records of the app.
+Advisor lists the same purchase more than once, for each term and each look-back. Those variants are alternatives of one decision, so they are one case, one request and one figure: the smallest.
+A decision about a whole subscription is one case; a recommendation about one resource is a case for that resource, or a row of the case that an older check of Meternaut or the investigation
+made for it. Commitments of one subscription that Advisor offers in more than one way are alternatives too, and only the larger is counted. Nothing here changes Azure.
 """
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections import defaultdict
 from dataclasses import replace
 
@@ -25,10 +26,14 @@ ADVICE_NONE = {"problem": "Azure Advisor has a cost recommendation", "solution":
 
 
 def group_key(lead: Lead) -> str:
-    """What one case stands for: the subscription, the type and the sub-category of a recommendation about a whole subscription, else the resource."""
-    if cost_words.scope_of(lead.resource_id).kind == "subscription":
-        return f"{lead.subscription_id}|{lead.advisor.get('type', '')}|{lead.advisor.get('sub', '')}"
-    return lead.resource_id.lower()
+    """What one case stands for. For a whole subscription: the subscription, type, sub-category, size or product, region, quantity and scope, which Advisor repeats for each term and look-back, so
+    the variants share it. A recommendation with no term or no look-back is its own decision, never merged by a guess. For anything else: the resource."""
+    item = lead.advisor
+    if cost_words.scope_of(lead.resource_id).kind != "subscription":
+        return lead.resource_id.lower()
+    if item["term"] and item["lookback"] is not None:
+        return "|".join((lead.subscription_id, item["type"], item["sub"], item["sku"], item["region"], str(item["qty"]), item["scope"]))
+    return f"{lead.subscription_id}|{lead.lead_id}"
 
 
 def resources(leads: list[Lead]) -> set[str]:
@@ -37,16 +42,42 @@ def resources(leads: list[Lead]) -> set[str]:
 
 
 def digest(leads: list[Lead], dollars: bool) -> dict:
-    """What a group of recommendations says, as typed values: how many, what their yearly savings add up to in dollars, the first ROWS of them (the largest first), and how many more with their
-    sum. A recommendation in another currency, or with no figure, is counted and not added; one that names no currency is read as dollars when the cost lines of its subscription are (`dollars`)."""
-    items = sorted((lead.advisor for lead in leads), key=lambda item: (-(item["annual"] or 0.0), item["sku"]))
+    """What a decision says, as typed values: its variants (the first ROWS, the smallest figure first), the smallest and the largest of them in dollars a year, and `usd`, the one figure that is
+    counted. The variants of a purchase are alternatives, so the counted figure is the smallest; recommendations about one resource overlap, so it is the largest. A variant in another currency, or
+    with no figure, is counted and not added; one that names no currency is read as dollars when the cost lines of its subscription are (`dollars`)."""
+    items = sorted((lead.advisor for lead in leads), key=lambda item: (item["annual"] is None, item["annual"] or 0.0, item["term"], item["lookback"] or 0, item["sku"]))
     counted = [item["annual"] is not None and (item["currency"] == "USD" or (not item["currency"] and dollars)) for item in items]
+    figures = [item["annual"] for item, yes in zip(items, counted) if yes]
+    low, high = (min(figures), max(figures)) if figures else (0.0, 0.0)
     return {"type": items[0]["type"], "sub": items[0]["sub"], "n": len(items), "added": sum(counted), "skipped": len(items) - sum(counted),
-            "currencies": sorted({item["currency"] for item in items if item["currency"] not in ("", "USD")}),
-            "usd": round(sum(item["annual"] for item, yes in zip(items, counted) if yes), 2),
+            "currencies": sorted({item["currency"] for item in items if item["currency"] not in ("", "USD")}), "low": round(low, 2), "high": round(high, 2),
+            "usd": round(low if any(item["term"] for item in items) else high, 2), "alt": "",
             "rows": [[item["sku"], item["qty"], item["region"], item["term"], item["annual"], "USD" if yes else item["currency"], item["lookback"], item["scope"]]
-                     for item, yes in zip(items[:ROWS], counted)],
-            "more": max(0, len(items) - ROWS), "moreUsd": round(sum(item["annual"] for item, yes in zip(items[ROWS:], counted[ROWS:]) if yes), 2)}
+                     for item, yes in zip(items[:ROWS], counted)], "more": max(0, len(items) - ROWS)}
+
+
+def _alternatives(groups: dict[str, list[Lead]], decisions: dict[str, dict]) -> None:
+    """Among the commitments of one subscription (decisions whose variants have a term) only one way to buy is counted. A product that Advisor offers in another quantity or scope counts once, by its
+    larger figure, and a kind of commitment (Advisor's sub-category) is an alternative to another kind, because Advisor's fields do not say which spend each covers: the kind whose products add up
+    to most is counted. The others keep their figures, are not added (`usd` 0), and say what is counted instead (`alt`)."""
+    mine: dict[str, list[str]] = defaultdict(list)
+    for key, said in decisions.items():
+        if any(row[3] for row in said["rows"]):
+            mine[groups[key][0].subscription_id].append(key)
+    for keys in mine.values():
+        best: dict[tuple, str] = {}
+        for key in sorted(keys):
+            said = decisions[key]
+            product = (said["type"], said["rows"][0][0], said["rows"][0][2])
+            if product not in best or said["low"] > decisions[best[product]]["low"]:
+                best[product] = key
+        total: dict[str, float] = defaultdict(float)
+        for key in best.values():
+            total[decisions[key]["sub"]] += decisions[key]["low"]
+        winner = max(total, key=lambda kind: (total[kind], kind))
+        for key in keys:
+            if key not in best.values() or decisions[key]["sub"] != winner:
+                decisions[key].update(usd=0.0, alt=re.sub(r"(?<=[a-z])(?=[A-Z])", " ", winner).lower() or "another kind")
 
 
 def _asks_again(old: CaseRecord, now: dt.datetime, recheck_days: int) -> bool:
@@ -94,8 +125,8 @@ def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: l
         h.emit("case.started", caseId=case_id, leadId=lead.lead_id)
         h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=record.detector, resourceName=clean_text(record.resource_name, 120), resourceType=record.resource_type,
                resourceGroup=clean_text(record.resource_group, 90), costUsd30d=record.cost_usd_30d, status="needs_human", recommendation="change", confidence=None,
-               monthlySavingUsd=round(said["usd"] / 12, 2) if said["usd"] > 0 else None, summary=f"Azure Advisor: {said['n']} recommendation{'' if said['n'] == 1 else 's'}, "
-               f"{said['skipped']} not added up", objections=[], guards=[])
+               monthlySavingUsd=round(said["usd"] / 12, 2) if said["usd"] > 0 else None, summary=f"Azure Advisor: {said['n']} recommendation{'' if said['n'] == 1 else 's'} in one decision, "
+               + ("an alternative, none counted" if said["alt"] else f"{said['usd']:.2f} a year counted"), objections=[], guards=[])
     upkeep.ask(ex, h, record, lead, holds)
     return int(fresh)
 
@@ -131,9 +162,10 @@ def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[s
             others[lead.resource_id.lower()].add(lead.detector)
     made = skipped = 0
     currencies: set[str] = set()
+    decisions = {key: digest(leads, (contexts.get(leads[0].subscription_id) or Context()).currency == "USD") for key, leads in groups.items()}
+    _alternatives(groups, decisions)
     for key, leads in groups.items():
-        context = contexts.get(leads[0].subscription_id)
-        said = digest(leads, context is not None and context.currency == "USD")
+        said = decisions[key]
         skipped += said["skipped"]
         currencies.update(said["currencies"])
         try:
@@ -142,7 +174,7 @@ def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[s
             say(f"the case of {len(leads)} Advisor recommendation{'' if len(leads) == 1 else 's'} could not be kept in the store: {clean_text(s.redact(error), 200)}")
     try:
         if retired := _retire(s.extras, {leads[0].subscription_id for leads in groups.values()}, s.clock()):
-            say(f"{retired} earlier request{'s' if retired != 1 else ''} about whole subscriptions {'were' if retired != 1 else 'was'} closed: Advisor's recommendations have a request for each kind now")
+            say(f"{retired} earlier request{'s' if retired != 1 else ''} about whole subscriptions {'were' if retired != 1 else 'was'} closed: Advisor's recommendations have a request for each decision now")
     except StoreError as error:
         say(f"the earlier requests about whole subscriptions could not be closed: {clean_text(s.redact(error), 200)}")
     if skipped:
