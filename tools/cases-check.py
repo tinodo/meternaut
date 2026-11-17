@@ -367,7 +367,7 @@ NO_CALLS = "The Scholar made no call of the page reader: the model did not use i
 STUDY_NOTE_WORDS = (
     "the Study is switched off", "no Foundry endpoint is set", "no store keeps the claims, so there is nothing to study for", "the switch all or the switch investigation is pulled, or cannot be read",
     "no kind of resource waits to be studied", "the survey or the re-read of the claims could not be made", "the Scholar could not be made ready", "the Scholar gave no answer that could be read",
-    "the Scholar gave no answer",
+    "the Scholar gave no answer", "the cost of some kinds of resource could not be read, so they are studied after the kinds that have a cost, the most common first",
 )
 STUDY_NOTE_COUNTS = re.compile(r"claims thrown away: (?:[a-z]+ [0-9]+(?:, )?)+|[0-9]+ of [0-9]+ calls of the page reader were refused or failed(?: \((?:[a-z-]+ [0-9]+(?:, )?)+\))?")
 NOT_SHOWN = "a note that is not shown in a public log; it is in the History, in the app's telemetry"
