@@ -255,8 +255,12 @@ class TableStore:
         rows = self._query(PLANS, "PartitionKey eq 'p' and (state eq 'open' or state eq 'approved')", PAGE)
         return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
+    def plans_held(self) -> list[PlanRecord]:
+        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'held'", PAGE)
+        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
-        plans = self._records(self._query(PLANS, "PartitionKey eq 'p'", PAGE), PlanRecord)
+        plans = self._records(self._query(PLANS, "PartitionKey eq 'p' and state ne 'held'", PAGE), PlanRecord)
         return sorted(plans, key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
 
     def plan_get(self, plan_id: str) -> PlanRecord | None:

@@ -35,7 +35,10 @@ CASE_STATUSES = ("proposed", "needs_human", "dropped", "error", "awaiting_ok", "
 # What a case is while a person has still to answer, and what it is once the loop has finished with it.
 CASE_OPEN = ("awaiting_ok", "approved", "running")
 CASE_CLOSED = ("done", "failed", "declined", "expired", "verified", "acknowledged")
-PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed")
+PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed", "held")
+# The state of the request of a finding that a guard holds back (cases/approvals.py Approvals.settle): it is no open request, so nothing that lists the open ones (the Decisions page, the
+# letters of a request, the cards, the cap of ADVICE_OPEN_MAX) sees it, and it takes the answers that ask for nothing: a question, "not mine", "later" and "not worth it".
+HELD = "held"
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
@@ -513,6 +516,9 @@ class Store(Protocol):
         and its result is kept instead, so that what the other step wrote is never written over. Returns False when the case is gone or when `change` returned None."""
         ...
     def plans_open(self) -> list[PlanRecord]: ...
+    def plans_held(self) -> list[PlanRecord]:
+        """The requests of the findings that a guard holds back (the state HELD), newest first. plans_recent leaves them out: they never end by the clock, and a bulk of them would crowd the newest plans."""
+        ...
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]: ...
     def plan_get(self, plan_id: str) -> PlanRecord | None: ...
     def plan_put(self, plan: PlanRecord) -> None: ...

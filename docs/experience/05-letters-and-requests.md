@@ -24,7 +24,7 @@ Nothing is ever approved by e-mail. The platform features named here are general
 | Letter | Audience | Arrives | Length | What it holds |
 |---|---|---|---|---|
 | **Monday letter** | FinOps lead and platform owner | Monday before 09:00 local, after quiet hours end | At most 400 words | What was learned, done and got wrong; where the bill moved; what waits |
-| **Weekly desk** | Owners on the e-mail or digest-only profile (Teams users get a card) | Their chosen day and time (default Tuesday 10:00 local) | Five items at most, about ten minutes | Each item in a line: value, price basis, saving word, and a link to its page |
+| **Weekly desk** | Owners on the e-mail or digest-only profile (Teams users get a card) | Their chosen day and time (default Tuesday 10:00 local) | Five items at most, about ten minutes | Each item in a line: value, price basis, saving word, and a link to its page; then three lines at most on held findings |
 | **Monthly letter** | Finance and executives | After the period closes (starting value: five days after it ends) | Two pages and a CSV | Claimed against verified, the invoice, the commitment's pace |
 | **First-contact e-mail** | Someone not yet reachable in Teams | Once, after the announcement | One screen | Who writes, why this person, what is kept, one link |
 | **Approval-waiting e-mail** | Every purchase approver, as well as the card; others on e-mail or where a card's link opens in an embedded view | When a plan waits for an OK on a page | A few lines | The change, whether one person or two must approve, plan code (a short reference), expiry with time zone, the network that can open the page, one link; never the other approver's answer |
