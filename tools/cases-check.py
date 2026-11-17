@@ -252,7 +252,8 @@ def claim_lines(findings: list[dict]) -> list[str]:
     """Why the claims of the findings were not confirmed, from the counts on the lines `investigation.finding`, added up (no text of the estate: a count for each reason of the code), and how many
     resources were too small to open a case. Nothing when no finding carries the counts."""
     reasons = (("noEntry", "listed with no measurement cited"), ("notMeasured", "cited for a resource that no tool measured"), ("metricUnknown", "cited for a metric that no tool returned for the resource"),
-               ("totalDiffers", "cited with a total that none of the tools' totals equals"), ("tooSmall", "too small to open a case"))
+               ("totalDiffers", "cited with a total that none of the tools' totals equals"), ("showsUse", "cited with a total that shows use, against a claim of no usage"),
+               ("tooBrief", "cited with a measurement of too few days to prove no usage"), ("tooSmall", "too small to open a case"))
     shown = [f"{sum(whole(e.get(key)) or 0 for e in findings)} {what}" for key, what in reasons if any(key in e for e in findings)]
     return [f"  Claims of the findings, over all of them: " + "; ".join(shown) + "."] if shown else []
 

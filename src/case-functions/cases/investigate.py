@@ -125,11 +125,14 @@ class Finding:
     repeated: int = 0
     surpassed: int = 0  # the resources that a later finding, which was surer of them, took from this one
     # Why the claims of the finding were not confirmed, as counts (the diagnosis of a run, from the History alone): the resources that it lists and gave no measurement for, and the measurements
-    # that it cites for a resource that no tool measured, for a metric that no tool returned for the resource, or with a total that none of the tools' totals equals.
+    # that it cites for a resource that no tool measured, for a metric that no tool returned for the resource, or with a total that none of the tools' totals equals; and, for a claim of no usage,
+    # the cited measurements that match the tools and still prove nothing: one that shows use, and one of too few days or with gaps.
     no_entry: int = 0
     not_measured: int = 0
     metric_unknown: int = 0
     total_differs: int = 0
+    shows_use: int = 0
+    too_brief: int = 0
     recent: int = 0
     guarded: int = 0
     capped: int = 0
@@ -459,9 +462,11 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
         if finding.basis == "no-usage":
             numbers = [t for t in shown["totals"] if t is not None]
             if any(t != 0 for t in numbers):
+                finding.shows_use += 1
                 contradicted.add(handle)
                 continue
             if not _quiet(shown):
+                finding.too_brief += 1
                 continue  # a measurement that was absent at some time, or that has values on too few days, proves nothing
         if len(cited[handle]) < MAX_FACT_METRICS:
             cited[handle][metric] = total
@@ -1213,7 +1218,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         saved = [point for item in finding.items if (point := pricing.point(item.lead.facts, item.lead.cost_usd_30d)) is not None]
         h.emit("investigation.finding", finding=finding.number, basis=finding.basis or None, proposal=finding.proposal or None, confidence=finding.confidence,
                claimed=finding.claimed, handles=len(finding.items), unknown=finding.unknown, unproven=finding.unproven, repeated=finding.repeated,
-               noEntry=finding.no_entry, totalDiffers=finding.total_differs, metricUnknown=finding.metric_unknown, notMeasured=finding.not_measured,
+               noEntry=finding.no_entry, totalDiffers=finding.total_differs, metricUnknown=finding.metric_unknown, notMeasured=finding.not_measured, showsUse=finding.shows_use, tooBrief=finding.too_brief,
                judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, tooSmall=finding.small, unmeasured=sum(1 for item in finding.items if not item.metrics),
                shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd, change=finding.change.action if finding.change else None,
                pricedHandles=len(saved), savingUsdMonth=_figure(sum(saved)) if saved else None,

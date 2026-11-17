@@ -611,12 +611,13 @@ class Run(unittest.TestCase):
 
     def test_the_claims_that_were_not_confirmed_are_added_up_by_reason_and_the_resources_that_were_too_small_are_counted(self):
         events = a_good_run()
-        events[-1:-1] = [*an_investigation(), event("investigation.finding", finding=1, kept=False, noEntry=2, notMeasured=1, metricUnknown=0, totalDiffers=1, tooSmall=0),
-                         event("investigation.finding", finding=2, kept=True, noEntry=1, notMeasured=0, metricUnknown=2, totalDiffers=0, tooSmall=4)]
+        events[-1:-1] = [*an_investigation(), event("investigation.finding", finding=1, kept=False, noEntry=2, notMeasured=1, metricUnknown=0, totalDiffers=1, showsUse=1, tooBrief=0, tooSmall=0),
+                         event("investigation.finding", finding=2, kept=True, noEntry=1, notMeasured=0, metricUnknown=2, totalDiffers=0, showsUse=0, tooBrief=3, tooSmall=4)]
         for extra in ((), ("--counts-only",)):
             _, out, _, _ = self.go([telemetry(events)], *extra)
             self.assertIn("Claims of the findings, over all of them: 3 listed with no measurement cited; 1 cited for a resource that no tool measured; 2 cited for a metric that no tool returned "
-                          "for the resource; 1 cited with a total that none of the tools' totals equals; 4 too small to open a case.", out, extra)
+                          "for the resource; 1 cited with a total that none of the tools' totals equals; 1 cited with a total that shows use, against a claim of no usage; "
+                          "3 cited with a measurement of too few days to prove no usage; 4 too small to open a case.", out, extra)
         _, out, _, _ = self.go([telemetry([*a_good_run()[:-1], *an_investigation(), a_good_run()[-1]])])
         self.assertNotIn("Claims of the findings", out, "findings that carry no counts say nothing of why")
 

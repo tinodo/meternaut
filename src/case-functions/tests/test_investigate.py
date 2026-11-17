@@ -809,6 +809,14 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         quiet = verified(finding(handles=["r1", "r3"], evidence=[entry("r3", "MetricA", 0)]), toolbox)
         self.assertEqual((quiet.no_entry, quiet.total_differs, quiet.metric_unknown, quiet.not_measured, quiet.handles), (1, 0, 0, 0, ["r3"]), "r1 was listed and gave no measurement")
 
+    def test_a_claim_of_no_usage_that_is_dropped_as_unproven_says_why_the_measurement_shows_use_or_it_is_too_brief(self):
+        brief = {"metrics": {"MetricA": {"total": 0, "totals": [0], "days": 30, "days_with_data": 19}}}
+        toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0]), "r2": metrics(MetricA=0), "r3": brief, "r4": recorded(MetricA=[0])})
+        parsed = verified(finding(handles=["r1", "r2", "r3", "r4"], evidence=[entry(handle, "MetricA", 0) for handle in ("r1", "r2", "r3", "r4")]), toolbox)
+        self.assertEqual((parsed.handles, parsed.unproven, parsed.shows_use, parsed.too_brief), (["r2", "r4"], 2, 1, 1))
+        low = verified(finding(handles=["r1", "r3"], basis="low-usage", evidence=[entry("r1", "MetricA", 0), entry("r3", "MetricA", 0)]), toolbox)
+        self.assertEqual((low.shows_use, low.too_brief, low.handles), (0, 0, ["r1", "r3"]), "only a claim of no usage is held to a measurement of nil")
+
     def test_an_entry_for_a_handle_that_the_finding_does_not_list_is_dropped(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
         parsed = verified(finding(handles=["r1"], basis="low-usage", evidence=[entry("r2", "MetricA", 0)]), toolbox)
@@ -1045,7 +1053,7 @@ class AGoodInvestigation(unittest.TestCase):
         (line,) = self.h.of("investigation.finding")
         self.assertEqual({k: v for k, v in line.items() if k not in ("v", "ts", "runId", "requestId", "type")},
                          {"finding": 1, "basis": "no-usage", "proposal": "delete", "confidence": 0.9, "claimed": 2, "handles": 2, "unknown": 0, "unproven": 0, "repeated": 0,
-                          "noEntry": 0, "totalDiffers": 0, "metricUnknown": 0, "notMeasured": 0,
+                          "noEntry": 0, "totalDiffers": 0, "metricUnknown": 0, "notMeasured": 0, "showsUse": 0, "tooBrief": 0,
                           "judgedLately": 0, "guarded": 0, "capped": 0, "tooSmall": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "change": None, "pricedHandles": 0, "savingUsdMonth": None,
                           "verdict": "agree", "kept": True,
                           "reason": None, "note": None, "summary": "Nothing used these in the window."})

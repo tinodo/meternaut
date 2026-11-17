@@ -974,6 +974,17 @@ class Salvage(unittest.TestCase):
             self.assertEqual(raised.exception.partial.salvage_failed, word, failure)
             self.assertRegex(raised.exception.partial.salvage_failed, r"^[A-Za-z0-9._-]{1,24}$", "a word and nothing of the answer")
 
+    def test_a_step_that_is_cut_in_flight_at_the_hard_time_is_not_followed_by_a_last_request_because_the_service_may_hold_the_outputs_that_it_carried(self):
+        rig = Rig()
+        rig.service.advance = 10
+        rig.service.failures["POST responses"] = [PASS, PASS, TimeoutError("cut at the deadline"), PASS]  # the third request is cut: its answer never arrives, and a request after it would be answered
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(self.asks("c1"), self.asks("c2"), reply([message("never read")]), handler=Handler(), max_calls=5, max_seconds=100, salvage=lambda: 25.0)
+        partial = raised.exception.partial
+        self.assertEqual((partial.salvaged, partial.salvage_failed, partial.text), (False, "", ""))
+        self.assertNotIn(self.TEXT, [item for sent in SoftBudget.posted(rig) for item in sent], "the outputs that the cut request carried are not sent again with a last request")
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
+
     def test_a_reason_to_stop_that_is_the_tokens_of_a_beat_leaves_the_last_request_and_any_other_reason_does_not(self):
         rig = Rig()
         stop = lambda progress: fo.Salvageable("the token budget of the run is used up") if progress.input_tokens + progress.output_tokens >= 40 else None  # noqa: E731
