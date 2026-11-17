@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import agents, capability, decide, gateways, guards, impact, learning, roles, unread, upkeep, wiring
+from . import activity, agents, capability, decide, gateways, guards, impact, learning, roles, unread, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -126,6 +126,7 @@ class Finding:
     reason: str | None = None
     verdict: SkepticAnswer | None = None
     covered_usd: float | None = None
+    fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
 
 
 @dataclass
@@ -158,6 +159,11 @@ class Investigation:
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
     held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (automation, unchecked), by reason: counted with the findings that were held back
+    # What the record of the run is made from (cases/activity.py).
+    toolbox: object = None
+    answer: object = None
+    examined: list[str] = field(default_factory=list)
+    findings: list = field(default_factory=list)
 
     @property
     def state(self) -> str:
@@ -704,6 +710,7 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
 
     A fault of its own, after some cases were opened, leaves the counts of those cases in the result, so that the end of the run counts the lines of the History."""
     out = Investigation()
+    opened = s.clock()
     try:
         return _investigate(s, contexts, notes, toolbox, out)
     except Exception as error:  # noqa: BLE001 (an investigation never stops the run)
@@ -715,6 +722,7 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
         harness = getattr(s, "harness", None)
         if harness is not None:
             harness.close()  # the line of every agent run, and the brake for a run that misbehaved (cases/harness.py)
+        activity.keep(s, out, contexts, trigger=getattr(s, "trigger", ""), opened=opened)  # never raises
 
 
 def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], toolbox: Toolbox | None, out: Investigation) -> Investigation:
@@ -746,6 +754,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
+    out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
         # a definition that equals the lock. Without a harness (a test that plays the agents) the client makes the agents as it always did.
@@ -802,6 +811,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             answer = harness.run(investigator_ref, spec_i, agents.investigator_input(max_calls), toolbox.call, max_calls=max_calls, max_seconds=run_seconds)
     except FoundryError as error:
         partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
+        out.answer = partial
         out.tool_calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log)
         out.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
         flush_notes()
@@ -812,6 +822,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         return out
     made = _made(answer.calls)
     refused = len(answer.calls) - len(made)
+    out.answer = answer
     out.tool_calls, out.tokens = len(made), answer.input_tokens + answer.output_tokens
     failed_calls = sum(1 for call in made if isinstance(call, dict) and call.get("ok") is False)
     out_of_time = answer.out_of_time
@@ -832,11 +843,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         finished(False, note=out.note)
         return out
     out.ran = True
+    out.examined = examined
     if len(raw_findings) > agents.MAX_FINDINGS:
         note(f"the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
 
     # 2. Code checks the findings against what the tools showed, then the recheck and the guards hold every resource.
     findings: list[Finding] = []
+    out.findings = findings
     taken: set[str] = set()
     for number, raw in enumerate(raw_findings[: agents.MAX_FINDINGS], 1):
         finding, handles, entries = parse_finding(number, raw)
@@ -1190,9 +1203,12 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
             subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
+        fate = "dropped"  # what became of the resources of the finding
         if outcome.status in ("proposed", "needs_human"):
+            fate = "person"
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
+                fate = "request"
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
@@ -1200,9 +1216,11 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
                 why = ex.approvals.held_why(record)  # an automation manages the resource, or nobody looked up who changed it: no request is made (cases/brief.py held_reason)
                 if why or says_nothing(record):
                     upkeep.held(h, record, why)
+                    fate = why or "nothing"
                     if why:
                         out.held_back[why] = out.held_back.get(why, 0) + 1
                     else:
                         out.said_nothing += 1
+        finding.fates[fate] = finding.fates.get(fate, 0) + len(group or [item])
     except (StoreError, ValueError) as error:
         h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))

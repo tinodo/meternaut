@@ -436,14 +436,14 @@ class WhoMayOpenIt(unittest.TestCase):
     def test_the_page_is_in_the_navigation_of_ops_and_owner_only_and_marked_when_it_is_open(self):
         def names(oid):
             return [a.text() for a in self.console.get("/", oid=oid).root.find("nav").find_all("a")]
-        self.assertEqual(names(TINO), ["Decisions", "History", "Settings", "Operations", "Savings found"])
-        self.assertEqual(names(OPS), ["Decisions", "History", "Settings", "Operations", "Savings found"])
-        self.assertEqual(names(OWNER), ["Decisions", "History", "Settings", "Savings found"])
+        self.assertEqual(names(TINO), ["Decisions", "History", "Settings", "Operations", "Savings found", "What the AI looked at"])
+        self.assertEqual(names(OPS), ["Decisions", "History", "Settings", "Operations", "Savings found", "What the AI looked at"])
+        self.assertEqual(names(OWNER), ["Decisions", "History", "Settings", "Savings found", "What the AI looked at"])
         self.assertEqual(names(MAYA), ["Decisions", "History", "Settings"])
         reply = self.console.get(PATH, oid=OWNER)
         current = [a.text() for a in reply.root.find("nav").find_all("a") if a.attrs.get("aria-current") == "page"]
         self.assertEqual(current, ["Savings found"])
-        self.assertEqual([a.attrs["href"] for a in reply.root.find("nav").find_all("a")][-1], PATH)
+        self.assertEqual([a.attrs["href"] for a in reply.root.find("nav").find_all("a")][-2:], [PATH, "/ops/activity"], "it comes just before What the AI looked at")
 
     def test_the_operations_page_links_to_it_beside_every_run_and_every_finding(self):
         links = self.console.get("/ops", oid=OPS).links()

@@ -1,6 +1,7 @@
 import re
 import unittest
 
+from test_web_activity import finding, record
 from test_web_support import (HOST, MAYA, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, make_action, make_advice, make_advice_case, make_case,
                               make_decision, make_plan, make_run, at, snapshot)
 
@@ -19,7 +20,7 @@ REQUIRED = {
     "Cache-Control": "no-store",
 }
 GET_PATHS = ["/", "/ok/plan0001", "/ok/plan0002", "/why/case0001", "/why/case0002", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs",
-             "/ops/runs?run=run00001", "/ops/permissions", "/ops/savings", "/ops/pause"]
+             "/ops/runs?run=run00001", "/ops/permissions", "/ops/savings", "/ops/activity", "/ops/pause"]
 # The addresses outside the function app that a page may hold: the page of the resource in the Azure portal, made from a resource id that code checked, and Cost analysis of its subscription or resource
 # group in the same portal, made from the id of the subscription and, when there is one, the name of a resource group that can be one. Each at most once, on a brief page only.
 PORTAL = re.compile(r"^https://portal\.azure\.com/#resource/subscriptions/[0-9A-Fa-f-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}/providers/[A-Za-z0-9.]{1,80}(?:/[A-Za-z0-9._()~-]{1,100}){2,16}$")
@@ -543,11 +544,12 @@ class XssEverywhere(unittest.TestCase):
         store.decision_put(make_decision(note=XSS, approver_name=XSS, plan_code=XSS))
         store.note_put(NoteRecord("n1", TINO, "note", XSS, XSS, XSS, XSS, at(days=-1), at(days=9), 3))
         store.switch_put(SwitchRecord("changes", True, XSS, at(minutes=-5), XSS))
+        store.investigation_put(record(investigator=XSS, skeptic=XSS, note=XSS, examined=(XSS,), findings=(finding(1, says=XSS, doubts=[XSS], note=XSS, verdict=XSS),), kinds=([XSS, XSS],), unread=(XSS,)))
         return console
 
     def test_the_payload_is_escaped_on_every_page_and_never_becomes_a_tag_or_a_handler(self):
         console = self.console()
-        shows_records = ["/", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/plan0001", "/ops/runs"]
+        shows_records = ["/", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/notes", "/ops/pause", "/ops/permissions", "/ok/plan0001", "/ops/runs", "/ops/activity"]
         for path in GET_PATHS:
             for oid in (TINO, MAYA):
                 with self.subTest(path=path, oid=oid):

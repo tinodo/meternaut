@@ -2,6 +2,7 @@ import dataclasses
 import re
 import unittest
 
+from test_web_activity import record
 from test_web_card_buttons import token_for
 from test_web_look_before_approve import ScriptedChecker
 from test_web_pages import busy
@@ -90,11 +91,13 @@ def gallery() -> dict:
     console.store.note_put(NoteRecord("n1", TINO, "note", "A note", f"/subscriptions/{'1' * 8}-1111-1111-1111-{'1' * 12}/resourceGroups/g/providers/p.q/t/n", "x", "you", at(days=-1), at(days=9), 1))
     console.store.case_put(make_case(case_id="case0002", status="error", summary="a reason", models={}, run_id="run00001"))
     console.store.run_put(make_run(run_id="run00002", ok=False, reason="a reason", finished_at=None))
+    console.store.investigation_put(record())  # what the AI looked at: tiles, findings, the money by kind and the earlier runs
     console.store.case_put(make_advice_case(case_id="case0005", plan_id="plan0005", use_series=[round(0.6 + 0.1 * (n % 4), 1) for n in range(29)] + [None], use_series_end="2026-11-04",
                                             use_kind="vm-cpu"))  # a machine: its request page shows the chart of its use, with a gap on the last day
     console.store.plan_put(make_advice(plan_id="plan0005", case_id="case0005"))
     for path in ("/", "/ok/plan0001", "/ok/plan0005", "/why/case0001", "/why/case0002", "/why/case0005", "/history", "/me/decisions", "/me/activity", "/me/settings",
-                 "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/savings", "/ops/pause", "/nothing", "/ok/nothing", "/why/nothing"):
+                 "/me/notes", "/ops", "/ops/runs", "/ops/runs?run=run00001", "/ops/runs?run=%3C", "/ops/permissions", "/ops/savings", "/ops/activity", "/ops/pause", "/nothing", "/ok/nothing",
+                 "/why/nothing"):
         pages[f"GET {path}"] = console.get(path)
     # The pages that a button on a Teams card opens: the one that sends the answer by itself, for a delete that the card asked about, for a decline and for advice, and the one for a button that
     # cannot be used.
@@ -175,6 +178,8 @@ def gallery() -> dict:
     pages["ops degraded"] = degraded.get("/ops")
     pages["runs degraded"] = degraded.get("/ops/runs")
     pages["savings degraded"] = degraded.get("/ops/savings")
+    degraded.store.investigation_put(record())
+    pages["activity degraded"] = degraded.get("/ops/activity")
     pages["pause degraded"] = degraded.get("/ops/pause")
     return pages
 
