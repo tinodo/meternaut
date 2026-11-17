@@ -126,7 +126,7 @@ class Finding:
     reason: str | None = None
     verdict: SkepticAnswer | None = None
     covered_usd: float | None = None
-    fates: dict[str, int] = field(default_factory=dict)  # the resources of the finding by what became of them: request, person, dropped, or why a request was held back (automation, unchecked, impact, nothing)
+    fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
 
 
 @dataclass
@@ -159,7 +159,7 @@ class Investigation:
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
     held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (automation, unchecked), by reason: counted with the findings that were held back
-    # What the record of the run is made from (cases/activity.py): the tools that were called, what the Investigator came to, its phrases and the findings with what code made of them.
+    # What the record of the run is made from (cases/activity.py).
     toolbox: object = None
     answer: object = None
     examined: list[str] = field(default_factory=list)
@@ -722,7 +722,7 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
         harness = getattr(s, "harness", None)
         if harness is not None:
             harness.close()  # the line of every agent run, and the brake for a run that misbehaved (cases/harness.py)
-        activity.keep(s, out, contexts, trigger=getattr(s, "trigger", ""), at=at)  # what the run looked at, for the page of that name: it never raises
+        activity.keep(s, out, contexts, trigger=getattr(s, "trigger", ""), at=at)  # never raises
 
 
 def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], toolbox: Toolbox | None, out: Investigation) -> Investigation:
@@ -1203,7 +1203,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
             subscription_name=lead.subscription_name or (old.subscription_name if old else ""), **upkeep.cost_fields(lead, old))
         ex.store.case_put(record)
-        fate = "dropped"  # what became of the resources of the finding: the page "What the AI looked at" says it
+        fate = "dropped"  # what became of the resources of the finding
         if outcome.status in ("proposed", "needs_human"):
             fate = "person"
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on

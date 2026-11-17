@@ -1,7 +1,6 @@
-"""What the AI looked at, for the roles ops and owner: the latest investigation as the Investigator and the Skeptic left it, and how much of the 30-day cost its tools read (docs/proposals/23).
+"""What the AI looked at, for the roles ops and owner: the latest investigation as its two AIs left it, and how much of the 30-day cost its tools read (docs/proposals/23).
 
-It shows what the app kept of each investigation (cases/activity.py): the Investigator's own phrases, every finding and what became of it, why the run stopped, and the kinds of resource that the tools
-touched against the cost of those kinds. It shows no name, tag or id of a resource, and the labels that the AI used inside a run (r1, r53) are left as they are. It changes nothing.
+It shows what the app kept of each investigation (cases/activity.py) and no name, tag or id of a resource; the labels that the AI used inside a run (r1, r53) stay as written. It changes nothing.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ ENDS = {"answered": ("It gave its answer", "It gave its answer within its limits
         "failed": ("It failed", "It gave no answer that could be read.")}
 STOPS = {"tokens": "its token limit was used up", "switch": "a switch that holds the agents is pulled", "refusals": "too many of its tool calls were refused"}
 VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
-# What became of the resources of a finding: a request was made, it was left for a person, it was dropped, or a rule held the request back (the words that the History says: cases/approvals.py).
+# What became of the resources of a finding (the words of cases/approvals.py for a request that was held back).
 FATES = {"request": "a request was made", "person": "left for a person, no request yet", "dropped": "dropped, no change is suggested", "nothing": "held back, nothing to say",
          "automation": "held back, managed by an automation", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked"}
 LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that proves it", "repeated": "that an earlier finding has", "guarded": "held back by a guard",
@@ -127,8 +126,7 @@ def _findings(record: InvestigationRecord) -> Safe:
 
 
 def _open(ctx: Ctx) -> tuple[dict[str, list[int]], bool, bool]:
-    """The open requests and the open questions of each kind of resource, from the findings: a request waits for a person's answer, and a question is a finding that nobody has been asked about
-    yet. Whether a read failed, and whether one read was full (there may be more)."""
+    """The open requests (a person's answer is awaited) and the open questions (nobody has been asked yet) of each kind, whether a read failed, and whether one read was full."""
     plans, ok = read(lambda: ctx.store.plans_open(), [])
     asked = {plan.case_id for plan in plans if effective_state(ctx, plan) == "open"}
     counts: dict[str, list[int]] = {}
