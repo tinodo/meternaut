@@ -45,7 +45,6 @@ ALIKE = 0.05  # two rates that differ by no more than this share of the larger a
 DIFFER = 0.25  # two rates that differ by more than this share of the larger are far apart: the figure is then a Scenario whatever its form, because the bill alone does not say what it will be
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
-PRICE = re.compile(r"p[0-9]{1,4}")
 NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 WHY = {
@@ -58,7 +57,7 @@ WHY = {
     "alternative": "No saving was worked out: the alternative that the AI named is not a price that the tool for alternatives showed for this bill line in this run, or its price changes with the quantity.",
     "units": "No saving was worked out: the units differ, so the alternative cannot be priced against the bill line.",
     "dearer": "No saving was worked out: at the rate of the bill, or at list prices, the alternative costs as much as the bill line or more.",
-    "quantity": "No saving was worked out: the bill line has no quantity to price the alternative by.",
+    "quantity": "No saving was worked out: the bill line has no cost per unit to price the alternative by (no quantity, or no cost over its window).",
 }
 
 
@@ -176,7 +175,7 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
         return form, 0.0, 0.0, {}
     if form == "alternative":
         offer = said.get("price")
-        return (form, 0.0, 0.0, {"offer": offer}) if isinstance(offer, str) and PRICE.fullmatch(offer) else "alternative"
+        return (form, 0.0, 0.0, {"offer": offer}) if isinstance(offer, str) else "alternative"
     if form == "quantity":
         start, target = _number(said.get("from")), _number(said.get("to"))
         return (form, target / start, target / start, {"from": start, "to": target}) if start is not None and target is not None and 0 <= target < start else "remains"

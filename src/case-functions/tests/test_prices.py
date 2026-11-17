@@ -654,9 +654,10 @@ class TheOffers(unittest.TestCase):
 
     def test_only_the_prices_of_the_pages_that_were_shown_are_offered_and_a_price_with_steps_is_never_one(self):
         estate, box = priced()
-        estate.lines = ([line("Basic", "Fixed Hours", 0.5)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(99)]
-                        + [line("Basic", "Free Units", 0.0), line("Basic", "Free Units", 0.4, tier=100)])
+        estate.lines = ([line("Basic", "Fixed Hours", 5.0)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(99)]
+                        + [line("Basic", "Free Units", 0.0), line("Basic", "Free Units", 0.4, tier=100)])  # the line of the meter is the dearest: it is on the last page and is the current line of the first
         first = ask(box, "price_alternatives", meter="m1")
+        self.assertNotIn(first["current"]["line"], {found["price"] for found in prices_of(first)})
         self.assertEqual(box.offers["m1"], {found["price"] for found in prices_of(first)} | {first["current"]["line"]})
         self.assertLess(len(box.offers["m1"]), 100)
         offset = first["next_offset"]

@@ -18,6 +18,7 @@ from cases.families import registry
 from cases.families.words import SHOWN
 from cases.meters import Meter
 from cases.models import ADVISE
+from cases.prices import Line as Listed
 
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
 INJECTIONS = (
@@ -484,6 +485,18 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertEqual(b.saving.basis, pricing.saved(priced_case().facts, 100.0).basis)
         self.assertIn("the AI's own assumption", b.saving.basis)
         self.assertEqual(b.saving.waiting_per_day, 1.0)
+
+    def test_a_switch_is_a_scenario_whose_low_end_counts_and_the_words_of_the_figure_say_that_the_alternative_has_not_been_checked_for_features(self):
+        start = dt.date(2026, 10, 5)
+        meter = Meter("r1", None, pricing_words(1), 600.0, 60.0, {start + dt.timedelta(days=n): 2.0 for n in range(30)}, None, start, 30)
+        box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"p1": Listed("Example Compute", "Basic Tier", "Small", "Meter 1", "1 Hour", 0.0625, "swedencentral", 1)},
+                              rates={"m1": 0.8}, offers={"m1": {"p1"}})
+        change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "p1"}}], "how": "Take the basic tier."})
+        facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None), "r1")}
+        b = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+        self.assertEqual((b.saving.monthly, b.saving.level), (22.5, "Scenario"), "600 hours at 0.0625 are 37.50 at list prices, and 30 at the rate of the bill: 22.50 to 30 saved, and the low end counts")
+        self.assertIn("repriced at the alternative's list price scaled by your bill's rate, ratio 0.8, or at list prices: the alternative has not been checked for features", b.saving.basis)
+        self.assertEqual(b.how, "Take the basic tier.")
 
     def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):
         remove = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}

@@ -786,6 +786,19 @@ class TheAlternative(unittest.TestCase):
             with self.subTest(price=price):
                 self.assertEqual(self.priced(switch(price)).why, {"r1": "alternative"})
 
+    def test_a_line_whose_price_is_no_price_is_not_priced_and_a_meter_that_has_not_six_words_does_not_break_the_arithmetic(self):
+        base = LISTED["p1"]
+        for usd in (-0.0625, float("nan"), float("inf"), "0.0625", None, True):
+            with self.subTest(usd=usd):
+                box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, prices={"p1": dataclasses.replace(base, usd=usd)}, rates={"m1": 0.8}, offers={"m1": {"p1"}})
+                self.assertEqual(self.priced(box=box).why, {"r1": "alternative"})
+        short = billed_units(usd=60.0, quantity=600.0, words=COMPUTE[:5])
+        self.assertEqual(self.priced(box=self.box(meters={"m1": short})).why, {"r1": "alternative"})
+
+    def test_a_bill_line_that_gave_money_back_over_its_window_has_no_cost_per_unit_and_is_not_priced_by_the_unit(self):
+        meter = shaped("r1", [-100.0] + [2.0] * 29, words=COMPUTE)._replace(quantity=600.0)  # -42 in the window, 60 a month at the last 7 days
+        self.assertEqual(self.priced(box=self.box(meters={"m1": meter})).why, {"r1": "quantity"})
+
     def test_a_price_in_another_unit_is_refused_with_the_reason_that_the_units_differ(self):
         found = self.priced(switch("p3"))
         self.assertEqual((found.rows, found.why), ({}, {"r1": "units"}))
