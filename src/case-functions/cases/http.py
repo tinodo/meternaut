@@ -122,6 +122,16 @@ DOCS_PAGES = {"learn.microsoft.com": "/en-us/", "azure.microsoft.com": "/en-us/"
 PRICES_HOST = "prices.azure.com"
 PRICES_PATH = "/api/retail/prices"
 DOC_PATH = r"(?:(?!\.+(?:/|$))[A-Za-z0-9._~-]{1,100}/?){1,16}"
+GRAPH_HOST = "graph.microsoft.com"
+DIRECTORY_USER = rf"(?:{GUID}|[A-Za-z0-9._%+'-]{{1,64}}@[A-Za-z0-9.-]{{1,200}}\.[A-Za-z]{{2,24}})"
+
+
+def directory_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """The two reads of the escalation (cases/directory.py), on a list of their own: the Microsoft Graph profile of one person and the manager of one person, each named by an object id or a
+    user principal name. GET only: no list of users, no group, no write. What they may read is the application permission User.Read.All (environment/access-requirements.json, T4); the query
+    that picks the few properties is made by the directory module."""
+    user = re.escape(f"https://{GRAPH_HOST}/v1.0/users/")
+    return (("GET", re.compile(user + DIRECTORY_USER)), ("GET", re.compile(user + DIRECTORY_USER + "/manager")))
 
 
 def docs_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:

@@ -5,8 +5,8 @@ import datetime as dt
 import secrets
 from typing import Callable
 
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
-                     RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, EscalationRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord,
+                     PlanRecord, RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 
 def utc_now() -> dt.datetime:
@@ -39,6 +39,7 @@ class MemoryStore:
         self.claims: dict[str, ClaimRecord] = {}
         self.profiles: list[CapabilityRecord] = []
         self.investigations: dict[str, InvestigationRecord] = {}
+        self.escalations: dict[tuple[str, str, int], EscalationRecord] = {}
         self.check: CheckRecord | None = None
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
@@ -189,6 +190,22 @@ class MemoryStore:
 
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         return sorted((m for m in self.mails if m.oid == oid and m.sent_at >= since), key=lambda m: (m.sent_at, m.mail_id))
+
+    def escalation_claim(self, record: EscalationRecord) -> bool:
+        key = (record.plan_id, record.kind, record.number)
+        if key in self.escalations:
+            return False
+        self.escalations[key] = record
+        return True
+
+    def escalation_put(self, record: EscalationRecord) -> None:
+        self.escalations[(record.plan_id, record.kind, record.number)] = record
+
+    def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
+        return sorted((r for r in self.escalations.values() if r.plan_id == plan_id), key=lambda r: (r.kind, r.number))
+
+    def escalations_recent(self, limit: int = 500) -> list[EscalationRecord]:
+        return sorted(self.escalations.values(), key=lambda r: (r.at, r.plan_id, r.kind, r.number), reverse=True)[:limit]
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self.lessons[lesson.lesson_id] = lesson

@@ -10,7 +10,7 @@ Graph answers 202 Accepted with no body. That means Graph took the letter, not t
 
 Kinds of letter: the notifier sends `digest` (the weekly desk), `approval` (a plan waits for an OK), `notice` (a change ran or failed), `verified` (the check
 afterwards), `unsure` (the result of a change stays unknown), `first_contact` (the one-time introduction) and `alert` (an agent safeguard stopped the investigation: cases/alerts.py); the weekly budget neither counts nor holds any of
-these seven. Any other name of the shape
+these seven, nor the two kinds of an escalation (`escalation`, `escalation-weekly`: cases/escalation.py). Any other name of the shape
 `[a-z][a-z0-9_-]{0,31}` is valid and counts against the weekly budget (and is not allowed for a person of the weekly desk).
 
 Before a call the mailer checks, in this order, and the first check that fails ends the send and is written as the outcome:
@@ -45,17 +45,19 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import quiet
+from .directory import Target
 from .http import Client, HttpError, Refused
 from .letters import Letter
 from .models import TIME_FORMAT, MailRecord, Store
-from .people import People, Person
+from .people import ADDRESS, GUID, People, Person
 
 GRAPH_RESOURCE = "https://graph.microsoft.com"
 SENDER = re.compile(r"^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
 KIND = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "unsure", "digest", "alert")
+BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "unsure", "digest", "alert", "escalation", "escalation-weekly")
+ESCALATION_KINDS = ("escalation", "escalation-weekly")  # the kinds that the one exception to the closed list of people covers (send_escalation)
 NOT_MESSAGES = ("card-closed",)  # a card that closes itself is edited in place (cases/offers.py): no message, so no budget counts it
-DESK_KINDS = ("digest",)
+DESK_KINDS = ("digest", *ESCALATION_KINDS)  # a person who chose the weekly desk gets an escalation too: it is what keeps a request from fading
 SWITCHES = ("messages", "all")
 RETRY_ONLY = frozenset({429})
 MAX_DETAIL = 240
@@ -100,9 +102,10 @@ def _one_line(text: object) -> bool:
 
 class Mailer:
     def __init__(self, sender: str, client: Client, token: Callable[[str], str], people: People, store: Store, clock: Callable[[], dt.datetime],
-                 redact: Callable[[str], str], ids: Callable[[], str]) -> None:
+                 redact: Callable[[str], str], ids: Callable[[], str], deny: tuple[str, ...] = ()) -> None:
         self.url = _url(sender)
         self.sender, self.client, self.token, self.people, self.store, self.clock, self.redact, self.ids = sender, client, token, people, store, clock, redact, ids
+        self.deny = tuple(item.strip().lower() for item in deny if item.strip())
 
     def send(self, person: Person, letter: Letter, kind: str, plan_id: str | None = None) -> MailResult:
         """Sends `letter` to `person` if every check allows it, and writes the outcome. It does not raise for a problem of the send.
@@ -118,6 +121,32 @@ class Mailer:
         if result is None:
             result = self._post(listed.mail, letter)
         return self._record(person, listed, letter, kind, plan_id, now, result)
+
+    def hold_reason(self, oid: str, kind: str) -> str | None:
+        """Why a message of this kind to this person would be held now (a switch, a pause, quiet hours, the weekly desk), in plain words, or None. It writes nothing."""
+        now = self.clock()
+        now = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
+        found = self._hold(self.people.by_oid(oid) or Person(oid, "", (), ""), kind, now)
+        return None if found is None else found.detail
+
+    def send_escalation(self, target: Target, letter: Letter, kind: str, plan_id: str | None, step: int, source: str) -> MailResult:
+        """The one exception to the closed list of people (AGENTS.md rule 38), for the kinds of an escalation only: the address is the target's, which cases/directory.py made from the list of people
+        or from a profile of the directory (a Member of the tenant, enabled, with a mail address). It is checked here again: the kind, a well-formed address and object id, and the deny list. The
+        holds are the ordinary ones (a pulled switch, a pause, quiet hours): they delay the message and never cancel it, and the record says so. The record names the step and the source."""
+        now = self.clock()
+        now = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
+        mail = (target.mail or "").strip().lower()
+        person = self.people.by_oid(target.oid) or Person(target.oid, target.name, (), mail)
+        result: MailResult | None
+        if kind not in ESCALATION_KINDS or not ADDRESS.fullmatch(mail) or not GUID.fullmatch(target.oid or "") or any(mail == d or (d.startswith("@") and mail.endswith(d)) for d in self.deny):
+            result = MailResult("refused", "This is not a message that may go to a person outside the list, or the address is not allowed.")
+        elif not _one_line(letter.subject):
+            result = MailResult("refused", "The subject is empty or is not one line.")
+        else:
+            result = self._hold(person, kind, now)
+        if result is None:
+            result = self._post(mail, letter)
+        return self._record(person, self.people.by_oid(target.oid), letter, kind, plan_id, now, MailResult(result.status, f"Step {step}, {source}: {result.detail}" if step else f"{source}: {result.detail}"))
 
     def _refusal(self, person: Person, listed: Person | None, letter: Letter, kind: str) -> MailResult | None:
         address = (person.mail or "").strip().lower()

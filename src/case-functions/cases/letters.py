@@ -30,7 +30,7 @@ from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
 from .models import ActionRecord, CaseRecord, PlanRecord
 from .people import Person
-from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text
+from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text, waited_line
 
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
@@ -361,10 +361,8 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
 
 
 def _waits(plan: PlanRecord, now: dt.datetime) -> bool:
-    """A plan waits for an answer while it is open and its time is not over, as the page counts it: a time that cannot be read is over. An open plan that is past its time is closed by the loop, not listed."""
-    end = brief_mod.parse_time(plan.expires_at)
-    moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
-    return plan.state == "open" and end is not None and end > moment
+    """A plan waits for an answer while it is open: no clock ends it (AGENTS.md rule 38)."""
+    return plan.state == "open"
 
 
 def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (), later: Collection[str] = ()) -> Letter | None:
@@ -387,4 +385,109 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     else:
         doc.button("Open the decisions", f"{base}/")
     doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    return doc.build()
+
+
+# ---- the escalation of a request that waits (cases/escalation.py) ----------------------------------------------------------------------------------
+
+ESCALATION_WHY = {
+    "same": "This is a reminder. You are named as an approver of this request, and nobody has answered it.",
+    "manager": "You are told because you are the manager of {who}, who was asked first and has not answered.",
+    "tag": "You are told because your address is in the escalation tag of this resource, of its resource group or of its subscription.",
+    "contact": "You are told because you are an escalation contact: when nobody answers a request, it comes to you.",
+    "owners": "You are told because no manager and no escalation contact could be found, so a request that nobody answers comes to the owners of Meternaut.",
+}
+ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
+                    "I change nothing myself: a person decides on a web page.")
+ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not worth it, you have a question, it is not yours (then I pass it on), or you decide later (at most three times)."
+
+
+def waited_days(plan: PlanRecord, now: dt.datetime) -> int:
+    """How many whole days the request has waited since it was first made (a request that was made again keeps the first start)."""
+    since = brief_mod.parse_time(plan.created_at)
+    moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
+    return 0 if since is None else max(0, (moment - since).days)
+
+
+def _days(days: int) -> str:
+    return f"{days} day{'s' if days != 1 else ''}"
+
+
+def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), *, source: str, asked: str = "",
+                      notes: Sequence[str] = (), told: Sequence[str] = (), first: bool = False, put_off: int = 0) -> Letter:
+    """One request that has waited without an answer, to the person that the ladder has come to: why this person is told (and, to a person who never heard of Meternaut, who writes), the
+    request as its page has it (title, place, figure with its level), how long it has waited, what waiting has cost so far, who was told before and when, and what the person can do. Names
+    come from a directory and are cut and escaped. A saving that nobody measured says so, and no cost of waiting is worked out for it."""
+    base = _base(base_url)
+    brief = brief_mod.build_brief(case, plan, None, (), now=now)
+    days = waited_days(plan, now)
+    stake = stake_of(brief)
+    doc = _Doc(f"A decision has waited {_days(days)}")
+    doc.heading(_data(title_text(brief), 200))
+    if first:
+        doc.paragraph(ESCALATION_INTRO)
+    doc.paragraph(ESCALATION_WHY.get(source, ESCALATION_WHY["owners"]).format(who=_data(asked, 120) or "the person who was asked first"))
+    for note in notes:
+        doc.paragraph(_data(note, 200), muted=True)
+    _place(doc, brief)
+    doc.paragraph(", ".join(chips_of(brief)), strong=True)
+    doc.figure(stake)
+    waited = waited_line(stake, days)
+    rows = [("Waiting", f"{_days(days)}, since {_data(plan.created_at[:10], 12)}"),
+            ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
+            ("Told before", "; ".join(_data(t, 160) for t in told[:4]) or "Nobody else yet.")]
+    if put_off:
+        rows.append(("Put off", f"{put_off} time{'s' if put_off != 1 else ''} by the people who were asked."))
+    doc.facts(*rows)
+    doc.paragraph(ESCALATION_CAN)
+    doc.button("Review and decide", _plan_url(base, plan.plan_id))
+    doc.footer(brief.models, "You got this because a request has waited without an answer and I tell the next person.", contacts, person)
+    return doc.build()
+
+
+def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, rows: Sequence[tuple[PlanRecord, CaseRecord | None, str]], contacts: Sequence[str] = (), *, first: bool = False) -> Letter:
+    """One letter for the several requests that the ladder has come to for the same person on the same day: nobody gets more than one a day. Each line has the title, the figure with its level,
+    how long it has waited and why the person is told; one link to the page that lists them."""
+    base = _base(base_url)
+    count = len(rows)
+    doc = _Doc(f"{count} decisions have waited without an answer")
+    if first:
+        doc.paragraph(ESCALATION_INTRO)
+    lines = []
+    for plan, case, source in rows[:MAX_LISTED]:
+        brief = brief_mod.build_brief(case, plan, None, (), now=now)
+        stake, days = stake_of(brief), waited_days(plan, now)
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days), f"Why you are told: {_data(source, 20)}.") if part))
+    doc.items(*lines)
+    if count > MAX_LISTED:
+        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    doc.paragraph(ESCALATION_CAN)
+    doc.button("Open the decisions", f"{base}/")
+    doc.footer((), "You got this because requests have waited without an answer and I tell the next person. Why you are told: same is a reminder, manager is the manager of the person asked, "
+                   "tag is an escalation tag, contact is an escalation contact and owners is the owners of Meternaut.", contacts, person)
+    return doc.build()
+
+
+def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, rows: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (),
+                             problems: Sequence[str] = (), *, first: bool = False) -> Letter:
+    """The weekly letter to an escalation contact: the requests that have waited more than a week, each with its own figure and how long it has waited (no total: a total is no part of a case),
+    and what stops Meternaut from finding people (a missing permission, a message that could not be delivered), once each."""
+    base = _base(base_url)
+    count = len(rows)
+    doc = _Doc(f"{count} decision{' has' if count == 1 else 's have'} waited more than a week" if count else "What stops Meternaut from escalating")
+    if first:
+        doc.paragraph(ESCALATION_INTRO)
+    lines = []
+    for plan, case in rows[:MAX_LISTED]:
+        brief = brief_mod.build_brief(case, plan, None, (), now=now)
+        stake, days = stake_of(brief), waited_days(plan, now)
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days)) if part))
+    if lines:
+        doc.items(*lines)
+    if count > MAX_LISTED:
+        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    for problem in problems:
+        doc.paragraph(_data(problem, 300))
+    doc.button("Open the decisions", f"{base}/")
+    doc.footer((), f"You got this because you are an escalation contact or an owner of Meternaut, with the roles: {_roles(person)}.", contacts, person)
     return doc.build()

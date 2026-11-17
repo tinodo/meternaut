@@ -16,8 +16,8 @@ from urllib.parse import quote
 
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
-                     Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, EscalationRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord,
+                     PlanRecord, Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -35,7 +35,9 @@ LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
 CHECKS = "mnchecks"
 # What each investigation looked at (cases/activity.py): one row each, the newest KEPT_INVESTIGATIONS.
 INVESTIGATIONS = "mninvestigations"
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS)
+# The ladder of every request that waits (cases/escalation.py): a row for each step and each put-off, in the partition of its plan.
+ESCALATIONS = "mnescalations"
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS, ESCALATIONS)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -76,6 +78,10 @@ def _text(value: object) -> str:
 def type_key(resource_type: str) -> str:
     """A resource type as a value that a key or a filter may hold: the slashes of microsoft.compute/disks become underscores (microsoft.compute_disks)."""
     return resource_type.replace("/", "_")
+
+
+def _escalation_key(record: EscalationRecord) -> str:
+    return f"{ {'step': 's', 'snooze': 'z', 'pass': 'p'}[record.kind] }{record.number:04d}"
 
 
 class TableStore:
@@ -419,6 +425,19 @@ class TableStore:
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         flt = f"PartitionKey eq '{self._quoted(oid)}' and RowKey ge '{self._quoted(compact(since))}'"
         return sorted(self._records(self._query(MAILS, flt, PAGE), MailRecord), key=lambda m: (m.sent_at, m.mail_id))
+
+    def escalation_claim(self, record: EscalationRecord) -> bool:
+        return self._insert(ESCALATIONS, record.plan_id, _escalation_key(record), record)
+
+    def escalation_put(self, record: EscalationRecord) -> None:
+        self._upsert(ESCALATIONS, record.plan_id, _escalation_key(record), record)
+
+    def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
+        found = self._records(self._query(ESCALATIONS, f"PartitionKey eq '{self._quoted(plan_id)}'", PAGE), EscalationRecord)
+        return sorted(found, key=lambda r: (r.kind, r.number))
+
+    def escalations_recent(self, limit: int = 500) -> list[EscalationRecord]:
+        return sorted(self._records(self._query(ESCALATIONS, "", limit), EscalationRecord), key=lambda r: (r.at, r.plan_id, r.kind, r.number), reverse=True)
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)

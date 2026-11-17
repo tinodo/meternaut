@@ -40,8 +40,18 @@ TEAMS_BOT_APP_ID = "TEAMS_BOT_APP_ID"
 TEAMS_BOT_IDENTITY_CLIENT_ID = "TEAMS_BOT_IDENTITY_CLIENT_ID"
 TEAMS_SERVICE_URL = "TEAMS_SERVICE_URL"
 PLANTED_TAG = "PLANTED_TAG"
-PLAN_TTL_HOURS = "PLAN_TTL_HOURS"
 RECHECK_DAYS = "RECHECK_DAYS"
+# The ladder of a request that waits (cases/escalation.py, AGENTS.md rule 38). A request never expires, so there is no setting for how long it waits. ESCALATE_TO says whom the ladder asks after the
+# people that the request was made for: `contacts` (the escalation contacts: the default) or `managers` (the manager that Microsoft Entra names first, which needs the Graph permission
+# User.Read.All, then the contacts); `off` is refused. The days of the first four steps, the days between the weekly steps after them, the name of the escalation tag, the addresses that are
+# never written to, and how often and for how long a person may put a request off.
+ESCALATE_TO = "ESCALATE_TO"
+ESCALATION_DAYS = "ESCALATION_DAYS"
+ESCALATION_REPEAT_DAYS = "ESCALATION_REPEAT_DAYS"
+ESCALATION_TAG = "ESCALATION_TAG"
+ESCALATION_DENY = "ESCALATION_DENY"
+ESCALATION_SNOOZES = "ESCALATION_SNOOZES"
+ESCALATION_SNOOZE_DAYS = "ESCALATION_SNOOZE_DAYS"
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 ACCOUNT = re.compile(r"^[a-z0-9]{3,24}$")
@@ -99,19 +109,63 @@ def bot_way(env: Mapping[str, str], tenant: str | None) -> TeamsWay:
 
 
 @dataclass(frozen=True)
+class EscalationSettings:
+    """The settings of the ladder, as `escalation_of` reads them: whom it asks (`to`), the age in days of the first four steps and the days between the later ones, the tag, the addresses that are
+    never written to, and the put-offs that a request may have (how many, and how many days each holds the next step back)."""
+
+    to: str = "contacts"
+    days: tuple[int, ...] = (3, 7, 14, 21)
+    repeat_days: int = 7
+    tag: str = "escalation"
+    deny: tuple[str, ...] = ()
+    snoozes: int = 3
+    snooze_days: int = 7
+
+    @property
+    def managers(self) -> bool:
+        return self.to == "managers"
+
+
+def escalation_of(env: Mapping[str, str], problems: list[str]) -> EscalationSettings:
+    """The ladder's settings: a value that is wrong is a problem, and the default is used. `off` is refused in plain words: a request that waits is never left alone."""
+    to = (env.get(ESCALATE_TO) or "").strip().lower() or "contacts"
+    if to == "off":
+        problems.append(f"{ESCALATE_TO} cannot be off: a request that nobody answers is always passed on (AGENTS.md rule 38); use contacts or managers")
+    elif to not in ("contacts", "managers"):
+        problems.append(f"{ESCALATE_TO} is neither contacts nor managers")
+    raw_days, days = (env.get(ESCALATION_DAYS) or "").strip(), EscalationSettings.days
+    if raw_days:
+        try:
+            days = tuple(int(part) for part in raw_days.split(","))
+        except ValueError:
+            problems.append(f"{ESCALATION_DAYS} is four whole numbers of days, such as 3,7,14,21")
+        else:
+            if len(days) != 4 or any(d < 1 or d > 365 for d in days) or list(days) != sorted(set(days)):
+                problems.append(f"{ESCALATION_DAYS} is four days, from 1 to 365, each later than the one before")
+                days = EscalationSettings.days
+    tag = (env.get(ESCALATION_TAG) or "").strip() or "escalation"
+    if not TAG.match(tag):
+        problems.append(f"{ESCALATION_TAG} is not a tag name")
+    return EscalationSettings(
+        to if to in ("contacts", "managers") else "contacts", days, _integer(env, ESCALATION_REPEAT_DAYS, 1, 90, 7, problems), tag,
+        tuple(item.strip().lower() for item in (env.get(ESCALATION_DENY) or "").split(",") if item.strip()),
+        _integer(env, ESCALATION_SNOOZES, 0, 10, 3, problems), _integer(env, ESCALATION_SNOOZE_DAYS, 1, 30, 7, problems))
+
+
+@dataclass(frozen=True)
 class LoopSettings:
     store_account: str
     change_scopes: tuple[ChangeScope, ...]
     console_host: str
     mail_sender: str | None
     planted_tag: str
-    plan_ttl_hours: int
     recheck_days: int
     signin_tenant_id: str | None = None
     signin_client_id: str | None = None
     signin_assertion_client_id: str | None = None
     cards_queue: str | None = None  # the queue that the Teams cards are put on; None: no card is sent
     teams: TeamsWay = TeamsWay()  # how the cards go to Teams (TEAMS_DELIVERY): the queue, the bot, or off with the reason
+    escalation: EscalationSettings = EscalationSettings()  # the ladder of a request that waits
 
     @property
     def base_url(self) -> str:
@@ -174,12 +228,12 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
         problems.append(f"{MAIL_SENDER} is not an address")
     if values[PLANTED_TAG] and not TAG.match(values[PLANTED_TAG]):
         problems.append(f"{PLANTED_TAG} is not a tag name")
-    ttl = _integer(env, PLAN_TTL_HOURS, 1, 24 * 14, 72, problems)
     recheck = _integer(env, RECHECK_DAYS, 1, 90, 7, problems)
+    escalation = escalation_of(env, problems)
     if problems:
         raise LoopConfigError("; ".join(problems))
     return LoopSettings(
         store_account=values[STORE_ACCOUNT_NAME], change_scopes=scopes, console_host=values[CONSOLE_HOST].lower(), mail_sender=values[MAIL_SENDER] or None,
-        planted_tag=values[PLANTED_TAG] or "meternaut-planted", plan_ttl_hours=ttl, recheck_days=recheck, signin_tenant_id=values[SIGNIN_TENANT_ID].lower() or None,
+        planted_tag=values[PLANTED_TAG] or "meternaut-planted", recheck_days=recheck, signin_tenant_id=values[SIGNIN_TENANT_ID].lower() or None,
         signin_client_id=values[SIGNIN_CLIENT_ID].lower() or None, signin_assertion_client_id=values[SIGNIN_ASSERTION_CLIENT_ID].lower() or None,
-        cards_queue=values[TEAMS_CARDS_QUEUE] or None, teams=_teams(env, values[SIGNIN_TENANT_ID].lower() or None))
+        cards_queue=values[TEAMS_CARDS_QUEUE] or None, teams=_teams(env, values[SIGNIN_TENANT_ID].lower() or None), escalation=escalation)

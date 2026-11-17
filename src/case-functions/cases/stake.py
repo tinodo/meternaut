@@ -6,7 +6,8 @@ works out into lines, so that the three can never differ: the figure a year (who
 measured" or "Cost not visible") and its basis or its reason in one line, the title, the place under it, the risk, how sure the AIs are and what a change leaves behind, each as words. It
 holds no markup: the letter lays the lines out as HTML and as text, the card as TextBlocks.
 
-Nothing here reads a clock, a store or the network. A letter and a card say neither how long a request has waited nor what waiting costs: that is on the page, and it pushes.
+Nothing here reads a clock, a store or the network. A letter and a card for a request that was just made say neither how long it has waited nor what waiting costs; the messages of an escalation do
+(`waited_line`), because the owner's rule is that a request that waits is never silent (AGENTS.md rule 38), and the page of a request says it too.
 """
 from __future__ import annotations
 
@@ -77,6 +78,15 @@ def stake_of(brief: Brief) -> Stake:
     the number that the page reads with `cost_of`: a test holds the two to each other."""
     figure = figure_for([brief], [brief.cost])
     return stake_of_figure(figure, figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none)
+
+
+def waited_line(stake: Stake, days: int) -> str:
+    """What waiting has cost so far, by code: the figure of a month over thirty days, for the days that the request has waited, in whole dollars. A Scenario figure says "about". Empty when the
+    request has no measured saving: waiting cost nothing that anybody measured, and the message then says so in its own words."""
+    if stake.state != "save" or stake.monthly is None or days < 0:
+        return ""
+    about = "about " if stake.level == "Scenario" else ""
+    return f"{days} day{'s' if days != 1 else ''} at {stake.month} a month is {about}${stake.monthly / 30 * days:,.0f}, at the figure above ({stake.level})."
 
 
 def title_text(brief: Brief) -> str:
