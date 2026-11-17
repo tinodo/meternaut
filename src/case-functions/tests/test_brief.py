@@ -491,9 +491,9 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertEqual((b.saving.monthly, b.saving.level, b.saving.waiting_per_day), (60.0, "Expected", 2.0))
         self.assertEqual(brief_of(priced_case(remove), None).saving.monthly, 60.0)
 
-    def test_a_figure_above_what_the_finding_cost_is_not_shown(self):
-        b = brief_of(priced_case(cost_usd_30d=40.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
-        self.assertIsNone(b.saving.monthly)
+    def test_a_figure_above_what_the_finding_cost_allows_is_not_shown(self):
+        b = brief_of(priced_case(cost_usd_30d=10.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+        self.assertIsNone(b.saving.monthly, "60 a month cannot come from a finding that cost 10 in 30 days")
 
     def test_a_change_that_was_stated_and_could_not_be_priced_says_why_as_the_finding_s_own_reason_and_a_finding_with_none_says_nothing_of_the_kind(self):
         for raw, word in (({"action": "remove", "effects": [{"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}]}, "lines"),
@@ -518,7 +518,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertIn("Bill lines it would shrink", labels)
         self.assertIn("Used Units", labels)
         row = next(fact for fact in facts_of(priced_case()) if fact.label == "Bill lines it would shrink")
-        self.assertEqual((row.value, row.source), ("2 lines, $100.00 in the last 30 days", "Azure cost lines"))
+        self.assertEqual((row.value, row.source), ("2 lines, $100.00 a month", "Azure cost lines"))
 
     def test_the_ai_s_words_for_a_person_are_shown_as_text_of_an_ai_and_cut_to_one_line(self):
         hostile = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "<script>alert(1)</script> " + "x" * 400}

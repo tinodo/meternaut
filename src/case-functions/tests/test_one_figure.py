@@ -92,9 +92,10 @@ def priced_request() -> tuple:
 
 
 def worst_priced_request() -> tuple:
-    """The longest basis that a figure from the bill lines can have: a group priced for 40 of its 60 resources by an assumption, with lines that were not counted and Advisor's figure beside it."""
-    digest = {"action": "reduce", "price": {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "lines": 12, "resources": 40, "members": 60, "skipped": 12, "advisorUsd": 1234.56,
-                                            "form": "assumed", "away": [0.3, 0.6]}}
+    """The longest basis that a figure from the bill lines can have: a group priced for 40 of its 60 resources by a change of the quantity of a meter (the unit as long as it can be), at the lowest of three rates,
+    with uneven lines and lines that were not counted, and Advisor's figure beside it."""
+    digest = {"action": "reduce", "price": {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "weekUsd": 123456.78, "sinceUsd": 90000.0, "steadyUsd": 12345.67, "life": 12, "uneven": 12,
+                                            "lines": 12, "resources": 40, "members": 60, "skipped": 12, "advisorUsd": 1234.56, "form": "quantity", "from": 1234567890.0, "to": 987654321.0, "unit": "a" * 24}}
     case = make_advice_case(case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_type="microsoft.example/things", resource_group="rg-thing", saving_usd_month=12345.67,
                             cost_usd_30d=200000.0, plan_id="plan7100", facts={"basis": "oversized", "proposal": "change", "change": digest})
     plan = make_advice(plan_id="plan7100", case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_group="rg-thing", saving_usd_month=12345.67,
