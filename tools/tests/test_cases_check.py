@@ -609,6 +609,17 @@ class Run(unittest.TestCase):
         self.assertIn("it ended answered; findings 2.", out, "the beats that were not cut off say what they said")
         self.assertIn("Pictures that were kept and answered again with no read: 1 calls, 18.4 seconds that their reads took and that were not spent again.", out)
 
+    def test_the_claims_that_were_not_confirmed_are_added_up_by_reason_and_the_resources_that_were_too_small_are_counted(self):
+        events = a_good_run()
+        events[-1:-1] = [*an_investigation(), event("investigation.finding", finding=1, kept=False, noEntry=2, notMeasured=1, metricUnknown=0, totalDiffers=1, tooSmall=0),
+                         event("investigation.finding", finding=2, kept=True, noEntry=1, notMeasured=0, metricUnknown=2, totalDiffers=0, tooSmall=4)]
+        for extra in ((), ("--counts-only",)):
+            _, out, _, _ = self.go([telemetry(events)], *extra)
+            self.assertIn("Claims of the findings, over all of them: 3 listed with no measurement cited; 1 cited for a resource that no tool measured; 2 cited for a metric that no tool returned "
+                          "for the resource; 1 cited with a total that none of the tools' totals equals; 4 too small to open a case.", out, extra)
+        _, out, _, _ = self.go([telemetry([*a_good_run()[:-1], *an_investigation(), a_good_run()[-1]])])
+        self.assertNotIn("Claims of the findings", out, "findings that carry no counts say nothing of why")
+
     def test_the_tools_that_are_named_are_the_first_twelve_by_their_seconds_and_the_others_are_counted(self):
         events = a_good_run()
         events[-1:-1] = [*an_investigation(), *[event("investigation.call", beat=1, n=n, by="agent", tool=f"tool_{chr(97 + n)}", handles=0, ok=True, chars=2, seconds=float(n)) for n in range(15)]]
