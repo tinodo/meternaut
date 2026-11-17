@@ -246,7 +246,7 @@ class Interface(unittest.TestCase):
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
         self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools", "reasoning_effort"])
         self.assertIsNone(AgentSpec("n", "d", "m", "i").reasoning_effort, "the effort is left out unless a spec asks for one")
-        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time", "out_of_tokens", "salvaged"])
+        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time", "out_of_tokens", "salvaged", "salvage_failed"])
         for frozen, cls in ((True, FunctionTool), (True, AgentSpec), (False, AgentRun)):
             self.assertEqual(cls.__dataclass_params__.frozen, frozen, cls.__name__)
 
@@ -953,15 +953,37 @@ class Salvage(unittest.TestCase):
         self.assertEqual((rig.service.routes()[-1], rig.service.conversations, len(handler.calls)), ("DELETE conversation", {}, 1))
 
     def test_without_a_time_for_it_or_when_it_asks_for_a_tool_again_the_run_ends_as_it_did_and_keeps_what_was_gathered(self):
-        for allowed, last, requests in ((lambda: 0.0, None, 3), (None, None, 3), (lambda: 25.0, SoftBudget.asks("c4"), 4)):
+        for allowed, last, requests, word in ((lambda: 0.0, None, 3, ""), (None, None, 3, ""), (lambda: 25.0, SoftBudget.asks("c4"), 4, "asked-for-a-tool")):
             rig = Rig()
             rig.service.advance = 10
             replies = [self.asks("c1"), self.asks("c2"), self.asks("c3"), *([last] if last else [])]
             with self.assertRaises(FoundryError) as raised:
                 rig.run(*replies, handler=Handler(), max_calls=1, max_seconds=35, **({"salvage": allowed} if allowed else {}))
             self.assertEqual(str(raised.exception), "Foundry run stopped: the time allowed (35 seconds) was used up after 1 tool calls and 2 that were refused")
-            self.assertEqual((raised.exception.partial.responses, raised.exception.partial.text, raised.exception.partial.salvaged), (requests, "", False))
+            self.assertEqual((raised.exception.partial.responses, raised.exception.partial.text, raised.exception.partial.salvaged, raised.exception.partial.salvage_failed), (requests, "", False, word))
             self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
+
+    def test_a_last_request_that_fails_leaves_one_word_that_says_why_and_the_run_ends_as_it_did(self):
+        for failure, word in ((reply([]), "no-text"), ((400, {"error": {"code": "BadRequest", "message": "the conversation does not take that"}}), "BadRequest"), ((503, {"error": {}}), "503")):
+            rig = Rig()
+            rig.service.advance = 10
+            rig.service.failures["POST responses"] = [PASS, PASS, PASS, failure] if isinstance(failure, tuple) else [PASS, PASS, PASS, PASS]
+            replies = [self.asks("c1"), self.asks("c2"), self.asks("c3"), *([failure] if not isinstance(failure, tuple) else [])]
+            with self.assertRaises(FoundryError) as raised:
+                rig.run(*replies, handler=Handler(), max_calls=1, max_seconds=35, salvage=lambda: 25.0)
+            self.assertEqual(raised.exception.partial.salvage_failed, word, failure)
+            self.assertRegex(raised.exception.partial.salvage_failed, r"^[A-Za-z0-9._-]{1,24}$", "a word and nothing of the answer")
+
+    def test_a_step_that_is_cut_in_flight_at_the_hard_time_is_not_followed_by_a_last_request_because_the_service_may_hold_the_outputs_that_it_carried(self):
+        rig = Rig()
+        rig.service.advance = 10
+        rig.service.failures["POST responses"] = [PASS, PASS, TimeoutError("cut at the deadline"), PASS]  # the third request is cut: its answer never arrives, and a request after it would be answered
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(self.asks("c1"), self.asks("c2"), reply([message("never read")]), handler=Handler(), max_calls=5, max_seconds=100, salvage=lambda: 25.0)
+        partial = raised.exception.partial
+        self.assertEqual((partial.salvaged, partial.salvage_failed, partial.text), (False, "", ""))
+        self.assertNotIn(self.TEXT, [item for sent in SoftBudget.posted(rig) for item in sent], "the outputs that the cut request carried are not sent again with a last request")
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
 
     def test_a_reason_to_stop_that_is_the_tokens_of_a_beat_leaves_the_last_request_and_any_other_reason_does_not(self):
         rig = Rig()

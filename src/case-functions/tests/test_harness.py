@@ -7,6 +7,7 @@ import copy
 import datetime as dt
 import json
 import logging
+import math
 import re
 import tempfile
 import unittest
@@ -752,6 +753,26 @@ class TheRun(unittest.TestCase):
         (line,) = lines(capture, "harness.run")
         self.assertEqual((line["outcome"], line["reason"]), ("failed", "tokens"), "a last request that asks for a tool is no answer: the beat fails as it did")
         self.assertEqual((r.pulled(), r.letters), ([], []))
+
+    def test_what_a_beat_can_come_to_is_its_hard_limit_and_two_steps_and_a_scripted_beat_of_steps_up_to_the_assumed_size_stays_inside_it(self):
+        self.assertEqual((hn.BEAT_STEP_TOKENS, hn.beat_bound(100_000), hn.beat_bound(30_000), hn.beat_bound(10_000)), (25_000, 250_000, 140_000, 120_000))
+        cap, limit = 100_000, hn.beat_limit(100_000)
+        for step in (10_000, 20_000, 24_999, 25_000, 49_999):
+            with self.subTest(step=step):
+                r = Rigged()
+                # The agent asks for a tool every step. Its calls are refused from the cap on and it has three more rounds; the brake stops it at the limit. Whichever comes first, the last request is the
+                # one more step that a beat is given for its answer.
+                asked = min(math.ceil(cap / step) + 3, math.ceil(limit / step))
+                asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], step - 1_000, 1_000) for n in range(1, asked + 1)]
+                result = r.run(*asks, reply([message("saved")], step - 1_000, 1_000), max_tokens=cap, salvage=lambda: 25.0)
+                with LogCapture() as capture:
+                    r.harness.close()
+                (line,) = lines(capture, "harness.run")
+                self.assertEqual((result.salvaged, line["tokens"], line["outcome"]), (True, (asked + 1) * step, "ok"))
+                if step <= hn.BEAT_STEP_TOKENS:
+                    self.assertLessEqual(line["tokens"], hn.beat_bound(cap), "the most that a beat can come to: the hard limit and two steps of the size that is assumed")
+                else:
+                    self.assertGreater(line["tokens"], hn.beat_bound(cap), "a step larger than the assumed one (a long conversation) costs more than the bound says: that is why the bound names the step")
 
     def test_the_hard_limit_of_a_beat_is_twice_its_cap_or_its_cap_and_sixty_thousand_when_that_is_more(self):
         self.assertEqual([hn.beat_limit(cap) for cap in (10_000, 30_000, 60_000, 100_000, 200_000)], [70_000, 90_000, 120_000, 200_000, 400_000])

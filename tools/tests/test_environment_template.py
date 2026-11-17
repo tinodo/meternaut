@@ -832,6 +832,12 @@ class Cases(unittest.TestCase):
             if ("DEFAULT", what) in constants:
                 self.assertEqual(template[name], constants[("DEFAULT", what)], f"{name}: the template and the code start from the same budget")
 
+    def test_the_smallest_cost_of_a_case_of_the_investigation_has_in_the_template_the_default_and_the_ceiling_that_the_code_has(self):
+        self.assertRegex(self.code, r"@minValue\(0\)\n@maxValue\(100\)\nparam caseMinUsd int = 5\n")
+        self.assertIn("{ name: 'CASE_MIN_USD', value: string(caseMinUsd) }", self.found["functionApp"][1])
+        config_text = (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8")
+        self.assertEqual((re.search(r"(?m)^DEFAULT_CASE_MIN_USD = (\d+)$", config_text).group(1), re.search(r"(?m)^LIMIT_CASE_MIN_USD = (\d+)$", config_text).group(1)), ("5", "100"))
+
     def test_the_workbook_file_is_valid_json_and_only_reads_the_traces(self):
         import json
         raw = (ROOT / "environment" / "cases" / "history.workbook.json").read_text(encoding="utf-8")

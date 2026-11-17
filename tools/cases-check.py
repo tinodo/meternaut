@@ -220,6 +220,7 @@ def investigation_lines(events: list[dict], counts_only: bool = False) -> list[s
     lines.extend(beat_lines(events))
     lines.extend(call_lines(events))
     findings = sorted((e for e in events if e["type"] == "investigation.finding"), key=lambda e: e["finding"] if isinstance(e.get("finding"), int) else 0)
+    lines.extend(claim_lines(findings))
     for e in findings:
         if counts_only:
             outcome = "kept" if e.get("kept") is True else "dropped"
@@ -245,6 +246,16 @@ TOOLS_SHOWN = 12  # the tools that the line "by tool" names; the others are coun
 def seconds_of(value) -> float:
     """The seconds of a tool call from a line of the History: a number that is not negative and not absurd, else 0. Never text."""
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 100_000 else 0.0
+
+
+def claim_lines(findings: list[dict]) -> list[str]:
+    """Why the claims of the findings were not confirmed, from the counts on the lines `investigation.finding`, added up (no text of the estate: a count for each reason of the code), and how many
+    resources were too small to open a case. Nothing when no finding carries the counts."""
+    reasons = (("noEntry", "listed with no measurement cited"), ("notMeasured", "cited for a resource that no tool measured"), ("metricUnknown", "cited for a metric that no tool returned for the resource"),
+               ("totalDiffers", "cited with a total that none of the tools' totals equals"), ("showsUse", "cited with a total that shows use, against a claim of no usage"),
+               ("tooBrief", "cited with a measurement of too few days to prove no usage"), ("tooSmall", "too small to open a case"))
+    shown = [f"{sum(whole(e.get(key)) or 0 for e in findings)} {what}" for key, what in reasons if any(key in e for e in findings)]
+    return [f"  Claims of the findings, over all of them: " + "; ".join(shown) + "."] if shown else []
 
 
 def beat_lines(events: list[dict]) -> list[str]:
