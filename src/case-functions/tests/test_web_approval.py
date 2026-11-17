@@ -47,15 +47,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), [TITLE])
         self.assertEqual(self.reply.root.find("title").text(), f"{TITLE} - Meternaut")
-        self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(),
-                         "Managed disk · resource group meternaut-test-rg · found 3 days ago · open until Sun 8 Nov 2026 08:00 UTC (09:00 CET)")
+        self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(), "Managed disk · resource group meternaut-test-rg · found 3 days ago")
         self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$86 a year")
         self.assertEqual(self.reply.main.find("p", class_="figsub").text(),
                          "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
         self.assertIn("Money is in US dollars, and a year is twelve times the month.", self.reply.content)
 
     def test_the_page_answers_the_eight_questions_in_this_order(self):
-        self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertIn("How sure: High.", self.reply.content)
         self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("$7.17", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
                                                  "Locks and keep tags": ("None found", "Azure, checked by code")})
@@ -163,7 +162,7 @@ class ThePage(unittest.TestCase):
         case_page = self.console.get("/why/case0001")
         self.assertEqual(case_page.status, 200)
         self.assertEqual(case_page.headings(1), [TITLE])
-        self.assertEqual(case_page.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(case_page.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertEqual(case_page.facts(), self.reply.facts())
 
     def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
@@ -212,17 +211,17 @@ class ThePage(unittest.TestCase):
         other = form.node.find_all("div", class_="acts")[0]
         self.assertEqual([(b.text(), b.attrs["class"]) for b in other.find_all("button")], [("This is not mine", "subtle sm"), ("Ask or tell", "subtle sm"), ("Decide later", "subtle sm")])
 
-    def test_the_token_lasts_until_the_plan_expires_but_not_longer_than_a_day(self):
+    def test_the_token_of_the_form_lasts_a_day_whatever_the_age_of_the_request(self):
         store = self.console.store
         seen = []
         original = store.nonce_new
         store.nonce_new = lambda oid, purpose, ttl_seconds=3600: seen.append(ttl_seconds) or original(oid, purpose, ttl_seconds)
         self.console.get("/ok/plan0001")
         self.assertEqual(set(seen), {86400})
-        self.console.store.plan_put(make_plan(expires_at=at(minutes=30)))
+        self.console.store.plan_put(make_plan(expires_at=at(minutes=30), created_at=at(days=-100)))
         seen.clear()
         self.console.get("/ok/plan0001")
-        self.assertEqual(set(seen), {1800})
+        self.assertEqual(set(seen), {86400}, "an old end time shortens nothing: no clock ends a request")
 
     def test_a_question_that_the_person_asked_before_is_shown_to_them_alone(self):
         self.console.store.decision_put(make_decision(decision="ask", note="Is this the standby disk?"))
@@ -245,9 +244,10 @@ class ThePage(unittest.TestCase):
         self.assertEqual([label for _, _, label in alone.forms()[0].buttons], ["Decline", "This is not mine", "Ask or tell", "Decide later"])
 
     def test_time_is_in_utc_and_in_the_persons_own_zone(self):
-        content = self.reply.content
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", content)
-        self.assertIn('datetime="2026-11-08T08:00:00Z"', self.reply.text)
+        self.console.store.plan_put(make_plan(created_at="2026-11-08T08:00:00Z"))
+        reply = self.console.get("/ok/plan0001")
+        self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", reply.content)
+        self.assertIn('datetime="2026-11-08T08:00:00Z"', reply.text)
 
     def test_the_page_has_no_cancel_no_start_time_and_no_form_that_posts_to_withdraw(self):
         self.assertEqual(self.reply.status, 200)
@@ -285,19 +285,17 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         (title,) = reply.main.find_all("p", class_="notice-title")
         return title.text(), title.parent.text().replace(title.text(), "", 1).strip()
 
-    def test_a_plan_whose_time_is_over_shows_it_has_expired_also_when_the_record_still_says_open(self):
-        reply = self.page(expires_at=at(minutes=-1))
-        self.assert_no_buttons(reply)
-        self.assertEqual(self.notice(reply), ("Expired", "Nobody answered in time. Nothing changed. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
-        self.assertNotIn("Open until", reply.content)
+    def test_an_old_end_time_closes_nothing_the_request_is_open_and_has_its_buttons(self):
+        for old_end in (at(minutes=-1), at(), "not a time"):
+            reply = self.page(expires_at=old_end)
+            self.assertEqual(reply.status, 200)
+            self.assertEqual([f.action for f in reply.forms()], ["/ok/plan0001"], "no clock ends a request (AGENTS.md rule 38)")
+            self.assertNotIn("Expired", reply.content)
 
-    def test_the_plan_that_expires_at_this_moment_has_expired(self):
-        self.assert_no_buttons(self.page(expires_at=at()))
-
-    def test_a_plan_that_has_expired_in_the_record(self):
+    def test_a_plan_that_meternaut_took_back_shows_it_and_no_buttons(self):
         reply = self.page(state="expired")
         self.assert_no_buttons(reply)
-        self.assertIn("Expired", reply.content)
+        self.assertEqual(self.notice(reply)[0], "Taken back")
 
     def test_each_other_state_shows_its_state_in_words_and_no_buttons(self):
         for state, title, words_ in (("declined", "Declined", "Declined by Tino. Reason: it is already handled. Nothing changed."),
@@ -532,10 +530,10 @@ class WhoMayAnswer(unittest.TestCase):
 KINDS = {  # the status, the title of the page, and a sentence that the page always has
     "declined": (200, "Declined", "Declined. Nothing has changed. The request is closed."),
     "asked": (200, "Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet."),
-    "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list."),
+    "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list. If nobody answers it, it goes on to the next person."),
     "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
     "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions."),
-    "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
+    "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes on to the next person."),
     "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
                                         "Meternaut holds no right of its own to change Azure."),
     "ran_unconfirmed": (200, "The delete was accepted", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions."),
@@ -552,7 +550,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "refused_state": (409, "This request cannot take an answer", ""),
     "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
     "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
-    "expired": (410, "This request expired", "This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed."),
+    "expired": (410, "This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed."),
     "duplicate": (409, "Already answered", "You answered this request already. Your first answer stands, and nothing has changed."),
     "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
 }
@@ -644,15 +642,13 @@ class EveryKindOfResult(unittest.TestCase):
                 wanted = ("/", "Back to the decisions") if kind in BACK_TO_THE_LIST else ("/ok/plan0001", "Back to the request")
                 self.assertEqual(self.backs(self.by_decider(kind, plan=False)), [wanted], "the address of the page names the plan")
 
-    def test_the_time_of_an_expired_result_is_read_from_the_plan_in_the_store_and_left_out_when_no_plan_is_known(self):
-        for route in (self.by_decider, self.by_begin):
+    def test_the_page_of_a_request_that_was_taken_back_has_no_time_of_an_expiry(self):
+        for route in (self.by_decider, self.by_begin, self.by_return):
             with self.subTest(route=route.__name__):
                 reply = route("expired", plan=False)
-                self.assertIn("This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed.", reply.content)
-        reply = self.by_return("expired", plan=False)
-        self.assertEqual(reply.status, 410)
-        self.assertNotIn("Sun 8 Nov 2026", reply.content)
-        self.assertIn("Nothing has changed.", reply.content)
+                self.assertEqual(reply.status, 410)
+                self.assertIn("Meternaut took this request back, so it cannot be answered. Nothing has changed.", reply.content)
+                self.assertNotIn("Sun 8 Nov 2026", reply.content)
 
     def test_a_refusal_of_the_role_shows_no_plan_details(self):
         for route in self.routes:
@@ -673,7 +669,7 @@ class EveryKindOfResult(unittest.TestCase):
                  "stopped": "Meternaut did not make the change.", "azure_refused": "Azure refused the change.",
                  "failed": "The change failed.", "signin_failed": "Nothing is approved.",
                  "step_up_failed": "The extra sign-in check that Azure asked for was not completed. The change was not made.",
-                 "refused_state": "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.",
+                 "refused_state": "This request is not open for an answer now. It may be answered or taken back. Nothing has changed.",
                  "error": "The approval service did not answer."}
         self.assertEqual(set(lines), set(SHOWS_THE_MESSAGE))
         for route in self.routes:
@@ -1349,7 +1345,7 @@ class AgainstTheLoop(unittest.TestCase):
     def test_asking_or_telling_leaves_the_request_open_and_is_shown_to_the_person_who_wrote_it(self):
         reply = self.console.submit(self.form(), "Ask or tell", note="Is it the standby disk?")
         self.assertEqual(reply.headings(1), ["Recorded: your words"])
-        self.assertIn("The request stays open until Sun 8 Nov 2026 08:00 UTC", reply.content)
+        self.assertIn("The request stays open.", reply.content)
         page = self.console.get("/ok/plan0001")
         self.assertEqual(len(page.forms()), 1)
         self.assertIn("Is it the standby disk?", page.content)

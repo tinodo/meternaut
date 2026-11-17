@@ -30,7 +30,7 @@ class Moving:
 def loop_for(clock, store=None, *, recheck_days=7, approvers=True, on_plan=None):
     store = store or MemoryStore(clock=clock)
     settings = loop_config.LoopSettings(store_account="stexample", change_scopes=(ChangeScope(SUBSCRIPTION, GROUP),), console_host="func.example.net",
-                                        mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=recheck_days)
+                                        mail_sender=None, planted_tag="meternaut-planted", recheck_days=recheck_days)
     roles = ("owner", "approver", "ops") if approvers else ("owner",)
     people = people_mod.People((people_mod.Person(OID, "Tino", roles, "tino@example.com"),))
     extras = wiring.Extras(settings, store, people, Approvals(store, wiring.approval_settings(settings), clock))
