@@ -99,6 +99,23 @@ def _links(box: "Toolbox", state, number: "int | None") -> dict:
     return block
 
 
+def counted(history: object) -> bool:
+    """Whether a history says a number of days: how old the resource is, or when it was last changed."""
+    return isinstance(history, dict) and any(isinstance(history.get(key), int) and not isinstance(history.get(key), bool) for key in ("age_days", "changed_days"))
+
+
+def read_by(part: dict) -> str:
+    """What a profile of one resource holds data of, as letters: `m` when a metric answered (with a value or with none), `d` when anything else is a row, a number or a link (a meter, a link, an Advisor
+    item, an age or a last change, a part, a diagnostic setting). A part that was not read, that failed or that the type does not have holds none, so nothing is credited for it."""
+    def has(block: object, name: str) -> bool:
+        return isinstance(block, dict) and bool(block.get(name))
+
+    metrics, links = part.get("metrics"), part.get("links")
+    described = (has(part.get("meters"), "meters"), any(has(links.get(side) if isinstance(links, dict) else None, "total") for side in ("refers_to", "referred_by")),
+                 isinstance(part.get("advisor"), list) and bool(part["advisor"]), counted(part.get("history")), has(part.get("children"), "total"), has(part.get("sends_to"), "total"))
+    return ("m" if has(metrics, "with_data") or has(metrics, "no_data") else "") + ("d" if any(described) else "")
+
+
 def _tasks(tb, box: "Toolbox", entries: list, plans: dict, days: int) -> dict:
     """The reads that a profile needs, each as a function of the clock of the call, by what it is for: the references of the estate, the ages, the Advisor items of each subscription, and for each
     resource its metrics, its meters, its Activity Log and, when it takes no data in, its diagnostic settings."""
@@ -136,6 +153,9 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
     done, left = box._run(tasks)
     unread = _unread(left, entries)
     graph = _outcome(tb, ("graph",), done, left)
+    state = graph[1]
+    unavailable = [sub for sub in box.subscriptions if state is not None and sub in set(state.failed)]
+    incomplete = state is not None and (not state.done or bool(unavailable))
     history = box._history(entries, done.get(("ages",)), {entry.resource.handle: done.get((entry.resource.handle, "log")) for entry in entries})
     profiles, lists, shown = [], [], []
     for entry in entries:
@@ -156,7 +176,9 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
         part["metrics"], measured = (word, {}) if word else _metrics(tb, box, plans[handle], found, hourly)
         if isinstance(part["metrics"], dict):
             lists += [(part["metrics"]["rows"], part["metrics"], "rows"), (part["metrics"].get("no_data", []), part["metrics"], "no_data")]
-        part["links"] = graph[0] or ({"complete": False} if not graph[1].done else _links(box, graph[1], graph[1].ids.get(entry.key)))
+        part["links"] = graph[0] or ({"complete": False} if not state.done else _links(box, state, state.ids.get(entry.key)))
+        if unavailable and isinstance(part["links"], dict):
+            box._listing(part["links"], "unavailable", unavailable)
         word, found = _outcome(tb, ("advisor", entry.sub), done, left)
         advice = [item for item in found or [] if item.resource_id.lower() == entry.key][:ADVISOR_ROWS]
         if word:
@@ -172,7 +194,7 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
             part["sends_to"] = word or box._sends_to(entry)["diagnostic_settings"]
         profiles.append(part)
         shown.append((entry, facts, part, measured, advice))
-    answer = {"days": days, "grain": grain, "partial": bool(unread), **({"unread": unread} if unread else {}), "profiles": profiles}
+    answer = {"days": days, "grain": grain, "partial": bool(unread) or incomplete, **({"unread": unread} if unread else {}), "profiles": profiles}
     box._fit(answer, lists, max(tb.MAX_RESULT_CHARS, PER_HANDLE * len(entries)))
     for entry, facts, part, measured, advice in shown:
         handle = entry.resource.handle

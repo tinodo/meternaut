@@ -59,7 +59,7 @@ What the investigation may rely on after a run (it reads these and changes none)
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
-refers to it, with the key that held each reference as its word. profile gives the picture of up to five resources in one call (cases/dossier.py: the same function, build_dossier, is for code that does not
+refers to it, with one of two words of code for each (`parent` for the structure of an id, `refers` for a reference in a property) and never the key that held it. profile gives the picture of up to five resources in one call (cases/dossier.py: the same function, build_dossier, is for code that does not
 use the tools); its answer has a cap of its own, result_cap("profile"), because a picture of five resources does not fit under MAX_RESULT_CHARS, and a part of it that did not finish in the time of the call is
 `unread`, by handle. changes shows the age of a resource and its last change as numbers and the kind of identity as a word. Their numbers are in Toolbox.evidence like those of the other tools.
 """
@@ -779,8 +779,8 @@ TOOLS = {tool.name: tool for tool in (
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
     Tool("neighbors",
          "Shows what one resource refers to and what refers to it, found from the references that the properties of the resources of the estate hold to one another, as tables of handles: "
-         "refers_to and referred_by. A row: handle, type, relation (the key that held the reference, as the platform names it; parent when the resource is a part of the other; other when "
-         "the key is not a plain name), usd30d, sku, kind and state as short words. A large referred_by also has a row of count and usd30d for each type and relation; read the handles "
+         "refers_to and referred_by. A row: handle, type, relation (parent when the resource is a part of the other, refers for any other reference), usd30d, sku, kind and state as short words. "
+         "A large referred_by also has a row of count and usd30d for each type and relation; read the handles "
          "page by page with offset. graph says how many resources and edges were read and how many references pointed outside this run. unavailable names subscriptions that could not be "
          "read; partial means that the pass has more to read, so call again to go on. It shows no name, tag or text and says nothing about what a reference means.",
          (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),
@@ -957,6 +957,7 @@ class Toolbox:
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
         self._edges: nb.Edges | None = None  # the pass over the references of the estate (neighbors): read once in a run, a page at a time
+        self._read: dict[str, str] | None = None  # for the tools that give a picture of resources: the handles that the call that is running held data of, with the letters of what (see Toolbox.log)
 
     @property
     def specs(self) -> tuple[FunctionTool, ...]:
@@ -981,7 +982,7 @@ class Toolbox:
         caches, so a later call goes on from there), and its answer says how many were not read (`not_read`) while a note says which."""
         with self._lock:
             self._calls += 1
-            self._began, self._timed, self._skipped = self.monotonic(), True, {}
+            self._began, self._timed, self._skipped, self._read = self.monotonic(), True, {}, None
             try:
                 answer = self._answer(name, arguments)
             finally:
@@ -998,7 +999,8 @@ class Toolbox:
             if len(text) > result_cap(name):
                 answer = {"error": "too-large"}
                 text = _dump(answer)
-            self.log.append({"name": _logged_name(name), "arguments": _logged_arguments(arguments), "ok": "error" not in answer, "chars": len(text)})
+            self.log.append({"name": _logged_name(name), "arguments": _logged_arguments(arguments), "ok": "error" not in answer, "chars": len(text),
+                             **({"read": self._read} if self._read is not None and "error" not in answer else {})})
             return text
 
     def _answer(self, name: object, arguments: object) -> dict:
@@ -2483,7 +2485,9 @@ class Toolbox:
             return self._once(("meters", sub, scope, service, days), lambda: (self.arm.meter_days(sub, start, end, where, also),
                                                                             {} if handle is not None else self.arm.meter_resources(sub, start, end, where, also)))
 
-        outcomes = self._pool(subs, read)
+        ready = [sub for sub in subs if ("meters", sub, scope, service, days) in self._kept]  # a read that is kept is in the answer whatever the time: it costs none
+        outcomes = self._pool([sub for sub in subs if sub not in ready], read)
+        outcomes.update({sub: read(sub) for sub in ready})
         rows: list[tuple] = []
         carriers: dict[tuple[str, ...], int] = {}
         failed: list[str] = []
@@ -2638,6 +2642,7 @@ class Toolbox:
 
     def _tool_neighbors(self, args: dict) -> dict:
         entry, direction, offset = self._entry(args["handle"]), args["direction"], args["offset"] or 0
+        self._read = {}  # an answer that holds no link of the resource credits it with nothing
         state = self._load_edges()
         said: dict = {}
         if state.failed:
@@ -2674,6 +2679,8 @@ class Toolbox:
                     seen: dict = {"managed": cell["managed"], "properties": {looked[0]: looked[1]} if looked else {}}
                     seen.update({key: cell[field] for key, field in (("cost30d", "usd30d"), ("sku", "sku"), ("kind", "kind"), ("location", "region")) if field in cell})
                     row[0] = self._show(found, seen)
+        if any(answer[name]["total"] for name in wanted):
+            self._read = {args["handle"]: "d"}
         return answer
 
     # -- the whole picture of a few resources, and their age -------------------------------------------------------------------------------------
@@ -2753,15 +2760,20 @@ class Toolbox:
         found = self._history(entries, done.get(("ages",)), {entry.resource.handle: done.get((entry.resource.handle,)) for entry in entries})
         unread = [entry.resource.handle for entry in entries if ("ages",) in left or (entry.resource.handle,) in left]
         rows = []
+        self._read = {}
         for entry in entries:
             handle = entry.resource.handle
             if handle not in unread:
                 self.evidence.setdefault(handle, {})["history"] = dict(found[handle])
                 rows.append([handle, *(found[handle][name] for name in HISTORY_COLUMNS[1:])])
+                if dossier.counted(found[handle]):
+                    self._read[handle] = "d"
         return {"log_days": ownership.WINDOW_DAYS, "cols": list(HISTORY_COLUMNS), "rows": rows, **({"unread": unread} if unread else {})}
 
     def _tool_profile(self, args: dict) -> dict:
-        return dossier.build_dossier(self, args["handles"], args["days"] or MAX_DAYS, args["grain"] or "day")
+        answer = dossier.build_dossier(self, args["handles"], args["days"] or MAX_DAYS, args["grain"] or "day")
+        self._read = {part["handle"]: letters for part in answer["profiles"] if (letters := dossier.read_by(part))}
+        return answer
 
     # -- what was learned: answers about people's earlier answers and about documentation that code checked, never about this estate ---------------------------------
     def _remembered(self, read: Callable[[object], object]) -> object:

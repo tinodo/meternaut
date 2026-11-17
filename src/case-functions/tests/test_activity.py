@@ -97,6 +97,13 @@ class WhatTheToolsTouched(unittest.TestCase):
         found = self.touched(call("neighbors", handle="r1"), call("profile", handles=["r10", "r20"]), call("changes", handles=["r2"]))
         self.assertEqual(found, {WIDGETS: "d", GADGETS: "md", GIZMOS: "md"}, "a profile of handles of two kinds touches both, and the page says measured and described")
 
+    def test_a_picture_credits_a_kind_only_for_the_resources_that_the_call_says_it_held_data_of_and_with_the_letters_of_what_it_held(self):
+        picture = {**call("profile", handles=["r10", "r20"]), "read": {"r10": "m"}}
+        found = self.touched(picture, {**call("neighbors", handle="r1"), "read": {}}, {**call("changes", handles=["r2", "r10"]), "read": {"r2": "d"}})
+        self.assertEqual(found, {GADGETS: "m", WIDGETS: "d"}, "no letter for what the answer held nothing of, and none for a kind of which no resource held anything")
+        self.assertEqual(self.touched({**call("profile", handles=["r10"]), "read": {"r10": "md"}}), {GADGETS: "md"})
+        self.assertEqual(self.touched({**call("profile", handles=["r10"]), "read": {"r1": "md", "r10": ""}}), {}, "a resource that the call was not given is not credited, and one with no letters has none")
+
     def test_a_toolbox_that_shows_nothing_touched_nothing(self):
         self.assertEqual(activity.touched(None, set()), {})
         self.assertEqual(activity.touched(SimpleNamespace(), {WIDGETS}), {})
