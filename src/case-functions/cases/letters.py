@@ -372,6 +372,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))
+    if brief.advisor is not None and brief.options:
+        doc.paragraph(_data(brief_mod.ADVISOR_SHORT, 200))  # the order of work for a commitment, in a line: the page has the whole of each step
     if brief.check_first:
         doc.paragraph(brief_mod.CHECK_FIRST_SHORT)
     if brief.impact is not None:
@@ -439,7 +441,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
         return None
     count = len(rows)
     doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you")
-    doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." for row in rows[:MAX_LISTED]))
+    doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "") for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
     only = rows[0].brief if count == 1 else None
