@@ -400,6 +400,7 @@ ESCALATION_WHY = {
 ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
                     "I change nothing myself: a person decides on a web page.")
 ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not worth it, you have a question, it is not yours (then I pass it on), or you decide later (at most three times)."
+ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 
 
 def waited_days(plan: PlanRecord, now: dt.datetime) -> int:
@@ -439,8 +440,10 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     if put_off:
         rows.append(("Put off", f"{put_off} time{'s' if put_off != 1 else ''} by the people who were asked."))
     doc.facts(*rows)
-    doc.paragraph(ESCALATION_CAN)
-    doc.button("Review and decide", _plan_url(base, plan.plan_id))
+    listed = bool(person.roles)  # a person from the directory who is not on the list cannot open the page
+    doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
+    if listed:
+        doc.button("Review and decide", _plan_url(base, plan.plan_id))
     doc.footer(brief.models, "You got this because a request has waited without an answer and I tell the next person.", contacts, person)
     return doc.build()
 
@@ -461,8 +464,10 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     doc.items(*lines)
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
-    doc.paragraph(ESCALATION_CAN)
-    doc.button("Open the decisions", f"{base}/")
+    listed = bool(person.roles)
+    doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
+    if listed:
+        doc.button("Open the decisions", f"{base}/")
     doc.footer((), "You got this because requests have waited without an answer and I tell the next person. Why you are told: same is a reminder, manager is the manager of the person asked, "
                    "tag is an escalation tag, contact is an escalation contact and owners is the owners of Meternaut.", contacts, person)
     return doc.build()

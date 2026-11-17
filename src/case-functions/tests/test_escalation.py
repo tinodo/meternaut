@@ -229,6 +229,21 @@ class TheLadder(unittest.TestCase):
         again = world.store.mails_since(MANAGER, "2000-01-01T00:00:00Z")
         self.assertEqual([m.kind for m in again], ["escalation"])
 
+    def test_a_person_who_is_not_on_the_list_is_not_told_that_the_page_opens_for_them(self):
+        world = World()
+        world.clock.advance(days=7)
+        world.tick()
+        world.clock.advance(days=1)
+        world.tick()
+        (to_manager,) = world.mail.sent_to("mae@example.com")
+        self.assertIn("you are not on it yet", to_manager[2])
+        self.assertNotIn("Review and decide", to_manager[2])
+        world.clock.advance(days=7)
+        world.tick()
+        to_contact = world.mail.sent_to("cora@example.com")
+        self.assertTrue(any("Review and decide" in call[2] for call in to_contact))
+        self.assertFalse(any("you are not on it yet" in call[2] for call in to_contact))
+
     def test_no_step_is_made_for_a_request_that_is_not_open(self):
         world = World()
         world.store.plan_put(dataclasses.replace(world.store.plan_get("p1"), state="declined"))
@@ -346,6 +361,35 @@ class TheRevival(unittest.TestCase):
             self.assertEqual(escalation.clock_closed(plan), expected, hours)
         self.assertFalse(escalation.clock_closed(advice(state="expired", expires_at="")))
         self.assertFalse(escalation.clock_closed(advice(state="expired", expires_at=stamp(START + dt.timedelta(hours=72, minutes=1)))))
+
+
+class TheWeeklyLetter(unittest.TestCase):
+    def test_the_contacts_get_a_letter_every_week_for_as_long_as_a_request_waits_and_never_twice_in_a_week(self):
+        world = World(managers=False)
+        for _ in range(35):
+            world.clock.advance(days=1)
+            world.tick()
+        weekly = sorted(m.sent_at for m in world.store.mails_since(CONTACT, "2000-01-01T00:00:00Z") if m.kind == "escalation-weekly" and m.status == "sent")
+        self.assertGreaterEqual(len(weekly), 4)
+        for earlier, later in zip(weekly, weekly[1:]):
+            self.assertGreaterEqual((parse(later) - parse(earlier)).days, 6)
+        self.assertTrue(any("has waited more than a week" in call[2] for call in world.mail.sent_to("cora@example.com")))
+
+    def test_a_missing_permission_is_named_to_the_owners_in_the_weekly_letter(self):
+        world = World(graph=Graph(managers={A: 403}))
+        world.clock.advance(days=8)
+        world.tick()
+        world.clock.advance(days=1)
+        world.tick()
+        named = [call for call in world.mail.sent_to("olga@example.com") if "User.Read.All" in call[2]]
+        self.assertEqual(len(named), 1)
+
+    def test_when_nothing_waits_nothing_is_sent(self):
+        world = World(plans=0)
+        for _ in range(40):
+            world.clock.advance(days=1)
+            world.tick()
+        self.assertEqual(world.mail.calls, [])
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):
