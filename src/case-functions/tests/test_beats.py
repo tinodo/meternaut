@@ -191,7 +191,11 @@ class SeedToolbox(ti.FakeToolbox):
     def __init__(self, by_kind, answers=None, **more):
         resources = [r for found in by_kind.values() for r in found]
         super().__init__(resources, evidence={r.handle: ti.metrics(MetricA=0) for r in resources}, **more)
-        self.by_kind, self.answers, self.extra_calls, self.limited = by_kind, answers or {}, 0, 0
+        self.by_kind, self.answers, self.extra_calls, self.limited, self.preloaded = by_kind, answers or {}, 0, 0, []
+
+    def preload(self, kinds):
+        self.preloaded.append(list(kinds))
+        return len(kinds)
 
     def call(self, name, arguments):
         self.log.append({"name": name, "arguments": arguments, "ok": True, "chars": 2})
@@ -639,6 +643,35 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         with mock.patch.object(beats, "call_fields", side_effect=RuntimeError("boom")):
             result = h.go()
         self.assertEqual((result.state, h.of("investigation.call"), len(h.toolbox.log)), ("ran", [], 7))
+
+    def test_the_read_ahead_of_the_kinds_of_a_beat_is_a_line_of_its_own_before_the_listings_and_only_a_beat_of_several_kinds_has_one(self):
+        kinds = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0, "fabrikam.store/vaults": 2000.0}
+        h = rig([script(one("r1"), calls=()), script(one("r3"), calls=())], by_kind=kinds)
+        h.go()
+        self.assertEqual(h.toolbox.preloaded, [["contoso.compute/rigs", "contoso.compute/racks"]], "a beat of one kind has nothing to read at the same time")
+        self.assertEqual(self.lines(h), [(1, 1, "code", "preload", None, 0, None), (1, 2, "code", "list_resources", "contoso.compute/rigs", 0, None),
+                                         (1, 3, "code", "list_resources", "contoso.compute/racks", 0, None), (1, 4, "code", "profile", None, 4, None),
+                                         (2, 1, "code", "list_resources", "fabrikam.store/vaults", 0, None), (2, 2, "code", "profile", None, 2, None)])
+        self.assertEqual([c["name"] for c in h.toolbox.log], ["list_resources", "list_resources", "profile", "list_resources", "profile"], "the read ahead is no call of the toolbox")
+
+    def test_a_read_ahead_that_fails_costs_nothing_the_listings_read_for_themselves(self):
+        kinds = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0}
+        h = rig([script(one("r1"), calls=())], by_kind=kinds)
+
+        def broken(read):
+            raise RuntimeError("boom")
+
+        h.toolbox.preload = broken
+        result = h.go()
+        self.assertEqual(result.state, "ran")
+        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile"])
+
+    def test_a_toolbox_with_no_read_ahead_is_seeded_as_before(self):
+        kinds = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0}
+        h = rig([script(one("r1"), calls=())], by_kind=kinds)
+        h.toolbox.preload = None
+        h.go()
+        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile"])
 
     def test_one_session_with_no_beats_has_the_same_lines_for_the_calls_of_the_agent_alone(self):
         h = ti.Harness(BeatFoundry([script(one("r1"), calls=(("profile", {"handles": ["r1"]}), ("estate_overview", {})))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)

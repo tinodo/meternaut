@@ -28,6 +28,7 @@ MIN_TOKENS = 30_000
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
+PRELOAD = "preload"  # the name that the line of the History gives to the read ahead that code makes of the resources of a beat's kinds (Toolbox.preload); it is no tool of the agent
 REFUSED_LINES = 8  # the tool calls that a beat asked for after its budget was used up, and that get a line each in the History; the line of the beat counts the others
 BUDGET_USED_UP = "budget-used-up"  # what the client answers a call that it does not run (cases/foundry.py)
 CALL_ERRORS = ERRORS + (BUDGET_USED_UP,)  # the words that a line of a tool call may give as the reason why a call has no answer: the toolbox's own, and the refusal of a budget
@@ -112,10 +113,16 @@ def _said(text: object) -> dict:
     return found if isinstance(found, dict) and found and "error" not in found else {}
 
 
-def seed(call: Callable[[str, dict], str], beat: Beat) -> Seed:
+def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
     """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
-    and the picture of those. It costs no model tokens, and what it shows is registered as evidence like any answer of a tool."""
+    and the picture of those. It costs no model tokens, and what it shows is registered as evidence like any answer of a tool. `warm` reads the resources of the kinds at the same time first (the
+    toolbox's `preload`), so that the listings find them in its caches; a read ahead that fails leaves the listings to make their own."""
     found, lists = Seed(), []
+    if warm is not None and len(beat.kinds) > 1:
+        try:
+            warm(beat.kinds[:SEED_RESOURCES])
+        except Exception:  # noqa: BLE001 (nothing is lost by a read ahead that did not work: the listings read for themselves)
+            pass
     for kind in beat.kinds[:SEED_RESOURCES]:
         listing = _said(call("list_resources", {"type": kind, "order_by": "cost", "limit": SEED_RESOURCES, "offset": None}))
         if not listing:

@@ -4,6 +4,7 @@ answers an error or a limit: the subscriptions are asked one at a time, the one 
 The estate is the fake of test_toolbox.py, which pages its answers and refuses a subscription here. Nothing of this has run in Azure.
 """
 import json
+import threading
 import unittest
 
 import support  # noqa: F401 (it puts the app on the path)
@@ -12,7 +13,7 @@ from cases.arm import Arm
 from cases.http import Client, allowed_calls
 from cases.redact import Redactor
 from support import NOW, TOKEN
-from test_toolbox import DISK, HOSTILE, MARKERS, SUB, SUB2, Estate, ask, row
+from test_toolbox import ADDRESS, DISK, HOSTILE, MARKERS, SUB, SUB2, VM, Estate, ask, row
 
 OUTSIDE = "77777777-6666-4555-8444-333333333333"  # a subscription that is not on the list of the run
 
@@ -176,6 +177,78 @@ class WhenItAnswersALimit(unittest.TestCase):
         answer = listed(toolbox(estate, subs))
         self.assertEqual((answer["total"], answer["unavailable"]), (1, ["s2", "s3"]))
         self.assertEqual([c["body"]["subscriptions"] for c in estate.graph_calls()], [list(subs), [subs[0]], [subs[1]], [subs[1]], [subs[1]]], "the third subscription is not asked for")
+
+
+class Together(Graphed):
+    """A Resource Graph whose first `parties` questions about the resources of a type wait until all of them are in flight at once, so that questions asked one after the other cannot pass: the test
+    would end in a broken barrier."""
+
+    def __init__(self, parties):
+        super().__init__()
+        self.parties, self.arrivals, self.barrier = parties, 0, threading.Barrier(parties, timeout=5)
+
+    def _graph(self, body):
+        with self.lock:
+            self.arrivals += 1
+            waits = self.arrivals <= self.parties
+        if waits:
+            self.barrier.wait()
+        return super()._graph(body)
+
+
+class WhenTheResourcesOfSeveralTypesAreReadAhead(unittest.TestCase):
+    KINDS = (DISK, VM, ADDRESS)
+
+    def estate(self, parties):
+        estate = Together(parties)
+        for kind in self.KINDS:
+            estate.rows.append(row(kind, "one"))
+        return estate
+
+    def test_the_questions_of_resource_graph_for_the_types_are_asked_at_the_same_time_and_the_listings_that_follow_ask_none(self):
+        estate = self.estate(3)
+        box = toolbox(estate)
+        self.assertEqual(box.preload(self.KINDS), 3)
+        self.assertEqual(estate.graph_names(), ["type-resources"] * 3)
+        self.assertEqual([listed(box, kind)["total"] for kind in self.KINDS], [1, 1, 1])
+        self.assertEqual(estate.graph_names(), ["type-resources"] * 3, "the listings found in the caches what was read ahead")
+
+    def test_what_is_read_ahead_is_what_a_listing_reads_for_itself_the_same_answers_and_the_same_handles(self):
+        ahead, alone = toolbox(self.estate(3)), toolbox(self.estate(1))
+        ahead.preload(self.KINDS)
+        self.assertEqual([listed(ahead, kind) for kind in self.KINDS], [listed(alone, kind) for kind in self.KINDS])
+        self.assertEqual(sorted(ahead.handles), sorted(alone.handles))
+
+    def test_a_type_that_is_read_already_or_has_not_the_shape_of_one_is_left_alone_and_one_type_is_not_worth_a_pool(self):
+        estate = self.estate(1)
+        box = toolbox(estate)
+        self.assertEqual(box.preload([DISK]), 0)
+        self.assertEqual(box.preload(["not a type", "microsoft.compute/disks' | where 1 == 1 //", 5, None, "Microsoft.Compute/Disks"]), 0, "no text of an argument reaches a question")
+        self.assertEqual(estate.graph_calls(), [])
+        listed(box, DISK)
+        self.assertEqual(box.preload([DISK, VM]), 0, "the one that is left is read by its listing")
+        self.assertEqual(len(estate.graph_calls()), 1)
+
+    def test_a_read_that_fails_is_left_to_the_listing_which_asks_again_and_a_type_is_never_taken_for_empty(self):
+        estate = self.estate(3)
+        estate.failures["graph:type-resources"] = [403]
+        box = toolbox(estate, (SUB,))
+        self.assertEqual(box.preload(self.KINDS), 2)
+        self.assertEqual([listed(box, kind)["total"] for kind in self.KINDS], [1, 1, 1])
+        self.assertEqual(estate.graph_names(), ["type-resources"] * 4, "the type whose read failed was asked again by its listing")
+
+    def test_the_toolbox_does_not_let_a_call_and_a_read_ahead_run_beside_each_other(self):
+        estate = self.estate(1)
+        box = toolbox(estate)
+        with box._lock:
+            runner = threading.Thread(target=lambda: box.preload(self.KINDS))
+            runner.start()
+            runner.join(0.3)
+            self.assertTrue(runner.is_alive(), "it waits for the call that holds the toolbox")
+            self.assertEqual(estate.graph_calls(), [])
+        runner.join(10)
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(len(estate.graph_calls()), 3)
 
 
 if __name__ == "__main__":

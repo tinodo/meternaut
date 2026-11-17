@@ -104,6 +104,7 @@ TOP_COST_SERVICES = 3  # services of one resource in a list
 ADVISOR_PAGE = 20
 RESOLVE_CHUNK = 25  # resource ids in one read of Resource Graph
 PARALLEL_READS = 8
+PRELOAD_WORKERS = 5  # the types whose resources `preload` reads at the same time: one question of Resource Graph each, and the quota of Resource Graph is one for the whole identity
 READ_WORKERS = 4  # subscriptions whose cost lines, recommendations or plans are read at the same time in one call: Cost Management allows 12 query units in 10 seconds for a tenant, and a 30 day read costs one
 READ_BUDGET_SECONDS = 60.0  # of one measurement
 SUBSCRIPTION_SECONDS = 45.0  # what the reads of the subscriptions in one tool call may take in all: a call that has used it reads no further subscription (what it read is kept)
@@ -1345,12 +1346,12 @@ class Toolbox:
             raise first
         return rows, failed
 
-    def _load_type(self, kind: str) -> None:
+    def _load_type(self, kind: str, read: "tuple[list[dict], list[str]] | None" = None) -> None:
         """The resources of one type in every subscription, from one query of Resource Graph for all of them (`_graph`). A subscription that has none has an empty list, and one that could not be
-        read has no list: it is in `_unlisted`."""
+        read has no list: it is in `_unlisted`. `read` is that query's answer when `preload` has made it ahead."""
         if all((sub, kind) in self._by_type or sub in self._unlisted for sub in self.subscriptions):
             return
-        rows, failed = self._graph(TYPE_RESOURCES.format(type=kind))
+        rows, failed = read if read is not None else self._graph(TYPE_RESOURCES.format(type=kind))
         self._unlisted.update(failed)
         found: dict[str, list[str]] = {sub: [] for sub in self.subscriptions if sub not in self._unlisted}
         for row in rows:
@@ -1361,6 +1362,28 @@ class Toolbox:
         for sub, keys in found.items():
             self._by_type[(sub, kind)] = keys
 
+    def preload(self, kinds: Iterable[object]) -> int:
+        """For code and never for an agent (cases/beats.py): reads the resources of several types at the same time, so that the listings that follow find them in the caches. The questions of
+        Resource Graph, one for each type, go to a pool of at most PRELOAD_WORKERS, and the workers only read: what they read is registered here, by the thread that called, in the order of the
+        types, as `_load_type` registers a read of its own, so that no state of the toolbox is touched by two threads. A call of a tool holds `_lock` for as long as it runs and this holds it too,
+        so that nothing runs beside it. A type that is read already, or has not the shape of one, is left alone; one that fails is left to the listing, which says why in its own words. Returns
+        how many types were read; fewer than two types are not worth a pool, and are read by the listing."""
+        with self._lock:
+            todo = [kind for kind in dict.fromkeys(kinds) if type_word(kind) and not all((sub, kind) in self._by_type or sub in self._unlisted for sub in self.subscriptions)]
+            if len(todo) < 2:
+                return 0
+            with ThreadPoolExecutor(max_workers=min(len(todo), PRELOAD_WORKERS)) as pool:
+                asked = {kind: pool.submit(self._graph, TYPE_RESOURCES.format(type=kind)) for kind in todo}
+            read: dict[str, tuple[list[dict], list[str]]] = {}
+            for kind, future in asked.items():
+                try:
+                    read[kind] = future.result()
+                except READ_ERRORS:
+                    continue
+            for kind in todo:
+                if kind in read:
+                    self._load_type(kind, read[kind])
+            return len(read)
     def _entries_of(self, kind: str, subs: Iterable[str] | None = None) -> list[_Entry]:
         return [self._entries[key] for sub in self.subscriptions if subs is None or sub in set(subs) for key in self._by_type.get((sub, kind), [])]
 

@@ -1160,7 +1160,7 @@ class TheRunUnderTheHarness(unittest.TestCase):
     def test_a_harness_that_lets_the_agents_run_ends_as_a_run_that_ran(self):
         _, events, _, _, foundry, _ = self.go()
         end = tr.of_type(events, "run.finished")[0]
-        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 3))
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 5), "the start, the line of each of the two tool calls that the fake agent makes, the finding and the end")
         self.assertEqual(len(foundry.runs), 2)
 
 

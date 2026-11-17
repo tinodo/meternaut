@@ -879,6 +879,20 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         for call in asked[: beats.REFUSED_LINES]:
             say_call(beat, number, "agent", beats.call_fields(call.get("name"), call.get("arguments"), None, 0.0, refused=True))
 
+    def warmed(beat: beats.Beat, number: list[int]) -> Callable[[object], object] | None:
+        """The read ahead that the toolbox makes of the resources of a beat's kinds, all at the same time, and one line of the History for it when it read something (cases/beats.seed)."""
+        preload = getattr(toolbox, "preload", None)
+        if preload is None:
+            return None
+
+        def warm(kinds: object) -> object:
+            began = tool_clock()
+            read = preload(kinds)
+            if read:
+                say_call(beat, number, "code", {"tool": beats.PRELOAD, "handles": 0, "ok": True, "chars": 0, "seconds": round(max(0.0, tool_clock() - began), 1)})
+            return read
+        return warm
+
     for beat in plan:
         at = s.monotonic()
         if out.beats and beats_deadline - at < beats.MIN_SECONDS:
@@ -894,7 +908,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         if focused:
             # Each beat has an allowance of calls of its own on the shared toolbox, whatever the beats before it used: the reads that code makes for it and the calls of its session (the toolbox allows MAX_CALLS and what is added).
             toolbox.extra_calls = max(toolbox.extra_calls, log_before + beats.SEED_CALLS + calls - MAX_CALLS)
-        seeded = beats.seed(recorded(beat, "code", number), beat) if focused else None
+        seeded = beats.seed(recorded(beat, "code", number), beat, warmed(beat, number)) if focused else None
         calls_from = len(toolbox.log) if focused or out.beats else 0  # the calls of the beat's own session are the ones after the reads that code made for it
         if seeded is not None:
             result.seeded = len(seeded.handles)
