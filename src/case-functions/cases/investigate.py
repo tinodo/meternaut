@@ -6,6 +6,8 @@ object of findings. Nothing in it is believed before code has checked it:
 - a handle that no tool showed is dropped, and so is a measurement whose total is not a number that the tools returned;
 - a finding that claims no usage keeps only the resources whose cited measurements are nil in every total that the tools recorded for them;
 - the cost of the resources is added up by code from the cost lines, and the agent never supplies a figure;
+- the change that a finding states (its action, the meters that it would shrink and what remains of them) is checked against the meters and the numbers that the tools showed, and the saving
+  is computed by code from the bill lines (cases/pricing.py);
 - the guards of guards.py hold every resource, and a resource with a guard on leaves the finding;
 - a second agent, the Skeptic, then tries to break the findings that are left, and decide.py gives each resource its status.
 
@@ -28,7 +30,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import activity, agents, capability, decide, gateways, guards, impact, learning, roles, unread, upkeep, wiring
+from . import activity, agents, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -43,7 +45,7 @@ from .memory_store import parse, stamp
 from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox
+from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
 
 if TYPE_CHECKING:
     from .run import Services
@@ -126,6 +128,8 @@ class Finding:
     reason: str | None = None
     verdict: SkepticAnswer | None = None
     covered_usd: float | None = None
+    change: pricing.Change | None = None  # the change that the Investigator stated, read strictly (cases/pricing.py); None when it stated none
+    priced: pricing.Priced | None = None  # what code made of it for the resources that are left: the figure of each, or why it has none
     fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
 
 
@@ -236,6 +240,7 @@ def parse_finding(number: int, raw: object) -> tuple[Finding, list[str], object]
     else:  # a model that writes 85 for a percentage must not pass the gate of 0.7: the finding stays, with a confidence that cannot propose, and a person is told
         finding.note = f"the Investigator gave a confidence of {confidence:g}, which is not a number from 0 to 1, so it counts as 0 and a person has to judge this finding"
     finding.summary = clean_text(raw.get("summary"), agents.MAX_SUMMARY)
+    finding.change = pricing.parse(raw.get("change"))
     handles = list(dict.fromkeys(h for h in listed if isinstance(h, str)))
     finding.claimed = len(handles)
     return finding, handles[: agents.MAX_HANDLES], raw.get("metric_evidence")
@@ -634,8 +639,12 @@ def _skeptic_input(findings: list[Finding], toolbox: Toolbox) -> tuple[str, set[
         listed = []
         for index, f in enumerate(findings):
             rows = [_row(item, toolbox, count, fields, sku, properties) for item in f.items if item.handle not in left_out]
-            listed.append({"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
-                           "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)})
+            said = {"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
+                    "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)}
+            model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out) if f.priced is not None else None
+            if model and model["effects"]:
+                said["change"] = model  # the model of the saving, for the Skeptic to judge: the lines that it rests on and what remains of them, never the words of the AI for a person
+            listed.append(said)
         return agents.skeptic_input(listed)
 
     for level in DETAIL:
@@ -681,15 +690,6 @@ def _facts(finding: Finding, metrics: dict[str, float], cost: float | None, reco
 
 def _figure(value: float | None) -> float | None:
     return None if value is None else round(value, 2)
-
-
-def _unread(toolbox: Toolbox, resource: Resource, cost: float | None) -> dict | None:
-    """What a workspace takes in and nothing reads (cases/unread.py), for a finding about a workspace: worked out by code from everything that the tools recorded for it, and not from what the
-    Investigator cited. The names of the tables that are not the platform's (t1, t2, ...) are put back for the page of a person; no model sees them."""
-    if (resource.resource_type or "").lower() != unread.WORKSPACE:
-        return None
-    names = getattr(toolbox, "table_names", None)
-    return unread.analyse(_block(toolbox.evidence, resource.handle), cost, names(resource.handle) if callable(names) else None)
 
 
 def _why(s: "Services", error: Exception) -> str:
@@ -868,17 +868,16 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         if finding.reason is not None:
             continue
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
+        states = {handle: _cost_state(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower()), costs[handle]) for handle in finding.handles}
+        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY})
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
-            found_unread = _unread(toolbox, resource, costs[handle])
-            if found_unread is not None:
-                facts[unread.KEY] = found_unread  # a workspace: the data that nothing reads, and the scenario figure that rests on it (the saving of a change has no figure of its own: decide.py)
-            if (resource.resource_type or "").lower() == gateways.TYPE:
-                facts[gateways.KEY] = gateways.analyse(_block(toolbox.evidence, handle), costs[handle])  # a point-to-site gateway: its scale units, the most connections that it saw, and the scenario figure
-            context = contexts.get(resource.subscription_id.lower())
-            state = _cost_state(resource, context, costs[handle])
-            lead = _lead(resource, facts, costs[handle], _advisor(toolbox.evidence, handle), state, _estimate(toolbox, resource, state))
+            advisor, state = _advisor(toolbox.evidence, handle), states[handle]
+            stated = pricing.digest(finding.change, finding.priced, handle, advisor)
+            if stated is not None:
+                facts[pricing.KEY] = stated  # the change that the finding states, with the figure that code computed from the bill lines or the word that says why there is none
+            lead = _lead(resource, facts, costs[handle], advisor, state, _estimate(toolbox, resource, state))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
             if old is not None and old.status == "expired" and any(lead.lead_id in _members_of(group) and group.case_id != old.case_id and _recent(s, group, None) for group in groups):
@@ -970,10 +969,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
 
     # 4. One line for each finding, then one case for each resource that is left.
     for finding in findings:
+        saved = [point for item in finding.items if (point := pricing.point(item.lead.facts, item.lead.cost_usd_30d)) is not None]
         h.emit("investigation.finding", finding=finding.number, basis=finding.basis or None, proposal=finding.proposal or None, confidence=finding.confidence,
                claimed=finding.claimed, handles=len(finding.items), unknown=finding.unknown, unproven=finding.unproven, repeated=finding.repeated,
                judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, unmeasured=sum(1 for item in finding.items if not item.metrics),
-               shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd,
+               shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd, change=finding.change.action if finding.change else None,
+               pricedHandles=len(saved), savingUsdMonth=_figure(sum(saved)) if saved else None,
                verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary)
     models = {"investigator": st.foundry_model_investigator, "skeptic": st.foundry_model_skeptic}
     out.impact_due = _impact_due(survivors)
@@ -1147,10 +1148,9 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     lead = item.lead
     if group:
         together = _together(group, finding.capped, finding.silenced)
-        kept = {k: v for k, v in lead.facts.items() if k not in (unread.KEY, gateways.KEY)}  # the analysis of one workspace, or of one gateway, is not the analysis of the group
-        if together["type"] == gateways.TYPE:
-            combined = gateways.combine(member.lead.facts.get(gateways.KEY) for member in group)
-            kept.update({gateways.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its gateways
+        kept = {k: v for k, v in lead.facts.items() if k != pricing.KEY}  # the figure of one resource is not the figure of the group
+        combined = pricing.combine([member.lead.facts.get(pricing.KEY) for member in group], len(group))
+        kept.update({pricing.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its resources
         lead = replace(lead, cost_usd_30d=together["costUsd30d"], cost_state=_together_state(group, together["costUsd30d"]), estimate={},
                        facts={**kept, "costUsd30d": together["costUsd30d"], GROUP_FACT: together})
     detective = DetectiveAnswer(finding.proposal, finding.confidence, finding.summary)

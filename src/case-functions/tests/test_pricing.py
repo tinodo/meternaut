@@ -1,22 +1,25 @@
 """What a finding's change would save, worked out from the bill (cases/pricing.py): the typed block that the Investigator states, what code checks of it against what the tools showed, the
 arithmetic, the words that say what it rests on, and what the second AI is shown of it. Every kind of resource, meter and number here is INVENTED.
 
-The first part tests the module by itself. The second runs whole investigations with fakes, and the third prices a change from the meters of the real toolbox.
+The first part tests the module by itself. The second runs whole investigations with fakes (the Skeptic, the cases, the History), and shows that the findings that the removed modules priced
+by kind are priced by the generic path. The third prices a change from the meters of the real toolbox.
 """
+import ast
 import dataclasses
 import datetime as dt
 import json
 import math
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
-from support import NOW, SUBSCRIPTION
+from support import APP_ROOT, NOW, SUBSCRIPTION
 
 from cases import agents, brief, decide, investigate, pricing
 from cases.detectors import Context
 from cases.meters import Meter
 from cases.roles import DetectiveAnswer, SkepticAnswer
-from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, finding, metrics, resource, verdicts
+from test_investigate import HOSTILE, SAFE, FakeFoundry, FakeToolbox, Harness, answer, finding, meter_line, metrics, resource, verdicts
 
 START = dt.date(2026, 10, 5)
 COMPUTE = ("Example Compute", "Standard Tier", "Fixed Hours", "OnDemand", "Usage", "1 Hour")
@@ -107,19 +110,19 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
         self.assertEqual((row.low, row.high, row.bill, row.lines), (60.0, 60.0, 60.0, 1))
 
     def test_a_ratio_of_a_property_is_checked_against_the_number_that_the_tools_showed_and_the_remainder_is_the_codes(self):
-        row = priced(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "of": "units", "from": 12, "to": 4}))).rows["r1"]
+        row = priced(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))).rows["r1"]
         self.assertEqual((row.low, row.high, row.form, row.level), (66.67, 66.67, "ratio", pricing.SCENARIO))
         self.assertEqual(row.said, {"from": 12.0, "to": 4.0})
 
     def test_a_ratio_of_a_measurement_takes_its_total_its_highest_value_or_its_average_as_the_tools_gave_them(self):
         for said in (90, 11, 3.0):
             with self.subTest(said=said):
-                row = priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "of": "Used Units", "from": said, "to": said / 3}))).rows["r1"]
+                row = priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "Used Units", "from": said, "to": said / 3}))).rows["r1"]
                 self.assertEqual(row.low, 40.0)
 
     def test_a_ratio_whose_current_number_is_not_the_tools_makes_no_figure(self):
-        for remains in ({"form": "ratio", "of": "units", "from": 13, "to": 4}, {"form": "ratio", "of": "other units", "from": 12, "to": 4},
-                        {"form": "ratio", "of": "tier", "from": 12, "to": 4}, {"form": "ratio", "from": 12, "to": 4}, {"form": "ratio", "of": ["units"], "from": 12, "to": 4}):
+        for remains in ({"form": "ratio", "on": "units", "from": 13, "to": 4}, {"form": "ratio", "on": "other units", "from": 12, "to": 4},
+                        {"form": "ratio", "on": "tier", "from": 12, "to": 4}, {"form": "ratio", "from": 12, "to": 4}, {"form": "ratio", "on": ["units"], "from": 12, "to": 4}):
             with self.subTest(remains=remains):
                 found = priced(block("reduce", effect("r1", ("m1",), remains)))
                 self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
@@ -127,11 +130,11 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
     def test_a_ratio_of_numbers_that_are_not_a_reduction_makes_no_figure(self):
         for start, target in ((12, 12), (12, 13), (12, -1), (0, 0), (True, 4), (12, True), ("12", 4), (12, "4"), (12, None), (float("nan"), 4), (12, float("inf")), (10 ** 400, 4)):
             with self.subTest(start=start, target=target):
-                found = priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "of": "units", "from": start, "to": target})))
+                found = priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": start, "to": target})))
                 self.assertEqual(found.rows, {})
 
     def test_a_target_of_nothing_is_a_ratio_that_removes_everything(self):
-        self.assertEqual(priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "of": "units", "from": 12, "to": 0}))).rows["r1"].low, 60.0)
+        self.assertEqual(priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": 12, "to": 0}))).rows["r1"].low, 60.0)
 
     def test_a_share_of_days_is_arithmetic_on_two_whole_numbers(self):
         row = priced(block("schedule", effect("r1", ("m1", "m2"), {"form": "share_of_days", "days": 5, "of": 7}))).rows["r1"]
@@ -164,9 +167,9 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
         self.assertIn("not available yet", pricing.WHY["later"])
 
     def test_a_form_that_does_not_go_with_the_action_is_refused(self):
-        for action, remains in (("remove", {"form": "ratio", "of": "units", "from": 12, "to": 4}), ("remove", {"form": "assumed", "low": 0.1, "high": 0.2}),
+        for action, remains in (("remove", {"form": "ratio", "on": "units", "from": 12, "to": 4}), ("remove", {"form": "assumed", "low": 0.1, "high": 0.2}),
                                 ("reduce", {"form": "none"}), ("schedule", {"form": "none"}), ("switch", {"form": "none"}), ("commit", {"form": "none"}),
-                                ("commit", {"form": "ratio", "of": "units", "from": 12, "to": 4}), ("reduce", {"form": "share_of_days", "days": 5, "of": 7})):
+                                ("commit", {"form": "ratio", "on": "units", "from": 12, "to": 4}), ("reduce", {"form": "share_of_days", "days": 5, "of": 7})):
             with self.subTest(action=action, form=remains["form"]):
                 self.assertEqual(priced(block(action, effect("r1", ("m1",), remains))).why, {"r1": "remains"})
 
@@ -253,7 +256,7 @@ class WhatMetersCount(unittest.TestCase):
         self.assertIsNone(row.away)
 
     def test_a_part_that_cannot_be_priced_is_left_out_of_the_row_and_counted(self):
-        found = priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.5, "high": 0.5}), effect("r1", ("m2",), {"form": "ratio", "of": "units", "from": 99, "to": 1})))
+        found = priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.5, "high": 0.5}), effect("r1", ("m2",), {"form": "ratio", "on": "units", "from": 99, "to": 1})))
         self.assertEqual((found.rows["r1"].low, found.rows["r1"].skipped, found.why), (30.0, 1, {}))
 
     def test_a_group_is_priced_as_the_sum_of_its_resources_each_by_its_own_meters_once(self):
@@ -283,7 +286,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
 
     def test_the_figure_of_a_remove_is_expected_and_every_other_form_is_a_scenario(self):
         for raw, level in ((block("remove", effect()), pricing.EXPECTED),
-                           (block("reduce", effect("r1", ("m1",), {"form": "ratio", "of": "units", "from": 12, "to": 4})), pricing.SCENARIO),
+                           (block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": 12, "to": 4})), pricing.SCENARIO),
                            (block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7})), pricing.SCENARIO),
                            (block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.2, "high": 0.4})), pricing.SCENARIO)):
             with self.subTest(form=raw["effects"][0]["remains"]["form"]):
@@ -295,7 +298,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
     def test_the_words_of_the_basis_say_what_the_figure_rests_on_for_each_form(self):
         removed = pricing.saved(self.facts(block("remove", effect("r1", ("m1", "m2")))))
         self.assertEqual(removed.basis, "the 2 bill lines of 1 resource that the change would remove, over the last 30 days")
-        ratio = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "of": "units", "from": 12, "to": 4}))))
+        ratio = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))))
         self.assertEqual(ratio.basis, "the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, scaled by the change from 12 to 4: the target is the AI's proposal")
         days = pricing.saved(self.facts(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7}))))
         self.assertEqual(days.basis, "the 1 bill line of 1 resource that the change would shrink, over the last 30 days, scaled to 5 days of every 7: the AI's proposal")
@@ -322,7 +325,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         self.assertEqual(found.low, 100.0)
 
     def test_a_group_says_how_many_of_its_resources_are_priced_and_a_mix_of_rules_says_so(self):
-        change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.5, "high": 0.5}), effect("r2", ("m3",), {"form": "ratio", "of": "units", "from": 4, "to": 1})))
+        change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.5, "high": 0.5}), effect("r2", ("m3",), {"form": "ratio", "on": "units", "from": 4, "to": 1})))
         found = pricing.price(change, ("r1", "r2", "r3"), shown(), COSTS, None)
         joined = pricing.combine([pricing.digest(change, found, handle, None) for handle in ("r1", "r2", "r3")], 3)
         saved = pricing.saved({pricing.KEY: joined})
@@ -376,7 +379,7 @@ class WhatTheSkepticIsShown(unittest.TestCase):
         return pricing.view(change, pricing.price(change, handles, shown(), COSTS, None), shown().meters, lambda word: word, limit, skip)
 
     def test_the_block_is_shown_in_typed_form_with_the_lines_the_remainder_and_the_computed_sum_and_not_the_ais_words(self):
-        seen = self.view(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "of": "units", "from": 12, "to": 4}), how="Secret advice."))
+        seen = self.view(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}), how="Secret advice."))
         self.assertEqual(seen["action"], "reduce")
         (one,) = seen["effects"]
         self.assertEqual((one["handle"], one["form"], one["usd"], one["from"], one["to"]), ("r1", "ratio", 100.0, 12.0, 4.0))

@@ -18,8 +18,7 @@ from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer,
 from test_letters import BASE, CONTACTS, PERSON
 from test_missing_data import ABSENT, DISK, ENDPOINTS, PE, endpoint_case, endpoint_plan
 from test_run_loop import Moving, loop_for
-from test_unread import page_of, walk_blocks
-from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case
+from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case, page_of, walk_blocks
 
 from cases import brief, cards, evidence, impact, investigate, learning, letters, stake
 from cases.approvals import IMPACT_NOT_CHECKED
@@ -472,11 +471,11 @@ class WhatAPersonReads(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_what_only_code_worked_out(self):
         case = case_with(digest_of("safe"))
-        case = dataclasses.replace(case, facts={**case.facts, "gateways": {"gateways": 2, "counted": 5}})
+        case = dataclasses.replace(case, facts={**case.facts, "change": {"action": "remove", "how": "Remove it.", "missing": "none"}})
         reply, _ = page_of(case, endpoint_plan(case, saving_usd_month=None))
         self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"})
         self.assertNotIn("readAt", reply.content, "the digest is not printed as a row of raw JSON anywhere on the page")
-        self.assertEqual(sorted(case.facts), ["asked", "basis", "finding", "gateways", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
+        self.assertEqual(sorted(case.facts), ["asked", "basis", "change", "finding", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
 
     def test_an_unfinished_check_says_so_in_the_line_of_the_card_and_the_letter(self):
         azure = Azure()

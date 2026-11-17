@@ -109,7 +109,7 @@ class Watched:
 
 
 def month(case) -> float:
-    return brief_mod.scenario_saving(case) or 0.0
+    return brief_mod.advisor_saving(case) or 0.0
 
 
 class TheLeads(unittest.TestCase):

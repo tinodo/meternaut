@@ -165,15 +165,14 @@ class MakingTheAdvice(Base):
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
                 self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), (None, None))
 
-    def test_a_case_without_a_figure_of_its_own_takes_the_one_that_code_worked_out_for_the_data_that_nothing_reads_and_a_figure_of_its_own_stays(self):
-        digest = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "savingUsd": 48.0, "costUsd30d": 80.0, "runsRecorded": True, "more": 0, "unknown": 0,
-                  "kinds": [{"kind": "Syslog", "gb": 60.0, "share": 0.6, "runs": 0}]}
+    def test_a_case_without_a_figure_of_its_own_takes_the_one_that_azure_advisor_gave_and_a_figure_of_its_own_stays(self):
+        digest = {"n": 1, "usd": 576.0, "low": 576.0, "high": 576.0, "rows": [["Standard_D2s_v5", 2, "swedencentral", "P1Y", 576.0, "USD", 30, "single"]]}
         for own, found, expected in ((None, digest, (48.0, 1.6)), (0, digest, (48.0, 1.6)), (-5.0, digest, (48.0, 1.6)), (120.0, digest, (120.0, 4.0)),
-                                     (None, {**digest, "savingUsd": 90.0}, (None, None)), (None, {**digest, "savingUsd": 0}, (None, None)), (None, {**digest, "savingUsd": "48"}, (None, None)),
-                                     (None, {"missing": "volume"}, (None, None)), (None, "text", (None, None))):
+                                     (None, {**digest, "usd": 0}, (None, None)), (None, {**digest, "usd": "576"}, (None, None)), (None, {**digest, "rows": []}, (None, None)),
+                                     (None, "text", (None, None))):
             with self.subTest(saving=own, digest=found):
                 store = MemoryStore(clock=self.clock)
-                case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"unread": found})
+                case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"advisor": found})
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
                 self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), expected)
 
@@ -293,15 +292,14 @@ class TheWorthOfARequest(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNotNone(why_not_ask(self.finding(**changes)))
 
-    def test_a_figure_that_code_worked_out_for_the_data_that_a_workspace_takes_in_and_nothing_reads_is_something_to_decide_with_even_for_a_cheap_resource(self):
-        digest = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "savingUsd": 12.0, "costUsd30d": 20.0, "runsRecorded": True, "more": 0, "unknown": 0,
-                  "kinds": [{"kind": "Syslog", "gb": 60.0, "share": 0.6, "runs": 0}]}
-        case = self.finding(cost_usd_30d=20.0, facts={"unread": digest})
-        self.assertIsNone(why_not_ask(case))
-        self.assertIsNotNone(self.approvals.advise(case, NAMED))
-        for name, found in (("no figure", {"missing": "volume"}), ("a figure above the cost", {**digest, "savingUsd": 25.0}), ("a figure of nothing", {**digest, "savingUsd": 0})):
+    def test_a_figure_that_code_computed_from_the_bill_lines_or_that_azure_advisor_gave_is_something_to_decide_with_even_for_a_cheap_resource(self):
+        self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0)), "the figure that code computed from the bill lines is the case's own saving")
+        advisor = {"n": 1, "usd": 144.0, "low": 144.0, "high": 144.0, "rows": [["Standard_D2s_v5", 2, "swedencentral", "P1Y", 144.0, "USD", 30, "single"]]}
+        self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts={"advisor": advisor})))
+        self.assertIsNotNone(self.approvals.advise(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0), NAMED))
+        for name, found in (("no digest", {}), ("a figure of nothing", {"advisor": {**advisor, "usd": 0}}), ("a change that was not priced", {"change": {"action": "remove", "missing": "lines"}})):
             with self.subTest(name):
-                self.assertIsNotNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts={"unread": found})))
+                self.assertIsNotNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts=found)))
 
     def test_plan_for_holds_the_same_finding_back(self):
         case = self.finding()

@@ -6,15 +6,17 @@ import re
 import unicodedata
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from test_web_support import GROUP, NOW, SUB, VM, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import brief
+from cases import brief, pricing
 from cases.brief import (Brief, build_brief, check_lines, confidence_of, contact_text, days_text, doubt_of, facts_of, footer_line, headline_of, kind_words, models_of, number_text,
                          order_key, owner_of, plain, plan_headline, portal_url, quantity, reasoning_of, usd_text, visible, written_by)
 from cases.families import registry
 from cases.families.words import SHOWN
+from cases.meters import Meter
 from cases.models import ADVISE
 
 IP = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Network/publicIPAddresses/planted-ip-1"
@@ -438,148 +440,102 @@ class TheSaving(unittest.TestCase):
             self.assertNotRegex(text, r"\b(saved|saves)\b")
 
 
-WORKSPACE = "microsoft.operationalinsights/workspaces"
-WORKSPACE_ID = f"/subscriptions/{SUB}/resourceGroups/rg-demo/providers/Microsoft.OperationalInsights/workspaces/ws-demo"
-LINE = {"kind": "Syslog", "gb": 5.0, "share": 0.05, "runs": 0}
+WORKSPACE_ID = f"/subscriptions/{SUB}/resourceGroups/rg-demo/providers/Microsoft.Example/things/thing-demo"
 
 
-def digest_of(**changes) -> dict:
-    """What cases/unread.py keeps in the facts of the case of a workspace: 60 of its 100 GB are read by nothing, and it cost 80 US dollars."""
-    values = {"days": 30, "billableGb": 100.0, "unreadGb": 60.0, "share": 0.6, "runsRecorded": True, "more": 0, "unknown": 0, "costUsd30d": 80.0, "savingUsd": 48.0,
-              "kinds": [{"kind": "AzureDiagnostics", "gb": 40.0, "share": 0.4, "runs": 0}, {"kind": "Syslog", "gb": 20.0, "share": 0.2, "runs": 0, "writers": ["microsoft.compute/virtualmachines"]}]}
-    values.update(changes)
-    return values
+def change_facts(raw: dict, handle="r1", advisor=None, cost: float | None = None) -> dict:
+    """What cases/investigate.py keeps in the facts of a case for a change that a finding states: the digest of cases/pricing.py, from invented meters of the handle r1."""
+    meters = {"m1": pricing_line("r1", 60.0, pricing_words(1)), "m2": pricing_line("r1", 40.0, pricing_words(2))}
+    box = SimpleNamespace(meters=meters, evidence={"r1": {"properties": {"units": 12}}})
+    change = pricing.parse(raw)
+    return {pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": cost}, None), handle, advisor)}
 
 
-def workspace_case(found=None, **changes):
-    values = dict(resource_id=WORKSPACE_ID, resource_name="ws-demo", resource_type=WORKSPACE, resource_group="rg-demo", saving_usd_month=None, cost_usd_30d=80.0,
-                  facts={"unread": digest_of() if found is None else found})
+def pricing_words(number: int) -> tuple:
+    return ("Example Compute", "Standard Tier", f"Meter {number}", "OnDemand", "Usage", "1 Hour")
+
+
+def pricing_line(scope: str, usd: float, words: tuple) -> Meter:
+    start = dt.date(2026, 10, 5)
+    return Meter(scope, None, words, 100.0, usd, {start + dt.timedelta(days=n): usd / 30 for n in range(30)}, None, start, 30)
+
+
+def priced_case(raw=None, **changes):
+    values = dict(resource_id=WORKSPACE_ID, resource_name="thing-demo", resource_type="microsoft.example/things", resource_group="rg-demo", saving_usd_month=None, cost_usd_30d=100.0,
+                  facts={"basis": "oversized", "proposal": "change", "metrics": {}, **change_facts(raw or {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1", "m2"],
+                                                                                                                                        "remains": {"form": "assumed", "low": 0.4, "high": 0.7}}],
+                                                                                                           "how": "Take it down a size."})})
     values.update(changes)
     return make_advice_case(**values)
 
 
-def workspace_plan(**changes):
-    values = dict(resource_id=WORKSPACE_ID, resource_name="ws-demo", resource_group="rg-demo", saving_usd_month=48.0, waiting_costs_usd_day=1.6,
-                  title="Consider changing the Log Analytics workspace ws-demo in group rg-demo")
+def priced_plan(**changes):
+    values = dict(resource_id=WORKSPACE_ID, resource_name="thing-demo", resource_group="rg-demo", saving_usd_month=30.0, waiting_costs_usd_day=1.0)
     values.update(changes)
     return make_advice(**values)
 
 
-class TheDataThatNothingReads(unittest.TestCase):
-    """What a workspace takes in and nothing reads: the digest that code kept in the facts of the case, and what the brief makes of it."""
+class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
+    """What a finding that states a change shows a person: the figure with its level and the words of what it rests on, why there is none, the lines and the AI's own words."""
 
-    def test_the_brief_has_the_figure_as_a_scenario_with_its_method_the_lines_and_the_choices(self):
-        b = brief_of(workspace_case(), workspace_plan())
-        self.assertEqual(b.headline, "Consider changing the Log Analytics workspace ws-demo in group rg-demo")
-        self.assertEqual((b.saving.monthly, b.saving.level, b.saving.waiting_per_day), (48.0, "Scenario", 1.6))
-        self.assertEqual(b.saving.basis, "the workspace's cost of the last 30 days times the share of its data that nothing reads, about 60 percent")
-        self.assertEqual(b.unread.sentence, "About 60 percent of what this workspace is billed for is data that nothing reads.")
-        self.assertEqual(b.unread.volume, "That is 60 GB of the 100 GB that it took in over 30 days.")
-        self.assertEqual([(line.kind, line.gb, line.percent, line.writers) for line in b.unread.lines],
-                         [("AzureDiagnostics", "40 GB", "40 percent", ""), ("Syslog", "20 GB", "20 percent", "Virtual machine")])
-        self.assertEqual(b.unread.lines[0].reads, "Read by 0 rules, 0 saved searches and 0 workbooks; 0 queries run")
-        self.assertEqual((len(b.options), b.unread.more, b.unread.note), (3, 0, ""))
+    def test_the_brief_has_the_figure_with_its_level_and_the_basis_that_the_digest_gives(self):
+        b = brief_of(priced_case(), priced_plan())
+        self.assertEqual((b.saving.monthly, b.saving.level), (30.0, "Scenario"))
+        self.assertEqual(b.saving.basis, pricing.saved(priced_case().facts, 100.0).basis)
+        self.assertIn("the AI's own assumption", b.saving.basis)
+        self.assertEqual(b.saving.waiting_per_day, 1.0)
 
-    def test_a_digest_that_is_not_as_it_should_be_shows_nothing_and_never_something_else(self):
-        self.assertIsNone(brief.unread_of(None))
-        self.assertIsNone(brief.unread_of(make_advice_case(facts={})))
-        self.assertIsNone(brief.unread_of(make_advice_case(facts=None)))
-        for name, found in (("text", "text"), ("a list", [1]), ("no kinds", digest_of(kinds=[])), ("kinds that are not a list", digest_of(kinds="x")),
-                            ("items that are not kinds", digest_of(kinds=[5, None, "x", ["y"]])), ("a share of nothing", digest_of(share=0)), ("a share above 1", digest_of(share=1.2)),
-                            ("a share that is text", digest_of(share="0.6")), ("a share that is not a number", digest_of(share=math.nan)), ("more than the whole", digest_of(unreadGb=120.0)),
-                            ("nothing that is unread", digest_of(unreadGb=0)), ("no days", digest_of(days=0)), ("days that are a flag", digest_of(days=True)),
-                            ("days that are text", digest_of(days="30")), ("a kind that something reads", digest_of(kinds=[{**LINE, "runs": 3}])),
-                            ("a kind with no name", digest_of(kinds=[{**LINE, "kind": ""}])), ("a negative volume", digest_of(kinds=[{**LINE, "gb": -5.0}])),
-                            ("a share above 1", digest_of(kinds=[{**LINE, "share": 2}])), ("runs that are text", digest_of(kinds=[{**LINE, "runs": "0"}])),
-                            ("runs that are a flag", digest_of(kinds=[{**LINE, "runs": False}]))):
-            with self.subTest(digest=name):
-                self.assertIsNone(brief.unread_of(workspace_case(found)))
-        found = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "runs": 3}, LINE, "x"])))
-        self.assertEqual([line.kind for line in found.lines], ["Syslog"], "a kind that is read is left out, and the others stay")
+    def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):
+        remove = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}
+        b = brief_of(priced_case(remove), priced_plan(saving_usd_month=99.0, waiting_costs_usd_day=3.3))
+        self.assertEqual((b.saving.monthly, b.saving.level, b.saving.waiting_per_day), (60.0, "Expected", 2.0))
+        self.assertEqual(brief_of(priced_case(remove), None).saving.monthly, 60.0)
 
-    def test_six_lines_are_shown_what_is_left_is_counted_and_what_was_not_counted_is_said(self):
-        kinds = [{"kind": f"K{n}", "gb": 1.0, "share": 0.01, "runs": 0} for n in range(9)]
-        found = brief.unread_of(workspace_case(digest_of(kinds=kinds, more=2)))
-        self.assertEqual(([line.kind for line in found.lines], found.more), ([f"K{n}" for n in range(6)], 5), "the three that are left out and the two that the digest counted")
-        found = brief.unread_of(workspace_case(digest_of(unknown=2, runsRecorded=False, kinds=[{**LINE, "runs": None}])))
-        self.assertEqual(found.lines[0].reads, "Read by 0 rules, 0 saved searches and 0 workbooks; queries run: not recorded")
-        self.assertEqual(found.note, "What reads 2 other kinds of data could not be read, so they are not counted. "
-                                     "The queries that people run were not counted: the record of them is off or could not be read in full.")
-        one = brief.unread_of(workspace_case(digest_of(unknown=1)))
-        self.assertEqual(one.note, "What reads 1 other kind of data could not be read, so it is not counted.")
-
-    def test_the_figure_is_the_one_of_the_digest_when_it_is_above_nothing_and_not_above_the_cost(self):
-        for figure, expected in ((48.0, 48.0), (47.996, 48.0), (80.0, 80.0), (80.004, 80.0), (80.01, None), (0, None), (-1.0, None), (True, None), ("48", None), (math.nan, None),
-                                 (math.inf, None), (None, None)):
-            with self.subTest(figure=figure):
-                self.assertEqual(brief.unread_saving(workspace_case(digest_of(savingUsd=figure))), expected)
-        self.assertIsNone(brief.unread_saving(workspace_case(cost_usd_30d=None)))
-        self.assertIsNone(brief.unread_saving(workspace_case(cost_usd_30d=40.0)), "a figure above what the resource cost is not a figure")
-        self.assertIsNone(brief.unread_saving(workspace_case({"missing": "volume"})))
-        self.assertIsNone(brief.unread_saving(None))
-
-    def test_a_figure_above_the_cost_is_not_shown_by_the_brief_and_a_case_without_a_request_shows_the_one_of_the_digest(self):
-        b = brief_of(workspace_case(cost_usd_30d=40.0), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+    def test_a_figure_above_what_the_finding_cost_is_not_shown(self):
+        b = brief_of(priced_case(cost_usd_30d=40.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
         self.assertIsNone(b.saving.monthly)
-        info = brief_of(workspace_case(), None)
-        self.assertEqual((info.kind, info.saving.monthly, info.saving.level, info.options), ("info", 48.0, "Scenario", ()))
 
-    def test_a_digest_that_says_what_is_missing_gives_no_figure_and_the_sentence_of_what_is_missing(self):
-        for missing in ("volume", "readers"):
-            with self.subTest(missing=missing):
-                b = brief_of(workspace_case({"missing": missing}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None))
-                self.assertEqual((b.saving.monthly, b.saving.why_none, b.saving.specific), (None, brief.UNREAD_MISSING[missing], True))
-                self.assertLess(len(b.saving.why_none), 200)
-                self.assertEqual((b.unread, b.options), (None, ()))
-        other = brief_of(workspace_case({"missing": "anything else"}), workspace_plan(saving_usd_month=None, waiting_costs_usd_day=None)).saving
-        self.assertEqual(other.why_none, "The resource cost $80.00 in the last 30 days. What a change would save was not worked out.")
-        self.assertFalse(other.specific)
+    def test_a_change_that_was_stated_and_could_not_be_priced_says_why_as_the_finding_s_own_reason_and_a_finding_with_none_says_nothing_of_the_kind(self):
+        for raw, word in (({"action": "remove", "effects": [{"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}]}, "lines"),
+                          ({"action": "none"}, "none"), ({"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative"}}]}, "remains")):
+            with self.subTest(word=word):
+                b = brief_of(priced_case(raw, saving_usd_month=None, cost_usd_30d=80.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
+                self.assertEqual((b.saving.monthly, b.saving.why_none, b.saving.specific), (None, pricing.WHY[word], True))
+        plain = brief_of(make_advice_case(saving_usd_month=None, cost_usd_30d=80.0), make_advice(saving_usd_month=None, waiting_costs_usd_day=None)).saving
+        self.assertFalse(plain.specific)
 
-    def test_the_figure_of_advisor_stays_when_the_finding_has_one_and_the_lines_are_still_shown(self):
-        b = brief_of(workspace_case(saving_usd_month=12.0), workspace_plan(saving_usd_month=12.0, waiting_costs_usd_day=0.4))
-        self.assertEqual((b.saving.monthly, b.saving.level, b.saving.basis), (12.0, "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
-        self.assertEqual(len(b.unread.lines), 2)
+    def test_azure_advisor_s_figure_is_kept_beside_and_never_added_and_a_case_that_only_advisor_priced_keeps_its_own_basis(self):
+        both = brief_of(priced_case(facts={"basis": "oversized", "proposal": "change", "metrics": {}, **change_facts(
+            {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}, advisor=12.5)}), priced_plan(saving_usd_month=60.0)).saving
+        self.assertEqual(both.monthly, 60.0)
+        self.assertIn("Azure Advisor's own estimate for it is $12.50 a month, and the two are not added", both.basis)
+        only = brief_of(make_case(detector="investigation", recommendation="change"), make_plan()).saving
+        self.assertEqual((only.level, only.basis), ("Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
 
-    def test_the_two_cited_measurements_are_left_out_of_the_facts_when_the_lines_say_more_and_stay_when_they_do_not(self):
-        measured = {"metrics": {"Billable GB Syslog": 20.0, "Readers Syslog": 0}, "metricUnits": {"Billable GB Syslog": "GB"}, "metricDays": {"Billable GB Syslog": 30, "Readers Syslog": 30}}
-        self.assertEqual([fact.label for fact in facts_of(workspace_case(facts={"unread": digest_of(), **measured}))], ["Cost, last 30 days", "Locks and keep tags"])
-        labels = [fact.label for fact in facts_of(workspace_case(facts={"unread": {"missing": "readers"}, **measured}))]
-        self.assertIn("Billable GB Syslog", labels)
-        self.assertIn("Readers Syslog", labels)
+    def test_the_lines_that_the_figure_rests_on_are_a_row_of_the_evidence_and_the_measurements_are_still_shown(self):
+        facts = priced_case().facts
+        labels = [fact.label for fact in facts_of(priced_case(facts={**facts, "metrics": {"Used Units": 3.0}, "metricUnits": {"Used Units": "Count"}, "metricDays": {"Used Units": 30}}))]
+        self.assertIn("Bill lines it would shrink", labels)
+        self.assertIn("Used Units", labels)
+        row = next(fact for fact in facts_of(priced_case()) if fact.label == "Bill lines it would shrink")
+        self.assertEqual((row.value, row.source), ("2 lines, $100.00 in the last 30 days", "Azure cost lines"))
 
-    def test_the_choices_are_code_s_words_they_name_the_listed_kinds_and_the_writers_and_never_an_invented_one(self):
-        unread = brief.unread_of(workspace_case())
-        first, second, third = brief.options_of(unread, True)
-        self.assertTrue(first.what.startswith("Stop sending AzureDiagnostics and Syslog at the source: the log categories that a diagnostic setting sends, or the data collection rule that writes it."))
-        self.assertIn("On the last closed day, the largest writers of Syslog were: Virtual machine.", first.what)
-        self.assertNotIn("writers of AzureDiagnostics", first.what)
-        self.assertIn("a transformation in the data collection rule", second.what)
-        self.assertIn("Basic or Auxiliary plan", third.what)
-        for option in (first, second, third):
-            self.assertTrue(option.risk, "each choice says what is lost or at risk")
-        self.assertTrue(third.risk.endswith("That lowers the bill by less than the figure above."))
-        self.assertFalse(brief.options_of(unread, False)[2].risk.endswith("That lowers the bill by less than the figure above."), "no figure, no remark about it")
-        nothing_shown = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "writers": [5, None, ""]}])))
-        self.assertNotIn("largest writers", brief.options_of(nothing_shown, False)[0].what)
-        many = brief.unread_of(workspace_case(digest_of(more=2, kinds=[{**LINE, "kind": name} for name in ("A", "B", "C", "D", "E")])))
-        self.assertTrue(brief.options_of(many, False)[0].what.startswith("Stop sending A, B, C and 4 more at the source"))
-        self.assertEqual((brief.options_of(None, True), brief.options_of(dataclasses.replace(unread, lines=()), True)), ((), ()))
+    def test_the_ai_s_words_for_a_person_are_shown_as_text_of_an_ai_and_cut_to_one_line(self):
+        hostile = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "<script>alert(1)</script> " + "x" * 400}
+        b = brief_of(priced_case(hostile), priced_plan())
+        self.assertLessEqual(len(b.how), brief.MAX_REASON)
+        self.assertNotRegex(b.how, r"\n")
+        self.assertEqual(brief_of(priced_case(), priced_plan()).how, "Take it down a size.")
+        self.assertEqual((brief_of(make_advice_case(), make_advice()).how, brief_of(priced_case(status="error"), priced_plan()).how), ("", ""))
 
-    def test_only_a_request_to_a_person_for_advice_has_the_choices(self):
-        self.assertEqual(len(brief_of(workspace_case(), workspace_plan()).options), 3)
-        self.assertEqual(brief_of(workspace_case(), None).options, ())
-        self.assertEqual(brief_of(make_advice_case(), make_advice()).options, (), "advice about anything else has none")
-        self.assertIsNone(brief_of(make_advice_case(), make_advice()).unread)
-        self.assertEqual(brief_of(make_case(), make_plan()).options, ())
-
-    def test_a_name_is_cut_and_the_text_of_the_estate_is_plain_text(self):
-        hostile = "<script>alert(1)</script>[x](javascript:alert(1)) https://evil.example/x\u202e" + "n" * 300
-        found = brief.unread_of(workspace_case(digest_of(kinds=[{**LINE, "kind": "t1", "name": hostile, "writers": [hostile]}])))
-        (line,) = found.lines
-        self.assertLessEqual(len(line.kind), 64)
-        for text in (line.kind, line.writers, " ".join(option.what for option in brief.options_of(found, True))):
-            self.assertNotRegex(text, r"https?://|\]\(|\u202e|\n")
-        self.assertIn("...", line.kind)
+    def test_a_finding_that_names_the_bill_lines_it_would_shrink_is_not_the_question_whether_the_resource_is_still_used_unless_it_asks_to_delete(self):
+        facts = {"basis": "unused-feature", "proposal": "investigate", "metrics": {}}
+        modelled = priced_case(facts={**facts, **priced_case().facts})
+        self.assertFalse(brief.still_used(modelled))
+        self.assertIsNone(brief.impact_of(modelled))
+        self.assertFalse(brief.says_nothing(modelled))
+        deleting = priced_case({"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}, recommendation="delete")
+        self.assertIsNotNone(brief.impact_of(deleting), "a deletion is always the question what depends on the resource")
 
 
 class TheOwner(unittest.TestCase):
@@ -847,7 +803,7 @@ class WhatTheModuleIs(unittest.TestCase):
 
     def test_it_imports_only_the_standard_library_the_records_and_the_words_of_the_families(self):
         allowed = {"__future__", "datetime", "math", "re", "unicodedata", "dataclasses", "typing"}
-        pure = {"costs", "estimate"}  # the words and the address of the cost, and the table of list prices: the next test holds that they too hold no way to reach Azure
+        pure = {"costs", "estimate", "pricing"}  # the words and the address of the cost, the table of list prices and the arithmetic of the saving: the next tests hold that they too hold no way to reach Azure
         for node in ast.walk(ast.parse(self.source)):
             if isinstance(node, ast.Import):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)

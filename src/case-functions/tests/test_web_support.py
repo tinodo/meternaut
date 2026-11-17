@@ -513,3 +513,26 @@ class Console:
             self.store.case_put(make_case(plan_id="plan0001" if plan else None))
         if plan:
             self.store.plan_put(make_plan())
+
+
+def page_of(case, plan) -> tuple[object, str]:
+    """The page of the request of a plan, as the real handler renders it for a console that holds this case and this plan, and the text of its main part."""
+    console = Console()
+    console.store.case_put(case)
+    console.store.plan_put(plan)
+    reply = console.get(f"/ok/{plan.plan_id}")
+    return reply, reply.main.text()
+
+
+def walk_blocks(card) -> list:
+    """The TextBlocks of a card that have an id, at any depth (the figure and the footer are in a container or at the end, and a test reads them by id)."""
+    found, stack = [], [card]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if node.get("type") == "TextBlock" and "id" in node:
+                found.append(node)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found

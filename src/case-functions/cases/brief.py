@@ -19,6 +19,7 @@ from typing import Mapping, Sequence
 
 from . import costs as cost_words
 from . import estimate as estimates
+from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import ADVISE, GROUP_FACT, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
@@ -188,19 +189,9 @@ COULD_NOT_LOOK = "Meternaut could not look at the {noun} just now, so it cannot 
 LOOKS_AGAIN = "It looks again right before it acts, and it changes nothing if a check fails."
 # What a request that was refused before and is open again says at the top, when the look made now cannot say whether the reason still holds (the reason itself is the record's).
 NOT_MADE_BEFORE = "Meternaut did not make this change last time"
-# The data that a workspace takes in and nothing reads: cases/unread.py works it out and keeps it in the facts of the case under this key, as numbers, flags and the names of kinds of data. This
-# module reads that typed digest and nothing of how it is made. The words are code's; the names of tables are text of the estate and are cut and escaped like every other.
-UNREAD = "unread"
-MAX_UNREAD_LINES = 6
-READS_NOTHING = "0 rules, 0 saved searches and 0 workbooks"
-UNREAD_MISSING = {
-    "volume": "How much data this workspace takes in was not read, so there is no way to say how much of it nothing reads.",
-    "readers": "Not everything that reads this workspace's data (its rules, saved searches, workbooks and analytics rules) could be read, so Meternaut cannot say which data nothing reads.",
-}
-# What a person could do about data that nothing reads, in one line, for a letter that has no room for the section of the page. The section ends with OPTIONS_END; a letter adds it where
-# no other line says that the answer changes nothing in Azure.
+# What a person could do about a finding, in one line for a letter that has no room for the section of the page (the options are those of a commitment that Azure Advisor recommends). The section ends
+# with OPTIONS_END; a letter adds it where no other line says that the answer changes nothing in Azure.
 OPTIONS_END = "Nothing changes in Azure when you answer."
-OPTIONS_SHORT = "Options: stop sending it, filter it before it is stored, or use a cheaper plan."
 
 
 @dataclass(frozen=True)
@@ -274,54 +265,11 @@ class Outcome:
 
 
 @dataclass(frozen=True)
-class DataLine:
-    """One kind of data that nothing reads, as a typed line: what it is, how much of it came in, its share of what is billed, and what reads it. `writers` names the kinds of resource of its
-    largest writers on the last closed day when the tools showed them ("" otherwise): the options use it and the line does not."""
-
-    kind: str
-    gb: str
-    percent: str
-    reads: str
-    writers: str = ""
-
-
-@dataclass(frozen=True)
-class Unread:
-    """The data that a workspace takes in and nothing reads, for the evidence of a request: the method in one plain sentence, the volume that it rests on ("That is 88 GB of the 118 GB that
-    it took in over 30 days."), the days, up to six typed lines (the largest first), how many more kinds there are, and one sentence about what was not counted ("" when everything was).
-    `caveat` says the same in a few words, for a letter and a card, which have no room for the sentence (for example "Not counted: the queries people run.")."""
-
-    sentence: str
-    volume: str
-    days: str
-    lines: tuple[DataLine, ...]
-    more: int
-    note: str
-    caveat: str = ""
-
-
-@dataclass(frozen=True)
 class Option:
     """One thing that a person could do about it, in words that code wrote, and what is lost or at risk if they do it."""
 
     what: str
     risk: str
-
-
-@dataclass(frozen=True)
-class Gateways:
-    """What a finding about point-to-site gateways says in plain words of code (cases/gateways.py works the digest out): what these gateways are, what was found in one or two sentences, up to two
-    rows of evidence (the scale units, and the most connections at one time), how many scale units would be taken away in all, how many gateways were counted of how many there are, and what was
-    not counted, in a sentence for the page and in a few words for a letter and a card."""
-
-    what: str
-    sentence: str
-    rows: tuple["Fact", ...]
-    fewer: int
-    counted: int
-    gateways: int
-    note: str = ""
-    caveat: str = ""
 
 
 @dataclass(frozen=True)
@@ -396,13 +344,11 @@ class Brief:
     # one sentence about that. Both are written by code from the case's own record of them (CaseRecord.learned); empty when the case has none.
     past: str = ""
     access: str = ""
-    # The data that a workspace takes in and nothing reads, and what a person could do about it (both written by code from the typed digest in the facts of the case; None and () for every
-    # other finding). And, for a case that stands for many resources, the group (also from the facts of the case; None for every other).
-    unread: Unread | None = None
+    # What a person could do about a commitment that Azure Advisor recommends (written by code from the typed digest in the facts of the case; () for every other finding). And, for a case that
+    # stands for many resources, the group (also from the facts of the case; None for every other). `how` is what the AI says that a person would do, in its own words: text of an AI, never trusted.
     options: tuple[Option, ...] = ()
     group: Group | None = None
-    # The point-to-site gateways whose scale units nobody uses, for a finding about them (None for every other).
-    gateways: Gateways | None = None
+    how: str = ""
     # What the finding costs in 30 days, from the cost lines (everything that it stands for when it is a group); None when no cost line was read. A request that has no saving shows this cost as
     # the most that a change could save. The letter and the card read it from here, because the card has no case at hand: it is the number that the pages read with cost_of (a test holds the two together).
     cost: float | None = None
@@ -639,10 +585,10 @@ def _id_like(label: str) -> bool:
 
 
 def says_nothing(case: CaseRecord | None) -> bool:
-    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads, no analysis of
-    gateways and no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
+    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no figure that code computed from the bill lines that it names and
+    no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
     a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
-    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None or advisor_says(advisor_digest(case)):
+    if case is None or advice_of(case) is not None or group_of(case) is not None or _priced(case) is not None or advisor_says(advisor_digest(case)):
         return False
     if cost_words.is_container(case.resource_id):
         return True
@@ -719,10 +665,24 @@ def _checked(facts: object) -> bool:
     return found is not None and found.get("complete") is True
 
 
+def _priced(case: CaseRecord | None) -> pricing.Saved | None:
+    """What code computed from the bill lines that a finding of the investigation names (cases/pricing.py), read again; None when the finding has no figure of that kind. The cost of the finding bounds
+    it, except for a group, whose resources are each bounded by their own cost when the figure is made."""
+    if case is None:
+        return None
+    return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d))
+
+
+def _modelled(case: CaseRecord | None) -> bool:
+    """Whether a finding is about what a change would shrink in the bill, and not about whether one resource is still used: it has a figure of its own from the bill lines that it names, and it
+    does not ask to delete the resource (that is always the question whether anything uses it)."""
+    return case is not None and _priced(case) is not None and not _asked_delete(case)
+
+
 def impact_of(case: CaseRecord | None) -> Impact | None:
     """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
     model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding."""
-    if case is None or not _idle(case) or unread_of(case) is not None or gateways_of(case) is not None:
+    if case is None or not _idle(case) or _modelled(case):
         return None
     found = _impact_digest(case.facts)
     if found is None:
@@ -778,8 +738,8 @@ def proposal_of(case: CaseRecord | None) -> str | None:
 
 def still_used(case: CaseRecord | None) -> bool:
     """Whether a finding of the investigation is the question whether one resource is still used: it asks for a look, it asked to delete the resource or says that nothing uses it, and either the
-    resource is one that others share or no measured zero lets it ask for more. A finding that has an analysis of its own (data that nothing reads, gateways) is not this question."""
-    return (case is not None and _idle(case) and proposal_of(case) == "investigate" and group_of(case) is None and unread_of(case) is None and gateways_of(case) is None
+    resource is one that others share or no measured zero lets it ask for more. A finding that names the bill lines that a change would shrink, and has a figure for them, is not this question."""
+    return (case is not None and _idle(case) and proposal_of(case) == "investigate" and group_of(case) is None and not _modelled(case)
             and (shared(case.resource_type) or _asked_delete(case) or not measured_zero(case.facts)))
 
 
@@ -796,7 +756,7 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
-    analysed = unread_of(case) is not None or gateways_of(case) is not None  # a finding with an analysis of its own is measured: it is not the question whether anything uses the resource
+    analysed = _modelled(case)  # a finding that has a figure of its own from the bill lines that it names is measured: it is not the question whether anything uses the resource
     parts = ([UNPROVEN] if _idle(case) and not proven and not analysed else []) + ([SHARED_RISK] if others else [])
     return Risk("high" if others and not proven and not analysed else "medium", ACTING + " ".join(parts or [RARE_USE if proven else CHANGE_RISK]))
 
@@ -961,6 +921,13 @@ def reasoning_of(case: CaseRecord | None) -> str:
     return text_of(case.summary, MAX_REASON)
 
 
+def how_of(case: CaseRecord | None) -> str:
+    """What the first AI says that a person would do about the finding, in its own words (the key `how` of the change that it states), cut to one line: text of an AI, shown as such, never trusted."""
+    found = case.facts.get(pricing.KEY) if case is not None and isinstance(case.facts, dict) else None
+    how = found.get("how") if isinstance(found, dict) else None
+    return text_of(how, MAX_REASON) if isinstance(how, str) and case is not None and case.status != "error" else ""
+
+
 def doubt_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> str:
     """The second AI's strongest objection: the first of its own, never a note that code wrote. When there is none, what the second AI did instead."""
     if case is None or case.status == "error" or _by_advisor(case):
@@ -1044,244 +1011,8 @@ def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
     return rows
 
 
-# -- the data that a workspace takes in and nothing reads ----------------------------------------------------------------------------------------------
-
-CUSTOM_TABLE = re.compile(r"t[0-9]{1,4}")  # what the tools call a table that the platform did not make, when they do not know its name: a handle that means something in one run only
-
-
-def _digest(case: CaseRecord | None) -> dict | None:
-    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
-    found = facts.get(UNREAD)
-    return found if isinstance(found, dict) else None
-
-
 def _whole(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
-
-
-def _percent(share: float) -> str:
-    points = round(share * 100)
-    return "under 1 percent" if points < 1 else f"{points} percent"
-
-
-def _about(share: float) -> str:
-    return _percent(share) if round(share * 100) < 1 else f"about {_percent(share)}"
-
-
-def _gb_text(value: float) -> str:
-    return "under 0.01 GB" if 0 < value < 0.005 else f"{number_text(round(value, 2))} GB"
-
-
-def _series(words: Sequence[str]) -> str:
-    return words[0] if len(words) == 1 else f"{', '.join(words[:-1])} and {words[-1]}"
-
-
-def _kind_name(item: Mapping) -> str:
-    """The name of a kind of data as a person reads it: the name of the table when it is known, the platform's own name, or "custom table t3" for a table of the customer that has none."""
-    name, kind = plain(item.get("name"), 60), plain(item.get("kind"), 60)
-    if name:
-        return name
-    return f"custom table {kind}" if CUSTOM_TABLE.fullmatch(kind) else kind
-
-
-def _writers_text(item: Mapping) -> str:
-    """The kinds of resource of the largest writers of a kind of data on the last closed day, in the words of the brief ("Key Vault, Storage account"); "" when the tools showed none."""
-    types = item.get("writers") if isinstance(item.get("writers"), list) else []
-    return ", ".join(dict.fromkeys(kind_words(text_of(kind, 80))[0] for kind in types[:3] if isinstance(kind, str) and text_of(kind, 80)))
-
-
-def unread_of(case: CaseRecord | None) -> Unread | None:
-    """The data that a workspace takes in and nothing reads, as the facts of its case keep it (cases/unread.py), or None for a case that has none or whose digest holds no kind. Every number
-    is checked again here: a digest that is not as it should be shows less and never something else."""
-    digest = _digest(case)
-    if digest is None:
-        return None
-    share, gone, whole, days = _figure(digest.get("share")), _figure(digest.get("unreadGb")), _figure(digest.get("billableGb")), _whole(digest.get("days"))
-    if share is None or not 0 < share <= 1 or gone is None or whole is None or not 0 < gone <= whole or not days:
-        return None
-    lines: list[DataLine] = []
-    skipped = 0
-    for item in digest.get("kinds") if isinstance(digest.get("kinds"), list) else []:
-        if not isinstance(item, dict):
-            continue
-        volume, part, runs, kind = _figure(item.get("gb")), _figure(item.get("share")), item.get("runs"), _kind_name(item)
-        counted = isinstance(runs, int) and not isinstance(runs, bool)
-        if volume is None or volume < 0 or part is None or not 0 <= part <= 1 or not kind or (counted and runs != 0) or (runs is not None and not counted):
-            continue  # a kind that something reads is not one that nothing reads
-        if len(lines) == MAX_UNREAD_LINES:
-            skipped += 1
-            continue
-        lines.append(DataLine(kind, _gb_text(volume), _percent(part), f"Read by {READS_NOTHING}; " + ("0 queries run" if counted else "queries run: not recorded"), _writers_text(item)))
-    if not lines:
-        return None
-    notes, short = [], []
-    unknown = _whole(digest.get("unknown"))
-    if unknown:
-        notes.append(f"What reads {unknown} other kind{'s' if unknown != 1 else ''} of data could not be read, so {'they are' if unknown != 1 else 'it is'} not counted.")
-        short.append(f"what reads {unknown} other kind{'s' if unknown != 1 else ''} of data")
-    if digest.get("runsRecorded") is not True:
-        notes.append("The queries that people run were not counted: the record of them is off or could not be read in full.")
-        short.append("the queries people run")
-    first = "Under 1 percent" if round(share * 100) < 1 else f"About {_percent(share)}"
-    sentence = f"{first} of what this workspace is billed for is data that nothing reads."
-    volume = f"That is {_gb_text(gone)} of the {_gb_text(whole)} that it took in over {days_text(days)}."
-    return Unread(sentence, volume, days_text(days), tuple(lines), _whole(digest.get("more")) + skipped, " ".join(notes), f"Not counted: {' and '.join(short)}." if short else "")
-
-
-def unread_saving(case: CaseRecord | None) -> float | None:
-    """The saving of the data that nothing reads in US dollars a month, when the digest of the case holds one that is whole: a number above 0 that is not more than the cost of the resource in the
-    last 30 days. Code worked it out (cases/unread.py); a model never writes it."""
-    digest = _digest(case)
-    figure = _figure(digest.get("savingUsd")) if digest is not None else None
-    cost = _figure(case.cost_usd_30d) if case is not None else None
-    if figure is None or figure <= 0 or cost is None or figure > cost + 0.005:
-        return None
-    return round(figure, 2)
-
-
-def _unread_basis(case: CaseRecord | None) -> str:
-    """What the figure of the data that nothing reads is computed from, as a part of a sentence of every render ("from ...", "(...)", "Basis: ...")."""
-    digest = _digest(case) or {}
-    share = _figure(digest.get("share"))
-    return "the workspace's cost of the last 30 days times the share of its data that nothing reads" + (f", {_about(share)}" if share is not None and 0 < share <= 1 else "")
-
-
-def _unread_missing(case: CaseRecord | None) -> str:
-    """Why there is no figure for a workspace whose record was not enough to say which data nothing reads ("" for any other case)."""
-    digest = _digest(case)
-    return UNREAD_MISSING.get(str(digest.get("missing")), "") if digest is not None and not digest.get("kinds") else ""
-
-
-def options_of(unread: Unread | None, figure: bool) -> tuple[Option, ...]:
-    """What a person could do about data that nothing reads, in three choices, with what each loses or puts at risk. The words are code's. They name the kinds of data that are listed and, when the
-    tools showed them, the kinds of resource of its largest writers; they never name a thing that the tools did not show. `figure` says that the request shows a figure, which counts all of
-    this data as no longer stored: the choices that remove only some of it save less."""
-    if unread is None or not unread.lines:
-        return ()
-    names = [line.kind for line in unread.lines]
-    others = max(0, len(names) - 3) + unread.more
-    listed = f"{', '.join(names[:3])} and {others} more" if others > 0 else _series(names[:3])
-    written = " ".join([f"On the last closed day, the largest writers of {line.kind} were: {line.writers}." for line in unread.lines if line.writers][:2])
-    less = " That lowers the bill by less than the figure above." if figure else ""
-    return (
-        Option(f"Stop sending {listed} at the source: the log categories that a diagnostic setting sends, or the data collection rule that writes it." + (f" {written}" if written else ""),
-               "alert rules, workbooks or investigations that need this data get no new data."),
-        Option("Filter it before it is stored: a transformation in the data collection rule that sends it (or, for data that comes through a diagnostic setting, in the workspace's own "
-               "transformation rule) can drop the rows or the columns that nobody needs.",
-               "what the filter drops cannot be searched later, and a filter that is too wide hides what an investigation needs. It lowers the bill only by what it drops."),
-        Option("Keep it, but cheaper: for data that people only search now and then, move its table to the Basic or Auxiliary plan, if the table supports it, or keep it for less time.",
-               "those plans offer fewer ways to query the data and charge each query for what it scans, and a shorter retention deletes old data for good." + less),
-    )
-
-
-# -- the point-to-site gateways whose scale units nobody uses --------------------------------------------------------------------------------------
-
-GATEWAYS = "gateways"  # the key of the digest in the facts of a case (cases/gateways.py)
-GATEWAYS_WHAT = ("A point-to-site gateway is the gateway that a virtual hub runs for its User VPN setting, so that people can connect to Azure from their own devices. Azure runs it inside the hub, which Microsoft "
-                 "manages, so what a person sets and sees is one number on the hub: its scale units. Azure charges for each unit by the hour whether anybody is connected or not, so a number that was set high once is easy to forget.")
-GATEWAYS_SHORT = "Options: scale them down to what their connections need, or keep them and say why."
-GATEWAYS_STEPS = ("In the Azure portal, open the virtual hub, go to its Point to site page, set Gateway scale units to the smaller number and confirm (the Edit virtual hub page has the same setting). "
-                  "With the Azure CLI, once for each gateway: az network p2s-vpn-gateway update --name <gateway> --resource-group <resource group> --scale-unit <scale units>. "
-                  "Azure says to plan for downtime when scale units change, and a hub update can take up to 30 minutes.")
-GATEWAYS_LOOK = ("In the Azure portal, open Monitor, then Metrics, choose the gateway and the metric P2S Connection Count, and look at the highest value of each day; "
-                 "az network p2s-vpn-gateway list shows the gateways and their scale units.")
-
-
-def _gateway_digest(case: CaseRecord | None) -> dict | None:
-    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
-    found = facts.get(GATEWAYS)
-    return found if isinstance(found, dict) else None
-
-
-def _plural_of(count: int, one: str, many: str | None = None) -> str:
-    return f"{number_text(count)} {one if count == 1 else (many or one + 's')}"
-
-
-def gateways_of(case: CaseRecord | None) -> Gateways | None:
-    """What a finding about point-to-site gateways says, from the digest in the facts of its case (cases/gateways.py), or None for a case that has none or whose digest is not as it should be. Every
-    number is checked again here: a digest that is not as it should be shows nothing and never something else."""
-    digest = _gateway_digest(case)
-    if digest is None:
-        return None
-    count, counted = _whole(digest.get("gateways")), digest.get("counted")
-    if not 1 <= count <= MAX_GROUP or isinstance(counted, bool) or not isinstance(counted, int) or not 0 <= counted <= count:
-        return None
-    one = count == 1
-    thing = "the gateway" if one else "these gateways"
-    if counted == 0:
-        sentence = f"Meternaut could not say how many scale units {thing} {'has' if one else 'have'} or whether anybody connected, because the tools did not record both."
-        return Gateways(GATEWAYS_WHAT, sentence, (), 0, 0, count, caveat=f"Not counted: {_plural_of(count, 'gateway')}.")
-    units, target, days, quiet = (_whole(digest.get(key)) for key in ("units", "target", "days", "quiet"))
-    peak = _figure(digest.get("peak"))
-    if units < counted or not counted <= target <= units or peak is None or peak < 0 or not days or quiet > counted:
-        return None
-    any_of = "the gateway" if counted == 1 else f"any of the {number_text(counted)} gateways"
-    span = (f"in the {days_text(days)} that Azure Monitor has a value for" if counted == 1
-            else f"in the days that Azure Monitor has a value for (at least {number_text(days)} for each)")
-    if peak == 0:
-        first = f"Nobody was connected to {any_of} {span}."
-    else:
-        first = f"The most connections at one time on {any_of} was {number_text(peak)} {span}." + (f" Nobody was connected to {number_text(quiet)} of them." if counted > 1 and quiet else "")
-    fewer = units - target
-    limit = _whole(digest.get("limit")) if counted == 1 else 0
-    if counted == 1:
-        have = f"It has {_plural_of(units, 'scale unit')}" + (f", which carry up to {number_text(limit)} connections at one time" if limit else "")
-    else:
-        have = f"They have {_plural_of(units, 'scale unit')} together"
-    if fewer:
-        second = f"{have}. The smallest size that still carries what {'it' if counted == 1 else 'each'} saw is {number_text(target)}{'' if counted == 1 else ' together'}, which is {number_text(fewer)} fewer."
-    else:
-        second = f"{have}. {'It is' if counted == 1 else 'Each is'} at the smallest size that carries what it saw already."
-    rows = (Fact("Scale units", f"{number_text(units)} in all" + ("" if counted == 1 else f", on {number_text(counted)} gateways"), RESOURCE_GRAPH),
-            Fact("Most connections at one time", f"{number_text(peak)} in the last {days_text(days)} with a value", MONITOR))
-    left = count - counted
-    note = f"{_plural_of(left, 'gateway')} of the {number_text(count)} {'is' if left == 1 else 'are'} not counted: the tools did not record the scale units or the connections." if left else ""
-    return Gateways(GATEWAYS_WHAT, f"{first} {second}", rows, fewer, counted, count, note, f"Not counted: {number_text(left)} of {number_text(count)} gateways." if left else "")
-
-
-def gateways_saving(case: CaseRecord | None) -> float | None:
-    """The saving of scaling the gateways down, in US dollars a month, when the digest of the case holds one that is whole: a number above 0 that is not more than the cost of the resource in the
-    last 30 days (for a group, of everything that it stands for). Code worked it out (cases/gateways.py); a model never writes it."""
-    digest = _gateway_digest(case)
-    figure = _figure(digest.get("savingUsd")) if digest is not None else None
-    cost = _figure(case.cost_usd_30d) if case is not None else None
-    if figure is None or figure <= 0 or cost is None or figure > cost + 0.005:
-        return None
-    return round(figure, 2)
-
-
-def _gateways_basis() -> str:
-    return "the cost of the gateways in the last 30 days, scaled by the share of their scale units that would be taken away (the price list was not read, so it is an estimate)"
-
-
-def _gateways_missing(case: CaseRecord | None) -> str:
-    """Why there is no figure for gateways whose record was not enough ("" for any other case)."""
-    found = gateways_of(case)
-    if found is None or found.counted:
-        return ""
-    return "The scale units or the connections of these gateways were not recorded, so no figure can be worked out for scaling them down."
-
-
-def gateway_options(found: Gateways | None) -> tuple[Option, ...]:
-    """What a person could do about gateways that carry more scale units than anybody uses, in two choices with the exact steps and what each puts at risk. The words are code's."""
-    if found is None:
-        return ()
-    these = "the gateway" if found.gateways == 1 else "the gateways"
-    keep = Option(f"Keep {these} as {'it is' if found.gateways == 1 else 'they are'}, and say why in your answer: for example a rollout that is still to come, or a gateway that is kept ready for a failure.",
-                  "the scale units keep billing by the hour, used or not.")
-    if found.counted and not found.fewer:
-        return (Option(f"Leave {these} as {'it is' if found.gateways == 1 else 'they are'}: {'it has' if found.gateways == 1 else 'each has'} the smallest size that carries the most connections that it saw.",
-                       "nothing more can be saved by scale units."),)
-    first = (f"Scale {these} down by {_plural_of(found.fewer, 'scale unit')} in all, each to the smallest size that carries the most connections that it saw. " if found.counted else
-             f"Look at the connections of {these} first. {GATEWAYS_LOOK} Then scale down the ones that nobody uses. ")
-    return (Option(first + GATEWAYS_STEPS, "users who are connected may be disconnected while it changes, and with fewer scale units a gateway carries fewer connections and less traffic."), keep)
-
-
-def scenario_saving(case: CaseRecord | None) -> float | None:
-    """The figure that code worked out for a finding that has an analysis (the data that nothing reads, gateways that carry more scale units than anybody uses, or what Azure Advisor says), or None."""
-    if _digest(case) is not None:
-        return unread_saving(case)
-    return gateways_saving(case) if _gateway_digest(case) is not None else advisor_saving(case)
 
 
 # -- what Azure Advisor says ---------------------------------------------------------------------------------------------------------------------
@@ -1494,23 +1225,22 @@ def cost_link(subscription: str, resource_id: str, subscription_name: str, scope
     return (url, f"subscription {text_of(subscription_name, 80) or text_of(subscription, 40)[:8]}") if url else ("", "")
 
 
-def _analysed(case: CaseRecord | None) -> bool:
-    return _digest(case) is not None or _gateway_digest(case) is not None or advisor_digest(case) is not None
-
-
 def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, state: str) -> Saving:
     figure = _figure(plan.saving_usd_month if plan is not None else (case.saving_usd_month if case is not None else None))
     if case is not None and (plan is None or plan.family == ADVISE) and case.recommendation == "delete" and proposal_of(case) != "delete":
         figure = None  # a finding that is only a look has no saving: a record from before this rule kept the cost as one
-    scenario = scenario_saving(case)  # the figure that code worked out from the analysis of the finding (data that nothing reads, gateways): the case holds no figure of its own for a change
     fam = shown(plan.family) if plan is not None else None
+    priced = _priced(case) if fam is None else None  # what code computed from the bill lines that the finding names: the figure of the case as it stands now, the same as the rows of its evidence
+    scenario = advisor_saving(case)  # what Azure Advisor's own figures add up to, for a case that holds what Advisor says
     own = _figure(case.saving_usd_month) if case is not None else None
-    # A case that holds that analysis and no figure of its own is worth what the analysis says now, the same numbers as its rows: the figure of a request is the one that code took when it was made,
-    # and a Watch that judged the case again while the request was open may have found the volume moved. That one stays in the plan as the record of what was asked.
-    current = fam is None and _analysed(case) and (own is None or own <= 0)
-    if current or (plan is None and (figure is None or figure <= 0)):
+    # A case that holds what Advisor says and no figure of its own is worth what Advisor says now: the figure of a request is the one that code took when it was made, and a later Watch may have
+    # found Advisor's figures moved. That one stays in the plan as the record of what was asked.
+    current = fam is None and advisor_digest(case) is not None and (own is None or own <= 0)
+    if priced is not None:
+        figure = priced.low
+    elif current or (plan is None and (figure is None or figure <= 0)):
         figure = scenario
-    waiting = None if current else (_figure(plan.waiting_costs_usd_day) if plan is not None else None)
+    waiting = None if current or priced is not None else (_figure(plan.waiting_costs_usd_day) if plan is not None else None)
     check = action.verification if action is not None and isinstance(action.verification, dict) else {}
     before, after = _figure(check.get("costBeforeUsd30d")), _figure(check.get("costAfterUsd"))
     if action is not None and action.no_change:
@@ -1541,17 +1271,20 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         else:
             why = f"{thing} cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
         specific = False
+        said = pricing.missing(case.facts if case is not None else None) or _advisor_missing(case)
         if fam is not None and fam.no_figure:
             why, specific = fam.no_figure, True
-        elif _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case):
-            why, specific = _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case), True
+        elif said:
+            why, specific = said, True
         return Saving(None, "", "", None, why, specific)
     if waiting is None:
         waiting = round(figure / 30, 2)
     if fam is not None and fam.saving_basis:
         return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
+    if priced is not None:
+        return Saving(round(figure, 2), priced.level, priced.basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
-        return Saving(round(figure, 2), "Scenario", _unread_basis(case) if _digest(case) is not None else (_gateways_basis() if _gateway_digest(case) is not None else _advisor_basis(case)), waiting, "")
+        return Saving(round(figure, 2), "Scenario", _advisor_basis(case), waiting, "")
     advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
@@ -1644,8 +1377,9 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
         return ()
     head: list[Fact] = []
     group = group_of(case)
-    found = gateways_of(case)
-    rows = list(found.rows) if found is not None else []
+    priced = _priced(case)
+    rows = ([Fact("Bill lines it would shrink", f"{number_text(priced.lines)} line{'' if priced.lines == 1 else 's'}, {usd_text(priced.bill)} in the last 30 days", "Azure cost lines")]
+            if priced is not None else [])
     cost = _figure(case.cost_usd_30d)
     state = cost_state_of(case, group)
     words = advice_of(case)
@@ -1658,7 +1392,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
             head.append(Fact("Also found by Meternaut", _also(case), RESOURCE_GRAPH))
     if group is not None:
         covered = _group_facts(group, case)
-        head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the rows of gateways come before the examples
+        head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the bill lines that it would shrink come before the examples
     elif state == cost_words.NONE:
         head.append(Fact("Cost, last 30 days", "Azure has no cost line for this yet", "Azure cost lines"))
     elif cost is not None and state == cost_words.LINES:
@@ -1669,8 +1403,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     if guards:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
     head += rows if group is None else []
-    if unread_of(case) is None and found is None:  # the rows of the data that nothing reads, and of gateways, say it better than two measurements of it
-        head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, CHECKED)] if group is None and _idle(case) else [])
+    head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, CHECKED)] if group is None and _idle(case) else [])
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
@@ -1866,8 +1599,6 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     found_at = (case.first_seen_at if case is not None and case.first_seen_at else (plan.created_at if plan is not None else ""))
     age, _ = ago_text(now, found_at)
     saving = _saving(case, plan, action, state)
-    unread = unread_of(case)
-    found = gateways_of(case)
     together = group_of(case)
     read = cost_state_of(case, together)
     scope = scope_of_case(case)
@@ -1887,7 +1618,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         models=models_of(case), outcome=_outcome(plan, state, action, decisions, case), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
-        unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found) or advisor_options(case)) if kind == "advice" else (), group=together, gateways=found,
+        options=advisor_options(case) if kind == "advice" else (), group=together, how=how_of(case),
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,

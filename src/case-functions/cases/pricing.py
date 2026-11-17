@@ -149,7 +149,7 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
         return "later"
     if form == "ratio":
         start, target = _number(said.get("from")), _number(said.get("to"))
-        if start is None or target is None or not 0 <= target < start or not _cited(block, said.get("of"), start):
+        if start is None or target is None or not 0 <= target < start or not _cited(block, said.get("on"), start):
             return "remains"
         return form, target / start, target / start, {"from": start, "to": target}
     if form == "share_of_days":
@@ -272,6 +272,8 @@ class Saved(NamedTuple):
     high: float
     level: str
     basis: str  # a phrase for "Based on ...", from closed words and numbers: no text of the estate
+    bill: float  # what the bill lines that the figure rests on cost in the last 30 days
+    lines: int
 
 
 def _usd(value: float) -> str:
@@ -321,7 +323,7 @@ def saved(facts: object, cost: float | None = None) -> Saved | None:
     form = found.get("form")
     if low is None or high is None or bill is None or form not in SHOWN or not 0 < low <= high <= bill + 0.005 or (cost is not None and high > cost + 0.005):
         return None
-    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" else SCENARIO, _basis(found, str(form), low, high))
+    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" else SCENARIO, _basis(found, str(form), low, high), round(bill, 2), _whole(found.get("lines")) or 0)
 
 
 def point(facts: object, cost: float | None = None) -> float | None:

@@ -12,10 +12,9 @@ from unittest import mock
 import support  # noqa: F401  (it puts the app on the path)
 from support import SUBSCRIPTION
 from test_cost_series import FIRST, LAST, FakeCosts, read as read_costs
-from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, metrics, resource, verdicts
+from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, meter_line, metrics, resource, verdicts
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
-from test_unread import page_of, walk_blocks
-from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case
+from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
 from cases import approvals, brief, cards, investigate, learning, letters
 from cases.approvals import ADVICE_MIN_USD, why_not_ask
@@ -56,10 +55,10 @@ def quiet_raw(handles, **changes) -> dict:
     return finding(handles=list(handles), basis="no-usage", proposal="delete", confidence=0.9, evidence=[entry(handle, "Traffic", 0) for handle in handles], **changes)
 
 
-def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None) -> Harness:
+def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None, meters=None) -> Harness:
     """One Watch over a fake estate. The clock and the loop (the store) are the ones to pass again for a second Watch."""
     clock = clock or Moving()
-    toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: absent() for r in resources})
+    toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: absent() for r in resources}, meters=meters)
     h = Harness(FakeFoundry(answer(*(raw if isinstance(raw, list) else [raw])), skeptic), toolbox, clock=clock, extras=extras if extras is not None else loop_for(clock))
     if contexts is not None:
         h.contexts = contexts
@@ -265,16 +264,27 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         (seen,) = json.loads(h.foundry.inputs()[1])["findings"]
         self.assertEqual((seen["resources"], seen["evidenceShown"], seen["costUsd30d"]), (60, 60, 1830.0))
 
-    def test_a_group_of_workspaces_is_not_shown_the_analysis_of_the_first_of_them(self):
-        from test_unread import COST, evidence_of
-        from cases import unread
-        resources = [resource(n, resource_type=unread.WORKSPACE, name=f"ws-{n}", cost_usd_30d=COST) for n in range(1, 8)]
-        h = watch(raw_of(7, evidence=[]), resources, evidence={r.handle: evidence_of() for r in resources})
+    def test_a_group_that_states_a_change_for_each_of_its_resources_is_priced_as_the_sum_of_them_and_not_as_the_first_of_them(self):
+        resources = endpoints(7, cost=lambda n: 100.0)
+        meters = {f"m{n}": meter_line(f"r{n}", 50.0) for n in range(1, 8)}
+        change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, 8)], "how": "Remove them."}
+        h = watch(raw_of(7, change=change), resources, meters=meters)
         case = only_case(h)
-        self.assertEqual((case.facts[GROUP_FACT]["count"], "unread" in case.facts), (7, False), "the figure and the rows of one workspace do not stand for seven")
+        price = case.facts["change"]["price"]
+        self.assertEqual((case.facts[GROUP_FACT]["count"], price["resources"], price["members"], price["lowUsd"], case.saving_usd_month), (7, 7, 7, 350.0, 350.0))
         b = brief.build_brief(case, None, now=WEB_NOW)
-        self.assertEqual((b.unread, b.options, b.saving.monthly), (None, (), None))
-        self.assertEqual(b.headline, "Look at 7 Log Analytics workspaces in 1 group, the first is ws-1")
+        self.assertEqual((b.saving.monthly, b.saving.level, b.group.count), (350.0, "Expected", 7))
+        self.assertIn("7 resources", b.saving.basis)
+        self.assertEqual(b.headline, "Look at 7 private endpoints in 7 groups, the first is pe-01")
+        self.assertEqual(h.of("investigation.finding")[0]["savingUsdMonth"], 350.0)
+
+    def test_a_group_whose_resources_are_only_partly_named_is_priced_for_those_and_says_how_many(self):
+        resources = endpoints(7, cost=lambda n: 100.0)
+        meters = {f"m{n}": meter_line(f"r{n}", 50.0) for n in range(1, 4)}
+        change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, 4)]}
+        case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
+        self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
+        self.assertTrue(brief.build_brief(case, None, now=WEB_NOW).saving.basis.endswith("; 3 of 7 resources are priced"))
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):
@@ -729,7 +739,7 @@ class TheBriefOfAGroup(unittest.TestCase):
         self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk), (single.answers, single.change, single.who_acts, single.undo, single.risk))
         self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (None, "", None))
         self.assertEqual(self.b.saving.why_none, "The 60 resources cost $1,830.00 together in the last 30 days. What a change would save was not worked out.")
-        self.assertEqual((self.b.unread, self.b.options), (None, ()))
+        self.assertEqual(self.b.options, ())
         self.assertEqual(single.group, None)
 
     def test_the_resource_that_the_case_belongs_to_is_whose_it_is_and_what_the_portal_shows(self):

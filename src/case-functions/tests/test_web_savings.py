@@ -3,7 +3,7 @@ import unittest
 
 from test_web_support import MAYA, NOW, OPS, OWNER, SUB, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, at, make_action, make_case, make_plan, snapshot
 
-from cases.brief import UNREAD_MISSING
+from cases import pricing
 from cases.memory_store import MemoryStore
 from cases.models import CASE_STATUSES, StoreError
 
@@ -231,9 +231,22 @@ class TheSavingsPage(unittest.TestCase):
         self.assertNotIn("disk-", reply.text)
 
     def test_a_finding_shows_its_own_specific_reason_for_having_no_saving_figure_and_not_the_general_one(self):
-        self.console.store.case_put(finding("needs_human", case_id="c-unread", saving_usd_month=None, cost_usd_30d=None, facts={"unread": {"missing": "volume"}}))
+        self.console.store.case_put(finding("needs_human", case_id="c-unpriced", saving_usd_month=None, cost_usd_30d=None, facts={"change": {"action": "remove", "missing": "lines"}}))
         row = rows_of(self.console.get(PATH))["Waiting for a person"]
-        self.assertEqual((row["Findings"], row["Findings with no saving figure"]), ("4", f"1 finding · {UNREAD_MISSING['volume']}"))
+        self.assertEqual((row["Findings"], row["Findings with no saving figure"]), ("4", f"1 finding · {pricing.WHY['lines']}"))
+
+    def test_findings_that_state_a_change_are_counted_once_each_at_the_level_that_their_bill_lines_give_and_the_levels_are_never_mixed(self):
+        console = Console()
+        removal = {"action": "remove", "how": "Take it away.", "price": {"lowUsd": 100.0, "highUsd": 100.0, "billUsd": 100.0, "lines": 2, "resources": 1, "form": "none"}}
+        assumption = {"action": "reduce", "price": {"lowUsd": 30.0, "highUsd": 60.0, "billUsd": 100.0, "lines": 2, "resources": 1, "form": "assumed", "away": [0.3, 0.6]}}
+        console.store.case_put(finding("needs_human", case_id="c-removal", saving_usd_month=100.0, cost_usd_30d=100.0, facts={"change": removal}))
+        console.store.case_put(finding("proposed", case_id="c-assumption", saving_usd_month=30.0, cost_usd_30d=100.0, facts={"change": assumption}))
+        row = rows_of(console.get(PATH))["Waiting for a person"]
+        self.assertEqual(row["Findings"], "2")
+        self.assertIn("$360 a year Saves, Scenario. $30.00 a month. Based on the 2 bill lines of 1 resource that the change would shrink", row["Saving a year"])
+        self.assertIn("the AI's own assumption, not checked by code", row["Saving a year"])
+        self.assertIn("$1,200 a year Saves, Expected. $100.00 a month. Based on the 2 bill lines of 1 resource that the change would remove, over the last 30 days.", row["Saving a year"])
+        self.assertEqual(row["Findings with no saving figure"], "None.")
 
     def test_two_confirmed_changes_of_one_finding_show_the_newest_in_its_row_and_are_two_changes_in_the_tile_which_the_note_says(self):
         console = Console()

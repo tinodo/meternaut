@@ -1,5 +1,5 @@
 """What a scale unit of a point-to-site gateway carries, as Microsoft's own table gives it. Pure data and functions, standard library only and no call to Azure, so that the family
-(families/gateway.py) and the analysis of a finding (cases/gateways.py) read one table.
+(families/gateway.py), which belongs to the approval loop and to the gateways that Meternaut planted, reads one table.
 
 Learn, "Virtual WAN FAQ", "For User VPN (point-to-site) - how many clients are supported?" and "What are Virtual WAN gateway scale units?" (read on 2026-11-11): one scale unit is 500 Mbps, the
 table lists the sizes 1 to 20 one by one and then 40, 60 and so on to 200, and for each of them the connections that it supports at one time (1 to 3 units: 500, 4 to 6: 1,000, 7 to 10: 5,000,
