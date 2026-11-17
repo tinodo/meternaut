@@ -16,7 +16,7 @@ import json
 
 from ..models import PlanRecord
 
-EXCLUDED = ("state", "digest", "code")
+EXCLUDED = ("state", "digest", "code", "waiting_since")
 # Why a plan may not be acted on, as fragments of a sentence (no capital, no full stop): the page, the letter and the runner put each in a sentence of their own.
 NOT_BOUND = "the request was made before requests were bound to what a person approves"
 CHANGED = "something in the request changed after it was made, so it is not the request that was approved"

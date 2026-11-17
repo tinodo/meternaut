@@ -22,7 +22,7 @@ from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError,
-                     TwoPeopleRule)
+                     TwoPeopleRule, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -434,7 +434,6 @@ class Approvals:
             open_plans = [plan for plan in self.store.plans_open() if plan.family == ADVISE and plan.state == "open"]
             waiting = {plan.case_id for plan in open_plans}
             groups: set[str] = set()
-            covered: set[str] = set()
             members_of: dict[str, set[str]] = {}
             for case in self.store.cases_recent(GROUP_CASES_READ):
                 together = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
@@ -442,23 +441,36 @@ class Approvals:
                     groups.add(case.case_id)
                     members = together.get("members")
                     if case.case_id in waiting and isinstance(members, list):
-                        covered.update(f"k{member}" for member in members if isinstance(member, str))
                         members_of[case.case_id] = {f"k{member}" for member in members if isinstance(member, str)}
+
+            def stands_for(plan: PlanRecord, other: PlanRecord) -> bool:
+                """A request of a group that has the resource among its members, or a later request of a group that shares most of its members: the finding changed its first resource."""
+                mine, theirs = members_of.get(plan.case_id, set()), members_of.get(other.case_id, set())
+                return other.plan_id != plan.plan_id and ((plan.case_id in theirs and plan.case_id not in groups) or (other.created_at > plan.created_at and len(mine & theirs) * 2 > len(mine)))
             closed = []
             for plan in open_plans:
-                fresher = any(other.plan_id != plan.plan_id and other.created_at > plan.created_at and len(members_of.get(plan.case_id, set()) & members_of.get(other.case_id, set())) * 2 > len(members_of.get(plan.case_id, set()))
-                              for other in open_plans)  # a later request of a group that shares most of its members: the finding changed its first resource, and the fresher request stands for it now
-                if (plan.case_id in covered and plan.case_id not in groups) or fresher:
+                standing = [other for other in open_plans if stands_for(plan, other)]
+                if standing:
                     plan = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                     if plan is None or plan.state != "open" or self.store.decisions_of_plan(plan.plan_id):
                         continue  # a person who put it off or asked about it has answered it
                     plan = _plan_with(plan, state="expired", expires_at=stamp(self.clock()), preconditions={**(plan.preconditions or {}), "takenBack": "group"})  # the field keeps the time of the end
                     self.store.plan_put(plan)
                     self._set_case(plan.case_id, "expired")
+                    self._carry(plan, max(standing, key=lambda other: (other.created_at, other.plan_id)))
                     closed.append(plan)
             return closed
         except StoreError:
             return []
+
+    def _carry(self, old: PlanRecord, new: PlanRecord) -> None:
+        """The request that stands for another keeps the oldest start, and the steps of the ladder that were made for the other count as made for it (cases/escalation.py): a request that is made again
+        does not start its wait again. A request that asks another question (the rules changed, another lead) is made by another path and starts when it is made."""
+        fresh = self.store.plan_get(new.plan_id)
+        if fresh is not None and fresh.state == "open" and started(old) < started(fresh):
+            self.store.plan_put(replace(fresh, waiting_since=started(old)))
+        for record in self.store.escalations_of(old.plan_id):
+            self.store.escalation_claim(replace(record, plan_id=new.plan_id))
 
     def _own_group(self, case: CaseRecord) -> bool:
         """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and the rules about asking to delete leave it alone."""

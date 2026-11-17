@@ -28,7 +28,7 @@ from typing import Collection, Sequence
 
 from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
-from .models import ActionRecord, CaseRecord, PlanRecord
+from .models import ActionRecord, CaseRecord, PlanRecord, started
 from .people import Person
 from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text, waited_line
 
@@ -420,7 +420,7 @@ ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are
 
 def waited_days(plan: PlanRecord, now: dt.datetime) -> int:
     """How many whole days the request has waited since it was made."""
-    since = brief_mod.parse_time(plan.created_at)
+    since = brief_mod.parse_time(started(plan))
     moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
     return 0 if since is None else max(0, (moment - since).days)
 
@@ -449,7 +449,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
     doc.figure(stake)
     waited = waited_line(stake, days)
-    rows = [("Waiting", f"{_days(days)}, since {_data(plan.created_at[:10], 12)}"),
+    rows = [("Waiting", f"{_days(days)}, since {_data(started(plan)[:10], 12)}"),
             ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
             ("Told before", "; ".join(_data(t, 160) for t in told[:4]) or "Nobody else yet.")]
     if put_off:

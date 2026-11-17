@@ -27,7 +27,7 @@ from .http import GUID, SCOPE, Client, directory_calls
 from .loop_config import EscalationSettings, LoopSettings
 from .mail import ESCALATION_KINDS, Mailer
 from .memory_store import parse, stamp
-from .models import ADVISE, EscalationRecord, PlanRecord, Store, StoreError
+from .models import ADVISE, EscalationRecord, PlanRecord, Store, StoreError, started
 from .people import People, Person
 
 EPOCH = "2000-01-01T00:00:00Z"
@@ -54,7 +54,7 @@ def due_number(plan: PlanRecord, steps: list[EscalationRecord], snoozes: list[Es
         return max(number, 2)
     if steps and now < parse(steps[-1].at) + MIN_GAP:
         return None
-    due = parse(plan.created_at) + dt.timedelta(days=wait_days(number, settings))
+    due = parse(started(plan)) + dt.timedelta(days=wait_days(number, settings))
     for put_off in snoozes[:settings.snoozes]:
         due = max(due, parse(put_off.at) + dt.timedelta(days=settings.snooze_days))
     return number if now >= due else None
@@ -279,7 +279,7 @@ def weekly(ladder: Ladder) -> int:
             continue
         person = ladder.people.by_oid(target.oid) or Person(target.oid, target.name, (), target.mail)
         mine = plans if target in contacts else []
-        letter = letters.escalation_weekly_letter(person, ladder.base, now, [(p, store.case_get(p.case_id)) for p in sorted(mine, key=lambda p: p.created_at)], ladder.contacts, problems, first=_first_contact(ladder, target.oid))
+        letter = letters.escalation_weekly_letter(person, ladder.base, now, [(p, store.case_get(p.case_id)) for p in sorted(mine, key=started)], ladder.contacts, problems, first=_first_contact(ladder, target.oid))
         if (mine or problems) and ladder.mailer.send_escalation(target, letter, "escalation-weekly", None, 0, "weekly").status == "sent":
             sent += 1
     return sent

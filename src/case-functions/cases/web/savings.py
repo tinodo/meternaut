@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..brief import HOLD_WORDS
-from ..models import HELD, PlanRecord
+from ..models import HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
@@ -145,7 +145,7 @@ def _longest_wait(ctx: Ctx) -> Safe:
     waiting = [p for p in plans if p.state == "open"]
     if not ok or not waiting:
         return Safe("")
-    plan = min(waiting, key=lambda p: (p.created_at, p.plan_id))
+    plan = min(waiting, key=lambda p: (started(p), p.plan_id))
     case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
     waited = brief_of(ctx, plan, case).waiting
     if waited is None:

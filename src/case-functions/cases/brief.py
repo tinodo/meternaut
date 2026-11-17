@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
+from .models import ADVISE, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -1624,10 +1624,10 @@ def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tu
 def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datetime) -> Waiting:
     """How long the request has waited since `plan.created_at`, from the records of its ladder (cases/escalation.py): with whom it is now, who was
     told and when, how often it was put off."""
-    days, _ = ago_text(now, plan.created_at)
+    days, _ = ago_text(now, started(plan))
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
     told, pending = told_lines(steps)
-    return Waiting(days or 0, plain(plan.created_at[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
+    return Waiting(days or 0, plain(started(plan)[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
                    sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0), pending[-4:])
 
 

@@ -239,6 +239,13 @@ class PlanRecord(Record):
     # SHA-256 over every other field of the plan but state and code (cases/families/digest.py), 64 hexadecimal characters. The sign-in binds it and the runner compares it before it acts:
     # empty only in a plan that was made before the digest existed, which cannot be approved.
     digest: str = ""
+    # When the wait of the request began, when that is before the request was made: a request that stands for another one keeps the oldest start (cases/approvals.py supersede). Not in the digest.
+    waiting_since: str = ""
+
+
+def started(plan: PlanRecord) -> str:
+    """When the wait of a request began: the start that it carries from the request that it stands for, else the time that it was made."""
+    return plan.waiting_since or plan.created_at
 
 
 @dataclass(frozen=True)

@@ -8,11 +8,13 @@ from support import APP_ROOT  # noqa: F401
 
 from cases.approvals import Approvals
 from cases.memory_store import MemoryStore, stamp
-from cases.models import ADVISE, GROUP_FACT
+from cases.models import ADVISE, GROUP_FACT, EscalationRecord, started
 from test_advise import NAMED, SETTINGS, Clock
 from test_run import estate_with, investigating, of_type
 from test_run_loop import Moving, loop_for
 from test_web_support import NOW, SUB, FailingStore, make_advice_case, make_decision
+
+OID = "aaaaaaaa-1111-4222-8333-444444444444"
 
 
 def short(n: int) -> str:
@@ -126,6 +128,51 @@ class WhenTheRequestOfAGroupWaits(unittest.TestCase):
                 asked(store, self.clock, range(1, 7), group=6, of=range(1, 7))
                 store.fail = {name}
                 self.assertEqual(Approvals(store, SETTINGS, self.clock).supersede(), [])
+
+
+class WhenARequestIsMadeAgain(unittest.TestCase):
+    """The wait of a finding does not start again when a request stands for another one: the Watch makes requests again often, and a wait that restarted would never reach its first step."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.store = MemoryStore(clock=self.clock)
+        self.approvals = Approvals(self.store, SETTINGS, self.clock)
+
+    def test_the_request_of_a_group_keeps_the_oldest_start_and_the_steps_that_were_made_for_the_requests_that_it_stands_for(self):
+        plans = asked(self.store, self.clock, range(1, 7), group=6, of=range(1, 7))
+        self.store.plan_put(replace(plans[1], created_at="2026-10-20T08:00:00Z"))
+        self.store.escalation_claim(EscalationRecord(plans[1].plan_id, "step", 1, "2026-10-23T08:00:00Z", "same", (OID,), ("Ada",), (OID,), "email", "sent"))
+        self.approvals.supersede()
+        stands = self.store.plan_get(plans[6].plan_id)
+        self.assertEqual((started(stands), stands.created_at), ("2026-10-20T08:00:00Z", plans[6].created_at))
+        self.assertEqual([(r.kind, r.number, r.delivered) for r in self.store.escalations_of(stands.plan_id)], [("step", 1, (OID,))], "the reminder that was sent is not sent again")
+        self.assertEqual(stands.digest, plans[6].digest, "the start is no part of what a person approves")
+
+    def test_a_fresher_request_of_a_group_that_stands_for_an_older_one_keeps_the_start_of_the_older(self):
+        older = single(6)
+        self.store.case_put(older)
+        before = self.approvals.advise(older, NAMED)
+        self.store.case_put(grouped(older, range(1, 7)))
+        self.clock.advance(days=2)
+        newer = single(7)
+        self.store.case_put(newer)
+        after = self.approvals.advise(newer, NAMED)
+        self.store.case_put(grouped(newer, range(2, 8)))
+        self.approvals.supersede()
+        self.assertEqual(self.store.plan_get(before.plan_id).state, "expired")
+        stands = self.store.plan_get(after.plan_id)
+        self.assertEqual((stands.state, started(stands), stands.created_at), ("open", before.created_at, after.created_at))
+
+    def test_a_request_that_asks_another_question_starts_when_it_is_made_and_the_closed_word_of_the_old_one_says_why(self):
+        case = single(1)
+        self.store.case_put(case)
+        old = self.approvals.advise(case, NAMED)
+        self.store.plan_put(replace(old, state="expired", preconditions={**old.preconditions, "takenBack": "rules"}))
+        self.clock.advance(days=9)
+        self.store.case_put(replace(case, plan_id=None))
+        again = self.approvals.advise(self.store.case_get(case.case_id), NAMED)
+        self.assertEqual((again.waiting_since, again.created_at), ("", stamp(self.clock())))
+        self.assertEqual(self.store.plan_get(old.plan_id).preconditions["takenBack"], "rules")
 
 
 class WhenTheWatchRuns(unittest.TestCase):
