@@ -657,10 +657,14 @@ class TheEvaluations(unittest.TestCase):
                 for tool, answer in evals.answers_of(row).items():
                     for arguments in garbage:
                         self.assertIsInstance(answer(arguments), dict, (tool, arguments))
-                    fitting = {name: values[name] for name, (kind, required, limits) in evals.PARAMETERS[tool].items() if (required or name == "table") and name in values}
-                    fitting = {"type": row["type"]} if tool == "cost_history" else fitting
+                    fitting = {name: values[name] for name, (kind, required, limits) in evals.PARAMETERS[tool].items() if (required or name in ("table", "metric")) and name in values}
+                    fitting = {"type": row["type"]} if tool in ("cost_history", "cost_meters") else fitting
                     self.assertIsNotNone(evals.checked_arguments(tool, fitting), (tool, fitting))
                     self.assertLessEqual(len(json.dumps(answer(fitting), separators=(",", ":"))), toolbox.MAX_RESULT_CHARS, tool)
+                    if "metrics" in evals.PARAMETERS[tool]:
+                        several = {**{name: value for name, value in fitting.items() if name != "metric"}, "metrics": [row["metric"], "Another Metric"], "grain": "hour"}
+                        self.assertIsNotNone(evals.checked_arguments(tool, several), (tool, several))
+                        self.assertLessEqual(len(json.dumps(answer(several), separators=(",", ":"))), toolbox.MAX_RESULT_CHARS, tool)
 
     def test_the_thresholds_are_read_from_the_file_and_a_threshold_that_is_missed_is_a_failure(self):
         thresholds = json.loads((ROOT / "evaluation" / "thresholds.json").read_text(encoding="utf-8"))["codeGraders"]
