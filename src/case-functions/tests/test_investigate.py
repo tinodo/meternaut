@@ -406,10 +406,12 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
+        # 11,000 since the form alternative of a change was added to the 10,500 of the beats: about 250 characters that say how to state a switch of one meter to a price that the tool for alternatives showed
+        # (the instructions say, in item 4, that a change to another tier or size can be priced and that the alternative must still be shown to do what is needed, and nothing names a kind of resource or a price).
         # 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
         # lines of the bill that no resource owns, and about 550 that say how code works a saving out as a monthly rate and when a ratio on a property is right; every step of an investigation reads them
         # again (it was 9,500 since the change that a finding states, 7,000 since the whole that a resource belongs to, 6,500 since the meters, 5,600 since the data that is stored, 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 10500)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 11000)
 
     def test_the_investigator_is_told_in_general_words_what_to_do_with_a_beat_and_that_no_beat_means_the_whole_estate(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -440,7 +442,8 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
         for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
                          "window that it offers, never those of a whole type)",
-                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
+                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"alternative"', '"form":"assumed"',
+                         "when one meter is moved to another tier, size or SKU of the same service, in the same unit, with one meter in the effect (the action switch)",
                          "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
                          "When you cannot name the meters, give the action none.",
                          "A recommendation names the change and the bill lines that it would shrink, and says what remains of them",
@@ -459,6 +462,9 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
+                         "or alternative with alternatives, one for each meter that is switched, with the words of the alternative, its list price (list), the rate that the bill pays against list (ratio, null "
+                         "when the line of the meter was not found, so that it is priced at list prices) and the smallest and the largest share that remains (remains)",
+                         "And an alternative, whose price shows neither its features nor its limits?",
                          "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
                          "ratio or quantity with from and to and, for a quantity, unit and moved",
                          "at the lowest of three rates: week, the rate of their last week, since, the mean since the first day that had a cost, null when the read cannot say it, "
