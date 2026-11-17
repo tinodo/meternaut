@@ -1,8 +1,10 @@
 """What a finding's change would save, worked out by code from the bill and from nothing that an AI wrote as an amount (rules 26 (d) and 30).
 
 The Investigator states a change in typed form (the key `change` of a finding): an action and, for each resource that it covers, the meters that the change would shrink (the handles that
-cost_meters gave for that resource, cases/meters.py) and what remains of them. The saving of a resource is the cost of those meters in the last 30 closed days times the share that goes away,
-as a low and a high, never above what the resource cost. How much remains is one of a few forms that code can check against what the tools showed in the same run:
+cost_meters gave for that resource, cases/meters.py) and what remains of them. A saving is a figure a month about what is to come, so the base is what those meters cost a month NOW, from their daily
+cost at two rates (cases/meters.py `rates`): the last 7 closed days, and the mean since the first day that has a cost (or over a month, for a meter that is older than the window). The low end of the
+saving rests on the lower rate and the high end on the higher one, times the share that goes away, never above what the resource costs a month on the same rates. How much remains is one of a few
+forms that code can check against what the tools showed in the same run:
 
   none           everything that the meters bill goes away: a figure that follows from the bill alone (Expected)
   ratio          a count or a size goes from a number that a tool returned for the resource to a number that the AI proposes (Scenario)
@@ -10,8 +12,8 @@ as a low and a high, never above what the resource cost. How much remains is one
   assumed        a share that the AI assumes, as a low and a high, always said to be the AI's own (Scenario)
   alternative    a switch to something else, priced from a public price list: refused until that exists
 
-A meter that no tool showed, that belongs to another resource or to a whole type, or that was not read over 30 days is not counted; a bill line is counted once in a finding; what could not be
-checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
+A meter that no tool showed, that belongs to another resource or to a whole type, or that gives no rate (a read of under 7 days, or fewer than 3 days of cost) is not counted; a bill line is counted
+once in a finding; what could not be checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
 """
 from __future__ import annotations
 
@@ -19,9 +21,9 @@ import datetime as dt
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Collection, Mapping, NamedTuple, Sequence
+from typing import Callable, Collection, Iterable, Mapping, NamedTuple, Sequence
 
-from .meters import Meter, shape
+from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
 from .roles import clean_text
 
 KEY = "change"  # the key of the facts of a case
@@ -30,16 +32,17 @@ FORMS = ("none", "ratio", "share_of_days", "assumed", "alternative")
 ALLOWED = {"remove": ("none",), "reduce": ("ratio", "assumed"), "schedule": ("share_of_days", "assumed"), "switch": ("alternative", "assumed"), "commit": ("assumed",)}
 SHOWN = ("none", "ratio", "share_of_days", "assumed", "mixed")  # the forms that a digest may have: mixed is a sum of resources whose rules differ
 MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
-WINDOW = 30  # the closed days that a figure a month rests on
+UNEVEN = 1.0  # a meter whose daily cost spreads by more than its mean is uneven: a rate worked out from it is a rough guide (a statistic about the bill, not a rule about what is waste)
+ALIKE = 0.05  # two rates that differ by no more than this share of the larger are the same one
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9 ._/-]{0,63}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
-    "lines": "No saving was worked out: the bill lines that the AI named were not found for this resource over the last 30 days.",
+    "lines": f"No saving was worked out: the bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
     "remains": "No saving was worked out: what would remain of the bill lines was not stated in a form that code can check.",
     "currency": "No saving was worked out: the cost is not in US dollars.",
-    "nothing": "No saving was worked out: the bill lines that the AI named cost nothing in the last 30 days.",
+    "nothing": f"No saving was worked out: the bill lines that the AI named cost nothing in the last {WEEK} days.",
     "later": "No saving was worked out: a switch to an alternative is not available yet.",
 }
 
@@ -59,7 +62,9 @@ class Change:
 
 
 class Row(NamedTuple):
-    """The figure of one resource: US dollars a month (low and high), the cost of the meters that it rests on, how many there are and what remains of them."""
+    """The figure of one resource: US dollars a month (low and high), what the meters that it rests on cost a month at the higher of their two rates (`bill`), at the rate of the last 7 days (`week`) and at
+    the mean since their first day (`since`, None when no read can say it), how many there are and what remains of them, how many days ago the youngest that began inside the window began (`life`)
+    and how many are uneven."""
 
     handle: str
     low: float
@@ -71,19 +76,26 @@ class Row(NamedTuple):
     away: tuple[float, float] | None  # the smallest and the largest share that goes away, when one rule says it
     skipped: int
     meters: tuple[str, ...]
+    week: float
+    since: float | None
+    life: int | None
+    uneven: int
 
     @property
     def level(self) -> str:
         return EXPECTED if self.form == "none" else SCENARIO
 
+    @property
+    def base(self) -> float:
+        return self.week if self.since is None else min(self.week, self.since)
+
     def digest(self, advisor: float | None = None) -> dict:
-        out: dict = {"lowUsd": self.low, "highUsd": self.high, "billUsd": self.bill, "lines": self.lines, "resources": 1, "form": self.form, **self.said}
+        out: dict = {"lowUsd": self.low, "highUsd": self.high, "billUsd": self.bill, "weekUsd": self.week, "lines": self.lines, "resources": 1, "form": self.form, **self.said}
         if self.away is not None and self.form == "assumed":
             out["away"] = list(self.away)
-        if self.skipped:
-            out["skipped"] = self.skipped
-        if advisor is not None:
-            out["advisorUsd"] = advisor
+        for key, value in (("sinceUsd", self.since), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None), ("advisorUsd", advisor)):
+            if value is not None:
+                out[key] = value
         return out
 
 
@@ -161,40 +173,90 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
     return (form, low, high, {}) if low is not None and high is not None and 0 <= low <= high <= 1 else "remains"
 
 
-def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: set) -> tuple | str:
-    """One effect: (form, smallest share that remains, largest, stated numbers, cost of its meters, the meters that count, how many were not counted), or the word of WHY."""
+class Part(NamedTuple):
+    """One effect of a resource: what remains (the form, the smallest and the largest share, the numbers that the AI stated), what its meters cost a month at the rate of the last 7 days (`week`) and at the
+    mean since their first day (`since`, None when no read can say it), the meters that count, how many were not counted, how many days ago the youngest that began inside the window began (`life`) and how
+    many are uneven."""
+
+    form: str
+    least: float
+    most: float
+    said: dict
+    week: float
+    since: float | None
+    names: tuple[str, ...]
+    skipped: int
+    life: int | None
+    uneven: int
+
+    @property
+    def low(self) -> float:
+        return self.week if self.since is None else min(self.week, self.since)
+
+    @property
+    def high(self) -> float:
+        return self.week if self.since is None else max(self.week, self.since)
+
+
+def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: set) -> Part | str:
+    """One effect as a Part, or the word of WHY."""
     found = _remains(effect.remains, action, block)
     if isinstance(found, str):
         return found
-    used: list[tuple[str, float]] = []
+    used: list[tuple[str, Rates]] = []
     skipped = 0
     for name in effect.meters:
         meter = registry.get(name) if METER.fullmatch(name) else None
-        if not isinstance(meter, Meter) or meter.scope != effect.handle or meter.days != WINDOW or _number(meter.usd) is None:
+        if not isinstance(meter, Meter) or meter.scope != effect.handle or _number(meter.usd) is None:
             skipped += 1
-        elif (meter.scope, meter.words) not in seen and meter.usd > 0:
+        elif meter.usd == 0:
+            continue  # it cost nothing: that is a reason of its own, not a lack of days
+        elif (got := rates(meter)) is None:
+            skipped += 1
+        elif (meter.scope, meter.words) not in seen and (got.week > 0 or (got.since or 0) > 0):
             seen.add((meter.scope, meter.words))  # a bill line counts once, however many calls showed it
-            used.append((name, meter.usd))
+            used.append((name, got))
     if not effect.meters:
         return "none"
     if not used:
         return "lines" if skipped else "nothing"
-    return (*found, math.fsum(usd for _, usd in used), tuple(name for name, _ in used), skipped)
+    since = math.fsum(got.week if got.since is None else got.since for _, got in used) if any(got.since is not None for _, got in used) else None
+    return Part(*found, math.fsum(got.week for _, got in used), since, tuple(name for name, _ in used), skipped, min((got.life for _, got in used if got.began), default=None),
+                sum(1 for _, got in used if got.cv is not None and got.cv > UNEVEN))
 
 
-def _row(handle: str, parts: list[tuple], cost: float | None, failed: int) -> Row | str:
-    low = math.fsum(part[4] * (1 - part[2]) for part in parts)
-    high = math.fsum(part[4] * (1 - part[1]) for part in parts)
-    bill = math.fsum(part[4] for part in parts)
-    if cost is not None:
-        low, high = min(low, cost), min(high, cost)
-    if high <= 0:
+def _own(meters: Iterable[Meter]) -> tuple[float, float] | None:
+    """What a resource costs a month at the lower and at the higher of its two rates, from every meter of it that a tool showed (a bill line once, a credit taking its share off)."""
+    seen: set = set()
+    week, since = [], []
+    for meter in meters:
+        got = rates(meter)
+        if got is not None and meter.words not in seen:
+            seen.add(meter.words)
+            week.append(got.week)
+            since.append(got.week if got.since is None else got.since)
+    return (min(math.fsum(week), math.fsum(since)), max(math.fsum(week), math.fsum(since))) if week else None
+
+
+def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: tuple[float, float] | None) -> Row | str:
+    low = math.fsum(part.low * (1 - part.most) for part in parts)
+    high = math.fsum(part.high * (1 - part.least) for part in parts)
+    week = math.fsum(part.week for part in parts)
+    since = math.fsum(part.week if part.since is None else part.since for part in parts) if any(part.since is not None for part in parts) else None
+    life = min((part.life for part in parts if part.life is not None), default=None)
+    if own is not None:  # never above what the resource costs a month on the same rates
+        low, high = max(0.0, min(low, own[0])), min(high, own[1])
+    if cost is not None:  # its own 30 days bound a rate only as far as the days of life allow: a meter of 4 days has a rate of 7.5 times what the 30 days show
+        reach = cost * MONTH / min(WEEK, life or WEEK)
+        low, high = min(low, reach), min(high, reach)
+    if high <= 0 or math.fsum(part.low for part in parts) <= 0:
         return "nothing"
-    alike = len({(part[0], part[1], part[2], tuple(sorted(part[3].items()))) for part in parts}) == 1
-    form = parts[0][0] if alike else "mixed"
-    away = (round(1 - parts[0][2], 4), round(1 - parts[0][1], 4)) if alike else None
-    return Row(handle, round(low, 2), round(high, 2), round(bill, 2), sum(len(part[5]) for part in parts), form, parts[0][3] if alike else {}, away,
-               failed + sum(part[6] for part in parts), tuple(name for part in parts for name in part[5]))
+    alike = len({(part.form, part.least, part.most, tuple(sorted(part.said.items()))) for part in parts}) == 1
+    form = parts[0].form if alike else "mixed"
+    away = (round(1 - parts[0].most, 4), round(1 - parts[0].least, 4)) if alike else None
+    return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, parts[0].said if alike else {}, away,
+               failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
+               sum(part.uneven for part in parts))
 
 
 def price(change: Change | None, handles: Collection[str], toolbox: object, costs: Mapping[str, float | None], blocked: Mapping[str, str] | None = None) -> Priced:
@@ -205,8 +267,12 @@ def price(change: Change | None, handles: Collection[str], toolbox: object, cost
         return out
     registry, evidence = getattr(toolbox, "meters", None), getattr(toolbox, "evidence", None)
     registry, evidence = registry if isinstance(registry, Mapping) else {}, evidence if isinstance(evidence, Mapping) else {}
+    owned: dict[str, list[Meter]] = {}
+    for meter in registry.values():
+        if isinstance(meter, Meter):
+            owned.setdefault(meter.scope, []).append(meter)
     seen: set = set()
-    parts: dict[str, list[tuple]] = {}
+    parts: dict[str, list[Part]] = {}
     failed: dict[str, list[str]] = {}
     for effect in change.effects:
         if effect.handle not in handles:
@@ -221,7 +287,7 @@ def price(change: Change | None, handles: Collection[str], toolbox: object, cost
             else:
                 parts.setdefault(effect.handle, []).append(got)
     for handle in dict.fromkeys([*parts, *failed]):
-        row = _row(handle, parts[handle], costs.get(handle), len(failed.get(handle, ()))) if handle in parts else failed[handle][0]
+        row = _row(handle, parts[handle], costs.get(handle), len(failed.get(handle, ())), _own(owned.get(handle, ()))) if handle in parts else failed[handle][0]
         if isinstance(row, str):
             out.why[handle] = row
         else:
@@ -255,9 +321,13 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
     keys = ("form", "from", "to", "on", "days", "span", "away")
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
-    total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd")}
+    rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
+    total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
+    if rated and any("sinceUsd" in price for price in prices):
+        total["sinceUsd"] = round(math.fsum(price.get("sinceUsd", price["weekUsd"]) for price in prices), 2)
+    lives, uneven = [price["life"] for price in prices if "life" in price], sum(price.get("uneven") or 0 for price in prices)
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
-             **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"})}
+             **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
     skipped = sum(price.get("skipped") or 0 for price in prices)
     return {**out, "price": {**price, **({"skipped": skipped} if skipped else {})}}
 
@@ -272,8 +342,9 @@ class Saved(NamedTuple):
     high: float
     level: str
     basis: str  # a phrase for "Based on ...", from closed words and numbers: no text of the estate
-    bill: float  # what the bill lines that the figure rests on cost in the last 30 days
+    bill: float  # what the bill lines that the figure rests on cost: a month at the lower of their two rates, or in the last 30 days for a figure made before the rates
     lines: int
+    per: str = f"in the last {MONTH} days"  # the period of `bill`
 
 
 def _usd(value: float) -> str:
@@ -284,10 +355,20 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}" + ("" if number == 1 else "s")
 
 
+def _rate(found: Mapping) -> str:
+    """Which rate the figure rests on, in words, from the numbers of the digest. A digest made before the rates rests on the last 30 days."""
+    week, since, life = _number(found.get("weekUsd")), _number(found.get("sinceUsd")), _whole(found.get("life"))
+    if week is None:
+        return f"over the last {MONTH} days"
+    if since is not None and abs(week - since) > ALIKE * max(week, since):
+        return f"at the lower of the {WEEK}-day rate and the " + ("rate since it began" if life else f"{MONTH}-day total")
+    return f"at the rate since it began {life} days ago" if life and life < WEEK and (_whole(found.get("resources")) or 1) == 1 else f"at the rate of the last {WEEK} days"
+
+
 def _basis(found: Mapping, form: str, low: float, high: float) -> str:
     lines, many, members = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1, _whole(found.get("members"))
     whose = f"{many} of {members} resources" if members and members > many else _count(many, "resource")  # how many of the resources are priced comes first: a card cuts the end of the line
-    text = f"the {_count(lines, 'bill line')} of {whose} that the change would {'remove' if form == 'none' else 'shrink'}, over the last {WINDOW} days"
+    text = f"the {_count(lines, 'bill line')} of {whose} that the change would {'remove' if form == 'none' else 'shrink'}, {_rate(found)}"
     start, target, days, span, away, on = (found.get(key) for key in ("from", "to", "days", "span", "away", "on"))
     if form == "ratio":
         name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
@@ -303,6 +384,9 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
         text += ", each by its own rule; part rests on the AI's own proposals"
     if high > low:
         text += f"; {_usd(low)} to {_usd(high)} a month"
+    uneven = _whole(found.get("uneven"))
+    if uneven:
+        text += f"; {_count(uneven, 'bill line')} {'is' if uneven == 1 else 'are'} uneven from day to day"
     skipped = _whole(found.get("skipped"))
     if skipped:
         text += f"; {_count(skipped, 'named thing')} not counted"
@@ -313,16 +397,23 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
 
 
 def saved(facts: object, cost: float | None = None) -> Saved | None:
-    """The figure that a case keeps, read again: None when there is none or when a number is not as it should be (a high above the cost of the bill lines or of the finding, a low of nothing,
-    a form that is not one). The level follows from the form, never from a word of the digest."""
+    """The figure that a case keeps, read again: None when there is none or when a number is not as it should be (a high above what the bill lines cost on their higher rate, or above what the finding
+    cost in 30 days allows for the days of life of its youngest line, a low of nothing, a form that is not one). The level follows from the form, never from a word of the digest."""
     found = _change(facts).get("price")
     if not isinstance(found, Mapping):
         return None
     low, high, bill = (_number(found.get(key)) for key in ("lowUsd", "highUsd", "billUsd"))
-    form = found.get("form")
-    if low is None or high is None or bill is None or form not in SHOWN or not 0 < low <= high <= bill + 0.005 or (cost is not None and high > cost + 0.005):
+    form, life = found.get("form"), found.get("life")
+    if low is None or high is None or bill is None or form not in SHOWN or not 0 < low <= high <= bill + 0.005:
         return None
-    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" else SCENARIO, _basis(found, str(form), low, high), round(bill, 2), _whole(found.get("lines")) or 0)
+    rated = "weekUsd" in found
+    bases = [_number(found.get(key)) for key in ("weekUsd", "sinceUsd") if key in found]
+    if rated and (any(base is None or base <= 0 for base in bases) or ("life" in found and (_whole(life) is None or not FEWEST <= life <= MONTH))):
+        return None
+    if cost is not None and high > (cost * MONTH / min(WEEK, life or WEEK) if rated else cost) + 0.005:
+        return None
+    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" else SCENARIO, _basis(found, str(form), low, high), round(min(bases) if rated else bill, 2), _whole(found.get("lines")) or 0,
+                 "a month" if rated else f"in the last {MONTH} days")
 
 
 def point(facts: object, cost: float | None = None) -> float | None:
@@ -351,8 +442,9 @@ def refused(facts: object) -> bool:
 # -- what the second AI is shown ----------------------------------------------------------------------------------------------------------------------
 
 def view(change: Change | None, priced: Priced, registry: Mapping, word: Callable[[object], str | None], limit: int, skip: Collection[str]) -> dict | None:
-    """The change in typed form for the Skeptic: for each resource its rule, the cost of the bill lines that it rests on, and at most `limit` of them with their words (as the tools show them:
-    `word` is the check of the tools), their cost and how steady it was; or the word that says why it has no figure. Not the AI's words for a person."""
+    """The change in typed form for the Skeptic: for each resource its rule, what the bill lines that it rests on cost a month at the lower of their two rates (`usd`) and at each of them, and at most
+    `limit` of them with their words (as the tools show them: `word` is the check of the tools), what each cost in its window, what it costs a month at the rate of its last 7 days and at the mean since
+    its first day (None when its read cannot say it), the days of life and how steady it was; or the word that says why it has no figure. Not the AI's words for a person."""
     if change is None:
         return None
     effects: list[dict] = []
@@ -366,9 +458,9 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
         lines = []
         for name in row.meters[:limit]:
             meter = registry[name]
-            numbers = shape(meter, meter.start + dt.timedelta(days=meter.days))
-            lines.append({"meter": name, "words": [word(text) or "other" for text in meter.words], "usd": round(meter.usd, 2), "days": numbers["days"],
-                          "cv": None if numbers["cv"] is None else round(numbers["cv"], 3)})
+            numbers, got = shape(meter, meter.start + dt.timedelta(days=meter.days)), rates(meter)
+            lines.append({"meter": name, "words": [word(text) or "other" for text in meter.words], "usd": round(meter.usd, 2), "days": numbers["days"], "week": round(got.week, 2),
+                          "since": None if got.since is None else round(got.since, 2), "life": got.life, "cv": None if got.cv is None else round(got.cv, 3)})
         more = {"remains": [round(1 - row.away[1], 4), round(1 - row.away[0], 4)]} if row.form == "assumed" and row.away is not None else {}
-        effects.append({"handle": handle, "form": row.form, "usd": row.bill, "lines": lines, **row.said, **more})
+        effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **row.said, **more})
     return {"action": change.action, "effects": effects}

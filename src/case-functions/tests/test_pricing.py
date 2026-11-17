@@ -305,11 +305,18 @@ class WhatMetersCount(unittest.TestCase):
         found = priced(block("remove", effect("r1", ("m5",))), toolbox=shown(meters={**registry(), "m5": line("microsoft.example/widgets", 900.0, resources=12)}))
         self.assertEqual((found.rows, found.why), ({}, {"r1": "lines"}))
 
-    def test_a_meter_that_was_not_read_over_30_days_is_not_a_monthly_cost(self):
-        found = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters={**registry(), "m1": line("r1", 14.0, days=7)}))
+    def test_a_meter_that_was_read_over_less_than_a_week_gives_no_rate_and_one_read_over_a_week_or_more_gives_the_rate_of_its_last_week(self):
+        found = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters={**registry(), "m1": line("r1", 12.0, days=6)}))
         self.assertEqual((found.rows["r1"].low, found.rows["r1"].skipped), (40.0, 1))
-        week = shown(meters={"m1": line("r1", 14.0, days=7)})
-        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=week).why, {"r1": "lines"})
+        short = shown(meters={"m1": line("r1", 12.0, days=6)})
+        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=short).why, {"r1": "lines"})
+        week = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters={**registry(), "m1": line("r1", 14.0, days=7)}))
+        self.assertEqual((week.rows["r1"].low, week.rows["r1"].skipped), (100.0, 0), "7 days at 2 a day are 60 a month, whatever the 30 days showed")
+
+    def test_a_meter_with_fewer_than_three_days_of_cost_is_not_counted_and_the_reason_is_the_lines(self):
+        found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", [9.0, 9.0])}))
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "lines"}))
+        self.assertIn(f"less than {pricing.FEWEST} days", pricing.WHY["lines"])
 
     def test_a_meter_counts_once_whatever_the_number_of_times_that_it_is_named(self):
         row = priced(block("remove", effect("r1", ("m1", "m1")), effect("r1", ("m1", "m2")))).rows["r1"]
@@ -320,24 +327,40 @@ class WhatMetersCount(unittest.TestCase):
         row = priced(block("remove", effect("r1", ("m1", "m8", "m2"))), toolbox=shown(meters=meters)).rows["r1"]
         self.assertEqual((row.low, row.lines), (100.0, 2))
 
-    def test_a_meter_that_cost_nothing_or_less_adds_nothing_and_a_resource_with_only_such_meters_has_nothing_to_save(self):
+    def test_a_meter_that_cost_nothing_or_less_adds_nothing_and_a_credit_takes_its_share_off_what_the_resource_costs(self):
         meters = {"m1": line("r1", 0.0), "m2": line("r1", -5.0, STORAGE), "m3": line("r1", 10.0, NETWORK)}
-        self.assertEqual(priced(block("remove", effect("r1", ("m1", "m2", "m3"))), toolbox=shown(meters=meters)).rows["r1"].low, 10.0)
+        self.assertEqual(priced(block("remove", effect("r1", ("m1", "m2", "m3"))), toolbox=shown(meters=meters)).rows["r1"].low, 5.0, "10 on the line, 5 of it given back: the resource costs 5")
         found = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters=meters))
         self.assertEqual((found.rows, found.why), ({}, {"r1": "nothing"}))
+        self.assertIn("last 7 days", pricing.WHY["nothing"])
 
     def test_a_meter_with_a_number_that_is_not_one_adds_nothing(self):
         meters = {"m1": line("r1", float("nan")), "m2": line("r1", 20.0, STORAGE)}
         self.assertEqual(priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters=meters)).rows["r1"].low, 20.0)
 
-    def test_the_figure_is_never_above_what_the_resource_cost(self):
-        row = priced(block("remove", effect("r1", ("m1", "m2"))), costs={"r1": 80.0}).rows["r1"]
+    def test_the_figure_is_never_above_what_the_resource_costs_a_month_on_the_same_rates(self):
+        credit = {"m1": line("r1", 60.0), "m2": line("r1", 40.0, STORAGE), "m6": line("r1", -20.0, ("Example Credit", "None", "Given Back", "OnDemand", "Refund", "1"))}
+        row = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters=credit)).rows["r1"]
         self.assertEqual((row.low, row.high, row.bill), (80.0, 80.0, 100.0))
-        row = priced(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.0, "high": 0.5})), costs={"r1": 80.0}).rows["r1"]
+        row = priced(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.0, "high": 0.5})), toolbox=shown(meters=credit)).rows["r1"]
         self.assertEqual((row.low, row.high), (50.0, 80.0))
+
+    def test_the_cap_is_the_lower_rates_for_the_low_end_and_the_higher_rates_for_the_high_end(self):
+        doubled = shaped("r1", [1.0] * 23 + [2.0] * 7)
+        credit = shaped("r1", [-0.5] * 30, words=STORAGE)
+        row = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": doubled, "m2": credit})).rows["r1"]
+        self.assertEqual((row.low, row.high), (37.0 - 15.0, 60.0 - 15.0), "37 and 60 a month on the two rates, and the credit is 15 a month on both")
 
     def test_a_resource_whose_cost_was_not_read_is_capped_by_its_own_meters_only(self):
         self.assertEqual(priced(block("remove", effect("r1", ("m1", "m2"))), costs={"r1": None}).rows["r1"].low, 100.0)
+
+    def test_the_cost_of_the_resource_in_30_days_bounds_a_rate_by_the_days_that_the_rate_rests_on(self):
+        week = shown(meters={"m1": shaped("r1", [1.0] * 23 + [2.0] * 7)})
+        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=week, costs={"r1": 37.0}).rows["r1"].high, 60.0, "37 in 30 days can be 60 a month: it all came in the last week")
+        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=week, costs={"r1": 10.0}).rows["r1"].high, 42.86, "10 in 30 days cannot be more than 10 a week")
+        young = shown(meters={"m1": shaped("r1", [8.0] * 4)})
+        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=young, costs={"r1": 32.0}).rows["r1"].high, 240.0)
+        self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=young, costs={"r1": 24.0}).rows["r1"].high, 180.0)
 
     def test_a_cost_that_is_not_in_dollars_makes_no_figure_and_says_so(self):
         found = priced(block("remove", effect("r1", ("m1", "m2"))), blocked={"r1": "currency"})
@@ -370,6 +393,91 @@ class WhatMetersCount(unittest.TestCase):
         self.assertEqual(pricing.digest(change, found, "r2", None)["missing"], "none")
 
 
+class WhenTheRateIsTheBase(unittest.TestCase):
+    """A saving is a figure a month about what is to come: the base is what the meters cost a month now, on the lower rate for the low end and on the higher one for the high end. By hand, with invented
+    meters over the 30 days that start on START."""
+
+    def row(self, costs, remains=None, action="remove", cost=None, **options):
+        meter = shaped("r1", costs, **options)
+        found = priced(block(action, effect("r1", ("m1",), remains)), toolbox=shown(meters={"m1": meter}), costs={"r1": math.fsum(costs) if cost is None else cost})
+        self.assertEqual(found.why, {})
+        return found.rows["r1"]
+
+    def test_a_flat_meter_has_one_base_whatever_the_basis(self):
+        row = self.row([2.0] * 30)
+        self.assertEqual((row.low, row.high, row.bill, row.week, row.since, row.life, row.uneven), (60.0, 60.0, 60.0, 60.0, 60.0, None, 0))
+
+    def test_a_new_meter_of_four_days_is_priced_at_its_own_rate_and_not_at_the_30_days_that_it_did_not_live(self):
+        row = self.row([8.0] * 4)
+        self.assertEqual((row.low, row.high, row.week, row.since, row.life), (240.0, 240.0, 240.0, None, 4), "32 in the window, 240 a month")
+        self.assertEqual(pricing.saved({pricing.KEY: pricing.digest(pricing.parse(block("remove", effect("r1", ("m1",)))), pricing.Priced("remove", {"r1": row}), "r1")}, 32.0).basis,
+                         "the 1 bill line of 1 resource that the change would remove, at the rate since it began 4 days ago")
+
+    def test_a_rate_that_doubled_in_the_last_week_counts_the_old_rate_and_shows_the_new_one(self):
+        row = self.row([1.0] * 23 + [2.0] * 7)
+        self.assertEqual((row.low, row.high, row.week, row.since), (37.0, 60.0, 60.0, 37.0))
+
+    def test_a_rate_that_halved_in_the_last_week_counts_the_new_rate_and_shows_the_old_one(self):
+        row = self.row([2.0] * 23 + [1.0] * 7)
+        self.assertEqual((row.low, row.high, row.week, row.since), (30.0, 53.0, 30.0, 53.0), "what was saved already is not counted")
+
+    def test_a_meter_that_stopped_saves_nothing_at_its_rate_now(self):
+        found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", [2.0] * 20 + [0.0] * 10)}), costs={"r1": 40.0})
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "nothing"}))
+
+    def test_an_uneven_meter_counts_the_lower_rate_and_says_that_it_is_uneven(self):
+        row = self.row([10.0 if n % 5 == 0 else 0.0 for n in range(30)])
+        self.assertEqual((row.low, row.high, row.uneven), (42.86, 60.0, 1))
+
+    def test_a_meter_with_one_day_or_two_has_no_rate_and_the_finding_says_that_the_lines_gave_none(self):
+        for costs in ([5.0], [5.0, 5.0]):
+            found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", costs)}))
+            self.assertEqual((found.rows, found.why), ({}, {"r1": "lines"}))
+
+    def test_a_read_of_14_days_is_priced_at_the_rate_of_its_last_week_and_claims_no_mean_since_the_start(self):
+        row = self.row([2.0] * 14, days=14)
+        self.assertEqual((row.low, row.high, row.week, row.since), (60.0, 60.0, 60.0, None))
+        self.assertNotIn("sinceUsd", row.digest())
+
+    def test_a_meter_read_over_14_days_that_began_inside_the_read_has_both_rates(self):
+        row = self.row([1.0] * 5 + [4.0] * 5, days=14)
+        self.assertEqual((row.low, row.high, row.life), (75.0, 94.29, 10))
+
+    def test_the_shares_of_every_form_apply_to_the_low_and_to_the_high_base(self):
+        doubled = [1.0] * 23 + [2.0] * 7
+        ratio = self.row(doubled, {"form": "ratio", "on": "units", "from": 12, "to": 4}, "reduce")
+        self.assertEqual((ratio.low, ratio.high), (24.67, 40.0), "two thirds of 37 and of 60")
+        days = self.row(doubled, {"form": "share_of_days", "days": 5, "of": 7}, "schedule")
+        self.assertEqual((days.low, days.high), (10.57, 17.14), "two sevenths of 37 and of 60")
+        assumed = self.row(doubled, {"form": "assumed", "low": 0.4, "high": 0.7}, "reduce")
+        self.assertEqual((assumed.low, assumed.high), (11.1, 36.0), "30 percent of 37 and 60 percent of 60")
+
+    def test_the_figure_that_a_case_counts_is_the_low_end_on_the_lower_rate(self):
+        row = self.row([1.0] * 23 + [2.0] * 7)
+        facts = {pricing.KEY: pricing.digest(pricing.parse(block("remove", effect("r1", ("m1",)))), pricing.Priced("remove", {"r1": row}), "r1")}
+        self.assertEqual((pricing.point(facts), pricing.saved(facts).high), (37.0, 60.0))
+        self.assertEqual(pricing.saved(facts).basis, "the 1 bill line of 1 resource that the change would remove, at the lower of the 7-day rate and the 30-day total; $37.00 to $60.00 a month")
+
+    def test_the_digest_of_a_group_is_the_sum_of_the_rates_of_its_resources_and_the_youngest_life(self):
+        change = pricing.parse(block("remove", effect("r1", ("m1",)), effect("r2", ("m2",))))
+        found = pricing.price(change, ("r1", "r2"), shown(meters={"m1": shaped("r1", [1.0] * 23 + [2.0] * 7), "m2": shaped("r2", [8.0] * 4)}), {"r1": 37.0, "r2": 32.0}, None)
+        joined = pricing.combine([pricing.digest(change, found, handle, None) for handle in ("r1", "r2")], 2)["price"]
+        self.assertEqual({key: joined[key] for key in ("lowUsd", "highUsd", "billUsd", "weekUsd", "sinceUsd", "life", "resources", "members")},
+                         {"lowUsd": 277.0, "highUsd": 300.0, "billUsd": 300.0, "weekUsd": 300.0, "sinceUsd": 277.0, "life": 4, "resources": 2, "members": 2})
+        saved = pricing.saved({pricing.KEY: {"action": "remove", "price": joined}})
+        self.assertEqual((saved.low, saved.high, saved.bill, saved.per), (277.0, 300.0, 277.0, "a month"))
+
+    def test_a_group_of_digests_made_before_the_rates_stays_without_them(self):
+        old = {"action": "remove", "price": {"lowUsd": 5.0, "highUsd": 5.0, "billUsd": 5.0, "lines": 1, "resources": 1, "form": "none"}}
+        joined = pricing.combine([old, old], 2)["price"]
+        self.assertEqual((joined["lowUsd"], "weekUsd" in joined, "sinceUsd" in joined), (10.0, False, False))
+        self.assertIn("over the last 30 days", pricing.saved({pricing.KEY: {"action": "remove", "price": joined}}).basis)
+
+    def test_a_credit_on_the_resource_takes_its_share_off_both_rates(self):
+        found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", [1.0] * 23 + [2.0] * 7), "m2": shaped("r1", [-0.5] * 30, words=STORAGE)}), costs={"r1": 22.0})
+        self.assertEqual((found.rows["r1"].low, found.rows["r1"].high), (22.0, 45.0))
+
+
 class TheDigestAndWhatItSays(unittest.TestCase):
     """The digest is typed numbers and closed words; the brief reads it again, and every number is checked once more."""
 
@@ -379,7 +487,8 @@ class TheDigestAndWhatItSays(unittest.TestCase):
 
     def test_a_priced_resource_keeps_its_action_its_words_and_the_numbers_and_no_text_of_the_estate(self):
         found = self.digest_of(block("remove", effect("r1", ("m1", "m2")), how="Remove it."))
-        self.assertEqual(found, {"action": "remove", "how": "Remove it.", "price": {"lowUsd": 100.0, "highUsd": 100.0, "billUsd": 100.0, "lines": 2, "resources": 1, "form": "none"}})
+        self.assertEqual(found, {"action": "remove", "how": "Remove it.", "price": {"lowUsd": 100.0, "highUsd": 100.0, "billUsd": 100.0, "weekUsd": 100.0, "sinceUsd": 100.0,
+                                                                                    "lines": 2, "resources": 1, "form": "none"}})
         json.dumps(found)
 
     def test_the_figure_of_a_remove_is_expected_and_every_other_form_is_a_scenario(self):
@@ -395,20 +504,21 @@ class TheDigestAndWhatItSays(unittest.TestCase):
 
     def test_the_words_of_the_basis_say_what_the_figure_rests_on_for_each_form(self):
         removed = pricing.saved(self.facts(block("remove", effect("r1", ("m1", "m2")))))
-        self.assertEqual(removed.basis, "the 2 bill lines of 1 resource that the change would remove, over the last 30 days")
+        self.assertEqual(removed.basis, "the 2 bill lines of 1 resource that the change would remove, at the rate of the last 7 days")
         ratio = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))))
-        self.assertEqual(ratio.basis, "the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, scaled by the change in units from 12 to 4: the AI's target")
+        self.assertEqual(ratio.basis, "the 2 bill lines of 1 resource that the change would shrink, at the rate of the last 7 days, scaled by the change in units from 12 to 4: the AI's target")
         days = pricing.saved(self.facts(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7}))))
-        self.assertEqual(days.basis, "the 1 bill line of 1 resource that the change would shrink, over the last 30 days, scaled to 5 days of every 7: the AI's proposal")
+        self.assertEqual(days.basis, "the 1 bill line of 1 resource that the change would shrink, at the rate of the last 7 days, scaled to 5 days of every 7: the AI's proposal")
         assumed = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7}))))
-        self.assertEqual(assumed.basis, "the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, of which 30 to 60 percent would go away: "
+        self.assertEqual(assumed.basis, "the 2 bill lines of 1 resource that the change would shrink, at the rate of the last 7 days, of which 30 to 60 percent would go away: "
                                         "the AI's own assumption, not checked by code; $30.00 to $60.00 a month")
         one = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.5, "high": 0.5}))))
         self.assertTrue(one.basis.endswith("of which 50 percent would go away: the AI's own assumption, not checked by code"))
 
     def test_a_ratio_keeps_the_name_that_a_tool_returned_and_the_page_says_what_is_scaled(self):
         found = self.digest_of(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4})))
-        self.assertEqual(found["price"], {"lowUsd": 66.67, "highUsd": 66.67, "billUsd": 100.0, "lines": 2, "resources": 1, "form": "ratio", "from": 12.0, "to": 4.0, "on": "units"})
+        self.assertEqual(found["price"], {"lowUsd": 66.67, "highUsd": 66.67, "billUsd": 100.0, "weekUsd": 100.0, "sinceUsd": 100.0, "lines": 2, "resources": 1, "form": "ratio", "from": 12.0, "to": 4.0,
+                                          "on": "units"})
         self.assertEqual(self.view_of(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))).get("on"), "units")
         for name in ("a" * 25, "units; drop it", "<b>units</b>", "units\n"):
             with self.subTest(name=name):
@@ -420,15 +530,35 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         (one,) = pricing.view(change, pricing.price(change, ("r1", "r2"), shown(), COSTS, None), shown().meters, lambda word: word, 6, ())["effects"]
         return one
 
-    WORST = {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "lines": 12, "resources": 40, "members": 60, "skipped": 12, "advisorUsd": 1234.56}
+    WORST = {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "weekUsd": 123456.78, "sinceUsd": 90000.0, "life": 12, "uneven": 12, "lines": 12, "resources": 40, "members": 60,
+             "skipped": 12, "advisorUsd": 1234.56}
 
     def test_the_worst_case_of_the_basis_fits_what_a_card_shows_and_the_parts_that_are_cut_first_are_the_last_ones(self):
         for more in ({"form": "assumed", "away": [0.3, 0.6]}, {"form": "ratio", "from": 120000.0, "to": 40000.0, "on": "a" * 24}, {"form": "share_of_days", "days": 20, "span": 31}, {"form": "mixed"}):
             with self.subTest(form=more["form"]):
                 basis = pricing.saved({pricing.KEY: {"action": "reduce", "price": {**self.WORST, **more}}}).basis
-                self.assertLessEqual(len(basis), 290, f"a card cuts the line at 300 characters, 'Based on ' and the full stop included: {basis}")
+                self.assertLessEqual(len(basis), 390, f"a card cuts the line at 400 characters, 'Based on ' and the full stop included: {basis}")
                 self.assertTrue(basis.endswith("is not added"), "the note about Azure Advisor is the last part")
                 self.assertIn("40 of 60 resources", basis, "how many of the resources are priced comes with what is counted, before the long parts")
+
+    def test_the_basis_says_which_rate_it_rests_on_in_plain_words(self):
+        def basis(**numbers):
+            return pricing.saved({pricing.KEY: {"action": "remove", "price": {"lowUsd": 30.0, "highUsd": 60.0, "billUsd": 60.0, "lines": 1, "resources": 1, "form": "none", **numbers}}}).basis
+
+        self.assertEqual(basis(weekUsd=60.0), "the 1 bill line of 1 resource that the change would remove, at the rate of the last 7 days; $30.00 to $60.00 a month")
+        self.assertEqual(basis(weekUsd=60.0, sinceUsd=58.0).split(", ")[1].split(";")[0], "at the rate of the last 7 days", "within 5 percent they are the same rate")
+        self.assertEqual(basis(weekUsd=60.0, sinceUsd=37.0).split(", ")[1].split(";")[0], "at the lower of the 7-day rate and the 30-day total")
+        self.assertEqual(basis(weekUsd=60.0, sinceUsd=37.0, life=12).split(", ")[1].split(";")[0], "at the lower of the 7-day rate and the rate since it began")
+        self.assertEqual(basis(weekUsd=60.0, life=4).split(", ")[1].split(";")[0], "at the rate since it began 4 days ago")
+        self.assertEqual(basis(weekUsd=60.0, life=9).split(", ")[1].split(";")[0], "at the rate of the last 7 days", "a meter of a week or more has its last 7 days")
+        self.assertEqual(basis(weekUsd=60.0, life=4, resources=3).split(", ")[1].split(";")[0], "at the rate of the last 7 days", "a group does not say when each of its resources began")
+        self.assertIn("over the last 30 days", basis(), "a figure made before the rates rests on the 30 days, as it said")
+
+    def test_a_case_that_rests_on_uneven_bill_lines_says_so(self):
+        found = pricing.saved({pricing.KEY: {"action": "remove", "price": {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "weekUsd": 60.0, "lines": 3, "resources": 1, "form": "none", "uneven": 1}}})
+        self.assertTrue(found.basis.endswith("; 1 bill line is uneven from day to day"), found.basis)
+        found = pricing.saved({pricing.KEY: {"action": "remove", "price": {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "weekUsd": 60.0, "lines": 3, "resources": 1, "form": "none", "uneven": 2}}})
+        self.assertTrue(found.basis.endswith("; 2 bill lines are uneven from day to day"), found.basis)
 
     def test_a_range_is_said_to_be_one_and_the_point_is_the_low_end(self):
         found = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7}))))
@@ -452,7 +582,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         joined = pricing.combine([pricing.digest(change, found, handle, None) for handle in ("r1", "r2", "r3")], 3)
         saved = pricing.saved({pricing.KEY: joined})
         self.assertEqual((saved.low, saved.level), (52.5, pricing.SCENARIO))
-        self.assertEqual(saved.basis, "the 2 bill lines of 2 of 3 resources that the change would shrink, over the last 30 days, each by its own rule; part rests on the AI's own proposals")
+        self.assertEqual(saved.basis, "the 2 bill lines of 2 of 3 resources that the change would shrink, at the rate of the last 7 days, each by its own rule; part rests on the AI's own proposals")
 
     def test_a_group_of_the_same_rule_with_the_same_numbers_keeps_the_rule(self):
         change = pricing.parse(block("remove", effect("r1", ("m1",)), effect("r2", ("m3",))))
@@ -471,17 +601,35 @@ class TheDigestAndWhatItSays(unittest.TestCase):
     def test_a_digest_that_is_not_as_it_should_be_gives_no_figure_and_never_another_one(self):
         good = self.digest_of(block("remove", effect("r1", ("m1", "m2"))))
         for label, changes in (("a low of nothing", {"lowUsd": 0}), ("a low above the high", {"lowUsd": 101.0}), ("a high above the bill", {"highUsd": 100.5}),
-                               ("a text", {"lowUsd": "100"}), ("a flag", {"lowUsd": True}), ("not a number", {"highUsd": float("nan")}), ("no bill", {"billUsd": None})):
+                               ("a text", {"lowUsd": "100"}), ("a flag", {"lowUsd": True}), ("not a number", {"highUsd": float("nan")}), ("no bill", {"billUsd": None}),
+                               ("a week that is not a number", {"weekUsd": "100"}), ("a week of nothing", {"weekUsd": 0}), ("a mean of nothing", {"sinceUsd": 0.0}),
+                               ("a mean that is a flag", {"sinceUsd": True}), ("days of life that are fewer than a rate needs", {"life": 2}), ("days of life that are more than the window", {"life": 31}),
+                               ("days of life that are a fraction", {"life": 4.5})):
             with self.subTest(label):
                 self.assertIsNone(pricing.saved({pricing.KEY: {**good, "price": {**good["price"], **changes}}}))
         for facts in (None, {}, {pricing.KEY: "x"}, {pricing.KEY: {"price": "x"}}, {pricing.KEY: {"price": {}}}, {pricing.KEY: {"missing": "none"}}):
             with self.subTest(facts=facts):
                 self.assertIsNone(pricing.saved(facts))
 
-    def test_a_figure_above_what_the_finding_cost_is_not_believed_and_the_form_decides_the_level_not_a_word_in_the_digest(self):
+    def test_a_forged_high_is_refused_against_the_bill_lines_and_against_what_the_finding_cost_in_30_days(self):
         good = self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7})))
-        self.assertIsNotNone(pricing.saved(good, 60.0))
-        self.assertIsNone(pricing.saved(good, 59.0))
+        self.assertIsNotNone(pricing.saved(good, 14.0), "a high of 60 a month can all have come in the last week of 30 days that cost 14")
+        self.assertIsNone(pricing.saved(good, 13.9))
+        forged = {pricing.KEY: {**good[pricing.KEY], "price": {**good[pricing.KEY]["price"], "highUsd": 100.01}}}
+        self.assertIsNone(pricing.saved(forged, 1000.0), "a high above what the lines cost on their higher rate is refused whatever the finding cost")
+        young = {pricing.KEY: {"action": "remove", "price": {"lowUsd": 240.0, "highUsd": 240.0, "billUsd": 240.0, "weekUsd": 240.0, "life": 4, "lines": 1, "resources": 1, "form": "none"}}}
+        self.assertIsNotNone(pricing.saved(young, 32.0), "four days that cost 32 are 240 a month")
+        self.assertIsNone(pricing.saved(young, 31.0))
+        self.assertIsNone(pricing.saved({pricing.KEY: {**young[pricing.KEY], "price": {**young[pricing.KEY]["price"], "life": 30}}}, 32.0), "a meter that is not young cannot be 240 a month on 32 in 30 days")
+
+    def test_a_figure_made_before_the_rates_is_still_read_and_is_still_bounded_by_what_the_finding_cost(self):
+        old = {pricing.KEY: {"action": "remove", "price": {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "lines": 1, "resources": 1, "form": "none"}}}
+        found = pricing.saved(old, 60.0)
+        self.assertEqual((found.low, found.bill, found.per), (60.0, 60.0, "in the last 30 days"))
+        self.assertIsNone(pricing.saved(old, 59.0))
+
+    def test_the_form_decides_the_level_and_not_a_word_in_the_digest(self):
+        good = self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7})))
         self.assertEqual(pricing.saved({pricing.KEY: {**good[pricing.KEY], "price": {**good[pricing.KEY]["price"], "form": "none", "level": "Verified"}}}).level, pricing.EXPECTED)
 
     def test_the_reasons_that_there_is_no_figure_are_plain_sentences_and_a_change_that_was_stated_and_not_priced_is_told_from_one_that_was_not_stated(self):
@@ -570,8 +718,9 @@ class WhatDecidesDoesWithIt(unittest.TestCase):
         self.assertEqual(self.decided("change", refused, 7.5).monthly_saving_usd, 7.5, "Advisor's own figure is not the model's")
         self.assertEqual(self.decided("delete", {pricing.KEY: {"action": "none", "missing": "none"}}, None, cost=44.0).monthly_saving_usd, 44.0)
 
-    def test_a_figure_above_the_cost_of_the_finding_is_not_believed(self):
-        self.assertEqual(self.decided("delete", self.facts(), None, cost=20.0).monthly_saving_usd, 20.0, "the cost lines, as for any delete with no figure of the model")
+    def test_a_figure_above_what_the_finding_cost_in_30_days_allows_is_not_believed(self):
+        self.assertEqual(self.decided("delete", self.facts(), None, cost=10.0).monthly_saving_usd, 10.0, "the cost lines, as for any delete with no figure of the model: 60 a month is more than 10 in 30 days allows")
+        self.assertEqual(self.decided("delete", self.facts(), None, cost=20.0).monthly_saving_usd, 60.0, "60 a month can be 20 in 30 days when it came in the last week")
 
     def test_a_skeptic_that_disagrees_or_is_unsure_keeps_the_figure_and_the_finding_needs_a_person(self):
         for verdict in ("disagree", "unsure"):
@@ -849,10 +998,10 @@ class WithTheRealBill(unittest.TestCase):
         self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": None})
         self.assertEqual([r.facts[pricing.KEY]["missing"] for r in h.store.cases_recent()], ["lines"])
 
-    def test_meters_read_over_a_shorter_window_are_not_a_month_of_the_bill(self):
+    def test_meters_read_over_a_shorter_window_give_the_rate_of_that_window_and_the_same_rate_as_a_month_when_the_bill_is_flat(self):
         h, _ = self.go(self.removes("r1"), days=7)
-        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": None})
-        self.assertEqual([r.facts[pricing.KEY]["missing"] for r in h.store.cases_recent()], ["lines"])
+        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": 60.0}, "7 days at 2 a day")
+        self.assertEqual([r.facts[pricing.KEY]["price"].get("sinceUsd") for r in h.store.cases_recent()], [None], "a read of 7 days cannot say a mean since the meter began")
 
     def test_a_later_shorter_read_of_the_same_meters_does_not_take_the_figure_away_and_a_later_longer_one_gives_it(self):
         h, _ = self.go(self.removes("r1"), then=7)
