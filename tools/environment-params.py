@@ -131,6 +131,9 @@ and these lines: teams_phase (1 or 2), teams_files, teams_identity_name, teams_b
 The Study (docs/proposals/15-learning.md) is off until the variable STUDY of the environment hub says on (1, true, on, yes; or 0, false, off, no; empty or not set is off), the words that the app reads. It is plain configuration, so a variable and not a secret
 (AGENTS.md rule 18 (b)). The builder refuses any other word without echoing it, and gives the cases file one bool, `study` (always written, so that a run of the action cases sets the setting either way), which the template gives
 the app as the setting STUDY. The limits STUDY_MAX_* are not passed: they stay the defaults of cases/config.py. The action cases (and no other) refuses on while the Foundry project is not in Azure, unless the build is a preview.
+
+The ladder of a request that waits (docs/proposals/30-escalation.md) asks, after the people the request was made for, the contacts or the managers, as the variable ESCALATE_TO of the environment hub says (contacts when it is
+empty or not set). Another word is refused without being echoed, and so is off: no request is left alone. The cases file always carries it as `escalateTo`, which the template gives the app as the setting ESCALATE_TO.
 """
 from __future__ import annotations
 
@@ -236,6 +239,7 @@ TEAMS_DELIVERIES = ("queue", "bot")
 # The words that switch a setting on and off: the ones that the app reads (cases/config.py SWITCH_ON and SWITCH_OFF; a test holds the two together).
 SWITCH_ON = ("1", "true", "on", "yes")
 SWITCH_OFF = ("0", "false", "off", "no")
+ESCALATE_WORDS = ("contacts", "managers")  # whom the ladder of a request that waits asks after the people it was made for (cases/loop_config.py escalation_of)
 TEAMS_IDENTITY_NAME = "id-meternaut-teams"
 TEAMS_BOT_SKU = "F0"
 FUNCTION_APP_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.azurewebsites\.net$")
@@ -639,6 +643,16 @@ def study_switch(env: dict, foundry_exists: bool, preview: bool) -> bool:
     if study and not foundry_exists and not preview and (env.get("ACTION") or "").strip() == "cases":
         raise Problem("STUDY is on, and the Foundry project is not in Azure: the Study needs the project, as the investigation does. Run the action foundry first, or set the variable STUDY to off. Nothing was changed.")
     return study
+
+
+def escalate_to(env: dict) -> str:
+    """The variable ESCALATE_TO of the environment hub: whom the ladder of a request that waits asks after the people it was made for (docs/proposals/30-escalation.md): contacts, which an empty or unset
+    variable reads as, or managers (which needs the Graph permission User.Read.All, granted by a person). Nothing else is allowed, and off least of all: no request is left alone (AGENTS.md rule 38). A
+    word that is none is refused and never echoed: the log is public."""
+    raw = (env.get("ESCALATE_TO") or "").strip().lower()
+    if raw and raw not in ESCALATE_WORDS:
+        raise Problem(f"ESCALATE_TO is {' or '.join(ESCALATE_WORDS)}, or not set: the variable of the environment hub holds another word. Nothing was changed.")
+    return raw or ESCALATE_WORDS[0]
 
 
 def ai_gateway_host(env: dict, preview: bool) -> str:
@@ -1084,6 +1098,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     release = {**({"buildCommit": build_commit} if build_commit else {}), **({"packageSha256": package_sha256} if package_sha256 else {})}
     teams_values = teams_settings(env, preview)
     study = study_switch(env, foundry_exists, preview)
+    escalate = escalate_to(env)
     outputs = {
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
@@ -1155,6 +1170,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "scopeAllSubscriptions": SCOPE_ALL_SUBSCRIPTIONS,
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
             "study": study,
+            "escalateTo": escalate,
             "aiGatewayHost": gateway_host or PLACEHOLDER_AIGATEWAY_HOST,
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),

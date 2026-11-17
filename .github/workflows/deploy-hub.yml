@@ -145,6 +145,9 @@ jobs:
       # Whether the Study is on (docs/proposals/15-learning.md): the Scholar, a third agent of the Foundry project, reads Microsoft's public documentation about the kinds of resource of the estate. on or off (1, true, on, yes or
       # 0, false, off, no), off when the variable is not set. A plain word and no identifier of the estate, so a variable (rule 18 (b)). The builder refuses another word, and refuses on for the action cases while the Foundry project is not in Azure.
       STUDY: ${{ vars.STUDY }}
+      # Whom the ladder of a request that waits asks after the people it was made for (docs/proposals/30-escalation.md): contacts (the people listed with the role escalation, else the owners; what an unset variable
+      # reads as) or managers (the manager that Microsoft Entra names first, which needs the Graph permission User.Read.All, granted by a person). A plain word and no identifier, so a variable (rule 18 (b)). The builder refuses another word.
+      ESCALATE_TO: ${{ vars.ESCALATE_TO }}
       ENV_ALERT_EMAILS: ${{ secrets.ENV_ALERT_EMAILS }}
       CONSOLE_APP_CLIENT_ID: ${{ secrets.CONSOLE_APP_CLIENT_ID }}
       CONSOLE_PEOPLE: ${{ secrets.CONSOLE_PEOPLE }}
