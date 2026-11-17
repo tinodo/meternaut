@@ -36,7 +36,7 @@ class PricedEstate(BillingEstate):
 
     def __init__(self):
         super().__init__()
-        self.lines, self.page_size, self.failure, self.urls, self.price_calls, self.link, self.body = catalogue(), 1000, None, [], [], None, None
+        self.lines, self.page_size, self.failure, self.urls, self.price_calls, self.link, self.body, self.wait = catalogue(), 1000, None, [], [], None, None, None
 
     def __call__(self, method, url, headers, data, timeout):
         parts = urlsplit(url)
@@ -45,7 +45,8 @@ class PricedEstate(BillingEstate):
             return super().__call__(method, url, headers, data, timeout)
         self.price_calls.append({"method": method, "url": url, "path": parts.path, "query": parse_qs(parts.query), "headers": dict(headers)})
         if self.failure:
-            return self._refused(self.failure)
+            status, headers, body = self._refused(self.failure)
+            return status, {**headers, **({"retry-after": str(self.wait)} if self.wait is not None else {})}, body
         if self.body is not None:
             return 200, {}, json.dumps(self.body).encode("utf-8")
         condition = parse_qs(parts.query)["$filter"][0]
@@ -378,10 +379,14 @@ class TheFailures(unittest.TestCase):
         self.assertNotIn("serviceName", notes[0])
         self.assertEqual(ask(box, "cost_meters", handle="r1", days=7)["meters"], 1, "the other tools do not notice")
 
-    def test_a_list_that_is_busy_is_unavailable_too(self):
-        estate, box = priced()
-        estate.failure = 429
-        self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable", "code": "Failed"})
+    def test_a_list_that_is_busy_is_unavailable_too_and_is_never_waited_for_longer_than_a_few_seconds(self):
+        for wait, sleeps, calls in ((None, [1.0], 2), (3, [3.0], 2), (30, [], 1)):
+            estate, box = priced()
+            slept = []
+            box.arm.client.sleep = slept.append
+            estate.failure, estate.wait = 429, wait
+            self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable", "code": "Failed"}, wait)
+            self.assertEqual((len(estate.price_calls), [round(s) for s in slept]), (calls, [round(s) for s in sleeps]), f"a wait of {wait}")
 
     def test_a_list_that_gives_no_pages_that_the_app_understands_is_unavailable_and_nothing_is_sent_elsewhere(self):
         estate, box = priced()

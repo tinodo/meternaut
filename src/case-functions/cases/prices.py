@@ -105,7 +105,7 @@ def read(client: Client, service: str, region: str, product: str | None, monoton
     url: str | None = address(service, region, product)
     stop, pages = monotonic() + SECONDS, 0
     while url and pages < MAX_PAGES and len(found) < MAX_LINES and monotonic() < stop:
-        data = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=20, retries=1).json()
+        data = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=20, retries=1, retry_after_max=10).json()
         items = data.get("Items") if isinstance(data, dict) else None
         if not isinstance(items, list):
             raise _bad("gave an answer that the app does not understand")

@@ -91,11 +91,15 @@ class TheAddressesThatMayBeRead(unittest.TestCase):
             with self.assertRaises(http.Refused, msg=f"{method} {address}"):
                 client.check(method, address)
 
-    def test_the_list_of_the_watch_holds_none_of_them(self):
+    def test_the_list_of_the_watch_holds_no_page_of_documentation_and_the_price_list_only_as_the_one_call_that_the_tool_for_prices_makes(self):
         client = Client(http.allowed_calls("https://example.services.ai.azure.com/api/projects/meternaut", "gw1.ai.gateway.azure.com"), lambda text: text)
-        for address in (PAGE, OTHER, PRICES):
+        for address in (PAGE, OTHER):
             with self.assertRaises(http.Refused):
                 client.check("GET", address)
+        client.check("GET", PRICES)
+        for method, address in (("POST", PRICES), ("PUT", PRICES), ("GET", "https://prices.azure.com/api/other"), ("GET", PRICES + "/other")):
+            with self.assertRaises(http.Refused, msg=f"{method} {address}"):
+                client.check(method, address)
 
     def test_the_filter_of_the_price_list_is_sent_percent_encoded_and_nothing_else_is_changed(self):
         url = PRICES + "?$filter=serviceName eq 'Example Widgets'"

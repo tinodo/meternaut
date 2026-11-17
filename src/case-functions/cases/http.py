@@ -115,7 +115,7 @@ def ai_gateway_calls(host: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
 
 # The public pages of Microsoft's documentation that the Study reads (cases/library.py), and nothing else of the internet: two hosts of pages, whose paths begin with the English folder
 # (an address of another language or of no language is answered by a redirect, which the client does not follow), and the Azure Retail Prices API. GET only, no token of any kind, and a
-# list of its own: the Watch's list (allowed_calls) holds none of them.
+# list of its own: the Watch's list (allowed_calls) holds none of the pages, and holds the call to the Azure Retail Prices API below, which the tool for the prices of alternatives makes.
 DOCS_PAGES = {"learn.microsoft.com": "/en-us/", "azure.microsoft.com": "/en-us/"}
 PRICES_HOST = "prices.azure.com"
 PRICES_PATH = "/api/retail/prices"
