@@ -22,10 +22,13 @@ One record for each investigation that was tried (not one that was switched off,
 |---|---|
 | When it began, what started it (`timer`, or `request` for a person or a tool), the two models | The run |
 | Calls made and allowed, tokens, seconds made and allowed (the time that it took, also when it failed before its end) | The run and the harness's budget |
-| Why it ended: `answered`, `time`, `calls`, `refused` or `failed` | The answer's refused calls and its out-of-time flag, and whether the harness held the run |
+| Why it ended: `answered`, `time`, `calls`, `tokens`, `refused` or `failed` | The answer's refused calls and its out-of-time and out-of-tokens flags, and whether the harness held the run; for beats, the first of time, tokens and calls that one of them ran out of |
 | The Investigator's own phrases about what it examined (at most 12, each at most 100 characters) | The answer, cleaned |
 | Each finding: its basis, proposal, how sure, how many resources, its sentence (at most 300 characters), the second AI's verdict and at most two objections (120 characters each), what code left out and why, and what became of its resources | The answer, the checks of code and the cases |
 | The kinds of resource that the estate is known to have, how many the tools read, and the first 20 of the kinds that they read (with what they did: listed, measured, described, split) and the first 20 of the kinds that they did not read | The toolbox's log and handles, and the cost lines that the Watch read |
+| **In beats** ([proposal 25](25-beats.md)): one entry for each beat that ran, with its number, its kinds (at most 8, each at most 80 characters, and a count of the kinds that the last beat did not name), whether it held the lines of the bill that no resource owns, the tool calls made and allowed, the tokens, the seconds, why it ended (the same words), how many of its resources were seeded by code, how many of its kinds its tools read, how many findings it wrote and at most three of its phrases (100 characters each); each finding says which beat wrote it | The result of the beat |
+
+**In beats, at most 16 findings are kept** and `more` counts the others. A record that is still too large for a row of the store (30,000 characters) loses its last findings, one at a time, until it fits, and `more` counts them too: a record that is too large is not kept at all, and this one is. A test builds such a record, with eight beats and forty findings at their longest.
 
 **No amount of money is kept.** The cost lines of the run decide one thing: the order of the kinds, the dearest first. The order is worked out by code when the record is made, and neither the amounts, nor their total, nor a share of them is written down or shown. A finding's cost is not kept either.
 
@@ -45,10 +48,11 @@ The estate has the kinds that a handle or a cost line shows, so a kind that the 
 
 ## What the page shows
 
-A title and one sentence, three tiles and five blocks, in this order, from the parts of the style guide.
+A title and one sentence, three tiles and five blocks, in this order, from the parts of the style guide. When the last investigation was made in beats ([proposal 25](25-beats.md)) there is one more block, between the second and the third.
 
 - **Tiles.** *Looked at in the last run*: how many of the kinds of resource that the estate is known to have a tool read ("12 of 41"). *Findings kept*: how many of the findings that the AI wrote passed the checks of code. *Stopped because*: the word, and the calls and seconds made of the allowed.
 - **What the AI looked at and concluded.** When it began, what started it, the two models, and the phrases as a quote labelled "Written by the AI".
+- **The parts that the AI looked at** (only for beats). A sentence that says what a part is and that no amount is shown, and a table with one row for each part: the kinds in it, its tool calls, seconds and tokens, why it stopped, how many of its kinds its tools read ("2 of 3"), how many findings it wrote and what it said that it examined. The findings table then has a column that says which part wrote each finding, and says how many findings were written and are not listed when the record has `more`. The word *tokens* is one of the ways to stop: the tokens that the part was allowed ran out, so it was told to answer with what it had.
 - **Findings of the last run.** A table: what the AI says, how sure it is, how many resources, the second AI's verdict, and what became of the resources.
 - **Which kinds of resource the AI looked at.** Two lists, each with its count ("Looked at: 12 of 41 kinds", "Not looked at: 29 of 41 kinds"), the first 20 of each, in the order of what each kind cost in the last 30 days, the dearest first, with no amount shown. The first list says what the tools did to each kind. This is the answer to "did it look at my biggest spend?" without a figure of the bill.
 - **Earlier runs.** The ten before it, one line each: when, tool calls, findings kept, kinds looked at, why it stopped. A run that investigated and has no record is a line that says so.
@@ -70,7 +74,8 @@ A person needs the role ops or owner and gets the refusal of the standing permis
 - The kind of a cost line comes from the type in its resource id. A line that a platform bills under another id than its resource can put a kind in the estate that no tool can list, and the order of the kinds rests on the cost lines of the subscriptions that were read in dollars.
 - A record is written when the investigation ends. A run that the platform kills in the middle leaves none, and the page then says that the newest investigation was not recorded.
 - Twenty records are kept. The page shows the last ten earlier runs.
+- The block of the parts, and a record with beats, are tested with records that the tests make. They have not been seen with the investigation of a real estate in beats, and what a part says that it examined is the AI's own claim, like the phrases of one session.
 
 ## What it costs
 
-One small table in the storage account that the app has already, at most twenty rows of up to 14,000 characters, one write for each investigation (about one a week by the timer) and one read of the records and of the runs for each opening of the page. No new resource, no new permission and no new call. The room that it takes in the upload package of the function app is in [the changelog](../../CHANGELOG.md).
+One small table in the storage account that the app has already, at most twenty rows of up to 30,000 characters (14,000 for an investigation made as one session), one write for each investigation (about one a week by the timer) and one read of the records and of the runs for each opening of the page. No new resource, no new permission and no new call. The room that it takes in the upload package of the function app is in [the changelog](../../CHANGELOG.md).

@@ -66,7 +66,7 @@ class InvestigationContract:
         self.assertEqual(newer.examined, ("x",))
 
     def test_the_words_of_how_an_investigation_ended(self):
-        self.assertEqual(INVESTIGATION_ENDS, ("answered", "time", "calls", "refused", "failed"))
+        self.assertEqual(INVESTIGATION_ENDS, ("answered", "time", "calls", "tokens", "refused", "failed"))
 
 
 class MemoryStoreKeepsInvestigations(InvestigationContract, unittest.TestCase):

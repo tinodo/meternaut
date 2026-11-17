@@ -928,6 +928,17 @@ class TheLimit(unittest.TestCase):
             first.call("nope", {})
         self.assertNotEqual(second.call("estate_overview", {}), '{"error":"limit"}')
 
+    def test_a_toolbox_that_is_given_more_calls_answers_them_and_then_answers_limit_and_reads_nothing(self):
+        estate = standard()
+        box = toolbox(estate)
+        self.assertEqual(box.extra_calls, 0, "a toolbox starts with the forty calls that it always had")
+        box.extra_calls = 25
+        for _ in range(40 + 25):
+            self.assertNotEqual(box.call("describe", {"handle": "r1"}), '{"error":"limit"}')
+        reads = len(estate.calls)
+        self.assertEqual(box.call("estate_overview", {}), '{"error":"limit"}')
+        self.assertEqual(len(estate.calls), reads)
+
 
 class TheLog(unittest.TestCase):
     def test_every_call_is_logged_with_its_name_its_arguments_whether_it_was_good_and_the_length_of_the_answer(self):

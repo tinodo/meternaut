@@ -37,7 +37,7 @@ class Lines(unittest.TestCase):
             history().emit("run.exploded")
 
     def test_the_lines_of_the_investigation_are_kinds_of_their_own_and_the_kinds_that_the_tools_read_are_the_same(self):
-        self.assertEqual(events.INVESTIGATION_KINDS, ("investigation.started", "investigation.finding", "investigation.finished"))
+        self.assertEqual(events.INVESTIGATION_KINDS, ("investigation.started", "investigation.beat", "investigation.call", "investigation.finding", "investigation.finished"))
         self.assertFalse(set(events.INVESTIGATION_KINDS) & set(KINDS + events.LOOP_KINDS))
         with LogCapture() as capture:
             for kind in events.INVESTIGATION_KINDS:

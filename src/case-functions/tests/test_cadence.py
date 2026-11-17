@@ -187,6 +187,28 @@ class InARealRun(unittest.TestCase):
         self.assertEqual(of_type(next_day, "investigation.started"), [])
         self.assertEqual(foundry.runs, [])
 
+    def test_a_run_that_spent_tokens_and_got_no_answer_that_could_be_read_starts_the_clock_so_that_the_timer_does_not_repeat_it_tomorrow(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        investigating(estate_with_leads(), foundry=FakeFoundry("this is no answer"), clock=clock, extras=extras, trigger="timer", new_id=self.new_id)
+        self.assertEqual([r.investigated for r in extras.store.runs_recent()], [True], "tokens were spent, whatever came of them")
+        clock.advance(days=1)
+        _, next_day, _, foundry, _ = self.watch(clock, extras, "timer")
+        self.assertEqual((of_type(next_day, "investigation.started"), foundry.runs), ([], []))
+        clock.advance(days=6)
+        _, seventh, _, _, _ = self.watch(clock, extras, "timer")
+        self.assertEqual(len(of_type(seventh, "investigation.started")), 1, "after the wait it investigates again")
+
+    def test_a_timer_that_fires_again_after_a_restart_inside_the_wait_starts_no_second_paid_run(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        self.watch(clock, extras, "timer")
+        for minutes in (10, 50):
+            clock.advance(minutes=minutes)
+            _, again, _, foundry, _ = self.watch(clock, extras, "timer")
+            self.assertEqual((of_type(again, "investigation.started"), foundry.runs), ([], []), f"{minutes} minutes later")
+            self.assertTrue([e for e in of_type(again, "run.note") if "the last investigation ran 0 days ago" in e["note"]])
+
     def test_a_run_that_could_not_investigate_does_not_start_the_clock(self):
         clock = Moving()
         extras = loop_for(clock)

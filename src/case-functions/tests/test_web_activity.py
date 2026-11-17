@@ -169,6 +169,7 @@ class HowTheRunEnded(unittest.TestCase):
     def test_each_word_of_the_list_says_what_it_stands_for_with_the_calls_and_the_seconds_that_were_used_of_the_allowed(self):
         said = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
                 "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),
+                "tokens": ("Its tokens ran out", "The tokens that it was allowed ran out, so it was told to answer with what it had."),
                 "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."), "failed": ("It failed", "It gave no answer that could be read.")}
         self.assertEqual(set(said), set(INVESTIGATION_ENDS), "every word that the record can hold has its words on the page")
         for end, (word, meaning) in said.items():
@@ -181,8 +182,8 @@ class HowTheRunEnded(unittest.TestCase):
                 self.assertTrue(self.tile(end="refused", stop=stop)[1].endswith(f"or stopped it. {why}"))
         self.assertTrue(self.tile(end="refused", stop="a code that nobody listed")[1].endswith("did not let it run, or stopped it."), "what is not listed is not said")
 
-    def test_a_run_that_used_up_its_time_or_its_calls_and_gave_no_answer_that_could_be_read_says_that_too(self):
-        for end in ("time", "calls"):
+    def test_a_run_that_used_up_its_time_its_calls_or_its_tokens_and_gave_no_answer_that_could_be_read_says_that_too(self):
+        for end in ("time", "calls", "tokens"):
             with self.subTest(end=end):
                 self.assertTrue(self.tile(end=end, answered=False, findings=())[1].endswith("answer with what it had. Its answer could not be read."))
 
@@ -200,6 +201,62 @@ class HowTheRunEnded(unittest.TestCase):
         self.assertEqual(tiles_of(reply)["Findings kept"][0], "0 of 0 findings")
         self.assertIn("The AI wrote no finding.", reply.content)
         self.assertNotIn("It did not finish", reply.content)
+
+
+def beat_row(n: int, kinds=(WIDGETS,), **more) -> dict:
+    return {**{"n": n, "kinds": list(kinds), "billing": False, "more": 0, "calls": 7, "max_calls": 8, "tokens": 98765, "seconds": 131, "end": "answered", "seeded": 3, "looked": 1, "found": 2,
+               "says": ["widgets: nothing idle, one is larger than its use needs"]}, **more}
+
+
+BEATS = (beat_row(1, (WIDGETS, GADGETS)), beat_row(2, (GIZMOS,), end="tokens", looked=0, found=0, says=[]), beat_row(3, (), billing=True, looked=0, says=["the bill lines were looked at"]),
+         beat_row(4, (ANVILS,), more=5, end="failed", calls=0, tokens=0))
+
+
+class TheBeatsOfTheLatestInvestigation(unittest.TestCase):
+    def setUp(self):
+        self.reply = page_of(record(beats=BEATS, findings=(finding(1, beat=1), finding(2, beat=3)), more=4, max_calls=32, calls=21))
+
+    def test_the_page_has_a_block_for_the_parts_between_what_the_ai_concluded_and_its_findings_and_no_block_for_a_run_that_had_none(self):
+        self.assertEqual(self.reply.headings(2), [HEADINGS[0], "The parts that the AI looked at", *HEADINGS[1:]])
+        self.assertEqual(page_of(record()).headings(2), HEADINGS, "an investigation of one session has no such block")
+        self.assertIn("Code chose the parts by what each kind of resource cost in the last 30 days, the dearest first, and no amount is shown.", self.reply.content)
+
+    def test_each_part_is_a_row_with_its_kinds_what_it_used_how_it_ended_how_many_of_its_kinds_its_tools_read_and_what_it_found(self):
+        table = self.reply.table("beats")
+        self.assertEqual(table.headers, ["Part", "Kinds of resource", "Tool calls", "Seconds", "Tokens", "Stopped because", "Kinds looked at", "Findings", "What the AI said it examined"])
+        rows = [list(row.values()) for row in table.rows]
+        self.assertEqual(rows[0][2:], ["7 of 8", "131", "98,765", "It gave its answer", "1 of 2", "2", "widgets: nothing idle, one is larger than its use needs"])
+        self.assertEqual((rows[1][5], rows[1][6], rows[1][7], rows[1][8]), ("Its tokens ran out", "0 of 1", "0", "—"))
+        self.assertEqual((rows[2][1], rows[2][6]), ("the lines of the bill that no resource owns", "—"), "a part with no kind has nothing to count")
+        self.assertIn("5 more kinds", rows[3][1])
+        self.assertEqual((rows[3][5], rows[3][3]), ("It failed", "131"))
+        for kind in (WIDGETS, GADGETS, GIZMOS, ANVILS):
+            self.assertIn(kind, self.reply.content)
+
+    def test_the_findings_say_which_part_wrote_them_and_how_many_the_record_had_no_room_for(self):
+        table = self.reply.table("findings")
+        self.assertEqual(table.headers[:2], ["Part", "What it says"])
+        self.assertEqual([row["Part"] for row in table.rows], ["1", "3"])
+        self.assertIn("The sentences of the second column were written by the AI.", self.reply.content)
+        self.assertIn("The record has room for 2 findings. 4 more were written, and they are not listed here.", self.reply.content)
+        self.assertEqual(page_of(record()).table("findings").headers[0], "What it says", "no column for a part when there are none")
+
+    def test_the_tile_counts_the_calls_of_all_the_parts_and_the_page_shows_no_amount_and_no_share_of_the_bill(self):
+        self.assertEqual(tiles_of(self.reply)["Stopped because"][1].split(" It ")[0], "It made 21 of the 32 tool calls that it was allowed and used 140 of the 600 seconds.")
+        text = self.reply.main.text()
+        self.assertNotRegex(text, r"[$€£]|\d\s?%|\bpercent\b|\bUSD\b|\bsaves?\b", "no amount, no percentage, no saving")
+        self.assertEqual(self.reply.problems, [])
+
+    def test_a_payload_in_the_kinds_or_the_phrases_of_a_part_is_escaped_and_an_id_is_taken_out(self):
+        hostile = f"{XSS} /subscriptions/{SUB}/resourceGroups/rg-secret/providers/Contoso.Example/widgets/prod-widget"
+        reply = page_of(record(beats=({**beat_row(1, (XSS, "not a kind", GADGETS), says=[hostile], end=XSS, calls=XSS, tokens=-5, looked=XSS), "n": XSS},)))
+        for payload in (XSS, "<script", "<img", "onerror=alert(2)>"):
+            self.assertNotIn(payload, reply.text)
+        for estate in (SUB, "rg-secret", "prod-widget", "/subscriptions"):
+            self.assertNotIn(estate, reply.text, estate)
+        self.assertEqual(reply.status, 200)
+        (row,) = [list(row.values()) for row in reply.table("beats").rows]
+        self.assertEqual((row[0], row[2], row[4], row[5]), ("0", "0 of 8", "0", "It failed"), "what is not a number is not shown as one, and an ending that nobody listed is a failure")
 
 
 class WhenThereIsNothingToShow(unittest.TestCase):

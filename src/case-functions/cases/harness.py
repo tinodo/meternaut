@@ -57,6 +57,7 @@ BY = "the agent harness"
 REPEAT_LIMIT = 2  # the same call (the same tool, the same arguments) may be made twice; the third is refused
 TRIP_LIMIT = 3  # refusals and guard failures in one run
 SKEPTIC_TOKENS = 100_000  # the Skeptic reads one input of at most 30,000 characters and answers once
+BEAT_TOKEN_ROOM = 60_000  # a beat may use this many tokens more than its cap before it is a failed beat, when twice the cap is less: a step of the model costs 13 to 20 thousand tokens, and an agent that was told to stop still asks once more
 STUDY_TOKENS = 400_000  # the Scholar's brake when the settings give none: see DEFAULT_STUDY_TOKENS in config.py
 MAX_ARGUMENT_DEPTH = 8
 KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,31}")
@@ -75,6 +76,16 @@ def _refused(reason: str, words: str) -> HarnessRefused:
     error = HarnessRefused(f"the harness refused the run: {words}")
     error.reason = reason
     return error
+
+
+class BeatOverTokens(FoundryError):
+    """A beat used more tokens than its hard limit (`beat_limit`). It is a failed beat and nothing more: no refusal of the harness (so the beats before it keep their findings) and no trip (so the
+    switch stays as it was, for loops and abuse). It carries `partial`, what the run had come to."""
+
+
+def beat_limit(max_tokens: int) -> int:
+    """The tokens that a beat may use in all: twice its cap, or its cap and BEAT_TOKEN_ROOM when that is more (the last beat may start with little)."""
+    return max(2 * max_tokens, max_tokens + BEAT_TOKEN_ROOM)
 
 
 # -- the trace -------------------------------------------------------------------------------------------------------------------------------------
@@ -280,6 +291,7 @@ class RunRecord:
     outcome: str = "idle"
     reason: str = ""
     breach: str = ""
+    over: bool = False  # a beat used more tokens than its hard limit: a failed beat, never a trip
     codes: list[str] = field(default_factory=list)
     options: list[str] = field(default_factory=list)
     closed: bool = False
@@ -378,12 +390,15 @@ class Harness:
             raise _refused("definition", "the stored definition differs from the lock (" + ", ".join(controls) + ")")
 
     # -- during a run ----------------------------------------------------------------------------------------------------------------------------
-    def run(self, reference: str, spec: AgentSpec, user_input: str, handler: ToolHandler | None, *, max_calls: int | None = None, max_seconds: float) -> AgentRun:
+    def run(self, reference: str, spec: AgentSpec, user_input: str, handler: ToolHandler | None, *, max_calls: int | None = None, max_seconds: float,
+            max_tokens: int | None = None) -> AgentRun:
         """Runs the agent through the Foundry loop with the guard on its tool calls and the brake before each request to its model. The budget of tool calls is the harness's (Budget)
-        unless the caller gives one: the Skeptic has no tools, so its caller gives 0."""
+        unless the caller gives one: the Skeptic has no tools, so its caller gives 0. A caller that gives `max_tokens` has the agent told to stop calling tools once its run has used that many
+        tokens (it then gives its answer), and the brake stops the run at twice that: the tokens of a beat are a budget, and an agent that goes on after it is a loop."""
         record = self._record_of(spec)
         guard = ToolGuard(spec.tools, self.budget.repeat_limit)
-        limit = record.limit = self.budget.tokens_for(spec)
+        beat = bool(max_tokens)
+        limit = record.limit = beat_limit(max_tokens) if beat else self.budget.tokens_for(spec)  # type: ignore[arg-type]
         calls = self.budget.tool_calls if max_calls is None else max_calls
 
         def handle(name: str, arguments: dict) -> str:
@@ -400,7 +415,10 @@ class Harness:
                 record.breach = record.breach or "switch"
                 return "the switch investigation or the switch all is pulled, or cannot be read"
             if record.tokens >= limit:
-                record.breach = "tokens"
+                if beat:
+                    record.over = True  # a failed beat, not a trip
+                else:
+                    record.breach = "tokens"
                 return "the token budget of the run is used up"
             if record.failures() >= self.budget.trip_limit:
                 record.breach = "refusals"
@@ -408,7 +426,8 @@ class Harness:
             return None
 
         try:
-            result = self.foundry.run(reference, user_input, handle, max_calls=calls, max_seconds=max_seconds, stop=stop)  # type: ignore[attr-defined]
+            result = self.foundry.run(reference, user_input, handle, max_calls=calls, max_seconds=max_seconds, stop=stop,  # type: ignore[attr-defined]
+                                      **({"max_tokens": max_tokens} if max_tokens else {}))
         except FoundryError as error:
             partial = getattr(error, "partial", None)
             if partial is not None:
@@ -416,6 +435,11 @@ class Harness:
             text = str(error)
             record.seconds = int(self.monotonic() - record.began)
             if "stopped by the harness" in text:
+                if record.over:
+                    record.outcome, record.reason = "failed", "tokens"
+                    over = BeatOverTokens(f"the beat used {record.tokens} tokens, over its limit of {limit}")
+                    over.partial = partial
+                    raise over from None
                 record.outcome = "stopped"
                 record.reason = record.breach or "stopped"
                 refusal = _refused(record.reason, text.split("stopped by the harness: ", 1)[-1])
@@ -436,6 +460,11 @@ class Harness:
         record.outcome = "ok"
         record.seconds = int(self.monotonic() - record.began)
         if record.tokens > limit:
+            if beat:
+                record.outcome, record.reason = "failed", "tokens"
+                over = BeatOverTokens(f"the beat used {record.tokens} tokens, over its limit of {limit}")
+                over.partial = result
+                raise over
             record.breach = "tokens"
         return result
 
@@ -449,6 +478,11 @@ class Harness:
         for record in reversed(self.records):
             if record.agent == spec.name and record.outcome in ("idle", "ok"):
                 return record
+        return self.again(spec)
+
+    def again(self, spec: AgentSpec) -> RunRecord:
+        """A new record for the next run of an agent that was made ready already (a beat after the first, a batch of the Skeptic's after the first): the run has its own tokens, its own count of
+        refusals and its own line. Runs that do not ask for one share the record of the agent, which is what a Watch with one run of each agent always did."""
         record = RunRecord(agent=spec.name, definition=(self.lock.definition_sha256(spec.name)[:8] if self.lock else ""), began=self.monotonic())
         self.records.append(record)
         return record
