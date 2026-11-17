@@ -378,12 +378,14 @@ class Harness:
             raise _refused("definition", "the stored definition differs from the lock (" + ", ".join(controls) + ")")
 
     # -- during a run ----------------------------------------------------------------------------------------------------------------------------
-    def run(self, reference: str, spec: AgentSpec, user_input: str, handler: ToolHandler | None, *, max_calls: int | None = None, max_seconds: float) -> AgentRun:
+    def run(self, reference: str, spec: AgentSpec, user_input: str, handler: ToolHandler | None, *, max_calls: int | None = None, max_seconds: float,
+            max_tokens: int | None = None) -> AgentRun:
         """Runs the agent through the Foundry loop with the guard on its tool calls and the brake before each request to its model. The budget of tool calls is the harness's (Budget)
-        unless the caller gives one: the Skeptic has no tools, so its caller gives 0."""
+        unless the caller gives one: the Skeptic has no tools, so its caller gives 0. A caller that gives `max_tokens` has the agent told to stop calling tools once its run has used that many
+        tokens (it then gives its answer), and the brake stops the run at twice that: the tokens of a beat are a budget, and an agent that goes on after it is a loop."""
         record = self._record_of(spec)
         guard = ToolGuard(spec.tools, self.budget.repeat_limit)
-        limit = record.limit = self.budget.tokens_for(spec)
+        limit = record.limit = 2 * max_tokens if max_tokens else self.budget.tokens_for(spec)
         calls = self.budget.tool_calls if max_calls is None else max_calls
 
         def handle(name: str, arguments: dict) -> str:
@@ -408,7 +410,8 @@ class Harness:
             return None
 
         try:
-            result = self.foundry.run(reference, user_input, handle, max_calls=calls, max_seconds=max_seconds, stop=stop)  # type: ignore[attr-defined]
+            result = self.foundry.run(reference, user_input, handle, max_calls=calls, max_seconds=max_seconds, stop=stop,  # type: ignore[attr-defined]
+                                      **({"max_tokens": max_tokens} if max_tokens else {}))
         except FoundryError as error:
             partial = getattr(error, "partial", None)
             if partial is not None:
@@ -449,6 +452,11 @@ class Harness:
         for record in reversed(self.records):
             if record.agent == spec.name and record.outcome in ("idle", "ok"):
                 return record
+        return self.again(spec)
+
+    def again(self, spec: AgentSpec) -> RunRecord:
+        """A new record for the next run of an agent that was made ready already (a beat after the first, a batch of the Skeptic's after the first): the run has its own tokens, its own count of
+        refusals and its own line. Runs that do not ask for one share the record of the agent, which is what a Watch with one run of each agent always did."""
         record = RunRecord(agent=spec.name, definition=(self.lock.definition_sha256(spec.name)[:8] if self.lock else ""), began=self.monotonic())
         self.records.append(record)
         return record

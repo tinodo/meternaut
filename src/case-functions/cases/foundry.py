@@ -197,8 +197,9 @@ class AgentRun:
     input_tokens: int = 0
     output_tokens: int = 0
     responses: int = 0
-    # True when a call was refused because the soft time of the run was used up (and not the budget of calls).
+    # True when a call was refused because the soft time of the run was used up (and not the budget of calls), and True when it was refused because the tokens of the run had passed `max_tokens`.
     out_of_time: bool = False
+    out_of_tokens: bool = False
 
 
 # (tool name, arguments) -> the result as a JSON string that holds typed values only. It never raises.
@@ -374,7 +375,7 @@ class Foundry:
         return found, True
 
     def run(self, agent: str, user_input: str, handler: ToolHandler | None = None, *, max_calls: int = 20, max_seconds: float | None = None,
-            stop: Callable[[AgentRun], str | None] | None = None) -> AgentRun:
+            stop: Callable[[AgentRun], str | None] | None = None, max_tokens: int | None = None) -> AgentRun:
         """Runs the agent on one input, answers each function call of it with `handler`, and returns when the agent gives its text.
 
         `agent` is what ensure_agent returned ("name:version": that version is run) or a name. The calls of one answer are all made and answered in one request.
@@ -384,8 +385,8 @@ class Foundry:
         `max_calls` is a soft budget. That many calls are run (one that failed counts). Every call after them is not given to the handler: it is answered
         {"error":"budget-used-up"} and recorded with refused: True, and the agent has GRACE_ROUNDS (3) more rounds to give its text. The same is done with every call
         that the agent asks for after SOFT_TIME_SHARE (70%) of `max_seconds` has passed (the result then has out_of_time True), so that a run that was slowed down, by the
-        rate of its model for instance, still gives its answer before the hard limit. A FoundryError is raised when it
-        still asks for a tool call after those rounds, when `max_seconds` pass (that limit is hard, also while a tool works), or when the service gives no usable answer.
+        rate of its model for instance, still gives its answer before the hard limit, and with every call that it asks for once the tokens of the run so far have reached `max_tokens` (the
+        result then has out_of_tokens True): the model reads everything again at every step, so the tokens of a run grow with the square of its calls. A FoundryError is raised when it        still asks for a tool call after those rounds, when `max_seconds` pass (that limit is hard, also while a tool works), or when the service gives no usable answer.
         What the run had gathered is in the `partial` of every FoundryError of a run. The conversation is deleted in every case, after the time is used up too.
 
         The key of the agent reference is `agent_reference` (the REST reference). If the first response that the service answers in the life of this client is an
@@ -403,6 +404,8 @@ class Foundry:
             raise FoundryError("Foundry: max_calls is not a whole number from 0 up")
         if max_seconds is not None and (isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)) or not max_seconds > 0):
             raise FoundryError("Foundry: max_seconds is not a number above 0")
+        if max_tokens is not None and (isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1):
+            raise FoundryError("Foundry: max_tokens is not a whole number above 0")
         result = AgentRun(text="")
         now = self.client.monotonic
         began = now()
@@ -441,7 +444,8 @@ class Foundry:
                 before, pending = refused, []
                 for each in calls:
                     late = soft is not None and now() >= soft
-                    if made < max_calls and not late:
+                    heavy = max_tokens is not None and result.input_tokens + result.output_tokens >= max_tokens
+                    if made < max_calls and not late and not heavy:
                         pending.append(self._answer(each, handler, result))
                         made += 1
                     else:
@@ -449,11 +453,13 @@ class Foundry:
                         refused += 1
                         if late and made < max_calls:
                             result.out_of_time = True
+                        elif heavy and made < max_calls:
+                            result.out_of_tokens = True
                 if refused > before:
                     told += 1
                     if told > GRACE_ROUNDS:
                         spent = (f"the time for tool calls ({SOFT_TIME_SHARE * max_seconds:g} seconds) was used up" if result.out_of_time
-                                 else f"the budget of {max_calls} tool calls was used up")
+                                 else f"the tokens for tool calls ({max_tokens}) were used up" if result.out_of_tokens else f"the budget of {max_calls} tool calls was used up")
                         raise self._error(f"Foundry run stopped: {spent} and the agent still asked for a tool call after {GRACE_ROUNDS} more rounds, and gave no text")
                 purpose = "function output"
         except FoundryError as error:

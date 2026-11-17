@@ -45,23 +45,45 @@ FOUNDRY_MODEL_SKEPTIC = "FOUNDRY_MODEL_SKEPTIC"
 INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
-# How many days the daily timer waits after an investigation before it investigates again. A run uses about 340,000 tokens and costs about half a US dollar (Cost Management, 2026-11-09). The standing
-# limit of the AI Gateway is 5 a day and 25 a month for each caller (rule 15 (g)), shared with the evaluations, the red team and every run that a person starts: weekly is about 2 of the 25, daily about 15.
-# A run that a person starts always investigates; the fixed detectors' leads are judged by the Detective and the Skeptic every day anyway (cents).
+# How many days the daily timer waits after an investigation before it investigates again. A Watch of six beats uses at most about 800,000 tokens of the Investigator, which is about 1 to 3 US dollars through
+# the AI Gateway (docs/proposals/25-beats.md has the arithmetic). The standing limit of the gateway is 5 a day and 25 a month for each caller (rule 15 (g)), shared with the Study, the evaluations, the red
+# team and every run that a person starts: weekly is about 13 of the 25, daily would be about 90 and does not fit. A run that a person starts always investigates; the fixed detectors' leads are
+# judged by the Detective and the Skeptic every day anyway (cents).
 INVESTIGATE_EVERY_DAYS = "INVESTIGATE_EVERY_DAYS"
 DEFAULT_INVESTIGATE_EVERY_DAYS = 7
 LIMIT_INVESTIGATE_EVERY_DAYS = 30
 # The tokens that one agent run may use before the harness stops it (cases/harness.py): a brake against a loop in a model, not a limit of normal work. The fourth real run of the agents
 # (2026-11-08) used about 169,000 tokens in all; this is about three and a half times that, written here before it was measured again. A setting can lower it and never raise it.
 INVESTIGATE_MAX_TOKENS = "INVESTIGATE_MAX_TOKENS"
+# The investigation looks at the estate in beats (cases/beats.py, docs/proposals/25-beats.md): at most INVESTIGATE_BEATS short sessions of the Investigator, each with its own calls, seconds and tokens,
+# inside the seconds and the tokens of the whole investigation. A session of 22 tool calls used about 345,000 tokens, and a model reads the conversation again at every step, so many short sessions
+# that start from what code has read cost far less than one long one. The tokens of a beat are soft: after them its tool calls are refused and it writes its answer; the harness stops it at twice that.
+# The standing limit of the AI Gateway for each caller is 50,000 tokens a minute, 5 US dollars a day and 25 a month (rule 15 (g)), and the Watch has to end inside what the Hub waits for.
+INVESTIGATE_BEATS = "INVESTIGATE_BEATS"
+INVESTIGATE_BEAT_CALLS = "INVESTIGATE_BEAT_CALLS"
+INVESTIGATE_BEAT_SECONDS = "INVESTIGATE_BEAT_SECONDS"
+INVESTIGATE_BEAT_TOKENS = "INVESTIGATE_BEAT_TOKENS"
+INVESTIGATE_TOTAL_TOKENS = "INVESTIGATE_TOTAL_TOKENS"
+DEFAULT_INVESTIGATE_BEATS = 6
+LIMIT_INVESTIGATE_BEATS = 8
+DEFAULT_BEAT_CALLS = 8
+LIMIT_BEAT_CALLS = 16
+DEFAULT_BEAT_SECONDS = 160
+LIMIT_BEAT_SECONDS = 300
+DEFAULT_BEAT_TOKENS = 100_000
+LIMIT_BEAT_TOKENS = 200_000
+DEFAULT_TOTAL_TOKENS = 800_000
+LIMIT_TOTAL_TOKENS = 1_200_000
 
 # The Investigator is gpt-5.5 (no effort sent: see INVESTIGATOR_REASONING_EFFORT in agents.py) and the Skeptic gpt-6.1-sol: see AGENT_MODELS in tools/environment-params.py for why, and a test holds the files together.
 DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
 DEFAULT_MODEL_SKEPTIC = "gpt-6.1-sol"
 DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40
-DEFAULT_INVESTIGATE_SECONDS = 600
-LIMIT_INVESTIGATE_SECONDS = 600
+# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,080 is six beats of 160 seconds and 120 for the checks and the Skeptic; the Watch that holds it (reading
+# the subscriptions took 345 seconds for ten of them) ends inside the 30 minutes that the Hub waits for. The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
+DEFAULT_INVESTIGATE_SECONDS = 1080
+LIMIT_INVESTIGATE_SECONDS = 1500
 LIMIT_INVESTIGATE_TOKENS = 600_000
 
 # SCOPE_SUBSCRIPTIONS is required unless SCOPE_ALL_SUBSCRIPTIONS is on (load below): the template always sets it, as the fallback.
@@ -93,7 +115,8 @@ LEARNING_HOLD = "LEARNING_HOLD"
 OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS: str(LIMIT_COMPLETION_TOKENS), RUN_DEADLINE_SECONDS: str(LIMIT_DEADLINE_SECONDS),
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS),
-            INVESTIGATE_EVERY_DAYS: str(DEFAULT_INVESTIGATE_EVERY_DAYS),
+            INVESTIGATE_EVERY_DAYS: str(DEFAULT_INVESTIGATE_EVERY_DAYS), INVESTIGATE_BEATS: str(DEFAULT_INVESTIGATE_BEATS), INVESTIGATE_BEAT_CALLS: str(DEFAULT_BEAT_CALLS),
+            INVESTIGATE_BEAT_SECONDS: str(DEFAULT_BEAT_SECONDS), INVESTIGATE_BEAT_TOKENS: str(DEFAULT_BEAT_TOKENS), INVESTIGATE_TOTAL_TOKENS: str(DEFAULT_TOTAL_TOKENS),
             STUDY_MAX_TYPES: str(DEFAULT_STUDY_TYPES), STUDY_MAX_PAGES: str(DEFAULT_STUDY_PAGES), STUDY_MAX_SECONDS: str(DEFAULT_STUDY_SECONDS), STUDY_MAX_TOKENS: str(DEFAULT_STUDY_TOKENS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -132,6 +155,12 @@ class Settings:
     investigate_max_seconds: int = DEFAULT_INVESTIGATE_SECONDS
     investigate_max_tokens: int = LIMIT_INVESTIGATE_TOKENS
     investigate_every_days: int = DEFAULT_INVESTIGATE_EVERY_DAYS
+    # The beats of the investigation (cases/beats.py): how many at most, and the calls, seconds and tokens of one, and the tokens of all of them together.
+    investigate_beats: int = DEFAULT_INVESTIGATE_BEATS
+    investigate_beat_calls: int = DEFAULT_BEAT_CALLS
+    investigate_beat_seconds: int = DEFAULT_BEAT_SECONDS
+    investigate_beat_tokens: int = DEFAULT_BEAT_TOKENS
+    investigate_total_tokens: int = DEFAULT_TOTAL_TOKENS
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
     # The quota ids of the subscriptions of the run, as the one list of subscriptions of the run gave them (scope.py): not a setting of the environment, the run fills them in its copy.
@@ -194,6 +223,11 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
         "investigate_max_seconds": _integer(env, INVESTIGATE_MAX_SECONDS, 30, LIMIT_INVESTIGATE_SECONDS, OPTIONAL[INVESTIGATE_MAX_SECONDS], problems),
         "investigate_max_tokens": _integer(env, INVESTIGATE_MAX_TOKENS, 10_000, LIMIT_INVESTIGATE_TOKENS, OPTIONAL[INVESTIGATE_MAX_TOKENS], problems),
         "investigate_every_days": _integer(env, INVESTIGATE_EVERY_DAYS, 1, LIMIT_INVESTIGATE_EVERY_DAYS, OPTIONAL[INVESTIGATE_EVERY_DAYS], problems),
+        "investigate_beats": _integer(env, INVESTIGATE_BEATS, 1, LIMIT_INVESTIGATE_BEATS, OPTIONAL[INVESTIGATE_BEATS], problems),
+        "investigate_beat_calls": _integer(env, INVESTIGATE_BEAT_CALLS, 1, LIMIT_BEAT_CALLS, OPTIONAL[INVESTIGATE_BEAT_CALLS], problems),
+        "investigate_beat_seconds": _integer(env, INVESTIGATE_BEAT_SECONDS, 30, LIMIT_BEAT_SECONDS, OPTIONAL[INVESTIGATE_BEAT_SECONDS], problems),
+        "investigate_beat_tokens": _integer(env, INVESTIGATE_BEAT_TOKENS, 10_000, LIMIT_BEAT_TOKENS, OPTIONAL[INVESTIGATE_BEAT_TOKENS], problems),
+        "investigate_total_tokens": _integer(env, INVESTIGATE_TOTAL_TOKENS, 10_000, LIMIT_TOTAL_TOKENS, OPTIONAL[INVESTIGATE_TOTAL_TOKENS], problems),
     }
 
 

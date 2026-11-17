@@ -241,11 +241,11 @@ class Interface(unittest.TestCase):
         self.assertEqual([(p.name, p.kind.name, p.default) for p in run.values()],
                          [("self", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("agent", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty),
                           ("user_input", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("handler", "POSITIONAL_OR_KEYWORD", None),
-                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None), ("stop", "KEYWORD_ONLY", None)])
+                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None), ("stop", "KEYWORD_ONLY", None), ("max_tokens", "KEYWORD_ONLY", None)])
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
         self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools", "reasoning_effort"])
         self.assertIsNone(AgentSpec("n", "d", "m", "i").reasoning_effort, "the effort is left out unless a spec asks for one")
-        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time"])
+        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time", "out_of_tokens"])
         for frozen, cls in ((True, FunctionTool), (True, AgentSpec), (False, AgentRun)):
             self.assertEqual(cls.__dataclass_params__.frozen, frozen, cls.__name__)
 
@@ -873,6 +873,39 @@ class SoftBudget(unittest.TestCase):
         rig.service.advance = 10_000
         result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=Handler(), max_calls=40)
         self.assertEqual((result.out_of_time, [c.get("refused") for c in result.calls]), (False, [None, None]))
+
+    def test_a_call_after_the_tokens_of_the_run_have_reached_the_cap_is_refused_like_one_beyond_the_budget_and_the_agent_may_still_give_its_text(self):
+        rig = Rig()
+        handler = Handler()
+        result = rig.run(self.asks("c1", tokens=(30, 10)), self.asks("c2", tokens=(30, 10)), reply([message("final")], 30, 10), handler=handler, max_calls=40, max_tokens=70)
+        self.assertEqual((result.text, result.out_of_tokens, result.out_of_time, len(handler.calls)), ("final", True, False, 1))
+        self.assertEqual([c.get("refused") for c in result.calls], [None, True])
+        self.assertEqual(self.posted(rig)[-1], [output_of("c2", self.REFUSED)])
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations, rig.foundry.notes), ("DELETE conversation", {}, []))
+
+    def test_a_run_below_its_token_cap_or_with_none_is_never_out_of_tokens_and_a_budget_that_ends_first_is_not_the_tokens(self):
+        for cap in (None, 10_000):
+            rig = Rig()
+            result = rig.run(self.asks("c1"), self.asks("c2"), reply([message("final")]), handler=Handler(), max_calls=40, max_tokens=cap)
+            self.assertEqual((result.out_of_tokens, [c.get("refused") for c in result.calls]), (False, [None, None]), str(cap))
+        rig = Rig()
+        result = rig.run(self.asks("c1", tokens=(30, 10)), self.asks("c2", tokens=(30, 10)), reply([message("final")]), handler=Handler(), max_calls=1, max_tokens=100)
+        self.assertEqual((result.out_of_tokens, [c.get("refused") for c in result.calls]), (False, [None, True]), "the budget of calls refused the second call, and the tokens were below the cap")
+
+    def test_an_agent_that_still_asks_after_the_cap_of_tokens_and_three_more_rounds_fails_with_words_about_the_tokens_and_keeps_what_was_gathered(self):
+        rig = Rig()
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(*[self.asks(f"c{i}", tokens=(30, 10)) for i in range(1, 8)], reply([message("never read")]), handler=Handler(), max_calls=40, max_tokens=70)
+        self.assertEqual(str(raised.exception), "Foundry run stopped: the tokens for tool calls (70) were used up and the agent still asked for a tool call after 3 more rounds, and gave no text")
+        partial = raised.exception.partial
+        self.assertEqual(([bool(c.get("refused")) for c in partial.calls], partial.out_of_tokens), ([False] + [True] * 4, True))
+
+    def test_a_cap_of_tokens_that_is_not_a_whole_number_above_zero_is_refused_before_anything_is_asked(self):
+        for bad in (0, -1, 1.5, "100", True):
+            rig = Rig()
+            with self.assertRaises(FoundryError, msg=str(bad)):
+                rig.run(reply([message("final")]), handler=Handler(), max_tokens=bad)
+            self.assertEqual(rig.service.routes(), [], "nothing was asked of the service")
 
     def test_the_soft_time_counts_the_seconds_that_a_tool_took(self):
         rig = Rig()

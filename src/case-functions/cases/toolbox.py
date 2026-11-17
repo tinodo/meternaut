@@ -933,6 +933,7 @@ class Toolbox:
         self._lock = threading.Lock()
         self._notes_lock = threading.Lock()  # the reads of several subscriptions at once write their notes through it
         self._calls = 0
+        self.extra_calls = 0  # the calls beyond MAX_CALLS that this run allows: an investigation of beats makes the seeds of each beat and the calls of each, on this one toolbox (cases/beats.py)
         self._next_handle = 1
         self._entries: dict[str, _Entry] = {}  # every resource that a read returned, by lower-case id
         self._by_handle: dict[str, _Entry] = {}
@@ -1004,7 +1005,7 @@ class Toolbox:
             return text
 
     def _answer(self, name: object, arguments: object) -> dict:
-        if self._calls > MAX_CALLS:
+        if self._calls > MAX_CALLS + self.extra_calls:
             return {"error": "limit"}
         tool = TOOLS.get(name) if isinstance(name, str) else None
         if tool is None:
