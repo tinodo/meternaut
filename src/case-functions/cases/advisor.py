@@ -9,12 +9,14 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections import defaultdict
+from collections.abc import Collection
 from dataclasses import replace
 
 from . import costs as cost_words
 from . import upkeep
 from .brief import ADVISOR_KEY as KEY
 from .brief import ADVISOR_ROWS as ROWS
+from .brief import advisor_says, says_nothing
 from .detectors import ADVISOR, DETECTORS, Context, Lead, ident
 from .memory_store import parse, stamp
 from .models import ADVICE_QUIET_DAYS, INVESTIGATION, CaseRecord, StoreError
@@ -26,13 +28,14 @@ ADVICE_NONE = {"problem": "Azure Advisor has a cost recommendation", "solution":
 
 
 def group_key(lead: Lead) -> str:
-    """What one case stands for. For a whole subscription: the subscription, type, sub-category, size or product, region, quantity and scope, which Advisor repeats for each term and look-back, so
-    the variants share it. A recommendation with no term or no look-back is its own decision, never merged by a guess. For anything else: the resource."""
+    """What one case stands for. For a whole subscription: the subscription, type, sub-category, size or product, region and scope, which Advisor repeats for each term and look-back, so the variants
+    share it. The quantity is not in it: the engine recommends the quantity that saves most for each look-back (Learn), so it differs between variants, and the case must not change when it does.
+    A recommendation with no term or no look-back is its own decision, never merged by a guess. For anything else: the resource."""
     item = lead.advisor
     if cost_words.scope_of(lead.resource_id).kind != "subscription":
         return lead.resource_id.lower()
     if item["term"] and item["lookback"] is not None:
-        return "|".join((lead.subscription_id, item["type"], item["sub"], item["sku"], item["region"], str(item["qty"]), item["scope"]))
+        return "|".join((lead.subscription_id, item["type"], item["sub"], item["sku"], item["region"], item["scope"]))
     return f"{lead.subscription_id}|{lead.lead_id}"
 
 
@@ -57,8 +60,8 @@ def digest(leads: list[Lead], dollars: bool) -> dict:
 
 
 def _alternatives(groups: dict[str, list[Lead]], decisions: dict[str, dict]) -> None:
-    """Among the commitments of one subscription (decisions whose variants have a term) only one way to buy is counted. A product that Advisor offers in another quantity or scope counts once, by its
-    larger figure, and a kind of commitment (Advisor's sub-category) is an alternative to another kind, because Advisor's fields do not say which spend each covers: the kind whose products add up
+    """Among the commitments of one subscription (decisions whose variants have a term) only one way to buy is counted. A product that Advisor offers in another scope counts once, by its larger
+    figure, and a kind of commitment (Advisor's sub-category) is an alternative to another kind, because Advisor's fields do not say which spend each covers: the kind whose products add up
     to most is counted. The others keep their figures, are not added (`usd` 0), and say what is counted instead (`alt`)."""
     mine: dict[str, list[str]] = defaultdict(list)
     for key, said in decisions.items():
@@ -96,15 +99,22 @@ def _mate(store, key: str) -> CaseRecord | None:
     return None
 
 
-def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: list[str] | None) -> int:
-    """Makes or brings up to date the case for one group and asks about it. Returns 1 when the case is new or is asked about again."""
+def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: list[str] | None, listed: set[str]) -> int:
+    """Makes or brings up to date the case for one decision and asks about it. Returns 1 when the case is new or is asked about again. A case that an older check or an AI made for the resource keeps
+    its own flow, its status and its time: it only gets what Advisor says, in its facts."""
     ex, h = s.extras, s.history
     lead, now = leads[0], s.clock()
     single = key == lead.resource_id.lower()
     mate = _mate(ex.store, key) if single else None
-    case_id = mate.case_id if mate is not None else f"k{ident(ADVISOR, key)}"
-    old = mate or ex.store.case_get(case_id)
-    if single and mate is None and others:
+    if mate is not None:
+        listed.add(mate.case_id)
+        if mate.facts.get(KEY) != said:
+            ex.store.case_update(mate.case_id, lambda kept: replace(kept, facts={**kept.facts, KEY: said}))
+        return 0
+    case_id = f"k{ident(ADVISOR, key)}"
+    listed.add(case_id)
+    old = ex.store.case_get(case_id)
+    if single and others:
         said["also"] = sorted(others)  # the older checks found the same resource, and their lead is left to this case
     if old is not None and not _asks_again(old, now, ex.settings.recheck_days):
         if old.facts.get(KEY) != said:  # an answer, or a request that is running, stays as it is: only what Advisor says is brought up to date
@@ -113,14 +123,15 @@ def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: l
     fresh = old is None or old.status != "needs_human"
     impact = next((word for word in ("high", "medium", "low") if any(item.facts.get("impact") == word for item in leads)), "other")
     changes: dict = {"status": "needs_human", "updated_at": stamp(now) if fresh else old.updated_at, "runs_seen": old.runs_seen + 1 if old else 1,
-                     "facts": {**(old.facts if old else {"category": "cost", "impact": impact}), KEY: said}}
-    if mate is None:
-        changes.update(run_id=h.run_id, resource_name=clean_text(lead.name, 120), subscription_name=lead.subscription_name, advice=next((i.advice for i in leads if i.advice), ADVICE_NONE),
-                       **upkeep.cost_fields(lead, old))
+                     "facts": {**(old.facts if old else {"category": "cost", "impact": impact}), KEY: said}, "run_id": h.run_id, "resource_name": clean_text(lead.name, 120),
+                     "subscription_name": lead.subscription_name, "advice": next((i.advice for i in leads if i.advice), ADVICE_NONE if advisor_says(said) else {}),
+                     **upkeep.cost_fields(lead, old)}
     record = replace(old, **changes) if old else CaseRecord(
         case_id=case_id, resource_id=lead.resource_id, resource_type=clean_text(lead.resource_type, 120), resource_group=clean_text(lead.resource_group, 90),
-        subscription_id=lead.subscription_id, detector=ADVISOR, recommendation="change", first_seen_at=stamp(now), **{"resource_name": "", "run_id": "", **changes})
+        subscription_id=lead.subscription_id, detector=ADVISOR, recommendation="change", first_seen_at=stamp(now), **changes)
     ex.store.case_put(record)
+    if not fresh and says_nothing(record):
+        return 0  # it was said when the case was made that it has nothing to say, and it is not said again at each Watch
     if fresh:
         h.emit("case.started", caseId=case_id, leadId=lead.lead_id)
         h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=record.detector, resourceName=clean_text(record.resource_name, 120), resourceType=record.resource_type,
@@ -131,28 +142,30 @@ def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: l
     return int(fresh)
 
 
-def _retire(ex, subscriptions: set[str], now: dt.datetime) -> int:
-    """Closes what an earlier version made for a whole subscription: one case, and one request with one figure for all of its recommendations, which the new requests replace. A request that a person
-    has answered stays theirs."""
+def _close(ex, listed: set[str], read: set[str], replaced: set[str], now: dt.datetime) -> tuple[int, int]:
+    """Closes the Advisor cases that no recommendation stands for any more, in the subscriptions whose list Advisor gave in this Watch (`read`; a list that could not be read says nothing about what
+    is on it): a decision that Advisor does not list now (bought, or recomputed into another), and the one case that an earlier version made for a whole subscription, which the decisions of the
+    subscriptions in `replaced` replace. A request that a person has answered, or put off, stays theirs. Returns how many of the second and of the first were closed."""
     plans = {plan.case_id: plan for plan in ex.store.plans_open() if plan.state == "open"}
-    closed = 0
+    earlier = gone = 0
     for case in ex.store.cases_recent(CASES_READ):
-        if (case.detector != ADVISOR or case.subscription_id not in subscriptions or KEY in case.facts or case.status not in ("proposed", "needs_human")
-                or cost_words.scope_of(case.resource_id).kind != "subscription"):
+        if case.detector != ADVISOR or case.subscription_id not in read or case.case_id in listed or case.status not in ("proposed", "needs_human"):
             continue
+        first = KEY not in case.facts and cost_words.scope_of(case.resource_id).kind == "subscription"
         plan = ex.store.plan_get(plans[case.case_id].plan_id) if case.case_id in plans else None
-        if plan is not None and (plan.state != "open" or ex.store.decisions_of_plan(plan.plan_id)):
+        if (first and case.subscription_id not in replaced) or (plan is not None and (plan.state != "open" or ex.store.decisions_of_plan(plan.plan_id))):
             continue
         if plan is not None:
-            ex.store.plan_put(replace(plan, state="expired", expires_at=stamp(now), preconditions={**(plan.preconditions or {}), "takenBack": "advisor"}))
+            ex.store.plan_put(replace(plan, state="expired", expires_at=stamp(now), preconditions={**(plan.preconditions or {}), "takenBack": "advisor" if first else "delisted"}))
         ex.store.case_update(case.case_id, lambda kept: replace(kept, status="expired"))
-        closed += 1
-    return closed
+        earlier, gone = earlier + first, gone + (not first)
+    return earlier, gone
 
 
-def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[str] | None) -> int:
-    """The step of a Watch that makes the case of every recommendation of Advisor, whether or not the investigation ran, and asks a person about each (upkeep.ask). A case that a person has answered,
-    or whose request is open, only has what Advisor says brought up to date. Says what was counted and not added up. Returns the cases that were made or asked about again. A store that fails is a note."""
+def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[str] | None, read: Collection[str] = ()) -> int:
+    """The step of a Watch that makes the case of every decision of Advisor, whether or not the investigation ran, and asks a person about each (upkeep.ask). A case that a person has answered, or
+    whose request is open, only has what Advisor says brought up to date. `read` holds the subscriptions whose list Advisor gave in this Watch: the cases of theirs that it does not list now are
+    closed. Says what was counted and not added up. Returns the cases that were made or asked about again. A store that fails is a note."""
     groups: dict[str, list[Lead]] = defaultdict(list)
     others: dict[str, set[str]] = defaultdict(set)
     for lead in ranked:
@@ -162,6 +175,8 @@ def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[s
             others[lead.resource_id.lower()].add(lead.detector)
     made = skipped = 0
     currencies: set[str] = set()
+    listed: set[str] = set()
+    broken = False
     decisions = {key: digest(leads, (contexts.get(leads[0].subscription_id) or Context()).currency == "USD") for key, leads in groups.items()}
     _alternatives(groups, decisions)
     for key, leads in groups.items():
@@ -169,14 +184,18 @@ def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[s
         skipped += said["skipped"]
         currencies.update(said["currencies"])
         try:
-            made += _case(s, key, leads, said, others.get(key, set()), holds)
+            made += _case(s, key, leads, said, others.get(key, set()), holds, listed)
         except StoreError as error:
+            broken = True
             say(f"the case of {len(leads)} Advisor recommendation{'' if len(leads) == 1 else 's'} could not be kept in the store: {clean_text(s.redact(error), 200)}")
     try:
-        if retired := _retire(s.extras, {leads[0].subscription_id for leads in groups.values()}, s.clock()):
-            say(f"{retired} earlier request{'s' if retired != 1 else ''} about whole subscriptions {'were' if retired != 1 else 'was'} closed: Advisor's recommendations have a request for each decision now")
+        earlier, gone = _close(s.extras, listed, {sub.lower() for sub in read}, {leads[0].subscription_id for leads in groups.values()}, s.clock()) if not broken else (0, 0)
+        if earlier:
+            say(f"{earlier} earlier request{'s' if earlier != 1 else ''} about whole subscriptions {'were' if earlier != 1 else 'was'} closed: Advisor's recommendations have a request for each decision now")
+        if gone:
+            say(f"{gone} Advisor request{'s' if gone != 1 else ''} {'were' if gone != 1 else 'was'} closed: Advisor does not list {'them' if gone != 1 else 'it'} any more")
     except StoreError as error:
-        say(f"the earlier requests about whole subscriptions could not be closed: {clean_text(s.redact(error), 200)}")
+        say(f"the requests of recommendations that Advisor does not list any more could not be closed: {clean_text(s.redact(error), 200)}")
     if skipped:
         say(f"{skipped} Advisor recommendation{'' if skipped == 1 else 's'} {'was' if skipped == 1 else 'were'} counted and not added up: no figure in dollars"
             + (f" ({', '.join(sorted(currencies))})" if currencies else "") + ", so no saving is stated for them")

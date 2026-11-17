@@ -685,7 +685,7 @@ def execute(s: Services, trigger: str) -> Summary:
         else:
             summary.errors += 1
     if s.extras is not None:
-        made = advisor.make(s, ranked, contexts, say, held_ids)  # every recommendation of Azure Advisor is a case that a person is asked about, and none is judged by a model
+        made = advisor.make(s, ranked, contexts, say, held_ids, [sub for sub, found in estate.collected.items() if found.advisor_read])  # every recommendation of Azure Advisor is a case that a person is asked about, and none is judged by a model
         summary.cases += made
         summary.needs_human += made
     held = Counter(held_ids)  # the words of the History for each finding that was held back by a case of this Watch

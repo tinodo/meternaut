@@ -301,6 +301,57 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         self.assertEqual((watched.case(COSMOS).status, len([p for p in watched.store.plans_open() if p.case_id == case.case_id])), ("needs_human", 1))
 
 
+class ADecisionThatAdvisorChangesOrDelists(unittest.TestCase):
+    def test_the_quantity_that_advisor_recomputes_is_the_same_case_with_the_new_figure_and_a_decline_is_kept(self):
+        watched = Watched(estate({SUBSCRIPTION: [], SUB_B: variants(VM, SUB_B, 100.0, 0, sku=D2S, qty="2")})).run()
+        case = watched.case(VM, SUB_B)
+        watched.store.plan_put(replace(next(p for p in watched.store.plans_open() if p.case_id == case.case_id), state="declined"))
+        watched.store.case_put(replace(case, status="declined"))
+        watched.tenant.advisor_of = {SUBSCRIPTION: [], SUB_B: variants(VM, SUB_B, 150.0, 0, sku=D2S, qty="3")}
+        watched.clock.advance(days=1)
+        watched.run()
+        (again,) = watched.cases()
+        self.assertEqual((again.case_id, again.status, watched.store.plans_open()), (case.case_id, "declined", []), "no second case and no second request, and the decline stands")
+        self.assertEqual((again.facts["advisor"]["usd"], {row[1] for row in again.facts["advisor"]["rows"]}), (160.5, {3}), "but what Advisor says is brought up to date")
+        self.assertEqual(of_type(watched.events, "plan.created"), [])
+
+    def test_a_decision_that_advisor_does_not_list_any_more_is_closed_and_leaves_savings_found(self):
+        watched = Watched().run()
+        before = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
+        lists, _ = the_list()
+        lists[SUBSCRIPTION] = [r for r in lists[SUBSCRIPTION] if r["properties"]["recommendationTypeId"] != COSMOS]
+        watched.tenant.advisor_of = lists
+        watched.clock.advance(days=1)
+        watched.run()
+        (case,) = [c for c in watched.cases() if c.facts["advisor"]["type"] == COSMOS]
+        plan = watched.store.plan_get(case.plan_id)
+        self.assertEqual((case.status, plan.state, plan.preconditions["takenBack"]), ("expired", "expired", "delisted"))
+        self.assertIn(brief_mod.TAKEN_BACK["delisted"], brief_mod.build_brief(case, plan, now=NOW).outcome.lines)
+        self.assertTrue(any("closed: Advisor does not list it any more" in e["note"] for e in of_type(watched.events, "run.note")))
+        after = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
+        self.assertEqual((before["Findings"], after["Findings"], len(watched.store.plans_open())), ("9", "8", 8))
+        self.assertNotEqual(before["Saving a year"], after["Saving a year"], "its figure is no longer counted")
+
+    def test_a_decline_of_a_decision_that_is_gone_stays_and_so_does_an_answer_that_is_recorded(self):
+        watched = Watched().run()
+        gone = watched.case(COSMOS)
+        watched.store.decision_put(make_decision(plan_id=gone.plan_id, approver_oid=TINO, decision="later"))
+        lists, _ = the_list()
+        lists[SUBSCRIPTION] = [r for r in lists[SUBSCRIPTION] if r["properties"]["recommendationTypeId"] != COSMOS]
+        watched.tenant.advisor_of = lists
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual((watched.store.plan_get(gone.plan_id).state, watched.store.case_get(gone.case_id).status), ("open", "needs_human"))
+
+    def test_a_subscription_whose_advisor_list_could_not_be_read_has_nothing_closed(self):
+        watched = Watched().run()
+        watched.tenant.broken = {("advisor", SUBSCRIPTION): 403}
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual(({c.status for c in watched.cases()}, len(watched.store.plans_open())), ({"needs_human"}, 9))
+        self.assertFalse([e for e in of_type(watched.events, "run.note") if "does not list" in e["note"]])
+
+
 class WhatIsOneDecisionAndWhatIsNot(unittest.TestCase):
     def cases_of(self, lists):
         return sorted((c.facts["advisor"]["n"], c.facts["advisor"]["usd"], c.facts["advisor"]["alt"]) for c in Watched(estate({SUBSCRIPTION: [], SUB_B: lists})).run().cases())
@@ -314,10 +365,29 @@ class WhatIsOneDecisionAndWhatIsNot(unittest.TestCase):
         found = self.cases_of(whole + [no_back, no_term])
         self.assertEqual(sorted(n for n, _, _ in found), [1, 1, 2], "the two of one decision, and the two that cannot be told by their term and look-back, each alone")
 
-    def test_the_same_product_in_another_quantity_is_an_alternative_and_only_the_larger_is_counted(self):
-        two = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), qty="2")
-        three = variants(VM, SUB_B, 150.0, 10, lookbacks=(7,), qty="3")
-        self.assertEqual(self.cases_of(two + three), [(2, 0.0, "reservations"), (2, 160.5, "")])
+    def test_look_backs_with_different_quantities_are_one_decision_and_its_figure_is_the_smallest(self):
+        wanted = [("P1Y", 7, "2", 200.0), ("P1Y", 30, "3", 280.0), ("P1Y", 60, "3", 300.0), ("P3Y", 7, "2", 400.0), ("P3Y", 30, "3", 520.0), ("P3Y", 60, "3", 560.0)]
+        rows = [rec(VM, SUB_B, n, annual=a, sku=D2S, qty=q, term=t, lookbackPeriod=str(b)) for n, (t, b, q, a) in enumerate(wanted)]
+        (case,) = Watched(estate({SUBSCRIPTION: [], SUB_B: rows})).run().cases()
+        said = case.facts["advisor"]
+        self.assertEqual((said["n"], said["usd"], {row[1] for row in said["rows"]}), (6, 200.0, {2, 3}))
+        self.assertIn("differ by quantity, term and look-back", brief_mod.advisor_of(case).sentence)
+
+    def test_the_same_product_in_another_scope_is_an_alternative_and_only_the_larger_is_counted(self):
+        single = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), scope="Single")
+        shared = variants(VM, SUB_B, 150.0, 10, lookbacks=(7,), scope="Shared")
+        self.assertEqual(self.cases_of(single + shared), [(2, 0.0, "reservations"), (2, 160.5, "")])
+
+    def test_a_different_region_scope_type_or_sub_category_is_another_decision_and_never_merged(self):
+        base = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,))
+        other = {"region": variants(VM, SUB_B, 100.0, 10, lookbacks=(7,), region="northeurope", location="northeurope"),
+                 "scope": variants(VM, SUB_B, 100.0, 10, lookbacks=(7,), scope="Shared"),
+                 "type": variants(COSMOS, SUB_B, 100.0, 10, lookbacks=(7,), sku=D2S, qty="1", region="swedencentral"),
+                 "sub-category": variants(VM, SUB_B, 100.0, 10, lookbacks=(7,), recommendationSubCategory="Other")}
+        for name, changed in other.items():
+            with self.subTest(name):
+                self.assertEqual(sorted(n for n, _, _ in self.cases_of(base + changed)), [2, 2], f"a different {name} is not a variant of the same purchase")
+        self.assertEqual(sorted(n for n, _, _ in self.cases_of(base + variants(VM, SUB_B, 100.0, 10, lookbacks=(7,)))), [4], "and all the same is")
 
     def test_a_different_product_is_another_decision_and_both_are_counted(self):
         a, b = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), sku=D2S), variants(VM, SUB_B, 100.0, 10, lookbacks=(7,), sku=D2ALS)
@@ -365,6 +435,9 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
         self.assertEqual((case.facts["advisor"]["n"], case.models != {}), (1, True))
         self.assertEqual(len([c for c in watched.store.cases_recent() if c.resource_id.lower() == case.resource_id.lower()]), 1)
         self.assertEqual([p.family for p in watched.store.plans_open() if p.resource_id.lower() == case.resource_id.lower()], ["delete-disk"])
+        mine = [e for e in of_type(watched.events, "case.result") if e["detector"] == "orphan-managed-disk"]
+        self.assertEqual(len(mine), 1, "one line of the History for it, under its own detector, and it is not the line of the Advisor step")
+        self.assertNotIn("Azure Advisor", mine[0]["summary"])
         for prompt in tenant.prompts():
             self.assertNotIn("Advisor", prompt)
             self.assertNotIn("Standard HDD", prompt)
@@ -380,20 +453,20 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
         self.assertIn("Also found by Meternaut", content)
         self.assertIn("Not attached to any virtual machine", content)
 
-    def test_an_older_case_that_asks_to_delete_keeps_its_own_guards_and_gets_no_words_of_advisor_and_the_history_says_what_was_held(self):
+    def test_an_older_case_is_not_rewritten_by_advisor_it_only_gets_what_advisor_says_and_keeps_its_status_its_time_and_its_words(self):
         disk = disk_id("disk-0")
         lists = {SUBSCRIPTION: [rec(DISKS, SUBSCRIPTION, 0, annual=18.42, resource=disk)], SUB_B: []}
         watched = Watched(estate(lists))
-        mate = make_case(case_id=f"k{detectors.ident('orphan-managed-disk', disk)}", detector="orphan-managed-disk", status="needs_human", recommendation="delete", resource_id=disk,
-                         resource_type="microsoft.compute/disks", resource_name="disk-0", resource_group="rg-app", subscription_id=SUBSCRIPTION, facts={"diskState": "unattached"}, advice={})
+        mate = make_case(case_id=f"k{detectors.ident('orphan-managed-disk', disk)}", detector="orphan-managed-disk", status="proposed", recommendation="delete", resource_id=disk,
+                         resource_type="microsoft.compute/disks", resource_name="disk-0", resource_group="rg-app", subscription_id=SUBSCRIPTION, facts={"diskState": "unattached"}, advice={},
+                         updated_at="2026-11-01T00:00:00Z", runs_seen=3, models={"detective": "model-a"})
         watched.store.case_put(mate)
         watched.run()
         found = watched.store.case_get(mate.case_id)
-        self.assertEqual((found.advice, found.detector, found.facts["advisor"]["n"]), ({}, "orphan-managed-disk", 1), "Advisor's figure is on its case, and its words are not")
-        self.assertEqual([p for p in watched.store.plans_open() if p.resource_id.lower() == disk.lower()], [], "nobody looked up who changed the disk: a deletion is not asked on that")
-        (held,) = [e for e in of_type(watched.events, "case.held") if e["caseId"] == mate.case_id]
-        self.assertEqual(held["reason"], "held back: not checked who changed it")
-        self.assertEqual(watched.summary.held, 1)
+        self.assertEqual((found.status, found.updated_at, found.runs_seen, found.advice, found.detector), ("proposed", "2026-11-01T00:00:00Z", 3, {}, "orphan-managed-disk"))
+        self.assertEqual((found.facts["advisor"]["n"], found.facts["diskState"]), (1, "unattached"), "Advisor's figure is on its case, and its words are not")
+        self.assertEqual([e for e in watched.events if e.get("caseId") == mate.case_id], [], "no line of the History says that Advisor made or judged it")
+        self.assertEqual((watched.summary.cases, watched.store.plans_open()), (0, []), "the Advisor step made and asked about nothing")
 
 
 class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
@@ -477,6 +550,20 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertIn("The typed facts that Meternaut recorded", content)
         for text in ("What the AIs wrote, in full", "The typed facts that the AIs saw", "The second AI was not asked"):
             self.assertNotIn(text, content)
+
+    def test_the_footer_names_no_model_and_the_weekly_summary_says_that_no_ai_looked_at_it(self):
+        self.assertNotIn("Models:", self.page.content, "no model is named for a request that no model touched")
+        letter = letters.digest_letter(Person(TINO, "Tino", ("owner", "approver"), "tino@example.com"), "https://meternaut.example", NOW, [(self.plan, self.case)])
+        self.assertIn("No AI looked at it.", letter.text)
+
+    def test_only_a_commitment_says_what_its_figure_rests_on_and_a_disk_says_nothing_of_rates(self):
+        commitment = self.page.content.replace("&#x27;", "'")
+        self.assertIn("based on your own rates and usage", commitment)
+        disk = next(c for c in self.watched.cases() if c.facts["advisor"]["type"] == DISKS)
+        text = Console(store=self.watched.store).get(f"/ok/{disk.plan_id}").content
+        self.assertIn("Its figure is $18.42 a year", text)
+        for words in ("retail", "your own rates", "rates"):
+            self.assertNotIn(words, text)
 
     def test_the_page_names_nothing_of_the_estate_that_other_requests_do_not_name(self):
         content = self.page.content

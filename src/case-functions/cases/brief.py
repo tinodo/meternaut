@@ -86,7 +86,8 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
               "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
-              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
+              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
+              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -428,8 +429,10 @@ class Brief:
     check_first: tuple[str, ...] = ()
     # What removing the resource would do (impact_of); None for every request that is not advice about the use of a resource.
     impact: Impact | None = None
-    # What Azure Advisor says (advisor_of): its figures added up, its rows, and what was not added up. None for a case that holds nothing of Advisor's.
+    # What Azure Advisor says (advisor_of): its figure, its rows and what was not counted. None for a case that holds nothing of Advisor's. `by_code` is a request that Advisor's own recommendation made
+    # by code: no AI looked at it.
     advisor: Advisor | None = None
+    by_code: bool = False
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -632,7 +635,7 @@ def says_nothing(case: CaseRecord | None) -> bool:
     """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads, no analysis of
     gateways and no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
     a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
-    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None or advisor_digest(case) is not None:
+    if case is None or advice_of(case) is not None or group_of(case) is not None or     unread_of(case) is not None or gateways_of(case) is not None or advisor_says(advisor_digest(case)):
         return False
     if cost_words.is_container(case.resource_id):
         return True
@@ -1323,6 +1326,12 @@ def advisor_saving(case: CaseRecord | None) -> float | None:
     return round(usd / 12, 2) if usd else None
 
 
+def advisor_says(found: dict | None) -> bool:
+    """Whether what Advisor says holds anything to look at: a figure in dollars, a product or a term. A recommendation with none of them, and no words, says nothing."""
+    return found is not None and (any((_figure(found.get(name)) or 0) > 0 for name in ("usd", "low", "high"))
+                                  or any(isinstance(row, list) and len(row) == 8 and (row[0] or row[3]) for row in found["rows"]))
+
+
 def _by_advisor(case: CaseRecord | None) -> bool:
     """A case that Advisor's recommendations made, by code: no AI looked at it."""
     return case is not None and case.detector == "advisor-cost" and not case.models and advisor_digest(case) is not None
@@ -1379,19 +1388,21 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     alt, left, commit = text_of(found.get("alt"), 40), _whole(found.get("more")), _commitment(case)
     top = _term_text(found["rows"][-1][3]) if not left and isinstance(found["rows"][-1], list) and len(found["rows"][-1]) == 8 else ""
     many = f"{number_text(count)} {'variant' if commit else 'recommendation'}{'' if count == 1 else 's'}"
-    rates = "based on your own rates and usage" if commit else "at retail rates, so your own rates are not in it"
-    what = f"{many} of one purchase{f' ({same})' if same else ''} that differ by term and look-back" if commit and count > 1 else many
+    rates = ", based on your own rates and usage" if commit else ""  # Learn: reservations and savings plans are priced on actual rates and usage; it says nothing of rates for the others that Advisor lists
+    differ = [word for n, word in ((0, "quantity"), (2, "term"), (4, "look-back")) if n in shown] or ["term", "look-back"]
+    what = (f"{many} of one purchase{f' ({same})' if same else ''} that differ by {', '.join(differ[:-1])}{' and ' if len(differ) > 1 else ''}{differ[-1]}"
+            if commit and count > 1 else many)
     if alt:
         money = ADVISOR_ALT.format(alt=alt)
     elif usd <= 0:
         money = "None of them has a figure in dollars."
     elif count == 1:
-        money = f"Its figure is {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}."
+        money = f"Its figure is {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
     elif commit:
-        money = (f"You buy one of them, so they are alternatives, and Meternaut counts the smallest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}. "
+        money = (f"You buy one of them, so they are alternatives, and Meternaut counts the smallest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}. "
                  f"The largest is {usd_text(high)} a year{f' with a term of {top}' if top else ''}.")
     else:
-        money = f"They overlap, so Meternaut counts the largest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}."
+        money = f"They overlap, so Meternaut counts the largest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
     skipped = _whole(found.get("skipped"))
     kinds = [text_of(item, 3) for item in found.get("currencies", []) if isinstance(item, str)] if isinstance(found.get("currencies"), list) else []
     note = (f"{number_text(skipped)} of the {number_text(count)} {'was' if skipped == 1 else 'were'} counted and not added up: Advisor gave no figure in dollars"
@@ -1873,7 +1884,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case))
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case))
 
 
 def order_key(brief: Brief) -> tuple:

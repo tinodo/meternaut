@@ -353,7 +353,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
     if case is not None:
-        by_code = brief.advisor is not None and not brief.models  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
+        by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
         parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
         typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT, ADVISOR_KEY)}  # what code made of the estate is in the evidence above, and no AI saw it
@@ -388,4 +388,5 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
     reading = join(block(part) for part in (_impact(brief), _measured(brief), _options(brief), _check_first(brief), _why(brief), _whose(brief)))
     parts.append(fmt('<div class="cols{solo}"><div>{reading}</div>{side}</div>', solo="" if side is not None else " solo", reading=reading, side=side if side is not None else Safe("")))
     parts.append(_details(ctx, brief, case, plan, action))
-    return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=brief.models or None, why=why or "you opened a request that Meternaut made", wide=True)
+    return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=() if brief.by_code else brief.models or None,
+                why=why or "you opened a request that Meternaut made", wide=True)

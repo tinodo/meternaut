@@ -193,6 +193,7 @@ class Collected:
     context: Context
     sources_read: int
     sources_failed: int
+    advisor_read: bool = False  # Advisor's list for the subscription was read (an empty list is a read): only then is a recommendation that is not on it gone
 
 
 def pick(value: object, allowed: frozenset[str], other: str = "other") -> str:
@@ -472,12 +473,14 @@ def _read_subscription(arm: Arm, subscription: str, today: dt.date, graph: _Grap
     leads = list(graph.leads)
     context = Context(recent=graph.recent, managed_groups=graph.groups)
     read, failed = graph.read, graph.failed
+    advisor_read = False
     try:
         for recommendation in arm.advisor_cost(subscription):
             lead = advisor_lead(recommendation, subscription)
             if lead:
                 leads.append(lead)
         read += 1
+        advisor_read = True
     except HttpError as error:
         failed += 1
         problems.add(ADVISOR, subscription, error)
@@ -507,7 +510,7 @@ def _read_subscription(arm: Arm, subscription: str, today: dt.date, graph: _Grap
             lead.subscription_name = named
             if named and cost_words.scope_of(lead.resource_id).kind == "subscription":
                 lead.name = named  # a finding about the subscription itself is about "this subscription", and a person knows it by its name
-    return Collected(leads, context, read, failed)
+    return Collected(leads, context, read, failed, advisor_read)
 
 
 def collect_estate(arm: Arm, subscriptions: Sequence[str], now: dt.datetime, notes: list[str], out_of_time: Callable[[], bool] = lambda: False) -> Estate:
