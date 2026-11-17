@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, GROUP_FACT, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
+from .models import ADVISE, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -68,6 +68,28 @@ HELD_SHARED = "others share this kind of resource, so this asks for a look and n
 AUTOMATION_DAYS = 14
 # And a finding that asks to delete a resource of the network that others do not share is held back when what depends on it was not checked to the end (cases/impact.py): `impact`.
 HELD_REASONS = ("automation", "unchecked", "impact")
+# Why a finding has no request, as every page and letter says it: the heading (one line a reason), the guard's sentence and what the guard still needs. `{when}` is how long ago something that runs
+# by itself changed the resource. A finding that a guard holds back is shown, in a request of its own that no person is asked to approve (cases/approvals.py Approvals.settle).
+HOLD_WORDS = {
+    "automation": ("Something that runs by itself changes it",
+                   "Something that runs by itself changed it {when} and would change it back, so a change by hand would not last.",
+                   f"Whoever looks after what runs by itself can change it there. Meternaut asks about it as usual when nothing has changed it for {AUTOMATION_DAYS} days."),
+    "unchecked": ("Nobody has looked up who changed it",
+                  "Nobody has looked up who changed it, so Meternaut does not ask anyone to delete it.",
+                  "Meternaut looks it up at its next search. Nothing is asked of you."),
+    "impact": ("What depends on it was not checked to the end",
+               "What depends on it was not checked to the end, so Meternaut does not ask anyone to remove it.",
+               "Meternaut checks again at its next search. You can look at what uses it in the meantime."),
+    "nothing": ("Meternaut has nothing to say about it yet",
+                "Meternaut has no figure, no name of a thing and no words of Azure Advisor for it, so it cannot say what to look at.",
+                "Nothing is asked of you. Meternaut asks again when it can say what to look at."),
+    "rules": ("Meternaut's rules changed",
+              "Meternaut's rules changed, and it had asked about this on less evidence than it asks for now.",
+              "Nothing is asked of you. Meternaut looks at it again at its next search."),
+    "waiting": ("Waiting for a free place",
+                "Nothing holds it back any more, but all the places for requests are taken, so Meternaut has not asked about it yet.",
+                "Nothing is asked of you. Meternaut asks about it when a place is free."),
+}
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
 IMPACT = "impact"
 CHANGE = pricing.KEY  # the key of the change that a finding states, kept in the facts of the case (cases/pricing.py makes its digest)
@@ -89,7 +111,9 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
               "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
               "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
-              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
+              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more.",
+              "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
+              "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -314,6 +338,17 @@ class Impact:
 
 
 @dataclass(frozen=True)
+class Hold:
+    """Why no request is made for a finding that a guard holds back, in plain sentences (HOLD_WORDS): `reason` is a key of it, `heading` one line, `why` the guard's sentence and `needs` what the guard
+    still needs. Nothing asks a person to approve a change for such a finding, and nothing changes in Azure when a person answers."""
+
+    reason: str
+    heading: str
+    why: str
+    needs: str
+
+
+@dataclass(frozen=True)
 class Brief:
     case_id: str
     plan_id: str
@@ -380,6 +415,8 @@ class Brief:
     # by code: no AI looked at it.
     advisor: Advisor | None = None
     by_code: bool = False
+    # Why no request was made, for a finding that a guard holds back (hold_of): None for every other request.
+    hold: Hold | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -596,6 +633,12 @@ def says_nothing(case: CaseRecord | None) -> bool:
     return kind_words(case.resource_type)[1] == "resource" and _id_like(text_of(case.resource_name, MAX_NAME))
 
 
+def _automated_at(owner: dict) -> object:
+    """When something that is no person last changed the resource, as the owner record keeps it: the newest write of one (`automatedAt`), and for a record from before it the last change when its
+    author has no @ in the name."""
+    return owner.get("automatedAt") if "automatedAt" in owner else (owner.get("changedAt") if "@" not in str(owner.get("changedBy") or "@") else "")
+
+
 def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
     """Why no request is made for a finding, or one that was made is taken back (one of HELD_REASONS), and "" when none is held. `automation`: the Activity Log names a write within AUTOMATION_DAYS days
     by an identity that is no person (the owner record keeps the newest, `automatedAt`; a record from before it has only the last change). `unchecked`: the finding asks to delete the resource and who
@@ -604,8 +647,7 @@ def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
     if case is None:
         return ""
     owner = case.owner if isinstance(case.owner, dict) else {}
-    last = owner.get("automatedAt") if "automatedAt" in owner else (owner.get("changedAt") if "@" not in str(owner.get("changedBy") or "@") else "")
-    when = parse_time(last)
+    when = parse_time(_automated_at(owner))
     if when is not None and _utc(now) - when <= dt.timedelta(days=AUTOMATION_DAYS):
         return "automation"
     about_a_resource = advice_of(case) is None and not cost_words.is_container(case.resource_id)  # a recommendation of Advisor, or about a whole subscription or group, is not the deletion of a resource
@@ -628,6 +670,23 @@ def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
     nothing used it. It was made when a deletion could be asked on less than the rules ask for."""
     return (plan.family == ADVISE and plan.title.startswith(VERBS["delete"]) and case is not None and case.recommendation == "delete"
             and (shared(case.resource_type) or not measured_zero(case.facts)))
+
+
+def held_of(plan: PlanRecord | None) -> str:
+    """The reason that the request of a held finding (state HELD) was made for, a key of HOLD_WORDS, or "" for every other request."""
+    reason = plan.preconditions.get(HELD) if plan is not None and plan.state == HELD and isinstance(plan.preconditions, dict) else None
+    return reason if isinstance(reason, str) and reason in HOLD_WORDS else ""
+
+
+def hold_of(plan: PlanRecord | None, case: CaseRecord | None, now: dt.datetime) -> Hold | None:
+    """Why no request is made for the held finding of this request, in the sentences of HOLD_WORDS (the same for the page, the letter and the proposal); None for every other request. How long ago
+    something that runs by itself changed the resource comes from the owner record of the case."""
+    reason = held_of(plan)
+    if not reason:
+        return None
+    heading, why, needs = HOLD_WORDS[reason]
+    owner = case.owner if case is not None and isinstance(case.owner, dict) else {}
+    return Hold(reason, heading, why.format(when=ago_text(now, str(_automated_at(owner) or ""))[1] or "lately"), needs)
 
 
 def _advisor_headline(problem: str, scope: str, name: str, group: str, subscription_name: str, subscription: str) -> str:
@@ -1449,9 +1508,9 @@ def _answers(kind: str, state: str, may_answer: bool, changes_paused: bool, stag
     (`refused`): the answers that are left are the ones that approve nothing. A change that needs two people (`stage`, see cases/twopeople.py)
     offers the first person "confirm" in the place of "approve", the second person "approve", and a person who confirmed it only a decline or "not mine": a question or a "later" would
     take the place of their confirmation."""
-    if kind == "info" or state != "open" or not may_answer:
+    if kind == "info" or state not in ("open", HELD) or not may_answer:
         return ()
-    answers = ["approve", "decline", "not_mine", "ask", "later"]
+    answers = ["decline", "not_mine", "ask", "later"] if state == HELD else ["approve", "decline", "not_mine", "ask", "later"]  # there is nothing to approve for a finding that is held back
     if stage == "mine":
         answers = ["decline", "not_mine"]
     elif stage:
@@ -1521,13 +1580,14 @@ def _nothing_changed(result: object) -> str:
 
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
-    if plan is None or state == "open":
+    if plan is None or state in ("open", HELD):
         return none
     advice = plan.family == ADVISE
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            return Outcome("expired", "Taken back", (TAKEN_BACK[why], "Nothing was changed in Azure."), "Taken back by Meternaut", "", plan.expires_at)
+            title = {"released": "No longer held back", "left-alone": "Left alone"}.get(why, "Taken back")
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Expired", ("Nobody answered in time.", "Nothing changed."), "Expired, nobody answered", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")
@@ -1622,7 +1682,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case))
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
+        hold=hold_of(plan, case, now))
 
 
 def order_key(brief: Brief) -> tuple:

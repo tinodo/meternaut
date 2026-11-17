@@ -85,6 +85,7 @@ Each line of the telemetry is `meternaut_event ` and one compact JSON object. Th
 | `case.step` | One step of a case ends | `caseId`, `step` (evidence, detective, guards, skeptic), `model`, `promptTokens`, `completionTokens`, `ms`, `ok`, `note` |
 | `case.result` | A case ends | `caseId`, `leadId`, `detector`, `resourceName`, `resourceType`, `resourceGroup`, `costUsd30d`, `status` (proposed, needs_human, dropped, error), `recommendation`, `confidence`, `monthlySavingUsd`, `summary`, `objections`, `guards` |
 | `case.held` | A finding cannot say what to look at, so no request is made for it, or a request that was made before is taken back | `caseId`, `detector`, `resourceType`, `resourceName`, `reason` (always `held back: nothing to say`) |
+| `case.released` | A finding that was held back is held no longer: it was judged again and nothing holds it back, it was dropped, answered, or has a request ([proposal 29](29-held-findings.md)) | `caseId`, `detector`, `resourceType`, `resourceName`, `reason` (`no longer held back`), `was` (the `held back: …` words of the reason that it was held for); no amount of money |
 | `run.finished` | The run ends | `ok`, `leads`, `cases`, `proposed`, `needsHuman`, `dropped`, `errors`, `tokens`, `seconds`, `investigation` (`ran`, `failed` or `off`), `investigationLines` (how many `investigation.*` lines the run wrote, so that a reader knows when all have arrived), `heldBack` (how many findings were held back in the run: see `case.held`) |
 | `run.failed` | The run cannot continue | `reason` |
 

@@ -50,7 +50,7 @@ class AFindingThatSaysNothingIsHeldBack(unittest.TestCase):
 
     def test_no_request_is_made_and_nobody_is_asked(self):
         self.assertEqual((self.extras.store.plans_open(), self.offered), ([], []))
-        self.assertFalse(self.case.plan_id)
+        self.assertEqual(self.extras.store.plan_get(self.case.plan_id).state, "held", "it is shown in a request of its own that nobody is asked to approve (cases/approvals.py settle)")
 
     def test_the_finding_stays_in_the_history_with_the_reason_and_its_name(self):
         (held,) = [e for e in self.events if e["type"] == "case.held"]

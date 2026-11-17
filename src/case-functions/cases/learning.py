@@ -43,7 +43,7 @@ from .approvals import ADVICE_QUIET_DAYS
 from .brief import past_line, says_nothing, taken_back  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
 from .decide import PROPOSE_CONFIDENCE, Decision
 from .memory_store import parse, stamp
-from .models import ADVISE, DECLINE_REASONS, ActionRecord, CaseRecord, LessonRecord, PlanRecord, Store, StoreError
+from .models import ADVISE, DECLINE_REASONS, HELD, ActionRecord, CaseRecord, LessonRecord, PlanRecord, Store, StoreError
 
 LOG = logging.getLogger("meternaut.learning")
 
@@ -206,6 +206,8 @@ def lesson_of(plan: PlanRecord, case: CaseRecord | None, decisions: Sequence, ac
         return None
     if plan.family == ADVISE and plan.state == "expired" and (says_nothing(case) or taken_back(plan, case)):
         return None  # a request that was taken back (it cannot say what to look at, or Meternaut's rules held it back or changed) was never one for a person to answer: it teaches nothing, and does not count as unanswered
+    if (plan.preconditions or {}).get(HELD):
+        return None  # the request of a finding that a guard held back could not be approved, only asked about, declined or called not theirs: it would skew what past requests like this say
     answer, reason, decided = _answer(plan, decisions)
     facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
     learned = case.learned if case is not None and isinstance(case.learned, dict) else {}

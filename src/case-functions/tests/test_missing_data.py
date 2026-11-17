@@ -406,7 +406,8 @@ class TheOlderDetectorsAreHeldByTheSameRules(unittest.TestCase):
         summary, events, _ = run_watch(estate_with(planted_disk=False, endpoints=1), extras, clock)
         self.assertEqual((summary.cases, summary.held, extras.store.plans_open()), (1, 1, []), "the Detective said delete, and no request is made")
         (case,) = extras.store.cases_recent()
-        self.assertEqual((case.detector, case.recommendation, case.plan_id), ("orphan-private-endpoint", "delete", None))
+        self.assertEqual((case.detector, case.recommendation), ("orphan-private-endpoint", "delete"))
+        self.assertEqual(extras.store.plan_get(case.plan_id).state, "held", "the finding is shown to a person in a request of its own, which nobody is asked to approve (cases/approvals.py settle)")
         (held,) = [e for e in events if e["type"] == "case.held"]
         self.assertEqual(held["reason"], "held back: not checked who changed it")
         self.assertIn("1 finding held back: not checked who changed it", [e["note"] for e in events if e["type"] == "run.note"])

@@ -16,7 +16,7 @@ import datetime as dt
 import json
 
 from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
-from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
@@ -52,7 +52,7 @@ def _chips(brief: Brief) -> Safe:
     if brief.kind == "change":
         chips.append(chip("Can be undone", "low", "circle") if brief.undo.reversible else chip("Cannot be undone", "high", "diamond"))
     elif brief.kind == "advice":
-        chips.append(chip("Answering changes nothing in Azure"))
+        chips.append(chip("Held back from a request", "mid", "triangle") if brief.hold is not None else chip("Answering changes nothing in Azure"))
     return fmt('<p class="chips">{chips}</p>', chips=join(chips))
 
 
@@ -64,6 +64,12 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     kind = {"expired": "warning", "failed": "error", "done": "success", "verified": "success"}.get(outcome.state, "info")
     when = paragraph(ctx.when(outcome.at)) if outcome.at else Safe("")
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
+
+
+def _hold(brief: Brief) -> Safe:
+    """Why no request was made, at the top of the page of a finding that a guard holds back: the guard's sentence and what it still needs. Nothing asks the person to approve anything here."""
+    found = brief.hold
+    return notice("info", found.heading, found.why, found.needs) if found is not None else Safe("")
 
 
 def _look(brief: Brief) -> Safe:
@@ -323,7 +329,8 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if plan is not None:
         waiting = action is not None and plan.state == "approved" and action.state == "queued" and action.step_up
         rows += [("Request code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
-                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)), ("Expires", ctx.when(plan.expires_at))]
+                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)),
+                 ("Expires", "It ends when nothing holds the finding back any more." if plan.state == HELD else ctx.when(plan.expires_at))]
     if ctx.services.host:
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
@@ -354,7 +361,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _decision(brief, case, ctx.now)]
+    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

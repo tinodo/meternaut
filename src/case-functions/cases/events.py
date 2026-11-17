@@ -18,7 +18,7 @@ KINDS = ("run.started", "run.note", "lead.found", "case.started", "case.step", "
 # The lines of the loop that follows a case: a plan, the change and its check, a message, and a finding that was held back because it cannot say what to look at (cases/upkeep.py). The tools
 # that read a run's History know the kinds above only.
 LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed", "approval.recorded", "action.started", "action.finished", "action.verified", "mail.result",
-              "tick.result", "case.held")
+              "tick.result", "case.held", "case.released")
 # The lines of the investigation (cases\investigate.py): its start, one line for each beat when the estate was looked at in beats (cases/beats.py), one line for each tool call that ran (and for the first few
 # that were refused), one line for each finding and its end. The cases that it opens end in `case.result`, as every case does.
 INVESTIGATION_KINDS = ("investigation.started", "investigation.beat", "investigation.call", "investigation.finding", "investigation.finished")

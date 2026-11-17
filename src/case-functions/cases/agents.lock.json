@@ -70,7 +70,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "80f9bcd3931a7b8a6cfc1fd3662d7eae4d87971bffeb3a9fdea67993a22178a7"
+    "moduleSha256": "4f8dbce81e241e2a9005f20e3d702718215eac0266c480e19e80a4e5d9d9c3a0"
   },
   "tools": {
     "advisor_items": {
