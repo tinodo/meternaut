@@ -393,10 +393,19 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a finer grain than a day
-        # (it was 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since the data that
-        # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 6500)
+        # 7,000 since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says
+        # which level it judged (it was 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a
+        # finer grain than a day, 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since
+        # the data that is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 7000)
+
+    def test_the_investigator_is_told_in_general_words_to_judge_the_whole_that_a_resource_belongs_to_and_to_say_which_level_it_judged(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("A resource is often a symptom of something larger, or a part of something larger: follow what it is connected to and judge the whole, not only its quiet part.",
+                         "One call can show the whole picture of a few resources at once, which costs fewer calls than separate reads.",
+                         "In each finding say which level you judged, the part or the whole, and why."):
+            self.assertIn(sentence, text)
+        self.assertEqual(banned_in(text), [], "no kind of resource, no measurement, no threshold")
 
     def test_the_investigator_is_told_to_cite_the_volume_and_the_readers_of_data_that_is_stored_and_not_read_and_that_a_source_it_could_not_read_is_unknown(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS

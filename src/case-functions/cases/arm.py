@@ -13,7 +13,7 @@ import threading
 from typing import Callable, Mapping, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
-from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError
+from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError, retry_after
 from .identity import IdentityError
 from .metrics import DAILY, GRAINS, MAX_POINTS, MetricPoint, Plan
 
@@ -178,6 +178,21 @@ class Arm:
                 raise
             middle = len(subscriptions) // 2
             return self.graph_many(subscriptions[:middle], query) + self.graph_many(subscriptions[middle:], query)
+
+    def graph_page(self, subscriptions: Sequence[str], query: str, skip: str | None = None, top: int = 1000) -> tuple[list[dict], str | None]:
+        """One page of a Resource Graph query over the subscriptions, and the token of the next page (None after the last). The caller keeps the token, so that a pass of many pages can stop and go on. When
+        the quota of the user is used up and another page follows, it waits as long as the platform says that the quota resets after (Learn, "Guidance for throttled requests in Azure Resource Graph")."""
+        options: dict[str, object] = {"resultFormat": "objectArray", "$top": top, **({"$skipToken": skip} if skip else {})}
+        response = self.client.request("POST", f"{ARM}/providers/Microsoft.ResourceGraph/resources?api-version={GRAPH_API}", headers=self._headers(),
+                                       body={"subscriptions": list(subscriptions), "query": query, "options": options}, timeout=60)
+        data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            raise _bad("Resource Graph")
+        token = data.get("$skipToken") or None
+        remaining, wait = str(response.headers.get("x-ms-user-quota-remaining", "")).strip(), retry_after(response.headers)
+        if token and wait and remaining.isdigit() and int(remaining) <= 1 and wait < (self.client.remaining() or 3600):
+            self.client.sleep(min(wait, 30.0))
+        return [row for row in data["data"] if isinstance(row, dict)], token
 
     def subscriptions(self) -> list[dict]:
         """The subscriptions that the identity can read, as Azure Resource Manager lists them (every state of them), every page. The next-page link is followed only on the same

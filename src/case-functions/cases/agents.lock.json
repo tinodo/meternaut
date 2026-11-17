@@ -2,7 +2,7 @@
   "agents": {
     "meternaut-investigator": {
       "connection": "aigateway",
-      "instructionsSha256": "d06ecc72d2a2fb4556ccf0bcde8863b391b0e3aef29e514cfd64fc448eb81872",
+      "instructionsSha256": "2d8660f63d648276caa42ea991401ec61b67270d031d4fdc745ff1c56509f18b",
       "kind": "prompt",
       "model": "gpt-5.5",
       "options": {
@@ -11,6 +11,7 @@
       },
       "tools": [
         "advisor_items",
+        "changes",
         "children",
         "commitments",
         "cost_history",
@@ -26,12 +27,14 @@
         "metric_names",
         "metric_split",
         "metric_summary",
+        "neighbors",
         "paid_features",
+        "profile",
         "recall_knowledge",
         "recall_lessons",
         "recall_open_questions"
       ],
-      "toolsSha256": "063a90f9ab32d4059d0371b64157eee2f185bfca123fc70d3d7de49f412eadf6"
+      "toolsSha256": "ecfeda90d5649142625d89e9b76edc4ef76e791829f241ca18105ce08f280e7e"
     },
     "meternaut-scholar": {
       "connection": "aigateway",
@@ -67,12 +70,16 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "d241effab7efa782b41e420a36dfdba392c5b1cbfdfecf5db396f4495973eab8"
+    "moduleSha256": "9f4ace3f5d8ff88949af17dc523ac13492a19f98ce5feac8e9fb0d8af54a5855"
   },
   "tools": {
     "advisor_items": {
-      "implementationSha256": "f52163c0724e0bdb2597a3db6b1d5457def9a210b125e6ed49d9fb7ca2002061",
+      "implementationSha256": "0a767f27ec8e3212a5a0ba3f765697f2c8e4bc0b623e3c742761eae6a46302f8",
       "schemaSha256": "39a000d2d4ec6c44503be15a7678eef98f18bd3dd19a828fe6cc9c91eaf35596"
+    },
+    "changes": {
+      "implementationSha256": "2ef910f7a960363605b2a2912e35ea8f306d6d698629260284e712dfc395c68c",
+      "schemaSha256": "a23aa203022f99dc5274ade211e568041530f6941459db172552b03a3d2d705c"
     },
     "children": {
       "implementationSha256": "5f9fa9060c84d5a8bec2e6d3e54c08f1b7f6762f90621cdcf7b254d60c478fe7",
@@ -91,7 +98,7 @@
       "schemaSha256": "3debb75ad86a22576bdcb26e10900b6dccfb38e4a282bbfe7c0f8eccbf29a1c1"
     },
     "cost_meters": {
-      "implementationSha256": "04654b832c4aaa3f37ca33ae5badde86756d21aff9d574ff83a4e1679f0b4a6b",
+      "implementationSha256": "7100ea2ab6bc8d2f6209d636218ec9c0076684a6519a7eddf072e857f65c9090",
       "schemaSha256": "f913324ff561517b6000caaabffa4a1814e8be0d06a98adddbd27f0a52c5f693"
     },
     "data_readers": {
@@ -138,9 +145,17 @@
       "implementationSha256": "1f84d2ce9c71a25e89da1ed85567a2cf5a6fb2f4838fc3af099bf680d6492750",
       "schemaSha256": "0960d57f469511f28b81b4d13c4fad30e41ee1dbdd61baec7345897c063b4869"
     },
+    "neighbors": {
+      "implementationSha256": "7f318c9f1385161bc40961e46742f9d57eff96f5a13fb867b0a908f19d50af13",
+      "schemaSha256": "2de4989081f20c825c059cbb097ad2665c8d315e22011218b3a57632a09a9afd"
+    },
     "paid_features": {
       "implementationSha256": "5de1f3567a8fd44094be12f27b1d49b8ae6ef6076d66c513f883fb19db24a852",
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
+    },
+    "profile": {
+      "implementationSha256": "b1853c8565d84b4effcf508b39eced755847c99277931451cd6afd47a6720ba6",
+      "schemaSha256": "b21e65836ea628c9967b48aebca9ceb356f5782e43bb9befb2f6f8f1198d6087"
     },
     "recall_knowledge": {
       "implementationSha256": "2c982244e85d0623be9f942be1dabcb08e25f8dd63129a6db4951d55e372b00e",

@@ -379,7 +379,7 @@ class Foundry:
 
         `agent` is what ensure_agent returned ("name:version": that version is run) or a name. The calls of one answer are all made and answered in one request.
         Arguments that are not a JSON object are not given to the handler: the agent is told {"error":"bad-arguments"}. A handler that raises, or that does not give a
-        string, makes the answer {"error":"tool-failed"}. An answer longer than cases.toolbox.MAX_RESULT_CHARS is cut and says so.
+        string, makes the answer {"error":"tool-failed"}. An answer longer than cases.toolbox.result_cap(name) is cut and says so.
 
         `max_calls` is a soft budget. That many calls are run (one that failed counts). Every call after them is not given to the handler: it is answered
         {"error":"budget-used-up"} and recorded with refused: True, and the agent has GRACE_ROUNDS (3) more rounds to give its text. The same is done with every call
@@ -719,7 +719,7 @@ class Foundry:
 
     def _answer(self, call: dict, handler: ToolHandler, result: AgentRun) -> dict:
         """Runs one function call of the agent and returns the input item that answers it."""
-        from .toolbox import MAX_RESULT_CHARS  # imported here: the toolbox imports this module, so a top-level import would be circular
+        from .toolbox import result_cap  # imported here: the toolbox imports this module, so a top-level import would be circular
 
         name = call["name"]
         try:
@@ -738,8 +738,8 @@ class Foundry:
                 output = TOOL_FAILED
         else:
             output = BAD_ARGUMENTS
-        if len(output) > MAX_RESULT_CHARS:
-            output = output[: MAX_RESULT_CHARS - len(CUT_NOTE)] + CUT_NOTE
+        if len(output) > result_cap(name):
+            output = output[: result_cap(name) - len(CUT_NOTE)] + CUT_NOTE
             entry["cut"] = True
         entry["chars"] = len(output)
         result.calls.append(entry)
