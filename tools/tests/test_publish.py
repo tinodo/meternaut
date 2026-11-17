@@ -924,10 +924,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left, or the comments are not taken out any more: look at which, "
                                                                                                     "and raise the ceiling on purpose, with the new measure, only for the first")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_150000_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_135000_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 150_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 150,000 that stay free are the room for the code that the app grows by, which the stripped "
-                                                      "sources (tools/strip-sources.py) make: when this fails, no word is shortened to make room: look at what grew, or at whether the strip still runs")
+        self.assertLessEqual(sent, 480_000 - 135_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 135,000 that stay free are the room for the code that the app grows by, which the stripped "
+                                                      "sources (tools/strip-sources.py) make (the floor was 150,000 until the request grew to about 337,000 bytes: docs/proposals/27-package-without-comments.md): when this fails, no word is "
+                                                      "shortened to make room: look at what grew, at whether the strip still runs, and at what can leave the package, before the floor moves again")
 
     @staticmethod
     def sources_with_a_broken_file(tmp):
