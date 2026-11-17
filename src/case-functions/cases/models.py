@@ -19,6 +19,7 @@ The drift check on the Operations page added CheckRecord (its own table, one row
 The work on names and on the cost that Cost Management shows added `CaseRecord.cost_state` (empty: a record of before, read from `cost_usd_30d` by cases/brief.py), `cost_by_service`, `estimate`,
 `subscription_name` and `advice` (all empty: nothing was looked up), and `RunRecord.held` (0). Nothing was renamed or removed. A series of daily costs that is kept with no number above nothing is
 not drawn (cases/web/figures.py), so a record of before that holds thirty zeros for a resource that had no cost line shows what a record of now shows: no line.
+The page "What the AI looked at" added InvestigationRecord (its own table, the newest KEPT_INVESTIGATIONS) and no field of a record that was there before: a run before it has no record, and the page says so.
 """
 from __future__ import annotations
 
@@ -78,6 +79,10 @@ ADVICE_QUIET_DAYS = 30
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
+# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time` or `calls` (its time for tool calls or its calls were used up), `refused` (the harness did not let it run
+# or stopped it) and `failed`. The records of the investigations that the page "What the AI looked at" reads are kept for the newest KEPT_INVESTIGATIONS runs.
+INVESTIGATION_ENDS = ("answered", "time", "calls", "refused", "failed")
+KEPT_INVESTIGATIONS = 20
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
 INVESTIGATION = "investigation"
 # The key, in the facts of a case, of what a case stands for when its finding covers many resources and a person is asked about the finding and not about each resource (cases/investigate.py
@@ -413,6 +418,37 @@ class CapabilityRecord(Record):
 
 
 @dataclass(frozen=True)
+class InvestigationRecord(Record):
+    """What one investigation looked at and came to (cases/activity.py makes it; the page "What the AI looked at" shows it). It holds words of closed lists, numbers, the AI's own sentences cleaned
+    of ids, and kinds of resource as Azure names them: no name, tag, id or description of a resource. A run before this record existed has none, which is not a record of nothing."""
+
+    run_id: str
+    at: str  # when the investigation began
+    trigger: str = ""  # what started the run: timer or control
+    investigator: str = ""  # the two models
+    skeptic: str = ""
+    calls: int = 0  # tool calls made, and the most that the run allowed
+    max_calls: int = 0
+    tokens: int = 0
+    seconds: int = 0
+    max_seconds: int = 0
+    end: str = "failed"  # one of INVESTIGATION_ENDS
+    answered: bool = False  # the Investigator's answer could be read
+    stop: str = ""  # why the harness refused or stopped the run: a code of cases/harness.py
+    note: str = ""  # what the run said of itself when it ended in no answer
+    examined: tuple[str, ...] = ()  # the Investigator's own phrases about what it looked at
+    # One dict for each finding: n, basis, proposal, sure (0 to 1), resources, usd (what its resources cost in 30 days: not a saving), says (its sentence), verdict (the Skeptic's), doubts (its first
+    # objections), kept, left (resources left out, by the reason), fates (resources by what became of them) and note (what code said of it).
+    findings: tuple[dict, ...] = ()
+    kinds: tuple[list, ...] = ()  # [kind, 30-day cost in US dollars, what the tools did to it]: the dearest kinds of the cost that the run read
+    looked: int = 0  # how many kinds of resource the tools touched
+    cost_total: float | None = None  # the cost that the run read in US dollars (None: none could be read in dollars)
+    cost_looked: float = 0.0  # the part of it in the kinds that the tools touched
+    subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars
+    subs_costed: int = 0
+
+
+@dataclass(frozen=True)
 class Principal:
     """The signed-in person, from the headers that the platform's sign-in adds. It is never read from a form or a link."""
 
@@ -552,6 +588,10 @@ class Store(Protocol):
     def claims_recent(self, limit: int = 500) -> list[ClaimRecord]: ...
     def profile_put(self, profile: CapabilityRecord) -> None: ...
     def profile_latest(self) -> CapabilityRecord | None: ...
+    def investigation_put(self, record: InvestigationRecord) -> None:
+        """Keeps the record of an investigation, and only the newest KEPT_INVESTIGATIONS of them."""
+        ...
+    def investigations_recent(self, limit: int = KEPT_INVESTIGATIONS) -> list[InvestigationRecord]: ...
 
 
 class Decider(Protocol):

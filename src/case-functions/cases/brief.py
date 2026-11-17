@@ -455,6 +455,13 @@ def plain(value: object, limit: int = MAX_NAME) -> str:
 
 text_of = plain  # the name that the first modules of the decision brief use
 
+# The id of a resource, a subscription or anything else that is a GUID: an id of the estate, which a sentence of an AI that is shown to a person does not hold (the page "What the AI looked at").
+ID_TEXT = re.compile(r"(?i)/subscriptions/\S*|\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b")
+
+
+def without_ids(text: str) -> str:
+    return ID_TEXT.sub("(id removed)", text)
+
 
 def parse_time(value: object) -> dt.datetime | None:
     try:

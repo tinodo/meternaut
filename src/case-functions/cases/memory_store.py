@@ -5,8 +5,8 @@ import datetime as dt
 import secrets
 from typing import Callable
 
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord,
-                     SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
+                     RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 
 def utc_now() -> dt.datetime:
@@ -38,6 +38,7 @@ class MemoryStore:
         self.lessons: dict[str, LessonRecord] = {}
         self.claims: dict[str, ClaimRecord] = {}
         self.profiles: list[CapabilityRecord] = []
+        self.investigations: dict[str, InvestigationRecord] = {}
         self.check: CheckRecord | None = None
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
@@ -213,6 +214,14 @@ class MemoryStore:
 
     def profile_latest(self) -> CapabilityRecord | None:
         return max(self.profiles, key=lambda p: (p.at, p.run_id), default=None)
+
+    def investigation_put(self, record: InvestigationRecord) -> None:
+        self.investigations[record.run_id] = record
+        for old in self.investigations_recent(len(self.investigations))[KEPT_INVESTIGATIONS:]:
+            del self.investigations[old.run_id]
+
+    def investigations_recent(self, limit: int = KEPT_INVESTIGATIONS) -> list[InvestigationRecord]:
+        return sorted(self.investigations.values(), key=lambda r: (r.at, r.run_id), reverse=True)[:limit]
 
     def check_latest(self) -> CheckRecord | None:
         return self.check
