@@ -123,7 +123,7 @@ PRICES_HOST = "prices.azure.com"
 PRICES_PATH = "/api/retail/prices"
 DOC_PATH = r"(?:(?!\.+(?:/|$))[A-Za-z0-9._~-]{1,100}/?){1,16}"
 GRAPH_HOST = "graph.microsoft.com"
-DIRECTORY_USER = rf"(?:{GUID}|[A-Za-z0-9._%+'-]{{1,64}}@[A-Za-z0-9.-]{{1,200}}\.[A-Za-z]{{2,24}})"
+DIRECTORY_USER = rf"(?:{GUID}|[A-Za-z0-9._+'-]{{1,64}}@[A-Za-z0-9.-]{{1,200}}\.[A-Za-z]{{2,24}})"
 
 
 def directory_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:

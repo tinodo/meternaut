@@ -15,6 +15,7 @@ from cases.store import TableStore, table_calls
 
 from test_directory import A, CONTACT, MANAGER, NO_CONTACT, OWNER, PEOPLE, Graph, directory_of, profile
 from test_letters import make_case, make_plan
+from test_people_and_loop_config import FULL
 from test_store import ACCOUNT, FakeTables
 
 START = dt.datetime(2026, 11, 2, 10, 0, 0, tzinfo=dt.timezone.utc)
@@ -429,6 +430,61 @@ class TheTableStore(unittest.TestCase):
         world.tick()
         self.assertEqual([r.number for r in world.steps()], [1, 2], "the second step is made once: the open request is read for itself")
         self.assertEqual(len(world.mail.sent_to("ada@example.com")), 1)
+
+
+SUB = "11111111-2222-4333-8444-555555555555"
+GROUP = f"/subscriptions/{SUB}/resourcegroups/rg-x"
+LOWER = f"{GROUP}/providers/microsoft.compute/disks/d1"  # an id as Resource Graph spells it: in lower case
+
+
+class TagArm:
+    """Resource Graph for the escalation tag: the value on the resource, on its group and on its subscription, and what was asked."""
+
+    def __init__(self, resource="", group="", subscription="", fail=False):
+        self.values, self.fail, self.queries = (resource, group, subscription), fail, []
+
+    def graph(self, subscription, query):
+        self.queries.append((subscription, query))
+        if self.fail:
+            raise RuntimeError("down")
+        resource, group, sub = self.values
+        if query.startswith("resources "):
+            return [{"tags": {"Escalation": resource}}] if resource else []
+        return ([{"id": GROUP, "tags": {"ESCALATION": group}}] if group else []) + ([{"id": f"/subscriptions/{SUB}", "tags": {"escalation": sub}}] if sub else [])
+
+
+class TheTagSource(unittest.TestCase):
+    def test_the_tag_nearest_to_the_resource_wins_and_an_id_in_lower_case_is_read_too(self):
+        plan = advice(resource_id=LOWER)
+        read = lambda **tags: escalation.tag_reader(TagArm(**tags), "escalation")(plan)
+        self.assertEqual(read(resource="r@example.com", group="g@example.com", subscription="s@example.com"), "r@example.com")
+        self.assertEqual(read(group="g@example.com", subscription="s@example.com"), "g@example.com")
+        self.assertEqual(read(subscription="s@example.com"), "s@example.com")
+        self.assertEqual(read(), "")
+        arm = TagArm(resource="r@example.com")
+        escalation.tag_reader(arm, "escalation")(plan)
+        self.assertEqual([subscription for subscription, _ in arm.queries], [SUB, SUB], "one query for the resource, one for its group and its subscription")
+
+    def test_a_read_that_fails_or_an_id_that_is_not_one_is_no_tag_and_nothing_is_asked_of_an_id_that_could_carry_text(self):
+        self.assertEqual(escalation.tag_reader(TagArm(resource="r@example.com", fail=True), "escalation")(advice(resource_id=LOWER)), "")
+        arm = TagArm(resource="r@example.com")
+        self.assertEqual(escalation.tag_reader(arm, "escalation")(advice(resource_id=f"{LOWER}' | take 1 | project tags")), "")
+        self.assertEqual(arm.queries, [])
+
+    def test_the_round_of_the_timer_asks_the_person_of_the_tag_nearest_to_the_resource(self):
+        for tags, expected in ((dict(resource="olga@example.com", group="cora@example.com"), (OWNER,)), (dict(group="cora@example.com"), (CONTACT,))):
+            with self.subTest(tags=tags):
+                clock = Clock()
+                store = MemoryStore(clock)
+                store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1"))
+                store.plan_put(advice(resource_id=LOWER))
+                on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=SendMail(), sleep=lambda s: None,
+                                           monotonic=lambda: 0.0, clock=clock)
+                for days in (3, 5):
+                    clock.advance(days=days)
+                    on_round(TagArm(**tags), lambda kind, **fields: None)
+                (second,) = [r for r in store.escalations_of("p1") if r.kind == "step" and r.number == 2]
+                self.assertEqual((second.source, second.who), ("tag", expected))
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):

@@ -166,7 +166,8 @@ class TheCallsOfTheDirectory(unittest.TestCase):
         for method, url in (("GET", self.URL.rstrip("/")), ("GET", f"{self.URL}{A}/memberOf"), ("GET", f"{self.URL}{A}/manager/directReports"), ("GET", f"{self.URL}{A}/photo"),
                             ("GET", "https://graph.microsoft.com/v1.0/groups"), ("GET", "https://graph.microsoft.com/beta/users/" + A), ("GET", f"{self.URL}"),
                             ("POST", f"{self.URL}{A}"), ("PATCH", f"{self.URL}{A}"), ("DELETE", f"{self.URL}{A}"), ("GET", f"https://example.invalid/v1.0/users/{A}"),
-                            ("GET", f"{self.URL}{A}/../{OWNER}"), ("GET", f"{self.URL}%2e%2e/x"), ("POST", "https://graph.microsoft.com/v1.0/users/ada@example.com/sendMail")):
+                            ("GET", f"{self.URL}{A}/../{OWNER}"), ("GET", f"{self.URL}%2e%2e/x"), ("POST", "https://graph.microsoft.com/v1.0/users/ada@example.com/sendMail"),
+                            ("GET", f"{self.URL}a%2Fb@example.com"), ("GET", f"{self.URL}%2e%2e@example.com"), ("GET", f"{self.URL}ada%40example.com")):
             self.assertFalse(self.allowed(method, url), (method, url))
 
     def test_the_lists_of_the_watch_hold_none_of_them(self):

@@ -100,7 +100,7 @@ def tag_reader(arm: object, name: str) -> Callable[[PlanRecord], str]:
     request (checked against the shape of an id). Anything else of the resource stays unread, and a read that fails is no tag."""
     def read(plan: PlanRecord) -> str:
         found = re.match(rf"(/subscriptions/{GUID})(/resourceGroups/[^/]+)?", plan.resource_id or "", re.I)
-        if found is None or not re.fullmatch(SCOPE, plan.resource_id):
+        if found is None or not re.fullmatch(SCOPE, plan.resource_id, re.I):
             return ""
         subscription, group = found.group(1), (found.group(1) + found.group(2) if found.group(2) else "")
         queries = [f"resources | where id =~ '{plan.resource_id}' | project tags"] if "/providers/" in plan.resource_id else []
