@@ -3,9 +3,9 @@
 
     python tools/package-digest.py <folder> [--check HEX]
 
-The folder is the one that holds `function_app.py` and the package `cases/`: the folder that the deployment zips (the build directory of tools/build-function-app.sh) or a checkout's
-`src/case-functions`. The digest covers `function_app.py` and every `.py` and `.json` file in `cases/`, in the order of their paths, with line ends read as LF (cases/release.py says
-exactly how), so that it is the same for the folder of a build, for the folder that the platform unpacked and for a checkout on any system. The deployment sets it as the app
+The folder is the one that holds `function_app.py` and the package `cases/`: the folder that the deployment zips (the build directory of tools/build-function-app.sh) or the folder that the platform unpacked. The files are read as
+they are, and the files that are shipped have no comments (tools/strip-sources.py), so for a checkout, which has them, use tools/source-digest.py: it takes them out in memory, as the pack step does. The digest covers `function_app.py` and every `.py` and `.json` file in `cases/`, in the order of their paths, with line ends read as LF (cases/release.py says
+exactly how), so that it is the same for the folder of a build and for the folder that the platform unpacked. The deployment sets it as the app
 setting PACKAGE_SHA256, the app computes it over its own files, and the drift check holds the two together (cases/drift.py, control A-RELEASE).
 
 With --check HEX it prints nothing but a verdict and exits 1 when the digest of the folder is another one. It reads files and calls nothing.
