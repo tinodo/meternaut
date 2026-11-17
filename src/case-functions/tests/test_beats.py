@@ -37,11 +37,12 @@ class TheFocusThatCodeChooses(unittest.TestCase):
         self.assertEqual([(beat.number, beat.of) for beat in plan], [(n, 6) for n in range(1, 7)])
         self.assertEqual([beat.rest for beat in plan], [0] * 6)
 
-    def test_a_kind_that_belongs_to_the_same_service_as_a_dearer_one_goes_with_it_and_a_beat_holds_three_kinds_at_most(self):
+    def test_a_kind_that_belongs_to_the_same_service_as_a_dearer_one_goes_with_it_and_a_beat_holds_two_kinds_at_most(self):
         costs = {f"contoso.compute/k{n}": 100.0 - n for n in range(5)} | {"fabrikam.store/s": 50.0}
-        plan = beats.plan(costs, 0.0, 6)
-        self.assertEqual(kinds_of(plan), [["contoso.compute/k0", "contoso.compute/k1", "contoso.compute/k2"], ["contoso.compute/k3", "contoso.compute/k4"], ["fabrikam.store/s"]])
-        self.assertEqual([beat.number for beat in plan], [1, 2, 3])
+        plan = beats.plan(costs, 0.0, 8)
+        self.assertEqual(kinds_of(plan), [["contoso.compute/k0", "contoso.compute/k1"], ["contoso.compute/k2", "contoso.compute/k3"], ["contoso.compute/k4"], ["fabrikam.store/s"]])
+        self.assertEqual([beat.number for beat in plan], [1, 2, 3, 4])
+        self.assertEqual(beats.BEAT_KINDS, 2, "the dearest kind and at most one more of its service: the dearest things get more of a session")
 
     def test_the_kinds_below_the_floor_are_left_to_the_last_beat_when_the_plan_has_room_for_one(self):
         plan = beats.plan(ESTATE, UNOWNED, 8)
