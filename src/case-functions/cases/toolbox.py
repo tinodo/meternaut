@@ -4,8 +4,10 @@ A tool answer is a JSON string of at most MAX_RESULT_CHARS characters. A resourc
 the name, the tags and every other text that somebody wrote about a resource stay in the Resource below and never go into an answer. What does go into an answer is a
 number, a flag, a GUID, or a short word in the form that the platform itself uses. The checks bound the alphabet, the length and the number of parts of a word, and
 that does not say what a word means, so a text goes into an answer only where the platform, and not the owner of the estate, chooses it:
-  - a text of a property (STRING_LEAVES, KNOWN_PATHS) only under a key that is one of a fixed list of names of enumerations, never by the end of a key, and the keys of a
-    property are plain names of at most MAX_SEGMENT characters, at most MAX_DEPTH levels down, that are not a container of somebody's text (DENIED_KEYS, DENIED_WORDS);
+  - a text of a property (STRING_LEAVES, KNOWN_PATHS) only under a key that is one of a fixed list of names of enumerations, never by the end of a key; and a property is shown at all
+    only at a path that the platform lists for the type of the resource (the aliases of Azure Policy: Arm.provider_paths, read once for each namespace, kept for the run as a Listing),
+    every key of the path included, so that a key that somebody chose in a map is never a part of a path. When the list cannot be read or the type has none, only the exact paths of
+    KNOWN_PATHS are shown, and the answer says property_list: unavailable or not-offered;
   - a SKU, a kind and a region of at most 24 characters, a service name of at most 40 characters and five words, a metric name that Azure Monitor offers for the type
     (and nothing else is ever measured), and the words of Advisor, of the paid plans and of Azure Monitor that have no separator (sku_word, service_word, metric_word,
     token_word). The names of several words are written as the platform writes them, each word with a capital letter (a short word such as "for" apart), which a sentence
@@ -111,9 +113,8 @@ SUBSCRIPTION_SECONDS = 45.0  # what the reads of the subscriptions in one tool c
 NOT_READ_SHOWN = 5  # the subscriptions that an answer names, by label, when some were not read or could not be: it counts the rest
 MAX_BLOCKS = 20  # the subscriptions that estate_overview and paid_features show when the estate has more: the dearest ones, with a count of the others
 SUBSCRIPTION_NOTES = 10  # the notes about one subscription that could not be read: the later ones are counted in one note
-MAX_DEPTH = 3  # key levels of a property; only the exact paths of KNOWN_PATHS may have one more
-MAX_SEGMENT = 32  # characters of one key of a property
 MAX_NODES = 4000  # values looked at in the properties of one resource
+MAX_NAMESPACES = 80  # the namespaces whose lists of property paths one run reads: the next ones are `unavailable`
 LIST_ITEMS = 20  # items of a list that are looked at
 MAX_TOTALS = 20  # the totals of one metric of one resource that the evidence keeps
 MAX_DIMENSIONS = 10  # the names of the dimensions of one metric that metric_names shows
@@ -156,6 +157,8 @@ CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "
 ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed", NO_METRICS)
 READ_ERRORS = (HttpError, Refused, IdentityError, StoreError)
 OTHER = "other"  # what an answer shows for a text that is there and fails its check: never the text itself
+UNAVAILABLE = "unavailable"  # what property_list says when the platform's list of property paths for a namespace could not be read
+NOT_OFFERED = "not-offered"  # and when the platform lists none for the type
 
 # The word checks. The patterns of the four arguments are written once, as the schema of the tools gives them to the agent, and compiled here; every check is a full match.
 # The other checks keep a text that somebody could have written to the forms that the platform itself uses: a bound on the alphabet, the length and the number of parts.
@@ -184,7 +187,6 @@ SUFFIXES = ("State", "Status", "Code", "Tier", "Capacity", "Count", "Replicas", 
 COUNT_LIKE = frozenset(SUFFIXES.index(suffix) for suffix in ("Capacity", "Count", "Replicas", "Size", "GB", "Cores", "Throughput", "Unit", "Units", "Mbps", "Gbps"))  # what `count` orders by
 _ALTERNATIVES = "|".join(SUFFIXES)
 LEAF = re.compile(rf"(?:[a-z][A-Za-z0-9]*)?(?:{_ALTERNATIVES})|(?:{_ALTERNATIVES.lower()})|(?:[a-z][A-Za-z0-9]*)?[Nn]umberOf[A-Z][A-Za-z0-9]*")
-KEY = re.compile(rf"[A-Za-z][A-Za-z0-9]{{0,{MAX_SEGMENT - 1}}}")
 # A text of a property is shown only when its key is exactly one of these names, which hold the values of an enumeration of the platform and never a text that somebody wrote
 # (compared without regard to case, never by the end of a key). The list names no resource type and says nothing about what to look for.
 STRING_LEAVES = frozenset(name.lower() for name in (
@@ -197,18 +199,19 @@ STRING_LEAVES = frozenset(name.lower() for name in (
     "version", "minimumTlsVersion", "minTlsVersion", "minimalTlsVersion", "gatewayVersion", "privateIPAddressVersion", "ipVersionType", "ipAddressType",
     "publicNetworkAccess", "publicNetworkAccessForIngestion", "publicNetworkAccessForQuery", "networkAccessPolicy", "defaultAction", "access", "direction",
     "privateIPAllocationMethod", "publicIPAllocationMethod", "ingestionAccessMode", "queryAccessMode"))
-# The exact paths of properties that are shown whatever their key, and that may be a level deeper than MAX_DEPTH or have a part that is longer than MAX_SEGMENT.
+# The exact paths of properties that are shown whatever the platform's list for the type says (those lists are not complete), and the only ones that are shown when that list could not be
+# read or the type has none. Each is a path that the platform itself defines, with no key that somebody could choose.
 KNOWN_PATHS = frozenset(tuple(path.split(".")) for path in (
     "privateLinkServiceConnections.properties.privateLinkServiceConnectionState.status",
     "manualPrivateLinkServiceConnections.properties.privateLinkServiceConnectionState.status",
     "privateEndpointConnections.properties.privateLinkServiceConnectionState.status",
     "extended.instanceView.powerState.code", "powerState.code", "agentPoolProfiles.powerState.code",
     "functionAppConfig.scaleAndConcurrency.alwaysReady.instanceCount",
-    "virtualRouterAutoScaleConfiguration.minCapacity"))  # the key of a hub's units is longer than MAX_SEGMENT
+    "virtualRouterAutoScaleConfiguration.minCapacity"))
 _KNOWN_PREFIXES = frozenset(path[:length] for path in KNOWN_PATHS for length in range(1, len(path) + 1))
-# Names that hold somebody's text, an address or a secret, or that hold a dictionary whose keys somebody chose: never shown and never followed, wherever they are in a
-# path. A key is denied when the whole of it is one of these names, or when one of the words of its camel case is one of the DENIED_WORDS (nodeLabels, appSettings).
-# (A text is shown only under the keys of STRING_LEAVES, so a key that holds one of a secret is hidden whether it is named here or not.)
+# Names that hold somebody's text, an address or a secret, or that hold a dictionary whose keys somebody chose. A property is not shown by this list: the platform's list for the type decides
+# (Listing), and a list of names is incomplete by nature. cases/neighbors.py uses it for the one thing that is left, which keys of a resource it reads a reference from. A key is denied when the
+# whole of it is one of these names, or when one of the words of its camel case is one of the DENIED_WORDS (nodeLabels, appSettings).
 DENIED_KEYS = frozenset({"name", "id", "displayname", "description", "tags", "uri", "url", "endpoint", "endpoints", "host", "hostname", "ip", "address", "metadata",
                          "parameters", "labels", "annotations", "template", "definition", "variables", "outputs",
                          "nodelabels", "nodetaints", "resourcetags", "settings", "protectedsettings", "publicsettings", "appsettings", "environmentvariables", "env",
@@ -408,10 +411,19 @@ def _leaf(path: tuple[str, ...], node: object) -> "bool | int | float | str | No
     return _shown(property_value, node) if exact or path[-1].lower() in STRING_LEAVES else None
 
 
-def _may_follow(path: tuple[str, ...]) -> bool:
-    """Whether a key path may be followed: an exact path of KNOWN_PATHS or a part of one, or else a path of at most MAX_DEPTH keys of which the last is a plain name of
-    at most MAX_SEGMENT characters that does not hold somebody's text. (The keys before it were followed, so they passed.)"""
-    return path in _KNOWN_PREFIXES or (len(path) <= MAX_DEPTH and KEY.fullmatch(path[-1]) is not None and not _denied(path[-1]))
+class Listing:
+    """The property paths that the platform lists for one resource type (cases/arm.py, provider_paths), as tuples of lower-case keys: `paths` are the ones that may be shown, and `prefixes`, which
+    hold every beginning of them, the ones that may be followed. A key of a resource is looked up in lower case, and a key that is not plain ASCII is never found."""
+
+    __slots__ = ("paths", "prefixes")
+
+    def __init__(self, paths: "frozenset[tuple[str, ...]]") -> None:
+        self.paths = paths
+        self.prefixes = frozenset(path[:length] for path in paths for length in range(1, len(path) + 1))
+
+    def knows(self, path: tuple[str, ...], whole: bool) -> bool:
+        keys = tuple(key.lower() for key in path if key.isascii())
+        return len(keys) == len(path) and keys in (self.paths if whole else self.prefixes)
 
 
 def _rank(leaf: str) -> int:
@@ -426,10 +438,11 @@ def _order(path: str) -> tuple[int, int, int, str]:
     return (1 if leaf == "provisioningState" else 0, _rank(leaf), path.count("."), path)
 
 
-def typed_properties(properties: object, sku: object = None) -> list[tuple[str, "bool | int | float | str | list"]]:
-    """The properties of a resource that an answer may show, the most informative first: a flag or a number under a key that ends in one of the SUFFIXES, a short word
-    under a key that is one of the STRING_LEAVES, and the length of a list as <key>Count. The keys come from the shape of the resource, so a key is followed only when it is
-    a plain name of at most MAX_SEGMENT characters, at most MAX_DEPTH levels down, and does not hold somebody's text or a dictionary whose keys somebody chose.
+def typed_properties(properties: object, sku: object = None, listed: "Listing | None" = None) -> list[tuple[str, "bool | int | float | str | list"]]:
+    """The properties of a resource that an answer may show, the most informative first: a flag or a number under a key that ends in one of the SUFFIXES, a short word under a key that is one of
+    the STRING_LEAVES, and the length of a list as <key>Count. A property is shown only at a path that `listed`, the platform's list for the type of the resource, names (every key of the
+    path, the last one too, so a map that somebody fills shows at most as its own name, and nothing under it is followed) or at an exact path of KNOWN_PATHS; with no list (None: it could
+    not be read, or the platform has none for the type) only at the paths of KNOWN_PATHS, and no length of a list.
 
     The items of a list are followed under the key of the list, so the value of a path is that of every item: one value when they agree, else up to three."""
     found: dict[str, list] = {}
@@ -446,17 +459,16 @@ def typed_properties(properties: object, sku: object = None) -> list[tuple[str, 
             return
         if isinstance(node, dict):
             for key, value in node.items():
-                if isinstance(key, str) and _may_follow((*path, key)):
+                if isinstance(key, str) and ((*path, key) in _KNOWN_PREFIXES or (listed is not None and listed.knows((*path, key), False))):
                     walk(value, (*path, key))
         elif isinstance(node, list):
             if path:
-                counted = (*path[:-1], f"{path[-1]}Count")
-                if _may_follow(counted):
-                    add(counted, len(node))
+                if listed is not None:
+                    add((*path[:-1], f"{path[-1]}Count"), len(node))
                 for item in node[:LIST_ITEMS]:
                     if isinstance(item, dict):
                         walk(item, path)
-        elif path:
+        elif path and (path in KNOWN_PATHS or (listed is not None and listed.knows(path, True))):
             value = _leaf(path, node)
             if value is not None:
                 add(path, value)
@@ -518,6 +530,7 @@ class _Entry:
     properties: list[tuple[str, "bool | int | float | str | list"]]
     size: float  # the largest count, size or capacity among the properties: what `count` orders by
     part_of: str | None = None  # the key of the resource that keeps it inside itself, for a part that Resource Graph does not list: it has no cost of its own
+    property_list: str = ""  # why its properties are the few of KNOWN_PATHS: `unavailable` (the platform's list for its namespace could not be read) or `not-offered` (the platform lists none for its type)
 
     @property
     def key(self) -> str:
@@ -711,7 +724,8 @@ TOOLS = {tool.name: tool for tool in (
          "name, its tier, its sub plan and its coverage, as short words. It takes no arguments."),
     Tool("describe",
          "Describes one resource by its handle: its type, SKU, kind, region, cost of the last 30 days, the cost by service and up to 30 properties that are numbers, flags "
-         "or words. When the type has deeper reads, reads names them. The answer carries no names, tags or other text of the resource.",
+         "or words. A property is shown only where the platform lists it for the type; property_list says unavailable or not-offered when that list could not be read or is none, and then few "
+         "properties are shown. When the type has deeper reads, reads names them. The answer carries no names, tags or other text of the resource.",
          (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),)),
     Tool("data_volume",
          "Reads what a resource records about the data written to it, over the closed days of a window, as a table: for each kind of data its plan, how long it is kept, the "
@@ -958,6 +972,8 @@ class Toolbox:
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
         self._edges: nb.Edges | None = None  # the pass over the references of the estate (neighbors): read once in a run, a page at a time
         self._read: dict[str, str] | None = None  # for the tools that give a picture of resources: the handles that the call that is running held data of, with the letters of what (see Toolbox.log)
+        self._lists: "dict[str, dict[str, frozenset[tuple[str, ...]]] | str]" = {}  # namespace -> the paths that the platform lists for each of its types, or the word that says why not: read once in a run
+        self._listings: "dict[str, Listing | str]" = {}  # type -> its Listing, or the word that says why it has none
 
     @property
     def specs(self) -> tuple[FunctionTool, ...]:
@@ -1190,13 +1206,49 @@ class Toolbox:
                             resource_group=str(row.get("resourceGroup") or ""), subscription_id=str(row.get("subscriptionId") or sub).lower(),
                             location=str(row.get("location") or ""), tags={str(k): str(v) for k, v in tags.items()} if isinstance(tags, dict) else {},
                             managed_by=str(row.get("managedByText") or ""))
-        properties = typed_properties(row.get("properties"), sku)
+        listed = self._listing_of(resource.resource_type, sub)
+        properties = typed_properties(row.get("properties"), sku, listed if isinstance(listed, Listing) else None)
         numbers = [number for path, value in properties if _rank(path.rsplit(".", 1)[-1]) in COUNT_LIKE for number in (value if isinstance(value, list) else [value])
                    if isinstance(number, (int, float)) and not isinstance(number, bool)]
         entry = _Entry(resource, sub, _shown(sku_word, sku.get("name")), _shown(sku_word, row.get("kindName")), _shown(region_word, resource.location.lower()), properties,
-                       float(max(numbers, default=0)))
+                       float(max(numbers, default=0)), property_list=listed if isinstance(listed, str) else "")
         self._entries[key] = entry
         return entry
+
+    def _listing_of(self, kind: str, sub: str) -> "Listing | str":
+        """The platform's list of property paths for a resource type, or the word that says why there is none: `unavailable` when the list of its namespace could not be read, `not-offered` when the
+        platform lists no path for the type. The list of a namespace is read once in a run, with the subscription of the first resource of it that an answer is about, and kept whether the read
+        worked or not."""
+        namespace, _, name = kind.partition("/")
+        if namespace not in self._lists:
+            self._lists[namespace] = self._read_lists(namespace, sub)
+        found = self._lists[namespace]
+        if isinstance(found, str):
+            return found
+        if kind not in self._listings:
+            paths = found.get(name)
+            self._listings[kind] = Listing(paths) if paths else NOT_OFFERED
+        return self._listings[kind]
+
+    def _read_lists(self, namespace: str, sub: str) -> "dict[str, frozenset[tuple[str, ...]]] | str":
+        if len(self._lists) >= MAX_NAMESPACES:
+            return UNAVAILABLE
+        try:
+            return self.arm.provider_paths(sub, namespace)
+        except READ_ERRORS as error:
+            self._say(f"{sub[:8]}: the property paths of {namespace[:40]} could not be read ({str(error)[:200]})")
+            return UNAVAILABLE
+
+    def _prefetch_lists(self, wanted: "Iterable[tuple[str, str]]") -> None:
+        """Reads the lists of the namespaces of (type, subscription) pairs that no read has given yet, `read_workers` at a time, so that the ingest of the rows of one answer finds them in the cache."""
+        todo: dict[str, str] = {}
+        for kind, sub in wanted:
+            if kind.partition("/")[0] not in self._lists:
+                todo.setdefault(kind.partition("/")[0], sub)
+        todo = dict(list(todo.items())[:max(0, MAX_NAMESPACES - len(self._lists))])
+        if len(todo) > 1:
+            with ThreadPoolExecutor(max_workers=max(1, min(self.read_workers, len(todo)))) as pool:
+                self._lists.update(zip(todo, pool.map(lambda item: self._read_lists(*item), todo.items())))
 
     def _facts(self, entry: _Entry, shown: int) -> dict:
         """What describe says about one resource, except its handle."""
@@ -1209,6 +1261,8 @@ class Toolbox:
         if entry.part_of is not None and entry.part_of in self._entries:
             facts["part_of"] = self._entries[entry.part_of].resource.handle or None
         facts.update(sku=entry.sku, kind=entry.kind, location=entry.location, managed=bool(entry.resource.managed_by), properties=dict(entry.properties[:shown]))
+        if entry.property_list:
+            facts["property_list"] = entry.property_list
         return facts
 
     def _cells(self, entry: _Entry) -> dict:
@@ -1303,8 +1357,9 @@ class Toolbox:
             chunk = wanted[start:start + RESOLVE_CHUNK]
             subs = list(dict.fromkeys(sub for sub, _ in chunk))
             found: set[str] = set()
-            for row in self.arm.graph_many(subs, RESOURCES_BY_ID.format(ids=", ".join(f"'{item}'" for _, item in chunk))):
-                owner = self._owner_of(row, subs[0] if len(subs) == 1 else None)
+            rows = [(row, self._owner_of(row, subs[0] if len(subs) == 1 else None)) for row in self.arm.graph_many(subs, RESOURCES_BY_ID.format(ids=", ".join(f"'{item}'" for _, item in chunk)))]
+            self._prefetch_lists((str(row.get("type") or "").lower(), owner) for row, owner in rows if owner)
+            for row, owner in rows:
                 entry = self._ingest(row, owner) if owner else None
                 if entry is not None:
                     found.add(entry.key)
@@ -1467,6 +1522,8 @@ class Toolbox:
         page = page[:self._within_handles(page)]
         cells = [self._cells(entry) for entry in page]
         caveats = self._caveats(failed, {entry.sub for entry in entries})
+        if page and page[0].property_list:
+            caveats["property_list"] = page[0].property_list  # every resource of one type has the same list
 
         def table(count: int) -> tuple[dict, list[list], set[str]]:
             same, columns, rows, visible = _layout([(PLACEHOLDER, cell) for cell in cells[:count]])

@@ -9,11 +9,12 @@ from __future__ import annotations
 import datetime as dt
 import math
 import re
+import sys
 import threading
 from typing import Callable, Mapping, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
-from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError, retry_after
+from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, NAMESPACE, SCOPE, WORKSPACE, Client, HttpError, retry_after
 from .identity import IdentityError
 from .metrics import DAILY, GRAINS, MAX_POINTS, MetricPoint, Plan
 
@@ -43,6 +44,13 @@ BILLING_API = "2024-04-01"  # Learn, "Billing Accounts - List": the billing acco
 CAPACITY_API = "2022-11-01"  # Learn, "Reservation Order - List": the reservation orders that the user has access to in the current tenant
 SAVINGS_PLAN_ORDERS_API = "2026-06-01"  # Learn, "Savings Plan Order - List"
 PRICE_SHEET_API = "2026-06-01"  # Learn, "Price Sheet - Get": the price sheet of a subscription, with $top to read one line of it
+PROVIDERS_API = "2021-04-01"  # Learn, "Providers - Get": $expand=resourceTypes/aliases adds the property aliases of Azure Policy to each resource type of the provider
+ALIAS_BYTES = 12_000_000  # the largest answer of that read that is parsed: the largest namespace of an estate measured 5.5 million
+ALIAS_PAGES = 3  # the pages of that answer that are followed: the platform gives it in one
+ALIAS_PATHS = 120_000  # the paths that one namespace may hold
+ALIAS_PATH = re.compile(r"[A-Za-z0-9_]+(?:\[\*\])?(?:\.[A-Za-z0-9_]+(?:\[\*\])?)*")
+TYPE_NAME = re.compile(r"[A-Za-z0-9._-]{1,60}(?:/[A-Za-z0-9._-]{1,60}){0,3}")
+NAMESPACE_NAME = re.compile(NAMESPACE)
 # Cost Management throttles by the type of the client as well as by the tenant, and a call that names no client type shares the quota of every caller that does not either: in the pilot it got
 # HTTP 429 with a wait of 2 to 21 seconds while the same call with this header got 200. The header is described in Microsoft Q&A (learn.microsoft.com/answers/a/8268839) and by the owners
 # of the REST specifications (Azure/azure-rest-api-specs issue 24407), and not on a page of the REST reference.
@@ -120,6 +128,22 @@ def scopes_of(resource_id: str) -> list[str]:
     if group and group.group(1).lower() != resource_id.lower():
         scopes.append(group.group(1))
     return scopes
+
+
+def _alias_paths(item: object) -> set[tuple[str, ...]]:
+    """The property paths of one resource type in the answer of a provider: the default path of each alias and each path that it has (they differ between API versions), as tuples of lower-case
+    keys, without the array marks and without the first `properties`, which the properties of a resource do not hold (the paths of the envelope, `sku.name`, stay as they are). A text that is not a
+    dotted name of letters, digits and underscores is no path."""
+    found: set[tuple[str, ...]] = set()
+    for alias in (item.get("aliases") if isinstance(item, dict) else None) or []:
+        if not isinstance(alias, dict):
+            continue
+        more = alias.get("paths") if isinstance(alias.get("paths"), list) else []
+        for text in (alias.get("defaultPath"), *(path.get("path") for path in more if isinstance(path, dict))):
+            if isinstance(text, str) and ALIAS_PATH.fullmatch(text):
+                keys = text.replace("[*]", "").lower().split(".")
+                found.add(tuple(map(sys.intern, keys[1:] if keys[0] == "properties" and len(keys) > 1 else keys)))
+    return found
 
 
 class Arm:
@@ -731,3 +755,30 @@ class Arm:
         if not isinstance(self.client.request("GET", url, headers=self._headers(), timeout=60, retries=1).json(), dict):
             raise _bad("Microsoft.Consumption")
         return True
+
+    def provider_paths(self, subscription: str, namespace: str) -> dict[str, frozenset[tuple[str, ...]]]:
+        """The property paths that the platform lists for each resource type of one namespace (Learn, "Providers - Get" with $expand=resourceTypes/aliases: the aliases of Azure Policy):
+        {the type without its namespace, in lower case: its paths}, each path as _alias_paths gives it. A type that lists no path is not in it. An answer larger than ALIAS_BYTES or with more than
+        ALIAS_PATHS paths, or one that goes on for more than ALIAS_PAGES pages, is an error, and nothing of it is kept."""
+        if not NAMESPACE_NAME.fullmatch(namespace):
+            raise HttpError(0, "the namespace is not the name of a resource provider")
+        found: dict[str, set[tuple[str, ...]]] = {}
+        link: str | None = f"{ARM}/subscriptions/{subscription}/providers/{namespace}?$expand=resourceTypes/aliases&api-version={PROVIDERS_API}"
+        for _ in range(ALIAS_PAGES):
+            response = self.client.request("GET", link, headers=self._headers(), timeout=60, retries=1)
+            if len(response.body) > ALIAS_BYTES:
+                raise HttpError(response.status, "the list of property paths is larger than the app reads")
+            data = response.json()
+            kinds = data.get("resourceTypes", []) if isinstance(data, dict) else None
+            if not isinstance(kinds, list):
+                raise _bad("Microsoft.Resources")
+            for item in kinds:
+                name = item.get("resourceType") if isinstance(item, dict) else None
+                if isinstance(name, str) and TYPE_NAME.fullmatch(name):
+                    found.setdefault(name.lower(), set()).update(_alias_paths(item))
+            if sum(len(paths) for paths in found.values()) > ALIAS_PATHS:
+                raise HttpError(response.status, "the list of property paths is longer than the app keeps")
+            link = self._next(data.get("nextLink"), subscription, namespace)
+            if not link:
+                return {name: frozenset(paths) for name, paths in found.items() if paths}
+        raise TooManyPages(0, f"the list of property paths has more than {ALIAS_PAGES} pages")

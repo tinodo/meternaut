@@ -162,7 +162,7 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
         handle, kind = entry.resource.handle, kinds[entry.resource.handle]
         facts = box._facts(entry, tb.DESCRIBED_PROPERTIES)
         part: dict = {"handle": handle, "type": kind, **{name: facts[key] for name, key in (("sku", "sku"), ("kind", "kind"), ("region", "location")) if facts.get(key) is not None},
-                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of") if key in facts}, "properties": dict(facts["properties"])}
+                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of", "property_list") if key in facts}, "properties": dict(facts["properties"])}
         lists.append((part["properties"], part, "properties"))
         if entry.part_of is None:
             word, _ = _outcome(tb, (handle, "meters"), done, left)
