@@ -6,7 +6,7 @@ import unittest
 import support  # noqa: F401  (it puts the app on the path)
 from cases import toolbox as tb
 from deep_estate import (ACCOUNT, AI, COLLECTION, MACHINE, OTHER_WORKSPACE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment, ident, table, usage)
-from test_toolbox import HOSTILE, MARKERS, SUB2, ask, point, row, toolbox
+from test_toolbox import HOSTILE, MARKERS, SUB2, ask, everything_listed, point, row, toolbox
 
 NOT_VISIBLE = "not visible with this access"
 
@@ -532,7 +532,7 @@ class TheSizesOfResources(Base):
                   "provisionedBandwidthInGbps": 10.5, "throughputUnits": 4}
 
     def test_the_units_the_bandwidth_and_the_capacity_are_shown_and_the_lists_are_counted(self):
-        found = dict(tb.typed_properties(self.PROPERTIES))
+        found = dict(tb.typed_properties(self.PROPERTIES, None, everything_listed(self.PROPERTIES)))
         wanted = {"vpnGatewayScaleUnit": 3, "virtualRouterAutoScaleConfiguration.minCapacity": 2, "serviceProviderProperties.bandwidthInMbps": 200, "autoscaleConfiguration.maxCapacity": 5,
                   "frontendIPConfigurationsCount": 3, "connectionConfigurationsCount": 2, "provisionedBandwidthInGbps": 10.5, "throughputUnits": 4}
         self.assertEqual({key: found[key] for key in wanted}, wanted)
