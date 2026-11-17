@@ -6,7 +6,8 @@ One run of the Study (the timer `study-weekly`, or the control message with the 
      is read or asked before that.
   2. It reads again the claims that are due (code only: the page is fetched again and the quote must still be on it, a quote that is not is marked stale).
   3. It surveys the estate: the kinds of resource that it has (one Resource Graph query, the same one that the investigation's overview makes) that have no current claim and no mark that they
-     were studied, the most common first, at most STUDY_MAX_TYPES of them. The list is made from what exists; no person writes it and no rule in code names a kind of resource.
+     were studied, the dearest first (what each kind cost over the last 30 closed days, in US dollars, from the cost that the Watch reads; then the most common, then the name), at most
+     STUDY_MAX_TYPES of them. The list is made from what exists, and only dollars rank it: no person writes it and no rule in code names a kind of resource.
   4. It runs the Scholar (cases/agents.py) through the agent harness (cases/harness.py: the lock, the switches, the budgets, the guard on the tool calls, the trace) with one tool, `fetch_doc`
      (cases/library.py), which this app runs against public pages only. Every model call goes through the AI Gateway, as every model call of Meternaut does.
   5. It checks every claim in the Scholar's answer by code: the kind of resource is one of the input, the kind of claim is on the closed list, the page is one that this run read, and the quote is
@@ -46,6 +47,8 @@ RECHECK_PAGES = 12  # the pages that one run reads again for the claims that are
 CALLS_PER_PAGE = 3  # the tool calls that the budget gives for each page: the windows of a page, and the pages that were not worth reading
 SURVEY_CLAIMS = 500  # the claims of the store that the survey looks at
 REASONS = ("shape", "type", "kind", "url", "quote", "cap", "duplicate")  # why a claim is thrown away: the words of the History, never the text of the claim
+COST_SECONDS = 60  # a read of the cost of a subscription starts only in the first minute of the survey, so that a slow Cost Management does not take the time of the Scholar
+COST_NOTE = "the cost of some kinds of resource could not be read, so they are studied after the kinds that have a cost, the most common first"
 
 
 @dataclass
@@ -159,9 +162,33 @@ def recheck(s: Services, now: dt.datetime, out: Summary) -> None:
         out.stale += found.state == "stale"
 
 
+def type_costs(s: Services, subscriptions: Collection[str], now: dt.datetime) -> tuple[dict[str, float], bool]:
+    """What each kind of resource cost over the 30 closed days, from the cost that the Watch reads for every resource (Arm.costs: the client type of Cost Management, its waits and its one read for each
+    subscription and period), and whether every subscription could be read. A subscription whose cost is not in US dollars is left out: no sum adds two currencies."""
+    day = now.astimezone(dt.timezone.utc).date()
+    costs: dict[str, float] = {}
+    began, complete = s.monotonic(), True
+    for subscription in subscriptions:
+        if s.monotonic() - began >= COST_SECONDS:
+            return costs, False
+        try:
+            totals, currency = s.arm.costs(subscription, day - dt.timedelta(days=toolbox.MAX_DAYS), day - dt.timedelta(days=1))
+        except toolbox.READ_ERRORS:
+            complete = False
+            continue
+        if currency != "USD":
+            continue
+        for resource_id, amount in totals.items():
+            kind = toolbox.type_of_id(resource_id)
+            if kind:
+                costs[kind] = costs.get(kind, 0.0) + amount
+    return costs, complete
+
+
 def survey(s: Services, now: dt.datetime, notes: list[str]) -> list[dict]:
-    """The kinds of resource of the estate that wait to be studied, most common first, as the input of the Scholar wants them: the type, and the address of its reference page. A kind that has a
-    current claim, or a mark that it was studied, does not wait. A kind that is not a plain name of a resource type is left out."""
+    """The kinds of resource of the estate that wait to be studied, as the input of the Scholar wants them: the type, and the address of its reference page. The dearest come first (their cost over the
+    30 closed days in dollars, to the cent, then how many there are, then the name), and a kind that has no cost line comes after those that have one. When a cost cannot be read the note says so, and
+    the kinds of that subscription count as having none. A kind that has a current claim, or a mark that it was studied, does not wait. A kind that is not a plain name of a resource type is left out."""
     st = s.settings
     try:
         scope = scope_mod.resolve(s.arm, st, None, s.redact)
@@ -175,8 +202,12 @@ def survey(s: Services, now: dt.datetime, notes: list[str]) -> list[dict]:
         number = row.get("n")
         if resource_type is not None and isinstance(number, int) and not isinstance(number, bool):
             counts[resource_type] += number
+    costs, complete = type_costs(s, scope.subscriptions, now)
+    if not complete:
+        notes.append(COST_NOTE)
     known = {claim.resource_type for claim in s.store.claims_recent(SURVEY_CLAIMS) if library.current(claim, now)}  # type: ignore[union-attr]
-    waiting = [(resource_type, library.reference_url(resource_type)) for resource_type, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0])) if resource_type not in known]
+    ranked = sorted(counts.items(), key=lambda item: (item[0] not in costs, -round(costs.get(item[0], 0.0), 2), -item[1], item[0]))
+    waiting = [(resource_type, library.reference_url(resource_type)) for resource_type, _ in ranked if resource_type not in known]
     return [{"type": resource_type, "reference": reference} for resource_type, reference in waiting if reference][: st.study_max_types]
 
 

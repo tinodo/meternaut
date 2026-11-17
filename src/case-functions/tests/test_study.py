@@ -17,6 +17,7 @@ from cases.events import History
 from cases.foundry import AgentRun, FoundryError
 from cases.harness import Harness, HarnessRefused
 from cases.http import Client
+from cases.identity import IdentityError
 from cases.memory_store import MemoryStore, stamp
 from cases.models import CLAIM_KINDS, STUDIED, ClaimRecord, StoreError, SwitchRecord
 from cases.redact import Redactor
@@ -41,17 +42,33 @@ PAGES = {
 }
 ROWS = [{"type": WIDGETS, "n": 7, "subscriptionId": "s"}, {"type": GADGETS, "n": 3, "subscriptionId": "s"}, {"type": GIZMOS, "n": 1, "subscriptionId": "s"},
         {"type": "microsoft.example/widgets", "n": 2, "subscriptionId": "t"}]
+SUB_A, SUB_B, SUB_C = "11111111-2222-3333-4444-555555555555", "22222222-3333-4444-5555-666666666666", "33333333-4444-5555-6666-777777777777"
+
+
+def priced(*pairs, currency="USD"):
+    """What Arm.costs answers for one subscription: the cost of each resource by its lower-case id, and the currency. Each pair is a type and its dollars, on a resource of its own."""
+    return {f"/subscriptions/s/resourcegroups/g/providers/{kind}/r{number}": amount for number, (kind, amount) in enumerate(pairs)}, currency
 
 
 class FakeArm:
-    def __init__(self, rows=None, error=None):
+    def __init__(self, rows=None, error=None, costs=None, cost_error=None):
         self.rows, self.error, self.calls = list(ROWS if rows is None else rows), error, []
+        self.costs_of, self.cost_error, self.cost_calls, self.on_cost = costs or {}, cost_error, [], None
 
     def graph_many(self, subscriptions, query):
         self.calls.append((tuple(subscriptions), query))
         if self.error:
             raise self.error
         return list(self.rows)
+
+    def costs(self, subscription, start, end):
+        self.cost_calls.append((subscription, start, end))
+        if self.on_cost:
+            self.on_cost()
+        error = self.cost_error.get(subscription) if isinstance(self.cost_error, dict) else self.cost_error
+        if error:
+            raise error
+        return self.costs_of.get(subscription, ({}, None))
 
 
 class ScholarFoundry:
@@ -188,7 +205,67 @@ class TheSurvey(unittest.TestCase):
         found, notes, world = self.survey(subscriptions=())
         self.assertEqual(found, [])
         self.assertTrue(notes and "no subscription is named" in notes[0], notes)
-        self.assertEqual(world.arm.calls, [])
+        self.assertEqual((world.arm.calls, world.arm.cost_calls), ([], []))
+
+    def test_the_dearest_kinds_come_first_whatever_their_count(self):
+        arm = FakeArm(costs={SUB_A: priced((GIZMOS, 500.0), (GADGETS, 120.5), (WIDGETS, 10.0))})
+        found, notes, _ = self.survey(arm=arm)
+        self.assertEqual([item["type"] for item in found], [GIZMOS, GADGETS, WIDGETS], "one gizmo that costs 500 comes before nine widgets that cost 10")
+        self.assertEqual([item["reference"] for item in found], [REFERENCE[GIZMOS], REFERENCE[GADGETS], REFERENCE[WIDGETS]])
+        self.assertEqual(notes, [])
+
+    def test_kinds_that_cost_the_same_to_the_cent_go_by_count_and_then_by_name(self):
+        rows = [{"type": "microsoft.example/bbb", "n": 3}, {"type": GADGETS, "n": 3}, {"type": "microsoft.example/aaa", "n": 3}, {"type": WIDGETS, "n": 9}]
+        costs = priced(("microsoft.example/aaa", 50.004), ("microsoft.example/bbb", 49.996), (WIDGETS, 50.0), (GADGETS, 50.0))
+        found, _, _ = self.survey(arm=FakeArm(rows, costs={SUB_A: costs}))
+        self.assertEqual([item["type"] for item in found], [WIDGETS, "microsoft.example/aaa", "microsoft.example/bbb", GADGETS], "four kinds at 50.00 to the cent: the nine widgets, then by name")
+
+    def test_a_kind_with_no_cost_line_comes_after_every_kind_that_has_one_and_a_free_kind_has_a_line(self):
+        found, notes, _ = self.survey(arm=FakeArm(costs={SUB_A: priced((GIZMOS, 0.4), (GADGETS, 0.0))}))
+        self.assertEqual([item["type"] for item in found], [GIZMOS, GADGETS, WIDGETS], "the nine widgets have no line, so they come last")
+        self.assertEqual(notes, [], "a kind without a line is no failure")
+
+    def test_the_cost_of_a_kind_is_added_up_over_the_subscriptions_of_the_scope_and_each_is_read_once_for_the_30_closed_days(self):
+        arm = FakeArm(costs={SUB_A: priced((GADGETS, 60.0), (GIZMOS, 100.0)), SUB_B: priced((GADGETS, 60.0))})
+        found, _, world = self.survey(arm=arm, subscriptions=(SUB_A, SUB_B))
+        self.assertEqual([item["type"] for item in found][:2], [GADGETS, GIZMOS], "60 and 60 are dearer than 100")
+        self.assertEqual(world.arm.cost_calls, [(SUB_A, dt.date(2026, 10, 5), dt.date(2026, 11, 3)), (SUB_B, dt.date(2026, 10, 5), dt.date(2026, 11, 3))])
+
+    def test_a_subscription_whose_cost_is_not_in_dollars_is_left_out_and_is_never_added(self):
+        arm = FakeArm(costs={SUB_A: priced((GADGETS, 20.0)), SUB_B: priced((GIZMOS, 9999.0), currency="EUR"), SUB_C: priced((WIDGETS, 8888.0), currency="mixed")})
+        found, notes, _ = self.survey(arm=arm, subscriptions=(SUB_A, SUB_B, SUB_C))
+        self.assertEqual([item["type"] for item in found], [GADGETS, WIDGETS, GIZMOS], "only the gadgets have a cost in dollars; the others go by count")
+        self.assertEqual(notes, [], "a subscription in another currency is left out by design and is no failure")
+
+    def test_costs_that_cannot_be_read_give_the_old_order_and_one_plain_note(self):
+        for error in (http.HttpError(429, "Cost Management: too many requests"), http.HttpError(403, "no right"), IdentityError("no token"), http.Refused("no such call")):
+            with self.subTest(error=type(error).__name__):
+                found, notes, _ = self.survey(arm=FakeArm(costs={SUB_A: priced((GIZMOS, 500.0))}, cost_error=error))
+                self.assertEqual([item["type"] for item in found], [WIDGETS, GADGETS, GIZMOS], "the most common first, as before")
+                self.assertEqual(notes, [study.COST_NOTE])
+
+    def test_a_subscription_whose_cost_cannot_be_read_does_not_take_the_ranking_of_the_others_but_is_said(self):
+        arm = FakeArm(costs={SUB_A: priced((GIZMOS, 5.0))}, cost_error={SUB_B: http.HttpError(429, "slow")})
+        found, notes, _ = self.survey(arm=arm, subscriptions=(SUB_A, SUB_B))
+        self.assertEqual([item["type"] for item in found], [GIZMOS, WIDGETS, GADGETS])
+        self.assertEqual(notes, [study.COST_NOTE])
+
+    def test_no_read_of_cost_starts_after_the_time_that_is_set_aside_for_them_and_what_was_not_read_is_said(self):
+        arm = FakeArm(costs={SUB_A: priced((GIZMOS, 5.0)), SUB_B: priced((GADGETS, 9.0)), SUB_C: priced((WIDGETS, 1.0))})
+        world = World(arm=arm, subscriptions=(SUB_A, SUB_B, SUB_C))
+        arm.on_cost = lambda: world.ticker.jump(study.COST_SECONDS / 2 + 1)
+        notes: list[str] = []
+        found = study.survey(world.services(), NOW, notes)
+        self.assertEqual([call[0] for call in arm.cost_calls], [SUB_A, SUB_B], "the third read would have started after the time was used up")
+        self.assertEqual([item["type"] for item in found], [GADGETS, GIZMOS, WIDGETS])
+        self.assertEqual(notes, [study.COST_NOTE])
+
+    def test_the_default_gives_the_scholar_eight_kinds_and_they_are_the_eight_dearest_of_all_that_wait(self):
+        names = [f"microsoft.example/kind{letter}" for letter in "abcdefghij"]
+        costs = priced(*[(name, float(number)) for number, name in enumerate(names)])
+        found, _, world = self.survey(arm=FakeArm([{"type": name, "n": 1} for name in names], costs={SUB_A: costs}))
+        self.assertEqual(world.settings.study_max_types, 8)
+        self.assertEqual([item["type"] for item in found], names[:1:-1], "the cap of eight is applied after the ranking: the two cheapest wait for the next run")
 
 
 class WhatCodeKeepsOfTheAnswer(unittest.TestCase):
@@ -311,6 +388,21 @@ class TheRun(unittest.TestCase):
         self.assertEqual((spec.name, spec.tools), (agents.SCHOLAR_NAME, (library.FETCH_DOC,)))
         self.assertEqual(world.foundry.runs[0]["max_calls"], 24)
 
+    def test_the_scholar_gets_the_kinds_dearest_first_with_no_dollar_in_its_input_and_a_cost_that_cannot_be_read_is_a_note_and_no_failure(self):
+        costs = {SUB_A: priced((GIZMOS, 4321.5), (GADGETS, 12.25))}
+        world = World(foundry=self.good(), arm=FakeArm(costs=costs))
+        world.go()
+        asked = world.foundry.runs[0]["input"]
+        self.assertEqual([item["type"] for item in json.loads(asked)["types"]], [GIZMOS, GADGETS, WIDGETS])
+        for amount in ("4321", "12.25"):
+            self.assertNotIn(amount, asked, "the order is all that the cost gives the Scholar: no amount of the estate is in its input")
+        self.assertNotIn(study.COST_NOTE, " ".join(event["note"] for event in world.of("study.note")))
+        broken = World(foundry=self.good(), arm=FakeArm(costs=costs, cost_error=http.HttpError(429, "slow")))
+        broken.go()
+        self.assertEqual((broken.summary.state, broken.summary.ok, broken.summary.note), ("ran", True, study.COST_NOTE))
+        self.assertEqual([event["note"] for event in broken.of("study.note")].count(study.COST_NOTE), 1)
+        self.assertEqual([item["type"] for item in json.loads(broken.foundry.runs[0]["input"])["types"]], [WIDGETS, GADGETS, GIZMOS], "the old order")
+
     def test_the_budgets_of_the_settings_are_the_ceilings_of_the_run(self):
         world = World(foundry=self.good(), study_max_pages=2, study_max_types=1, study_max_seconds=60)
         world.go()
@@ -331,7 +423,7 @@ class TheRun(unittest.TestCase):
         world = World(foundry=self.good(), study=False)
         summary = world.go()
         self.assertEqual((summary.state, summary.ok, summary.note), ("off", True, "the Study is switched off"))
-        self.assertEqual((world.arm.calls, world.web.calls, world.foundry.runs, world.foundry.specs), ([], [], [], []))
+        self.assertEqual((world.arm.calls, world.arm.cost_calls, world.web.calls, world.foundry.runs, world.foundry.specs), ([], [], [], [], []))
         self.assertEqual([e["type"] for e in world.events], ["study.started", "study.finished"])
 
     def test_without_a_foundry_project_or_a_store_it_is_off_too(self):
@@ -344,7 +436,7 @@ class TheRun(unittest.TestCase):
         services = replace(world.services(), store=None)
         with LogCapture():
             self.assertEqual(study.execute(services, "timer").note, "no store keeps the claims, so there is nothing to study for")
-        self.assertEqual((world.arm.calls, world.foundry.runs), ([], []))
+        self.assertEqual((world.arm.calls, world.arm.cost_calls, world.foundry.runs), ([], [], []))
 
     def test_a_pulled_switch_holds_the_study_before_anything_is_read_and_a_switch_that_cannot_be_read_counts_as_pulled(self):
         for name in ("all", "investigation"):

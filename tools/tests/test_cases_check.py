@@ -716,7 +716,7 @@ GUID_IN_A_NOTE = "99999999-aaaa-bbbb-cccc-dddddddddddd"
 def a_study(**finished):
     """The lines that one run of the Study writes (cases/study.py), with the fields that the check reads."""
     return [
-        event("study.started", trigger="control", maxTypes=4, maxPages=8, maxSeconds=300, maxTokens=400000),
+        event("study.started", trigger="control", maxTypes=8, maxPages=8, maxSeconds=300, maxTokens=400000),
         event("study.note", note="claims thrown away: quote 1, cap 1"),
         event("study.claim", claimId="a" * 24, resourceType="microsoft.example/widgets", claimKind="minimum-charge", url=STUDY_URL),
         event("study.claim", claimId="b" * 24, resourceType="microsoft.example/widgets", claimKind="quota-limit", url=STUDY_URL),
@@ -763,7 +763,7 @@ class TheStudy(unittest.TestCase):
     def test_a_good_study_passes_and_says_the_counts_in_plain_words(self):
         code, out, err, _, _ = self.go([telemetry(a_study())])
         self.assertEqual((code, err), (0, ""))
-        for text in (f"Request {ID}:", "The Study started (by the control); its limits: 4 kinds of resource, 8 pages, 300 seconds, 400000 tokens.",
+        for text in (f"Request {ID}:", "The Study started (by the control); its limits: 8 kinds of resource, 8 pages, 300 seconds, 400000 tokens.",
                      "The Study ended: ran, well, after 142 seconds.", "Kinds of resource given to the Scholar: 4; it says it read about: 3.",
                      "Pages read: 5; tool calls of the page reader: 11.", "Claims kept: 3 (minimum-charge 1, quota-limit 2); thrown away: 2; read again and still on their page: 1; read again and stale: 0.",
                      "Tokens through Foundry: 123456.", "claims thrown away: quote 1, cap 1", "The Study ran and read pages: passed."):
@@ -823,6 +823,22 @@ class TheStudy(unittest.TestCase):
             self.assertEqual(cc.study_note(other), cc.NOT_SHOWN, other)
         self.assertEqual(cc.study_note(""), "")
         self.assertEqual(cc.study_note(None), "")
+
+    def test_the_note_that_the_costs_could_not_be_read_is_one_of_the_apps_words_it_is_shown_and_it_does_not_fail_the_study(self):
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import study as the_app
+        finally:
+            sys.path.remove(app)
+        self.assertIn(the_app.COST_NOTE, cc.STUDY_NOTE_WORDS, "the note that the survey writes when a cost cannot be read is one of the words that a public log shows")
+        self.assertEqual(cc.study_note(the_app.COST_NOTE), the_app.COST_NOTE)
+        events = a_study()
+        events.insert(1, event("study.note", note=the_app.COST_NOTE))
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 0, "the Study ran on the old order: that is no failure")
+        self.assertIn(f"    - {the_app.COST_NOTE}", out)
 
     def test_a_number_that_is_not_a_number_is_never_printed(self):
         code, out, _, _, _ = self.go([telemetry(a_study(seconds="::error::x", tokens=True, types="9" * 40, kept=-1, pages=2.5, toolCalls=None, state="RAN!"))])
