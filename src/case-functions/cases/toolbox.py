@@ -55,6 +55,10 @@ What the investigation may rely on after a run (it reads these and changes none)
   Toolbox.meters[m]     the Meter (cases/meters.py) of a meter handle m (m1, m2, ...) that cost_meters showed: its scope (the handle of a resource, or a resource type), the six words of the meter as Cost
                         Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
                         the same scope has the same handle all through the run, and the numbers are those of the longest window that a call showed it for. A line that no resource owns has no handle.
+  Toolbox.prices[p]     the Line (cases/prices.py) of a price handle p (p1, p2, ...) that price_alternatives showed: its service, product, SKU, meter, unit of measure, the price of one unit in US dollars, its region
+                        (`Global` for a price that holds in every region) and how many price steps it has (1 for one price). The same line has the same handle all through the run.
+  Toolbox.rates[m]      the rate ratio that price_alternatives showed for the meter handle m: what the bill paid for one unit over the window divided by the list price of the line that the words of the
+                        meter name. A meter has none when it was not asked about, when no line (or several that disagree) has its words, when its list price has steps or is nothing, or when the bill had no quantity.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
