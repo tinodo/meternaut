@@ -403,7 +403,11 @@ class Foundry:
         starts that. A second failure is raised, and so is the first answer when the second one says that `agent` is deprecated: `agent_reference` then stays.
 
         `stop` is the brake of the harness (cases/harness.py): it is called with what the run has come to before every request to the model, the first one too, and a reason that it
-        returns (plain words) ends the run with a FoundryError. A `stop` that raises ends the run too: a brake that cannot decide is a brake that holds."""
+        returns (plain words) ends the run with a FoundryError. A `stop` that raises ends the run too: a brake that cannot decide is a brake that holds.
+
+        `soft_seconds` is the time after which the calls that the agent asks for are refused (the default is SOFT_TIME_SHARE of `max_seconds`). `salvage` is a function that says how many seconds a
+        last request may take (0 for none): when the run is cut off (its hard time, the rounds that it was given, or a `stop` that gives a `Salvageable` reason, the tokens of a beat), that request carries
+        the answers that are waiting and the instruction to write the answer now, and the run returns its text, with `salvaged` True; when it asks for a tool again or fails, the run ends as it would have."""
         reference = self._reference(agent)
         self._model = self._models.get(reference["name"])
         if not isinstance(user_input, str) or not user_input.strip():
