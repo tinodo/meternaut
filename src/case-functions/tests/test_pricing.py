@@ -437,6 +437,14 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         row = self.row([10.0 if n % 5 == 0 else 0.0 for n in range(30)])
         self.assertEqual((row.low, row.high, row.uneven), (42.86, 60.0, 1))
 
+    def test_an_uneven_line_makes_the_figure_rough_only_when_it_carries_a_tenth_of_what_the_figure_rests_on(self):
+        def uneven(peak):
+            spiky = shaped("r1", [peak if n % 10 == 0 else 0.0 for n in range(30)], words=STORAGE)
+            found = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters={"m1": shaped("r1", [10.0] * 30), "m2": spiky}), costs={"r1": 300.0 + 3 * peak})
+            return found.rows["r1"].uneven
+
+        self.assertEqual((uneven(10.0), uneven(30.0)), (0, 1), "30 of 330 a month is under a tenth, and 90 of 390 is not")
+
     def test_a_meter_with_one_day_or_two_has_no_rate_and_the_finding_says_that_the_lines_gave_none(self):
         for costs in ([5.0], [5.0, 5.0]):
             found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", costs)}))

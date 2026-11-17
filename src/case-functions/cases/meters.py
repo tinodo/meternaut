@@ -38,6 +38,9 @@ class Rates(NamedTuple):
     began: bool
     cv: float | None
 
+    @property
+    def high(self) -> float:
+        return self.week if self.since is None else max(self.week, self.since)
 
 def rates(meter: Meter) -> Rates | None:
     """The rates of a meter, or None when its days cannot give one: a window under 7 days, a number that is not one, no day with a cost, or fewer than FEWEST days from the first cost to the last

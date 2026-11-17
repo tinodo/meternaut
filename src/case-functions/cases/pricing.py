@@ -37,6 +37,7 @@ ALLOWED = {"remove": ("none",), "reduce": ("quantity", "ratio", "assumed"), "sch
 SHOWN = ("none", "quantity", "ratio", "share_of_days", "assumed", "mixed")  # the forms that a digest may have: mixed is a sum of resources whose rules differ
 MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
 UNEVEN = 1.0  # a meter whose daily cost spreads by more than its mean is uneven: a rate worked out from it is a rough guide (a statistic about the bill, not a rule about what is waste)
+MATERIAL = 0.1  # an uneven meter makes a figure rough only when it carries at least this share of what the figure rests on
 ALIKE = 0.05  # two rates that differ by no more than this share of the larger are the same one
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
@@ -221,7 +222,7 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
             continue  # it cost nothing: that is a reason of its own, not a lack of days
         elif (got := rates(meter)) is None:
             skipped += 1
-        elif (meter.scope, meter.words) not in seen and (got.week > 0 or (got.since or 0) > 0):
+        elif (meter.scope, meter.words) not in seen and got.high > 0:
             seen.add((meter.scope, meter.words))  # a bill line counts once, however many calls showed it
             used.append((name, got, meter))
     if not effect.meters:
@@ -235,8 +236,9 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
         unit = (used[0][2].words or ("",))[-1]
         said = {**said, **({"unit": unit} if UNIT.fullmatch(unit) else {})}
     since = math.fsum(got.week if got.since is None else got.since for _, got, _ in used) if any(got.since is not None for _, got, _ in used) else None
+    total = math.fsum(got.high for _, got, _ in used)
     return Part(form, least, most, said, math.fsum(got.week for _, got, _ in used), since, tuple(name for name, _, _ in used), skipped,
-                min((got.life for _, got, _ in used if got.began), default=None), sum(1 for _, got, _ in used if got.cv is not None and got.cv > UNEVEN))
+                min((got.life for _, got, _ in used if got.began), default=None), sum(1 for _, got, _ in used if got.cv is not None and got.cv > UNEVEN and got.high >= MATERIAL * total))
 
 
 def _own(meters: Iterable[Meter]) -> tuple[float, float] | None:
