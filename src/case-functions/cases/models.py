@@ -241,6 +241,9 @@ class PlanRecord(Record):
     digest: str = ""
     # When the wait of the request began, when that is before the request was made: a request that stands for another one keeps the oldest start (cases/approvals.py supersede). Not in the digest.
     waiting_since: str = ""
+    # What the requests that this one stands for cost while they waited, in dollars (each at its own figure, for its own days, up to the day that this one was made). The cost of waiting adds what this one
+    # has cost since it was made. Not in the digest.
+    waited_usd: float = 0.0
 
 
 def started(plan: PlanRecord) -> str:

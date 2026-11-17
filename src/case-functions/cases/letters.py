@@ -418,9 +418,9 @@ ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not w
 ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 
 
-def waited_days(plan: PlanRecord, now: dt.datetime) -> int:
-    """How many whole days the request has waited since it was made."""
-    since = brief_mod.parse_time(started(plan))
+def waited_days(plan: PlanRecord, now: dt.datetime, own: bool = False) -> int:
+    """How many whole days the request has waited since the wait began (a request that stands for others keeps their start), or, with `own`, since this request was made."""
+    since = brief_mod.parse_time(plan.created_at if own else started(plan))
     moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
     return 0 if since is None else max(0, (moment - since).days)
 
@@ -448,7 +448,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
     doc.figure(stake)
-    waited = waited_line(stake, days)
+    waited = waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))
     rows = [("Waiting", f"{_days(days)}, since {_data(started(plan)[:10], 12)}"),
             ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
             ("Told before", "; ".join(_data(t, 160) for t in told[:4]) or "Nobody else yet.")]
@@ -477,7 +477,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case, source in rows[:MAX_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days), f"Why you are told: {_data(source, 20)}.") if part))
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)), f"Why you are told: {_data(source, 20)}.") if part))
     doc.items(*lines)
     if count > MAX_LISTED:
         doc.paragraph(f"and {count - MAX_LISTED} more.")
@@ -503,7 +503,7 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case in rows[:WEEKLY_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days)) if part))
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))) if part))
     if lines:
         doc.items(*lines)
     if count > WEEKLY_LISTED:

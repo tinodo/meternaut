@@ -1601,11 +1601,16 @@ def _nothing_changed(result: object) -> str:
     return f"Nothing was changed: {why}" if why else "Nothing was changed."
 
 
-def waiting_cost(monthly: float | None, level: str, days: int) -> str:
-    """What waiting has cost so far, by code: the figure of a month over thirty days, for the days that the request has waited, in whole dollars ("about" for a Scenario). Empty without a measured saving."""
+def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0.0, own: int | None = None) -> str:
+    """What waiting has cost so far, by code: the figure of a month over thirty days, for the days that the request has waited, in whole dollars ("about" for a Scenario). Empty without a measured saving.
+    A request that stands for others (a group) adds what they cost while they waited, `before` (each at its own figure for its own days), to what it has cost itself for the `own` days since it was made."""
     if monthly is None or monthly <= 0 or days < 0 or level not in ("Verified", "Expected", "Scenario"):
         return ""
-    return f"{days} day{'s' if days != 1 else ''} at {usd_text(monthly)} a month is {'about ' if level == 'Scenario' else ''}${monthly / 30 * days:,.0f}"
+    about = "about " if level == "Scenario" else ""
+    if not before:
+        return f"{days} day{'s' if days != 1 else ''} at {usd_text(monthly)} a month is {about}${monthly / 30 * days:,.0f}"
+    return (f"{days} day{'s' if days != 1 else ''}: {about}${before + monthly / 30 * (days if own is None else own):,.0f} so far, of which ${before:,.0f} is what the requests that this one replaced "
+            f"cost for the days that each of them waited")
 
 
 def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1626,10 +1631,11 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
     """How long the request has waited since `plan.created_at`, from the records of its ladder (cases/escalation.py): with whom it is now, who was
     told and when, how often it was put off."""
     days, _ = ago_text(now, started(plan))
+    own, _ = ago_text(now, plan.created_at)
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
     told, pending = told_lines(steps)
     return Waiting(days or 0, plain(started(plan)[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
-                   sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0), pending[-4:])
+                   sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0, plan.waited_usd, own or 0), pending[-4:])
 
 
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:

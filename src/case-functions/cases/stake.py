@@ -80,10 +80,11 @@ def stake_of(brief: Brief) -> Stake:
     return stake_of_figure(figure, figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none)
 
 
-def waited_line(stake: Stake, days: int) -> str:
+def waited_line(stake: Stake, days: int, before: float = 0.0, own: int | None = None) -> str:
     """What waiting has cost so far, by code (brief.waiting_cost): the figure of a month over thirty days, for the days that the request has waited, in whole dollars. A Scenario figure says "about".
-    Empty when the request has no measured saving: waiting cost nothing that anybody measured, and the message then says so in its own words."""
-    cost = waiting_cost(stake.monthly if stake.state == "save" else None, stake.level, days)
+    A request that stands for others adds what they cost (`before`) to what it has cost in the `own` days since it was made. Empty when the request has no measured saving: waiting cost nothing that
+    anybody measured, and the message then says so in its own words."""
+    cost = waiting_cost(stake.monthly if stake.state == "save" else None, stake.level, days, before, own)
     return f"{cost}, at the figure above ({stake.level})." if cost else ""
 
 

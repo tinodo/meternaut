@@ -466,10 +466,16 @@ class Approvals:
 
     def _carry(self, old: PlanRecord, new: PlanRecord) -> None:
         """The request that stands for another keeps the oldest start, and the steps of the ladder that were made for the other count as made for it (cases/escalation.py): a request that is made again
-        does not start its wait again. A request that asks another question (the rules changed, another lead) is made by another path and starts when it is made."""
+        does not start its wait again. What the other cost while it waited (at its own figure, for its own days, up to the day that this one was made) is carried too, so the cost of waiting of a group
+        is the sum of what each of its members cost for the days that it waited, and not the whole figure of the group for the days of the oldest member. A request that asks another question (the
+        rules changed, another lead) is made by another path and starts when it is made."""
         fresh = self.store.plan_get(new.plan_id)
-        if fresh is not None and fresh.state == "open" and started(old) < started(fresh):
-            self.store.plan_put(replace(fresh, waiting_since=started(old)))
+        if fresh is not None and fresh.state == "open":
+            days = max((parse(fresh.created_at) - parse(started(old))).total_seconds() / 86400, 0.0)
+            changes: dict = {"waited_usd": round(fresh.waited_usd + old.waited_usd + (old.saving_usd_month or 0.0) / 30 * days, 2)}
+            if started(old) < started(fresh):
+                changes["waiting_since"] = started(old)
+            self.store.plan_put(replace(fresh, **changes))
         for record in self.store.escalations_of(old.plan_id):
             self.store.escalation_claim(replace(record, plan_id=new.plan_id))
 

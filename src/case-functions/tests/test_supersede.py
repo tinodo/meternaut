@@ -1,12 +1,14 @@
 """A request for a group of resources closes the older requests for single resources of that group (cases/approvals.py: supersede, which the Watch calls after the investigation), and an
 advice that nobody answered is not a row of "Recently decided" (cases/web/home.py). Everything in these tests is invented.
 """
+import datetime as dt
 import unittest
 from dataclasses import replace
 
 from support import APP_ROOT  # noqa: F401
 
 from cases.approvals import Approvals
+from cases.brief import waiting_cost
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ADVISE, GROUP_FACT, EscalationRecord, started
 from test_advise import NAMED, SETTINGS, Clock
@@ -162,6 +164,34 @@ class WhenARequestIsMadeAgain(unittest.TestCase):
         self.assertEqual(self.store.plan_get(before.plan_id).state, "expired")
         stands = self.store.plan_get(after.plan_id)
         self.assertEqual((stands.state, started(stands), stands.created_at), ("open", before.created_at, after.created_at))
+
+    def test_a_group_that_stands_for_singles_costs_the_sum_of_what_each_cost_for_its_own_days_and_not_its_whole_figure_for_the_oldest_days(self):
+        plans = asked(self.store, self.clock, range(1, 4), group=3, of=range(1, 4))
+        for n, days, saving in ((1, 10, 30.0), (2, 5, 60.0)):  # one waited 10 days at $30 a month, the other 5 days at $60, and the group is made now with all three
+            self.store.plan_put(replace(plans[n], created_at=stamp(self.clock() - dt.timedelta(days=days)), saving_usd_month=saving))
+        self.store.plan_put(replace(plans[3], saving_usd_month=120.0))
+        self.approvals.supersede()
+        stands = self.store.plan_get(plans[3].plan_id)
+        self.assertEqual((stands.waited_usd, started(stands)), (20.0, stamp(self.clock() - dt.timedelta(days=10))), "$10 and $10: not $120 a month over 10 days, which is $40")
+        self.assertEqual(stands.digest, plans[3].digest, "what was carried is no part of what a person approves")
+        self.clock.advance(days=3)
+        text = waiting_cost(120.0, "Expected", 13, stands.waited_usd, 3)
+        self.assertIn("$32 so far, of which $20 is what the requests that this one replaced cost for the days that each of them waited", text)
+        self.assertEqual(waiting_cost(120.0, "Expected", 13), "13 days at $120.00 a month is $52", "a request that replaced none reads as it always did")
+
+    def test_a_request_that_stands_for_one_with_the_same_members_carries_what_it_cost_so_far(self):
+        older = single(6)
+        self.store.case_put(older)
+        before = self.approvals.advise(older, NAMED)
+        self.store.plan_put(replace(before, saving_usd_month=90.0, waited_usd=6.0))
+        self.store.case_put(grouped(older, range(1, 7)))
+        self.clock.advance(days=2)
+        newer = single(7)
+        self.store.case_put(newer)
+        after = self.approvals.advise(newer, NAMED)
+        self.store.case_put(grouped(newer, range(2, 8)))
+        self.approvals.supersede()
+        self.assertEqual(self.store.plan_get(after.plan_id).waited_usd, 12.0, "$6 that it carried and $90 a month for the 2 days that it stood")
 
     def test_a_request_that_asks_another_question_starts_when_it_is_made_and_the_closed_word_of_the_old_one_says_why(self):
         case = single(1)
