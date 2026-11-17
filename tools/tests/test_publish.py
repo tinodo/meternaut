@@ -944,17 +944,49 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
 
     def test_the_archive_is_at_least_a_quarter_smaller_than_the_same_files_each_compressed_alone_and_stays_within_its_ceiling(self):
         data = self.sources_archive()
-        root = ROOT / "src" / "case-functions"
+        inner = self.inner_zip(data)
         one_by_one = io.BytesIO()
         with zipfile.ZipFile(one_by_one, "w", zipfile.ZIP_LZMA) as archive:
-            for name in self.expected_sources("cases"):
-                archive.write(root / name, name)
+            for name in inner.namelist():
+                archive.writestr(name, inner.read(name))
         self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
-        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left: raise the ceiling on purpose, with the new measure")
+        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left, or the comments are not taken out any more: look at which, "
+                                                                                                    "and raise the ceiling on purpose, with the new measure, only for the first")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_61250_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_150000_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 61_250, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
+        self.assertLessEqual(sent, 480_000 - 150_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 150,000 that stay free are the room for the code that the app grows by, which the stripped "
+                                                      "sources (tools/strip-sources.py) make: when this fails, no word is shortened to make room: look at what grew, or at whether the strip still runs")
+
+    @staticmethod
+    def sources_with_a_broken_file(tmp):
+        folder = tmp / "sources"
+        files = {"function_app.py": b"# the cases app\n", "host.json": b"{}\n", "requirements.txt": b"azure-functions==2.3.0 \\\n    --hash=sha256:" + b"cd" * 32 + b"\n", "cases/__init__.py": b"",
+                 "cases/broken.py": b"def broken(:\n"}
+        for name, data in files.items():
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(data)
+        return folder
+
+    def test_a_python_file_that_cannot_be_stripped_stops_the_pack_in_plain_words_and_no_archive_is_made(self):
+        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7", prior=self.sources_with_a_broken_file)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("error: cases/broken.py: it could not be stripped", done.stderr)
+        self.assertIn("The sources were not stripped and nothing is packed.", done.stderr)
+        self.assertEqual(done.stdout, "", "no count of files: nothing was packed")
+        self.assertIsNone(members, "no archive is made of sources that were not stripped")
+
+    def test_the_strip_is_a_step_of_the_pack_of_the_sources_before_the_zip_and_of_no_other_build_because_the_container_has_no_such_tool(self):
+        code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
+        sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
+        self.assertEqual(code.count("strip-sources.py"), 1)
+        self.assertLess(sources.index("strip-sources.py"), sources.index('rm -f "$zip_file"'), "the files are stripped before the zip is made")
+        self.assertTrue((ROOT / "tools" / "strip-sources.py").is_file())
+        for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
+            done, calls, members, folder = self.run_build(env=env, python=python, prior=self.sources_with_a_broken_file)
+            self.assertEqual(done.returncode, 0, (label, done.stderr))
+            with zipfile.ZipFile(io.BytesIO(self.last_zip)) as package:
+                self.assertEqual(package.read("cases/broken.py"), b"def broken(:\n", f"{label}: the files are those that it was given")
 
     def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
         data = self.sources_archive()
