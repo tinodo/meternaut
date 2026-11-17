@@ -89,7 +89,13 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
               "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
               "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
-              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
+              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more.",
+              "group": "Meternaut took this request back: it was one of several requests about single resources, and one request for the whole group of them waits now.",
+              "nothing": "Meternaut took this request back: the finding does not say what to look at."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
+# What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
+WITH_WHOM = {"same": "the people it was made for", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
+             "contact": "the escalation contact", "owners": "the owners of Meternaut"}
+SAID_HOW = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -266,6 +272,19 @@ class Outcome:
 
 
 @dataclass(frozen=True)
+class Waiting:
+    """How long an open request has waited since it was first made, with whom it is now, who was told and when, how often it was put off, and what the waiting has cost so far (by code, from the
+    figure of the request; empty when no saving was measured). Made from the ladder of cases/escalation.py."""
+
+    days: int
+    since: str  # the date, YYYY-MM-DD
+    with_whom: str  # in words: "the people it was made for", "the manager of the person who was asked first", ...
+    told: tuple[str, ...]
+    put_off: int
+    cost: str
+
+
+@dataclass(frozen=True)
 class Option:
     """One thing that a person could do about it, in words that code wrote, and what is lost or at risk if they do it."""
 
@@ -320,7 +339,7 @@ class Brief:
     plan_code: str
     kind: str  # change (a change in Azure that a person may approve), advice (an advise plan: nothing changes) or info (no plan)
     family: str
-    state: str  # the state of the plan as it is now: open, expired, declined, approved, consumed, failed, withdrawn; none without a plan
+    state: str  # the state of the plan as it is now: open, expired (taken back by Meternaut, with its reason), declined, approved, consumed, failed, withdrawn; none without a plan
     headline: str
     saving: Saving
     confidence: Confidence
@@ -337,7 +356,6 @@ class Brief:
     answers: tuple[str, ...]  # the answers that exist for this person right now, in the order of the page
     found_at: str
     age_days: int | None
-    expires_at: str
     models: tuple[str, ...]
     outcome: Outcome
     two_people: bool
@@ -380,6 +398,8 @@ class Brief:
     # by code: no AI looked at it.
     advisor: Advisor | None = None
     by_code: bool = False
+    # How long an open request has waited, with whom it is now and what waiting has cost (cases/escalation.py); None for a request that is not open.
+    waiting: Waiting | None = None
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -1519,6 +1539,23 @@ def _nothing_changed(result: object) -> str:
     return f"Nothing was changed: {why}" if why else "Nothing was changed."
 
 
+def waiting_cost(monthly: float | None, level: str, days: int) -> str:
+    """What waiting has cost so far, by code: the figure of a month over thirty days, for the days that the request has waited, in whole dollars ("about" for a Scenario). Empty without a measured saving."""
+    if monthly is None or monthly <= 0 or days < 0 or level not in ("Verified", "Expected", "Scenario"):
+        return ""
+    return f"{days} day{'s' if days != 1 else ''} at {usd_text(monthly)} a month is {'about ' if level == 'Scenario' else ''}${monthly / 30 * days:,.0f}"
+
+
+def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datetime) -> Waiting:
+    """How long the request has waited since `plan.created_at` (a request that was made again keeps the first start), from the records of its ladder (cases/escalation.py): with whom it is now, who was
+    told and when, how often it was put off."""
+    days, _ = ago_text(now, plan.created_at)
+    steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
+    told = tuple(f"{', '.join(plain(n, 80) for n in r.names)} ({SAID_HOW.get(r.source, '')}), {r.at[:10]}" for r in steps if r.names)
+    return Waiting(days or 0, plain(plan.created_at[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
+                   sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0))
+
+
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state == "open":
@@ -1528,7 +1565,8 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
             return Outcome("expired", "Taken back", (TAKEN_BACK[why], "Nothing was changed in Azure."), "Taken back by Meternaut", "", plan.expires_at)
-        return Outcome("expired", "Expired", ("Nobody answered in time.", "Nothing changed."), "Expired, nobody answered", "", plan.expires_at)
+        return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open. A request that nobody answered is opened again at the next Watch.", "Nothing changed."),
+                       "Closed by a timer", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")
         who = text_of(found.approver_name, 80) if found else "A person"
@@ -1571,7 +1609,7 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
 
 def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None = None, decisions: Sequence[DecisionRecord] = (), *, now: dt.datetime,
-                may_answer: bool = False, changes_paused: bool = False, viewer: str = "", ready: Readiness | None = None) -> Brief:
+                may_answer: bool = False, changes_paused: bool = False, viewer: str = "", ready: Readiness | None = None, ladder: Sequence = ()) -> Brief:
     """The brief of one case, with its plan and the action of the plan when there are any. `may_answer` says that the person who looks may answer the plan (the role and
     the names are checked by the caller); `changes_paused` that a switch holds the changes; `viewer` is the object id of the person who looks, for a request that needs two people
     (what that person may do depends on whether they confirmed it); `ready` is what a look at the resource said about a change that waits for an OK (cases/precheck.py), when the caller took
@@ -1580,8 +1618,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     name, group, subscription, resource_id, rtype = _subject(case, plan)
     family = plan.family if plan is not None else ""
     kind = "info" if plan is None else ("advice" if family == ADVISE else "change")
-    end = parse_time(plan.expires_at) if plan is not None else None
-    state = "none" if plan is None else ("expired" if plan.state == "open" and (end is None or now >= end) else plan.state)
+    state = "none" if plan is None else plan.state  # no clock ends a request: it is open until it is answered or Meternaut takes it back
     recommendation = case.recommendation if case is not None else None
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
     if said is not None:
@@ -1614,7 +1651,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case),
         where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
-        age_days=age, expires_at=plain(plan.expires_at if plan is not None else "", 30),
+        age_days=age,
         models=models_of(case), outcome=_outcome(plan, state, action, decisions, case), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
@@ -1622,7 +1659,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case))
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
+        waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None)
 
 
 def order_key(brief: Brief) -> tuple:

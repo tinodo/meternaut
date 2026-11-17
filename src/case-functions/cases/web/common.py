@@ -41,7 +41,8 @@ def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, acti
     answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`. `ready` is a look at the resource
     (look_at): when it says that the change would be refused, the brief has no answer that approves."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
-    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready)
+    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready,
+                       ladder=ctx.ladder(plan.plan_id) if plan is not None and plan.state == "open" else ())
 
 
 def verified_brief(ctx: Ctx, plan: PlanRecord | None, action: ActionRecord | None) -> Brief | None:
@@ -113,19 +114,10 @@ def pulled(ctx: Ctx, *names: str) -> bool:
 
 
 def may_answer(principal: Principal, plan: PlanRecord) -> bool:
-    """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too."""
+    """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too, and so may an
+    escalation contact: the last link, who is told when nobody answers (cases/escalation.py)."""
     named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))
-
-
-def is_expired(ctx: Ctx, plan: PlanRecord) -> bool:
-    """A plan whose time is over, also when the record still says open. A time that cannot be read counts as over."""
-    end = parse_time(plan.expires_at)
-    return end is None or ctx.now >= end
-
-
-def effective_state(ctx: Ctx, plan: PlanRecord) -> str:
-    return "expired" if plan.state == "open" and is_expired(ctx, plan) else plan.state
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and principal.has("escalation"))
 
 
 # -- what happened to the change ---------------------------------------------------------------------------------------------------------------------

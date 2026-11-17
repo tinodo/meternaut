@@ -69,7 +69,7 @@ NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
 ROLES = ("owner", "approver", "ops", "escalation")
 # Who an escalation step goes to, as the word that the record keeps (cases/escalation.py, cases/directory.py): the people the request was made for, the manager that the directory names, the
-# address of an escalation tag, the escalation contacts, or the owners when nothing else was found. And what a record of the ladder is: a step, or a person's put-off ("later").
+# address of an escalation tag, the escalation contacts, or the owners when nothing else was found. And what a record of the ladder is: a step, a person's put-off ("later") or a pass-on ("not mine").
 ESCALATION_SOURCES = ("same", "manager", "tag", "contact", "owners")
 ESCALATION_KINDS = ("step", "snooze", "pass")
 # The most characters that the address which the function app sends a person to (the sign-in of Microsoft Entra) may have after the host and the slash behind it. The pages refuse a

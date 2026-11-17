@@ -59,6 +59,7 @@ RETRY_MINUTES = 15  # a card that was not sent is offered again after this long
 MAX_TRIES = 12  # and given up after this many tries
 ROUND_SECONDS = 25  # the bot's time for the calls of one round: the letters follow the cards in the same minute, and a slow Bot Connector must not hold them back
 RESULT_DAYS = 3  # the cards about a change are offered for this long after it
+LINK_DAYS = 30  # the buttons of a card answer for this long (the request itself never expires)
 APPROVAL, ADVICE, NOTICE, VERIFIED, FIRST_CONTACT = "approval-card", "advice-card", "notice-card", "verified-card", "first-contact-card"
 POSTED, CLOSED = "card-posted", "card-closed"
 BOT = "bot"  # the last word of the detail of a `card-posted` record that the bot made
@@ -122,7 +123,7 @@ class Offers:
             self.bot.client.deadline = self.bot.client.monotonic() + ROUND_SECONDS
         try:
             for plan in self.store.plans_open():
-                if plan.state != "open" or parse(plan.expires_at) <= now:
+                if plan.state != "open":
                     continue
                 case = self.store.case_get(plan.case_id)
                 for oid in plan.approvers:
@@ -217,7 +218,7 @@ class Offers:
         if not wanted or not plan.code:
             return {}
         try:
-            seconds = (parse(plan.expires_at) - self.clock()).total_seconds()
+            seconds = LINK_DAYS * 86400  # no clock closes the request, so the buttons of a card last a good while; the letters and the page go on after them
             page = cards.page_url(self.base_url, plan.plan_id)
             return {answer: cardlinks.answer_url(page, answer, plan.code, cardlinks.mint(self.store.nonce_new, person.oid, plan.plan_id, plan.code, answer, twice, seconds))
                     for answer, twice in wanted}

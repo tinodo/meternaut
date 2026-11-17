@@ -1,6 +1,6 @@
-"""The timer of the loop, every minute: closes the plans whose time is over, checks the changes that were made, tells the person what happened and, every fifth minute, writes the lessons
-of the plans that ended (cases/learning.py). It does nothing when the loop is not configured. It cannot change Azure: its token is the reader's, and its list of calls holds no write
-(runner.py reads them).
+"""The timer of the loop, every minute: checks the changes that were made, escalates the requests that wait, tells the person what happened and, every fifth minute, writes the lessons
+of the plans that ended (cases/learning.py). It closes no request by a clock (AGENTS.md rule 38). It does nothing when the loop is not configured. It cannot change Azure: its token is the reader's,
+and its list of calls holds no write (runner.py reads them).
 """
 from __future__ import annotations
 
@@ -60,6 +60,14 @@ def _remind(extras: wiring.Extras, clock: Callable[[], dt.datetime], redact: Cal
         LOG.error(redact(f"the letters could not be offered: {type(error).__name__}"))
 
 
+def _escalate(extras: wiring.Extras, arm: Arm, history: History, redact: Callable[[str], str]) -> None:
+    """One round of the ladder of the requests that wait (cases/escalation.py): the steps that are due, the letters that go with them, and the weekly letter. It never stops the round."""
+    try:
+        extras.on_escalate(arm, history.emit)
+    except Exception as error:  # noqa: BLE001 (the timer must go on)
+        LOG.error(redact(f"the escalation could not be made: {type(error).__name__}"))
+
+
 def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, sleep: Callable[[float], None] = time.sleep,
          monotonic: Callable[[], float] = time.monotonic, clock: Callable[[], dt.datetime] = utc_now, fetch=None) -> TickResult | None:
     """One round. It never raises: a failure is logged, and the next minute tries again."""
@@ -84,14 +92,15 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         result = runner.tick(services)
         _offer_cards(extras, redact)
         _remind(extras, clock, redact)
+        _escalate(extras, services.arm, history, redact)
         if clock().minute % learning.SYNC_EVERY_MINUTES == 0:
             learning.sync(extras.store, clock(), arm=services.arm)  # the lessons of the plans that ended (cases/learning.py); it never raises
         if clock().minute == 0:
             purge = getattr(extras.store, "nonces_purge", None)
             if purge:
                 purge()
-        if result.expired or result.finished or result.verified:
-            history.emit("tick.result", expired=len(result.expired), finished=len(result.finished), verified=len(result.verified))
+        if result.finished or result.verified:
+            history.emit("tick.result", finished=len(result.finished), verified=len(result.verified))
         return result
     except Exception as error:  # noqa: BLE001 (the timer must go on)
         LOG.error(redact(f"the tick failed: {type(error).__name__}: {error}"))

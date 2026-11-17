@@ -97,15 +97,6 @@ def revive(store: Store, now: dt.datetime, emit: Callable[..., object] = lambda 
         return []
 
 
-def put_off(store: Store, plan: PlanRecord, kind: str, oid: str, name: str, now: dt.datetime) -> None:
-    """Records an answer that moves the ladder: `snooze` (a person put the request off, "later") or `pass` (a person said that it is not theirs). The ladder reads it, the page shows it. It never raises."""
-    try:
-        count = sum(1 for r in store.escalations_of(plan.plan_id) if r.kind == kind)
-        store.escalation_claim(EscalationRecord(plan.plan_id, kind, count + 1, stamp(now), who=(oid,), names=(name[:80],)))
-    except StoreError:
-        pass
-
-
 def tag_reader(arm: object, name: str) -> Callable[[PlanRecord], str]:
     """The reader of the escalation tag: the value on the resource, else on its resource group, else on its subscription, from two Resource Graph queries of fixed text that name only the ids of the
     request (checked against the shape of an id). Anything else of the resource stays unread, and a read that fails is no tag."""

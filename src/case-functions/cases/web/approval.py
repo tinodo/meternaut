@@ -18,7 +18,7 @@ from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
 from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import brief_of, checked_brief, decisions_for, effective_state, may_answer, read
+from .common import brief_of, checked_brief, decisions_for, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
@@ -131,7 +131,7 @@ def card_answer(ctx: Ctx, plan_id: str, answer: str) -> Response:
     plan, refused = _gate(ctx, plan_id)
     if refused is not None:
         return refused
-    state = effective_state(ctx, plan)  # type: ignore[arg-type]
+    state = plan.state  # type: ignore[union-attr]
     if state != "open":
         return outcome(ctx, DecideResult(False, "expired" if state == "expired" else "refused_state", "", plan), plan_id)  # type: ignore[arg-type]
     if ctx.request.query.get("code", "").strip().upper() != plan.code:  # type: ignore[union-attr]
@@ -259,17 +259,15 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "confirmed":
         return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions.", history)
     if kind == "asked":
-        plan = _plan_of(ctx, result, plan_id)
-        until = paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe("")
-        return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet.", until)
+        return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet. The request stays open.")
     if kind == "later":
-        return show("Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list.", back_to=("/", "Back to the decisions"))
+        return show("Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list. If nobody answers it, it goes on to the next person.", back_to=("/", "Back to the decisions"))
     if kind == "not_mine":
-        return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner.", back_to=("/", "Back to the decisions"))
+        return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes on to the next person.", back_to=("/", "Back to the decisions"))
     if kind == "refused_code":
         return show("This request changed", CHANGED)
     if kind == "refused_state":
-        return show("This request cannot take an answer", text or "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.")
+        return show("This request cannot take an answer", text or "This request is not open for an answer now. It may be answered or taken back. Nothing has changed.")
     if kind == "refused_role":
         return _refused_role(ctx)
     if kind == "refused_paused":
@@ -278,9 +276,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
             return show("Meternaut is paused", PAUSED_ADVICE)
         return show("Changes are paused", PAUSED)
     if kind == "expired":
-        plan = _plan_of(ctx, result, plan_id)
-        when = ctx.when(plan.expires_at, "its expiry time") if plan is not None else "its expiry time"
-        return show("This request expired", paragraph(fmt("This request expired on {when}. Nothing has changed.", when=when)))
+        return show("This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed.")
     if kind == "duplicate":
         return show("Already answered", "You answered this request already. Your first answer stands, and nothing has changed.")
     return show("I could not take your answer", text or "The approval service did not answer.", "Open the request again to see where it stands.")

@@ -18,7 +18,7 @@ from typing import Callable, Mapping, Sequence
 
 from . import config as cfg
 from . import costs as cost_words
-from . import advisor, decide, detectors, evidence, guards, investigate, roles, upkeep, usage, wiring
+from . import advisor, decide, detectors, escalation, evidence, guards, investigate, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
@@ -513,6 +513,16 @@ def _take_back_empty(s: Services, say: Callable[[str], None]) -> Counter:
         return Counter()
 
 
+def _revive(s: Services, say: Callable[[str], None]) -> None:
+    """Opens again the requests that a clock closed before requests were kept open, with their own start (cases/escalation.py revive), and says how many in the History. It never fails the run."""
+    try:
+        opened = escalation.revive(s.extras.store, s.clock(), s.history.emit)
+        if opened:
+            say(f"{len(opened)} request{'s that a clock had closed were' if len(opened) != 1 else ' that a clock had closed was'} opened again, with {'their' if len(opened) != 1 else 'its'} first start: nobody had answered")
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the requests that a clock closed could not be opened again ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -695,6 +705,7 @@ def execute(s: Services, trigger: str) -> Summary:
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
+        _revive(s, say)
     summary.held += sum(held.values())
     for reason, count in held.items():
         if count:

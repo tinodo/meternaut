@@ -10,9 +10,9 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from ..brief import REASON_WORDS, plan_headline
+from ..brief import REASON_WORDS, TAKEN_BACK, plan_headline, taken_back
 from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
-from .common import effective_state, may_answer, read
+from .common import may_answer, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip, short_title
 from .layout import head, kpi, kpis, link, notice, page, paragraph
@@ -26,7 +26,7 @@ COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "don
 KINDS = {"approved": ("Approved", "info", "square"), "confirmed": ("Confirmed", "info", "square"), "worth": ("Worth acting on", "info", "square"),
          "declined": ("Declined", "", "square"), "not-worth": ("Not worth it", "", "square"),
          "not-mine": ("Not theirs", "", "square"), "made": ("Change made", "low", "circle"), "unchanged": ("Nothing changed", "", "square"), "failed": ("Change not made", "high", "diamond"),
-         "checked": ("Checked", "low", "circle"), "expired": ("Expired", "", "square"), "closed": ("Closed", "", "square"), "search": ("Search", "info", "square")}
+         "checked": ("Checked", "low", "circle"), "expired": ("Taken back", "", "square"), "closed": ("Closed", "", "square"), "search": ("Search", "info", "square")}
 DECISIONS = ("approved", "confirmed", "worth", "declined", "not-worth", "not-mine")
 
 
@@ -97,11 +97,11 @@ def _events(ctx: Ctx, since: str) -> Feed:
     old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
     if len(plans) >= PLANS_ASKED and plans[-1].created_at >= old:  # the oldest plan that was read is still inside the window, so older ones may be as well
         cut.add("plans")
-    quiet: dict[str, list[str]] = {}  # the advice that nobody answered, for each day: one line, not one for each, and none of them takes a place of the plans that are read
+    quiet: dict[str, list[str]] = {}  # the advice that Meternaut took back, for each day: one line, not one for each, and none of them takes a place of the plans that are read
     mine = []
     for plan in plans:
         if may_answer(ctx.principal, plan) and plan.created_at >= old:  # type: ignore[arg-type]
-            if plan.family == "advise" and effective_state(ctx, plan) == "expired":
+            if plan.family == "advise" and plan.state == "expired":
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
@@ -125,10 +125,11 @@ def _events(ctx: Ctx, since: str) -> Feed:
                 events.append(event)
         if plan.family != "advise" and plan.plan_id in actions:
             events += _action_events(ctx, plan, actions[plan.plan_id])
-        if effective_state(ctx, plan) == "expired":
-            events.append(Event(plan.expires_at, "expired", _headline(ctx, plan), "Nobody answered in time."))
+        if plan.state == "expired":
+            why = taken_back(plan)
+            events.append(Event(plan.expires_at, "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else "A timer closed it before requests were kept open."))
     for found in quiet.values():
-        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Closed with no answer."))
+        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Taken back by Meternaut: each says why."))
     cases, ok = read(lambda: ctx.store.cases_recent(CASES_ASKED), [])
     if not ok:
         failed.add("cases")
