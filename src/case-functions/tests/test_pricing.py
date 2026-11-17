@@ -362,6 +362,17 @@ class WhatMetersCount(unittest.TestCase):
     def test_a_resource_whose_cost_was_not_read_is_capped_by_its_own_meters_only(self):
         self.assertEqual(priced(block("remove", effect("r1", ("m1", "m2"))), costs={"r1": None}).rows["r1"].low, 100.0)
 
+    def test_a_credit_is_taken_off_once_however_many_calls_showed_the_line_that_is_given_back(self):
+        again = line("r1", 60.0, service="Example Service")
+        credit = line("r1", -30.0, ("Example Credit", "None", "Given Back", "OnDemand", "Refund", "1"))
+        row = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": line("r1", 60.0), "m8": again, "m6": credit})).rows["r1"]
+        self.assertEqual(row.low, 30.0, "the line of 60 was shown twice and is one: 60 less the 30 that is given back")
+
+    def test_a_meter_that_cost_nothing_or_less_in_its_last_week_adds_nothing_whatever_it_cost_over_the_read(self):
+        refund = shaped("r1", [10.0] * 7 + [-1.0] * 7, days=14, words=STORAGE)
+        row = priced(block("remove", effect("r1", ("m1", "m2"))), toolbox=shown(meters={"m1": line("r1", 60.0), "m2": refund})).rows["r1"]
+        self.assertEqual((row.low, row.lines), (30.0, 1), "63 over the read, and -30 a month at its rate now: one line counts, and what it gives back is taken off")
+
     def test_the_cost_of_the_resource_in_30_days_bounds_a_rate_by_the_days_that_the_rate_rests_on(self):
         week = shown(meters={"m1": shaped("r1", [1.0] * 23 + [2.0] * 7)})
         self.assertEqual(priced(block("remove", effect("r1", ("m1",))), toolbox=week, costs={"r1": 37.0}).rows["r1"].high, 60.0, "37 in 30 days can be 60 a month: it all came in the last week")
@@ -774,6 +785,16 @@ class WhatTheSkepticIsShown(unittest.TestCase):
     def test_an_assumption_is_shown_as_one_with_its_range(self):
         (one,) = self.view(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.2, "high": 0.9})))["effects"]
         self.assertEqual((one["form"], one["remains"]), ("assumed", [0.2, 0.9]))
+
+    def test_every_line_is_shown_with_its_two_rates_its_days_of_life_and_its_spread_and_the_resource_with_the_sums(self):
+        meters = {"m1": shaped("r1", [1.0] * 23 + [2.0] * 7), "m2": shaped("r1", [8.0] * 4, words=STORAGE)}
+        change = pricing.parse(block("remove", effect("r1", ("m1", "m2"))))
+        found = pricing.price(change, ("r1",), shown(meters=meters), {"r1": 69.0}, None)
+        (one,) = pricing.view(change, found, meters, lambda word: word, 6, ())["effects"]
+        self.assertEqual((one["usd"], one["week"], one["since"]), (277.0, 300.0, 277.0), "a month at the lower rate, and at each of the two")
+        by = {line_["meter"]: line_ for line_ in one["lines"]}
+        self.assertEqual({key: by["m1"][key] for key in ("usd", "week", "since", "life", "cv")}, {"usd": 37.0, "week": 60.0, "since": 37.0, "life": 30, "cv": 0.343})
+        self.assertEqual({key: by["m2"][key] for key in ("usd", "week", "since", "life", "cv")}, {"usd": 32.0, "week": 240.0, "since": None, "life": 4, "cv": 0.0})
 
     def test_a_resource_that_could_not_be_priced_says_why_by_the_word_and_the_lines_are_cut_to_the_room_that_there_is(self):
         seen = self.view(block("remove", effect("r1", ("m1", "m2", "m4")), effect("r2", ("m9",))), limit=2)
