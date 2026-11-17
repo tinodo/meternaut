@@ -2099,35 +2099,53 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
 # -- the caps ----------------------------------------------------------------------------------------------------------------------------------------
 
 class WhatIsTooSmall(unittest.TestCase):
-    """A resource whose cost of the last 30 days is under the floor (CASE_MIN_USD) opens no case: it is counted, and the Skeptic is not shown it. A cost that is not known is not small."""
+    """A finding whose resources together cost under the floor (CASE_MIN_USD) opens no case: its resources are counted, and the Skeptic is not shown it. A finding at the floor or over it keeps every
+    resource, however small each is alone, and a cost that is not known makes the finding not small."""
 
-    def test_a_resource_under_the_floor_opens_no_case_is_counted_on_the_line_of_its_finding_and_is_not_shown_to_the_skeptic(self):
-        h = Harness(FakeFoundry(answer(finding(handles=[f"r{n}" for n in range(1, 13)]))), many(12), make_settings(case_min_usd=5), with_store=True)
+    @staticmethod
+    def toolbox(*costs):
+        return FakeToolbox([resource(n, cost_usd_30d=cost) for n, cost in enumerate(costs, 1)], {f"r{n}": metrics(MetricA=0) for n in range(1, len(costs) + 1)})
+
+    def go(self, costs, floor=5, skeptic=None):
+        h = Harness(FakeFoundry(answer(finding(handles=[f"r{n}" for n in range(1, len(costs) + 1)])), skeptic=skeptic), self.toolbox(*costs), make_settings(case_min_usd=floor), with_store=True)
         h.go()
+        return h
+
+    def test_twenty_idle_things_of_3_dollars_65_are_73_dollars_together_and_each_one_keeps_its_case(self):
+        h = self.go([3.65] * 20)
         (line,) = h.of("investigation.finding")
-        self.assertEqual((line["handles"], line["tooSmall"], line["kept"]), (8, 4, True), "r1 to r4 cost 1 to 4 dollars: under 5; r5 costs 5, which is not under it")
-        self.assertEqual((h.result.cases, len(h.of("case.result"))), (8, 8))
-        self.assertTrue([n for n in h.notes if n.startswith("4 resources of the findings are too small to open a case")], h.notes)
-        shown = h.foundry.inputs()[1]
-        for handle in ("r1", "r4"):
-            self.assertNotIn(f'"{handle}"', shown, "the Skeptic is shown the resources that will be cases")
-        self.assertIn('"r5"', shown)
+        self.assertEqual((line["handles"], line["tooSmall"], line["kept"], h.result.cases, len(h.of("case.result"))), (20, 0, True, 20, 20))
+        self.assertEqual(line["coveredCostUsd30d"], 73.0)
 
-    def test_a_finding_whose_resources_are_all_under_the_floor_is_dropped_with_its_count_and_opens_nothing_whatever_the_skeptic_would_say(self):
-        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2", "r3"])), skeptic=verdicts(("disagree", ("it is in use",), "No."))), many(3), make_settings(case_min_usd=5), with_store=True)
-        h.go()
+    def test_three_things_of_40_cents_are_1_dollar_20_together_so_the_finding_opens_no_case_and_they_are_counted(self):
+        h = self.go([0.4, 0.4, 0.4])
         (line,) = h.of("investigation.finding")
         self.assertEqual((line["kept"], line["reason"], line["tooSmall"], line["handles"]), (False, "no resource of it is left: 3 too small to open a case", 3, 0))
-        self.assertEqual((h.result.cases, h.result.needs_human, len(h.of("case.result"))), (0, 0, 0))
+        self.assertEqual((h.result.cases, h.result.proposed, len(h.of("case.result"))), (0, 0, 0))
+        self.assertTrue([n for n in h.notes if n.startswith("1 finding whose resources together cost less than the floor of the setting CASE_MIN_USD opens no case (3 resources in all)")], h.notes)
+        self.assertEqual(len(h.foundry.inputs()), 1, "no finding is left for the Skeptic")
 
-    def test_a_floor_of_nil_is_no_floor_and_a_cost_that_is_not_known_or_not_in_cost_lines_is_not_small(self):
-        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2", "r3"]))), many(3), make_settings(case_min_usd=0), with_store=True)
-        h.go()
+    def test_a_big_resource_and_a_small_one_in_a_finding_keep_both_and_the_floor_is_the_sum_and_at_the_floor_it_stays(self):
+        h = self.go([300.0, 0.3])
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["handles"], line["tooSmall"], h.result.cases), (2, 0, 2))
+        self.assertEqual([(self.go([1.0] * n)).result.cases for n in (4, 5, 6)], [0, 5, 6], "4 dollars together are under 5, and 5 dollars together are not")
+
+    def test_a_floor_of_nil_keeps_everything_and_a_cost_that_is_not_known_or_not_in_cost_lines_makes_the_finding_not_small(self):
+        h = self.go([0.4, 0.4, 0.4], floor=0)
         self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 3))
-        unknown = FakeToolbox([resource(n, cost_usd_30d=None) for n in (1, 2)], {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
-        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), unknown, make_settings(case_min_usd=5), with_store=True)
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), self.toolbox(None, None), make_settings(case_min_usd=5), with_store=True)
         h.go()
         self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 2), "the cost lines were read and hold none for them: that is not a cost of nothing")
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), self.toolbox(0.4, None), make_settings(case_min_usd=5), with_store=True)
+        h.go()
+        self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 2), "one resource of which the cost is not known: the finding is not small")
+
+    def test_a_skeptic_that_would_disagree_with_a_finding_under_the_floor_opens_nothing_because_it_is_never_asked(self):
+        h = self.go([0.4, 0.4, 0.4], skeptic=verdicts(("disagree", ("it is in use",), "No.")))
+        self.assertEqual((h.result.cases, h.result.needs_human, len(h.of("case.result")), len(h.foundry.inputs())), (0, 0, 0, 1))
+        over = self.go([4.0, 4.0], skeptic=verdicts(("disagree", ("it is in use",), "No.")))
+        self.assertEqual((over.result.cases, over.result.needs_human), (2, 2), "8 dollars together are over the floor: the finding goes to the Skeptic and to a person as ever")
 
     def test_the_floor_is_a_setting_of_5_dollars_that_a_person_can_lower_to_nil_and_raise_to_100_and_no_further(self):
         self.assertEqual((cfg.DEFAULT_CASE_MIN_USD, cfg.LIMIT_CASE_MIN_USD, cfg.load(dict(ENV)).case_min_usd), (5, 100, 5))

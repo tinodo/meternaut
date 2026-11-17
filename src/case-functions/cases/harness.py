@@ -58,6 +58,7 @@ REPEAT_LIMIT = 2  # the same call (the same tool, the same arguments) may be mad
 TRIP_LIMIT = 3  # refusals and guard failures in one run
 SKEPTIC_TOKENS = 100_000  # the Skeptic reads one input of at most 30,000 characters and answers once
 BEAT_TOKEN_ROOM = 60_000  # a beat may use this many tokens more than its cap before it is a failed beat, when twice the cap is less: a step of the model costs 13 to 20 thousand tokens, and an agent that was told to stop still asks once more
+BEAT_STEP_TOKENS = 25_000  # one step of a beat at its largest: its context (the instructions, the definitions of the tools, the pictures and every answer so far) is read again at every step, 13 to 20 thousand tokens at the start of a beat and about this at its end
 STUDY_TOKENS = 400_000  # the Scholar's brake when the settings give none: see DEFAULT_STUDY_TOKENS in config.py
 MAX_ARGUMENT_DEPTH = 8
 KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,31}")
@@ -84,8 +85,15 @@ class BeatOverTokens(FoundryError):
 
 
 def beat_limit(max_tokens: int) -> int:
-    """The tokens that a beat may use in all: twice its cap, or its cap and BEAT_TOKEN_ROOM when that is more (the last beat may start with little)."""
+    """The tokens after which a beat is asked for no further step: twice its cap, or its cap and BEAT_TOKEN_ROOM when that is more (the last beat may start with little). What a beat can come to
+    is more than this by two steps: see beat_bound."""
     return max(2 * max_tokens, max_tokens + BEAT_TOKEN_ROOM)
+
+
+def beat_bound(max_tokens: int) -> int:
+    """The most that a beat can come to: its hard limit and two steps of BEAT_STEP_TOKENS. The brake is asked before each request, so one ordinary step may start just under the limit and end over it,
+    and a beat that is cut off at the limit is asked once more for its answer (the last request: cases/foundry.py, `salvage`), which is the second step. It is 250,000 tokens at a cap of 100,000."""
+    return beat_limit(max_tokens) + 2 * BEAT_STEP_TOKENS
 
 
 # -- the trace -------------------------------------------------------------------------------------------------------------------------------------
@@ -394,7 +402,8 @@ class Harness:
             max_tokens: int | None = None, soft_seconds: float | None = None, salvage: Callable[[], float] | None = None) -> AgentRun:
         """Runs the agent through the Foundry loop with the guard on its tool calls and the brake before each request to its model. The budget of tool calls is the harness's (Budget)
         unless the caller gives one: the Skeptic has no tools, so its caller gives 0. A caller that gives `max_tokens` has the agent told to stop calling tools once its run has used that many
-        tokens (it then gives its answer), and the brake stops the run at twice that: the tokens of a beat are a budget, and an agent that goes on after it is a loop."""
+        tokens (it then gives its answer), and the brake stops the run at twice that (beat_limit): the tokens of a beat are a budget, and an agent that goes on after it is a loop. A beat can come to
+        more than that limit by two steps (beat_bound): one step that starts just under it and ends over it, and the last request that a beat that is cut off is given for its answer (`salvage`)."""
         record = self._record_of(spec)
         guard = ToolGuard(spec.tools, self.budget.repeat_limit)
         beat = bool(max_tokens)

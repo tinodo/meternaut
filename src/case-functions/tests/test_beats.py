@@ -568,6 +568,17 @@ class TheInvestigationInBeats(unittest.TestCase):
         ticker.now = 1000 + 960 - 20
         self.assertEqual(salvage(), 0.0, "less than 40 seconds are left in the time of the beats: no last request")
 
+    def test_a_last_request_that_failed_is_a_note_with_its_word_and_the_note_of_a_cut_off_beat_says_by_what_it_was_cut(self):
+        failure = FoundryError("Foundry run stopped: the time allowed (170 seconds) was used up after 3 tool calls")
+        failure.partial = AgentRun(text="", salvage_failed="BadRequest")
+        foundry = BeatFoundry([script(one("r1"), error=failure), script(one("r3"), salvaged="time"), script(one("r5"), salvaged="calls", refused=(("tool_one", {}),))])
+        h = rig(None, foundry=foundry)
+        h.go()
+        self.assertIn("beat 1: the last request for the answer of beat 1 failed: BadRequest", h.notes)
+        self.assertEqual([n for n in h.notes if "gave its answer when it was asked once more" in n],
+                         ["beat 2: the investigator was cut off by its time and gave its answer when it was asked once more",
+                          "beat 3: the investigator was cut off by its calls and gave its answer when it was asked once more"])
+
     def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
         for seconds in (1080, 600):
             h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=1, investigate_max_seconds=seconds), with_store=True)

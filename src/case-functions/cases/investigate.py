@@ -133,7 +133,7 @@ class Finding:
     recent: int = 0
     guarded: int = 0
     capped: int = 0
-    small: int = 0  # the resources whose cost of the last 30 days is under CASE_MIN_USD: too small to ask a person for, so they open no case (counted, never shown with their cost)
+    small: int = 0  # the resources of a finding that together costs less than CASE_MIN_USD in the last 30 days: too small to ask a person for, so the finding opens no case (counted, never shown with a cost)
     seen: set[str] = field(default_factory=set)  # the short ids of every resource that the finding names and that the tools showed, whatever became of it
     stood: list[CaseRecord] = field(default_factory=list)  # the cases of a group, judged lately, that a resource of the finding is the first of: what the finding may be covered by
     silenced: int = 0  # the resources that a person marked do-not-touch and that the case of the group leaves out
@@ -1010,6 +1010,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         except FoundryError as error:
             partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
             say_refused(beat, number, partial)
+            if getattr(partial, "salvage_failed", ""):
+                note(f"{who}the last request for the answer of {'beat ' + str(beat.number) if focused else 'the investigator'} failed: {clean_text(partial.salvage_failed, 40)}")
             result.calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log) - calls_from
             result.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
             out.answer, out.tool_calls, out.tokens = partial, out.tool_calls + result.calls, out.tokens + result.tokens
@@ -1059,7 +1061,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         result.end, result.examined, result.found = activity.end_of_run(False, answer, True), examined, min(len(raw_findings), agents.MAX_FINDINGS)
         result.salvaged = bool(getattr(answer, "salvaged", False))
         if result.salvaged:
-            note(f"{who}the investigator was cut off by its {'tokens' if out_of_tokens else 'time'} and gave its answer when it was asked once more")
+            note(f"{who}the investigator was cut off by its {result.end if result.end in ('time', 'tokens', 'calls') else 'limit'} and gave its answer when it was asked once more")
         if len(raw_findings) > agents.MAX_FINDINGS:
             note(f"{who}the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
 
@@ -1110,8 +1112,6 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 finding.recent += 1
                 if finding.proposal == "investigate" and _stands_for_a_group(old):
                     finding.stood.append(old)  # the case of a group, judged lately: the question to a person is open or was answered. Whether it stands for this finding is settled below
-            elif st.case_min_usd > 0 and states[handle] == cost_words.LINES and costs[handle] is not None and costs[handle] < st.case_min_usd:
-                finding.small += 1  # too small to ask a person for: the cost lines of its last 30 days are under the floor (a cost that is not known, or none, is not small)
             elif room <= 0:
                 finding.capped += 1
             else:
@@ -1129,6 +1129,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 if _members_of(old) & finding.seen and old.case_id[1:] not in finding.seen and all(old.case_id != known.case_id for known in finding.stood) and _recent(s, old, None, open_questions):
                     finding.stood.append(old)  # a group that stands for resources of this finding although the resource that it belongs to is not one of them
         room += _settle(finding, marked)
+        if (st.case_min_usd > 0 and finding.items and all(states[item.handle] == cost_words.LINES and item.lead.cost_usd_30d is not None for item in finding.items)
+                and sum(item.lead.cost_usd_30d for item in finding.items) < st.case_min_usd):  # type: ignore[misc]
+            # A finding whose resources that are left together cost less than the floor is too small to ask a person for: no case, and a count. A resource of which the cost is not known, or none, makes the
+            # finding not small, and a finding at the floor or over it keeps every resource however small it is alone (twenty small things that are idle are 73 dollars, which is not small).
+            room += len(finding.items)
+            finding.small += len(finding.items)
+            finding.items = []
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
         if not finding.items:
@@ -1229,9 +1236,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if out.guarded:
         note(f"the investigation held back {out.guarded} resource{'' if out.guarded == 1 else 's'} with a guard: " + ", ".join(f"{n} {name}" for name, n in sorted(held.items())))
     capped = sum(f.capped for f in findings)
-    small = sum(f.small for f in findings)
+    small, small_findings = sum(f.small for f in findings), sum(1 for f in findings if f.small)
     if small:
-        note(f"{small} resource{'' if small == 1 else 's'} of the findings {'is' if small == 1 else 'are'} too small to open a case (their cost of the last 30 days is under the floor of the setting CASE_MIN_USD)")
+        note(f"{small_findings} finding{'' if small_findings == 1 else 's'} whose resources together cost less than the floor of the setting CASE_MIN_USD open{'s' if small_findings == 1 else ''} no case "
+             f"({small} resource{'' if small == 1 else 's'} in all)")
     if capped:
         note(f"{capped} resource{'' if capped == 1 else 's'} of the findings {'is' if capped == 1 else 'are'} not listed as cases: a run opens at most {MAX_CASES}")
     for finding in survivors:

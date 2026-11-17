@@ -203,6 +203,19 @@ class AgentRun:
     out_of_tokens: bool = False
     # True when the run was cut off (its hard time, its tokens, or the rounds that it was given to answer) and one last request, with no tool to call, gave its text: see Foundry.run, `salvage`.
     salvaged: bool = False
+    # The one word that says why the last request failed, when one was made and gave no answer: a code word of the platform, `no-text`, `asked-for-a-tool`, an HTTP status or `failed`.
+    salvage_failed: str = ""
+
+
+def _salvage_word(error: "FoundryError") -> str:
+    """The one word that says why the last request of a cut-off run failed: the code word that the platform gave (letters, digits and . _ -), else no-text, else the HTTP status, else `failed`."""
+    code = getattr(error, "code", "")
+    if isinstance(code, str) and ROUTE_CODE.fullmatch(code):
+        return code
+    if NO_TEXT in str(error):
+        return "no-text"
+    status = getattr(error, "status", None)
+    return str(status) if isinstance(status, int) and not isinstance(status, bool) else "failed"
 
 
 class Salvageable(str):
@@ -435,13 +448,17 @@ class Foundry:
 
             def rescue(cause: str) -> bool:
                 """The last request of a run that is cut off: the answers of the calls that are waiting, and the instruction to write the answer now, with a time of its own (`salvage` says how long,
-                0 for none). True when the agent gave its text; any failure is False and the run ends as it would have. A brake that is not the tokens of a beat still holds first."""
+                0 for none). True when the agent gave its text; any failure is False, with its word in `salvage_failed`, and the run ends as it would have. The brake of the harness is asked first, and a reason
+                of it that is not the tokens of a beat (a `Salvageable` reason) holds; but the harness tests its switch, then the tokens and then the refusals, so a run that is over its tokens is given its
+                last request even when it also has the refusals of a trip. A step of the model that is in flight at the hard time is not salvaged: see the proposal of the beats."""
                 try:
                     seconds = salvage() if salvage is not None else 0.0
                     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not seconds > 0:
                         return False
-                    if cause != "tokens" and stop is not None and stop(result):
-                        return False
+                    if cause != "tokens" and stop is not None:
+                        why = stop(result)
+                        if why and not isinstance(why, Salvageable):
+                            return False  # a brake that is not the tokens of a beat holds
                 except Exception:  # noqa: BLE001 (a check that cannot decide gives no last request)
                     return False
                 self.client.deadline = now() + seconds if saved is None else min(saved, now() + seconds)
@@ -452,9 +469,11 @@ class Foundry:
                     self._count(result, document, "salvage")
                     output = self._output(document, "salvage")
                     if self._calls(output, "salvage"):
+                        result.salvage_failed = "asked-for-a-tool"
                         return False  # it asked for a tool again: there is no answer
                     result.text = self._text(output, "salvage")
-                except FoundryError:
+                except FoundryError as error:
+                    result.salvage_failed = _salvage_word(error)
                     return False
                 result.salvaged = True
                 if cause == "time":

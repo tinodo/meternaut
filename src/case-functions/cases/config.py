@@ -74,8 +74,8 @@ DEFAULT_BEAT_TOKENS = 100_000
 LIMIT_BEAT_TOKENS = 200_000
 DEFAULT_TOTAL_TOKENS = 800_000
 LIMIT_TOTAL_TOKENS = 1_200_000
-# A finding of the investigation about a resource whose cost of the last 30 days is under this many US dollars opens no case: it is too small to ask a person for (the Watch counts it, and the History
-# says how many). 0 turns it off. A resource whose cost is not known is not small.
+# A finding of the investigation whose resources together cost under this many US dollars (their cost of the last 30 days, added up) opens no case: it is too small to ask a person for (the Watch counts it,
+# and the History says how many). A finding at the floor or over it keeps every resource, however small each is alone. 0 turns it off. A resource whose cost is not known makes the finding not small.
 CASE_MIN_USD = "CASE_MIN_USD"
 DEFAULT_CASE_MIN_USD = 5
 LIMIT_CASE_MIN_USD = 100

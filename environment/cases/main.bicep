@@ -190,7 +190,7 @@ param investigateMaxCalls int = 40
 @maxValue(1500)
 param investigateMaxSeconds int = 1440
 
-@description('The smallest cost of the last 30 days, in US dollars, of a resource that a finding of the investigation opens a case for: a finding about a resource that costs less is counted and opens no case. 0 turns it off. The code accepts no more than 100 (LIMIT_CASE_MIN_USD in src/case-functions/cases/config.py).')
+@description('The smallest cost of the last 30 days, in US dollars, that the resources of a finding of the investigation have together for the finding to open a case: a finding that together costs less is counted and opens no case, and a finding at this cost or over it keeps every resource, however small each is alone. 0 turns it off. The code accepts no more than 100 (LIMIT_CASE_MIN_USD in src/case-functions/cases/config.py).')
 @minValue(0)
 @maxValue(100)
 param caseMinUsd int = 5
