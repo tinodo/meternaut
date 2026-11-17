@@ -38,6 +38,7 @@ RECOMMENDATIONS = ("delete", "change", "keep", "investigate")
 DETECTIVE_RECOMMENDATIONS = ("delete", "keep", "investigate")
 VERDICTS = ("agree", "disagree", "unsure")
 MAX_TEXT = 300
+MAX_CITED_NAME = 96  # the longest name of a property or a measurement that a finding may cite (pricing.NAME) and so the longest path that the toolbox shows (the exact path of a private link's state has 87)
 MAX_OBJECTION = 200
 MAX_OBJECTIONS = 3
 MAX_CLEAN_INPUT = 20_000  # the most that clean_text reads of a text, whatever its limit
