@@ -8,6 +8,7 @@ import importlib.util
 import io
 import os
 import re
+import shutil
 import tempfile
 import time
 import unittest
@@ -162,14 +163,31 @@ class TheRepository(unittest.TestCase):
         self.assertRegex(sd.digest(ROOT / "src" / "case-functions"), r"^[0-9a-f]{64}$")
 
     @unittest.skipUnless(RELEASE.is_file(), "cases/release.py (the agent harness) is not in the repository yet: the pinned digest above stands for it until then")
-    def test_the_app_s_own_module_gives_the_same_digest_for_the_real_app_and_for_the_known_folder(self):
+    def test_the_app_s_own_module_gives_the_same_digest_for_the_known_folder_and_for_the_real_app_as_it_is_shipped(self):
         release_spec = importlib.util.spec_from_file_location("release_of_the_app", RELEASE)
         release = importlib.util.module_from_spec(release_spec)
         release_spec.loader.exec_module(release)
-        self.assertEqual(release.digest(ROOT / "src" / "case-functions")[0], sd.digest(ROOT / "src" / "case-functions"))
+        app = ROOT / "src" / "case-functions"
         with tempfile.TemporaryDirectory() as tmp:
             make(Path(tmp))
             self.assertEqual(release.digest(Path(tmp))[0], sd.digest(Path(tmp)))
+            shipped = Path(tmp) / "shipped"
+            shutil.copytree(app / "cases", shipped / "cases", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copy(app / "function_app.py", shipped)
+            sd.stripper().strip_folder(shipped)
+            self.assertEqual(release.digest(shipped)[0], sd.digest(app), "the app works out over the files that it runs from the digest that the runner works out from the checkout")
+            self.assertNotEqual(release.digest(app)[0], sd.digest(app), "the checkout holds the comments that the package does not carry")
+
+    def test_a_python_file_is_digested_as_it_is_shipped_and_one_that_cannot_be_stripped_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plain, commented = Path(tmp) / "plain", Path(tmp) / "commented"
+            make(plain, {**COVERED, "cases/run.py": b'def run():\n    ""\n\n\n    return 1\n'})
+            make(commented, {**COVERED, "cases/run.py": b'def run():\n    """Runs.\n\n    More."""  \r\n    return 1  # one\n'})
+            self.assertEqual(sd.digest(plain), sd.digest(commented), "a comment and the text of a docstring are not shipped, so they are not in the digest")
+            (commented / "cases" / "run.py").write_bytes(b"def run(:\n")
+            with self.assertRaises(sd.Problem) as stopped:
+                sd.digest(commented)
+            self.assertIn("cases/run.py: it could not be stripped", str(stopped.exception))
 
 
 if __name__ == "__main__":

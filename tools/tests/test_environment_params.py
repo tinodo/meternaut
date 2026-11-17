@@ -1411,5 +1411,92 @@ class WhatTheWatchReads(unittest.TestCase):
             self.assertNotIn(role, self.CASES_TEMPLATE, f"{name} is given by a person")
 
 
+class TheStudySwitch(unittest.TestCase):
+    """The Study (cases/study.py) is off until the variable STUDY of the environment hub says on (docs/proposals/15-learning.md). The builder reads it, refuses nonsense and gives the cases file one bool, the
+    template gives it to the app as the setting STUDY, and the app reads the same words as the builder. A switch is plain configuration, so a variable, and no identifier of the estate."""
+
+    CASES_TEMPLATE = (ROOT / "environment" / "cases" / "main.bicep").read_text(encoding="utf-8")
+    PROJECT = {"ENV_FOUNDRY_PROJECT_EXISTS": "true"}
+    CASES = {"ACTION": "cases", "AIGATEWAY_HOST": "aigw-meternaut-0123abcd.swedencentral.ai.gateway.azure.com"}
+
+    def build(self, *extra, **changes):
+        return run({**SETTINGS, **changes}, *extra)
+
+    @staticmethod
+    def app_config():
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import config
+        finally:
+            sys.path.remove(app)
+        return config
+
+    def test_it_is_off_when_the_variable_is_not_set_or_is_empty_and_only_the_cases_file_carries_it(self):
+        for changes in ({}, {"STUDY": ""}, {"STUDY": "   "}):
+            code, out, err, files = self.build(**changes)
+            self.assertEqual((code, err), (0, ""), changes)
+            self.assertIs(values(files["cases.parameters.json"])["study"], False, changes)
+            for name, document in files.items():
+                if name != "cases.parameters.json":
+                    self.assertNotIn("study", document.get("parameters", {}), name)
+            self.assertNotIn("study", out.lower(), "no output of the workflow carries it")
+
+    def test_every_word_that_the_app_reads_as_on_or_off_is_read_the_same_way_in_any_case_and_with_spaces(self):
+        config = self.app_config()
+        self.assertEqual((ep.SWITCH_ON, ep.SWITCH_OFF), (config.SWITCH_ON, config.SWITCH_OFF), "the builder and the app read the same words")
+        for word in ep.SWITCH_ON + ep.SWITCH_OFF:
+            for written in (word, word.upper(), f"  {word.title()} "):
+                code, _, err, files = self.build(STUDY=written, **self.PROJECT)
+                self.assertEqual((code, err), (0, ""), written)
+                self.assertIs(values(files["cases.parameters.json"])["study"], word in ep.SWITCH_ON, written)
+
+    def test_a_word_that_is_neither_is_refused_by_name_before_anything_is_written_and_is_never_echoed(self):
+        for bad in ("maybe", "enabled", "2", "on off", "sk-not-a-secret-but-it-looks-like-one", "onn"):
+            code, out, err, files = self.build(STUDY=bad)
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("STUDY is on or off", err)
+            self.assertNotIn(bad, err, "the log of the Hub is public, and the variable may hold anything")
+
+    def test_only_the_action_cases_refuses_on_while_the_foundry_project_is_not_in_azure_and_a_preview_never_does(self):
+        code, out, err, files = self.build(STUDY="on", **self.CASES)
+        self.assertEqual((code, out, files), (2, "", {}))
+        self.assertIn("STUDY is on, and the Foundry project is not in Azure", err)
+        self.assertIn("Run the action foundry first", err)
+        self.assertIn("Nothing was changed.", err)
+        for action in ("what-if", "foundry", "study-run", "base", "operator", "teams", ""):
+            code, _, err, files = self.build(STUDY="on", ACTION=action, AIGATEWAY_HOST=self.CASES["AIGATEWAY_HOST"])
+            self.assertEqual((code, err), (0, ""), action)
+            self.assertIs(values(files["cases.parameters.json"])["study"], True, action)
+        code, _, err, files = self.build("--preview", STUDY="on", ACTION="cases")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIs(values(files["cases.parameters.json"])["study"], True)
+        code, _, err, files = self.build(STUDY="on", **self.CASES, **self.PROJECT)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIs(values(files["cases.parameters.json"])["study"], True)
+        self.assertEqual(values(files["cases.parameters.json"])["foundryProjectEndpoint"][:8], "https://", "the app is given the project that the Study needs")
+        code, _, err, files = self.build(STUDY="off", **self.CASES)
+        self.assertEqual((code, err), (0, ""), "off needs no project")
+        self.assertIs(values(files["cases.parameters.json"])["study"], False)
+
+    def test_the_template_takes_a_bool_that_is_off_by_default_and_gives_it_to_the_app_as_the_setting_that_the_code_reads_and_the_limits_are_left_to_the_code(self):
+        self.assertEqual(bicep_params(self.CASES_TEMPLATE)["study"], ("bool", True))
+        self.assertIn("\nparam study bool = false\n", self.CASES_TEMPLATE, "a file that leaves it out keeps the Study off")
+        self.assertEqual(self.CASES_TEMPLATE.count("{ name: 'STUDY', value: study ? 'on' : 'off' }\n"), 1)
+        self.assertEqual(len(re.findall(r"name: 'STUDY", self.CASES_TEMPLATE)), 1, "the limits STUDY_MAX_* stay the defaults of cases/config.py: nothing passes them")
+        config = self.app_config()
+        env = {"SCOPE_SUBSCRIPTIONS": SETTINGS["ENV_SUBSCRIPTION_ID"], "MODEL_DETECTIVE": "a-model", "MODEL_SKEPTIC": "b-model", "AIGATEWAY_HOST": "aigw-x.swedencentral.ai.gateway.azure.com",
+               "MAX_CASES_PER_RUN": "3", "CASES_CONTROL_QUEUE_NAME": "cases-control", "FOUNDRY_PROJECT_ENDPOINT": "https://aif-x.services.ai.azure.com/api/projects/p"}
+        self.assertIs(config.load({**env, "STUDY": "on"}).study, True, "the word that the template writes for on")
+        self.assertIs(config.load({**env, "STUDY": "off"}).study, False, "and for off")
+
+    def test_the_cases_file_names_nothing_that_the_template_does_not_declare(self):
+        declared = bicep_params(self.CASES_TEMPLATE)
+        given = values(self.build(**self.PROJECT, STUDY="on")[3]["cases.parameters.json"])
+        self.assertLessEqual(set(given), set(declared), set(given) - set(declared))
+        self.assertIsInstance(given["study"], bool)
+
+
 if __name__ == "__main__":
     unittest.main()

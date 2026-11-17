@@ -12,7 +12,8 @@
 # and a request takes at most 480,000 bytes of files: tools/operator-run.py has the evidence), and its code is published from inside the network (docs/proposals/07-private-by-default.md,
 # phase 2): the workflow sends the sources, and operator/publish.sh builds the libraries in the container. It is still this one script, with three switches, each set only by the caller that needs it,
 # so that there is one build command and one layout:
-#   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked). Python makes the zip, with
+#   FUNCTION_APP_SOURCES_ONLY=1       the app's own files and no libraries: the sources that the workflow sends to the Operator (nothing is installed, so no interpreter is checked). The Python files lose their comments
+#                                     and the text of their docstrings, and keep every line in place (tools/strip-sources.py checks each one and stops the pack when it fails). Python makes the zip, with
 #                                     one entry, sources.zip, that is LZMA-compressed and holds the files in a zip of their own, stored: the files are compressed together, which makes the archive a third smaller
 #                                     than a zip that compresses each file alone. Only the container opens it (operator/publish.sh, which needs Python's lzma module). A package that an app runs from stays
 #                                     deflate: the deployment site cannot read LZMA
@@ -109,6 +110,7 @@ if [ -n "$sources_only" ]; then
   # The request that carries the sources is small (tools/operator-run.py, MAX_FILE_BYTES). A zip compresses each file alone, and the files of the app share most of their text, so one LZMA entry holds all of
   # them, in a zip of their own that stores them. operator/publish.sh opens the entry and then that zip.
   rm -f "$zip_file"
+  python3 "$(dirname "${BASH_SOURCE[0]}")/strip-sources.py" "$build"
   python3 -c '
 import io, os, sys, zipfile
 root, target = sys.argv[1], sys.argv[2]
