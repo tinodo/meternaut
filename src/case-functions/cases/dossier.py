@@ -14,6 +14,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .toolbox import Toolbox
 
 MAX_HANDLES = 5  # the resources of one profile
+MIN_DAYS = 7  # the fewest closed days that a profile looks back
 PER_HANDLE = 3200  # characters that a profile may take for each of them (and MAX_RESULT_CHARS at the least)
 METER_ROWS = 6  # the dearest meters of a resource
 LINK_ROWS = 8  # the rows of types and relations of each side of the links of a resource
@@ -118,10 +119,14 @@ def _tasks(tb, box: "Toolbox", entries: list, plans: dict, days: int) -> dict:
 
 
 def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str = "day") -> dict:
-    """The picture of one to MAX_HANDLES resources that the tools of `box` have shown, for the last `days` closed days (7 to 30), with the metrics at the grain `day` or `hour`. A part that
-    could not be read says why, and a part that did not finish in the time of the call is `unread`, and named by handle. It raises UnknownHandle for a handle that no answer showed."""
+    """The picture of one to MAX_HANDLES resources that the tools of `box` have shown, for the last `days` closed days (MIN_DAYS to 30), with the metrics at the grain `day` or `hour`. A part that
+    could not be read says why, and a part that did not finish in the time of the call is `unread`, and named by handle. It raises ValueError, before it reads anything, for what the tool refuses, and
+    UnknownHandle for a handle that no answer showed."""
     tb = _toolbox()
-    entries = [box._entry(handle) for handle in dict.fromkeys(handles)]
+    wanted = list(dict.fromkeys(handles))
+    if not 1 <= len(wanted) <= MAX_HANDLES or not MIN_DAYS <= days <= tb.MAX_DAYS or grain not in ("day", "hour"):
+        raise ValueError(f"a profile is of 1 to {MAX_HANDLES} handles, of {MIN_DAYS} to {tb.MAX_DAYS} days, by the day or by the hour")
+    entries = [box._entry(handle) for handle in wanted]
     hourly = grain == "hour"
     box._prefetch_costs(dict.fromkeys(entry.sub for entry in entries))
     kinds = {entry.resource.handle: tb.type_word(entry.resource.resource_type) for entry in entries}

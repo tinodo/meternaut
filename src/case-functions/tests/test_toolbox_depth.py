@@ -559,6 +559,14 @@ class TheChanges(unittest.TestCase):
         self.assertEqual(answer["unread"], ["r2", "r3"])
         self.assertEqual([item["handle"] for item in table(answer)], ["r1"])
 
+    def test_when_resource_graph_has_not_answered_in_time_every_handle_is_unread_and_none_is_called_not_recorded(self):
+        box = self.box()
+        box.budget_seconds = 0.2
+        import time
+        with mock.patch.object(tb.Toolbox, "_ages_of", lambda self, entries: time.sleep(1.0)):
+            answer = ask(box, "changes", handles=["r1", "r2"])
+        self.assertEqual((answer["unread"], answer["rows"]), (["r1", "r2"], []))
+
     def test_the_arguments_are_checked_and_the_handle_must_be_one_that_an_answer_showed(self):
         box = self.box()
         self.assertEqual(box.call("changes", {"handles": ["r99"]}), '{"error":"unknown-handle"}')
@@ -730,6 +738,15 @@ class TheProfile(unittest.TestCase):
         text = first.call("profile", {"handles": ["r1", "r2"], "days": 30, "grain": "day"})
         self.assertEqual(json.loads(text), json.loads(json.dumps(dossier.build_dossier(second, ["r1", "r2"], 30, "day"))))
         self.assertEqual(json.loads(json.dumps(dossier.build_dossier(second, ["r1"]))), json.loads(first.call("profile", {"handles": ["r1"]})))
+
+    def test_the_plain_function_refuses_what_the_tool_would_refuse_and_takes_a_handle_given_twice_as_one(self):
+        estate, box = opened(profiled(5), 5)
+        for handles, days, grain in (([], 30, "day"), ([f"r{n}" for n in range(1, 7)], 30, "day"), (["r1"], dossier.MIN_DAYS - 1, "day"), (["r1"], tb.MAX_DAYS + 1, "day"), (["r1"], 30, "week")):
+            estate.calls.clear()
+            with self.assertRaises(ValueError, msg=(handles, days, grain)):
+                dossier.build_dossier(box, handles, days, grain)
+            self.assertEqual(estate.calls, [], "nothing is read for a request that is refused")
+        self.assertEqual([part["handle"] for part in dossier.build_dossier(box, ["r2", "r2"], dossier.MIN_DAYS)["profiles"]], ["r2"])
 
     def test_the_arguments_are_checked(self):
         estate, box = opened()

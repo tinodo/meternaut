@@ -793,11 +793,11 @@ TOOLS = {tool.name: tool for tool in (
          "and created_by and changed_by as a kind of identity); its parts; and where it sends its own data. A part that was not read in time is in unread, by handle, and is not none; a "
          "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited like those of the other tools.",
          (Param("handles", "handles", "Handles of 1 to 5 resources that earlier answers showed.", required=True, high=dossier.MAX_HANDLES),
-          Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _GRAIN)),
+          Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=dossier.MIN_DAYS, high=MAX_DAYS), _GRAIN)),
     Tool("changes",
          "Shows how old each of 1 to 5 resources is and what was last written to it, as numbers and words: age_days, created_by and changed_by (the kind of identity that did it: person, application, "
          "managed-identity or unknown, never a name), changed_days and written_14d (true when something was written in the last 14 days). over-90 says that a log that was read to its end shows "
-         "nothing in its 90 days, and not-recorded that no source says. It says nothing about what an age or a change means.",
+         "nothing in its 90 days, and not-recorded that no source says. A handle that was not read in time is in unread, and is not none. It says nothing about what an age or a change means.",
          (Param("handles", "handles", "Handles of 1 to 5 resources that earlier answers showed.", required=True, high=dossier.MAX_HANDLES),)),
     Tool("recall_lessons",
          "Shows how people answered the earlier proposals about resources of one resource type, as counts, for each kind of proposal: how many were answered, approved, declined (with the "
@@ -2751,7 +2751,7 @@ class Toolbox:
         tasks: dict = {("ages",): lambda late: self._ages_of(entries), **{(entry.resource.handle,): lambda late, entry=entry: self._owners().log(entry.resource.resource_id) for entry in entries}}
         done, left = self._run(tasks)
         found = self._history(entries, done.get(("ages",)), {entry.resource.handle: done.get((entry.resource.handle,)) for entry in entries})
-        unread = [entry.resource.handle for entry in entries if (entry.resource.handle,) in left]
+        unread = [entry.resource.handle for entry in entries if ("ages",) in left or (entry.resource.handle,) in left]
         rows = []
         for entry in entries:
             handle = entry.resource.handle
