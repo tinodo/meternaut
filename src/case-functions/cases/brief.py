@@ -85,7 +85,8 @@ NOT_LOOKED_UP = "Not checked: who changed it."
 TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now.",
               "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
-              "impact": "Meternaut took this request back: nobody checked what depends on the resource."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty), in a sentence
+              "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
+              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each kind of recommendation has its own now."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -628,10 +629,10 @@ def _id_like(label: str) -> bool:
 
 
 def says_nothing(case: CaseRecord | None) -> bool:
-    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads and no analysis of
-    gateways to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
+    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads, no analysis of
+    gateways and no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
     a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
-    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None:
+    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None or advisor_digest(case) is not None:
         return False
     if cost_words.is_container(case.resource_id):
         return True
@@ -1280,16 +1281,16 @@ ADVISOR_ROWS = 12
 ADVISOR_COLUMNS = ["What", "Where", "For how long", "Saves a year", "Looked back", "Applies to"]
 TERM = re.compile(r"^P([0-9]{1,2})([YM])$")
 ADVISOR_BASIS = "Azure Advisor's own estimate: no cost line of this resource backs it"
-ADVISOR_BASIS_MANY = "Azure Advisor's own estimates, added up: the rows can be alternatives, so one purchase saves less than the sum"
+ADVISOR_BASIS_MANY = "Azure Advisor's own estimates, added up: the rows can be alternatives or overlap, so buying saves less than the sum"
 ADVISOR_SURE = "Azure Advisor's own estimate. No AI and no check by code looked at it, and Meternaut has not checked that what it covers will keep running."
 ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
                  "and a discount lowers the rate and does not remove waste.")
-ADVISOR_FIRST_RISK = "Meternaut has not checked that the machines these cover are the right size or will keep running."
+ADVISOR_FIRST_RISK = "Meternaut has not checked that what these cover is the right size or will keep running."
 ADVISOR_BUY = ("Then buy the one that fits, in the Azure portal under Reservations or Savings plans. Meternaut does not buy it: "
                "the steps are in its proposal on reservations (docs/proposals/17-reservations-instructions-only.md).")
 ADVISOR_BUY_RISK = "A commitment is a one-way door: a refund counts against a yearly cap, and an exchange is limited."
 ADVISOR_RISK = "A commitment of one or three years locks in what runs today, and a refund or an exchange is limited."
-ADVISOR_SHORT = "Order of work: remove what is idle and resize what is too big first, then commit. Meternaut has not checked that these machines are the right size."
+ADVISOR_SHORT = "Order of work: remove what is idle and resize what is too big first, then commit. Meternaut has not checked that what these cover is the right size."
 
 
 @dataclass(frozen=True)
@@ -1358,7 +1359,7 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     rows = tuple(row for row in (_advisor_row(item) for item in found["rows"][:ADVISOR_ROWS]) if row)
     count, usd, left = found["n"], _figure(found["usd"]) or 0.0, _whole(found.get("more"))
     many = f"{number_text(count)} recommendation{'' if count == 1 else 's'}"
-    rates = "from your own rates and usage" if _commitment(case) else "at retail rates, so your own rates are not in it"
+    rates = "based on your own rates and usage" if _commitment(case) else "at retail rates, so your own rates are not in it"
     said = f"Azure Advisor lists {many} here" if case.detector == "advisor-cost" else f"Azure Advisor also says so, with {many}"
     money = f"{'Its figure is' if count == 1 else 'Its figures add up to'} {usd_text(usd)} a year ({usd_text(usd / 12)} a month), {rates}." if usd > 0 else "None of them has a figure in dollars."
     skipped = _whole(found.get("skipped"))
@@ -1372,6 +1373,12 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
 def advisor_options(case: CaseRecord | None) -> tuple[Option, ...]:
     """What a person could do about a commitment that Advisor recommends, in the order of work that the proposal on reservations gives, and what each puts at risk. The words are code's."""
     return (Option(ADVISOR_FIRST, ADVISOR_FIRST_RISK), Option(ADVISOR_BUY, ADVISOR_BUY_RISK)) if _commitment(case) else ()
+
+
+def _also(case: CaseRecord) -> str:
+    """What the check of Meternaut that found the same resource read (the case is Advisor's, and its lead was left to it): its one fact, in the words of DETECTOR_STATE."""
+    found = advisor_digest(case) or {}
+    return next((DETECTOR_STATE[name][1] for name in found.get("also") or () if isinstance(name, str) and name in DETECTOR_STATE), "")
 
 
 # -- what the cost says -------------------------------------------------------------------------------------------------------------------------
@@ -1598,6 +1605,8 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     said = advisor_of(case)
     if said is not None and case is not None:
         head.append(Fact("Advisor's list" if case.detector == "advisor-cost" else "Azure Advisor also says so", said.line, "Azure Advisor"))
+        if case.detector == "advisor-cost" and _also(case):
+            head.append(Fact("Also found by Meternaut", _also(case), RESOURCE_GRAPH))
     if group is not None:
         covered = _group_facts(group, case)
         head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the rows of gateways come before the examples

@@ -306,7 +306,7 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertIn(f"Its figures add up to {self.year} a year", reply.content)
         self.assertIn(f"and 2 more, {brief_mod.usd_text(self.case.facts['advisor']['moreUsd'])} a year", reply.content)
         self.assertIn("Saves, Scenario", reply.content)
-        self.assertIn("the rows can be alternatives, so one purchase saves less than the sum", reply.content)
+        self.assertIn("the rows can be alternatives or overlap, so buying saves less than the sum", reply.content)
 
     def test_the_page_says_the_order_of_work_that_nothing_was_checked_and_that_meternaut_does_not_buy(self):
         content = self.page.content

@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_COLUMNS, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_COLUMNS, ADVISOR_KEY, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -353,10 +353,12 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
     if case is not None:
-        parts.append(_ai_words(case))
-        parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT)}  # what code made of the estate is in the evidence above, and no AI saw it
-        parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
+        by_code = brief.advisor is not None and not brief.models  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
+        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
+            _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT, ADVISOR_KEY)}  # what code made of the estate is in the evidence above, and no AI saw it
+        parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
+                           [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))
         parts.append(join([paragraph("These guards fired. A guard stops a finding from becoming a request, and no model can lift it."),
                            summary([(guard, words.GUARD.get(guard, "")) for guard in case.guards])]) if case.guards else paragraph("No guard fired."))

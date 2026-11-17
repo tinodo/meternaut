@@ -295,9 +295,6 @@ ADVICE_PROBLEM = 160  # the characters of Advisor's own short problem that a rec
 ADVICE_SOLUTION = 300
 
 
-ADVICE_NONE = {"problem": "Azure Advisor has a cost recommendation", "solution": "Azure Advisor gave no words for it: its figures and details are listed here"}  # when it gave neither
-
-
 def advisor_words(properties: dict) -> dict:
     """Advisor's own words for a recommendation (Learn, "Recommendations - List": properties.shortDescription has a problem and a solution, each a sentence that Advisor wrote), one line each, with
     one standing in for the other when Advisor gave only one. Empty when it gave neither. It is text that Advisor wrote, kept for a person to read: it never goes into a prompt."""
@@ -350,7 +347,7 @@ def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
     return Lead(detector=ADVISOR, resource_id=resource_id, resource_type=str(properties.get("impactedField") or "").lower(),
                 name=str(properties.get("impactedValue") or ""), resource_group=group.group(1) if group else "", subscription_id=subscription.lower(),
                 location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=round(annual / 12, 2) if annual is not None and currency == "USD" else None,
-                advice=advisor_words(properties) or ADVICE_NONE, key=str(recommendation.get("name") or recommendation.get("id") or ""), advisor=item)
+                advice=advisor_words(properties), key=str(recommendation.get("name") or recommendation.get("id") or ""), advisor=item)
 
 
 GRAPH_CHUNK = 50  # the subscriptions that one Resource Graph query reads: Learn recommends groups of fewer than 300 (the guidance for throttled requests)

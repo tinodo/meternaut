@@ -6,12 +6,12 @@ A request that an earlier version made for such a finding, and that nobody has a
 import unittest
 
 from support import SUBSCRIPTION, NOW
-from test_names_and_cost import DEV, PROBLEM, a_subscription_with_a_bill, advisor_item, the_case
+from test_names_and_cost import DEV, a_subscription_with_a_bill, advisor_item, the_case
 from test_run_loop import OID, Moving, loop_for, watch
 from test_web_support import make_advice, make_advice_case, make_decision
 
 from cases import brief, learning
-from cases.approvals import NOTHING_TO_SAY
+from cases.advisor import ADVICE_NONE
 
 SUBSCRIPTION_ID = f"/subscriptions/{SUBSCRIPTION}"
 GROUP_ID = f"{SUBSCRIPTION_ID}/resourceGroups/rg-demo"
@@ -33,8 +33,9 @@ def request_for(case, **changes):
     return make_advice(**base)
 
 
-class AFindingThatSaysNothingIsHeldBack(unittest.TestCase):
-    """The request that read "Review the resource <id>": Azure Advisor's recommendation about a subscription, with none of Advisor's words. It has nothing to say, so no request is made."""
+class AnAdvisorRecommendationWithNoWordsIsNotHeldBack(unittest.TestCase):
+    """The request that read "Review the resource <id>": Azure Advisor's recommendation about a subscription, with none of Advisor's words. It is Advisor's own claim, and its figures and rows say what to
+    look at, so no rule that holds back a finding that says nothing (brief.says_nothing) holds it back: the request is made, in words of code (docs/proposals/22-advisor-first-class.md)."""
 
     @classmethod
     def setUpClass(cls):
@@ -46,55 +47,33 @@ class AFindingThatSaysNothingIsHeldBack(unittest.TestCase):
         cls.summary, cls.events, _ = watch(cls.estate, cls.extras, cls.clock)
         cls.case = the_case(cls.extras, "advisor-cost")
 
-    def test_no_request_is_made_and_nobody_is_asked(self):
-        self.assertEqual((self.extras.store.plans_open(), self.offered), ([], []))
-        self.assertFalse(self.case.plan_id)
+    def test_a_request_is_made_and_the_person_is_asked(self):
+        (plan,) = self.extras.store.plans_open()
+        self.assertEqual((self.offered, self.case.plan_id), ([plan.plan_id], plan.plan_id))
 
-    def test_the_finding_stays_in_the_history_with_the_reason_and_its_name(self):
-        (held,) = [e for e in self.events if e["type"] == "case.held"]
-        self.assertEqual((held["caseId"], held["detector"], held["resourceType"], held["resourceName"]), (self.case.case_id, "advisor-cost", "microsoft.subscriptions/subscriptions", DEV))
-        self.assertEqual(held["reason"], "held back: nothing to say")
-        self.assertEqual(held["reason"], NOTHING_TO_SAY)
-        self.assertNotIn(SUBSCRIPTION, str(held), "the history says the name, not the id")
+    def test_it_is_titled_by_what_it_is_about_in_words_of_code_and_never_by_the_words_review_the_resource(self):
+        (plan,) = self.extras.store.plans_open()
+        self.assertEqual(plan.title, f"{ADVICE_NONE['problem']}: subscription {DEV}")
+        self.assertNotIn("Review the resource", plan.title)
+        self.assertNotIn(SUBSCRIPTION, plan.title)
 
-    def test_the_case_is_kept_with_its_name_and_its_bill_so_nothing_is_lost(self):
+    def test_nothing_is_held_back_and_nothing_is_counted_as_held(self):
+        self.assertEqual([e for e in self.events if e["type"] == "case.held"], [])
+        self.assertEqual((self.summary.held, self.extras.store.runs_recent()[0].held, self.events[-1]["heldBack"]), (0, 0, 0))
+
+    def test_the_case_is_kept_with_its_name_and_its_bill(self):
         self.assertEqual((self.case.subscription_name, self.case.resource_name, self.case.cost_state, self.case.cost_usd_30d), (DEV, DEV, "lines", 148.95))
 
-    def test_it_is_counted_in_the_run_and_said_in_a_note_and_in_the_end_of_the_run(self):
-        self.assertEqual(self.summary.held, 1)
-        record = self.extras.store.runs_recent()[0]
-        self.assertEqual(record.held, 1)
-        self.assertIn("1 finding held back: nothing to say", record.notes)
-        finished = self.events[-1]
-        self.assertEqual((finished["type"], finished["heldBack"]), ("run.finished", 1))
-
-    def test_the_run_still_ends_well_and_the_other_findings_are_taken_up(self):
+    def test_the_run_ends_well_with_the_one_case(self):
         self.assertTrue(self.summary.ok)
-        self.assertEqual(self.summary.cases, 1)
+        self.assertEqual((self.summary.cases, self.summary.needs_human), (1, 1))
 
-    def test_it_is_not_judged_again_at_the_next_watch_so_it_is_not_counted_twice(self):
+    def test_the_next_watch_asks_nobody_again_for_a_request_that_is_open(self):
+        (first,) = self.extras.store.plans_open()
         self.clock.advance(hours=3)
         again, events, _ = watch(a_subscription_with_a_bill(), self.extras, self.clock)
-        self.assertEqual(again.held, 0)
+        self.assertEqual(([p.plan_id for p in self.extras.store.plans_open()], again.held, again.cases), ([first.plan_id], 0, 0))
         self.assertEqual([e for e in events if e["type"] == "case.held"], [])
-
-
-class AFindingThatGetsItsWordsIsAskedAbout(unittest.TestCase):
-    def test_the_same_finding_with_the_words_of_advisor_gets_its_request_and_is_not_held_back(self):
-        clock = Moving()
-        offered: list = []
-        extras = loop_for(clock, on_plan=lambda plan, case: offered.append(plan.plan_id))
-        estate = a_subscription_with_a_bill()
-        estate.advisor = [advisor_item(shortDescription={})]
-        first, _, _ = watch(estate, extras, clock)
-        self.assertEqual((first.held, extras.store.plans_open()), (1, []))
-        clock.advance(days=8)  # the finding is judged again after the days that the loop waits
-        estate = a_subscription_with_a_bill()
-        second, events, _ = watch(estate, extras, clock)
-        (plan,) = extras.store.plans_open()
-        self.assertEqual((second.held, offered), (0, [plan.plan_id]))
-        self.assertEqual([e for e in events if e["type"] == "case.held"], [])
-        self.assertTrue(plan.title.startswith(PROBLEM))
 
 
 class WhatSaysNothing(unittest.TestCase):
