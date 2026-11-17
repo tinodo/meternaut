@@ -533,7 +533,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list. If nobody answers it, it goes on to the next person."),
     "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
     "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions."),
-    "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes on to the next person."),
+    "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
     "ran": (200, "The change was made", "It was made with your own permissions: Azure's Activity Log shows your name as the person who made it. "
                                         "Meternaut holds no right of its own to change Azure."),
     "ran_unconfirmed": (200, "The delete was accepted", "Meternaut looks again in a few minutes and records what it finds. It was made with your own permissions."),

@@ -38,7 +38,10 @@ CASE_STATUSES = ("proposed", "needs_human", "dropped", "error", "awaiting_ok", "
 CASE_OPEN = ("awaiting_ok", "approved", "running")
 CASE_CLOSED = ("done", "failed", "declined", "expired", "verified", "acknowledged")
 # `expired` is the stored word for a request that Meternaut itself took back, with its reason in `preconditions["takenBack"]` (cases/brief.py TAKEN_BACK): no clock ends a request (AGENTS.md rule 38).
-PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed")
+PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed", "held")
+# The state of the request of a finding that a guard holds back (cases/approvals.py Approvals.settle): it is no open request, so nothing that lists the open ones (the Decisions page, the
+# letters of a request, the cards, the cap of ADVICE_OPEN_MAX) sees it, and it takes the answers that ask for nothing: a question, "not mine", "later" and "not worth it".
+HELD = "held"
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
@@ -86,9 +89,9 @@ ADVICE_QUIET_DAYS = 30
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
-# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time` or `calls` (its time for tool calls or its calls were used up), `refused` (the harness did not let it run
-# or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
-INVESTIGATION_ENDS = ("answered", "time", "calls", "refused", "failed")
+# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time`, `calls` or `tokens` (its time, its calls or its tokens for tool calls were used up), `refused` (the harness did not
+# let it run or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
+INVESTIGATION_ENDS = ("answered", "time", "calls", "tokens", "refused", "failed")
 INVESTIGATION_TOUCHES = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
 KEPT_INVESTIGATIONS = 20
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
@@ -476,6 +479,11 @@ class InvestigationRecord(Record):
     unread: tuple[str, ...] = ()
     subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars (which the order rests on)
     subs_costed: int = 0
+    # When the estate was looked at in beats (cases/beats.py), one dict for each: n, kinds (the words of its focus), billing (the lines of the bill that no resource owns were in it), more (kinds that the last one holds
+    # beyond those named), calls, max_calls, tokens, seconds, end (one of INVESTIGATION_ENDS), seeded (the resources whose picture code read), looked (how many of its kinds its tools read), found (findings that it wrote)
+    # and says (what it said that it examined). Counts and words, no amount. `more` counts the findings that the record had no room for.
+    beats: tuple[dict, ...] = ()
+    more: int = 0
 
 
 @dataclass(frozen=True)
@@ -541,6 +549,9 @@ class Store(Protocol):
         and its result is kept instead, so that what the other step wrote is never written over. Returns False when the case is gone or when `change` returned None."""
         ...
     def plans_open(self) -> list[PlanRecord]: ...
+    def plans_held(self) -> list[PlanRecord]:
+        """The requests of the findings that a guard holds back (the state HELD), newest first. plans_recent leaves them out: they never end by the clock, and a bulk of them would crowd the newest plans."""
+        ...
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]: ...
     def plan_get(self, plan_id: str) -> PlanRecord | None: ...
     def plan_put(self, plan: PlanRecord) -> None: ...

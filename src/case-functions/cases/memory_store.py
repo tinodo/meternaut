@@ -69,8 +69,11 @@ class MemoryStore:
     def plans_open(self) -> list[PlanRecord]:
         return sorted((p for p in self.plans.values() if p.state in ("open", "approved")), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
+    def plans_held(self) -> list[PlanRecord]:
+        return sorted((p for p in self.plans.values() if p.state == "held"), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
-        return sorted(self.plans.values(), key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
+        return sorted((p for p in self.plans.values() if p.state != "held"), key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
 
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         return self.plans.get(plan_id)

@@ -107,6 +107,7 @@ TOP_COST_SERVICES = 3  # services of one resource in a list
 ADVISOR_PAGE = 20
 RESOLVE_CHUNK = 25  # resource ids in one read of Resource Graph
 PARALLEL_READS = 8
+PRELOAD_WORKERS = 5  # the types whose resources `preload` reads at the same time: one question of Resource Graph each, and the quota of Resource Graph is one for the whole identity
 READ_WORKERS = 4  # subscriptions whose cost lines, recommendations or plans are read at the same time in one call: Cost Management allows 12 query units in 10 seconds for a tenant, and a 30 day read costs one
 READ_BUDGET_SECONDS = 60.0  # of one measurement
 SUBSCRIPTION_SECONDS = 45.0  # what the reads of the subscriptions in one tool call may take in all: a call that has used it reads no further subscription (what it read is kept)
@@ -831,7 +832,7 @@ TOOLS = {tool.name: tool for tool in (
           _OFFSET)),
     Tool("profile",
          "Gives the whole picture of 1 to 5 resources, named by handle, in one call: facts and typed properties; meters (the dearest 6 of what it is billed for); metrics (every platform metric that has data, "
-         "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95; the metrics with no data are listed by name); links (what it "
+         "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95, for the 20 with the greatest daily maximum if it offers more (at_hour; with_data counts all); the metrics with no data are listed by name); links (what it "
          "refers to and what refers to it, as count and usd30d for each type and relation: neighbors shows the handles); Advisor items; history (age_days, changed_days and written_14d, "
          "and created_by and changed_by as a kind of identity); its parts; and where it sends its own data. A part that was not read in time is in unread, by handle, and is not none; a "
          "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited like those of the other tools.",
@@ -976,6 +977,7 @@ class Toolbox:
         self._lock = threading.Lock()
         self._notes_lock = threading.Lock()  # the reads of several subscriptions at once write their notes through it
         self._calls = 0
+        self.extra_calls = 0  # the calls beyond MAX_CALLS that this run allows: an investigation of beats makes the seeds of each beat and the calls of each, on this one toolbox (cases/beats.py)
         self._next_handle = 1
         self._entries: dict[str, _Entry] = {}  # every resource that a read returned, by lower-case id
         self._by_handle: dict[str, _Entry] = {}
@@ -1001,6 +1003,8 @@ class Toolbox:
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
         self._edges: nb.Edges | None = None  # the pass over the references of the estate (neighbors): read once in a run, a page at a time
         self._read: dict[str, str] | None = None  # for the tools that give a picture of resources: the handles that the call that is running held data of, with the letters of what (see Toolbox.log)
+        self._pictures: dict[tuple, tuple[dict, float]] = {}  # the parts of a profile that were read in full, by handle, days and grain, with the seconds that their read took: a plain repeat is answered from them
+        self._saved: float | None = None  # the seconds that the call that is running did not spend, because the pictures were kept
         self._lists: "dict[str, dict[str, frozenset[tuple[str, ...]]] | str]" = {}  # namespace -> the paths that the platform lists for each of its types, or the word that says why not: read once in a run
         self._listings: "dict[str, Listing | str]" = {}  # type -> its Listing, or the word that says why it has none
         self._held: dict[str, list[str]] = {}  # namespace -> the subscriptions that hold a resource of it, in the order that they were met: the list of a namespace is read with the first of them and, when that fails, one other
@@ -1030,7 +1034,7 @@ class Toolbox:
         with self._lock:
             self._calls += 1
             self._began, self._timed, self._skipped, self._read = self.monotonic(), True, {}, None
-            self._listed_seconds, self._late_lists = 0.0, set()
+            self._listed_seconds, self._late_lists, self._saved = 0.0, set(), None
             try:
                 answer = self._answer(name, arguments)
             finally:
@@ -1049,11 +1053,11 @@ class Toolbox:
                 answer = {"error": "too-large"}
                 text = _dump(answer)
             self.log.append({"name": _logged_name(name), "arguments": _logged_arguments(arguments), "ok": "error" not in answer, "chars": len(text),
-                             **({"read": self._read} if self._read is not None and "error" not in answer else {})})
+                             **({"read": self._read} if self._read is not None and "error" not in answer else {}), **({"saved": self._saved} if self._saved else {})})
             return text
 
     def _answer(self, name: object, arguments: object) -> dict:
-        if self._calls > MAX_CALLS:
+        if self._calls > MAX_CALLS + self.extra_calls:
             return {"error": "limit"}
         tool = TOOLS.get(name) if isinstance(name, str) else None
         if tool is None:
@@ -1478,12 +1482,12 @@ class Toolbox:
             raise first
         return rows, failed
 
-    def _load_type(self, kind: str) -> None:
+    def _load_type(self, kind: str, read: "tuple[list[dict], list[str]] | None" = None) -> None:
         """The resources of one type in every subscription, from one query of Resource Graph for all of them (`_graph`). A subscription that has none has an empty list, and one that could not be
-        read has no list: it is in `_unlisted`."""
+        read has no list: it is in `_unlisted`. `read` is that query's answer when `preload` has made it ahead."""
         if all((sub, kind) in self._by_type or sub in self._unlisted for sub in self.subscriptions):
             return
-        rows, failed = self._graph(TYPE_RESOURCES.format(type=kind))
+        rows, failed = read if read is not None else self._graph(TYPE_RESOURCES.format(type=kind))
         self._unlisted.update(failed)
         found: dict[str, list[str]] = {sub: [] for sub in self.subscriptions if sub not in self._unlisted}
         self._prefetch_lists((str(row.get("type") or "").lower(), owner) for row, owner in ((row, self._owner_of(row)) for row in rows) if owner in found)
@@ -1495,6 +1499,28 @@ class Toolbox:
         for sub, keys in found.items():
             self._by_type[(sub, kind)] = keys
 
+    def preload(self, kinds: Iterable[object]) -> int:
+        """For code and never for an agent (cases/beats.py): reads the resources of several types at the same time, so that the listings that follow find them in the caches. The questions of
+        Resource Graph, one for each type, go to a pool of at most PRELOAD_WORKERS, and the workers only read: what they read is registered here, by the thread that called, in the order of the
+        types, as `_load_type` registers a read of its own, so that no state of the toolbox is touched by two threads. A call of a tool holds `_lock` for as long as it runs and this holds it too,
+        so that nothing runs beside it. A type that is read already, or has not the shape of one, is left alone; one that fails is left to the listing, which says why in its own words. Returns
+        how many types were read; fewer than two types are not worth a pool, and are read by the listing."""
+        with self._lock:
+            todo = [kind for kind in dict.fromkeys(kinds) if type_word(kind) and not all((sub, kind) in self._by_type or sub in self._unlisted for sub in self.subscriptions)]
+            if len(todo) < 2:
+                return 0
+            with ThreadPoolExecutor(max_workers=min(len(todo), PRELOAD_WORKERS)) as pool:
+                asked = {kind: pool.submit(self._graph, TYPE_RESOURCES.format(type=kind)) for kind in todo}
+            read: dict[str, tuple[list[dict], list[str]]] = {}
+            for kind, future in asked.items():
+                try:
+                    read[kind] = future.result()
+                except READ_ERRORS:
+                    continue
+            for kind in todo:
+                if kind in read:
+                    self._load_type(kind, read[kind])
+            return len(read)
     def _entries_of(self, kind: str, subs: Iterable[str] | None = None) -> list[_Entry]:
         return [self._entries[key] for sub in self.subscriptions if subs is None or sub in set(subs) for key in self._by_type.get((sub, kind), [])]
 
@@ -2906,7 +2932,21 @@ class Toolbox:
         return {"log_days": ownership.WINDOW_DAYS, "cols": list(HISTORY_COLUMNS), "rows": rows, **({"unread": unread} if unread else {})}
 
     def _tool_profile(self, args: dict) -> dict:
-        answer = dossier.build_dossier(self, args["handles"], args["days"] or MAX_DAYS, args["grain"] or "day")
+        days, grain = args["days"] or MAX_DAYS, args["grain"] or "day"
+        wanted = list(dict.fromkeys(args["handles"]))
+        kept = [self._pictures.get((handle, days, grain)) for handle in wanted]
+        if wanted and all(part is not None for part in kept):
+            # A plain repeat: the parts were read in full already, at this grain and over these days, so the answer is what they showed and nothing is read again (the metrics were the only thing
+            # that a repeat read again, and they are what takes the time).
+            answer = {"days": days, "grain": grain, "partial": False, "profiles": [json.loads(json.dumps(part[0])) for part in kept]}  # type: ignore[index]
+            self._saved = round(sum(part[1] for part in kept), 1)  # type: ignore[index]
+        else:
+            began = self.monotonic()
+            answer = dossier.build_dossier(self, args["handles"], days, grain)
+            each = max(0.0, self.monotonic() - began) / max(1, len(answer["profiles"]))
+            for part in answer["profiles"]:
+                if part["handle"] not in answer.get("unread", {}) and dossier.complete(part):
+                    self._pictures[(part["handle"], days, grain)] = (json.loads(json.dumps(part)), each)
         self._read = {part["handle"]: letters for part in answer["profiles"] if (letters := dossier.read_by(part))}
         return answer
 

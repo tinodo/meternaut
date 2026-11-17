@@ -24,8 +24,12 @@ NO_KINDS = "No kind of resource is known for this run: no cost line was read and
 STARTED = {"timer": "the daily timer", "request": "a person or a tool that asked for a run"}
 # How the Investigator's run ended: the word of the tile, and what it means.
 ENDS = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
-        "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."), "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
+        "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),
+        "tokens": ("Its tokens ran out", "The tokens that it was allowed ran out, so it was told to answer with what it had."),
+        "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
         "failed": ("It failed", "It gave no answer that could be read.")}
+BEATS = ("The AI looked at the estate in parts, one after the other. Code chose the parts by what each kind of resource cost in the last 30 days, the dearest first, and no amount is shown. "
+         "Each part is a short session of its own, with its own tool calls, seconds and tokens, and the lines of the bill that no resource owns can be a part too.")
 STOPS = {"tokens": "its token limit was used up", "switch": "a switch that holds the agents is pulled", "refusals": "too many of its tool calls were refused"}
 VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
 # What became of the resources of a finding (the words of cases/approvals.py for a request that was held back).
@@ -65,7 +69,7 @@ def _tiles(record: InvestigationRecord | None) -> Safe:
     word, meaning = ENDS.get(record.end, ENDS["failed"])
     used = f"It made {record.calls} of the {record.max_calls} tool calls that it was allowed and used {record.seconds} of the {record.max_seconds} seconds."
     why = f" {STOPS[record.stop].capitalize()}." if record.end == "refused" and record.stop in STOPS else ""
-    unread = " Its answer could not be read." if not record.answered and record.end in ("time", "calls") else ""
+    unread = " Its answer could not be read." if not record.answered and record.end in ("time", "calls", "tokens") else ""
     return kpis(looked, found_tile, kpi("Stopped because", word, "", f"{used} {meaning}{why}{unread}"), label="The latest investigation")
 
 
@@ -110,8 +114,28 @@ def _finding(found: dict) -> list[object]:
 def _findings(record: InvestigationRecord) -> Safe:
     if not record.findings:
         return paragraph("The AI wrote no finding." if record.answered else "There is no finding: the AI gave no answer that code could read.")
-    return join([paragraph("The sentences of the first column were written by the AI."),
-                 table("findings", "Findings of the last run", ["What it says", "How sure (0 to 1)", "Resources", "The second AI", "What became of it"], [_finding(found) for found in record.findings])])
+    parted = bool(record.beats)
+    rows = [([str(_count(found.get("beat")))] if parted else []) + _finding(found) for found in record.findings]
+    more = [paragraph(f"The record has room for {len(record.findings)} findings. {_count(record.more)} more were written, and they are not listed here.")] if _count(record.more) else []
+    return join([paragraph("The sentences of the first column were written by the AI.") if not parted else paragraph("The sentences of the second column were written by the AI."),
+                 table("findings", "Findings of the last run", (["Part"] if parted else []) + ["What it says", "How sure (0 to 1)", "Resources", "The second AI", "What became of it"], rows), *more])
+
+
+def _beats(record: InvestigationRecord) -> Safe:
+    """One row for each part that the AI looked at: its kinds, what it used and how it ended, how many of its kinds its tools read, how many findings it wrote and what it said that it examined."""
+    rows = []
+    for beat in record.beats:
+        kinds = [kind_text(str(kind)) for kind in (beat.get("kinds") if isinstance(beat.get("kinds"), list) else [])]
+        if beat.get("billing"):
+            kinds.append(Safe("the lines of the bill that no resource owns"))
+        if _count(beat.get("more")):
+            kinds.append(Safe(counted(_count(beat.get("more")), "more kind")))
+        said = [_text(phrase, 100) for phrase in (beat.get("says") if isinstance(beat.get("says"), list) else [])]
+        rows.append([str(_count(beat.get("n"))), join(kinds, ", ") if kinds else Safe("—"), f"{_count(beat.get('calls'))} of {_count(beat.get('max_calls'))}", str(_count(beat.get("seconds"))),
+                     f"{_count(beat.get('tokens')):,}", ENDS.get(beat.get("end"), ENDS["failed"])[0], f"{_count(beat.get('looked'))} of {len(beat.get('kinds') or [])}" if beat.get("kinds") else "—",
+                     str(_count(beat.get("found"))), join((fmt("{phrase}", phrase=phrase) for phrase in said), "<br>") if said else Safe("—")])
+    return join([paragraph(BEATS), table("beats", "The parts that the AI looked at, in order", ["Part", "Kinds of resource", "Tool calls", "Seconds", "Tokens", "Stopped because", "Kinds looked at", "Findings",
+                                                                                              "What the AI said it examined"], rows)])
 
 
 def _kinds(record: InvestigationRecord) -> Safe:
@@ -162,8 +186,8 @@ def activity_page(ctx: Ctx) -> Response:
     if latest is not None:
         if latest.end in ("failed", "refused") and latest.note:
             parts.append(notice("warning", "It did not finish", _text(latest.note, 200)))
-        parts += [Safe("<h2>What the AI looked at and concluded</h2>"), _how(ctx, latest), Safe("<h2>Findings of the last run</h2>"), _findings(latest),
-                  Safe("<h2>Which kinds of resource the AI looked at</h2>"), _kinds(latest)]
+        parts += [Safe("<h2>What the AI looked at and concluded</h2>"), _how(ctx, latest), *([Safe("<h2>The parts that the AI looked at</h2>"), _beats(latest)] if latest.beats else []),
+                  Safe("<h2>Findings of the last run</h2>"), _findings(latest), Safe("<h2>Which kinds of resource the AI looked at</h2>"), _kinds(latest)]
     else:
         parts.append(notice("info", "", "No investigation is recorded yet. An investigation that ran before this page existed was not recorded."))
     parts += [Safe("<h2>Earlier runs</h2>"), _earlier(ctx, records[1:], unrecorded), Safe("<h2>What this page cannot tell</h2>"), paragraph(LIMITS)]

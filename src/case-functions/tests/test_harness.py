@@ -23,7 +23,7 @@ from test_foundry_reads import reading_rig
 
 from cases import agents, alerts, config as cfg, foundry, harness as hn, lockfile
 from cases.foundry import AgentRun, AgentSpec, FoundryError, FunctionTool
-from cases.harness import Brake, Budget, Harness, HarnessRefused, ToolGuard, conforms
+from cases.harness import BeatOverTokens, Brake, Budget, Harness, HarnessRefused, ToolGuard, conforms
 from cases.memory_store import MemoryStore
 from cases.models import StoreError, SwitchRecord
 
@@ -713,6 +713,103 @@ class TheRun(unittest.TestCase):
             r.harness.close()
         self.assertEqual(lines(capture, "harness.run"), [])
 
+    def test_a_run_given_a_cap_of_tokens_is_told_to_stop_calling_tools_at_the_cap_and_is_a_failed_beat_that_trips_nothing_beyond_its_limit(self):
+        r = Rigged()
+        with LogCapture() as capture:
+            result = r.run(reply([one(GOOD, "c1")], 50, 5), reply([one(GOOD, "c2")], 50, 5), reply([message("done")], 50, 5), max_tokens=100)
+            r.harness.close()
+        self.assertEqual((result.text, result.out_of_tokens, len(r.handler.calls)), ("done", True, 1), "the second call was refused, and the agent still gave its answer")
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["tokens"], line["budgetRefused"]), ("ok", 165, 1))
+        self.assertEqual((r.pulled(), r.letters), ([], []), "a beat that used its tokens as it was told to is no trip")
+        r = Rigged()
+        asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], 60_000, 6_000) for n in range(1, 6)]
+        with self.assertRaises(BeatOverTokens) as raised:
+            r.run(*asks, max_tokens=100_000)
+        with LogCapture() as capture:
+            r.harness.close()
+        self.assertNotIsInstance(raised.exception, HarnessRefused, "a failed beat holds nothing that the beats before it found")
+        self.assertEqual(raised.exception.partial.input_tokens + raised.exception.partial.output_tokens, 264_000)
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"], line["tokens"]), ("failed", "tokens", 264_000), "the History says why")
+        self.assertEqual((r.pulled(), r.letters), ([], []), "a beat that goes on after its cap is a failed beat and no trip: the switch stays as it was")
+
+    def test_a_beat_that_goes_over_its_tokens_and_is_asked_once_more_for_its_answer_is_an_answer_and_trips_nothing(self):
+        r = Rigged()
+        asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], 60_000, 6_000) for n in range(1, 5)]
+        result = r.run(*asks, reply([message("saved")], 70_000, 1_000), max_tokens=100_000, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_tokens), ("saved", True, True))
+        with LogCapture() as capture:
+            r.harness.close()
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"], line["tokens"]), ("ok", "salvaged", 4 * 66_000 + 71_000), "a beat that was cut off and gave its answer: said so, whatever it cost")
+        self.assertEqual((r.pulled(), r.letters), ([], []))
+        r = Rigged()
+        with self.assertRaises(BeatOverTokens):
+            r.run(*asks, reply([one({"handle": "r9"}, "c9")], 70_000, 1_000), max_tokens=100_000, salvage=lambda: 25.0)
+        with LogCapture() as capture:
+            r.harness.close()
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"]), ("failed", "tokens"), "a last request that asks for a tool is no answer: the beat fails as it did")
+        self.assertEqual((r.pulled(), r.letters), ([], []))
+
+    def test_the_hard_limit_of_a_beat_is_twice_its_cap_or_its_cap_and_sixty_thousand_when_that_is_more(self):
+        self.assertEqual([hn.beat_limit(cap) for cap in (10_000, 30_000, 60_000, 100_000, 200_000)], [70_000, 90_000, 120_000, 200_000, 400_000])
+
+    def test_a_beat_that_ends_above_its_limit_is_a_failed_beat_at_the_limit_or_below_it_is_not_and_none_pulls_the_switch(self):
+        for cap, used, fails in ((100_000, 220_000, True), (100_000, 200_000, False), (100_000, 150_000, False), (30_000, 95_000, True), (30_000, 90_000, False), (30_000, 65_000, False)):
+            with self.subTest(cap=cap, used=used):
+                r = Rigged()
+                answer = reply([message("done")], used - 1_000, 1_000)
+                if fails:
+                    with self.assertRaises(BeatOverTokens):
+                        r.run(answer, max_tokens=cap)
+                else:
+                    self.assertEqual(r.run(answer, max_tokens=cap).text, "done")
+                with LogCapture() as capture:
+                    r.harness.close()
+                (line,) = lines(capture, "harness.run")
+                self.assertEqual((line["outcome"], line["reason"]), ("failed", "tokens") if fails else ("ok", ""))
+                self.assertEqual((r.pulled(), r.letters), ([], []))
+
+    def test_a_run_without_a_cap_has_the_budget_of_the_harness_as_before(self):
+        r = Rigged(tokens=250)
+        with self.assertRaises(HarnessRefused):
+            r.run(*[reply([one({"handle": f"r{n}"}, f"c{n}")], 100, 10) for n in range(1, 6)])
+        r.harness.close()
+        self.assertIn("against a budget of 250", r.letters[0][1])
+
+    def test_each_run_has_a_record_of_its_own_when_the_caller_asks_for_another_and_otherwise_the_runs_of_one_agent_share_it(self):
+        r = Rigged()
+        reference = r.harness.ensure(r.investigator)
+        r.service.replies = [reply([message("one")], 100, 10)]
+        r.harness.run(reference, r.investigator, "x", r.handler, max_seconds=60)
+        r.harness.again(r.investigator)
+        r.service.replies = [reply([message("two")], 50, 5)]
+        r.harness.run(reference, r.investigator, "x", r.handler, max_seconds=60)
+        with LogCapture() as capture:
+            r.harness.close()
+        self.assertEqual([(line["agent"], line["tokens"], line["outcome"]) for line in lines(capture, "harness.run")], [(INVESTIGATOR, 110, "ok"), (INVESTIGATOR, 55, "ok")])
+        r = Rigged()
+        reference = r.harness.ensure(r.investigator)
+        for words in ("one", "two"):
+            r.service.replies = [reply([message(words)], 100, 10)]
+            r.harness.run(reference, r.investigator, "x", r.handler, max_seconds=60)
+        with LogCapture() as capture:
+            r.harness.close()
+        self.assertEqual(len(lines(capture, "harness.run")), 1, "without again, the second run is counted in the record of the first, as one run was before")
+
+    def test_the_refusals_of_one_run_do_not_count_against_the_run_that_follows_it(self):
+        r = Rigged()
+        reference = r.harness.ensure(r.investigator)
+        r.service.replies = [reply([one({}, "c1", "tool_three")]), reply([one({}, "c2", "tool_three")]), reply([message("one")])]
+        r.harness.run(reference, r.investigator, "x", r.handler, max_seconds=60)
+        r.harness.again(r.investigator)
+        r.service.replies = [reply([one({}, "c3", "tool_three")]), reply([message("two")])]
+        r.harness.run(reference, r.investigator, "x", r.handler, max_seconds=60)
+        r.harness.close()
+        self.assertEqual((r.pulled(), r.letters), ([], []), "two refusals and then one are no three in one run")
+
     def test_close_is_safe_to_call_twice_and_never_raises(self):
         r = Rigged()
         r.run(reply([message("done")]))
@@ -922,7 +1019,7 @@ class StoredFoundry(ti.FakeFoundry):
     def read_agent(self, name):
         return self.stored.get(name)
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None, max_tokens=None):
         if stop is not None:
             why = stop(foundry.AgentRun(text=""))  # the brake before a request, as the real client asks it before the first one too
             if why:
@@ -1104,7 +1201,7 @@ class TheRunUnderTheHarness(unittest.TestCase):
     def test_a_harness_that_lets_the_agents_run_ends_as_a_run_that_ran(self):
         _, events, _, _, foundry, _ = self.go()
         end = tr.of_type(events, "run.finished")[0]
-        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 3))
+        self.assertEqual((end["investigation"], end["investigationLines"]), ("ran", 5), "the start, the line of each of the two tool calls that the fake agent makes, the finding and the end")
         self.assertEqual(len(foundry.runs), 2)
 
 

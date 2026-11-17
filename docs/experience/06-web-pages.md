@@ -8,13 +8,13 @@ Every page is a render of the decision brief, which lets a stranger answer eight
 
 | Page and route | For | What it is for | What a card hands over |
 |---|---|---|---|
-| **Decisions** `/` | Each person | What waits for the person, the larger saving first, and what was decided lately | Nothing: the person signs in and sees their own |
+| **Decisions** `/` | Each person | What waits for the person, the larger saving first, and what was decided lately; "Held back" lists what a guard holds back | Nothing: the person signs in and sees their own |
 | **A decision** `/ok/<requestId>` (also `/why/<id>`) | The card's recipient | Headline, saving, facts, the AI's reasoning and doubt, change, undo, risk, owner and the answers; the rest in one Details | The request id |
 | **History** `/history` (also `/me/decisions`, `/me/activity`) | Each person | The last 30 days: what was decided, what ran and was checked, how many new findings | Nothing |
 | **What I know about your resources** `/me/notes` | Owners | Read, edit, expire and delete notes; do-not-touch marks | Nothing |
 | **Settings** `/me/settings` | Each person | Channel, quiet hours, the most messages a week, "Pause messages"; export and delete | Nothing |
 | **Operations** `/ops`, `/ops/runs` | The platform team | The switches, the runs and the cases | Never: no message links here |
-| **Savings found** `/ops/savings` | The platform team and the owner | Every saving that was found, by what became of it | Never: no message links here |
+| **Savings found** `/ops/savings` | The platform team and the owner | Every saving that was found, by what became of it, and what a guard holds back | Never: no message links here |
 | **What the AI looked at** `/ops/activity` | The platform team and the owner | What the AI examined and concluded | Never: no message links here |
 | **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
@@ -36,6 +36,7 @@ The page of one request is its decision brief (`/ok/<requestId>`; `/why/<id>` sh
 - **Evidence and doubt.** At most five facts with unit, source and period; how sure the system is, derived by code; and two labelled boxes, the first AI's reason and the second AI's strongest objection, marked as not checked by code.
 - **What happens.** What changes, who makes it (the approver, with their own permissions, so Azure checks their rights; said once on the page), what is read again just before, whether it can be undone, what could go wrong (always visible for R2 and R3), and whose resource it is.
 - **One answer form.** One text box ("A question, an objection or something to remember"), a reason for a decline, and a button for each answer that exists now: Approve, Decline, This is not mine, Ask or tell, Decide later. Decline matches Approve in size; on a narrow screen the buttons stack. Without script, the form posts the plan code (a reference, not proof of authenticity) and the anti-forgery token. Approve is left out while the checks that run right before a change would refuse it: a box says why. If the page cannot look, one line says so and Approve stays.
+- **A held finding** has the same page, a box that says why no request was made, and no Approve ([held findings](../proposals/29-held-findings.md)).
 - **Details and footer.** Steps, models, tokens, guards and ids sit in one collapsed `details` element. The footer is one line: an AI wrote the page and which models, why the person sees it, and a person to talk to, as a name and an address in plain text.
 
 A finding that Meternaut may not change gets a request of the same shape, with the answers Worth acting on, Not worth it, This is not mine, Ask or tell and Decide later. Nothing changes in Azure ([the decision brief](../proposals/09-the-decision-brief.md#a-finding-that-meternaut-may-not-change)). An Azure Advisor recommendation is one such request, with its figure and rows ([Advisor first class](../proposals/22-advisor-first-class.md)).
@@ -45,7 +46,7 @@ A finding that Meternaut may not change gets a request of the same shape, with t
 - **R2, "your OK on a page":** an Entra sign-in that meets an authentication context (a label an administrator ties to a Conditional Access policy), then the summary and one confirm.
 - **R3, "two people":** a phishing-resistant sign-in (security key, passkey, Windows Hello for Business or multifactor certificate; [Learn](https://learn.microsoft.com/entra/identity/authentication/concept-authentication-strengths)), the same summary with the total commitment and what cannot be undone restated, and two approvers, each on their own.
 
-**Step-up (not built yet).** The organisation's Conditional Access decides which sign-in an authentication context needs. The page requests the [context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context) with a [claims challenge](https://learn.microsoft.com/entra/identity-platform/claims-challenge) and checks the `acrs` claim of the token that returns. Before redirecting, it says which sign-in to expect.
+**Step-up (not built yet).** The organisation's Conditional Access decides which sign-in an authentication context needs. The page requests the [context](https://learn.microsoft.com/entra/identity-platform/developer-guide-conditional-access-authentication-context) with a [claims challenge](https://learn.microsoft.com/entra/identity-platform/claims-challenge) and checks the `acrs` claim of the token that returns.
 
 ### Binding
 
@@ -64,7 +65,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 - **Ask or tell** takes a question, an objection or something to remember. It is length-capped and screened, reaches the system as an excerpt (quoted data) and never as an instruction, and approves nothing. The other approver's page never shows it.
 - **Decide later** leaves the request open and only changes the order of the person's list.
 - **Not mine** says the resource is not the person's. Nothing is approved; the request goes back to finding the right owner.
-- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. The first of two approvers reads "Recorded. Nothing has changed yet."; the second reads "Submitted. A purchase cannot be cancelled." If Azure asks for an extra sign-in check before it makes the change, nothing has changed yet: the page sends the approver to Microsoft Entra once more, and the change is made after that second check, once. A check that is cancelled, refused or not completed closes the request, and the page says "The extra sign-in check was not completed. Nothing was changed. The request is closed."
+- **After the OK** the page sends the approver to sign in to Azure. The change runs right after the last approver's sign-in, as that person (for two approvers, not designed yet), and cannot be cancelled. If Azure asks for an extra sign-in check before it makes the change, nothing has changed yet: the page sends the approver to Microsoft Entra once more, and the change is made after that second check, once. A check that is cancelled, refused or not completed closes the request, and the page says "The extra sign-in check was not completed. Nothing was changed. The request is closed."
 - **A refusal before the change** does not close the request. Nothing is changed and the approval is taken back: the page says "The change was not made", why, and what the person can do. The request is open again, and a new approval is a new sign-in. A request that is not the one that was approved is closed.
 
 ### When something goes wrong
@@ -76,7 +77,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 | The plan changed | "This plan changed. Nothing is approved. A new message will bring the new plan and code." | Read the new plan; the old code is refused |
 | The request expired | "This request expired on Friday 14:00 CET. Nothing has changed." | Nothing; "Talk to a person" if the change is still wanted |
 | The kill switch is pulled | "Changes are paused here. Nothing has changed, and your OK cannot be recorded now." | Wait; the page works again when changes resume, unless the request has expired |
-| The checks that run right before the change would refuse it (for example a planted disk lost its test tag) | A box at the top that says why, and no Approve; after a press of Approve, "The change was not made" and "The request is still open" | Decline, decide later, or ask or tell; Approve is back when what stopped it is put right |
+| The checks that run right before the change would refuse it | A box at the top that says why, and no Approve; after a press of Approve, "The change was not made" and "The request is still open" | Decline, decide later, or ask or tell; Approve is back when what stopped it is put right |
 | Not your role | "I cannot take your OK on this request." No plan details | "Talk to a person" if it should be yours |
 | Step-up failed | "Your sign-in did not meet what this approval needs, for example a security key or passkey. Nothing is approved." | If Teams opened an embedded view, use the link in the approval-waiting e-mail in your own browser. If no required sign-in method is registered, choose "Talk to a person" |
 | The session ended | "You were signed out before you answered. Nothing is approved." | Sign in again; the plan and code are unchanged |
@@ -129,7 +130,7 @@ The kill switch cannot recall a purchase already submitted.
 
 ## Borrowed patterns and accessibility basics
 
-The pages borrow four patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign. The design copies neither styling nor wording.
+The pages borrow four patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign.
 
 The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These matter most:
 

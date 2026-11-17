@@ -2,7 +2,7 @@
   "agents": {
     "meternaut-investigator": {
       "connection": "aigateway",
-      "instructionsSha256": "b3c91bfa39e2c14c1fc773d46dd8d20ec6750be77140c16e2c5f53d7731da18a",
+      "instructionsSha256": "2ce228c73e375f942e18abc18439108400451b60682b0798e153f00e756aff73",
       "kind": "prompt",
       "model": "gpt-5.5",
       "options": {
@@ -34,7 +34,7 @@
         "recall_lessons",
         "recall_open_questions"
       ],
-      "toolsSha256": "2baba32c15515f7119a99459cfdfe83b7acfd667fc5bbfc636ad7dd1116fde92"
+      "toolsSha256": "97973a8cd95068a4d010c28fdb78fef47de40ca33c6fb0aef2725e3553fa839c"
     },
     "meternaut-scholar": {
       "connection": "aigateway",
@@ -70,7 +70,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "7942cc37d990309066c91fa34b07b973f20ee7c1b810bd5b4462d4693dd1f1d7"
+    "moduleSha256": "1e187deb16b03a23bdaecee51c1696a0a7d0f4e0e5a72f00e4094b5fbcae29f3"
   },
   "tools": {
     "advisor_items": {
@@ -154,8 +154,8 @@
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
     },
     "profile": {
-      "implementationSha256": "5a773603d2432aa69baa32c38f139d586a8e6ffd94b6ae7c890b30c6fa0ad33b",
-      "schemaSha256": "b21e65836ea628c9967b48aebca9ceb356f5782e43bb9befb2f6f8f1198d6087"
+      "implementationSha256": "cfcd70b8432501c686e5684eac4c0fab4556f2fbfb5f30fa395eaf9a51650086",
+      "schemaSha256": "2bd0ff63457019208fab7955557ae91b0facca7133bfaac0044208c6fd43b7ef"
     },
     "recall_knowledge": {
       "implementationSha256": "6230a3ea466a3c69e7da014d0429b36bc62144d0e47eaabb0e70531323ac0661",

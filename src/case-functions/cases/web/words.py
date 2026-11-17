@@ -25,6 +25,7 @@ CASE_STATUS = {
 
 PLAN_STATE = {
     "open": "Open. It waits for an answer, and goes on to the next person if nobody gives one.",
+    "held": "Held back. No request was made for the finding, and nothing changes in Azure.",
     "approved": "Approved. The change is being made now.",
     "consumed": "Used. The change was made with the approver's own permissions, and a request runs once.",
     "declined": "Declined. Nothing changed.",

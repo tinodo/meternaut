@@ -187,10 +187,10 @@ param foundryModelSkeptic string = 'gpt-6.1-sol'
 @maxValue(40)
 param investigateMaxCalls int = 40
 
-@description('Most seconds that one investigation may take. The code accepts no more than 600 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py).')
+@description('Most seconds that one investigation may take: its beats, the checks of code and the Skeptic. The code accepts no more than 1500 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py). The default is six beats of 220 seconds (a beat has the reads that code makes for it, then at most half of its 220 seconds for tool calls and a minute more to write its answer) and 120 for the checks and the Skeptic, 1440 in all, so that the Watch ends inside the 38 minutes that the Hub waits for (its container group has 45) at the usual reading time and not at the slowest (docs/proposals/25-beats.md).')
 @minValue(30)
-@maxValue(600)
-param investigateMaxSeconds int = 600
+@maxValue(1500)
+param investigateMaxSeconds int = 1440
 
 @description('Whether the Study runs: the Scholar, a third agent in the Foundry project, reads Microsoft\'s public documentation about the kinds of resource that the estate has and files claims that code checks (docs/proposals/15-learning.md). The app gets it as the setting STUDY, on or off, and the timer study-weekly and the Hub action study-run do nothing while it is off. The parameter builder passes the variable STUDY of the environment hub (off when it is not set) and refuses on while the Foundry project is not in Azure; the limits STUDY_MAX_* stay the defaults of the code.')
 param study bool = false

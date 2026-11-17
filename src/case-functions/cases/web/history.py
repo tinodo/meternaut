@@ -101,6 +101,8 @@ def _events(ctx: Ctx, since: str) -> Feed:
     mine = []
     for plan in plans:
         if may_answer(ctx.principal, plan) and plan.created_at >= old:  # type: ignore[arg-type]
+            if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
+                continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
             if plan.family == "advise" and plan.state == "expired":
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:

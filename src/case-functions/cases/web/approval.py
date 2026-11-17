@@ -16,7 +16,7 @@ import re
 
 from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
-from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
+from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
 from .common import brief_of, checked_brief, decisions_for, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
@@ -40,6 +40,7 @@ STATUS = {"declined": 200, "asked": 200, "not_mine": 200, "later": 200, "acknowl
 WHY = "you answered a request on this page"
 CONFIRM_WHY = "you asked to approve a change that cannot be undone"
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
+HELD_WHERE = 'The finding stays held back until nothing holds it back any more. You find it under "Held back" on the Decisions page, and on the page Savings found.'
 # What kind of news each result is, for the box that the page of the result puts its lines in: a change made is a success, an answer recorded or a change that was not needed is information, a
 # check that stopped a change, a sign-in that was not completed or an answer that cannot be taken now is a warning, and a refusal or a failure of Azure is an error.
 TONE = {"ran": "success", "ran_unconfirmed": "info", "running": "info", "unchanged": "info", "stopped": "warning", "azure_refused": "error", "failed": "error", "signin_failed": "warning",
@@ -259,11 +260,22 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
     if kind == "confirmed":
         return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions.", history)
     if kind == "asked":
-        return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet. The request stays open.")
+        plan = _plan_of(ctx, result, plan_id)
+        until = paragraph(HELD_WHERE) if plan is not None and plan.state == HELD else paragraph("The request stays open.")
+        return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet.", until)
     if kind == "later":
-        return show("Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list. If nobody answers it, it goes on to the next person.", back_to=("/", "Back to the decisions"))
+        plan = _plan_of(ctx, result, plan_id)
+        where = HELD_WHERE if plan is not None and plan.state == HELD else "The request stays in your list. If nobody answers it, it goes on to the next person."
+        return show("Noted", f"Noted. Nothing is approved and nothing has changed. {where}", back_to=("/", "Back to the decisions"))
     if kind == "not_mine":
-        return show("Recorded: not yours", "Recorded. Nothing is approved. The request goes on to the next person.", back_to=("/", "Back to the decisions"))
+        plan = _plan_of(ctx, result, plan_id)
+        if plan is not None and (plan.preconditions or {}).get(HELD):
+            after = "The finding is not brought up again for a month."
+        elif plan is not None and plan.family == "advise":
+            after = "The request goes on to the next person."
+        else:
+            after = "The request goes back to finding the right owner."
+        return show("Recorded: not yours", f"Recorded. Nothing is approved. {after}", back_to=("/", "Back to the decisions"))
     if kind == "refused_code":
         return show("This request changed", CHANGED)
     if kind == "refused_state":

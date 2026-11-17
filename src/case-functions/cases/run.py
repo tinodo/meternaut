@@ -626,7 +626,7 @@ def execute(s: Services, trigger: str) -> Summary:
         investigation = investigate.investigate(s, contexts, notes)
     else:
         investigation = investigate.Investigation(off=True, note=waits)
-    investigated = investigation.ran
+    investigated = investigation.ran or investigation.tokens > 0  # a run that spent tokens starts the wait, whatever came of it: the daily timer must not repeat it tomorrow
     if investigated:
         keep(False)  # the money is spent: the clock starts now, and a fault or a restart later in the run does not make the timer pay for another investigation tomorrow
     deadline += s.monotonic() - before

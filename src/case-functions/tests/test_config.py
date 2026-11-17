@@ -120,15 +120,15 @@ class Investigation(unittest.TestCase):
                 settings.investigate_max_seconds)
 
     def test_without_the_endpoint_the_app_does_not_investigate_and_the_defaults_are_the_ones_that_were_fixed(self):
-        self.assertEqual(self.investigation(config.load(ENV_NO_PROJECT)), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
-        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
+        self.assertEqual(self.investigation(config.load(ENV_NO_PROJECT)), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 1440))
+        self.assertEqual(self.investigation(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": "", "INVESTIGATE": ""})), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 1440))
         self.assertEqual((config.OPTIONAL["FOUNDRY_MODEL_INVESTIGATOR"], config.OPTIONAL["FOUNDRY_MODEL_SKEPTIC"], config.OPTIONAL["INVESTIGATE_MAX_CALLS"],
-                          config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-5.5", "gpt-6.1-sol", "40", "600"))
+                          config.OPTIONAL["INVESTIGATE_MAX_SECONDS"]), ("gpt-5.5", "gpt-6.1-sol", "40", "1440"))
         for name in ("FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL_INVESTIGATOR", "FOUNDRY_MODEL_SKEPTIC", "INVESTIGATE", "INVESTIGATE_MAX_CALLS", "INVESTIGATE_MAX_SECONDS"):
             self.assertNotIn(name, config.REQUIRED)
 
     def test_the_endpoint_turns_the_investigation_on_unless_it_is_switched_off(self):
-        self.assertEqual(self.investigation(config.load({**ENV_NO_PROJECT, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-5.5", "gpt-6.1-sol", 40, 600))
+        self.assertEqual(self.investigation(config.load({**ENV_NO_PROJECT, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT})), (self.ENDPOINT, True, "gpt-5.5", "gpt-6.1-sol", 40, 1440))
         for value in ("off", "OFF", "0", "false", "False", "no", " off "):
             self.assertFalse(config.load({**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT, "INVESTIGATE": value}).investigate, value)
         for value in ("on", "ON", "1", "true", "True", "yes", " on "):
@@ -213,12 +213,12 @@ class Investigation(unittest.TestCase):
             config.load({**ENV, "FOUNDRY_MODEL_INVESTIGATOR": "gpt-6.1-sol"})
 
     def test_the_limits_of_the_investigation_are_ceilings_that_a_setting_can_lower_and_never_raise(self):
-        settings = config.load({**ENV, "INVESTIGATE_MAX_CALLS": "40", "INVESTIGATE_MAX_SECONDS": "600"})
-        self.assertEqual((settings.investigate_max_calls, settings.investigate_max_seconds), (40, 600))
+        settings = config.load({**ENV, "INVESTIGATE_MAX_CALLS": "40", "INVESTIGATE_MAX_SECONDS": "1500"})
+        self.assertEqual((settings.investigate_max_calls, settings.investigate_max_seconds), (40, 1500))
         settings = config.load({**ENV, "INVESTIGATE_MAX_CALLS": "1", "INVESTIGATE_MAX_SECONDS": "30"})
         self.assertEqual((settings.investigate_max_calls, settings.investigate_max_seconds), (1, 30))
         for name, value, low, high in (("INVESTIGATE_MAX_CALLS", "0", 1, 40), ("INVESTIGATE_MAX_CALLS", "41", 1, 40), ("INVESTIGATE_MAX_CALLS", "-3", 1, 40),
-                                       ("INVESTIGATE_MAX_SECONDS", "29", 30, 600), ("INVESTIGATE_MAX_SECONDS", "601", 30, 600), ("INVESTIGATE_MAX_SECONDS", "100000", 30, 600)):
+                                       ("INVESTIGATE_MAX_SECONDS", "29", 30, 1500), ("INVESTIGATE_MAX_SECONDS", "1501", 30, 1500), ("INVESTIGATE_MAX_SECONDS", "100000", 30, 1500)):
             with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
                 config.load({**ENV, name: value})
             self.assertEqual(str(raised.exception), f"{name} is not between {low} and {high}")
@@ -226,14 +226,32 @@ class Investigation(unittest.TestCase):
             with self.assertRaises(config.ConfigError) as raised:
                 config.load({**ENV, name: "many"})
             self.assertEqual(str(raised.exception), f"{name} is not a whole number")
-        self.assertEqual((config.LIMIT_INVESTIGATE_CALLS, config.LIMIT_INVESTIGATE_SECONDS), (40, 600))
+        self.assertEqual((config.LIMIT_INVESTIGATE_CALLS, config.LIMIT_INVESTIGATE_SECONDS), (40, 1500))
+
+    def test_the_beats_have_defaults_and_ceilings_that_a_setting_can_lower_and_never_raise(self):
+        settings = config.load(ENV)
+        self.assertEqual((settings.investigate_beats, settings.investigate_beat_calls, settings.investigate_beat_seconds, settings.investigate_beat_tokens, settings.investigate_total_tokens),
+                         (6, 3, 220, 100_000, 800_000))
+        self.assertEqual((config.LIMIT_INVESTIGATE_BEATS, config.LIMIT_BEAT_CALLS, config.LIMIT_BEAT_SECONDS, config.LIMIT_BEAT_TOKENS, config.LIMIT_TOTAL_TOKENS), (8, 16, 300, 200_000, 1_200_000))
+        self.assertEqual(config.load({**ENV, "INVESTIGATE_BEATS": "1", "INVESTIGATE_BEAT_CALLS": "1", "INVESTIGATE_BEAT_SECONDS": "30", "INVESTIGATE_BEAT_TOKENS": "10000",
+                                      "INVESTIGATE_TOTAL_TOKENS": "10000"}).investigate_beats, 1)
+        for name, value, low, high in (("INVESTIGATE_BEATS", "0", 1, 8), ("INVESTIGATE_BEATS", "9", 1, 8), ("INVESTIGATE_BEAT_CALLS", "17", 1, 16), ("INVESTIGATE_BEAT_SECONDS", "301", 30, 300),
+                                       ("INVESTIGATE_BEAT_SECONDS", "29", 30, 300), ("INVESTIGATE_BEAT_TOKENS", "200001", 10_000, 200_000), ("INVESTIGATE_TOTAL_TOKENS", "1200001", 10_000, 1_200_000)):
+            with self.assertRaises(config.ConfigError, msg=f"{name}={value}") as raised:
+                config.load({**ENV, name: value})
+            self.assertEqual(str(raised.exception), f"{name} is not between {low} and {high}")
+        for name in ("INVESTIGATE_BEATS", "INVESTIGATE_BEAT_CALLS", "INVESTIGATE_BEAT_SECONDS", "INVESTIGATE_BEAT_TOKENS", "INVESTIGATE_TOTAL_TOKENS"):
+            self.assertNotIn(name, config.REQUIRED)
+        self.assertLessEqual(config.DEFAULT_INVESTIGATE_BEATS * config.DEFAULT_BEAT_SECONDS + 120, config.DEFAULT_INVESTIGATE_SECONDS, "six beats and the checks fit in the seconds of the investigation")
+        self.assertLessEqual(config.DEFAULT_INVESTIGATE_BEATS * config.DEFAULT_BEAT_TOKENS, config.DEFAULT_TOTAL_TOKENS, "and their tokens in the tokens of the investigation")
+        self.assertLessEqual(2 * config.DEFAULT_BEAT_TOKENS, config.LIMIT_INVESTIGATE_TOKENS, "the brake of the harness for a beat, twice its tokens, is inside the brake of a run")
 
     def test_the_default_budget_of_tool_calls_is_the_ceiling_and_a_setting_can_still_lower_it(self):
         self.assertEqual((config.DEFAULT_INVESTIGATE_CALLS, config.LIMIT_INVESTIGATE_CALLS), (40, 40))
         for env in (ENV, {**ENV, "INVESTIGATE_MAX_CALLS": ""}, {**ENV, "FOUNDRY_PROJECT_ENDPOINT": self.ENDPOINT}):
             self.assertEqual(config.load(env).investigate_max_calls, 40)
         self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_calls, 24)
-        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 600, "the seconds are not touched")
+        self.assertEqual(config.load({**ENV, "INVESTIGATE_MAX_CALLS": "24"}).investigate_max_seconds, 1440, "the seconds are not touched")
 
     def test_every_problem_is_named_at_once_with_the_older_ones_and_their_texts_do_not_change(self):
         env = {**ENV, "MODEL_DETECTIVE": "Bad Model", "FOUNDRY_PROJECT_ENDPOINT": "https://evil.example/api/projects/p", "FOUNDRY_MODEL_SKEPTIC": "gpt-5.5",
@@ -249,7 +267,7 @@ class Investigation(unittest.TestCase):
     def test_settings_that_are_made_by_hand_without_the_new_fields_have_their_defaults(self):
         settings = config.Settings(client_id="c", subscriptions=("s",), model_detective="a", model_skeptic="b",
                                    max_cases=1, max_tokens_per_run=1000, max_completion_tokens=100, deadline_seconds=60)
-        self.assertEqual(self.investigation(settings), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 600))
+        self.assertEqual(self.investigation(settings), (None, False, "gpt-5.5", "gpt-6.1-sol", 40, 1440))
 
 
 class ScopeSwitch(unittest.TestCase):

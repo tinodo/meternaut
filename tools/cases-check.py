@@ -217,6 +217,8 @@ def investigation_lines(events: list[dict], counts_only: bool = False) -> list[s
             lines.append("  What it says it examined: " + "; ".join(clean(x, 160) for x in examined[:10]))
     else:
         lines.append("  The end of the investigation did not arrive.")
+    lines.extend(beat_lines(events))
+    lines.extend(call_lines(events))
     findings = sorted((e for e in events if e["type"] == "investigation.finding"), key=lambda e: e["finding"] if isinstance(e.get("finding"), int) else 0)
     for e in findings:
         if counts_only:
@@ -233,6 +235,53 @@ def investigation_lines(events: list[dict], counts_only: bool = False) -> list[s
                      f"the Skeptic: {verdict}; {outcome}")
         if e.get("summary") and not counts_only:
             lines.append(f"     {clean(e.get('summary'), 600)}")
+    return lines
+
+
+TOOL_NAME = re.compile(r"[a-z][a-z_]{0,31}")
+TOOLS_SHOWN = 12  # the tools that the line "by tool" names; the others are counted
+
+
+def seconds_of(value) -> float:
+    """The seconds of a tool call from a line of the History: a number that is not negative and not absurd, else 0. Never text."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value < 100_000 else 0.0
+
+
+def beat_lines(events: list[dict]) -> list[str]:
+    """One line for each beat of the investigation (docs/proposals/25-beats.md), from the lines `investigation.beat`: counts and one word of code, and no kind of resource, which the line has not."""
+    beats = sorted((e for e in events if e["type"] == "investigation.beat"), key=lambda e: whole(e.get("beat")) or 0)
+    return [f"  Beat {figure(e.get('beat'))} of {figure(e.get('of'))}: {figure(e.get('kinds'))} kinds{' and the lines of the bill that no resource owns' if e.get('billing') is True else ''}; "
+            f"{figure(e.get('seeded'))} resources read by code first, {figure(e.get('looked'))} kinds looked at; {figure(e.get('toolCalls'))} tool calls, {figure(e.get('tokens'))} tokens, "
+            f"{figure(e.get('seconds'))} seconds; it ended {word(e.get('end'), 12) or 'unknown'}{' and gave its answer when it was asked once more' if e.get('salvaged') is True else ''}; findings {figure(e.get('findings'))}." for e in beats]
+
+
+def call_lines(events: list[dict]) -> list[str]:
+    """What the tool calls of the investigation took, from the lines `investigation.call`: how many ran and how long, how many of them gave no answer and why (a word of the toolbox), how many more
+    were asked for after a budget was used up, the reads that code made against the calls of the Investigator, and the calls and seconds of each tool. Counts, seconds and the names of the tools
+    (a name that is not a plain lower-case word is `other`); never the resource type, which the lines carry, and nothing else of the estate."""
+    calls = [e for e in events if e["type"] == "investigation.call"]
+    if not calls:
+        return []
+    ran = [e for e in calls if e.get("error") != "budget-used-up"]
+    why = Counter(word(e.get("error"), 24) or "other" for e in ran if e.get("ok") is not True)
+    tools: dict[str, list[float]] = {}
+    for e in ran:
+        name = e["tool"] if isinstance(e.get("tool"), str) and TOOL_NAME.fullmatch(e["tool"]) else "other"
+        found = tools.setdefault(name, [0, 0.0])
+        found[0] += 1
+        found[1] += seconds_of(e.get("seconds"))
+    sides = {who: [seconds_of(e.get("seconds")) for e in ran if e.get("by") == who] for who in ("code", "agent")}
+    lines = [f"  Tool calls in the History: {len(ran)} ran in {sum(seconds_of(e.get('seconds')) for e in ran):.1f} seconds in all, {sum(why.values())} gave no answer, "
+             f"{len(calls) - len(ran)} more were asked for after a budget was used up (the first few are counted).",
+             f"  The reads that code made for the beats: {len(sides['code'])} calls, {sum(sides['code']):.1f} seconds; the calls of the Investigator: {len(sides['agent'])} calls, {sum(sides['agent']):.1f} seconds."]
+    shown = sorted(tools.items(), key=lambda item: (-item[1][1], item[0]))
+    lines.append("  By tool, the calls and the seconds: " + "; ".join(f"{name} {int(n)}, {seconds:.1f}" for name, (n, seconds) in shown[:TOOLS_SHOWN])
+                 + (f"; {len(shown) - TOOLS_SHOWN} more tools" if len(shown) > TOOLS_SHOWN else "") + ".")
+    if why:
+        lines.append("  Why calls gave no answer, by the word of the toolbox: " + ", ".join(f"{name} {n}" for name, n in sorted(why.items())) + ".")
+    kept = [seconds_of(e.get("savedSeconds")) for e in ran if seconds_of(e.get("savedSeconds")) > 0]
+    if kept:
+        lines.append(f"  Pictures that were kept and answered again with no read: {len(kept)} calls, {sum(kept):.1f} seconds that their reads took and that were not spent again.")
     return lines
 
 

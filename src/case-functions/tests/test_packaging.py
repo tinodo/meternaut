@@ -74,6 +74,7 @@ class FilesOfTheAppTests(unittest.TestCase):
             host,
             {
                 "version": "2.0",
+                "functionTimeout": "00:45:00",
                 "logging": {
                     "logLevel": {"default": "Information", "Azure.Core": "Warning", "Azure.Identity": "Warning", "Microsoft.AspNetCore": "Warning"},
                     "applicationInsights": {"samplingSettings": {"isEnabled": False}},
@@ -83,7 +84,8 @@ class FilesOfTheAppTests(unittest.TestCase):
             },
             "sampling is off, so that no line of the History is dropped, and the host's own chatter is off: with the token requests of the Application Insights sign-in "
             "logged, every instance wrote about one line a second; the pages are at the root, with no /api in front; the control queue gives the app one message at a "
-            "time (one Watch at a time, as the one partition of the old control hub did) and moves a message to cases-control-poison after five tries",
+            "time (one Watch at a time, as the one partition of the old control hub did) and moves a message to cases-control-poison after five tries; the function has 45 minutes, "
+            "because a Watch of six beats reads for up to 9 minutes, investigates for up to 18 and judges for a few more, and the default of 30 would cut it off (docs/proposals/25-beats.md)",
         )
 
     def test_funcignore_leaves_out_the_tests_and_compiled_files_but_not_the_libraries(self):
