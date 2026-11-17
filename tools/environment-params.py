@@ -127,6 +127,10 @@ app reads as the settings TEAMS_BOT_IDENTITY_CLIENT_ID, TEAMS_BOT_APP_ID and TEA
                                       whose endpoint is made of TEAMS_FUNCTION_HOST),
 
 and these lines: teams_phase (1 or 2), teams_files, teams_identity_name, teams_bot_name, teams_bot_sku and teams_delivery.
+
+The Study (docs/proposals/15-learning.md) is off until the variable STUDY of the environment hub says on (1, true, on, yes; or 0, false, off, no; empty or not set is off), the words that the app reads. It is plain configuration, so a variable and not a secret
+(AGENTS.md rule 18 (b)). The builder refuses any other word without echoing it, and gives the cases file one bool, `study` (always written, so that a run of the action cases sets the setting either way), which the template gives
+the app as the setting STUDY. The limits STUDY_MAX_* are not passed: they stay the defaults of cases/config.py. The action cases (and no other) refuses on while the Foundry project is not in Azure, unless the build is a preview.
 """
 from __future__ import annotations
 
@@ -229,6 +233,9 @@ CARDS_QUEUE_NAME = "teams-cards"
 # queue (the Power Automate flow of proposal 19) until then, and everything about the bot is written only with --teams or when its settings are given, so that no other file differs from what it was. The identity's name is the
 # template's (id-<workload>-teams) and the tool's default (tools/entra-setup.py teams-bot): a test holds the three together. The SKU F0 is the free one, and Teams is a standard channel.
 TEAMS_DELIVERIES = ("queue", "bot")
+# The words that switch a setting on and off: the ones that the app reads (cases/config.py SWITCH_ON and SWITCH_OFF; a test holds the two together).
+SWITCH_ON = ("1", "true", "on", "yes")
+SWITCH_OFF = ("0", "false", "off", "no")
 TEAMS_IDENTITY_NAME = "id-meternaut-teams"
 TEAMS_BOT_SKU = "F0"
 FUNCTION_APP_HOST = re.compile(r"^(?=.{4,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.azurewebsites\.net$")
@@ -618,6 +625,20 @@ def teams_files(subscription: str, group: str, location: str, owner: str, settin
         values["functionAppHost"] = settings["host"] or "placeholder.azurewebsites.net"
     outputs = {"teams_phase": phase, "teams_files": "true", "teams_bot_sku": TEAMS_BOT_SKU, "teams_delivery": settings["delivery"], **names}
     return {"teams.parameters.json": parameters(values)}, outputs
+
+
+def study_switch(env: dict, foundry_exists: bool, preview: bool) -> bool:
+    """The variable STUDY of the environment hub: whether the Study is on (cases/study.py, docs/proposals/15-learning.md). Off when it is empty or not set. Nonsense is refused, and never echoed: the log is public.
+
+    On needs the Foundry project, as the investigation does, and the app does not start with STUDY on and no project, so the action cases (the one that gives the app its settings: ACTION is the job's own setting, as for
+    TEAMS_DELIVERY) refuses on while the project is not in Azure, unless the build is a preview. Every other action goes on, so that a switch that is ahead of the project never stops the action that makes it."""
+    raw = (env.get("STUDY") or "").strip().lower()
+    if raw and raw not in SWITCH_ON + SWITCH_OFF:
+        raise Problem(f"STUDY is on or off ({', '.join(SWITCH_ON)} or {', '.join(SWITCH_OFF)}), or not set: the variable of the environment hub holds another word. Nothing was changed.")
+    study = raw in SWITCH_ON
+    if study and not foundry_exists and not preview and (env.get("ACTION") or "").strip() == "cases":
+        raise Problem("STUDY is on, and the Foundry project is not in Azure: the Study needs the project, as the investigation does. Run the action foundry first, or set the variable STUDY to off. Nothing was changed.")
+    return study
 
 
 def ai_gateway_host(env: dict, preview: bool) -> str:
@@ -1062,6 +1083,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
         raise Problem("PACKAGE_SHA256 is a SHA-256 digest: 64 hexadecimal digits")
     release = {**({"buildCommit": build_commit} if build_commit else {}), **({"packageSha256": package_sha256} if package_sha256 else {})}
     teams_values = teams_settings(env, preview)
+    study = study_switch(env, foundry_exists, preview)
     outputs = {
         "vnet_name": "vnet-meternaut",
         "nsg_name": "nsg-meternaut-pe",
@@ -1132,6 +1154,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             "scopeSubscriptions": subscription.lower(),
             "scopeAllSubscriptions": SCOPE_ALL_SUBSCRIPTIONS,
             "foundryProjectEndpoint": foundry["foundry_project_endpoint"] if foundry_exists else "",
+            "study": study,
             "aiGatewayHost": gateway_host or PLACEHOLDER_AIGATEWAY_HOST,
             "casesAppPublicNetworkAccess": CASES_APP_PUBLIC_NETWORK_ACCESS,
             **console_parameters(env),

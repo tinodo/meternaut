@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -856,42 +857,13 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources measured on 2026-11-16, after the page Savings found was added and the review of it was answered (cases/web/savings.py, and what the Decisions page shares with it in common.py): 388,401 bytes
-    # with 106 files (the median of six runs, 388,370 to 388,487: the build copies the files, so the zip carries the time of the run), on an LF copy (git archive with core.eol=lf and one time on every file, --mtime) with the
-    # real build script, which is 2,361 more than the 386,040 that the same method gives for main before it (386,003 to 386,060 in six runs; 386,067 was recorded for it); the request sent is 418,444 bytes and 61,556 stay free.
-    # That is under the floor of 63,600 that held until now, so the floor of the test below is lowered to 61,250, on purpose, to keep the room over the jitter that it had (about 300 bytes); the code and its words were shortened once before that. Before it:
-    # What the archive of the sources of this repository measured on 2026-11-16, after the test card of the Teams bot was given the message of a refusal (BotError.detail, which the History of the test carries when it is
-    # plain words, and the words around it): 386,067 bytes with 105 files, on an LF copy (git archive with core.eol=lf and one time on every file, --mtime) with the real build script, which is 253 more than the 385,814 that
-    # the same method gives for main before it (with the time of each commit on the files the two numbers are 385,872 and 386,147: the number moves by a few dozen bytes with that time, and the 385,779 below was measured
-    # elsewhere for the same sources); the request sent is 416,110 bytes and 63,890 stay free (63,810 with the commit times). That is under the floor of 64,000 that held until now, so the floor of the test below is lowered
-    # to 63,600, on purpose, by the amount that leaves it the room over the jitter that it always had; the new code and its words were already shortened once, and the 253 bytes are what is left. On 2026-11-13 it measured,
-    # after the test card of the Teams bot was given the error code word of a refusal (BotError.code, which the History of the test and
-    # tools/teams-check.py carry, and the words around it): 385,779 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 156 more than the 385,623 that the same method gives
-    # for the tree before it (the number moves by a few dozen bytes with the time that the files carry, and by more with a second time on some of them: 385,726 to 385,844 in eight runs); the request sent is 415,822
-    # bytes and 64,178 stayed free, above the floor of 64,000 then. Before that, the test card was made to go by the bot's own settings and not by TEAMS_DELIVERY
-    # (loop_config.bot_way and the lines of offers.card_test that use it): 385,605 bytes, 158 more than the 385,447 of the tree before it, and 64,352 free. Before that it measured, after the bot way of the Teams cards (cases/teamsbot.py and
-    # the rounds of cases/offers.py that use it, his plain yes of 2026-11-13) was added on top of the impact check: 385,428 bytes with 105 files, on an LF copy with the real build script and one time on every file, which is 7,609 more than the 377,819 that the same method gives for main (the
-    # 377,814 that was recorded for main is 5 less, and the date that the files carry moves the number by a few dozen bytes either way, which the margin below covers); the request sent is 415,471 bytes (9,149 for this
-    # script and 20,894 for operator/publish.sh) and 64,529 stay free. The first version of the bot way measured 383,763; the fixes that three reviews asked for (no second card for a post whose answer was lost, the
-    # one address of the Bot Connector that is accepted, the time of a round, a token that is kept) added 1,041, and the fixes of a fourth review (a post that could not connect is tried again, the identity gets the
-    # time of the round, a post needs ten seconds of it) added 624. The room that more sources
-    # may take before this test asks for a decision is 200 bytes. Before the bot way the archive measured 377,814 bytes with 104 files, after the impact check of a private endpoint was added on top of the words sweep and the
-    # findings of its review were fixed (8,826 more than the 368,986 with 103 files of main after the sweep; the request sent was 407,855 bytes and 72,145 stayed free). Main measured 368,986 after the function app was
-    # no longer called by its old name in the messages, the comments and the docstrings of the code
-    # (45 fewer than the 369,031 of the day before). On 2026-11-12 it measured, after the reason of a request that Meternaut took back was kept on its plan (369,031 bytes with 103 files, which is 219 more
-    # than the 368,812 after the rules about a deletion were made one place that every path passes, and the requests that were open under the old rules are taken back; 5,002 more than the 363,810 after
-    # the Teams cards were given their buttons and the way to close themselves; 362,748 after the buttons alone). Before them it was 358,545 bytes with 102
-    # files, after the cost lines of a whole subscription or resource group, the names of subscriptions, the estimate for a disk that Azure has no cost line for and the findings that say nothing
-    # were added (of the 14,110 more than before 6,793 are code and the rest are the words that explain it;
-    # 344,390 just before, with 99 files; 340,907 on 2026-11-11, after the Teams bot was removed and the cards went onto a queue; 349,921 before that, after the approvals
-    # package (quiet hours, "review all", a second approver) on top of the engine package and the point-to-site gateway family; 341,242 after the first two, 331,719 after the engine package alone,
-    # 326,527 on 2026-11-10 after the pages, the confirmation, the letters, the cards and the chart of use were built from the style guide, 312,300 on 2026-11-09 with 94 files, and 302,601 with the
-    # 92 files before them). The cap of the request is 480,000 bytes. 85,000 stayed free until the rule that missing data is not zero and the rules that hold a deletion back, 80,000 until the impact check (the request
-    # sent was 399,029 bytes on main before it and 407,855 after it, so 72,145 stayed free) and 72,000 until the bot way: the request sent was 415,471 bytes then, so 64,529 stayed free, and the floor of the test below was
-    # lowered from 72,000 to 64,000, on purpose. No trimming of the words gave that room back, and the largest request that is known to work (466,104 bytes, tools/operator-run.py) is still about 50,000 above the one
-    # that is sent now.
-    SOURCES_ARCHIVE_MEASURED = 388_401
-    SOURCES_ARCHIVE_MARGIN = 200
+    # What the archive of the sources measured on 2026-11-17, with the comments and the text of the docstrings of the Python files taken out (tools/strip-sources.py, docs/proposals/27-package-without-comments.md): 255,610 bytes
+    # with 106 files (the median of three runs, 255,583 to 255,644: the zip carries the time of the files), on an LF copy (git archive with core.eol=lf and one time on every file, --mtime) with the real build script; the
+    # request sent is 285,935 bytes (9,431 for the build script and 20,894 for operator/publish.sh) and 194,065 stay free. The day before, with the comments in, it measured 388,401 bytes, 418,444 sent and 61,556 free, after five
+    # rounds of shorter words. The cap of the request is 480,000 bytes (tools/operator-run.py), and the largest request that is known to work is 466,104. The margin below is the room for the code of the next days, and an archive that
+    # is not stripped (about 133,000 bytes more) is above it; the floor of the test after it is what keeps the cap away.
+    SOURCES_ARCHIVE_MEASURED = 255_610
+    SOURCES_ARCHIVE_MARGIN = 20_000
 
     def sources_archive(self, fresh=False):
         """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""
@@ -927,29 +899,72 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertEqual([name for name in names if "\\" in name or name.endswith("/") or "__pycache__" in name], [], "forward slashes, no entry for a folder and no compiled cache")
         self.assertEqual(self.inner_zip(self.sources_archive(fresh=True)).namelist(), names, "the same order every time")
 
-    def test_the_archive_unpacks_with_zipfile_to_the_files_and_the_bytes_of_the_source_tree(self):
+    def test_the_archive_unpacks_with_zipfile_to_the_files_of_the_source_tree_with_the_python_files_stripped_of_their_comments_and_docstring_text(self):
         data = self.sources_archive()
         root = ROOT / "src" / "case-functions"
+        spec = importlib.util.spec_from_file_location("strip_sources_of_the_publish_tests", ROOT / "tools" / "strip-sources.py")
+        stripper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stripper)
         with tempfile.TemporaryDirectory() as tmp:
             self.inner_zip(data).extractall(tmp)
             unpacked = sorted(path.relative_to(tmp).as_posix() for path in Path(tmp).rglob("*") if path.is_file())
             self.assertEqual(unpacked, self.expected_sources("cases"))
             for name in unpacked:
-                self.assertEqual((Path(tmp) / name).read_bytes(), (root / name).read_bytes(), name)
+                original = (root / name).read_bytes()
+                self.assertEqual((Path(tmp) / name).read_bytes(), stripper.stripped(original) if name.endswith(".py") else original, name)
 
     def test_the_archive_is_at_least_a_quarter_smaller_than_the_same_files_each_compressed_alone_and_stays_within_its_ceiling(self):
         data = self.sources_archive()
-        root = ROOT / "src" / "case-functions"
+        inner = self.inner_zip(data)
         one_by_one = io.BytesIO()
         with zipfile.ZipFile(one_by_one, "w", zipfile.ZIP_LZMA) as archive:
-            for name in self.expected_sources("cases"):
-                archive.write(root / name, name)
+            for name in inner.namelist():
+                archive.writestr(name, inner.read(name))
         self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
-        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left: raise the ceiling on purpose, with the new measure")
+        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left, or the comments are not taken out any more: look at which, "
+                                                                                                    "and raise the ceiling on purpose, with the new measure, only for the first")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_61250_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_150000_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 61_250, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised: the room is made by the archive")
+        self.assertLessEqual(sent, 480_000 - 150_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 150,000 that stay free are the room for the code that the app grows by, which the stripped "
+                                                      "sources (tools/strip-sources.py) make: when this fails, no word is shortened to make room: look at what grew, or at whether the strip still runs")
+
+    @staticmethod
+    def sources_with_a_broken_file(tmp):
+        folder = tmp / "sources"
+        files = {"function_app.py": b"# the cases app\n", "host.json": b"{}\n", "requirements.txt": b"azure-functions==2.3.0 \\\n    --hash=sha256:" + b"cd" * 32 + b"\n", "cases/__init__.py": b"",
+                 "cases/broken.py": b"def broken(:\n"}
+        for name, data in files.items():
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(data)
+        return folder
+
+    @staticmethod
+    def sources_with_a_broken_file_and_an_older_archive(tmp):
+        folder = TheBuildScriptInTheOperator.sources_with_a_broken_file(tmp)
+        (tmp / "out.zip").write_bytes(source_zip())
+        return folder
+
+    def test_a_python_file_that_cannot_be_stripped_stops_the_pack_in_plain_words_and_no_archive_is_left(self):
+        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7", prior=self.sources_with_a_broken_file_and_an_older_archive)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("error: cases/broken.py: it could not be stripped", done.stderr)
+        self.assertIn("The sources were not stripped and nothing is packed.", done.stderr)
+        self.assertEqual(done.stdout, "", "no count of files: nothing was packed")
+        self.assertIsNone(members, "the archive that an earlier run left in the place of the new one is gone, so that nothing can take it for the archive of this run")
+
+    def test_the_strip_is_a_step_of_the_pack_of_the_sources_after_the_old_archive_is_removed_and_before_the_zip_is_made_and_of_no_other_build_because_the_container_has_no_such_tool(self):
+        code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
+        sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
+        self.assertEqual(code.count("strip-sources.py"), 1)
+        self.assertLess(sources.index('rm -f "$zip_file"'), sources.index("strip-sources.py"), "under set -e a failed strip ends the script, so the old archive has to be removed before it runs")
+        self.assertLess(sources.index("strip-sources.py"), sources.index("import io, os, sys, zipfile"), "the files are stripped before the zip is made")
+        self.assertTrue((ROOT / "tools" / "strip-sources.py").is_file())
+        for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
+            done, calls, members, folder = self.run_build(env=env, python=python, prior=self.sources_with_a_broken_file)
+            self.assertEqual(done.returncode, 0, (label, done.stderr))
+            with zipfile.ZipFile(io.BytesIO(self.last_zip)) as package:
+                self.assertEqual(package.read("cases/broken.py"), b"def broken(:\n", f"{label}: the files are those that it was given")
 
     def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
         data = self.sources_archive()
@@ -1033,9 +1048,8 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         for kind, arguments in self.APPS.items():
             runner, runner_calls, runner_members, _ = self.run_build(arguments=arguments, env={"FAKE_PIP": "ok"}, python="3.13.0")
             self.assertEqual(runner.returncode, 0, (kind, runner.stderr))
-            done, _, sources_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.13.0", zip_name="sources.zip")
-            self.assertEqual(done.returncode, 0, (kind, done.stderr))
-            sources_zip = self.last_zip
+            sources_zip = self.sources_archive()
+            sources_members = sorted(self.inner_zip(sources_zip).namelist())
 
             def unpacked(tmp, sources_zip=sources_zip):
                 self.inner_zip(sources_zip).extractall(tmp / "unpacked")
