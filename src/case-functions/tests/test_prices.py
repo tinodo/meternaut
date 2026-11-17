@@ -378,15 +378,18 @@ class TheFailures(unittest.TestCase):
         self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
         self.assertEqual([url for url in estate.urls if "example.com" in url], [])
 
-    def test_the_prices_of_only_so_many_services_are_read_in_a_run(self):
+    def test_the_prices_that_a_run_keeps_are_bounded_and_a_read_beyond_the_bound_is_unavailable_and_sends_nothing(self):
         estate, box = priced()
-        for n in range(prices.MAX_BOOKS):
-            box._books[(f"Other {n}", "swedencentral", None)] = prices.Book((), True)
-        self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
-        self.assertEqual(estate.price_calls, [])
-        self.assertTrue([note for note in box.notes if "no more" in note])
-        box._books.pop(("Other 0", "swedencentral", None))
-        self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found")
+        box._books[("Other", "swedencentral", None)] = prices.Book(tuple(prices.Line("Other", "p", "s", "m", "1 Hour", 1.0, "swedencentral", 1) for _ in range(5)), True)
+        with mock.patch.object(prices, "MAX_HELD", 5):
+            self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
+            self.assertEqual(estate.price_calls, [])
+            self.assertTrue([note for note in box.notes if "keeps no more" in note])
+        with mock.patch.object(prices, "MAX_HELD", 6):
+            self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found", "5 are held, and the bound is on what is held: a read that holds 5 more is still made")
+        with mock.patch.object(prices, "MAX_HELD", 1):
+            self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found", "a list that was read is not read again, whatever the bound")
+        self.assertEqual(len(estate.price_calls), 1)
 
     def test_a_bill_in_another_currency_has_no_meter_handle_and_so_no_price_is_asked(self):
         estate = PricedEstate()

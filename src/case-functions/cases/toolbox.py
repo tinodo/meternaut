@@ -2583,8 +2583,8 @@ class Toolbox:
         scope = product if within == "product" else None
         key = (service, region, scope)
         if key not in self._books:
-            if len(self._books) >= prices.MAX_BOOKS:
-                self.notes.append(f"price_alternatives: the prices of {prices.MAX_BOOKS} services or regions were read in this run, and the app reads no more")
+            if sum(len(book.lines) for book in self._books.values() if isinstance(book, prices.Book)) >= prices.MAX_HELD:
+                self.notes.append(f"price_alternatives: the run holds {prices.MAX_HELD} prices of the list already, and the app keeps no more")
                 return {"error": "unavailable"}
             self._books[key] = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic))
         book = self._books[key]
