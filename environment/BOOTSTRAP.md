@@ -1022,7 +1022,7 @@ python tools/entra-setup.py apply --tenant-id $tenant --host $host --identity-pr
 
 **What stays a hand step, and what must be true.** The Study reads `learn.microsoft.com`, `azure.microsoft.com` and `prices.azure.com` from the app's own subnet, behind the landing zone's firewall. Nothing in Meternaut opens that path and nothing here widens the list of calls that the app may make ([`http.docs_calls`](../src/case-functions/cases/http.py)). If the first `study-run` says that no page could be read and every call was unavailable, the platform team decides whether the firewall, or its DNS, lets those three hosts through on port 443 for that subnet.
 
-**What was not proved.** Nothing of this ran in Azure, on Foundry or on the Hub. [The proposal](../docs/proposals/15-learning.md#how-the-study-is-switched-on-and-run) lists what the first real run will prove.
+**What was not proved.** This section was written before the first real run, which has happened since (2026-11-17: 89 seconds, 4 kinds, 8 pages, 7 claims kept, 93,768 tokens). [The proposal](../docs/proposals/15-learning.md#how-the-study-is-switched-on-and-run) says what it showed and what is still not known.
 
 ## After it
 
