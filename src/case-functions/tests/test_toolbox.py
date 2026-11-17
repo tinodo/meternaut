@@ -189,7 +189,7 @@ def point(day, total=None, maximum=None, average=None):
 
 
 def definition(name, unit="Count", aggregation="Total", **changes):
-    found = {"name": {"value": name, "localizedValue": name}, "unit": unit, "primaryAggregationType": aggregation, "supportedAggregationTypes": [aggregation],
+    found = {"name": {"value": name, "localizedValue": name}, "unit": unit, "primaryAggregationType": aggregation, "supportedAggregationTypes": ["Average", "Count", "Maximum", "Minimum", "Total"],
              "isDimensionRequired": False, "namespace": "x", "metricAvailabilities": [{"timeGrain": "P1D", "retention": "P93D"}]}
     found.update(changes)
     return found
@@ -257,13 +257,13 @@ class Clock:
 
 
 class TheSpecs(unittest.TestCase):
-    def test_there_are_nineteen_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
+    def test_there_are_twenty_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
         specs = Toolbox(None, (), NOW, []).specs
-        # Nineteen since the learning: the last three (recall_lessons, recall_knowledge, recall_open_questions) read what Meternaut kept and make no call to Azure, except that the last
-        # reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
+        # Twenty since cost_meters, which reads what a resource or a type is billed for, meter by meter. The last three (recall_lessons, recall_knowledge, recall_open_questions) read what
+        # Meternaut kept and make no call to Azure, except that the last reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
         self.assertEqual([s.name for s in specs], ["estate_overview", "list_resources", "metric_names", "metric_summary", "measure", "cost_lines", "advisor_items", "paid_features",
                                                    "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history",
-                                                   "recall_lessons", "recall_knowledge", "recall_open_questions"])
+                                                   "cost_meters", "recall_lessons", "recall_knowledge", "recall_open_questions"])
         for spec in specs:
             schema = spec.parameters
             self.assertEqual((schema["type"], schema["additionalProperties"]), ("object", False), spec.name)
@@ -819,7 +819,7 @@ class TheArguments(unittest.TestCase):
         words.add(json.loads(self.box.call("list_resources", {"type": DISK}))["error"])
         self.assertEqual(words, {"bad-arguments", "unknown-tool", "unknown-handle", "unavailable"})
         self.assertLessEqual(words, set(tb.ERRORS))
-        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed"})
+        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed", "no-metrics"})
 
 
 class TheLimit(unittest.TestCase):
@@ -1690,7 +1690,7 @@ class TheMetricSummary(unittest.TestCase):
         estate.series[(estate.id_of("vm-2").lower(), VM1_METRIC)] = 500
         estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = [point(1, 1.0, 1.0, 1.0)]
         answer = ask(box, "metric_summary", handles=["r1", "r2"], metric=VM1_METRIC)
-        self.assertEqual(answer["results"][1], {"handle": "r2", "error": "unavailable"})
+        self.assertEqual(answer["results"][1], {"handle": "r2", "error": "unavailable", "code": "Failed"})
         self.assertEqual(answer["results"][0]["total"], 1)
         self.assertNotIn("metrics", box.evidence["r2"])
         self.assertFalse(answer["partial"])
@@ -1701,7 +1701,8 @@ class TheMetricSummary(unittest.TestCase):
         for body in (errored, {"value": "x"}, {"nope": 1}, {"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": "x"}]}):
             estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = body
             answer = ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)
-            self.assertEqual(answer["results"], [{"handle": "r1", "error": "unavailable"}], str(body)[:60])
+            code = {"code": "InvalidSamplingType"} if body is errored else {}  # the platform's code word is shown, never its text
+            self.assertEqual(answer["results"], [{"handle": "r1", "error": "unavailable", **code}], str(body)[:60])
             self.assertNotIn("IGNORE", json.dumps(answer))
         estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = {"value": []}
         self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"][0]["days_with_data"], 0)
@@ -2316,13 +2317,13 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
         second = ask(box, "measure", type=VM, metric=VM1_METRIC)
         self.assertEqual((first["summary"], second["summary"]), (self.said(2, 1, 1, 0, 1), self.said(2, 2, 0, 0, 2)))
 
-    def test_a_resource_with_data_but_no_total_or_a_total_that_is_not_above_zero_is_counted_with_the_zero_ones_so_that_the_numbers_add_up(self):
+    def test_a_resource_with_data_and_no_total_is_counted_by_its_maximum_and_average_and_one_whose_every_aggregation_is_not_above_zero_is_a_zero_one(self):
         estate = self.estate([None, None, None, None])
         ids = [r["id"].lower() for r in estate.rows]
         estate.series[(ids[0], VM1_METRIC)] = [point(1, None, 3.0, 2.0)]
         estate.series[(ids[1], VM1_METRIC)] = [point(1, -2.0, 1.0, 1.0)]
         estate.series[(ids[2], VM1_METRIC)] = [point(1, 0.0, 0.0, 0.0), point(2, None, None, None)]
-        self.assertEqual(ask(toolbox(estate), "measure", type=VM, metric=VM1_METRIC)["summary"], self.said(4, 3, 1, 3, 0))
+        self.assertEqual(ask(toolbox(estate), "measure", type=VM, metric=VM1_METRIC)["summary"], self.said(4, 3, 1, 1, 2), "the maximum above 0 of the first two is something that was there")
 
     def test_the_numbers_always_add_up_whatever_the_data(self):
         rng = random.Random(5)
@@ -2363,9 +2364,20 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
 
     def test_a_summary_is_counted_by_the_one_function_that_looks_at_a_measured_value(self):
         self.assertEqual([tb._bucket({"days_with_data": days, "total": total}) for days, total in ((0, None), (0, 5.0), (1, 0), (1, 0.0), (1, 2), (3, 0.001), (1, None), (1, -1))],
-                         ["no_data", "no_data", "zero", "zero", "positive", "positive", "zero", "zero"])
+                         ["no_data", "no_data", "zero", "zero", "positive", "positive", "no_data", "zero"], "data on a day and no aggregation at all is unknown, and a value below 0 is not above 0")
         self.assertEqual(tb._tally(["no_data", "zero", "positive", "positive"], 7), self.said(4, 3, 1, 1, 2, days=7))
         self.assertEqual(tb._tally([], 30), self.said(0, 0, 0, 0, 0))
+
+    def test_a_measurement_is_positive_when_any_aggregation_that_the_metric_has_is_above_0_and_zero_only_when_every_one_it_has_is_not(self):
+        def bucket(days=1, total=None, maximum=None, average=None):
+            return tb._bucket({"days_with_data": days, "total": total, "max": maximum, "average": average})
+
+        self.assertEqual(bucket(maximum=99, average=82.5), "positive", "a metric that offers no total has none: its maximum and its average say that something was there")
+        self.assertEqual((bucket(maximum=7), bucket(average=0.5), bucket(total=4)), ("positive", "positive", "positive"))
+        self.assertEqual((bucket(maximum=0, average=0), bucket(maximum=0), bucket(average=0.0), bucket(total=0, maximum=0, average=0)), ("zero", "zero", "zero", "zero"))
+        # A total of 0 with a maximum above 0 can come only from values below 0 that cancel: something was there, so it is counted as positive, never as zero.
+        self.assertEqual((bucket(total=0, maximum=3, average=0.5), bucket(total=4, maximum=0, average=0)), ("positive", "positive"))
+        self.assertEqual((bucket(), bucket(days=0, maximum=5, average=5)), ("no_data", "no_data"), "data on a day and no aggregation at all stays unknown, and no day with a value is no data")
 
 
 class TheCostLines(unittest.TestCase):
@@ -3179,10 +3191,10 @@ class TheTotalsOfAMetric(unittest.TestCase):
         estate.series[(rid, VM1_METRIC)] = [point(1, 7.0, 7.0, 7.0)]
         ask(box, "measure", type=VM, metric=VM1_METRIC)
         before = json.dumps(box.evidence["r1"])
-        for failure in (500, {"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": [], "errorCode": "InvalidSamplingType"}]}):
+        for failure, code in ((500, "Failed"), ({"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": [], "errorCode": "InvalidSamplingType"}]}, "InvalidSamplingType")):
             estate.series[(rid, VM1_METRIC)] = failure
             self.assertEqual(ask(box, "measure", type=VM, metric=VM1_METRIC)["failed"], ["r1"])
-            self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"], [{"handle": "r1", "error": "unavailable"}])
+            self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"], [{"handle": "r1", "error": "unavailable", "code": code}])
             self.assertEqual(json.dumps(box.evidence["r1"]), before)
         self.assertEqual(box.evidence["r1"]["metrics"][VM1_METRIC]["totals"], [7])
 
