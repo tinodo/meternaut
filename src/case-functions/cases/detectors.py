@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -154,10 +155,19 @@ class Lead:
     estimate: dict = field(default_factory=dict)
     subscription_name: str = ""
     advice: dict = field(default_factory=dict)
+    # What an Advisor lead is made of besides its words: `key` is the recommendation's own name (so that two recommendations about one subscription are two leads) and `advisor` its typed
+    # values (cases/advisor.py). Typed, for a person to read and never for a model: evidence.py builds a prompt from `facts` alone.
+    key: str = ""
+    advisor: dict = field(default_factory=dict)
 
     @property
     def lead_id(self) -> str:
-        return hashlib.sha256(f"{self.detector}|{self.resource_id.lower()}".encode("utf-8")).hexdigest()[:12]
+        return ident(self.detector, self.key or self.resource_id)
+
+
+def ident(detector: str, key: str) -> str:
+    """The id of a lead, and of the case that is made of it: the detector and the resource (or, for an Advisor recommendation, the recommendation)."""
+    return hashlib.sha256(f"{detector}|{key.lower()}".encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -285,6 +295,9 @@ ADVICE_PROBLEM = 160  # the characters of Advisor's own short problem that a rec
 ADVICE_SOLUTION = 300
 
 
+ADVICE_NONE = {"problem": "Azure Advisor has a cost recommendation", "solution": "Azure Advisor gave no words for it: its figures and details are listed here"}  # when it gave neither
+
+
 def advisor_words(properties: dict) -> dict:
     """Advisor's own words for a recommendation (Learn, "Recommendations - List": properties.shortDescription has a problem and a solution, each a sentence that Advisor wrote), one line each, with
     one standing in for the other when Advisor gave only one. Empty when it gave neither. It is text that Advisor wrote, kept for a person to read: it never goes into a prompt."""
@@ -296,7 +309,27 @@ def advisor_words(properties: dict) -> dict:
     return {"problem": problem or clean_text(solution, ADVICE_PROBLEM), "solution": solution or problem}
 
 
+PLATFORM_WORD = re.compile(r"^[A-Za-z0-9_. /()-]{1,64}$")  # what Advisor and the platform call a size, a region, a scope or a product; anything else is dropped, and a person reads the rest as escaped text
+TERM = re.compile(r"^P[0-9]{1,2}[YM]$")
+CURRENCY = re.compile(r"^[A-Z]{3}$")
+
+
+def _word(value: object, shape: "re.Pattern[str]" = PLATFORM_WORD) -> str:
+    text = str(value or "").strip()
+    return text if shape.match(text) else ""
+
+
+def _number(value: object, whole: bool = False) -> "float | int | None":
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return (int(number) if whole else number) if math.isfinite(number) and number >= 0 else None
+
+
 def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
+    """One lead for one recommendation of Azure Advisor, named by the recommendation itself, with what it says as typed values (`advisor`) and its own saving (`advisor_saving_usd`: a year divided
+    by twelve, only when Advisor gives dollars: a figure with no currency is read by cases/advisor.py, which knows the currency of the subscription's own cost lines)."""
     properties = recommendation.get("properties")
     if not isinstance(properties, dict):
         return None
@@ -306,18 +339,18 @@ def advisor_lead(recommendation: dict, subscription: str) -> Lead | None:
         resource_id = f"/subscriptions/{subscription}"
     group = RESOURCE_GROUP.search(resource_id)
     extended = properties.get("extendedProperties") if isinstance(properties.get("extendedProperties"), dict) else {}
-    saving = None
-    try:
-        if str(extended.get("savingsCurrency", "")).upper() == "USD":
-            saving = round(float(extended.get("annualSavingsAmount")) / 12, 2)
-    except (TypeError, ValueError):
-        saving = None
+    annual = _number(extended.get("annualSavingsAmount"))
+    currency = _word(str(extended.get("savingsCurrency") or "").upper(), CURRENCY)
     type_id = str(properties.get("recommendationTypeId") or "")
     facts = {"category": "cost", "impact": pick(properties.get("impact"), frozenset({"high", "medium", "low"})),
              "recommendationType": type_id.lower() if GUID.match(type_id) else "none"}
+    item = {"type": type_id.lower() if GUID.match(type_id) else "", "sub": _word(extended.get("recommendationSubCategory")), "sku": _word(extended.get("sku") or extended.get("productName")),
+            "qty": _number(extended.get("qty"), True), "region": _word(extended.get("region") or extended.get("location") or extended.get("armRegionName")),
+            "term": _word(extended.get("term"), TERM), "annual": annual, "currency": currency, "lookback": _number(extended.get("lookbackPeriod"), True), "scope": _word(extended.get("scope"))}
     return Lead(detector=ADVISOR, resource_id=resource_id, resource_type=str(properties.get("impactedField") or "").lower(),
                 name=str(properties.get("impactedValue") or ""), resource_group=group.group(1) if group else "", subscription_id=subscription.lower(),
-                location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=saving, advice=advisor_words(properties))
+                location="", tags={}, managed_by="", facts=facts, advisor_saving_usd=round(annual / 12, 2) if annual is not None and currency == "USD" else None,
+                advice=advisor_words(properties) or ADVICE_NONE, key=str(recommendation.get("name") or recommendation.get("id") or ""), advisor=item)
 
 
 GRAPH_CHUNK = 50  # the subscriptions that one Resource Graph query reads: Learn recommends groups of fewer than 300 (the guidance for throttled requests)
@@ -563,11 +596,11 @@ def _cost_of_container(lead: Lead, context: Context, key: str) -> None:
 
 def rank(leads: list[Lead], contexts: dict[str, Context]) -> list[Lead]:
     """One lead for each resource (a Resource Graph detector before Advisor), each with its 30-day cost, dearest first. What a whole subscription or resource group costs is not what a resource
-    costs, so a finding about one of them does not rank by it."""
+    costs, so a finding about one of them does not rank by it. An Advisor recommendation is its own lead (its key is its name), so that recommendations about one subscription are not folded."""
     seen: set[str] = set()
     unique: list[Lead] = []
     for lead in sorted(leads, key=lambda l: (l.detector == ADVISOR, l.detector, l.resource_id.lower())):
-        key = lead.resource_id.lower()
+        key = (lead.key or lead.resource_id).lower()
         if key not in seen:
             seen.add(key)
             unique.append(lead)

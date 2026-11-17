@@ -372,6 +372,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))
+    if brief.advisor is not None and brief.options:
+        doc.paragraph(_data(brief_mod.ADVISOR_SHORT, 200))  # the order of work for a commitment, in a line: the page has the whole of each step
     if brief.check_first:
         doc.paragraph(brief_mod.CHECK_FIRST_SHORT)
     if brief.impact is not None:
