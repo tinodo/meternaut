@@ -34,9 +34,9 @@ ENDPOINT = "https://example.services.ai.azure.com/api/projects/meternaut"
 
 
 def make_settings(**changes) -> cfg.Settings:
-    """The settings of the app as cases.config loads them, with the investigation on."""
+    """The settings of the app as cases.config loads them, with the investigation on, and as one session for the whole estate (one beat): the tests of the beats ask for more (tests/test_beats.py)."""
     values = dict(investigate=True, foundry_endpoint=ENDPOINT, foundry_model_investigator="model-investigator", foundry_model_skeptic="model-skeptic",
-                  investigate_max_calls=30, investigate_max_seconds=600)
+                  investigate_max_calls=30, investigate_max_seconds=600, investigate_beats=1)
     values.update(changes)
     return replace(cfg.load(dict(ENV)), **values)
 
@@ -130,8 +130,8 @@ class FakeFoundry:
         self.specs.append(spec)
         return f"{spec.name}:3"
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
-        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, max_tokens=None):
+        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "max_tokens": max_tokens, "handler": handler})
         if self.after_run:
             self.after_run(agent)
         if agent.startswith(agents.INVESTIGATOR_NAME):
@@ -362,7 +362,8 @@ class TheAgentDefinitions(unittest.TestCase):
 
     def test_the_investigator_is_told_to_cover_the_estate_from_the_dearest_service_and_to_prefer_a_call_for_a_whole_type(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
-        self.assertIn("2. Cover the estate before you go deep. Work down the cost by service that the overview of the estate shows, from the dearest, and do not stop "
+        self.assertIn("2. Cover the estate before you go deep. When your input names a beat", text)
+        self.assertIn("Without a beat, work down the cost by service that the overview of the estate shows, from the dearest, and do not stop "
                       "while you have calls left and the list has services that you did not look at. Prefer a call that covers a whole type (a table of every resource "
                       "of a type, a measurement across the whole type) to calls for single resources, and use single-resource calls only for what a whole type shows "
                       "to be unusual.", text)
@@ -405,13 +406,18 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 9,500 since the change that a finding states (the action, the meters that it would shrink and what remains of them, in four forms) was added, and the principle that something larger than
-        # its use needs is found by setting what it can carry beside the highest value of what it carries: about 2,400 characters in all, so that code can work out the saving from the bill (it was 7,000
-        # since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says which
-        # level it judged; 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a finer grain
-        # than a day; 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since the data that
-        # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 9500)
+        # 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
+        # lines of the bill that no resource owns, and about 550 that say how code works a saving out as a monthly rate and when a ratio on a property is right; every step of an investigation reads them
+        # again (it was 9,500 since the change that a finding states, 7,000 since the whole that a resource belongs to, 6,500 since the meters, 5,600 since the data that is stored, 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 10500)
+
+    def test_the_investigator_is_told_in_general_words_what_to_do_with_a_beat_and_that_no_beat_means_the_whole_estate(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("When your input names a beat, cover that part of the estate, which code chose by what it costs",
+                         "do not repeat what the beats before it concluded", "Leave it only when the links of a resource lead elsewhere.",
+                         "The lines of the bill that no resource owns can be a beat of their own.", "Without a beat, work down the cost by service that the overview of the estate shows"):
+            self.assertIn(sentence, text)
+        self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
 
     def test_the_investigator_is_told_how_to_find_what_is_larger_than_its_use_needs_in_general_terms_and_never_by_the_average(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -426,7 +432,7 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertLess(text.index("Something larger than its use needs is not found"), text.index("5. An absent measurement"))
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
 
-    def test_the_investigator_is_told_to_state_the_change_that_a_finding_proposes_and_what_remains_in_the_four_forms_that_code_can_check(self):
+    def test_the_investigator_is_told_to_state_the_change_that_a_finding_proposes_and_what_remains_in_the_forms_that_code_can_check(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
         for key in ('"change"', '"action"', '"effects"', '"meters"', '"remains"', '"how"'):
             self.assertIn(key, text)
@@ -434,12 +440,16 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
         for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
                          "window that it offers, never those of a whole type)",
-                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
+                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
                          "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
                          "When you cannot name the meters, give the action none.",
                          "A recommendation names the change and the bill lines that it would shrink, and says what remains of them",
                          "say so when a saving rests on your own assumption"):
             self.assertIn(sentence, text)
+        for sentence in ("Code works it out as a monthly rate from the latest days of those lines, so what is new, resized or stopped is priced as it is now.",
+                         "State a change in how much of a billed meter is used in that meter's own quantity; a ratio on a property is right only when the bill follows that property.",
+                         'when how much of a meter is used is reduced, with one meter in the effect (the action reduce or schedule)'):
+            self.assertIn(sentence, text, "the saving is a monthly rate from the latest days, and a quantity is the meter's own")
         self.assertIn(f"at most {pricing.MAX_HOW} characters", text)
         self.assertEqual(banned_in(text), [])
         for tool in FakeToolbox().specs:
@@ -449,17 +459,13 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
-                         "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why"):
+                         "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
+                         "ratio or quantity with from and to and, for a quantity, unit and moved",
+                         "at the lowest of three rates: week, the rate of their last week, since, the mean since the first day that had a cost, null when the read cannot say it, "
+                         "and steady, what a typical day costs for a month, null when too few days had a cost",
+                         "moved says that the rate of the last week is not the mean of the read, so that the share of the read that a quantity states is not the share of today"):
             self.assertIn(sentence, text)
         self.assertEqual(banned_in(text), [])
-
-    def test_the_investigator_is_told_in_general_words_to_judge_the_whole_that_a_resource_belongs_to_and_to_say_which_level_it_judged(self):
-        text = agents.INVESTIGATOR_INSTRUCTIONS
-        for sentence in ("A resource is often a symptom of something larger, or a part of something larger: follow what it is connected to and judge the whole, not only its quiet part.",
-                         "One call can show the whole picture of a few resources at once, which costs fewer calls than separate reads.",
-                         "In each finding say which level you judged, the part or the whole, and why."):
-            self.assertIn(sentence, text)
-        self.assertEqual(banned_in(text), [], "no kind of resource, no measurement, no threshold")
 
     def test_the_investigator_is_told_to_cite_the_volume_and_the_readers_of_data_that_is_stored_and_not_read_and_that_a_source_it_could_not_read_is_unknown(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -986,7 +992,7 @@ class AGoodInvestigation(unittest.TestCase):
         run = self.h.foundry.runs[0]
         self.assertEqual((run["agent"], run["input"]), ("meternaut-investigator:3", agents.investigator_input(30)))
         self.assertEqual((run["max_calls"], run["max_seconds"]), (30, 600 - 120))
-        self.assertEqual(run["handler"], self.h.toolbox.call)
+        self.assertEqual(run["handler"].__name__, "handler", "the handler is the one that writes a line of the History for each call (cases/beats.call_fields)")
         self.assertEqual([(c["name"], c["arguments"]) for c in self.h.toolbox.log], [("tool_one", {"x": 1}), ("tool_two", {})])
 
     def test_the_skeptic_runs_once_with_no_tools_and_gets_the_findings(self):
@@ -1002,7 +1008,7 @@ class AGoodInvestigation(unittest.TestCase):
 
     def test_the_history_has_a_line_for_the_start_each_finding_each_case_and_the_end(self):
         self.assertEqual([e["type"] for e in self.h.events],
-                         ["investigation.started", "investigation.finding", "case.result", "case.result", "investigation.finished", "run.note"])
+                         ["investigation.started", "investigation.call", "investigation.call", "investigation.finding", "case.result", "case.result", "investigation.finished", "run.note"])
         for e in self.h.events:
             self.assertEqual((e["v"], e["ts"], e["runId"], e["requestId"]), (1, "2026-11-04T12:00:00Z", "r" * 32, "a" * 32))
 
@@ -2172,7 +2178,7 @@ class WhenItDoesNotRun(unittest.TestCase):
                 result = h.go()
                 self.assertEqual((result.ran, result.cases, result.tokens, result.tool_calls), (False, 0, 1200, 2))
                 self.assertTrue(result.note.startswith("the investigator gave no answer that could be read ("), result.note)
-                self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.finished"])
+                self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.call", "investigation.call", "investigation.finished"])
                 self.assertEqual((h.events[-1]["ok"], h.events[-1]["tokens"], h.events[-1]["toolCalls"]), (False, 1200, 2))
                 self.assertEqual(len(h.foundry.runs), 1)
 
@@ -2295,7 +2301,7 @@ class TheStateOfAnInvestigation(unittest.TestCase):
     def test_the_lines_that_it_wrote_are_the_ones_of_the_history_by_kind(self):
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]), finding(handles=["r2"]))))
         h.go()
-        self.assertEqual(h.s.history.lines("investigation."), 4, "the start, two findings and the end")
+        self.assertEqual(h.s.history.lines("investigation."), 6, "the start, two calls, two findings and the end")
         self.assertEqual((h.s.history.counts["investigation.finding"], h.s.history.counts["case.result"]), (2, 2))
 
 
@@ -2304,8 +2310,8 @@ class WhenItFindsNothing(unittest.TestCase):
         h = Harness(FakeFoundry('{"findings": [], "examined": ["the biggest costs"]}'))
         result = h.go()
         self.assertEqual((result.ran, result.note, result.cases, result.kept, result.dropped_findings, result.tool_calls), (True, "", 0, 0, 0, 2))
-        self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.finished", "run.note"])
-        self.assertEqual({k: v for k, v in h.events[1].items() if k in ("ok", "examined", "findingsKept", "findingsDropped", "cases", "tokens")},
+        self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.call", "investigation.call", "investigation.finished", "run.note"])
+        self.assertEqual({k: v for k, v in h.events[3].items() if k in ("ok", "examined", "findingsKept", "findingsDropped", "cases", "tokens")},
                          {"ok": True, "examined": ["the biggest costs"], "findingsKept": 0, "findingsDropped": 0, "cases": 0, "tokens": 1200})
         self.assertEqual(h.notes, ["the investigation made 2 tool calls, kept 0 of 0 findings and opened 0 cases"])
         self.assertEqual(len(h.foundry.runs), 1, "nothing to judge, so no Skeptic")
@@ -2481,7 +2487,7 @@ class WhatTheToolsSaid(unittest.TestCase):
         self.assertEqual(h.notes[0], "cost lines could not be read (saves [figure removed] [link removed]")
         self.assertEqual(len(h.notes[1]), 300)
         kinds = [e["type"] for e in h.events]
-        self.assertEqual(kinds[:4], ["investigation.started", "run.note", "run.note", "investigation.finding"])
+        self.assertEqual(kinds[:6], ["investigation.started", "investigation.call", "investigation.call", "run.note", "run.note", "investigation.finding"])
         self.assertEqual([e["note"] for e in h.of("run.note")][:2], h.notes[:2])
 
 
@@ -2550,7 +2556,7 @@ class ScriptedAgent(FakeFoundry):
         self.answers.setdefault(name, json.loads(text))
         return json.loads(text)
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, max_tokens=None):
         if not agent.startswith(agents.INVESTIGATOR_NAME):
             return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
         self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})

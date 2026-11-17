@@ -8,21 +8,26 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import replace
 from typing import TYPE_CHECKING, Mapping
 
 from . import agents, roles
 from .brief import without_ids
 from .memory_store import stamp
-from .models import INVESTIGATION_TOUCHES, InvestigationRecord
+from .models import INVESTIGATION_ENDS, INVESTIGATION_TOUCHES, InvestigationRecord
+from .store import MAX_DATA
 from .toolbox import type_of_id, type_word
 
 if TYPE_CHECKING:
+    from .beats import Result
     from .detectors import Context
     from .investigate import Finding, Investigation
 
 LOG = logging.getLogger("meternaut.activity")
 MAX_KIND = 80  # a kind of resource that is longer than this is left out
 MAX_KINDS = 20  # the kinds of each list that a record keeps
+MAX_FINDINGS = 16  # the findings that a record keeps when it has beats: those of all of them can be more than a row of the store takes, and `more` counts the rest
+BEAT_PHRASES = 3  # what a beat said that it examined, at most as many phrases as this
 NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word that may be a resource's name: a full stop or a dash ends it unless a letter follows
 MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # objections of the second AI that a record keeps, and the longest of one of them and of a note of code
 # What each tool does to the kinds that it names or whose handles it is given (the letters of INVESTIGATION_TOUCHES: a profile measures and describes). The other tools show a list and touch no kind: a test fails for one that is in neither.
@@ -90,15 +95,25 @@ def costs_by_kind(contexts: Mapping[str, "Context"]) -> tuple[dict[str, float], 
     return {kind: amount for kind, amount in by_kind.items() if amount > 0}, read
 
 
-def end_of(out: "Investigation") -> str:
-    """How the Investigator's run ended (models.INVESTIGATION_ENDS): held by the harness, out of time or of calls (also with no answer to read), answered, or failed."""
-    answer = out.answer
-    if out.held:
+def end_of_run(held: bool, answer: object, ran: bool) -> str:
+    """How one run of the Investigator ended (models.INVESTIGATION_ENDS): held by the harness, out of time, of tokens or of calls (also with no answer to read), answered, or failed."""
+    if held:
         return "refused"
     if getattr(answer, "out_of_time", False):
         return "time"
+    if getattr(answer, "out_of_tokens", False):
+        return "tokens"
     refused = any(isinstance(call, dict) and call.get("refused") for call in getattr(answer, "calls", ()))
-    return "calls" if refused else "answered" if out.ran else "failed"
+    return "calls" if refused else "answered" if ran else "failed"
+
+
+def end_of(out: "Investigation") -> str:
+    """How the Investigator's work ended. One run: as end_of_run says. Beats: held when the harness held it, else the first of time, tokens and calls that a beat ran out of, else answered, or failed
+    when no beat answered."""
+    if not out.beats:
+        return end_of_run(out.held, out.answer, out.ran)
+    ends = {beat.end for beat in out.beats}
+    return "refused" if out.held else next((word for word in ("time", "tokens", "calls") if word in ends), "answered" if out.ran else "failed")
 
 
 def stop_of(harness: object) -> str:
@@ -118,6 +133,21 @@ def entry_of(finding: "Finding", names: frozenset[str]) -> dict:
     return {key: value for key, value in entry.items() if value not in ("", [], {}, None)}
 
 
+def beat_of(result: "Result", names: frozenset[str]) -> dict:
+    """One beat as the record keeps it: counts, words and kinds, what it said that it examined (cleaned of ids and names), and no amount."""
+    beat = result.beat
+    return {"n": beat.number, "kinds": [kind for kind in beat.kinds if len(kind) <= MAX_KIND][:MAX_KINDS], "billing": beat.billing, "more": beat.rest, "calls": result.calls, "max_calls": result.max_calls,
+            "tokens": result.tokens, "seconds": result.seconds, "end": result.end if result.end in INVESTIGATION_ENDS else "failed", "seeded": result.seeded, "looked": result.looked,
+            "found": result.found, "says": [plain(p, agents.MAX_EXAMINED_TEXT, names) for p in result.examined[:BEAT_PHRASES]]}
+
+
+def fit(record: InvestigationRecord) -> InvestigationRecord:
+    """The record with as many findings as a row of the store can take (a record that is too large is not kept at all): the last ones go, and `more` says how many."""
+    while len(record.to_json()) > MAX_DATA and record.findings:
+        record = replace(record, findings=record.findings[:-1], more=record.more + 1)
+    return record
+
+
 def record_of(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, at: str, seconds: int) -> InvestigationRecord:
     """The record of an investigation that was tried. The trigger is `timer`, or `request` for any other. The kinds are in the order of their cost lines, the dearest first."""
     st, harness = s.settings, getattr(s, "harness", None)
@@ -127,13 +157,15 @@ def record_of(s: object, out: "Investigation", contexts: Mapping[str, "Context"]
     done = touched(out.toolbox, exist)
     end = end_of(out)
     order = sorted(exist, key=lambda kind: (-costs.get(kind, 0.0), kind))
-    return InvestigationRecord(
+    parts = [beat_of(r, names) for r in out.beats] if any(not r.beat.open for r in out.beats) else []
+    return fit(InvestigationRecord(
         run_id=s.history.run_id, at=at, trigger="timer" if trigger == "timer" else "request" if trigger else "", investigator=st.foundry_model_investigator,
-        skeptic=st.foundry_model_skeptic, calls=out.tool_calls, max_calls=harness.budget.tool_calls if harness is not None else st.investigate_max_calls, tokens=out.tokens, seconds=seconds,
-        max_seconds=int(st.investigate_max_seconds), end=end, answered=out.ran or bool(out.findings), stop=stop_of(harness) if end == "refused" else "", note=plain(out.note, NOTE, names),
-        examined=tuple(plain(p, agents.MAX_EXAMINED_TEXT, names) for p in out.examined), findings=tuple(entry_of(f, names) for f in out.findings), known=len(exist), looked=len(done),
+        skeptic=st.foundry_model_skeptic, calls=out.tool_calls, max_calls=sum(p["max_calls"] for p in parts) if parts else harness.budget.tool_calls if harness is not None else st.investigate_max_calls,
+        tokens=out.tokens, seconds=seconds, max_seconds=int(st.investigate_max_seconds), end=end, answered=out.ran or bool(out.findings), stop=stop_of(harness) if end == "refused" else "",
+        note=plain(out.note, NOTE, names), examined=tuple(plain(p, agents.MAX_EXAMINED_TEXT, names) for p in out.examined[: agents.MAX_EXAMINED]),
+        findings=tuple(entry_of(f, names) | ({"beat": f.beat} if parts else {}) for f in out.findings[:MAX_FINDINGS]), known=len(exist), looked=len(done),
         kinds=tuple([kind, done[kind]] for kind in order if kind in done)[:MAX_KINDS], unread=tuple(kind for kind in order if kind not in done)[:MAX_KINDS], subs=len(st.subscriptions),
-        subs_costed=costed)
+        subs_costed=costed, beats=tuple(parts), more=max(0, len(out.findings) - MAX_FINDINGS)))
 
 
 def keep(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, opened: object) -> None:

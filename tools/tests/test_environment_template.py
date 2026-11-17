@@ -810,7 +810,7 @@ class Cases(unittest.TestCase):
                      "{ name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }", "{ name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }"):
             self.assertIn(line, body)
         for line in ("param foundryProjectEndpoint string = ''", "param foundryModelInvestigator string = 'gpt-5.5'", "param foundryModelSkeptic string = 'gpt-6.1-sol'",
-                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 600"):
+                     "param investigateMaxCalls int = 40", "param investigateMaxSeconds int = 1080"):
             self.assertRegex(self.code, rf"(?m)^{re.escape(line)}$")
         self.assertEqual(len(re.findall(r"name: '(?:FOUNDRY_\w+|INVESTIGATE\w*)'", body)), 6)
         self.assertEqual(self.code.count("foundryProjectEndpoint"), 3, "the parameter, the setting and the switch, and nothing else reads it")
@@ -820,12 +820,12 @@ class Cases(unittest.TestCase):
 
     def test_the_template_cannot_ask_for_more_of_the_investigation_than_the_code_accepts_and_starts_from_the_budget_that_the_code_starts_from(self):
         self.assertRegex(self.code, r"@minValue\(1\)\n@maxValue\(40\)\nparam investigateMaxCalls int = 40\n")
-        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(600\)\nparam investigateMaxSeconds int = 600\n")
+        self.assertRegex(self.code, r"@minValue\(30\)\n@maxValue\(1500\)\nparam investigateMaxSeconds int = 1080\n")
         constants = {(kind, what): value for kind, what, value in re.findall(r"(?m)^(LIMIT|DEFAULT)_INVESTIGATE_(CALLS|SECONDS) = (\d+)$",
                                                                               (ROOT / "src" / "case-functions" / "cases" / "config.py").read_text(encoding="utf-8"))}
         if not constants:
             self.skipTest("the code does not read the investigation settings yet; src/case-functions/tests/test_config.py holds the names of the template and of config.py together")
-        self.assertEqual({what: value for (kind, what), value in constants.items() if kind == "LIMIT"}, {"CALLS": "40", "SECONDS": "600"},
+        self.assertEqual({what: value for (kind, what), value in constants.items() if kind == "LIMIT"}, {"CALLS": "40", "SECONDS": "1500"},
                          "the largest value that the template takes is the largest that the code takes")
         template = dict(re.findall(r"(?m)^param (investigateMaxCalls|investigateMaxSeconds) int = (\d+)$", self.code))
         for name, what in (("investigateMaxCalls", "CALLS"), ("investigateMaxSeconds", "SECONDS")):
@@ -1446,7 +1446,7 @@ class CasesWorkflow(unittest.TestCase):
         block = self.step("Start one Watch and read its History")
         self.assertIn("if: inputs.action == 'cases-run'", block)
         self.assertIn('--env "TOOL_NAME=cases-check"', block)
-        self.assertIn("TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30", block)
+        self.assertIn("TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 38", block)
         self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
         self.assertNotIn("EVENT_HUB_NAMESPACE", block)
         self.assertNotIn("--namespace", block)
@@ -2631,7 +2631,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(self.text.count("uses: azure/login@"), 13, "(13, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the one before the read-back of the Teams identity and bot is the thirteenth; teams-test adds none; it was 12) the check action added no sign-in: the runner makes the container group with the credential of the first one (the twelve are the first, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, the one before the read-back of the AI security, the one before the read-back of the telemetry exporter, and the one before the read-back of Power Platform's subnet and policy)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
-        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only", "seconds": 2400,
+        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 38 --counts-only", "seconds": 2700,
                                  "minutes": 50}}
         for title, want in expected.items():
             block, script = self.step(title), self.script(title)

@@ -59,9 +59,10 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_the_one_read_of_the_price_list_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 27, "nineteen, the four reads of the capability profile (cases/capability.py), the read of the display name of one subscription, the two lists of the impact check "
-                                         "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone) and the public price list (cases/prices.py)")
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 24 + ["POST"] * 3)
+        self.assertEqual(len(plain), 28, "nineteen, the four reads of the capability profile (cases/capability.py), the read of the display name of one subscription, the two lists of the impact check "
+                                         "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone), the one read of a provider, which lists the property paths "
+                                         "of its resource types (cases/arm.py, provider_paths), and the public price list (cases/prices.py)")
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 25 + ["POST"] * 3)
         self.assertEqual([call for call in plain if "prices.azure.com" in call[1].pattern.replace("\\", "")], [http.PRICE_CALL], "the one call to the price list, once")
         for method, pattern in [call for call in plain if call != http.PRICE_CALL]:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),

@@ -30,10 +30,11 @@ from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
 from .models import ActionRecord, CaseRecord, PlanRecord
 from .people import Person
-from .stake import Stake, chips_of, decisions_of, place_of, stake_of, title_text
+from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text
 
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
+MAX_HELD = 3  # the findings that are held back which the weekly letter lists: a short block, and the page has the rest
 MAX_FACTS = 3
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on. "save" is the green of the figure of a saving (the pages'
@@ -144,7 +145,7 @@ class _Doc:
     def figure(self, stake: Stake, then: str = "") -> None:
         """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. What the cost of a whole subscription is made of, and the estimate at list
         price for a disk that Azure has no cost line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
-        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, 400), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
+        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, LINE_CHARS), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
 
     def facts(self, *rows: tuple[str, str]) -> None:
         if rows:
@@ -367,24 +368,37 @@ def _waits(plan: PlanRecord, now: dt.datetime) -> bool:
     return plan.state == "open" and end is not None and end > moment
 
 
-def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (), later: Collection[str] = ()) -> Letter | None:
+def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (), later: Collection[str] = (),
+                  held: Sequence[tuple[PlanRecord, CaseRecord | None]] = ()) -> Letter | None:
     """The decisions that wait for a person, counted and ranked as the Decisions page does it (the page's own code groups them, so that findings of one kind about several resources are one
     line here as they are one row there, "4 storage accounts in 3 resource groups", and the number in the subject is the number that the page shows; `later` holds the plans that the person
     put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure a year with its level ("$1,682 a year, Expected") and no total: a total is
-    the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then."""
+    the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then.
+
+    `held` holds the requests of the findings that a guard holds back that this person is named for (cases/approvals.py Approvals.settle): one short block after the decisions, with at most
+    MAX_HELD lines (the title, the figure a year with its level, the guard's sentence and what it still needs) and the count of the rest. It asks for nothing: no button, no link of its own. A
+    person with only such findings gets a letter that says so in its subject, and its link is the page that lists them."""
     base = _base(base_url)
     rows = decisions_of([(brief_mod.build_brief(case, plan, None, (), now=now), case, plan.plan_id in later) for plan, case in waiting if _waits(plan, now)])
-    if not rows:
+    kept = [(plan, case) for plan, case in held if brief_mod.held_of(plan)]
+    if not rows and not kept:
         return None
     count = len(rows)
-    doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you")
-    doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "") for row in rows[:MAX_LISTED]))
+    doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you" if rows else f"{len(kept)} finding{' is' if len(kept) == 1 else 's are'} held back from a request")
+    if rows:
+        doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "") for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    if kept:
+        found = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in kept), key=lambda b: (-(stake_of(b).monthly or 0.0), title_text(b), b.plan_id))  # what is at stake first
+        doc.paragraph("Found, and held back from a request. Nothing is asked of you to approve, and nothing changes in Azure.", strong=True)
+        doc.items(*(f"{_data(title_text(b), 200)}: {stake_of(b).short}. {_data(b.hold.why, 240)} {_data(b.hold.needs, 240)}" for b in found[:MAX_HELD] if b.hold is not None))
+        if len(found) > MAX_HELD:
+            doc.paragraph(f"{len(found) - MAX_HELD} more are held back. They are on the page.")
     only = rows[0].brief if count == 1 else None
     if only is not None:
         doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:
-        doc.button("Open the decisions", f"{base}/")
+        doc.button("Open the decisions" if rows else "See the held findings", f"{base}/")
     doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
     return doc.build()

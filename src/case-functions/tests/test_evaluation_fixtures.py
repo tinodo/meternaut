@@ -100,6 +100,8 @@ def deeper_estate():
                                                                       "costWithNoReservedInstances": 500.0, "totalCostWithReservedInstances": 350.0, "netSavings": 150.0, "currencyCode": "USD"}}]
     day = dt.date
     estate.daily = [(SUB, day(2026, 10, 20), WS.lower(), 3.0), (SUB, day(2026, 10, 21), WS.lower(), 4.5), (SUB, day(2026, 10, 21), AI.lower(), 9.0)]
+    estate.platform["microsoft.cognitiveservices/accounts/deployments"] = ["properties.model.name", "properties.model.version", "properties.provisioningState",
+                                                                          "properties.versionUpgradeOption", "sku.name", "sku.capacity"]  # the parts are not rows, so the platform's list is set
     return estate
 
 

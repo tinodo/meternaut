@@ -20,6 +20,7 @@ METER_ROWS = 6  # the dearest meters of a resource
 LINK_ROWS = 8  # the rows of types and relations of each side of the links of a resource
 ADVISOR_ROWS = 5
 NO_DATA_SHOWN = 40  # the names of the metrics that have no data, or that failed, that one resource lists
+HOURLY_METRICS = 20  # the metrics of one resource that a picture by the hour reads at the hour: Azure Monitor takes 20 names in a request, so the hour costs one request whatever the resource offers; the ones with the greatest daily maximum come first
 METRIC_COLUMNS = ("metric", "unit", "total", "max", "avg", "days")
 UNREAD = "unread"
 SECTIONS = {("graph",): "links", ("ages",): "history"}
@@ -54,18 +55,51 @@ def _unread(left: list, entries: list) -> dict[str, list[str]]:
     return {handle: sections for handle, sections in found.items() if sections}
 
 
+class _Day(tuple):
+    """What a picture by the hour holds of a metric that it read at the day only (its resource offers more than HOURLY_METRICS): the unit and the daily buckets, and the plan that read them."""
+
+    plan = None
+
+
+def _read_wide(box: "Toolbox", resource_id: str, plan: dict, day_plan: dict, start, end, late) -> dict:
+    """The reads of a resource that offers more than HOURLY_METRICS metrics, for a picture by the hour: all of them at the day, and then the HOURLY_METRICS with the greatest daily maximum at the
+    hour, which is one request of Azure Monitor. The others keep their reading of the day."""
+    tb = _toolbox()
+    day = box.arm.metric_reads(resource_id, day_plan, start, end, late)
+    greatest = {}
+    for name, result in day.items():
+        if isinstance(result, tuple):
+            summary, _ = box._measured(result, day_plan[name], False)
+            if tb._bucket(summary) != "no_data":
+                greatest[name] = float("-inf") if summary["max"] is None else summary["max"]
+    keep = sorted(greatest, key=lambda name: (-greatest[name], name.lower()))[:HOURLY_METRICS]
+    hour = box.arm.metric_reads(resource_id, {name: plan[name] for name in keep}, start, end, late) if keep else {}
+    found = {}
+    for name in plan:
+        result = hour.get(name, day.get(name))
+        if result is not None and name not in hour and isinstance(result, tuple):
+            result = _Day(result)
+            result.plan = day_plan[name]
+        if result is not None:
+            found[name] = result
+    return found
+
+
 def _metrics(tb, box: "Toolbox", plans: "dict | str", found: object, hourly: bool) -> "tuple[dict | str, dict]":
     """The section of the metrics of one resource: the rows of the metrics that have data (those with a value above 0 first, then by name), the names of those that have none and the names of those that
     could not be read. Returns it and what to register as evidence for each row, by name."""
     if isinstance(plans, str):
         return plans, {}
-    rows, measured, quiet, broken, codes = [], {}, [], [], set()
+    rows, measured, quiet, broken, codes, held = [], {}, [], [], set(), 0
     for name, plan in sorted(plans.items(), key=lambda item: item[0].lower()):
         result = found.get(name) if isinstance(found, dict) else None
         if isinstance(result, tuple):
-            summary, unit = box._measured(result, plan, hourly)
+            day_only = isinstance(result, _Day)
+            summary, unit = box._measured(result, result.plan if day_only else plan, hourly and not day_only)
             if tb._bucket(summary) == "no_data":
                 quiet.append(name)
+            elif day_only:
+                held += 1  # it has data, and was not read at the hour: counted in with_data, and not shown
             else:
                 measured[name] = (summary, unit)
                 rows.append((tb._bucket(summary) != "positive", name.lower(), name, summary, unit))
@@ -74,7 +108,7 @@ def _metrics(tb, box: "Toolbox", plans: "dict | str", found: object, hourly: boo
             codes.add(box._why(result).get("code", ""))
     rows.sort(key=lambda item: item[:2])
     read_at = any("read_at" in row[3] for row in rows)
-    block: dict = {"offered": len(plans), "with_data": len(rows), "cols": [*METRIC_COLUMNS, *(["peak", "p95"] if hourly else []), *(["read_at"] if read_at else [])],
+    block: dict = {"offered": len(plans), "with_data": len(rows) + held, **({"at_hour": len(rows)} if held else {}), "cols": [*METRIC_COLUMNS, *(["peak", "p95"] if hourly else []), *(["read_at"] if read_at else [])],
                    "rows": [[name, unit, summary["total"], summary["max"], summary["average"], summary["days_with_data"], *([summary["peak"], summary["p95"]] if hourly else []),
                              *([summary.get("read_at")] if read_at else [])] for _, _, name, summary, unit in rows]}
     for key, names in (("no_data", quiet), ("failed", broken)):
@@ -116,9 +150,10 @@ def read_by(part: dict) -> str:
     return ("m" if has(metrics, "with_data") or has(metrics, "no_data") else "") + ("d" if any(described) else "")
 
 
-def _tasks(tb, box: "Toolbox", entries: list, plans: dict, days: int) -> dict:
+def _tasks(tb, box: "Toolbox", entries: list, plans: dict, days: int, wide: "dict | None" = None) -> dict:
     """The reads that a profile needs, each as a function of the clock of the call, by what it is for: the references of the estate, the ages, the Advisor items of each subscription, and for each
-    resource its metrics, its meters, its Activity Log and, when it takes no data in, its diagnostic settings."""
+    resource its metrics (`wide` holds the day plans of the resources that are read at the day first and then at the hour for HOURLY_METRICS of them), its meters, its Activity Log and, when it takes
+    no data in, its diagnostic settings."""
     start, end = box._window(days)
     tasks: dict = {("graph",): lambda late: box._load_edges(), ("ages",): lambda late: box._ages_of(entries)}
     for sub in dict.fromkeys(entry.sub for entry in entries):
@@ -126,7 +161,10 @@ def _tasks(tb, box: "Toolbox", entries: list, plans: dict, days: int) -> dict:
     for entry in entries:
         handle, resource_id = entry.resource.handle, entry.resource.resource_id
         if isinstance(plans[handle], dict) and plans[handle]:
-            tasks[(handle, "metrics")] = lambda late, handle=handle, resource_id=resource_id: box.arm.metric_reads(resource_id, plans[handle], start, end, late)
+            if wide and handle in wide:
+                tasks[(handle, "metrics")] = lambda late, handle=handle, resource_id=resource_id: _read_wide(box, resource_id, plans[handle], wide[handle], start, end, late)
+            else:
+                tasks[(handle, "metrics")] = lambda late, handle=handle, resource_id=resource_id: box.arm.metric_reads(resource_id, plans[handle], start, end, late)
         if entry.part_of is None:
             tasks[(handle, "meters")] = lambda late, entry=entry: box._meters_for(entry, days)
         tasks[(handle, "log")] = lambda late, resource_id=resource_id: box._owners().log(resource_id)
@@ -149,7 +187,8 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
     kinds = {entry.resource.handle: tb.type_word(entry.resource.resource_type) for entry in entries}
     offers = {kind: box._offers(kind) for kind in dict.fromkeys(kinds.values())}
     plans = {handle: ({name: both[hourly] for name, both in offers[kind].items()} if isinstance(offers[kind], dict) else offers[kind]) for handle, kind in kinds.items()}
-    tasks = _tasks(tb, box, entries, plans, days)
+    wide = {handle: {name: both[False] for name, both in offers[kind].items()} for handle, kind in kinds.items() if hourly and isinstance(offers[kind], dict) and len(offers[kind]) > HOURLY_METRICS}
+    tasks = _tasks(tb, box, entries, plans, days, wide)
     done, left = box._run(tasks)
     unread = _unread(left, entries)
     graph = _outcome(tb, ("graph",), done, left)
@@ -162,7 +201,7 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
         handle, kind = entry.resource.handle, kinds[entry.resource.handle]
         facts = box._facts(entry, tb.DESCRIBED_PROPERTIES)
         part: dict = {"handle": handle, "type": kind, **{name: facts[key] for name, key in (("sku", "sku"), ("kind", "kind"), ("region", "location")) if facts.get(key) is not None},
-                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of") if key in facts}, "properties": dict(facts["properties"])}
+                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of", "property_list") if key in facts}, "properties": dict(facts["properties"])}
         lists.append((part["properties"], part, "properties"))
         if entry.part_of is None:
             word, _ = _outcome(tb, (handle, "meters"), done, left)

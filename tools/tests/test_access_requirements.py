@@ -683,6 +683,8 @@ class TheCallsOfTheApp(unittest.TestCase):
         "savings-plan-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.BillingBenefits/savingsPlanOrders"),
         # The public price list of Azure (cases/prices.py): one GET with no token, on a host that is no part of Azure Resource Manager.
         "retail-prices-read": lambda m, p: m == "GET" and p == "https://prices.azure.com/api/retail/prices",
+        # The property paths that the platform lists for the resource types of one provider (cases/arm.py, provider_paths): the address is the provider itself, and nothing after its namespace.
+        "provider-paths-read": lambda m, p: m == "GET" and p.endswith("/providers/[A-Za-z0-9]{1,40}(?:.[A-Za-z0-9]{1,40}){1,3}"),
     }
     # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
     # The one read of the public price list needs no role of any identity: it carries no token, and the network of the app has to allow the host (tools/cases-check.py says so).

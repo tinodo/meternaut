@@ -4,7 +4,8 @@ The hooks are given to the loop when a sender is set. They never raise: a letter
 loop goes on. A letter goes to a person on the list of people and to nobody else (mail.py checks that again), and the same letter is not sent twice. A letter
 that was held or failed is offered again by the timer (every call of a hook sends a letter only when it is due): after 15 minutes, at most 12 times. Exchange
 can take up to two hours to apply a new right to send, so the first letters of a new mailbox are tried more than once. A finding that only asks a person whether it
-is worth acting on (an advise plan) gets no letter of its own: it waits on the page and in the weekly summary, which is sent only when something waits. A change whose result stays unknown
+is worth acting on (an advise plan) gets no letter of its own: it waits on the page and in the weekly summary, which is sent only when something waits. A finding that a guard holds back (the state
+held, cases/approvals.py Approvals.settle) is in that summary too, in one short block that asks for nothing, and it gets no card. A change whose result stays unknown
 gets one letter of its own kind (`unsure`) once the result has been unknown for UNKNOWN_HOURS, and no card: it goes to a person who chose Teams as well, and a later letter about what
 came of the change is still sent.
 
@@ -57,11 +58,21 @@ def contacts_of(people: People) -> tuple[str, ...]:
 
 def digest_for(person: Person, store: Store, people: People, base: str, now: dt.datetime) -> letters.Letter | None:
     """The weekly summary for a person, or None when nothing waits for them (it is sent only then). The requests that the Decisions page shows this person: the ones that they may answer (the
-    page's own rule), and the ones that they put off are marked, as the page marks them."""
+    page's own rule), and the ones that they put off are marked, as the page marks them. Then the findings that a guard holds back and that they are named for (cases/approvals.py
+    Approvals.settle), unless they have answered one already: one short block that asks for nothing."""
     principal = people.principal(person.oid)
     mine = [(plan, store.case_get(plan.case_id)) for plan in store.plans_open() if plan.state == "open" and principal is not None and may_answer(principal, plan)]
-    later = {d.plan_id for d in store.decisions_by(person.oid, 200) if d.decision == "later"}
-    return letters.digest_letter(person, base, now, mine, contacts_of(people), later)
+    decided = store.decisions_by(person.oid, 200)
+    later = {d.plan_id for d in decided if d.decision == "later"}
+    seen = {d.plan_id for d in decided}
+    held = []
+    for plan in store.plans_held():
+        if plan.plan_id in seen or principal is None or not may_answer(principal, plan):
+            continue
+        case = store.case_get(plan.case_id)
+        if case is not None and case.status in ("needs_human", "proposed"):  # the finding is one that still waits
+            held.append((plan, case))
+    return letters.digest_letter(person, base, now, mine, contacts_of(people), later, held)
 
 
 def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *,

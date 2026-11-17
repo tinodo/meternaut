@@ -31,6 +31,8 @@ AI_ACCOUNT = rf"{GROUP}/providers/Microsoft\.CognitiveServices/accounts/[A-Za-z0
 # A private endpoint and a private DNS zone, whose own lists (the DNS zone groups of the endpoint, the address records of the zone) the impact check reads (cases/impact.py).
 ENDPOINT = rf"{GROUP}/providers/Microsoft\.Network/privateEndpoints/[A-Za-z0-9._()~-]{{1,100}}"
 DNS_ZONE = rf"{GROUP}/providers/Microsoft\.Network/privateDnsZones/[A-Za-z0-9._()~-]{{1,100}}"
+# The namespace of a resource provider: two to four parts of letters and digits with a dot between them, which is every namespace that the platform has.
+NAMESPACE = r"[A-Za-z0-9]{1,40}(?:\.[A-Za-z0-9]{1,40}){1,3}"
 # The query API of Azure Monitor Logs (Learn, "Request format for the Azure Monitor Logs query API"): the public endpoint, whose token is asked for the audience below. A workspace is named
 # there by its id (a GUID, the customerId of the workspace), and the one POST of it asks a question.
 LOG_ANALYTICS_HOST = "api.loganalytics.azure.com"
@@ -136,7 +138,7 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
     call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
     question: a query). The one GET of /subscriptions lists the subscriptions that the app's own identity can read (scope.py): the Reader role covers it (R1 of
     environment/access-requirements.json), and the address has no part after it. The GET of one subscription (/subscriptions/<id>, nothing after the id) gives its display name, with the same role. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
-    searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties. The last call is the one to the public price list (PRICE_CALL): a GET that carries no token and needs no role."""
+    searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties. The one GET of a provider (/subscriptions/<id>/providers/<namespace>, nothing after the namespace) gives the property paths that the platform lists for its resource types (Reader holds it, R1), which the toolbox shows a property by. The first entry is the one GET of the public price list (PRICE_CALL): it carries no token and needs no role."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
         PRICE_CALL,
@@ -152,6 +154,9 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Insights/workbooks", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Insights/eventtypes/management/values", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.Security/pricings", re.I)),
+        # The property paths that the platform lists for the resource types of one namespace (Learn, "Providers - Get" with $expand=resourceTypes/aliases): the address is the provider itself and
+        # nothing after it, so the toolbox shows a property only where this list names it for the type.
+        ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/{NAMESPACE}", re.I)),
         ("GET", re.compile(arm + WORKSPACE, re.I)),
         ("GET", re.compile(arm + WORKSPACE + "/tables", re.I)),
         ("GET", re.compile(arm + WORKSPACE + "/savedSearches", re.I)),
