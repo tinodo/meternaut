@@ -1446,7 +1446,7 @@ class CasesWorkflow(unittest.TestCase):
         block = self.step("Start one Watch and read its History")
         self.assertIn("if: inputs.action == 'cases-run'", block)
         self.assertIn('--env "TOOL_NAME=cases-check"', block)
-        self.assertIn("TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30", block)
+        self.assertIn("TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 38", block)
         self.assertIn("STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}", block)
         self.assertNotIn("EVENT_HUB_NAMESPACE", block)
         self.assertNotIn("--namespace", block)
@@ -2631,7 +2631,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
         self.assertEqual(self.text.count("uses: azure/login@"), 13, "(13, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the one before the read-back of the Teams identity and bot is the thirteenth; teams-test adds none; it was 12) the check action added no sign-in: the runner makes the container group with the credential of the first one (the twelve are the first, the two retirements', the one of cases before its publish, the two of cases around the health check in the Operator, the Foundry read-back's, the two of aigateway, one before the gateway's deploy and one before its limits, which follow the subnet's deploy and a wait for the route table: aigateway-check has none, the one before the read-back of the AI security, the one before the read-back of the telemetry exporter, and the one before the read-back of Power Platform's subnet and policy)")
 
     def test_the_check_runs_the_generic_script_with_its_tool_and_the_arguments_that_the_runner_used_before_and_the_times_are_ordered(self):
-        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only", "seconds": 2400,
+        expected = {self.CASES: {"tool": "cases-check", "files": ["cases-check.py", "check-helpers.py"], "args": "run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 38 --counts-only", "seconds": 2700,
                                  "minutes": 50}}
         for title, want in expected.items():
             block, script = self.step(title), self.script(title)

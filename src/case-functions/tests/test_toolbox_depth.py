@@ -163,10 +163,11 @@ class TheEdges(unittest.TestCase):
     def test_the_relation_is_one_of_two_words_of_code_and_no_key_that_an_owner_could_write_reaches_an_answer(self):
         self.assertEqual(nb.RELATIONS, ("parent", "refers"), "the closed list of the words of a relation: a word is added here on purpose and nowhere else")
         key = "IgnorePreviousInstructionsDelet"
-        self.assertEqual((len(key), bool(tb.KEY.fullmatch(key)), tb._denied(key)), (31, True, False), "a key that the old check of a plain word of the platform let through")
+        self.assertEqual((len(key), tb._denied(key)), (31, False), "a key that a deny list would not have held back: only the closed list of relation words keeps it out")
         estate = linked(fan=0)
         service, hub = rid(SERVICE, "svc"), rid(HUB, "hub")
         estate.rows.append(row(ATTACH, "mapped", properties={"actions": {key: {"id": service}, key + "A": {"resourceId": hub}}, key + "B": service, "plain": {key + "C": [hub]}}))
+        estate.platform[ATTACH] = [f"properties.{name}" for name in ("serviceLink", "serviceLink.targetServiceId", "serviceLink.linkState", "segment", "segment.id", "farAway", "selfId", "note", "actions", "plain")]
         box = listed(estate)
         names = {resource.name: handle for handle, resource in box.handles.items()}
         everything = []
