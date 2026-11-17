@@ -6,6 +6,7 @@ in this file is invented, and no model and no Azure is called.
 """
 import datetime as dt
 import json
+import re
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -521,6 +522,29 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
         waiting = next(row for row in table.rows if row["What became of it"].startswith("Waiting"))
         self.assertIn("Saves, Scenario", waiting["Saving a year"])
         self.assertIn("Saves, Expected", waiting["Saving a year"])
+
+    def test_the_level_of_a_held_finding_is_its_own_scenario_for_advisors_figure_and_expected_for_the_bill(self):
+        console = Console()
+        approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
+        owner = {"lookedUp": True, "automatedAt": days_ago(2)}
+        console.store.case_put(finding("needs_human", case_id="c-bill", owner=owner, detector="orphan-managed-disk", recommendation="investigate"))
+        console.store.case_put(finding("needs_human", case_id="c-advisor", owner=owner))
+        approvals.settle((TINO,))
+        table = console.get(SAVINGS).table("held-automation")
+        levels = sorted(re.findall(r"Saves, (\w+)\.", " ".join(row["Saving a year"] for row in table.rows)))
+        self.assertEqual(levels, ["Expected", "Scenario"])
+
+    def test_within_a_reason_what_is_at_stake_comes_first(self):
+        console = Console()
+        approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
+        owner = {"lookedUp": True, "automatedAt": days_ago(2)}
+        for case_id, name, amount in (("c-small", "small-one", 15.0), ("c-large", "large-one", 300.0), ("c-middle", "middle-one", 90.0)):
+            console.store.case_put(make_advice_case(case_id=case_id, resource_id=f"{BASE}/Microsoft.Foo/bars/{name}", resource_name=name, resource_type="microsoft.foo/bars",
+                                                    resource_group=GROUP, plan_id=None, owner=owner, recommendation="investigate", saving_usd_month=amount, cost_usd_30d=amount))
+        approvals.settle((TINO,))
+        table = console.get(SAVINGS).table("held-automation")
+        order = [name for row in table.rows for name in ("large-one", "middle-one", "small-one") if name in row["Finding"]]
+        self.assertEqual(order, ["large-one", "middle-one", "small-one"])
 
     def test_nothing_changes_for_a_store_that_holds_no_held_finding(self):
         console = Console()

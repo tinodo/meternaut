@@ -162,10 +162,12 @@ def _held_section(ctx: Ctx, group: Group, held: dict[str, PlanRecord]) -> Safe:
             brief = brief_of(ctx, plan, case)
             title = title_of(brief)[1]
             kind = fmt('<span class="muted">{kind}{place}</span>', kind=brief.where.kind, place=f", resource group {brief.where.group}" if brief.where.group else "")
-            rows.append([fmt('{title}<br>{kind}', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title), kind=kind), saving_cell(ctx, case),
-                         f"{brief.confidence.level} confidence. {brief.confidence.because}", brief.hold.why if brief.hold else "", brief.owner.text])
+            stake = figure_for([brief], [cost_of(brief, case)]).monthly or 0.0
+            rows.append((-stake, title, [fmt('{title}<br>{kind}', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title), kind=kind), saving_cell(ctx, case),
+                                         f"{brief.confidence.level} confidence. {brief.confidence.because}", brief.hold.why if brief.hold else "", brief.owner.text]))
         if rows:
-            parts += [fmt("<h3>{heading}</h3>", heading=heading), paragraph(needs), table(f"held-{reason}", heading, HELD_HEADERS, rows, row_header=True, quiet_caption=True)]
+            ordered = [row for _, _, row in sorted(rows, key=lambda item: item[:2])]  # what is at stake first
+            parts += [fmt("<h3>{heading}</h3>", heading=heading), paragraph(needs), table(f"held-{reason}", heading, HELD_HEADERS, ordered, row_header=True, quiet_caption=True)]
     return join(parts)
 
 

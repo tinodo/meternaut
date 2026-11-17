@@ -3,7 +3,7 @@
 Nothing here changes Azure, and Meternaut holds no right to change Azure. An approval is made when the person signs in to Azure, and the change is made
 with that person's own token (delegated.py and runner.py), so Azure checks the person's own rights. The plan is computed by code from the lead's typed
 facts and never from a model's words. A finding about a resource that Meternaut may not change gets an advise plan: a person says whether it is worth acting on,
-and the answer is recorded and changes nothing in Azure.
+and the answer is recorded and changes nothing in Azure. A finding that a guard holds back gets one too, in the state held (`Approvals.settle`): nothing asks a person to approve it.
 """
 from __future__ import annotations
 

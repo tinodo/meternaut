@@ -850,7 +850,7 @@ class WatchingMoreDoesNotWidenWhatMayBeChanged(unittest.TestCase):
         summary, events, _ = watch(tenant, clock=clock, extras=extras)
         self.assertEqual((summary.ok, summary.cases), (True, 1))
         (case,) = extras.store.cases_recent()
-        self.assertEqual((case.subscription_id, case.status, case.plan_id), (other, "proposed", None))
+        self.assertEqual((case.subscription_id, case.status, extras.store.plan_get(case.plan_id).state), (other, "proposed", "held"), "it is shown in a request of its own that nobody is asked to approve")
         self.assertEqual((extras.store.plans_open(), of_type(events, "plan.created")), ([], []), "no change plan, and no deletion advice either: nobody looked up who changed it")
         self.assertEqual([e["reason"] for e in of_type(events, "case.held")], ["held back: not checked who changed it"])
 
