@@ -1632,7 +1632,7 @@ jobs:
       - name: Start one Watch and read its History
         id: watch
         if: inputs.action == 'cases-run'
-        # The check waits up to 30 minutes for the end of the Watch, and the container group is given 40 (2400 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        # The check waits up to 38 minutes for the end of the Watch (a Watch of beats takes about 29 minutes at its slowest settings), and the container group is given 45 (2700 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
         timeout-minutes: 50
         env:
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}
@@ -1660,8 +1660,8 @@ jobs:
             --subnet-id "$OPERATOR_SUBNET_ID" --identity-id "$OPERATOR_IDENTITY_ID" --image "$OPERATOR_IMAGE" --script operator/run-tool.sh \
             --secret-file "cases-check.py=tools/cases-check.py" --secret-file "check-helpers.py=tools/check-helpers.py" \
             --env "GITHUB_ACTIONS=true" --env "OPERATOR_CLIENT_ID=$OPERATOR_CLIENT_ID" --env "OPERATOR_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
-            --env "TOOL_NAME=cases-check" --env "TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 30 --counts-only" \
-            "${dns[@]}" --timeout-seconds 2400 --summary "$GITHUB_STEP_SUMMARY"
+            --env "TOOL_NAME=cases-check" --env "TOOL_ARGS=run --storage-account $STORAGE_ACCOUNT --insights $insights --minutes 38 --counts-only" \
+            "${dns[@]}" --timeout-seconds 2700 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Delete any container group of the checks that is left
         if: always() && steps.watch.outcome != 'skipped'
