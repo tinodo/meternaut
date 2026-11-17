@@ -189,7 +189,7 @@ def make(s, ranked: list[Lead], contexts: dict[str, Context], say, holds: list[s
             broken = True
             say(f"the case of {len(leads)} Advisor recommendation{'' if len(leads) == 1 else 's'} could not be kept in the store: {clean_text(s.redact(error), 200)}")
     try:
-        earlier, gone = _close(s.extras, listed, {sub.lower() for sub in read}, {leads[0].subscription_id for leads in groups.values()}, s.clock()) if not broken else (0, 0)
+        earlier, gone = _close(s.extras, listed, set(read), {leads[0].subscription_id for leads in groups.values()}, s.clock()) if not broken else (0, 0)
         if earlier:
             say(f"{earlier} earlier request{'s' if earlier != 1 else ''} about whole subscriptions {'were' if earlier != 1 else 'was'} closed: Advisor's recommendations have a request for each decision now")
         if gone:
