@@ -71,7 +71,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "2afbd9638231736b53e0c67ea1a41ef57b79542785097c0f7c4ee20edb995444"
+    "moduleSha256": "06e6b324cb467e2945662ce10418203d682743296b684a4668e265d57c572622"
   },
   "tools": {
     "advisor_items": {
@@ -155,7 +155,7 @@
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
     },
     "price_alternatives": {
-      "implementationSha256": "8f6289b5f69d4c611387fc3fd35eeb1a959a096cdf80ba2ec1f5fa135bc8732f",
+      "implementationSha256": "5348ab68da756f9219625f3e9f985f5c4117b1fcc4828f53b6275c0c1ecedee6",
       "schemaSha256": "f22dc74757d3a67471a8ce05c2a330b33f07b68ec61877262999a7e9b77dc739"
     },
     "profile": {

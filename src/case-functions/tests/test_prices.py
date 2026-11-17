@@ -55,7 +55,8 @@ class PricedEstate(BillingEstate):
         kept = [found for found in self.lines if found["serviceName"] == service and found["armRegionName"] in regions and (product is None or found["productName"] == product.group(1))]
         skip = int(parse_qs(parts.query).get("$skip", ["0"])[0])
         more = skip + self.page_size < len(kept)
-        link = self.link or (url.split("&$skip=")[0] + f"&$skip={skip + self.page_size}" if more else None)
+        again = url.split("&$skip=")[0].replace(f"https://{PRICES_HOST}/", f"https://{PRICES_HOST}:443/") + f"&$skip={skip + self.page_size}"  # the list writes the port into the address of the next page
+        link = self.link or (again if more else None)
         return 200, {"content-type": "application/json"}, json.dumps({"BillingCurrency": "USD", "Items": kept[skip:skip + self.page_size], "NextPageLink": link, "Count": 1}).encode("utf-8")
 
 
@@ -126,6 +127,16 @@ class TheReads(unittest.TestCase):
                          "the reservation is not a pay-as-you-go price")
         self.assertEqual({found.service for found in book.lines}, {SERVICE})
         self.assertEqual([call["method"] for call in estate.price_calls], ["GET"] * 3)
+        self.assertEqual([(urlsplit(url).netloc, parse_qs(urlsplit(url).query).get("$skip")) for url in estate.urls], [(PRICES_HOST, None), (PRICES_HOST, ["2"]), (PRICES_HOST, ["4"])],
+                         "the list writes the port 443 into the address of the next page, and the app asks again without it")
+
+    def test_the_next_page_is_on_the_host_and_the_path_of_the_list_with_or_without_the_default_port_and_nowhere_else(self):
+        self.assertEqual(prices._next(f"https://{PRICES_HOST}:443{PRICES_PATH}?$filter=a%20b&$skip=1000"), f"https://{PRICES_HOST}{PRICES_PATH}?$filter=a%20b&$skip=1000")
+        self.assertEqual(prices._next(f"https://{PRICES_HOST}{PRICES_PATH}?$skip=1000"), f"https://{PRICES_HOST}{PRICES_PATH}?$skip=1000")
+        for link in (f"https://{PRICES_HOST}:8443{PRICES_PATH}", f"https://{PRICES_HOST}:abc{PRICES_PATH}", f"https://user@{PRICES_HOST}:443{PRICES_PATH}", f"http://{PRICES_HOST}{PRICES_PATH}",
+                     f"https://{PRICES_HOST}.example.com{PRICES_PATH}", f"https://example.com/{PRICES_HOST}{PRICES_PATH}", f"https://{PRICES_HOST}/api/other", f"https://{PRICES_HOST}{PRICES_PATH}/x", "", None, 5):
+            with self.assertRaises(prices.HttpError, msg=str(link)):
+                prices._next(link)
 
     def test_a_read_ends_at_the_cap_of_pages_and_says_that_it_did_not_read_the_whole_list(self):
         estate = PricedEstate()

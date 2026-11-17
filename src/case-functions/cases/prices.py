@@ -73,10 +73,15 @@ def _bad(what: str) -> HttpError:
 
 
 def _next(link: object) -> str:
-    parts = urlsplit(str(link))
-    if parts.scheme != "https" or parts.netloc != PRICES_HOST or parts.path != PRICES_PATH:
+    """The next page, as the list gives it (it writes the port 443 into the address): on the host and the path of the list and no other, and made again without the port."""
+    try:
+        parts = urlsplit(str(link))
+        port = parts.port
+    except ValueError:
+        raise _bad("gave a next page that the app does not follow") from None
+    if parts.scheme != "https" or "@" in parts.netloc or parts.hostname != PRICES_HOST or port not in (None, 443) or parts.path != PRICES_PATH:
         raise _bad("gave a next page that the app does not follow")
-    return str(link)
+    return f"https://{PRICES_HOST}{PRICES_PATH}?{parts.query}"
 
 
 def _number(value: object) -> float | None:
