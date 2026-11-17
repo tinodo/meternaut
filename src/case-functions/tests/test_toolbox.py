@@ -189,7 +189,7 @@ def point(day, total=None, maximum=None, average=None):
 
 
 def definition(name, unit="Count", aggregation="Total", **changes):
-    found = {"name": {"value": name, "localizedValue": name}, "unit": unit, "primaryAggregationType": aggregation, "supportedAggregationTypes": [aggregation],
+    found = {"name": {"value": name, "localizedValue": name}, "unit": unit, "primaryAggregationType": aggregation, "supportedAggregationTypes": ["Average", "Count", "Maximum", "Minimum", "Total"],
              "isDimensionRequired": False, "namespace": "x", "metricAvailabilities": [{"timeGrain": "P1D", "retention": "P93D"}]}
     found.update(changes)
     return found
@@ -257,13 +257,13 @@ class Clock:
 
 
 class TheSpecs(unittest.TestCase):
-    def test_there_are_nineteen_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
+    def test_there_are_twenty_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
         specs = Toolbox(None, (), NOW, []).specs
-        # Nineteen since the learning: the last three (recall_lessons, recall_knowledge, recall_open_questions) read what Meternaut kept and make no call to Azure, except that the last
-        # reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
+        # Twenty since cost_meters, which reads what a resource or a type is billed for, meter by meter. The last three (recall_lessons, recall_knowledge, recall_open_questions) read what
+        # Meternaut kept and make no call to Azure, except that the last reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
         self.assertEqual([s.name for s in specs], ["estate_overview", "list_resources", "metric_names", "metric_summary", "measure", "cost_lines", "advisor_items", "paid_features",
                                                    "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history",
-                                                   "recall_lessons", "recall_knowledge", "recall_open_questions"])
+                                                   "cost_meters", "recall_lessons", "recall_knowledge", "recall_open_questions"])
         for spec in specs:
             schema = spec.parameters
             self.assertEqual((schema["type"], schema["additionalProperties"]), ("object", False), spec.name)
@@ -819,7 +819,7 @@ class TheArguments(unittest.TestCase):
         words.add(json.loads(self.box.call("list_resources", {"type": DISK}))["error"])
         self.assertEqual(words, {"bad-arguments", "unknown-tool", "unknown-handle", "unavailable"})
         self.assertLessEqual(words, set(tb.ERRORS))
-        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed"})
+        self.assertEqual(set(tb.ERRORS), {"bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed", "no-metrics"})
 
 
 class TheLimit(unittest.TestCase):
@@ -1690,7 +1690,7 @@ class TheMetricSummary(unittest.TestCase):
         estate.series[(estate.id_of("vm-2").lower(), VM1_METRIC)] = 500
         estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = [point(1, 1.0, 1.0, 1.0)]
         answer = ask(box, "metric_summary", handles=["r1", "r2"], metric=VM1_METRIC)
-        self.assertEqual(answer["results"][1], {"handle": "r2", "error": "unavailable"})
+        self.assertEqual(answer["results"][1], {"handle": "r2", "error": "unavailable", "code": "Failed"})
         self.assertEqual(answer["results"][0]["total"], 1)
         self.assertNotIn("metrics", box.evidence["r2"])
         self.assertFalse(answer["partial"])
@@ -1701,7 +1701,8 @@ class TheMetricSummary(unittest.TestCase):
         for body in (errored, {"value": "x"}, {"nope": 1}, {"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": "x"}]}):
             estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = body
             answer = ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)
-            self.assertEqual(answer["results"], [{"handle": "r1", "error": "unavailable"}], str(body)[:60])
+            code = {"code": "InvalidSamplingType"} if body is errored else {}  # the platform's code word is shown, never its text
+            self.assertEqual(answer["results"], [{"handle": "r1", "error": "unavailable", **code}], str(body)[:60])
             self.assertNotIn("IGNORE", json.dumps(answer))
         estate.series[(estate.id_of("vm-1").lower(), VM1_METRIC)] = {"value": []}
         self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"][0]["days_with_data"], 0)
@@ -3179,10 +3180,10 @@ class TheTotalsOfAMetric(unittest.TestCase):
         estate.series[(rid, VM1_METRIC)] = [point(1, 7.0, 7.0, 7.0)]
         ask(box, "measure", type=VM, metric=VM1_METRIC)
         before = json.dumps(box.evidence["r1"])
-        for failure in (500, {"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": [], "errorCode": "InvalidSamplingType"}]}):
+        for failure, code in ((500, "Failed"), ({"value": [{"name": {"value": "m"}, "unit": "Count", "timeseries": [], "errorCode": "InvalidSamplingType"}]}, "InvalidSamplingType")):
             estate.series[(rid, VM1_METRIC)] = failure
             self.assertEqual(ask(box, "measure", type=VM, metric=VM1_METRIC)["failed"], ["r1"])
-            self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"], [{"handle": "r1", "error": "unavailable"}])
+            self.assertEqual(ask(box, "metric_summary", handles=["r1"], metric=VM1_METRIC)["results"], [{"handle": "r1", "error": "unavailable", "code": code}])
             self.assertEqual(json.dumps(box.evidence["r1"]), before)
         self.assertEqual(box.evidence["r1"]["metrics"][VM1_METRIC]["totals"], [7])
 

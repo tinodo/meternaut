@@ -66,7 +66,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
 from . import capability, deeper, learning, library
-from .arm import SCOPE_ID, Arm, CostLine, MetricPoint
+from . import metrics as mx
+from .arm import SCOPE_ID, Arm, CostLine, MetricPoint, TimeUp
 from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
@@ -118,10 +119,14 @@ OPEN_COLUMNS = ("handle", "type", "seen", "days_open", "confidence", "request")
 OPEN_SOURCE = "earlier findings that no person has decided: counts and words that Meternaut kept, not facts about this estate"
 QUERY_SECONDS = 45.0  # what one read of a resource's own records may take
 NOT_VISIBLE = "not visible with this access"  # what an answer says of a part that the access of the run cannot read: never "none"
+NO_METRICS = "no-metrics"  # what an answer says of a type that offers no platform metrics: nothing to read, and not use
+NO_METRICS_TEXT = "is not a supported platform metric namespace"  # how Azure Monitor refuses the definitions of such a type (HTTP 400)
+NOT_DOLLARS = "not in dollars"  # what an answer says of a scope whose cost is in another currency: it is never added up
+MAX_METRICS = 8  # the metrics that one call of metric_summary or measure reads
 READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # what data_readers counts, in the order of its columns
 CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "tokens_per_minute", "state", "upgrade")  # what children tells of each part, in the order of its columns
 
-ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed")
+ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed", NO_METRICS)
 READ_ERRORS = (HttpError, Refused, IdentityError, StoreError)
 OTHER = "other"  # what an answer shows for a text that is there and fails its check: never the text itself
 
@@ -135,6 +140,7 @@ TABLE_PATTERN = r"^(t[0-9]{1,4}|[A-Za-z][A-Za-z0-9]{0,63})$"  # a kind of data o
 DIMENSION_PATTERN = r"^[A-Za-z][A-Za-z0-9]{0,40}$"  # the name of a dimension of a metric, as metric_names shows it
 TYPE, SERVICE, METRIC, HANDLE, TABLE, DIMENSION = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN, TABLE_PATTERN, DIMENSION_PATTERN))
 SERVICE_FORM = re.compile(r"[A-Za-z0-9.&()-]+(?: [A-Za-z0-9.&()-]+){0,4}")  # one to five words, one space between them
+METER_FORM = re.compile(r"[A-Za-z0-9.&()/:+-]+(?: [A-Za-z0-9.&()/:+-]+){0,9}")  # one to ten words, one space between them
 SKU_FORM = re.compile(r"[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+){0,2}")  # a SKU or a kind: one to three parts, separated by commas
 TOKEN = re.compile(r"[A-Za-z0-9]+")  # a word of the platform that has no separator: an impact, a unit, a plan, a tier
 VERSIONED = re.compile(r"[a-z][0-9]{1,3}")  # a word such as v2, which a name may have in lower case
@@ -254,6 +260,14 @@ def metric_word(value: object) -> str | None:
     if len(words) > 8 or not all(words):
         return None
     return value if _titled(words) else None
+
+
+def meter_word(value: object) -> str | None:
+    """A field of a meter as Cost Management gives it (category, subcategory, name, pricing, charge, unit): at most 64 characters of the letters, digits and . & ( ) / : + - in at most ten
+    words with one space between them, written as the platform writes its names (see _titled; a word that is one hyphen stands between two names). The platform makes these words: the owner
+    of an estate cannot write one, so the alphabet is wider than a service name's, which has no slash for a unit such as a month."""
+    words = [word for word in value.split(" ") if word != "-"] if isinstance(value, str) else []
+    return value if words and len(value) <= 64 and METER_FORM.fullmatch(value) and _titled(words) else None
 
 
 def property_value(value: object) -> str | None:
@@ -552,6 +566,8 @@ class Param:
             body = {"type": typed("string"), "enum": [*self.choices, None] if nullable else list(self.choices)}
         elif self.kind == "handles":
             body = {"type": "array", "items": {"type": "string", "pattern": HANDLE_PATTERN}, "minItems": 1, "maxItems": MAX_MEASURED}
+        elif self.kind == "metrics":
+            body = {"type": typed("array"), "items": {"type": "string", "pattern": METRIC_PATTERN}, "minItems": 1, "maxItems": MAX_METRICS}
         else:
             body = {"type": typed("string"), "pattern": {"type": TYPE_PATTERN, "service": SERVICE_PATTERN, "metric": METRIC_PATTERN, "handle": HANDLE_PATTERN, "table": TABLE_PATTERN,
                                                         "dimension": DIMENSION_PATTERN}[self.kind]}
@@ -570,6 +586,10 @@ class Param:
             return value
         if self.kind == "handles":
             if not isinstance(value, list) or not 1 <= len(value) <= MAX_MEASURED or not all(isinstance(item, str) and HANDLE.fullmatch(item) for item in value):
+                raise BadArguments(self.name)
+            return list(dict.fromkeys(value))
+        if self.kind == "metrics":
+            if not isinstance(value, list) or not 1 <= len(value) <= MAX_METRICS or not all(_match(METRIC, item) for item in value):
                 raise BadArguments(self.name)
             return list(dict.fromkeys(value))
         text = {"type": type_word, "service": _service_form, "metric": lambda item: _match(METRIC, item), "handle": lambda item: _match(HANDLE, item),
@@ -608,6 +628,9 @@ class Tool:
 _TYPE = "The resource type, in lower case, as estate_overview shows it."
 _METRIC = "A metric name, as metric_names shows it. A name that metric_names does not show for the type answers unknown-metric."
 _OFFSET = Param("offset", "integer", "How many entries to skip: the next_offset of the last answer. Null for 0.", low=0, high=100000)
+_ONE = Param("metric", "metric", _METRIC + " Null when metrics is given.")
+_MANY = Param("metrics", "metrics", "Up to 8 metric names, as metric_names shows them, read in one call. Null when metric is given: give one of the two, never both.")
+_GRAIN = Param("grain", "choice", "day: daily buckets. hour: also the peak and p95 of the finer buckets, for a question about peaks. Null for day.", choices=("day", "hour"))
 TOOLS = {tool.name: tool for tool in (
     Tool("estate_overview",
          "Summarises the estate that this run may read. For each subscription (named s1, s2, ...): the number of resources, the cost of the last 30 days by service, "
@@ -624,28 +647,26 @@ TOOLS = {tool.name: tool for tool in (
           Param("limit", "integer", "How many resources to return, 1 to 40. Null for 40.", low=1, high=MAX_LISTED), _OFFSET)),
     Tool("metric_names",
          "Lists the metric names that Azure Monitor offers for the resources of one resource type, each with its unit and its primary aggregation. Use a name with "
-         "metric_summary or measure.",
+         "metric_summary or measure. A type that offers no platform metrics answers no-metrics: nothing to measure, and no sign of use.",
          (Param("type", "type", _TYPE, required=True), _OFFSET)),
     Tool("metric_summary",
-         "Measures one Azure Monitor metric for up to 60 resources, named by handle, in daily buckets over the last days (at most 30). For each resource: the total (the "
-         "sum of the daily totals), the maximum (of the daily maximums), the average (the mean of the daily averages) and the number of days that have data. A value "
-         "is null when the metric has none. summary counts the resources that were read in this call by whether the metric had data in the window: resources, with_data "
-         "(zero has a total of 0, positive a total above 0), no_data and days. A slow measurement stops after 60 seconds: the answer says partial and lists the handles "
-         "that were not read.",
-         (Param("handles", "handles", "Handles of resources that earlier answers showed, 1 to 60 of them.", required=True),
-          Param("metric", "metric", _METRIC, required=True),
-          Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS))),
+         "Measures Azure Monitor metrics for up to 60 resources, named by handle, in daily buckets over the last days (at most 30): one metric (metric) or up to 8 (metrics). For each "
+         "resource (and metric): total (the sum of the daily totals), max (of the daily maximums), average (the mean of the daily averages) and days_with_data; null when the metric has none. "
+         "With grain hour a row also has peak (the greatest value of any finer bucket) and p95 (95 percent of those buckets are at or below it); read_at names a finer grain that was read. "
+         "summary counts the resources that were read by whether the metric had data in the window: resources, with_data (zero has a total of 0, positive a total above 0), no_data and days. "
+         "A type that offers no platform metrics answers no-metrics, which is no sign of use. A read that failed says unavailable with the platform's code word. After 60 seconds "
+         "the answer says partial and lists the handles that were not read.",
+         (Param("handles", "handles", "Handles of resources that earlier answers showed, 1 to 60 of them.", required=True), _ONE, _MANY,
+          Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS), _GRAIN)),
     Tool("measure",
-         "Measures one Azure Monitor metric across the resources of one resource type, the dearest first, in daily buckets over the last days (at most 30), as a table. "
-         "cols names the columns and each array in rows holds the values in that order: handle (as in list_resources), usd30d (the cost of the last 30 days in dollars; "
-         "left out when unknown), total (the sum of the daily totals), max (the greatest daily maximum), avg (the mean of the daily averages) and days_with_data (the "
-         "days that have data). A value is null when the metric has none. summary counts the resources of the type shown so far, in this answer "
-         "and earlier ones, by whether the metric had data in the window: resources, with_data (zero has a total of 0, positive a total above 0), no_data and days. "
-         "failed lists the handles whose read failed. A measurement stops after 60 seconds: partial is then true and unread lists the handles that were not read. "
-         "When has_more is true, read the next page with next_offset.",
-         (Param("type", "type", _TYPE, required=True), Param("metric", "metric", _METRIC, required=True),
-          Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
-          Param("limit", "integer", "How many resources to measure, 1 to 80. Null for 40.", low=1, high=MAX_MEASURE_ROWS), _OFFSET)),
+         "Measures Azure Monitor metrics across the resources of one type, the dearest first, in daily buckets over the last days (at most 30), as a table: one metric (metric) or "
+         "up to 8 (metrics). Each array in rows follows cols: one resource and metric: handle, metric, usd30d (dollars), total, max and avg (the sum of the daily "
+         "totals, greatest daily maximum, mean of the daily averages; null when the metric has none), days_with_data and, with grain hour, peak and p95 (95 percent of the finer "
+         "buckets are at or below it); read_at names a finer grain that was read. summary counts the resources shown so far by whether the metric had data in the window: resources, "
+         "with_data (zero has a total of 0, positive a total above 0), no_data and days. failed lists the handles whose read failed, with failed_codes. A type that offers no platform "
+         "metrics answers no-metrics, which is no sign of use. After 60 seconds partial is true and unread lists the handles not read. When has_more is true, use next_offset.",
+         (Param("type", "type", _TYPE, required=True), _ONE, _MANY, Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
+          Param("limit", "integer", "How many resources to measure, 1 to 80. Null for 40.", low=1, high=MAX_MEASURE_ROWS), _OFFSET, _GRAIN)),
     Tool("cost_lines",
          "Lists the cost lines of the last 30 days, dearest first: for each one the handle of the resource (null when no such resource exists any more), the cost in US "
          "dollars, the service and the resource type. Filter by service name, as estate_overview shows it, and by resource type; with neither filter it lists the "
@@ -700,7 +721,7 @@ TOOLS = {tool.name: tool for tool in (
          "Measures one Azure Monitor metric of one resource split by one dimension of it, in daily buckets over the last days (at most 30), as a table of values: for each "
          "value its total, maximum, average and the days that have data. A value that is the name of a part that children showed is given as that part's handle, a whole "
          "number as that number, any other value as a label (v1, v2, ...) that stands for it in this answer only. A value with no data in the window has no row. "
-         "metric_names shows the dimensions that each metric has.",
+         "metric_names shows the dimensions that each metric has. A type that offers no platform metrics answers no-metrics.",
          (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True), Param("metric", "metric", _METRIC, required=True),
           Param("dimension", "dimension", "A dimension of the metric, as metric_names shows it.", required=True),
           Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
@@ -718,6 +739,16 @@ TOOLS = {tool.name: tool for tool in (
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
           Param("days", "integer", "How many closed days to look back, 7 to 90. Null for 30.", low=7, high=MAX_HISTORY),
           Param("basis", "choice", "actual: what was charged. amortized: a purchase spread over its term. Null for actual.", choices=("actual", "amortized")))),
+    Tool("cost_meters",
+         "Shows what one resource (handle) or all resources of one type (type, and service to keep one) are billed for, meter by meter, over the last 7 to 30 closed days, dearest first, as a table: "
+         "the meter (m1, m2, ... for this run), its category, subcategory and name as short words of the platform, its pricing and charge, the unit, the quantity and the cost in US dollars over the "
+         "window, its share of the scope's cost, and the daily shape: the days that have a cost, their average, smallest and greatest cost, cv (the spread of the daily cost over the whole "
+         "window divided by its mean) and how many days ago the first and the last cost were. For a type also resources, how many resources carry the meter. It says what is billed, not why, and "
+         "decides nothing. Give a handle or a type, never both. An answer is kept for the run.",
+         (Param("handle", "handle", "The handle of one resource that an earlier answer showed. Null when a type is given."),
+          Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
+          Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
+          Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
     Tool("recall_lessons",
          "Shows how people answered the earlier proposals about resources of one resource type, as counts, for each kind of proposal: how many were answered, approved, declined (with the "
          "reasons that people could choose from a fixed list), said to be somebody else's, or left without an answer; how the saving that was measured after a change compares with the one "
@@ -853,6 +884,8 @@ class Toolbox:
         self._advice: dict[str, list[_Advice]] = {}
         self._pricings: dict[str, list[dict]] = {}
         self._metric_names: dict[str, list[dict]] = {}
+        self._plans: dict[str, dict[str, tuple[mx.Plan, mx.Plan]]] = {}  # type -> metric -> how to read it by the day and by the hour (metrics.plan_of)
+        self._no_metrics: set[str] = set()  # the types that Azure Monitor keeps no platform metrics for
         self._without: set[str] = set()  # the types of which a read found no resource in any subscription, so that a later call does not look again
         self._reads: dict[tuple[str, str, int], dict[str, str]] = {}  # (type, metric, days) -> handle -> how its measurement counts: every resource whose numbers were shown
         self._missing: set[str] = set()  # ids that Resource Graph did not return
@@ -1409,38 +1442,66 @@ class Toolbox:
     def _names_of(self, kind: str) -> list[dict]:
         if kind not in self._metric_names:
             found: dict[str, dict] = {}
+            plans: dict[str, tuple[mx.Plan, mx.Plan]] = {}
             resource_id, complete = self._one_of_type(kind)
-            for definition in self.arm.metric_definitions(resource_id) if resource_id else []:
+            definitions: list[dict] = []
+            try:
+                definitions = self.arm.metric_definitions(resource_id) if resource_id else []
+            except HttpError as error:
+                if error.status != 400 or NO_METRICS_TEXT not in str(error).lower():
+                    raise
+                self._no_metrics.add(kind)
+            for definition in definitions:
                 name = definition.get("name")
                 word = metric_word(name.get("value") if isinstance(name, dict) else None)
-                # A metric that is only offered for a chosen dimension cannot be measured without one, and metric_summary names none.
-                if word is not None and definition.get("isDimensionRequired") is not True:
+                plan = mx.plan_of(definition)
+                # A metric that is only offered for a chosen dimension cannot be measured without one, and metric_summary names none; nor one that offers no grain or aggregation to read.
+                if word is not None and plan is not None and definition.get("isDimensionRequired") is not True:
                     dimensions = [token_word(item.get("value"), 41) for item in definition.get("dimensions") or [] if isinstance(item, dict)]
                     found.setdefault(word, {"name": word, "unit": token_word(definition.get("unit"), 16), "aggregation": token_word(definition.get("primaryAggregationType"), 16),
                                             **({"dimensions": [item for item in dimensions if item][:MAX_DIMENSIONS]} if any(dimensions) else {})})
+                    plans.setdefault(word, (plan, mx.plan_of(definition, True)))
             if not complete:
                 return []  # no resource was found in the subscriptions that were looked at, and the others were not: nothing is remembered, a later call looks again
-            self._metric_names[kind] = sorted(found.values(), key=lambda item: item["name"].lower())
+            self._metric_names[kind], self._plans[kind] = sorted(found.values(), key=lambda item: item["name"].lower()), plans
         return self._metric_names[kind]
 
-    def _offered(self, kinds: "set[str | None]", metric: str) -> "dict[str | None, bool | None]":
-        """For each resource type, whether Azure Monitor offers the metric for it (the metric_names of the type): True or False, or None when it could not be read.
-        A metric that the tools did not list is never measured, so no text of an argument or of an answer reaches Azure Monitor or the agent through it."""
-        verdict: "dict[str | None, bool | None]" = {}
-        for kind in kinds:
-            if kind is None:
-                verdict[kind] = False
-                continue
-            try:
-                verdict[kind] = any(item["name"] == metric for item in self._names_of(kind))
-            except READ_ERRORS as error:
-                self.notes.append(f"the metrics that Azure Monitor offers for a type could not be read ({str(error)[:200]})")
-                verdict[kind] = None
-        return verdict
+    def _offers(self, kind: str | None) -> "dict[str, tuple[mx.Plan, mx.Plan]] | str":
+        """What Azure Monitor offers for a resource type (the metric_names of the type): for each metric its plan by the day and by the hour, NO_METRICS for a type that has no platform
+        metrics, or `unavailable` when that could not be read. A metric that the tools did not list is never measured, so no text of an argument or of an answer reaches Azure Monitor or the
+        agent through it."""
+        if kind is None:
+            return {}
+        try:
+            self._names_of(kind)
+        except READ_ERRORS as error:
+            self.notes.append(f"the metrics that Azure Monitor offers for a type could not be read ({str(error)[:200]})")
+            return "unavailable"
+        return NO_METRICS if kind in self._no_metrics else self._plans.get(kind, {})
+
+    @staticmethod
+    def _plan(offer: "dict[str, tuple[mx.Plan, mx.Plan]] | str", name: str, hourly: bool) -> "mx.Plan | str":
+        """The plan to read one metric of a type with, or the word that says why there is none."""
+        return offer if isinstance(offer, str) else offer[name][hourly] if name in offer else "unknown-metric"
+
+    @staticmethod
+    def _asked(args: dict) -> list[str]:
+        """The metric names of a call: the one in `metric` or those in `metrics`, never both and never neither."""
+        if (args["metric"] is None) == (args["metrics"] is None):
+            raise BadArguments("metric")
+        return [args["metric"]] if args["metric"] is not None else args["metrics"]
+
+    @staticmethod
+    def _why(error: object) -> dict:
+        """What a row says of a metric that was not read: `failed` for a fault of the tool, else `unavailable` with the code word of the platform's error when it gave one (never its text)."""
+        code = token_word(getattr(error, "code", None), 40)
+        return {"error": "failed"} if error is None else {"error": "unavailable", **({"code": code} if code else {})}
 
     def _tool_metric_names(self, args: dict) -> dict:
         kind, offset = args["type"], args["offset"] or 0
         names = self._names_of(kind)
+        if kind in self._no_metrics:
+            return {"error": NO_METRICS}
         rows = [dict(item) for item in names[offset:]]
         answer: dict = {"type": kind, "total": len(names), "offset": offset, "returned": 0, "next_offset": None, **self._unread(), "metrics": rows}
         _page(answer, rows, offset, len(names))
@@ -1452,37 +1513,47 @@ class Toolbox:
         return end - dt.timedelta(days=days), end
 
     @staticmethod
-    def _outcome(future: Future) -> "tuple[str, list[MetricPoint]] | str":
+    def _outcome(future: Future, plans: dict) -> "dict | None":
+        """What the read of one resource gave: for each metric its unit and buckets, or its error (None for a fault of the tool); None when the time was used up before the read began."""
         try:
             return future.result()
-        except READ_ERRORS:
-            return "unavailable"
+        except TimeUp:
+            return None
+        except READ_ERRORS as error:
+            return dict.fromkeys(plans, error)
         except Exception:  # a fault in one read is that resource's word, not the end of the measurement
-            return "failed"
+            return dict.fromkeys(plans)
 
-    def _read_metrics(self, targets: list[tuple[str, str]], metric: str, start: dt.datetime, end: dt.datetime) -> tuple[dict, list[str]]:
-        """Reads the metric of every target, `workers` at a time, and starts no read after the time budget is spent. Returns what was read, by handle (the unit and
-        the points, or a word for a read that failed), and the handles that were not read."""
-        read: dict[str, "tuple[str, list[MetricPoint]] | str"] = {}
+    def _read_metrics(self, targets: "list[tuple[str, str, dict[str, mx.Plan]]]", start: dt.datetime, end: dt.datetime) -> tuple[dict, list[str]]:
+        """Reads the metrics of every target (a handle, its id, and the plan of each metric), `workers` resources at a time, and starts no read after the time budget is spent. Returns what was
+        read, by handle and metric (the unit and the buckets at the grain of the plan, or the error), and the handles that were not read."""
+        read: dict[str, dict] = {}
         queue = list(targets)
-        running: dict[Future, str] = {}
+        running: dict[Future, tuple[str, dict]] = {}
         workers = max(1, self.workers)
         began = self.monotonic()
+
+        def late() -> bool:
+            return self.monotonic() - began >= self.budget_seconds
+
         pool = ThreadPoolExecutor(max_workers=workers)
         try:
             while queue or running:
-                while queue and len(running) < workers and self.monotonic() - began < self.budget_seconds:
-                    handle, resource_id = queue.pop(0)
-                    running[pool.submit(self.arm.metrics, resource_id, metric, start, end)] = handle
+                while queue and len(running) < workers and not late():
+                    handle, resource_id, plans = queue.pop(0)
+                    running[pool.submit(self.arm.metric_reads, resource_id, plans, start, end, late)] = (handle, plans)
                 left = self.budget_seconds - (self.monotonic() - began)
                 if not running or left <= 0:
                     break
                 done, _ = wait(running, timeout=left, return_when=FIRST_COMPLETED)
                 for future in done:
-                    read[running.pop(future)] = self._outcome(future)
+                    handle, plans = running.pop(future)
+                    found = self._outcome(future, plans)
+                    if found is not None:
+                        read[handle] = found
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-        return read, [handle for handle, _ in targets if handle not in read]
+        return read, [handle for handle, _, _ in targets if handle not in read]
 
     def _record_metric(self, handle: str, metric: str, summary: dict, days: int, unit: str | None) -> None:
         """Keeps the numbers that an answer carried for one resource, as the investigation checks the claims of the agent against them: those of the last measurement,
@@ -1498,90 +1569,149 @@ class Toolbox:
         if kind is not None:
             self._reads.setdefault((kind, metric, days), {})[handle] = _bucket(summary)
 
+    @staticmethod
+    def _measured(found: tuple, plan: "mx.Plan", hourly: bool) -> tuple[dict, str | None]:
+        """The numbers of one read, (the unit, the buckets at the grain of the plan): the daily summary, `peak` and `p95` of the buckets that were read when `hourly`, and `read_at`, the grain,
+        when it is not a day."""
+        unit, points = found
+        row = _summarise(points if plan.grain == mx.DAY else mx.daily(points))
+        if hourly:
+            row["peak"], row["p95"] = (None if value is None else _measure(value) for value in mx.fine(points, plan.level))
+        if plan.grain != mx.DAY:
+            row["read_at"] = plan.grain
+        return row, token_word(unit, 16)
+
     def _tool_metric_summary(self, args: dict) -> dict:
-        handles, metric, days = args["handles"], args["metric"], args["days"] or MAX_DAYS
+        handles, names, days, hourly, many = args["handles"], self._asked(args), args["days"] or MAX_DAYS, args["grain"] == "hour", args["metrics"] is not None
         start, end = self._window(days)
         known = [handle for handle in handles if handle in self.handles]
         kinds = {handle: type_word(self.handles[handle].resource_type) for handle in known}
-        offered = self._offered(set(kinds.values()), metric)
-        if known and not any(offered.values()) and None not in offered.values():
-            return {"error": "unknown-metric"}
-        read, unread = self._read_metrics([(handle, self.handles[handle].resource_id) for handle in known if offered[kinds[handle]]], metric, start, end)
+        offers = {kind: self._offers(kind) for kind in set(kinds.values())}
+        plans = {handle: {name: self._plan(offers[kinds[handle]], name, hourly) for name in names} for handle in known}
+        refusals = {plan for each in plans.values() for plan in each.values()}
+        if known and len(refusals) == 1 and refusals <= {"unknown-metric", NO_METRICS}:
+            return {"error": refusals.pop()}  # no type of a handle offers a metric that was asked for, or none has platform metrics
+        echoed = [name for name in names if any(isinstance(offer, dict) and name in offer for offer in offers.values())]  # a name is echoed only when Azure Monitor offers it for a type of a handle
+        read, unread = self._read_metrics([(handle, self.handles[handle].resource_id, {name: plan for name, plan in plans[handle].items() if isinstance(plan, mx.Plan)})
+                                           for handle in known if any(isinstance(plan, mx.Plan) for plan in plans[handle].values())], start, end)
         skipped, rows, units = set(unread), [], {}
         for handle in handles:
-            outcome = read.get(handle)
             if handle not in self.handles:
                 rows.append({"handle": handle, "error": "unknown-handle"})
-            elif offered[kinds[handle]] is False:
-                rows.append({"handle": handle, "error": "unknown-metric"})
-            elif offered[kinds[handle]] is None:
-                rows.append({"handle": handle, "error": "unavailable"})
-            elif isinstance(outcome, str):
-                rows.append({"handle": handle, "error": outcome})
-            elif outcome is not None:
-                units[handle] = token_word(outcome[0], 16)
-                rows.append({"handle": handle, **_summarise(outcome[1])})
-        answer: dict = {"days": days, "unit": None, "partial": False, "summary": {}, "results": rows}
-        if any(offered.values()):
-            answer = {"metric": metric, **answer}  # the name is echoed only when Azure Monitor offers it for a type of a handle
+                continue
+            said: set[tuple[str, str | None]] = set()
+            for name in names:
+                plan = plans[handle][name]
+                if isinstance(plan, str):
+                    shown = name if many and plan == "unknown-metric" and name in echoed else None
+                    if (plan, shown) not in said:
+                        said.add((plan, shown))
+                        rows.append({"handle": handle, **({"metric": shown} if shown else {}), "error": plan})  # a type that has no metrics or could not be asked is told once, whatever the names
+                elif handle in read:
+                    result = read[handle].get(name)
+                    head = {"handle": handle, **({"metric": name} if many else {})}
+                    if isinstance(result, tuple):
+                        row, units[(handle, name)] = self._measured(result, plan, hourly)
+                        rows.append({**head, **row})
+                    else:
+                        rows.append({**head, **self._why(result)})
+        answer: dict = {"days": days, "partial": False, "summary": {}, "results": rows, **({} if many else {"unit": None})}
+        if echoed:
+            answer = {**({"metrics": echoed} if many else {"metric": echoed[0]}), **answer}
+        if many and len(echoed) < len(names):
+            answer["unknown_metrics"] = len(names) - len(echoed)
 
         def refresh() -> None:
-            answer["unit"] = next((units[row["handle"]] for row in rows if units.get(row["handle"])), None)
+            found: dict[str, str] = {}
+            for row in rows:
+                if "error" not in row and units.get((row["handle"], row.get("metric", names[0]))):
+                    found.setdefault(row.get("metric", names[0]), units[(row["handle"], row.get("metric", names[0]))])
+            answer.pop("units", None)
+            if many:
+                answer.update({"units": found} if found else {})
+            else:
+                answer["unit"] = found.get(names[0])
             answer["partial"] = bool(skipped)
-            answer["summary"] = _tally((_bucket(row) for row in rows if "error" not in row), days)  # the resources whose numbers are in the answer
+            ok = [row for row in rows if "error" not in row]  # the measurements whose numbers are in the answer
+            answer["summary"] = {name: _tally((_bucket(row) for row in ok if row["metric"] == name), days) for name in echoed} if many else _tally(map(_bucket, ok), days)
             if skipped:
                 answer["unread"] = [handle for handle in handles if handle in skipped]
 
         refresh()
         while len(_dump(answer)) > MAX_RESULT_CHARS and rows:
-            skipped.add(rows.pop()["handle"])
+            last = rows[-1]["handle"]
+            skipped.add(last)
+            rows[:] = [row for row in rows if row["handle"] != last]
             refresh()
         for row in rows:
             if "error" not in row:
-                self._record_metric(row["handle"], metric, row, days, units.get(row["handle"]))
-                self._count_read(kinds[row["handle"]], row["handle"], metric, days, row)
+                name = row.get("metric", names[0])
+                self._record_metric(row["handle"], name, row, days, units.get((row["handle"], name)))
+                self._count_read(kinds[row["handle"]], row["handle"], name, days, row)
         return answer
 
     def _tool_measure(self, args: dict) -> dict:
-        kind, metric, days, limit, offset = args["type"], args["metric"], args["days"] or MAX_DAYS, args["limit"] or DEFAULT_LISTED, args["offset"] or 0
+        kind, names, days, hourly, offset = args["type"], self._asked(args), args["days"] or MAX_DAYS, args["grain"] == "hour", args["offset"] or 0
+        many = args["metrics"] is not None
+        limit = args["limit"] or max(1, DEFAULT_LISTED // len(names))
         entries, failed = self._listed(kind, "cost")
         page = entries[offset:offset + limit]
-        vetted = bool(page)  # the name of the metric is echoed only when Azure Monitor offers it for the type, and that is read only when there is a resource to measure
-        if vetted and not any(item["name"] == metric for item in self._names_of(kind)):
+        offer = self._offers(kind) if page else {}  # a name is echoed only when Azure Monitor offers it for the type, and that is read only when there is a resource to measure
+        if isinstance(offer, str):
+            return {"error": offer}
+        plans = {name: offer[name][hourly] for name in names if name in offer}
+        if page and not plans:
             return {"error": "unknown-metric"}
         page = page[:self._within_handles(page)]
         handles = [self._show(entry, {}) for entry in page]  # every resource of the page is named in the answer: as a row, as failed or as unread
         start, end = self._window(days)
-        read, unread = self._read_metrics([(handle, entry.resource.resource_id) for handle, entry in zip(handles, page)], metric, start, end)
+        read, unread = self._read_metrics([(handle, entry.resource.resource_id, plans) for handle, entry in zip(handles, page)], start, end)
         costs = {handle: self._cost_total(entry) for handle, entry in zip(handles, page)}
         priced = any(cost is not None for cost in costs.values())
-        summaries: dict[str, tuple[dict, str | None]] = {}
+        summaries: dict[str, dict[str, tuple[dict, str | None]]] = {}
         broken: list[str] = []
+        codes: set[str] = set()
         for handle in handles:
-            outcome = read.get(handle)
-            if isinstance(outcome, str):
-                broken.append(handle)
-            elif outcome is not None:
-                summaries[handle] = (_summarise(outcome[1]), token_word(outcome[0], 16))
-        skipped = set(unread)
-        columns = ["handle", *(["usd30d"] if priced else []), "total", "max", "avg", "days_with_data"]
+            for name, result in (read.get(handle) or {}).items():
+                if isinstance(result, tuple):
+                    summaries.setdefault(handle, {})[name] = self._measured(result, plans[name], hourly)
+                else:
+                    if handle not in broken:
+                        broken.append(handle)
+                    codes.add(self._why(result).get("code", ""))
+        codes.discard("")
+        read_at = any("read_at" in found[0] for each in summaries.values() for found in each.values())
+        columns = ["handle", *(["metric"] if many else []), *(["usd30d"] if priced else []), "total", "max", "avg", "days_with_data", *(["peak", "p95"] if hourly else []),
+                   *(["read_at"] if read_at else [])]
         caveats = self._caveats(failed, {entry.sub for entry in entries})
         more = offset + len(page) < len(entries)
-        counted = dict(self._reads.get((kind, metric, days), {}))  # what the pages and the calls before this one showed
+        skipped = set(unread)
+        counted = {name: dict(self._reads.get((kind, name, days), {})) for name in names}  # what the pages and the calls before this one showed
 
-        def row_of(handle: str) -> list:
-            summary = summaries[handle][0]
+        def rows_of(handle: str) -> list[list]:
             cost = costs[handle]
-            return [handle, *([None if cost is None else _cents(cost)] if priced else []), summary["total"], summary["max"], summary["average"], summary["days_with_data"]]
+            return [[handle, *([name] if many else []), *([None if cost is None else _cents(cost)] if priced else []), row["total"], row["max"], row["average"], row["days_with_data"],
+                     *([row["peak"], row["p95"]] if hourly else []), *([row.get("read_at")] if read_at else [])]
+                    for name in plans if name in summaries[handle] for row in [summaries[handle][name][0]]]
 
         def answer() -> dict:
             kept = [handle for handle in handles if handle in summaries and handle not in skipped]
-            unit = next((summaries[handle][1] for handle in kept if summaries[handle][1]), None)
-            seen = {**counted, **{handle: _bucket(summaries[handle][0]) for handle in kept}}
-            return {"type": kind, **({"metric": metric} if vetted else {}), "days": days, **({"unit": unit} if unit else {}), "partial": bool(skipped), "total": len(entries),
-                    "offset": offset, "has_more": more, **({"next_offset": offset + len(page)} if more else {}), **caveats, **({"failed": broken} if broken else {}),
-                    **({"unread": [handle for handle in handles if handle in skipped]} if skipped else {}), "summary": _tally(seen.values(), days), "cols": columns,
-                    "rows": [row_of(handle) for handle in kept]}
+            found = {name: next((summaries[handle][name][1] for handle in kept if name in summaries[handle] and summaries[handle][name][1]), None) for name in plans}
+            seen = {name: {**counted[name], **{handle: _bucket(summaries[handle][name][0]) for handle in kept if name in summaries[handle]}} for name in names}
+            said: dict = {}
+            if page:  # the names and their units are echoed only when Azure Monitor offers them for the type
+                said.update({"metrics": list(plans), "units": {name: unit for name, unit in found.items() if unit}} if many else {"metric": names[0]})
+                if many and len(plans) < len(names):
+                    said["unknown_metrics"] = len(names) - len(plans)
+            if not many and any(found.values()):
+                said["unit"] = next(iter(found.values()))
+            if not said.get("units", True):
+                del said["units"]
+            tally = {name: _tally(seen[name].values(), days) for name in names if name in plans or counted[name]} if many else _tally(seen[names[0]].values(), days)
+            return {"type": kind, **said, "days": days, "partial": bool(skipped), "total": len(entries), "offset": offset, "has_more": more,
+                    **({"next_offset": offset + len(page)} if more else {}), **caveats, **({"failed": broken} if broken else {}), **({"failed_codes": sorted(codes)} if codes else {}),
+                    **({"unread": [handle for handle in handles if handle in skipped]} if skipped else {}), "summary": tally, "cols": columns,
+                    "rows": [row for handle in kept for row in rows_of(handle)]}
 
         built = answer()
         while len(_dump(built)) > MAX_RESULT_CHARS and any(handle in summaries and handle not in skipped for handle in handles):
@@ -1591,8 +1721,9 @@ class Toolbox:
             if handle in summaries and handle not in skipped:
                 if costs[handle] is not None:
                     self._show(entry, {"cost30d": _cents(costs[handle])})
-                self._record_metric(handle, metric, summaries[handle][0], days, summaries[handle][1])
-                self._count_read(kind, handle, metric, days, summaries[handle][0])
+                for name, (row, unit) in summaries[handle].items():
+                    self._record_metric(handle, name, row, days, unit)
+                    self._count_read(kind, handle, name, days, row)
         return built
 
     def _tool_cost_lines(self, args: dict) -> dict:
@@ -2090,6 +2221,8 @@ class Toolbox:
         entry = self._entry(handle)
         kind = type_word(entry.resource.resource_type)
         offered = next((item for item in self._names_of(kind) if item["name"] == metric), None) if kind else None
+        if kind in self._no_metrics:
+            return {"error": NO_METRICS}
         if offered is None:
             return {"error": "unknown-metric"}
         if dimension not in offered.get("dimensions", []):
@@ -2100,11 +2233,12 @@ class Toolbox:
             if not isinstance(known, Failed):
                 parts = {child.resource.name.lower(): child for child, _ in known}
         start, end = self._window(days)
-        unit, series = self.arm.metrics_split(entry.resource.resource_id, metric, dimension, start, end, top=limit)
+        plan = self._plans[kind][metric][0]
+        unit, series = self.arm.metrics_split(entry.resource.resource_id, metric, dimension, start, end, top=limit, plan=plan)
         labels: dict[str, str] = {}
         found: list[tuple[object, dict, _Entry | None]] = []
         for value, points in series:
-            summary = _summarise(points)
+            summary = _summarise(points if plan.grain == mx.DAY else mx.daily(points))
             if _bucket(summary) == "no_data":
                 continue
             text, part = value.strip(), parts.get(value.strip().lower())
