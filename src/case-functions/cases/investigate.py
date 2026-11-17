@@ -123,6 +123,7 @@ class Finding:
     unknown: int = 0
     unproven: int = 0
     repeated: int = 0
+    surpassed: int = 0  # the resources that a later finding, which was surer of them, took from this one
     recent: int = 0
     guarded: int = 0
     capped: int = 0
@@ -393,8 +394,14 @@ def _subscription_name(s: "Services", subscription: str) -> str:
         return ""
 
 
-def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Toolbox, taken: set[str]) -> None:
-    """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only.
+def _outranks(finding: Finding, earlier: "Finding | None") -> bool:
+    """A later finding takes a resource from an earlier one only when it is surer of it (its confidence is higher); with the same confidence the earlier keeps it."""
+    return earlier is not None and earlier is not finding and finding.confidence > earlier.confidence
+
+
+def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Toolbox, taken: set[str], holders: "dict[str, Finding] | None" = None) -> None:
+    """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only, the surer one of two (`holders` says which
+    finding has each handle; the earlier keeps it when they are as sure).
 
     An entry of metric_evidence counts when its total is one of the totals that the tools recorded for that handle and metric; the number that is kept is the tools'.
     A claim of no usage is proved by such an entry only when every total that was recorded for the metric is nil and a value was read on at least MEASURED_DAYS days (_quiet): a short
@@ -404,7 +411,7 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
     for handle in handles:
         if handle not in toolbox.handles:
             finding.unknown += 1
-        elif handle in taken:
+        elif handle in taken and not _outranks(finding, (holders or {}).get(handle)):
             finding.repeated += 1
         else:
             known.append(handle)
@@ -438,13 +445,23 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
     finding.handles = known
     finding.cited = {handle: cited[handle] for handle in known}
     taken.update(known)
+    for handle in known:
+        earlier = (holders or {}).get(handle)
+        if earlier is not None and earlier is not finding and handle in earlier.handles:
+            earlier.handles = [kept for kept in earlier.handles if kept != handle]  # the surer finding has it now: the earlier gives it up, and is dropped when it has none left
+            earlier.cited.pop(handle, None)
+            earlier.surpassed += 1
+            if not earlier.handles and earlier.reason is None:
+                earlier.reason = _why_none(earlier)
+        if holders is not None:
+            holders[handle] = finding
     if not known:
         finding.reason = _why_none(finding)
 
 
 def _why_none(finding: Finding) -> str:
     parts = [f"{n} {what}" for n, what in ((finding.unknown, "that no tool showed"), (finding.unproven, "without a cited measurement that matches the tools and shows no usage on enough days"),
-                                          (finding.repeated, "that an earlier finding has")) if n]
+                                          (finding.repeated, "that an earlier finding has"), (finding.surpassed, "that a later finding, which is surer of them, has")) if n]
     return "no resource of it is left: " + (", ".join(parts) if parts else "it lists none that the tools showed")
 
 
@@ -837,6 +854,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     findings: list[Finding] = []
     out.findings = findings
     taken: set[str] = set()
+    holders: dict[str, Finding] = {}  # the finding that has each resource of `taken`: a later finding that is surer takes it
     beat_steps: dict[int, dict] = {}
     raw_total, last_note = 0, ""
 
@@ -914,7 +932,14 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             result.seeded = len(seeded.handles)
             if seeded.failed:
                 note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
-        seconds = max(1.0, min(st.investigate_beat_seconds, beats_deadline - at) - (s.monotonic() - at)) if focused else max(1.0, budget - reserve)
+        seconds = max(1.0, min(st.investigate_beat_seconds, beats_deadline - at) - (s.monotonic() - at)) if focused else min(beats.OPEN_SECONDS, max(1.0, budget - reserve))
+        if focused and seconds < beats.STEP_SECONDS:
+            # What is left after the reads that code made does not pay for one step of the model: the model is not asked, and the beat fails at no cost in tokens.
+            result.end, result.note = "time", f"no time was left for the model after the reads that code made for the beat"
+            last_note = result.note
+            note(f"beat {beat.number}: {result.note}; the other beats go on")
+            close(result, False, at, log_before)
+            continue
         what = beats.beat_input(beat, calls, seeded, beats.carry(out.beats))
         who = f"beat {beat.number}: " if focused else ""
         handler = recorded(beat, "agent", number)
@@ -983,7 +1008,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             finding, handles, entries = parse_finding(len(findings) + 1, raw)
             finding.beat = beat.number
             if finding.reason is None:
-                _verify(finding, handles, entries, toolbox, taken)
+                _verify(finding, handles, entries, toolbox, taken, holders)
                 _hold_delete(finding, toolbox)
                 if finding.unknown and harness is not None:
                     harness.guard_failed(spec_i.name, "unknown-handle")  # an answer that cites a handle that no tool returned is a failure of the run, and a third failure trips the brake

@@ -23,7 +23,7 @@ from test_foundry_reads import reading_rig
 
 from cases import agents, alerts, config as cfg, foundry, harness as hn, lockfile
 from cases.foundry import AgentRun, AgentSpec, FoundryError, FunctionTool
-from cases.harness import Brake, Budget, Harness, HarnessRefused, ToolGuard, conforms
+from cases.harness import BeatOverTokens, Brake, Budget, Harness, HarnessRefused, ToolGuard, conforms
 from cases.memory_store import MemoryStore
 from cases.models import StoreError, SwitchRecord
 
@@ -713,7 +713,7 @@ class TheRun(unittest.TestCase):
             r.harness.close()
         self.assertEqual(lines(capture, "harness.run"), [])
 
-    def test_a_run_given_a_cap_of_tokens_is_told_to_stop_calling_tools_at_the_cap_and_is_stopped_at_twice_it(self):
+    def test_a_run_given_a_cap_of_tokens_is_told_to_stop_calling_tools_at_the_cap_and_is_a_failed_beat_that_trips_nothing_beyond_its_limit(self):
         r = Rigged()
         with LogCapture() as capture:
             result = r.run(reply([one(GOOD, "c1")], 50, 5), reply([one(GOOD, "c2")], 50, 5), reply([message("done")], 50, 5), max_tokens=100)
@@ -723,13 +723,35 @@ class TheRun(unittest.TestCase):
         self.assertEqual((line["outcome"], line["tokens"], line["budgetRefused"]), ("ok", 165, 1))
         self.assertEqual((r.pulled(), r.letters), ([], []), "a beat that used its tokens as it was told to is no trip")
         r = Rigged()
-        asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], 100, 10) for n in range(1, 6)]
-        with self.assertRaises(HarnessRefused) as raised:
-            r.run(*asks, max_tokens=100)
-        r.harness.close()
-        self.assertEqual(raised.exception.reason, "tokens")
-        self.assertEqual((r.pulled(), [letter[0] for letter in r.letters]), (["investigation"], ["tokens"]), "an agent that goes on after the cap is a loop, and the brake holds at twice the cap")
-        self.assertIn("against a budget of 200", r.letters[0][1])
+        asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], 60_000, 6_000) for n in range(1, 6)]
+        with self.assertRaises(BeatOverTokens) as raised:
+            r.run(*asks, max_tokens=100_000)
+        with LogCapture() as capture:
+            r.harness.close()
+        self.assertNotIsInstance(raised.exception, HarnessRefused, "a failed beat holds nothing that the beats before it found")
+        self.assertEqual(raised.exception.partial.input_tokens + raised.exception.partial.output_tokens, 264_000)
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"], line["tokens"]), ("failed", "tokens", 264_000), "the History says why")
+        self.assertEqual((r.pulled(), r.letters), ([], []), "a beat that goes on after its cap is a failed beat and no trip: the switch stays as it was")
+
+    def test_the_hard_limit_of_a_beat_is_twice_its_cap_or_its_cap_and_sixty_thousand_when_that_is_more(self):
+        self.assertEqual([hn.beat_limit(cap) for cap in (10_000, 30_000, 60_000, 100_000, 200_000)], [70_000, 90_000, 120_000, 200_000, 400_000])
+
+    def test_a_beat_that_ends_above_its_limit_is_a_failed_beat_at_the_limit_or_below_it_is_not_and_none_pulls_the_switch(self):
+        for cap, used, fails in ((100_000, 220_000, True), (100_000, 200_000, False), (100_000, 150_000, False), (30_000, 95_000, True), (30_000, 90_000, False), (30_000, 65_000, False)):
+            with self.subTest(cap=cap, used=used):
+                r = Rigged()
+                answer = reply([message("done")], used - 1_000, 1_000)
+                if fails:
+                    with self.assertRaises(BeatOverTokens):
+                        r.run(answer, max_tokens=cap)
+                else:
+                    self.assertEqual(r.run(answer, max_tokens=cap).text, "done")
+                with LogCapture() as capture:
+                    r.harness.close()
+                (line,) = lines(capture, "harness.run")
+                self.assertEqual((line["outcome"], line["reason"]), ("failed", "tokens") if fails else ("ok", ""))
+                self.assertEqual((r.pulled(), r.letters), ([], []))
 
     def test_a_run_without_a_cap_has_the_budget_of_the_harness_as_before(self):
         r = Rigged(tokens=250)

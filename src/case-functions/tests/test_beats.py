@@ -350,6 +350,24 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual(lines[3]["reason"], "no resource of it is left: 1 that an earlier finding has")
         self.assertEqual(result.cases, 3, "r1 and r2 from the first finding, r3 from the second: each resource once")
 
+    def test_a_later_finding_that_is_surer_of_a_resource_takes_it_from_an_earlier_one_and_with_the_same_confidence_the_earlier_keeps_it(self):
+        h = rig([script(ti.finding(handles=["r1"], confidence=0.6)), script(ti.finding(handles=["r1"], confidence=0.9)), script(one("r5"))])
+        result = h.go()
+        lines = {e["finding"]: e for e in h.of("investigation.finding")}
+        self.assertEqual((lines[1]["kept"], lines[1]["handles"], lines[1]["reason"]), (False, 0, "no resource of it is left: 1 that a later finding, which is surer of them, has"))
+        self.assertEqual((lines[2]["kept"], lines[2]["handles"], lines[2]["repeated"]), (True, 1, 0))
+        self.assertEqual(result.cases, 2, "r1 once, by the surer finding, and r5")
+        h = rig([script(ti.finding(handles=["r1"], confidence=0.9)), script(ti.finding(handles=["r1"], confidence=0.9)), script(one("r5"))])
+        h.go()
+        lines = {e["finding"]: e for e in h.of("investigation.finding")}
+        self.assertEqual((lines[1]["kept"], lines[2]["kept"], lines[2]["repeated"]), (True, False, 1), "the same confidence: the earlier keeps it")
+
+    def test_a_finding_that_code_drops_for_its_own_proof_does_not_take_the_resource_from_a_later_one(self):
+        h = rig([script(ti.finding(handles=["r1"], basis="no-usage", evidence=[])), script(one("r1")), script(one("r5"))])
+        h.go()
+        lines = {e["finding"]: e for e in h.of("investigation.finding")}
+        self.assertEqual((lines[1]["kept"], lines[2]["kept"], lines[2]["handles"]), (False, True, 1))
+
     def test_a_beat_that_fails_is_a_note_and_the_others_still_count(self):
         h = rig([script(one("r1")), {"error": FoundryError("the project is busy")}, script(one("r5"))])
         result = h.go()
@@ -384,12 +402,70 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([(e["beat"], e["end"]) for e in h.of("investigation.beat")], [(1, "answered"), (2, "refused")])
 
     def test_the_tokens_of_the_whole_investigation_stop_the_beats_and_the_beat_that_starts_with_less_gets_what_is_left(self):
-        h = rig([script(one("r1"), tokens=(90_000, 10_000)), script(one("r3"), tokens=(90_000, 10_000)), script(one("r5"))], investigate_total_tokens=150_000)
+        h = rig([script(one("r1"), tokens=(90_000, 10_000)), script(one("r3"), tokens=(60_000, 5_000)), script(one("r5"))], investigate_total_tokens=170_000)
         result = h.go()
         runs = h.foundry.investigator_runs()
-        self.assertEqual([run["max_tokens"] for run in runs], [100_000, 50_000], "the second beat has the tokens that are left")
+        self.assertEqual([run["max_tokens"] for run in runs], [100_000, 70_000], "the second beat has the tokens that are left")
         self.assertEqual((len(runs), result.cases), (2, 2))
         self.assertTrue([n for n in h.notes if "the tokens of the investigation" in n and "2 of 3 beats" in n], h.notes)
+
+    def test_no_beat_starts_with_fewer_tokens_than_it_needs_for_a_step_and_its_answer_and_its_kinds_are_named_as_not_looked_at(self):
+        h = rig([script(one("r1"), tokens=(90_000, 10_000)), script(one("r3")), script(one("r5"))], investigate_total_tokens=150_000)
+        h.go()
+        self.assertEqual(len(h.foundry.investigator_runs()), 1, "50,000 are left, and a step of the model costs 13 to 20 thousand")
+        (record,) = h.store.investigations_recent()
+        self.assertEqual(record.unread[:2], tuple(list(KINDS)[1:3]), "the kinds that no beat was left for are in the record as not looked at")
+
+    def test_a_beat_that_ends_above_its_hard_limit_is_a_failed_beat_with_a_note_and_the_beats_before_it_keep_their_findings_and_the_switch_is_not_pulled(self):
+        import test_harness as th
+        found, costs = pooled()
+        foundry = BeatFoundry([script(one("r1")), script(one("r3"), tokens=(200_000, 20_000)), script(one("r5"))])
+        rigged = th.UnderTheHarness(foundry, SeedToolbox(found), investigate_beats=3)
+        rigged.rig.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs=costs, currency="USD")}
+        result = rigged.go()
+        self.assertEqual((result.state, result.held, result.cases), ("ran", False, 2), "the findings of the first and of the third beat are cases")
+        self.assertEqual((rigged.pulled(), rigged.letters), ([], []), "a beat over its limit is a failed beat and no trip")
+        beat_lines = [(line["beat"], line["ok"]) for line in [e for e in rigged.rig.events if e["type"] == "investigation.beat"]]
+        self.assertEqual(beat_lines, [(1, True), (2, False), (3, True)])
+        self.assertTrue([n for n in rigged.rig.notes if "over its limit of 200000" in n and "the other beats go on" in n], rigged.rig.notes)
+        runs = rigged.lines("harness.run")
+        self.assertEqual([(line["outcome"], line["reason"]) for line in runs if line["agent"] == agents.INVESTIGATOR_NAME], [("ok", ""), ("failed", "tokens"), ("ok", "")])
+
+    def test_a_beat_does_not_start_with_less_time_than_its_reads_and_one_step_of_the_model_need(self):
+        ticker = Ticker()
+        foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+        foundry.after_run = lambda agent: ticker.jump(100) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+        h = rig(None, foundry=foundry, investigate_max_seconds=360)
+        h.ticker, h.s.monotonic = ticker, ticker
+        h.go()
+        self.assertEqual(len(foundry.investigator_runs()), 2, "the third beat had 70 seconds, which is less than the 90 that its reads and a step need")
+        self.assertTrue([n for n in h.notes if "the time of the investigation" in n and "2 of 3 beats" in n], h.notes)
+
+    def test_a_beat_whose_reads_took_the_time_that_the_model_needs_does_not_ask_the_model_and_fails_at_no_cost_in_tokens(self):
+        ticker = Ticker()
+        found, _ = pooled()
+
+        class Slow(SeedToolbox):
+            def call(self, name, arguments):
+                ticker.jump(40)
+                return super().call(name, arguments)
+
+        foundry = BeatFoundry([script(one("r5"))])
+        h = rig(None, foundry=foundry, investigate_beat_seconds=100)
+        h.toolbox = Slow(found)
+        h.ticker, h.s.monotonic = ticker, ticker
+        h.go()
+        ends = [(e["beat"], e["end"], e["ok"]) for e in h.of("investigation.beat")]
+        self.assertEqual(ends[:2], [(1, "time", False), (2, "time", False)], "two reads of 40 seconds leave 20 of the 100: no step of the model fits")
+        self.assertEqual(len(foundry.investigator_runs()), 0)
+        self.assertTrue([n for n in h.notes if "no time was left for the model after the reads that code made" in n], h.notes)
+
+    def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
+        for seconds in (1080, 600):
+            h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=1, investigate_max_seconds=seconds), with_store=True)
+            h.go()
+            (run,) = h.foundry.investigator_runs()
+            self.assertEqual(run["max_seconds"], beats.OPEN_SECONDS, seconds)
 
     def test_the_seconds_of_the_whole_investigation_stop_the_beats_too_and_the_skeptic_keeps_its_reserve(self):
         ticker = Ticker()

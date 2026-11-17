@@ -24,8 +24,10 @@ CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
 SEED_CALLS = SEED_RESOURCES + 2  # the reads that this takes at most: a listing for each kind that is seeded, and a picture at the hour and one at the day
-MIN_SECONDS = 45  # a beat does not start with less time than this, and not with fewer tokens than MIN_TOKENS
-MIN_TOKENS = 30_000
+MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
+STEP_SECONDS = 30  # nor does it ask the model when less than this is left after the reads that code made for it: one step could not end inside its hard time
+OPEN_SECONDS = 480  # the time that one open session has for tool calls, as it had it when the investigation had 600 seconds: the way back (INVESTIGATE_BEATS=1) is the old behaviour
+MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model costs 13 to 20 thousand, and a beat that starts with less cannot ask and be answered inside its hard limit (harness.beat_limit)
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
