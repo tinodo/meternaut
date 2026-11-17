@@ -86,6 +86,9 @@ HOLD_WORDS = {
     "rules": ("Meternaut's rules changed",
               "Meternaut's rules changed, and it had asked about this on less evidence than it asks for now.",
               "Nothing is asked of you. Meternaut looks at it again at its next search."),
+    "waiting": ("Waiting for a free place",
+                "Nothing holds it back any more, but all the places for requests are taken, so Meternaut has not asked about it yet.",
+                "Nothing is asked of you. Meternaut asks about it when a place is free."),
 }
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
 IMPACT = "impact"
@@ -109,7 +112,8 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
               "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
               "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more.",
-              "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
+              "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
+              "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -1582,8 +1586,8 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            title = "No longer held back" if why == "released" else "Taken back"
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why == "released" else "Taken back by Meternaut", "", plan.expires_at)
+            title = {"released": "No longer held back", "left-alone": "Left alone"}.get(why, "Taken back")
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Expired", ("Nobody answered in time.", "Nothing changed."), "Expired, nobody answered", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")

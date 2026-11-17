@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Callable, Sequence
 
 from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
@@ -47,7 +47,9 @@ RULES_CHANGED = "held back: Meternaut's rules changed"
 HELD_BACK = {"automation": MANAGED_BY_AUTOMATION, "unchecked": NOT_CHECKED, "impact": IMPACT_NOT_CHECKED, "rules": RULES_CHANGED}  # the reason of cases/brief.py held_reason (and `rules`) -> the words of the History
 # What the History says when a finding that a guard held back is held no longer (cases/upkeep.py released), and the words of each reason that it was held for.
 RELEASED = "no longer held back"
-HELD_WORDS = {**HELD_BACK, "nothing": NOTHING_TO_SAY}
+LEFT_ALONE = "closed: a person marked it do-not-touch"
+WAITING_FOR_PLACE = "held back: waiting for a free place"
+HELD_WORDS = {**HELD_BACK, "nothing": NOTHING_TO_SAY, "waiting": WAITING_FOR_PLACE}
 # A finding that a guard holds back is shown in a request of its own, in the state HELD (Approvals.settle): nothing asks a person to approve a change for it, and it takes no more than the
 # answers that ask for nothing. It is no open request, so ADVICE_OPEN_MAX does not count it, no card is made for it, and the Decisions page and the letters of a request do not list it.
 HELD_STATUSES = ("needs_human", "proposed")  # the statuses of the cases that wait with no request
@@ -505,40 +507,49 @@ class Approvals:
         approvals.why_not_ask): when a guard holds it back (brief.held_reason, nothing to say), or when its request was taken back because the rules changed. At most HELD_NEW are made at a time, and none
         when nobody can answer.
 
-        A held request is closed when its finding is not one that waits any more (a person answered it, it was dropped, or a request or a change was made), when a request is open for the resource, or
-        when the finding was judged again and no guard holds it back now: the finding is then asked about as any other, by the normal path. A guard that ends by itself (an automation that stopped
-        changing the resource) does not close it: only a judgment does, with the facts of that day. A reason that changed is kept. Returns the requests that it closed, each with its case; it makes no
+        A held request is closed when its finding is not one that waits any more (a person answered it, it was dropped, or a request or a change was made), when a request is open for the resource, when a
+        person marked the resource do-not-touch (`left-alone`), or when the finding was judged again, no guard holds it back now and nobody is to be asked (little is at stake, or a person answered it
+        lately). When the finding was judged again and no guard holds it back, but no request exists for it (the places for requests are full), the request stays, with the reason `waiting`, until a real
+        request exists: the finding is then asked about as any other, by the normal path, and the held one ends. A guard that ends by itself (an automation that stopped changing the resource) does not
+        close it: only a judgment does, with the facts of that day. A reason that changed is kept, and so is the figure of the case. Returns the requests that it closed, each with its case; it makes no
         History line (cases/upkeep.py does, and counts none of them as held back)."""
         try:
             now = self.clock()
             open_plans = self.store.plans_open()
             silenced = {key.lower() for key in self.store.do_not_touch()}
+            quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
+            answered = [p for p in self.store.plans_recent(HELD_ANSWERS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and parse(p.created_at) >= quiet]
             held: dict[str, PlanRecord] = {}
             for plan in self.store.plans_held():  # newest first
                 if plan.case_id in held:
-                    self._release(plan, now)  # a second request for one case (two Watches at once made it): the newest stays
+                    self._release(plan, now, "released")  # a second request for one case (two Watches at once made it): the newest stays
                 else:
                     held[plan.case_id] = plan
             released: list[tuple[PlanRecord, CaseRecord | None]] = []
             for case_id, plan in held.items():
                 case = self.store.case_get(case_id)
-                if case is None or case.status not in HELD_STATUSES or case.resource_id.lower() in silenced or any(about_the_same(open_plan, case) for open_plan in open_plans):
-                    ended = True
+                how = ""  # why the request ends, when it does
+                if case is None or case.status not in HELD_STATUSES or any(about_the_same(open_plan, case) for open_plan in open_plans):
+                    how = "released"
+                elif case.resource_id.lower() in silenced:
+                    how = "left-alone"
                 else:
                     why = self._guard(case)
-                    ended = not why and case.updated_at > plan.created_at  # judged again, and nothing holds it back now
-                    if not ended:
+                    if not why and case.updated_at > plan.created_at:
+                        # Judged again, and nothing holds it back now: the normal path asks about it, and the request ends when there is a real one. Until then it stays shown (the places for requests may be full),
+                        # unless nobody is to be asked: little is at stake, or a person answered it lately.
+                        why = "" if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered) else "waiting"
+                        how = "" if why else "released"
+                    if not how:
                         self._refresh(plan.plan_id, case, why)
                         if case.plan_id != plan.plan_id:
                             self.store.case_update(case.case_id, lambda kept, plan_id=plan.plan_id: _with(kept, plan_id=plan_id))
-                if ended:
-                    fresh = self._release(plan, now)
+                if how:
+                    fresh = self._release(plan, now, how)
                     if fresh is not None:
                         released.append((fresh, case))
             if not approvers:
                 return released
-            quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
-            answered = [p for p in self.store.plans_recent(HELD_ANSWERS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and parse(p.created_at) >= quiet]
             made = 0
             for status in HELD_STATUSES:
                 for case in self.store.cases_recent(HELD_CASES, status):
@@ -562,13 +573,13 @@ class Approvals:
         except StoreError:
             return []
 
-    def _release(self, plan: PlanRecord, now: dt.datetime) -> PlanRecord | None:
-        """Closes a held request that nothing holds back any more, as expired and ending now, with the reason `released`. It is read again first: a person may have answered it since the list was read, and
-        an answer is never taken back. Returns the plan that it closed, or None."""
+    def _release(self, plan: PlanRecord, now: dt.datetime, how: str) -> PlanRecord | None:
+        """Closes a held request, as expired and ending now, with the reason that it ends (`how`: released, when nothing holds the finding back any more or it does not wait any more, or left-alone, when
+        a person marked the resource do-not-touch). It is read again first: a person may have answered it since the list was read, and an answer is never taken back. Returns the plan that it closed, or None."""
         fresh = self.store.plan_get(plan.plan_id)
         if fresh is None or fresh.state != HELD:
             return None
-        fresh = _plan_with(fresh, state="expired", expires_at=stamp(now), preconditions={**(fresh.preconditions or {}), "takenBack": "released"})
+        fresh = _plan_with(fresh, state="expired", expires_at=stamp(now), preconditions={**(fresh.preconditions or {}), "takenBack": how})
         self.store.plan_put(fresh)
         return fresh
 
@@ -643,10 +654,7 @@ class Approvals:
                     return None
             if why_not_ask(case) is not None or brief.says_nothing(case) or self.held_why(case):
                 return None
-            # Azure Advisor's own recommendations are neither held by the cap nor counted by it: they are claims with a figure, and the cap is for the findings that the AIs did not settle.
-            if case.status == "needs_human" and case.detector != ADVISOR and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
-                                                                              and (plan.preconditions or {}).get("caseStatus") == "needs_human"
-                                                                              and (plan.preconditions or {}).get("source") != ADVISOR) >= ADVICE_OPEN_MAX:
+            if places_full(case, open_plans):
                 return None
             now = self.clock()
             quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
@@ -667,6 +675,14 @@ class Approvals:
             if plan is not None:
                 return plan
         return self.advise(case, approvers)
+
+
+def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:
+    """Whether no place is free for a request about this finding: ADVICE_OPEN_MAX requests wait already for findings that the AIs did not settle. Azure Advisor's own recommendations are neither held
+    by the cap nor counted by it: they are claims with a figure, and the cap is for the findings that the AIs did not settle."""
+    return case.status == "needs_human" and case.detector != ADVISOR and sum(
+        1 for plan in open_plans if plan.family == ADVISE and plan.state == "open" and (plan.preconditions or {}).get("caseStatus") == "needs_human"
+        and (plan.preconditions or {}).get("source") != ADVISOR) >= ADVICE_OPEN_MAX
 
 
 def _answered(plan: PlanRecord, now: dt.datetime) -> dict:

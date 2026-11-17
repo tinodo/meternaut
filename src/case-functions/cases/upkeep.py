@@ -15,7 +15,7 @@ from typing import Sequence
 from . import brief
 from . import costs as cost_words
 from . import learning
-from .approvals import HELD_BACK, HELD_WORDS, NOTHING_TO_SAY, RELEASED
+from .approvals import HELD_BACK, HELD_WORDS, LEFT_ALONE, NOTHING_TO_SAY, RELEASED
 from .detectors import Lead
 from .events import History
 from .models import HELD, CaseRecord, PlanRecord, StoreError
@@ -101,8 +101,10 @@ def take_back(ex, history: History) -> Counter:
 
 
 def released(history: History, plan: PlanRecord, case: CaseRecord | None) -> str:
-    """Says in the History that a finding is held back no longer, with the reason that it was held for. It holds no figure: the History keeps no amount of money. Returns the words that it said."""
+    """Says in the History that a finding is held back no longer (`no longer held back`), or that its note was closed because a person marked the resource do-not-touch, with the reason that it was held
+    for. It holds no figure: the History keeps no amount of money. Returns the words that it said."""
     reason = (plan.preconditions or {}).get(HELD)  # the reason that the request was made for stays in its preconditions when it is closed
+    said = LEFT_ALONE if (plan.preconditions or {}).get("takenBack") == "left-alone" else RELEASED
     history.emit("case.released", caseId=plan.case_id, detector=case.detector if case is not None else "", resourceType=clean_text(case.resource_type, 120) if case is not None else "",
-                 resourceName=clean_text(case.resource_name, 120) if case is not None else "", reason=RELEASED, was=HELD_WORDS.get(reason, "") if isinstance(reason, str) else "")
-    return RELEASED
+                 resourceName=clean_text(case.resource_name, 120) if case is not None else "", reason=said, was=HELD_WORDS.get(reason, "") if isinstance(reason, str) else "")
+    return said
