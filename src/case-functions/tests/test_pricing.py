@@ -400,6 +400,10 @@ class WhatMetersCount(unittest.TestCase):
         found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": line("r1", 100.0), "m2": self.refund(-20.0, 3, days=14)}), costs={"r1": 80.0})
         self.assertEqual((found.rows["r1"].low, found.rows["r1"].high), (57.14, 57.14), "20 in 14 days is 42.86 in 30")
 
+    def test_credits_that_take_all_of_the_lower_end_and_not_of_the_higher_end_leave_no_figure_and_say_the_credit(self):
+        found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": shaped("r1", [1.0] * 23 + [2.0] * 7), "m2": self.refund(-37.0, 3)}), costs={"r1": 0.0})
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "credit"}), "37 given back is all that the lines cost a month on the mean since they began: nothing is left of the low end")
+
     def test_credits_as_large_as_the_lines_that_were_named_say_so_and_never_that_those_lines_cost_nothing(self):
         found = priced(block("remove", effect("r1", ("m1",))), toolbox=shown(meters={"m1": line("r1", 20.0), "m2": self.refund(-20.0, 3)}), costs={"r1": 0.0})
         self.assertEqual((found.rows, found.why), ({}, {"r1": "credit"}))
