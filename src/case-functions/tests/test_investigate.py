@@ -405,13 +405,15 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 9,500 since the change that a finding states (the action, the meters that it would shrink and what remains of them, in four forms) was added, and the principle that something larger than
+        # 10,000 since the rate and the quantity of a meter: one sentence that says that code works the saving out as a monthly rate from the latest days, the form quantity (the quantity of one meter, in its
+        # own unit) with the sentence that a ratio on a property is right only when the bill follows it, and the two rates of a line in what the Skeptic is shown: about 550 characters in all, which every
+        # step of an investigation reads again (9,500 since the change that a finding states (the action, the meters that it would shrink and what remains of them, in four forms) was added, and the principle that something larger than
         # its use needs is found by setting what it can carry beside the highest value of what it carries: about 2,400 characters in all, so that code can work out the saving from the bill (it was 7,000
         # since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says which
         # level it judged; 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a finer grain
         # than a day; 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since the data that
         # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 9500)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 10000)
 
     def test_the_investigator_is_told_how_to_find_what_is_larger_than_its_use_needs_in_general_terms_and_never_by_the_average(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -426,7 +428,7 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertLess(text.index("Something larger than its use needs is not found"), text.index("5. An absent measurement"))
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
 
-    def test_the_investigator_is_told_to_state_the_change_that_a_finding_proposes_and_what_remains_in_the_four_forms_that_code_can_check(self):
+    def test_the_investigator_is_told_to_state_the_change_that_a_finding_proposes_and_what_remains_in_the_forms_that_code_can_check(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
         for key in ('"change"', '"action"', '"effects"', '"meters"', '"remains"', '"how"'):
             self.assertIn(key, text)
@@ -434,12 +436,16 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
         for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
                          "window that it offers, never those of a whole type)",
-                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
+                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
                          "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
                          "When you cannot name the meters, give the action none.",
                          "A recommendation names the change and the bill lines that it would shrink, and says what remains of them",
                          "say so when a saving rests on your own assumption"):
             self.assertIn(sentence, text)
+        for sentence in ("Code works it out as a monthly rate from the latest days of those lines, so what is new, resized or stopped is priced as it is now.",
+                         "State a change in how much of a billed meter is used in that meter's own quantity; a ratio on a property is right only when the bill follows that property.",
+                         'when how much of a meter is used is reduced, with one meter in the effect (the action reduce or schedule)'):
+            self.assertIn(sentence, text, "the saving is a monthly rate from the latest days, and a quantity is the meter's own")
         self.assertIn(f"at most {pricing.MAX_HOW} characters", text)
         self.assertEqual(banned_in(text), [])
         for tool in FakeToolbox().specs:
@@ -449,7 +455,8 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
-                         "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why"):
+                         "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
+                         "ratio or quantity with from and to and, for a quantity, unit", "at the lower of two rates: week, the rate of their last week, and since, the mean since the first day that had a cost, null when the read cannot say it"):
             self.assertIn(sentence, text)
         self.assertEqual(banned_in(text), [])
 

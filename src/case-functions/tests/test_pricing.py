@@ -44,6 +44,14 @@ def shaped(scope: str, costs, days: int = 30, words=COMPUTE) -> Meter:
     return Meter(scope, None, words, 24.0 * len(costs), math.fsum(costs), daily, None, START, days)
 
 
+UNITS = ("Example Gateway", "Standard Tier", "Extra Units", "OnDemand", "Usage", "1 Hour")
+
+
+def billed_units(usd: float = 201.60, quantity: float = 1440.0, scope: str = "r1", days: int = 30, words=UNITS) -> Meter:
+    """A meter that bills only the units above the included ones: `quantity` unit-hours that cost `usd` over `days` days, the same on each day (invented: 2 units for 720 hours of a resource with 4)."""
+    return Meter(scope, None, words, quantity, usd, {START + dt.timedelta(days=n): usd / days for n in range(days)}, None, START, days)
+
+
 def registry() -> dict[str, Meter]:
     return {"m1": line("r1", 60.0), "m2": line("r1", 40.0, STORAGE), "m3": line("r2", 30.0), "m4": line("r1", 25.0, NETWORK)}
 
@@ -478,6 +486,102 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         self.assertEqual((found.rows["r1"].low, found.rows["r1"].high), (22.0, 45.0))
 
 
+class TheQuantityOfAMeter(unittest.TestCase):
+    """A change in how much of a billed meter is used is stated in that meter's own quantity, which is what the bill measures. A ratio on a property is right only when the meter follows that property.
+    The meter here bills only the units above the included ones: invented numbers, 1,440 unit-hours that cost 201.60 (2 units for 720 hours), while the resource has 4 units in all."""
+
+    def price(self, remains, action="reduce", meters=("m1",), toolbox=None, costs=None):
+        box = toolbox or shown(meters={"m1": billed_units(), "m2": billed_units(scope="r2"), "m3": billed_units(words=STORAGE)},
+                               evidence={"r1": {"properties": {"units": 4}}, "r2": {"properties": {"units": 4}}})
+        return pricing.price(pricing.parse(block(action, effect("r1", meters, remains))), ("r1",), box, {"r1": 201.60} if costs is None else costs, None)
+
+    def test_the_extra_units_that_go_away_are_what_the_meter_bills_and_half_of_them_are_half(self):
+        row = self.price({"form": "quantity", "from": 1440, "to": 0}).rows["r1"]
+        self.assertEqual((row.low, row.high, row.form, row.level, row.said), (201.6, 201.6, "quantity", pricing.SCENARIO, {"from": 1440.0, "to": 0.0, "unit": "1 Hour"}))
+        row = self.price({"form": "quantity", "from": 1440, "to": 720}).rows["r1"]
+        self.assertEqual((row.low, row.high), (100.8, 100.8))
+
+    def test_a_ratio_on_the_property_of_the_resource_halves_a_meter_that_does_not_follow_it_which_is_why_the_quantity_form_exists(self):
+        row = self.price({"form": "ratio", "on": "units", "from": 4, "to": 2}).rows["r1"]
+        self.assertEqual((row.low, row.form), (100.8, "ratio"), "4 units to 2 books half of the meter: the meter bills the 2 above the included ones, and 2 to 0 is all of it")
+        self.assertEqual(self.price({"form": "quantity", "from": 1440, "to": 0}).rows["r1"].low, 201.6)
+
+    def test_the_quantity_that_the_ai_starts_from_is_the_meters_own_as_the_tool_showed_it(self):
+        for said in (1441, 1440.5, 4, 720, 14400):
+            with self.subTest(said=said):
+                found = self.price({"form": "quantity", "from": said, "to": 0})
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
+        self.assertEqual(self.price({"form": "quantity", "from": 1440.0001, "to": 0}).rows["r1"].low, 201.6, "within a millionth, as for a number that a ratio cites")
+
+    def test_a_target_that_is_not_a_reduction_of_a_quantity_makes_no_figure(self):
+        for start, target in ((1440, 1440), (1440, 1500), (1440, -1), (0, 0), (True, 0), (1440, True), ("1440", 0), (1440, "0"), (1440, None), (float("nan"), 0), (1440, float("inf"))):
+            with self.subTest(start=start, target=target):
+                found = self.price({"form": "quantity", "from": start, "to": target})
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
+
+    def test_a_quantity_of_a_meter_of_another_resource_or_of_a_meter_that_no_tool_showed_is_not_priced(self):
+        for meters in (("m2",), ("m9",)):
+            with self.subTest(meters=meters):
+                found = self.price({"form": "quantity", "from": 1440, "to": 0}, meters=meters)
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "lines"}))
+
+    def test_a_quantity_belongs_to_one_meter_so_an_effect_that_names_two_has_no_figure_and_two_effects_add_up(self):
+        found = self.price({"form": "quantity", "from": 1440, "to": 0}, meters=("m1", "m3"))
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
+        box = shown(meters={"m1": billed_units(), "m3": billed_units(usd=100.0, quantity=720.0, words=STORAGE)})
+        change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 720}), effect("r1", ("m3",), {"form": "quantity", "from": 720, "to": 0})))
+        row = pricing.price(change, ("r1",), box, {"r1": 301.6}, None).rows["r1"]
+        self.assertEqual((row.low, row.high, row.form, row.lines), (200.8, 200.8, "mixed", 2), "100.80 and 100.00, each by its own quantity")
+
+    def test_the_quantity_goes_with_reduce_and_schedule_and_with_no_other_action(self):
+        for action, fits in (("reduce", True), ("schedule", True), ("remove", False), ("switch", False), ("commit", False)):
+            with self.subTest(action=action):
+                found = self.price({"form": "quantity", "from": 1440, "to": 720}, action=action)
+                self.assertEqual(sorted(found.rows), ["r1"] if fits else [])
+
+    def test_the_share_that_remains_is_applied_to_both_rates_of_the_meter(self):
+        meter = Meter("r1", None, UNITS, 720.0, 37.0, {START + dt.timedelta(days=n): 1.0 if n < 23 else 2.0 for n in range(30)}, None, START, 30)
+        row = self.price({"form": "quantity", "from": 720, "to": 360}, toolbox=shown(meters={"m1": meter}), costs={"r1": 37.0}).rows["r1"]
+        self.assertEqual((row.low, row.high), (18.5, 30.0), "half of 37 and of 60 a month")
+
+    def test_the_basis_says_the_quantities_and_the_unit_and_whose_target_it_is(self):
+        facts = {pricing.KEY: pricing.digest(pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 720}))),
+                                             self.price({"form": "quantity", "from": 1440, "to": 720}), "r1")}
+        found = pricing.saved(facts)
+        self.assertEqual((found.low, found.level), (100.8, pricing.SCENARIO))
+        self.assertEqual(found.basis, "the 1 bill line of 1 resource that the change would shrink, at the rate of the last 7 days, scaled by the change from 1,440 to 720 (unit: 1 Hour): the AI's target")
+        for unit in ("<b>hours</b>", "a" * 25, "hours\n"):
+            with self.subTest(unit=unit):
+                price = {**facts[pricing.KEY]["price"], "unit": unit}
+                self.assertNotIn(unit.strip(), pricing.saved({pricing.KEY: {"action": "reduce", "price": price}}).basis, "a unit that is not a plain word is never put into a sentence")
+        bare = {key: value for key, value in facts[pricing.KEY]["price"].items() if key != "unit"}
+        self.assertTrue(pricing.saved({pricing.KEY: {"action": "reduce", "price": bare}}).basis.endswith("scaled by the change from 1,440 to 720: the AI's target"))
+
+    def test_a_unit_that_is_not_a_plain_word_is_not_kept_in_the_digest(self):
+        meter = billed_units(words=("Example Gateway", "Standard Tier", "Extra Units", "OnDemand", "Usage", "<script>"))
+        row = self.price({"form": "quantity", "from": 1440, "to": 0}, toolbox=shown(meters={"m1": meter})).rows["r1"]
+        self.assertEqual(row.said, {"from": 1440.0, "to": 0.0})
+
+    def test_the_skeptic_is_shown_the_unit_after_the_check_of_the_tools_and_the_two_quantities(self):
+        change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 720})))
+        box = shown(meters={"m1": billed_units()})
+        found = pricing.price(change, ("r1",), box, {"r1": 201.6}, None)
+        (one,) = pricing.view(change, found, box.meters, lambda word: word, 6, ())["effects"]
+        self.assertEqual((one["form"], one["from"], one["to"], one["unit"], one["usd"]), ("quantity", 1440.0, 720.0, "1 Hour", 201.6))
+        (one,) = pricing.view(change, found, box.meters, lambda word: None, 6, ())["effects"]
+        self.assertEqual(one["unit"], "other", "a word that the check of the tools does not pass is not shown")
+
+    def test_a_group_of_resources_that_state_the_same_quantities_keeps_the_rule_and_one_that_states_others_is_mixed(self):
+        change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 720}), effect("r2", ("m2",), {"form": "quantity", "from": 1440, "to": 720})))
+        box = shown(meters={"m1": billed_units(), "m2": billed_units(scope="r2")})
+        found = pricing.price(change, ("r1", "r2"), box, {"r1": 201.6, "r2": 201.6}, None)
+        joined = pricing.combine([pricing.digest(change, found, handle) for handle in ("r1", "r2")], 2)["price"]
+        self.assertEqual((joined["form"], joined["from"], joined["to"], joined["unit"], joined["lowUsd"]), ("quantity", 1440.0, 720.0, "1 Hour", 201.6))
+        other = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 720}), effect("r2", ("m2",), {"form": "quantity", "from": 1440, "to": 0})))
+        found = pricing.price(other, ("r1", "r2"), box, {"r1": 201.6, "r2": 201.6}, None)
+        self.assertEqual(pricing.combine([pricing.digest(other, found, handle) for handle in ("r1", "r2")], 2)["price"]["form"], "mixed")
+
+
 class TheDigestAndWhatItSays(unittest.TestCase):
     """The digest is typed numbers and closed words; the brief reads it again, and every number is checked once more."""
 
@@ -794,6 +898,17 @@ class WhenAnInvestigationPricesAChange(unittest.TestCase):
     def test_a_share_of_days_is_the_ais_and_the_arithmetic_is_the_codes(self):
         h = self.go(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7})), proposal="change", basis="oversized", handles=("r1",))
         self.assertEqual(self.figures(h), {"thing-1": 17.14})
+
+    def test_a_change_in_the_quantity_of_a_meter_is_priced_from_the_meter_and_a_ratio_on_a_property_that_the_meter_does_not_follow_is_not(self):
+        toolbox = holding(meters={"m1": billed_units()}, evidence={"r1": {**metrics(MetricA=0), "properties": {"units": 4}}, "r2": metrics(MetricA=0)}, costs=(201.6, 30.0))
+        quantity = self.go(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 1440, "to": 0})), toolbox, proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(quantity), {"thing-1": 201.6}, "2 extra units to none is all that the meter bills")
+        price = self.facts(quantity)["thing-1"]["price"]
+        self.assertEqual((price["form"], price["from"], price["to"], price["unit"]), ("quantity", 1440.0, 0.0, "1 Hour"))
+        ratio = self.go(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": 4, "to": 2})), toolbox, proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(ratio), {"thing-1": 100.8}, "4 units to 2 books half of a meter that bills the 2 above the included ones")
+        wrong = self.go(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 4, "to": 2})), toolbox, proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual((self.figures(wrong), self.facts(wrong)["thing-1"]["missing"]), ({"thing-1": None}, "remains"), "the number of a property is not the quantity of a meter")
 
     def test_an_amount_that_the_ai_writes_into_the_block_or_the_answer_is_never_read(self):
         raw = block("remove", {**effect("r1", ("m1",)), "monthlySavingUsd": 9999.5, "usd": 8888.5}, how="Saves 7777.5 a month.")

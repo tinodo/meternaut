@@ -7,10 +7,14 @@ saving rests on the lower rate and the high end on the higher one, times the sha
 forms that code can check against what the tools showed in the same run:
 
   none           everything that the meters bill goes away: a figure that follows from the bill alone (Expected)
+  quantity       how much of one billed meter is used goes from the quantity that the meter shows to a quantity that the AI proposes, in the meter's own unit (Scenario)
   ratio          a count or a size goes from a number that a tool returned for the resource to a number that the AI proposes (Scenario)
   share_of_days  the resource is needed on some days of every so many, which the AI states (Scenario)
   assumed        a share that the AI assumes, as a low and a high, always said to be the AI's own (Scenario)
   alternative    a switch to something else, priced from a public price list: refused until that exists
+
+A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
+quantity of a meter is what the bill measures, so it is checked against the meter itself.
 
 A meter that no tool showed, that belongs to another resource or to a whole type, or that gives no rate (a read of under 7 days, or fewer than 3 days of cost) is not counted; a bill line is counted
 once in a finding; what could not be checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
@@ -28,15 +32,16 @@ from .roles import clean_text
 
 KEY = "change"  # the key of the facts of a case
 ACTIONS = ("remove", "reduce", "switch", "schedule", "commit", "none")
-FORMS = ("none", "ratio", "share_of_days", "assumed", "alternative")
-ALLOWED = {"remove": ("none",), "reduce": ("ratio", "assumed"), "schedule": ("share_of_days", "assumed"), "switch": ("alternative", "assumed"), "commit": ("assumed",)}
-SHOWN = ("none", "ratio", "share_of_days", "assumed", "mixed")  # the forms that a digest may have: mixed is a sum of resources whose rules differ
+FORMS = ("none", "quantity", "ratio", "share_of_days", "assumed", "alternative")
+ALLOWED = {"remove": ("none",), "reduce": ("quantity", "ratio", "assumed"), "schedule": ("share_of_days", "quantity", "assumed"), "switch": ("alternative", "assumed"), "commit": ("assumed",)}
+SHOWN = ("none", "quantity", "ratio", "share_of_days", "assumed", "mixed")  # the forms that a digest may have: mixed is a sum of resources whose rules differ
 MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
 UNEVEN = 1.0  # a meter whose daily cost spreads by more than its mean is uneven: a rate worked out from it is a rough guide (a statistic about the bill, not a rule about what is waste)
 ALIKE = 0.05  # two rates that differ by no more than this share of the larger are the same one
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9 ._/-]{0,63}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
+UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
     "lines": f"No saving was worked out: the bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
@@ -159,6 +164,9 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
         return form, 0.0, 0.0, {}
     if form == "alternative":
         return "later"
+    if form == "quantity":
+        start, target = _number(said.get("from")), _number(said.get("to"))
+        return (form, target / start, target / start, {"from": start, "to": target}) if start is not None and target is not None and 0 <= target < start else "remains"
     if form == "ratio":
         start, target, name = _number(said.get("from")), _number(said.get("to")), said.get("on")
         if start is None or target is None or not 0 <= target < start or not _cited(block, name, start) or not NAME.fullmatch(str(name)):
@@ -203,7 +211,7 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
     found = _remains(effect.remains, action, block)
     if isinstance(found, str):
         return found
-    used: list[tuple[str, Rates]] = []
+    used: list[tuple[str, Rates, Meter]] = []
     skipped = 0
     for name in effect.meters:
         meter = registry.get(name) if METER.fullmatch(name) else None
@@ -215,14 +223,20 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
             skipped += 1
         elif (meter.scope, meter.words) not in seen and (got.week > 0 or (got.since or 0) > 0):
             seen.add((meter.scope, meter.words))  # a bill line counts once, however many calls showed it
-            used.append((name, got))
+            used.append((name, got, meter))
     if not effect.meters:
         return "none"
     if not used:
         return "lines" if skipped else "nothing"
-    since = math.fsum(got.week if got.since is None else got.since for _, got in used) if any(got.since is not None for _, got in used) else None
-    return Part(*found, math.fsum(got.week for _, got in used), since, tuple(name for name, _ in used), skipped, min((got.life for _, got in used if got.began), default=None),
-                sum(1 for _, got in used if got.cv is not None and got.cv > UNEVEN))
+    form, least, most, said = found
+    if form == "quantity":  # a quantity is the quantity of one meter, in its own unit, and is the one that the tool showed for it
+        if len(effect.meters) != 1 or not math.isclose(said["from"], used[0][2].quantity, rel_tol=1e-6, abs_tol=0.0):
+            return "remains"
+        unit = (used[0][2].words or ("",))[-1]
+        said = {**said, **({"unit": unit} if UNIT.fullmatch(unit) else {})}
+    since = math.fsum(got.week if got.since is None else got.since for _, got, _ in used) if any(got.since is not None for _, got, _ in used) else None
+    return Part(form, least, most, said, math.fsum(got.week for _, got, _ in used), since, tuple(name for name, _, _ in used), skipped,
+                min((got.life for _, got, _ in used if got.began), default=None), sum(1 for _, got, _ in used if got.cv is not None and got.cv > UNEVEN))
 
 
 def _own(meters: Iterable[Meter]) -> tuple[float, float] | None:
@@ -319,7 +333,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "to", "on", "days", "span", "away")
+    keys = ("form", "from", "to", "on", "unit", "days", "span", "away")
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
@@ -369,8 +383,12 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
     lines, many, members = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1, _whole(found.get("members"))
     whose = f"{many} of {members} resources" if members and members > many else _count(many, "resource")  # how many of the resources are priced comes first: a card cuts the end of the line
     text = f"the {_count(lines, 'bill line')} of {whose} that the change would {'remove' if form == 'none' else 'shrink'}, {_rate(found)}"
-    start, target, days, span, away, on = (found.get(key) for key in ("from", "to", "days", "span", "away", "on"))
-    if form == "ratio":
+    start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
+    if form == "quantity":
+        text += (f", scaled by the change from {start:,.10g} to {target:,.10g}" if _number(start) is not None and _number(target) is not None else ", scaled by the change in the quantity that the AI proposed")
+        text += f" (unit: {unit})" if isinstance(unit, str) and UNIT.fullmatch(unit) else ""
+        text += ": the AI's target"
+    elif form == "ratio":
         name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
         text += (f", scaled by the change{name} from {start:g} to {target:g}" if _number(start) is not None and _number(target) is not None else ", scaled by the change that the AI proposed")
         text += ": the AI's target"
@@ -462,5 +480,6 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
             lines.append({"meter": name, "words": [word(text) or "other" for text in meter.words], "usd": round(meter.usd, 2), "days": numbers["days"], "week": round(got.week, 2),
                           "since": None if got.since is None else round(got.since, 2), "life": got.life, "cv": None if got.cv is None else round(got.cv, 3)})
         more = {"remains": [round(1 - row.away[1], 4), round(1 - row.away[0], 4)]} if row.form == "assumed" and row.away is not None else {}
-        effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **row.said, **more})
+        said = {key: (word(value) or "other" if key == "unit" else value) for key, value in row.said.items()}  # the unit of a meter is a word of the platform, shown through the check of the tools
+        effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **said, **more})
     return {"action": change.action, "effects": effects}
