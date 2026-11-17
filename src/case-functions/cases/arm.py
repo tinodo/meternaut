@@ -239,18 +239,19 @@ class Arm:
         return str(link)
 
     def _cost_rows(self, subscription: str, start: dt.date, end: dt.date, dimensions: tuple[str, ...], *, kind: str = "ActualCost", daily: bool = False,
-                   where: tuple[str, tuple[str, ...]] | None = None, usage: bool = False) -> list[tuple]:
+                   where: tuple[str, tuple[str, ...]] | None = None, usage: bool = False, also: tuple[str, tuple[str, ...]] | None = None) -> list[tuple]:
         """Every row of one Cost Management query (Learn, "Query - Usage") that groups the cost from start to end (both days included) by the dimensions: the value of each
         dimension in the order asked for, the sum of the cost and its currency ("" when the answer has no currency column). `kind` is ActualCost or AmortizedCost. With `daily` the
-        granularity is Daily and the answer has a column UsageDate (a number such as 20261031), which a dimension of that name asks for: it is not a grouping. `where` is a dimension and the
-        values that a row must have (an In filter). With `usage` the sum of the quantity (UsageQuantity) is asked for too, and is the fourth value of a row."""
+        granularity is Daily and the answer has a column UsageDate (a number such as 20261031), which a dimension of that name asks for: it is not a grouping. `where` and `also` are a dimension
+        and the values that a row must have (an In filter each; both when both are given). With `usage` the sum of the quantity (UsageQuantity) is asked for too, and is the fourth value of a row."""
         grouping = [{"type": "Dimension", "name": name} for name in dimensions if name != "UsageDate"]
         aggregation = {"totalCost": {"name": "Cost", "function": "Sum"}, **({"totalQuantity": {"name": "UsageQuantity", "function": "Sum"}} if usage else {})}
         dataset: dict[str, object] = {"granularity": "Daily" if daily else "None", "aggregation": aggregation}
         if grouping:
             dataset["grouping"] = grouping
-        if where is not None:
-            dataset["filter"] = {"dimensions": {"name": where[0], "operator": "In", "values": list(where[1])}}
+        filters = [{"dimensions": {"name": pair[0], "operator": "In", "values": list(pair[1])}} for pair in (where, also) if pair is not None]
+        if filters:
+            dataset["filter"] = filters[0] if len(filters) == 1 else {"and": filters}
         body = {"type": kind, "timeframe": "Custom", "timePeriod": {"from": f"{start.isoformat()}T00:00:00Z", "to": f"{end.isoformat()}T23:59:59Z"}, "dataset": dataset}
         url: str | None = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.CostManagement/query?api-version={COST_API}"
         found: list[tuple] = []
@@ -376,21 +377,23 @@ class Arm:
         with the words as Cost Management gives them. A purchase is spread over its term, and a part of a commitment that nothing used is a charge of its own. Learn, "Query - Usage"."""
         return [(values[0], values[1], amount, code) for values, amount, code in self._cost_rows(subscription, start, end, ("PricingModel", "ChargeType"), kind="AmortizedCost")]
 
-    def meter_days(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]]) -> list[tuple[dt.date, tuple[str, ...], float, float, str]]:
+    def meter_days(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]],
+                   also: tuple[str, tuple[str, ...]] | None = None) -> list[tuple[dt.date, tuple[str, ...], float, float, str]]:
         """What the actual cost was billed for, for each day from start to end (both days included): (day, the six words of the meter as Cost Management gives them (category, subcategory, name,
-        pricing model, kind of charge, unit of measure), cost, quantity, currency). `where` is the dimension and the values that a line must have (ResourceId, ResourceType). Learn, "Query - Usage"."""
+        pricing model, kind of charge, unit of measure), cost, quantity, currency). `where` (and `also`) is the dimension and the values that a line must have (ResourceId, ResourceType, ServiceName).
+        Learn, "Query - Usage"."""
         found = []
-        for values, amount, code, quantity in self._cost_rows(subscription, start, end, METER_DIMENSIONS, daily=True, where=where, usage=True):
+        for values, amount, code, quantity in self._cost_rows(subscription, start, end, METER_DIMENSIONS, daily=True, where=where, usage=True, also=also):
             try:
                 found.append((dt.datetime.strptime(values[0][:8], "%Y%m%d").date(), tuple(values[1:]), amount, quantity, code))
             except ValueError:
                 raise _bad("Cost Management") from None
         return found
 
-    def meter_resources(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]]) -> dict[tuple[str, ...], int]:
+    def meter_resources(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]], also: tuple[str, tuple[str, ...]] | None = None) -> dict[tuple[str, ...], int]:
         """How many resources have a cost line for each meter over the same days: one query by meter and by resource, with no days."""
         found: dict[tuple[str, ...], set[str]] = {}
-        for values, _, _ in self._cost_rows(subscription, start, end, METER_DIMENSIONS[1:] + ("ResourceId",), where=where):
+        for values, _, _ in self._cost_rows(subscription, start, end, METER_DIMENSIONS[1:] + ("ResourceId",), where=where, also=also):
             found.setdefault(tuple(values[:-1]), set()).add(values[-1].lower())
         return {meter: len(resources - {""}) for meter, resources in found.items()}
 

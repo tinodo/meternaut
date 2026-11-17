@@ -72,6 +72,7 @@ from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
 from .identity import IdentityError
+from .meters import Meter, fold, shape
 from .models import CapabilityRecord, StoreError
 
 MAX_RESULT_CHARS = 6000
@@ -123,6 +124,8 @@ NO_METRICS = "no-metrics"  # what an answer says of a type that offers no platfo
 NO_METRICS_TEXT = "is not a supported platform metric namespace"  # how Azure Monitor refuses the definitions of such a type (HTTP 400)
 NOT_DOLLARS = "not in dollars"  # what an answer says of a scope whose cost is in another currency: it is never added up
 MAX_METRICS = 8  # the metrics that one call of metric_summary or measure reads
+METER_WORDS = ("category", "subcategory", "name", "pricing", "charge", "unit")  # the six words of a meter, in the order of the dimensions that Cost Management groups by
+METER_COLUMNS = ("meter", *METER_WORDS, "quantity", "usd", "share", "days", "avg_day", "min_day", "max_day", "cv", "first_day", "last_day")
 READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # what data_readers counts, in the order of its columns
 CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "tokens_per_minute", "state", "upgrade")  # what children tells of each part, in the order of its columns
 
@@ -740,11 +743,12 @@ TOOLS = {tool.name: tool for tool in (
           Param("days", "integer", "How many closed days to look back, 7 to 90. Null for 30.", low=7, high=MAX_HISTORY),
           Param("basis", "choice", "actual: what was charged. amortized: a purchase spread over its term. Null for actual.", choices=("actual", "amortized")))),
     Tool("cost_meters",
-         "Shows what one resource (handle) or all resources of one type (type, and service to keep one) are billed for, meter by meter, over the last 7 to 30 closed days, dearest first, as a table: "
-         "the meter (m1, m2, ... for this run), its category, subcategory and name as short words of the platform, its pricing and charge, the unit, the quantity and the cost in US dollars over the "
-         "window, its share of the scope's cost, and the daily shape: the days that have a cost, their average, smallest and greatest cost, cv (the spread of the daily cost over the whole "
-         "window divided by its mean) and how many days ago the first and the last cost were. For a type also resources, how many resources carry the meter. It says what is billed, not why, and "
-         "decides nothing. Give a handle or a type, never both. An answer is kept for the run.",
+         "Shows what one resource (handle) or all resources of one type (type; service keeps one service) are billed for, meter by meter, over the last 7 to 30 closed days, dearest first, as a "
+         "table (cols and rows; same holds a field that is the same in every row). A row: meter (m1, m2, ... for this run; null for a line that no resource owns), category, subcategory, name, "
+         "pricing, charge and unit as short words of the platform, quantity and usd over the window, share of the scope's cost, and the daily shape: days (that have a cost), avg_day, min_day, "
+         "max_day, cv (the spread of the daily cost over the whole window divided by its mean), first_day and last_day (how many days ago). For a type also resources, how many carry the meter. "
+         "It says what is billed, not why. costs says not in dollars when the cost is in another currency. Give a handle or a type, never both. When next_offset is there, read the next page "
+         "with it. An answer is kept for the run.",
          (Param("handle", "handle", "The handle of one resource that an earlier answer showed. Null when a type is given."),
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
           Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
@@ -771,6 +775,7 @@ TOOLS = {tool.name: tool for tool in (
 )}
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
+PLACEHOLDER_METER = f"m{HANDLE_LIMIT}"
 
 
 def _page(answer: dict, rows: list, offset: int, total: int) -> None:
@@ -893,6 +898,8 @@ class Toolbox:
         self._spaces: dict[str, _Space] = {}  # handle -> what is known of its settings and tables
         self._volumes: dict[tuple[str, int], tuple[list, float, str]] = {}  # (handle, days) -> the tables by volume, the billable MB, and the word that says whether it was read
         self._kept: dict[tuple, object] = {}  # what the deeper reads of the run have read, by what they asked for: a read is made once in a run, whether it worked or not
+        self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
+        self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
 
     @property
@@ -1603,7 +1610,9 @@ class Toolbox:
             for name in names:
                 plan = plans[handle][name]
                 if isinstance(plan, str):
-                    shown = name if many and plan == "unknown-metric" and name in echoed else None
+                    if many and plan == "unknown-metric" and name not in echoed:
+                        continue  # no type of a handle offers it: it is counted in unknown_metrics and never named
+                    shown = name if many and plan == "unknown-metric" else None
                     if (plan, shown) not in said:
                         said.add((plan, shown))
                         rows.append({"handle": handle, **({"metric": shown} if shown else {}), "error": plan})  # a type that has no metrics or could not be asked is told once, whatever the names
@@ -2372,6 +2381,96 @@ class Toolbox:
         if handle is not None:
             self._record_metric(handle, f"Cost {basis} USD {days}d", {"total": total, "max": _cents(_money(max(daily))), "average": _money(math.fsum(with_cost) / len(with_cost)) if with_cost else None,
                                                                    "days_with_data": len(with_cost)}, days, "USD")
+        return answer
+
+    def _meter_handle(self, line: Meter) -> str | None:
+        """The handle of a meter of a scope: the same one whenever it is shown again in the run. None when the handles are used up."""
+        key = (line.scope, line.service, line.words)
+        if key not in self._meter_keys:
+            if len(self._meter_keys) >= HANDLE_LIMIT:
+                return None
+            self._meter_keys[key] = f"m{len(self._meter_keys) + 1}"
+        self.meters[self._meter_keys[key]] = line
+        return self._meter_keys[key]
+
+    def _tool_cost_meters(self, args: dict) -> dict:
+        handle, kind, service, days, offset = args["handle"], args["type"], args["service"], args["days"] or MAX_DAYS, args["offset"] or 0
+        if (handle is None) == (kind is None):
+            raise BadArguments("handle")
+        today = self._today()
+        start, end = today - dt.timedelta(days=days), today - dt.timedelta(days=1)
+        unlisted: list[str] = []
+        if handle is not None:
+            entry = self._entry(handle)
+            if entry.part_of is not None:
+                raise NotOffered(handle)  # a part of a resource is billed with the resource, and no cost line is its own
+            subs, where, scope = [entry.sub], ("ResourceId", (entry.resource.resource_id,)), handle
+        else:
+            self._load_type(kind)
+            unlisted = [sub for sub in self.subscriptions if sub in self._unlisted]
+            subs, where, scope = sorted({item.sub for item in self._entries_of(kind)}, key=list(self.subscriptions).index), ("ResourceType", (kind,)), kind
+        also = ("ServiceName", (service,)) if service else None
+
+        def read(sub: str) -> "tuple[list, dict] | Failed":
+            return self._once(("meters", sub, scope, service, days), lambda: (self.arm.meter_days(sub, start, end, where, also),
+                                                                            {} if handle is not None else self.arm.meter_resources(sub, start, end, where, also)))
+
+        outcomes = self._pool(subs, read)
+        rows: list[tuple] = []
+        carriers: dict[tuple[str, ...], int] = {}
+        failed: list[str] = []
+        dollars: list[str] = []
+        last: Exception | None = None
+        for sub in subs:
+            found = outcomes.get(sub)
+            if isinstance(found, Failed):
+                self._note(sub, "what is billed", found.error)
+                failed.append(sub)
+                last = found.error
+            elif found is not None and any(row[4] != "USD" for row in found[0]):
+                self._say(f"{sub[:8]}: the cost is not in US dollars, so cost_meters does not show it")
+                dollars.append(sub)
+            elif found is not None:
+                rows.extend(found[0])
+                for words, count in found[1].items():
+                    carriers[words] = carriers.get(words, 0) + count
+        if last is not None and len(failed) == len([sub for sub in subs if sub in outcomes]):
+            raise last
+        folded = fold((day, words, cost, quantity) for day, words, cost, quantity, _ in rows)
+        total = math.fsum(spent for _, spent, _ in folded.values())
+        lines = [Meter(scope, service, words, used, spent, daily, None if handle is not None else carriers.get(words, 0), start, days)
+                 for words, (used, spent, daily) in sorted(folded.items(), key=lambda item: (-item[1][1], item[0]))]
+        said: dict = {}
+        if failed or unlisted:
+            self._listing(said, "unavailable", failed + [sub for sub in unlisted if sub not in failed])
+        if dollars:
+            said["costs"] = NOT_DOLLARS
+            if len(dollars) < len(subs):
+                self._listing(said, "not_in_dollars", dollars)
+        said.update(self._unread())
+        window = lines[offset:offset + MAX_LISTED]
+        cells = []
+        for line in window:
+            numbers = shape(line, today)
+            cells.append({"meter": PLACEHOLDER_METER if line.resources != 0 else None, **{name: _shown(meter_word, word) for name, word in zip(METER_WORDS, line.words)},
+                          "quantity": _measure(line.quantity), "usd": _cents(_money(line.usd)), "share": round(line.usd / total, 4) if total > 0 else None, "days": numbers["days"],
+                          **{name: None if numbers[name] is None else _cents(_money(numbers[name])) for name in ("avg_day", "min_day", "max_day")},
+                          "cv": None if numbers["cv"] is None else round(numbers["cv"], 3), "first_day": numbers["first_day"], "last_day": numbers["last_day"],
+                          **({"resources": line.resources} if handle is None else {})})
+        same = {name: cells[0][name] for name in METER_WORDS if len(cells) > 1 and cells[0][name] is not None and all(cell[name] == cells[0][name] for cell in cells)}
+        columns = [name for name in (*METER_COLUMNS, *(["resources"] if handle is None else [])) if name not in same]
+        table = []
+        for cell in cells:
+            values = [cell.get(name) for name in columns]
+            while len(values) > 1 and values[-1] is None:
+                values.pop()
+            table.append(values)
+        answer: dict = {**({"handle": handle} if handle is not None else {"type": kind}), **({"service": service} if service else {}), "window_days": days, "usd_total": _cents(_money(total)),
+                        "meters": len(lines), "offset": offset, "returned": 0, "next_offset": None, **said, **({"same": same} if same else {}), "cols": columns, "rows": table}
+        _page(answer, table, offset, len(lines))
+        for row, line, cell in zip(table, window, cells):
+            if cell["meter"] is not None:
+                row[0] = self._meter_handle(line)
         return answer
 
     # -- what was learned: answers about people's earlier answers and about documentation that code checked, never about this estate ---------------------------------
