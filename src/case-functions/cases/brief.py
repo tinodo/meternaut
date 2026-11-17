@@ -1437,7 +1437,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     head: list[Fact] = []
     group = group_of(case)
     priced = _priced(case)
-    rows = ([Fact("Bill lines it would shrink", f"{number_text(priced.lines)} line{'' if priced.lines == 1 else 's'}, {usd_text(priced.bill)} in the last 30 days", "Azure cost lines")]
+    rows = ([Fact("Bill lines it would shrink", f"{number_text(priced.lines)} line{'' if priced.lines == 1 else 's'}, {usd_text(priced.bill)} {priced.per}", "Azure cost lines")]
             if priced is not None else [])
     cost = _figure(case.cost_usd_30d)
     state = cost_state_of(case, group)

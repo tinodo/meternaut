@@ -59,9 +59,10 @@ class TheList(unittest.TestCase):
 
     def test_the_watch_without_a_foundry_project_makes_the_reads_of_azure_and_nothing_else(self):
         plain = http.allowed_calls()
-        self.assertEqual(len(plain), 26, "nineteen, the four reads of the capability profile (cases/capability.py), the read of the display name of one subscription and the two lists of the impact check "
-                                         "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone)")
-        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 23 + ["POST"] * 3)
+        self.assertEqual(len(plain), 27, "nineteen, the four reads of the capability profile (cases/capability.py), the read of the display name of one subscription, the two lists of the impact check "
+                                         "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone) and the one read of a provider, which lists the property paths "
+                                         "of its resource types (cases/arm.py, provider_paths)")
+        self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 24 + ["POST"] * 3)
         for method, pattern in plain:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
                             pattern.pattern)

@@ -30,7 +30,7 @@ from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
 from .models import ActionRecord, CaseRecord, PlanRecord
 from .people import Person
-from .stake import Stake, chips_of, decisions_of, place_of, stake_of, title_text
+from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text
 
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
@@ -145,7 +145,7 @@ class _Doc:
     def figure(self, stake: Stake, then: str = "") -> None:
         """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. What the cost of a whole subscription is made of, and the estimate at list
         price for a disk that Azure has no cost line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
-        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, 400), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
+        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, LINE_CHARS), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
 
     def facts(self, *rows: tuple[str, str]) -> None:
         if rows:

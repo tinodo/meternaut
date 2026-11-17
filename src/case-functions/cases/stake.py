@@ -20,6 +20,8 @@ from .web.figures import RISKS, Figure, a_year, dollars, figure_for, title_of
 from .web.home import Row, unit_title, units_of
 
 MONEY = "Money is in US dollars, and a year is twelve times the month."  # the page says it in the same words, once under its figure
+NOTE_CHARS = 440  # the most of the basis ("Based on ...") that a card shows, and with its label and month, the most that a letter shows: the longest sentence of a figure fits (a test in test_pricing.py)
+LINE_CHARS = NOTE_CHARS + 70
 
 
 @dataclass(frozen=True)
