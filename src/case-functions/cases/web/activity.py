@@ -36,7 +36,7 @@ VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
 FATES = {"request": "a request was made", "person": "left for a person, no request yet", "dropped": "dropped, no change is suggested", "nothing": "held back, nothing to say",
          "automation": "held back, managed by an automation", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked"}
 LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that proves it", "repeated": "that an earlier finding has", "guarded": "held back by a guard",
-        "recent": "judged lately", "capped": "beyond the cap of one run"}
+        "recent": "judged lately", "capped": "beyond the cap of one run", "small": "too small to open a case"}
 
 
 def _text(value: object, limit: int = 300) -> str:

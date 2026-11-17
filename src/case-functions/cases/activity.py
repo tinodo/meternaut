@@ -33,7 +33,7 @@ MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # objections of the second AI that a reco
 # What each tool does to the kinds that it names or whose handles it is given (the letters of INVESTIGATION_TOUCHES: a profile measures and describes). The other tools show a list and touch no kind: a test fails for one that is in neither.
 VERBS = {"list_resources": "l", "cost_lines": "l", "cost_history": "l", "cost_meters": "l", "measure": "m", "metric_summary": "m", "describe": "d", "children": "d", "data_volume": "d",
          "data_readers": "d", "data_writers": "d", "metric_split": "s", "neighbors": "d", "profile": "md", "changes": "d"}
-LEFT = ("unknown", "unproven", "repeated", "guarded", "recent", "capped")  # why resources of a finding left it (investigate.Finding)
+LEFT = ("unknown", "unproven", "repeated", "guarded", "recent", "capped", "small")  # why resources of a finding left it (investigate.Finding)
 
 
 def _fit(text: str, size: int) -> str:

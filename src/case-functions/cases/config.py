@@ -74,6 +74,11 @@ DEFAULT_BEAT_TOKENS = 100_000
 LIMIT_BEAT_TOKENS = 200_000
 DEFAULT_TOTAL_TOKENS = 800_000
 LIMIT_TOTAL_TOKENS = 1_200_000
+# A finding of the investigation about a resource whose cost of the last 30 days is under this many US dollars opens no case: it is too small to ask a person for (the Watch counts it, and the History
+# says how many). 0 turns it off. A resource whose cost is not known is not small.
+CASE_MIN_USD = "CASE_MIN_USD"
+DEFAULT_CASE_MIN_USD = 5
+LIMIT_CASE_MIN_USD = 100
 
 # The Investigator is gpt-5.5 (no effort sent: see INVESTIGATOR_REASONING_EFFORT in agents.py) and the Skeptic gpt-6.1-sol: see AGENT_MODELS in tools/environment-params.py for why, and a test holds the files together.
 DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
@@ -117,7 +122,7 @@ OPTIONAL = {MAX_TOKENS_PER_RUN: str(LIMIT_TOKENS_PER_RUN), MAX_COMPLETION_TOKENS
             FOUNDRY_MODEL_INVESTIGATOR: DEFAULT_MODEL_INVESTIGATOR, FOUNDRY_MODEL_SKEPTIC: DEFAULT_MODEL_SKEPTIC,
             INVESTIGATE_MAX_CALLS: str(DEFAULT_INVESTIGATE_CALLS), INVESTIGATE_MAX_SECONDS: str(DEFAULT_INVESTIGATE_SECONDS), INVESTIGATE_MAX_TOKENS: str(LIMIT_INVESTIGATE_TOKENS),
             INVESTIGATE_EVERY_DAYS: str(DEFAULT_INVESTIGATE_EVERY_DAYS), INVESTIGATE_BEATS: str(DEFAULT_INVESTIGATE_BEATS), INVESTIGATE_BEAT_CALLS: str(DEFAULT_BEAT_CALLS),
-            INVESTIGATE_BEAT_SECONDS: str(DEFAULT_BEAT_SECONDS), INVESTIGATE_BEAT_TOKENS: str(DEFAULT_BEAT_TOKENS), INVESTIGATE_TOTAL_TOKENS: str(DEFAULT_TOTAL_TOKENS),
+            INVESTIGATE_BEAT_SECONDS: str(DEFAULT_BEAT_SECONDS), INVESTIGATE_BEAT_TOKENS: str(DEFAULT_BEAT_TOKENS), INVESTIGATE_TOTAL_TOKENS: str(DEFAULT_TOTAL_TOKENS), CASE_MIN_USD: str(DEFAULT_CASE_MIN_USD),
             STUDY_MAX_TYPES: str(DEFAULT_STUDY_TYPES), STUDY_MAX_PAGES: str(DEFAULT_STUDY_PAGES), STUDY_MAX_SECONDS: str(DEFAULT_STUDY_SECONDS), STUDY_MAX_TOKENS: str(DEFAULT_STUDY_TOKENS)}
 
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -162,6 +167,7 @@ class Settings:
     investigate_beat_seconds: int = DEFAULT_BEAT_SECONDS
     investigate_beat_tokens: int = DEFAULT_BEAT_TOKENS
     investigate_total_tokens: int = DEFAULT_TOTAL_TOKENS
+    case_min_usd: int = DEFAULT_CASE_MIN_USD
     # True: `subscriptions` is only the fallback, and the list that a run reads is made at its start (scope.py). The run then works with a copy whose `subscriptions` is that list.
     all_subscriptions: bool = False
     # The quota ids of the subscriptions of the run, as the one list of subscriptions of the run gave them (scope.py): not a setting of the environment, the run fills them in its copy.
@@ -229,6 +235,7 @@ def _investigation(env: Mapping[str, str], problems: list[str]) -> dict:
         "investigate_beat_seconds": _integer(env, INVESTIGATE_BEAT_SECONDS, 30, LIMIT_BEAT_SECONDS, OPTIONAL[INVESTIGATE_BEAT_SECONDS], problems),
         "investigate_beat_tokens": _integer(env, INVESTIGATE_BEAT_TOKENS, 10_000, LIMIT_BEAT_TOKENS, OPTIONAL[INVESTIGATE_BEAT_TOKENS], problems),
         "investigate_total_tokens": _integer(env, INVESTIGATE_TOTAL_TOKENS, 10_000, LIMIT_TOTAL_TOKENS, OPTIONAL[INVESTIGATE_TOTAL_TOKENS], problems),
+        "case_min_usd": _integer(env, CASE_MIN_USD, 0, LIMIT_CASE_MIN_USD, OPTIONAL[CASE_MIN_USD], problems),
     }
 
 
