@@ -3,7 +3,9 @@
 The one call is a GET of the list with no token (http.PRICE_CALL). Its address is made from typed words only: a service, a region, a product and the currency, each a word of the platform that
 passed a check before it got here, and never a name, a tag or an id of an estate. What comes back is read into typed numbers and short words: a text of the list is kept only when it is no longer than
 a word of the platform, and the tool shows it through the same check as every other word of a meter. Only pay-as-you-go prices are read, in US dollars, and a price that has several steps is marked so
-and is never taken for the price of the whole quantity. A read has a cap of pages, of lines and of time, and says when a cap ended it. Standard library only: the client is the one of the Watch.
+and is never taken for the price of the whole quantity. A price that holds in every region the list writes with the region Global or with no region: both are Global here. A read has a cap of pages, of
+lines, of the length of a page and of time (a try of a page takes at most ATTEMPT seconds and never more than the time that is left), and says when a cap or a failure ended it. Standard library only: the
+client is the one of the Watch.
 """
 from __future__ import annotations
 
@@ -18,12 +20,15 @@ from .http import PRICES_HOST, PRICES_PATH, Client, HttpError
 
 API_VERSION = "2023-01-01-preview"
 CURRENCY = "USD"
-GLOBAL = "Global"  # how the list names the region of a price that holds in every region
+GLOBAL = "Global"  # how the list names the region of a price that holds in every region (it also writes such a price with no region: see _keep)
 MAX_PAGES = 5  # pages of one read; the list gives 1,000 lines a page
 MAX_LINES = 6000  # prices that one read keeps
 MAX_HELD = 20000  # prices that the reads of one run keep in all
 MAX_TEXT = 100  # characters of a text of the list that are kept: a longer one is no word of the platform
-SECONDS = 30.0  # what one read may take in all
+MAX_PAGE_LENGTH = 3_000_000  # the longest answer for a page that is read, as it comes: a page of 1,000 lines is about 600,000 long
+ATTEMPT = 8.0  # seconds that one try of one page may take
+SECONDS = 24.0  # what one read may take in all (a call of the toolbox may take 45)
+PAUSE = 5.0  # the longest that a list that says to wait is waited for
 USER_AGENT = "Meternaut-Watch/1 (reads the public price list)"
 WORDS = re.compile(r"[A-Za-z0-9.&()/:+-]+(?: [A-Za-z0-9.&()/:+-]+){0,9}")
 REGION = re.compile(r"[a-z0-9]{1,24}")
@@ -40,14 +45,15 @@ class Line:
     meter: str
     unit: str
     usd: float
-    region: str
+    region: str  # `Global` for a price that holds in every region
     tiers: int
 
 
 @dataclass(frozen=True)
 class Book:
     lines: tuple[Line, ...]
-    complete: bool  # False when a cap of pages, of lines or of time ended the read
+    complete: bool  # False when a cap of pages, of lines or of time, or a failure, ended the read
+    error: HttpError | None = None  # the failure that ended the read after a page that was read: the lines are those of the pages before it
 
 
 def region_of(word: object) -> str | None:
@@ -56,13 +62,15 @@ def region_of(word: object) -> str | None:
 
 
 def address(service: str, region: str, product: str | None) -> str:
-    """The address of the first page: the prices of a service that hold in a region or in every region, and of one product of it when there is one."""
+    """The address of the first page: the prices of a service that hold in a region or in every region (the list writes the region of such a price as Global or leaves it empty), and of one product
+    of it when there is one."""
     for word in (service, product or "x"):
         if not WORDS.fullmatch(word):
             raise ValueError("a word that is not made of letters, digits and the marks of a platform name")
     if not REGION.fullmatch(region) and region != GLOBAL:
         raise ValueError("a region that is not a region word")
-    condition = f"serviceName eq '{service}' and priceType eq 'Consumption' and " + (f"armRegionName eq '{GLOBAL}'" if region == GLOBAL else f"(armRegionName eq '{region}' or armRegionName eq '{GLOBAL}')")
+    everywhere = f"armRegionName eq '{GLOBAL}' or armRegionName eq ''"
+    condition = f"serviceName eq '{service}' and priceType eq 'Consumption' and (" + (everywhere if region == GLOBAL else f"armRegionName eq '{region}' or {everywhere}") + ")"
     if product:
         condition += f" and productName eq '{product}'"
     return f"https://{PRICES_HOST}{PRICES_PATH}?api-version={API_VERSION}&currencyCode='{CURRENCY}'&$filter={quote(condition, safe='')}"
@@ -89,32 +97,50 @@ def _number(value: object) -> float | None:
 
 
 def _keep(found: dict, item: object) -> None:
-    """One line of a page: kept when it is a pay-as-you-go price in dollars with words of the length of a platform's, as the price of its first step and the steps that it has."""
+    """One line of a page: kept when it is a pay-as-you-go price in dollars with words of the length of a platform's, as the price of its first step and the steps that it has. A line with no region is
+    one that holds in every region."""
     if not isinstance(item, dict) or item.get("type") != "Consumption" or item.get("currencyCode") != CURRENCY:
         return
-    texts = tuple(item.get(name) for name in ("productName", "skuName", "meterName", "unitOfMeasure", "armRegionName"))
+    region = item.get("armRegionName")
+    texts = (*(item.get(name) for name in ("productName", "skuName", "meterName", "unitOfMeasure")), GLOBAL if region == "" else region)
     price, tier = _number(item.get("retailPrice")), _number(item.get("tierMinimumUnits"))
     if price is not None and tier is not None and all(isinstance(text, str) and 0 < len(text) <= MAX_TEXT for text in texts):
         found.setdefault(texts, {}).setdefault(tier, set()).add(price)
 
 
-def read(client: Client, service: str, region: str, product: str | None, monotonic: Callable[[], float] = time.monotonic) -> Book:
-    """The prices of a service in a region, and of one product of it when there is one, read a page at a time up to the caps. Raises HttpError when the list cannot be read: a call that failed, an
-    answer that is not the list, or a next page somewhere else. A price that the list gives twice with two values is left out."""
+def read(client: Client, service: str, region: str, product: str | None, monotonic: Callable[[], float] = time.monotonic, seconds: float = SECONDS) -> Book:
+    """The prices of a service in a region, and of one product of it when there is one, read a page at a time up to the caps and never for longer than `seconds`: a try takes at most ATTEMPT seconds and
+    at most the time that is left, a host that gives no answer is tried once, and a second try (for a list that is busy or fails) is made only when the time that is left holds it. Raises HttpError
+    when the first page cannot be read: a call that failed, an answer that is not the list, a page that is too large or a next page somewhere else. A failure after a page that was read ends the read
+    there: the book holds what was read, is not complete and has the failure. A price that the list gives twice with two values is left out."""
     found: dict = {}
     url: str | None = address(service, region, product)
-    stop, pages = monotonic() + SECONDS, 0
-    while url and pages < MAX_PAGES and len(found) < MAX_LINES and monotonic() < stop:
-        data = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=20, retries=1, retry_after_max=10).json()
-        items = data.get("Items") if isinstance(data, dict) else None
-        if not isinstance(items, list):
-            raise _bad("gave an answer that the app does not understand")
+    stop, pages, error = monotonic() + seconds, 0, None
+    while url and pages < MAX_PAGES and len(found) < MAX_LINES:
+        left = stop - monotonic()
+        if left < 1.0:
+            break
+        try:
+            response = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=min(ATTEMPT, left), retries=1 if left >= 2 * ATTEMPT + PAUSE else 0, retry_after_max=PAUSE,
+                                      retry_network=False)
+            if len(response.body) > MAX_PAGE_LENGTH:
+                raise _bad("gave a page that is too large to read")
+            data = response.json()
+            items = data.get("Items") if isinstance(data, dict) else None
+            if not isinstance(items, list):
+                raise _bad("gave an answer that the app does not understand")
+            following = _next(data["NextPageLink"]) if data.get("NextPageLink") else None
+        except HttpError as failure:
+            if not pages:
+                raise
+            error = failure
+            break
         for item in items:
             _keep(found, item)
         pages += 1
-        url = _next(data["NextPageLink"]) if data.get("NextPageLink") else None
+        url = following
     lines = tuple(Line(service, *texts[:4], next(iter(steps[0])), texts[4], len(steps)) for texts, steps in found.items() if 0 in steps and len(steps[0]) == 1)
-    return Book(lines[:MAX_LINES], url is None)
+    return Book(lines[:MAX_LINES], url is None and len(lines) <= MAX_LINES, error)
 
 
 def match(lines: Sequence[Line], product: str, meter: str, unit: str, region: str) -> tuple[Line | None, str]:

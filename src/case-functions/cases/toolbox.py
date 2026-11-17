@@ -968,10 +968,11 @@ class Toolbox:
         self._kept: dict[tuple, object] = {}  # what the deeper reads of the run have read, by what they asked for: a read is made once in a run, whether it worked or not
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
-        self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run
-        self.rates: dict[str, float] = {}  # meter handle -> the rate ratio that price_alternatives showed for it: what the bill paid for one unit divided by the list price of the line that its words name
+        self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
+        self.rates: dict[str, float] = {}  # meter handle -> the rate ratio that price_alternatives showed for it, of the numbers that the meter has in `meters` now: what the bill paid for one unit divided by the list price of the line that its words name
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
+        self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
@@ -2471,6 +2472,7 @@ class Toolbox:
         held = self.meters.get(handle)
         if held is None or held.days < line.days:
             self.meters[handle] = line
+            self.rates.pop(handle, None)  # a rate was worked out from the numbers of the meter that this one replaces
         return handle
 
     def _meters_for(self, entry: _Entry, days: int) -> "tuple[list, dict] | Failed":
@@ -2564,7 +2566,10 @@ class Toolbox:
         return answer
 
     def _price_handle(self, line: prices.Line) -> str | None:
-        """The handle of a line of the price list: the same one whenever the line is shown again in the run, and None when the handles are used up."""
+        """The handle of a line of the price list that has one price: the same one whenever the line is shown again in the run, and None when the handles are used up. A line with price steps has none, so
+        that no code can take the price of its first step for the price of a quantity."""
+        if line.tiers > 1:
+            return None
         key = (line.service, line.product, line.sku, line.meter, line.unit, line.region)
         if key not in self._price_keys:
             if len(self._price_keys) >= HANDLE_LIMIT:
@@ -2572,6 +2577,14 @@ class Toolbox:
             self._price_keys[key] = f"p{len(self._price_keys) + 1}"
         self.prices[self._price_keys[key]] = line
         return self._price_keys[key]
+
+    @staticmethod
+    def _stopped(book: prices.Book) -> dict:
+        """What an answer says of a read that a failure ended after some pages: `stopped`, and the platform's code word for the failure when it gave one (never its text)."""
+        if book.error is None:
+            return {}
+        code = token_word(getattr(book.error, "code", None), 40)
+        return {"stopped": "unavailable", **({"code": code} if code else {})}
 
     def _tool_price_alternatives(self, args: dict) -> dict:
         name, within, offset = args["meter"], args["within"] or "product", args["offset"] or 0
@@ -2586,16 +2599,20 @@ class Toolbox:
             raise NotOffered(name)  # a meter of a whole type has no region, and a word that is no word of the platform is never sent anywhere
         scope = product if within == "product" else None
         key = (service, region, scope)
-        if key not in self._books:
-            if sum(len(book.lines) for book in self._books.values() if isinstance(book, prices.Book)) >= prices.MAX_HELD:
+        book = self._books.get(key, self._prices_down)
+        if book is None:
+            if sum(len(held_book.lines) for held_book in self._books.values() if isinstance(held_book, prices.Book)) >= prices.MAX_HELD:
                 self.notes.append(f"price_alternatives: the run holds {prices.MAX_HELD} prices of the list already, and the app keeps no more")
                 return {"error": "unavailable"}
-            self._books[key] = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic))
-        book = self._books[key]
+            book = self._books[key] = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, min(prices.SECONDS, self.read_seconds)))
+            if isinstance(book, Failed) and getattr(book.error, "status", None) == 0:
+                self._prices_down = book  # no answer at all: the host is not asked again in this run
+            elif isinstance(book, prices.Book) and book.error is not None:
+                self.notes.append(f"price_alternatives: the price list was read in part only ({str(book.error)[:200]})")
         if isinstance(book, Failed):
             self._fail("price_alternatives", "the price list", book)
             return self._why(book.error)
-        same = sorted((line for line in book.lines if line.unit == unit), key=lambda line: (line.usd, line.product, line.sku, line.meter, line.region))
+        same = sorted((line for line in book.lines if line.unit == unit), key=lambda line: (line.tiers > 1, line.usd, line.product, line.sku, line.meter, line.region))
         current, how = prices.match(book.lines, subcategory, meter, unit, region)
         paid = held.usd / held.quantity if held.usd > 0 and held.quantity > 0 else None
         ratio = round(paid / current.usd, 4) if current is not None and paid is not None and current.usd > 0 and current.tiers == 1 else None
@@ -2604,8 +2621,8 @@ class Toolbox:
                   "global" if line.region == prices.GLOBAL else _shown(region_word, line.region), line.tiers if line.tiers > 1 else None] for line in window]
         shared, columns, table = prices.layout(("price", "product", "sku", "meter", "usd", "region", "steps"), cells)
         answer: dict = {"meter": name, "service": service, "region": entry.location, "within": "product" if scope else "service", "unit": _shown(meter_word, unit), "match": how, "lines": len(same),
-                        "other_units": len(book.lines) - len(same), "complete": book.complete, "offset": offset, "returned": 0, "next_offset": None, **({"same": shared} if shared else {}),
-                        "cols": columns, "rows": table}
+                        "other_units": len(book.lines) - len(same), "complete": book.complete, **self._stopped(book), "offset": offset, "returned": 0, "next_offset": None,
+                        **({"same": shared} if shared else {}), "cols": columns, "rows": table}
         if current is not None:
             answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
                                  **({"steps": current.tiers} if current.tiers > 1 else {})}
@@ -2614,8 +2631,10 @@ class Toolbox:
             row[0] = self._price_handle(line)
         if current is not None:
             answer["current"]["line"] = self._price_handle(current)
-            if ratio is not None:
-                self.rates[name] = ratio
+        if ratio is not None:
+            self.rates[name] = ratio
+        else:
+            self.rates.pop(name, None)  # the last ask could not work one out, so there is none
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------
