@@ -20,6 +20,7 @@ from cases import agents, brief, cards, decide, investigate, letters, pricing, s
 from cases.detectors import Context
 from cases.foundry import AgentRun
 from cases.meters import Meter, rates
+from cases.prices import Line as Listed
 from cases.roles import DetectiveAnswer, SkepticAnswer
 from cases.web.figures import Figure
 from test_investigate import HOSTILE, SAFE, FakeFoundry, FakeToolbox, Harness, agree_all, answer, finding, handles_of, meter_line, metrics, resource, verdicts
@@ -282,11 +283,6 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
     def test_an_assumption_that_everything_remains_saves_nothing_and_says_so(self):
         found = priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 1, "high": 1})))
         self.assertEqual((found.rows, found.why), ({}, {"r1": "nothing"}))
-
-    def test_a_switch_to_an_alternative_is_refused_until_it_is_built_with_the_reason_that_it_is_not_available_yet(self):
-        found = priced(block("switch", effect("r1", ("m1",), {"form": "alternative", "to": "something"})))
-        self.assertEqual((found.rows, found.why), ({}, {"r1": "later"}))
-        self.assertIn("not available yet", pricing.WHY["later"])
 
     def test_a_form_that_does_not_go_with_the_action_is_refused(self):
         for action, remains in (("remove", {"form": "ratio", "on": "units", "from": 12, "to": 4}), ("remove", {"form": "assumed", "low": 0.1, "high": 0.2}),
@@ -712,6 +708,199 @@ class TheQuantityOfAMeter(unittest.TestCase):
         self.assertEqual(pricing.combine([pricing.digest(other, found, handle) for handle in ("r1", "r2")], 2)["price"]["form"], "mixed")
 
 
+LISTED = {  # the lines of an invented price list that the tool for alternatives showed in a run (cases/prices.py): the bill pays 0.10 an hour for COMPUTE and 0.8 of the list price (0.125)
+    "p1": Listed("Example Compute", "Basic Tier", "Small", "Fixed Hours", "1 Hour", 0.0625, "swedencentral", 1),
+    "p2": Listed("Example Compute", "Basic Tier", "Small", "Stepped Hours", "1 Hour", 0.0625, "swedencentral", 2),
+    "p3": Listed("Example Compute", "Basic Tier", "Small", "Moved Data", "1 GB", 0.0625, "swedencentral", 1),
+    "p4": Listed("Example Compute", "Premium Tier", "Large", "Fixed Hours", "1 Hour", 0.2, "swedencentral", 1),
+    "p5": Listed("Example Compute", "Premium Tier", "Medium", "Fixed Hours", "1 Hour", 0.11, "swedencentral", 1),
+    "p6": Listed("Example Storage", "Basic Tier", "Small", "Fixed Hours", "1 Hour", 0.0625, "swedencentral", 1),
+    "p7": Listed("Example Compute", "Free Tier", "Free", "Fixed Hours", "1 Hour", 0.0, "swedencentral", 1),
+    "p8": Listed("Example Compute", "Basic Tier", "Small", "Fixed Hours", "1 Hour", 0.0625, "swedencentral", 1),
+    "p9": Listed("Example Compute", "Basic Tier", "Medium", "Fixed Hours", "1 Hour", 0.1, "swedencentral", 1),
+}
+OFFERED = ("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p9")  # p8 is on the list of the run and was never shown for this meter
+
+
+def switch(price="p1", meters=("m1",), action="switch", **more):
+    return block(action, effect("r1", meters, {"form": "alternative", **({} if price is None else {"price": price}), **more}))
+
+
+class TheAlternative(unittest.TestCase):
+    """A switch to another tier or size of the same service, priced from the list prices that the tool for alternatives showed in the run, on the same monthly basis as the cost that it replaces. Invented
+    numbers: 600 hours cost 60 (0.10 an hour), the bill pays 0.8 of the list price of that line (0.125), and the alternative is listed at 0.0625 an hour."""
+
+    def box(self, rate=0.8, meters=None, offered=OFFERED):
+        found = {"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)} if meters is None else meters
+        return shown(meters=found, prices=LISTED, rates={} if rate is None else {"m1": rate}, offers={"m1": set(offered)})
+
+    def priced(self, raw=None, box=None, costs=None):
+        return pricing.price(pricing.parse(raw or switch()), ("r1",), box or self.box(), {"r1": 60.0} if costs is None else costs, None, lambda text: text)
+
+    def test_the_cost_after_the_switch_is_the_quantity_times_the_list_price_times_the_rate_of_the_bill_and_the_other_end_is_at_list_prices_alone(self):
+        row = self.priced().rows["r1"]
+        # 600 hours at 0.0625 x 0.8 = 0.05 an hour cost 30, so 30 of the 60 are saved; at the list price alone they cost 37.50, so 22.50 are saved.
+        self.assertEqual((row.low, row.high, row.form, row.level, row.lines), (22.5, 30.0, "alternative", pricing.SCENARIO, 1))
+        self.assertEqual(row.said, {"offer": "p1", "list": 0.0625, "ratio": 0.8})
+        self.assertEqual(row.away, (0.375, 0.5))
+
+    def test_a_meter_whose_line_the_list_did_not_name_has_no_rate_and_is_priced_at_list_prices_alone(self):
+        row = self.priced(box=self.box(rate=None)).rows["r1"]
+        self.assertEqual((row.low, row.high, row.said), (22.5, 22.5, {"offer": "p1", "list": 0.0625}))
+
+    def test_a_rate_above_one_is_carried_over_too_and_the_low_end_is_the_dearer_of_the_two_prices(self):
+        row = self.priced(box=self.box(rate=1.2)).rows["r1"]  # 0.0625 x 1.2 = 0.075 an hour: 600 hours cost 45, so 15 are saved; at the list price, 22.50
+        self.assertEqual((row.low, row.high, row.said["ratio"]), (15.0, 22.5, 1.2))
+
+    def test_a_rate_of_one_is_a_range_of_one_and_a_rate_that_is_no_number_is_no_rate(self):
+        row = self.priced(box=self.box(rate=1.0)).rows["r1"]
+        self.assertEqual((row.low, row.high), (22.5, 22.5))
+        for rate in (0.0, -0.8, float("nan"), float("inf"), True, "0.8"):
+            with self.subTest(rate=rate):
+                row = self.priced(box=self.box(rate=rate)).rows["r1"]
+                self.assertEqual((row.low, row.high, "ratio" in row.said), (22.5, 22.5, False))
+
+    def test_a_price_of_nothing_saves_all_that_the_meter_costs(self):
+        row = self.priced(switch("p7")).rows["r1"]
+        self.assertEqual((row.low, row.high), (60.0, 60.0))
+
+    def test_the_monthly_quantity_is_taken_at_the_same_rate_as_the_monthly_cost_so_that_a_meter_that_rose_is_priced_as_it_is_now(self):
+        # 23 days of 1 and 7 days of 2 for 370 hours: 37 in the window, 60 a month at the last 7 days, 37 at the mean, 30 at a typical day, and 0.10 an hour. The same share of each: 0.5 to 0.625.
+        meter = Meter("r1", None, COMPUTE, 370.0, 37.0, {START + dt.timedelta(days=n): 1.0 if n < 23 else 2.0 for n in range(30)}, None, START, 30)
+        row = self.priced(box=self.box(meters={"m1": meter}), costs={"r1": 37.0}).rows["r1"]
+        self.assertEqual((row.low, row.high, row.week, row.since), (11.25, 30.0, 60.0, 37.0), "30 x 0.375 at the lowest rate, 60 x 0.5 at the highest; 370 x 0.0625 x 0.8 = 18.50 off 37 would be the window")
+
+    def test_a_price_that_the_tool_did_not_show_for_this_bill_line_is_never_priced(self):
+        for price in ("p8", "p99", "p1; drop", "P1", "p", "", None, 5, ["p1"], {"p1": 1}):
+            with self.subTest(price=price):
+                found = self.priced(switch(price))
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "alternative"}))
+        other = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, prices=LISTED, rates={"m1": 0.8}, offers={"m2": {"p1"}})
+        self.assertEqual(self.priced(box=other).why, {"r1": "alternative"}, "shown for another meter")
+        for bare in (shown(), shown(prices=LISTED), shown(offers={"m1": {"p1"}}), shown(prices={"p1": "text"}, offers={"m1": {"p1"}}), shown(prices={"p1": None}, offers={"m1": {"p1"}})):
+            with self.subTest(bare=sorted(vars(bare))):
+                self.assertEqual(self.priced(box=bare).why, {"r1": "alternative"})
+
+    def test_a_price_that_changes_with_the_quantity_and_a_price_of_another_service_are_not_priced(self):
+        for price in ("p2", "p6"):
+            with self.subTest(price=price):
+                self.assertEqual(self.priced(switch(price)).why, {"r1": "alternative"})
+
+    def test_a_price_in_another_unit_is_refused_with_the_reason_that_the_units_differ(self):
+        found = self.priced(switch("p3"))
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "units"}))
+        self.assertIn("the units differ", pricing.WHY["units"])
+
+    def test_an_alternative_that_costs_as_much_or_more_at_the_rate_of_the_bill_or_at_list_prices_is_no_saving(self):
+        for rate in (0.8, None, 1.2):
+            for price in ("p4", "p5", "p9"):
+                with self.subTest(rate=rate, price=price):
+                    found = self.priced(switch(price), box=self.box(rate=rate))
+                    self.assertEqual((found.rows, found.why), ({}, {"r1": "dearer"}))
+
+    def test_a_bill_line_without_a_quantity_cannot_be_priced_by_the_unit(self):
+        for quantity in (0.0, -5.0):
+            with self.subTest(quantity=quantity):
+                found = self.priced(box=self.box(meters={"m1": billed_units(usd=60.0, quantity=quantity, words=COMPUTE)}))
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "quantity"}))
+
+    def test_the_form_goes_with_the_action_switch_and_one_meter_and_with_nothing_else(self):
+        for action in ("reduce", "schedule", "remove", "commit", "none"):
+            with self.subTest(action=action):
+                self.assertEqual(self.priced(switch(action=action)).rows, {})
+        box = self.box(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE), "m2": billed_units(usd=30.0, quantity=300.0, words=STORAGE)})
+        self.assertEqual(self.priced(switch(meters=("m1", "m2")), box=box).why, {"r1": "remains"}, "a switch is priced for one bill line")
+        self.assertEqual(self.priced(switch(meters=("m2",)), box=box).why, {"r1": "alternative"}, "the price was not shown for that meter")
+
+    def test_the_rest_of_the_resource_is_not_touched_and_the_figure_is_never_above_what_the_resource_costs(self):
+        box = self.box(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE), "m2": billed_units(usd=30.0, quantity=300.0, words=STORAGE)})
+        row = self.priced(box=box, costs={"r1": 90.0}).rows["r1"]
+        self.assertEqual((row.low, row.high, row.bill, row.lines), (22.5, 30.0, 60.0, 1), "only the meter that is switched is repriced")
+        row = self.priced(switch("p7"), box=box, costs={"r1": 10.0}).rows["r1"]
+        self.assertEqual((row.low, row.high), (42.86, 42.86), "60 a month is more than 10 in 30 days allows for a meter of a week: 10 x 30 / 7")
+
+    def facts(self, rate=0.8, price="p1"):
+        change = pricing.parse(switch(price))
+        found = pricing.price(change, ("r1",), self.box(rate=rate), {"r1": 60.0}, None, lambda text: text)
+        return {pricing.KEY: pricing.digest(change, found, "r1")}
+
+    def test_the_digest_holds_numbers_and_closed_words_only_and_the_figure_is_a_scenario_that_counts_its_low_end(self):
+        facts = self.facts()
+        self.assertEqual(facts[pricing.KEY]["price"], {"lowUsd": 22.5, "highUsd": 30.0, "billUsd": 60.0, "weekUsd": 60.0, "sinceUsd": 60.0, "lines": 1, "resources": 1, "form": "alternative",
+                                                      "offer": "p1", "list": 0.0625, "ratio": 0.8})
+        found = pricing.saved(facts)
+        self.assertEqual((found.low, found.high, found.level), (22.5, 30.0, pricing.SCENARIO))
+        self.assertEqual(pricing.point(facts), 22.5)
+        json.dumps(facts)
+
+    def test_the_basis_says_that_the_list_prices_of_the_alternative_are_scaled_by_the_rate_of_the_bill_or_are_list_prices_and_that_features_were_not_checked(self):
+        self.assertEqual(pricing.saved(self.facts()).basis,
+                         "the 1 bill line of 1 resource that the change would shrink, at the rate of the last 7 days, repriced at the alternative's list price scaled by your bill's rate, ratio 0.8, or at "
+                         "list prices: the alternative has not been checked for features; $22.50 to $30.00 a month")
+        self.assertEqual(pricing.saved(self.facts(rate=None)).basis,
+                         "the 1 bill line of 1 resource that the change would shrink, at the rate of the last 7 days, repriced at list prices because the rate that your bill pays for this line was not found: "
+                         "the alternative has not been checked for features")
+
+    def test_a_digest_that_holds_a_number_that_is_no_number_or_a_handle_that_is_no_handle_is_read_as_if_it_held_none_and_never_puts_it_into_a_sentence(self):
+        good = self.facts()[pricing.KEY]
+        for key, value in (("list", "<b>x</b>"), ("list", float("nan")), ("list", -1.0), ("ratio", "0.8"), ("ratio", 0.0), ("ratio", float("inf")), ("offer", "p1; drop"), ("offer", 5)):
+            with self.subTest(key=key, value=value):
+                without = {name: item for name, item in good["price"].items() if name != key}
+                basis = pricing.saved({pricing.KEY: {**good, "price": {**good["price"], key: value}}}).basis
+                self.assertEqual(basis, pricing.saved({pricing.KEY: {**good, "price": without}}).basis)
+                self.assertIn("the alternative has not been checked for features", basis)
+        self.assertIn("at list prices", pricing.saved({pricing.KEY: {**good, "price": {**good["price"], "ratio": 0.0}}}).basis)
+
+    def test_the_figure_of_a_switch_is_refused_when_what_it_rests_on_is_not_as_it_should_be(self):
+        good = self.facts()[pricing.KEY]
+        self.assertIsNone(pricing.saved({pricing.KEY: {**good, "price": {**good["price"], "form": "split"}}}))
+        self.assertIsNone(pricing.saved({pricing.KEY: {**good, "price": {**good["price"], "highUsd": 600.0}}}), "above what the bill lines cost on their higher rate")
+
+    def test_a_group_that_switches_to_the_same_alternative_keeps_the_rule_and_a_group_that_does_not_is_mixed(self):
+        box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE), "m2": billed_units(usd=60.0, quantity=600.0, scope="r2", words=COMPUTE)}, prices=LISTED,
+                    rates={"m1": 0.8, "m2": 0.8}, offers={"m1": {"p1", "p7"}, "m2": {"p1", "p7"}})
+        for second, form in (("p1", "alternative"), ("p7", "mixed")):
+            with self.subTest(second=second):
+                change = pricing.parse(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p1"}), effect("r2", ("m2",), {"form": "alternative", "price": second})))
+                found = pricing.price(change, ("r1", "r2"), box, {"r1": 60.0, "r2": 60.0}, None, lambda text: text)
+                joined = pricing.combine([pricing.digest(change, found, handle) for handle in ("r1", "r2")], 2)["price"]
+                self.assertEqual((joined["form"], joined.get("offer"), joined["resources"]), (form, "p1" if form == "alternative" else None, 2))
+
+    def test_the_skeptic_is_shown_the_alternative_by_its_words_after_the_check_of_the_tools_its_prices_and_what_remains_and_never_a_word_that_fails_the_check(self):
+        change, box = pricing.parse(switch()), self.box()
+        found = pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda text: text)
+        (one,) = pricing.view(change, found, box.meters, lambda word: word, 6, ())["effects"]
+        self.assertEqual((one["form"], one["usd"]), ("alternative", 60.0))
+        self.assertEqual(one["alternatives"], [{"meter": "m1", "words": ["Basic Tier", "Small", "Fixed Hours"], "list": 0.0625, "ratio": 0.8, "remains": [0.5, 0.625]}])
+        (one,) = pricing.view(change, found, box.meters, lambda word: None, 6, ())["effects"]
+        self.assertEqual(one["alternatives"][0]["words"], ["other"] * 3)
+        bare = pricing.price(change, ("r1",), self.box(rate=None), {"r1": 60.0}, None, lambda text: text)
+        (one,) = pricing.view(change, bare, box.meters, lambda word: word, 6, ())["effects"]
+        self.assertEqual((one["alternatives"][0]["ratio"], one["alternatives"][0]["remains"]), (None, [0.625, 0.625]))
+        self.assertNotIn("alternatives", self.view_of(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.2, "high": 0.9}))))
+
+    @staticmethod
+    def view_of(raw):
+        change = pricing.parse(raw)
+        (one,) = pricing.view(change, pricing.price(change, ("r1", "r2"), shown(), COSTS, None), shown().meters, lambda word: word, 6, ())["effects"]
+        return one
+
+    def test_the_registers_of_the_real_tool_for_alternatives_are_what_prices_a_switch(self):
+        from cases.toolbox import meter_word
+        from test_prices import priced as with_a_list
+        from test_toolbox import ask
+        estate, box = with_a_list(quantity=25.0)  # 70 dollars for 175 hours: 0.40 an hour, against the list price 0.50 of the line of the meter: a rate of 0.8
+        ask(box, "price_alternatives", meter="m1")
+        self.assertEqual((box.rates, sorted(box.offers["m1"])), ({"m1": 0.8}, ["p1", "p2", "p3", "p4"]))
+        for handle, usd in (("p1", 0.25), ("p2", 0.5)):
+            self.assertEqual(box.prices[handle].usd, usd)
+        # 7 days of 10 are 300 a month. The alternative at 0.25: 0.25 x 0.8 / 0.40 = 0.5 of it remains, and 0.25 / 0.40 = 0.625 at the list price alone.
+        row = pricing.price(pricing.parse(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p1"}))), ("r1",), box, {"r1": 70.0}, None, meter_word).rows["r1"]
+        self.assertEqual((row.low, row.high, row.said), (112.5, 150.0, {"offer": "p1", "list": 0.25, "ratio": 0.8}))
+        for handle in ("p5", "p99"):
+            self.assertEqual(pricing.price(pricing.parse(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": handle}))), ("r1",), box, {"r1": 70.0}, None).why, {"r1": "alternative"})
+
+
 class TheDigestAndWhatItSays(unittest.TestCase):
     """The digest is typed numbers and closed words; the brief reads it again, and every number is checked once more."""
 
@@ -770,7 +959,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
     def test_the_worst_case_of_the_basis_fits_whole_on_a_card_and_in_a_letter_and_the_note_about_advisor_is_the_last_part(self):
         lengths = []
         for more in ({"form": "assumed", "away": [0.3, 0.6]}, {"form": "ratio", "from": 120000.0, "to": 40000.0, "on": "a" * 24}, {"form": "quantity", "from": 1234567890.0, "to": 987654321.0, "unit": "a" * 24},
-                     {"form": "share_of_days", "days": 20, "span": 31}, {"form": "mixed"}, {"form": "none"}):
+                     {"form": "share_of_days", "days": 20, "span": 31}, {"form": "mixed"}, {"form": "none"}, {"form": "alternative", "offer": "p1234", "list": 1234567.89, "ratio": 12345.6789}):
             with self.subTest(form=more["form"]):
                 basis = pricing.saved({pricing.KEY: {"action": "reduce", "price": {**self.WORST, **more}}}).basis
                 self.assertTrue(basis.endswith("is not added"), "the note about Azure Advisor is the last part")
@@ -874,7 +1063,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         self.assertEqual(pricing.saved({pricing.KEY: {**good[pricing.KEY], "price": {**good[pricing.KEY]["price"], "form": "none", "level": "Verified"}}}).level, pricing.EXPECTED)
 
     def test_the_reasons_that_there_is_no_figure_are_plain_sentences_and_a_change_that_was_stated_and_not_priced_is_told_from_one_that_was_not_stated(self):
-        for word in ("lines", "remains", "currency", "nothing", "later", "none"):
+        for word in ("lines", "remains", "currency", "nothing", "alternative", "units", "dearer", "quantity", "none"):
             self.assertTrue(pricing.WHY[word].startswith("No saving was worked out: ") or word == "nothing", word)
         none = {pricing.KEY: {"action": "none", "missing": "none"}}
         refused = {pricing.KEY: {"action": "remove", "missing": "lines"}}
@@ -1045,6 +1234,27 @@ class WhenAnInvestigationPricesAChange(unittest.TestCase):
     def test_a_share_of_days_is_the_ais_and_the_arithmetic_is_the_codes(self):
         h = self.go(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7})), proposal="change", basis="oversized", handles=("r1",))
         self.assertEqual(self.figures(h), {"thing-1": 17.14})
+
+    def test_a_switch_is_priced_by_code_from_the_registers_of_the_run_and_a_handle_that_the_ai_made_up_gets_no_figure(self):
+        def toolbox():
+            box = holding(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, costs=(60.0, 30.0))
+            box.prices, box.rates, box.offers = {"p1": LISTED["p1"]}, {"m1": 0.8}, {"m1": {"p1"}}
+            return box
+
+        seen = {}
+        h = self.go(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p1"}), how="Take the cheaper plan."), toolbox(), proposal="change", basis="oversized", handles=("r1",),
+                    skeptic=lambda given: (seen.update(given), agree_all(given))[1])
+        self.assertEqual(self.figures(h), {"thing-1": 22.5})
+        price = self.facts(h)["thing-1"]["price"]
+        self.assertEqual((price["form"], price["lowUsd"], price["highUsd"], price["offer"]), ("alternative", 22.5, 30.0, "p1"))
+        found = pricing.saved({pricing.KEY: self.facts(h)["thing-1"]}, 60.0)
+        self.assertEqual(found.level, pricing.SCENARIO)
+        self.assertIn("the alternative has not been checked for features", found.basis)
+        (one,) = seen["findings"][0]["change"]["effects"]
+        self.assertEqual((one["form"], one["alternatives"][0]["words"]), ("alternative", ["Basic Tier", "Small", "Fixed Hours"]))
+        self.assertNotIn("cheaper plan", json.dumps(seen), "the words of the AI for a person are not shown to the second AI")
+        h = self.go(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p9"})), toolbox(), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual((self.figures(h), self.facts(h)["thing-1"]["missing"]), ({"thing-1": None}, "alternative"))
 
     def test_a_change_in_the_quantity_of_a_meter_is_priced_from_the_meter_and_a_ratio_on_a_property_that_the_meter_does_not_follow_is_not(self):
         toolbox = holding(meters={"m1": billed_units()}, evidence={"r1": {**metrics(MetricA=0), "properties": {"units": 4}}, "r2": metrics(MetricA=0)}, costs=(201.6, 30.0))

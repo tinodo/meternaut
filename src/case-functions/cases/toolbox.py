@@ -65,6 +65,8 @@ What the investigation may rely on after a run (it reads these and changes none)
                         words of the meter name. The two registers move together: a rate is dropped when a longer window replaces `meters[m]` (the rate of 7 days is not the rate of 30), and when a later ask for m
                         could not work one out, so a rate that is there was worked out from the meter that is there. A meter has none when it was not asked about, when no line (or several that disagree) has its
                         words, when its list price has steps or is nothing, when the bill paid nothing or gave money back, or when the bill had no quantity.
+  Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps). The form `alternative`
+                        of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -1020,6 +1022,7 @@ class Toolbox:
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
         self.rates: dict[str, float] = {}  # meter handle -> the rate ratio that price_alternatives showed for it, of the numbers that the meter has in `meters` now: what the bill paid for one unit divided by the list price of the line that its words name
+        self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
         self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
@@ -2792,10 +2795,15 @@ class Toolbox:
             answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
                                  **({"steps": current.tiers} if current.tiers > 1 else {})}
         _page(answer, table, offset, len(same))
+        offered = self.offers.setdefault(name, set())
         for row, line in zip(table, window):
             row[0] = self._price_handle(line)
+            if row[0] is not None:
+                offered.add(row[0])
         if current is not None:
             answer["current"]["line"] = self._price_handle(current)
+            if answer["current"]["line"] is not None:
+                offered.add(answer["current"]["line"])
         if ratio is not None:
             self.rates[name] = ratio
         else:

@@ -642,6 +642,29 @@ class TheSteps(unittest.TestCase):
         self.assertEqual(box.rates, {})
 
 
+class TheOffers(unittest.TestCase):
+    def test_the_register_names_the_prices_that_were_shown_for_the_meter_and_for_no_other(self):
+        estate, box = priced(also=(meter(name="Light Hours"),))
+        self.assertEqual(box.offers, {})
+        ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(box.offers, {"m1": {"p1", "p2", "p3", "p4"}}, "the rows of the answer, and nothing for m2, which was not asked about")
+        estate.failure = 500
+        ask(box, "price_alternatives", meter="m2", within="service")
+        self.assertEqual(sorted(box.offers), ["m1"], "a read that failed offers nothing")
+
+    def test_only_the_prices_of_the_pages_that_were_shown_are_offered_and_a_price_with_steps_is_never_one(self):
+        estate, box = priced()
+        estate.lines = ([line("Basic", "Fixed Hours", 0.5)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(99)]
+                        + [line("Basic", "Free Units", 0.0), line("Basic", "Free Units", 0.4, tier=100)])
+        first = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(box.offers["m1"], {found["price"] for found in prices_of(first)} | {first["current"]["line"]})
+        self.assertLess(len(box.offers["m1"]), 100)
+        offset = first["next_offset"]
+        while offset is not None:
+            offset = ask(box, "price_alternatives", meter="m1", offset=offset).get("next_offset")
+        self.assertEqual((box.offers["m1"], len(box.offers["m1"])), (set(box.prices), 100), "every price of the table, and none of the price with steps")
+
+
 class TheArguments(unittest.TestCase):
     def test_what_the_tool_takes(self):
         estate, box = priced()
