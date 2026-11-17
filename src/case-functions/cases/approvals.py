@@ -409,13 +409,15 @@ class Approvals:
             return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. Try again in a few minutes.", plan), None
 
     def supersede(self) -> list[PlanRecord]:
-        """Closes, as expired, the open advice requests of the resources that an open group request stands for, other than the group's own: the first version asked about each resource on its own,
-        and the group asks once. A plan of a change, an answered plan and the plan of a group are never touched. Returns the plans that it closed."""
+        """Takes back, with the reason `group` (stored as expired, ending now), the open advice requests of the resources that an open group request stands for, other than the group's own, and the
+        request of a group that a fresher request of a group stands for (the group changed its first resource): the first version asked about each resource on its own, and the group asks once. A plan
+        of a change and an answered plan are never touched. Returns the plans that it took back."""
         try:
             open_plans = [plan for plan in self.store.plans_open() if plan.family == ADVISE and plan.state == "open"]
             waiting = {plan.case_id for plan in open_plans}
             groups: set[str] = set()
             covered: set[str] = set()
+            members_of: dict[str, set[str]] = {}
             for case in self.store.cases_recent(GROUP_CASES_READ):
                 together = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
                 if isinstance(together, dict):
@@ -423,9 +425,12 @@ class Approvals:
                     members = together.get("members")
                     if case.case_id in waiting and isinstance(members, list):
                         covered.update(f"k{member}" for member in members if isinstance(member, str))
+                        members_of[case.case_id] = {f"k{member}" for member in members if isinstance(member, str)}
             closed = []
             for plan in open_plans:
-                if plan.case_id in covered and plan.case_id not in groups:
+                fresher = any(other.plan_id != plan.plan_id and other.created_at > plan.created_at and len(members_of.get(plan.case_id, set()) & members_of.get(other.case_id, set())) * 2 > len(members_of.get(plan.case_id, set()))
+                              for other in open_plans)  # a later request of a group that shares most of its members: the finding changed its first resource, and the fresher request stands for it now
+                if (plan.case_id in covered and plan.case_id not in groups) or fresher:
                     plan = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                     if plan is None or plan.state != "open" or self.store.decisions_of_plan(plan.plan_id):
                         continue  # a person who put it off or asked about it has answered it
