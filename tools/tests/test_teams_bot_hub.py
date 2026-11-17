@@ -245,7 +245,7 @@ class TheBuilderChangesNothingWhileTheBotIsOff(unittest.TestCase):
 class TheActionsAreOfferedAndTheEnvironmentHoldsTheTwoSettings(unittest.TestCase):
     def test_the_two_actions_are_offered_after_cases_run_and_the_pins_of_the_other_options_still_hold(self):
         options = re.findall(r"(?m)^          - (\S+)$", re.search(r"(?ms)^      action:\n(.*?)^      \w", WORKFLOW).group(1))
-        self.assertEqual(options[options.index("cases-run"):options.index("cases-run") + 4], ["cases-run", "teams", "teams-test", "page-latency"])
+        self.assertEqual(options[options.index("cases-run"):options.index("cases-run") + 4], ["cases-run", "study-run", "teams", "teams-test"], "study-run follows cases-run, and the two Teams actions follow it")
         self.assertEqual((options.count("teams"), options.count("teams-test")), (1, 1))
         self.assertEqual(options[options.index("operator-probe") + 1:options.index("operator-probe") + 3], ["aigateway", "aigateway-check"], "the pair of the AI Gateway still follows operator-probe at once")
         self.assertEqual(options[options.index("loop-check") + 1:options.index("loop-check") + 3], ["powerplatform", "operator"])
