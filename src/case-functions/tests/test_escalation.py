@@ -395,11 +395,11 @@ class TheWeeklyLetter(unittest.TestCase):
         self.assertEqual([call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]], [], "nothing has waited more than a week yet")
         world.clock.advance(days=2)
         world.tick()
-        world.clock.advance(days=1)
+        world.clock.advance(days=2)
         world.tick()
         (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
         self.assertIn("2 decisions wait for an answer", letter[2])
-        self.assertIn("Waiting 2 days.", letter[2])
+        self.assertIn("Waiting 3 days.", letter[2])
 
     def test_a_missing_permission_is_named_to_the_owners_in_the_weekly_letter(self):
         world = World(graph=Graph(managers={A: 403}))
