@@ -242,12 +242,6 @@ def make_step(ladder: Ladder, plan: PlanRecord, number: int, steps: list[Escalat
     return True
 
 
-def _told(steps: list[EscalationRecord], before: int) -> tuple[str, ...]:
-    """Who was told before step `before`, and who was not yet (held, not delivered), as plain lines."""
-    told, pending = brief_mod.told_lines(steps, before)
-    return told + pending
-
-
 def _asked(ladder: Ladder, plan: PlanRecord, steps: list[EscalationRecord]) -> str:
     first = next((s for s in steps if s.kind == "step" and s.number == 1), None)
     return ", ".join(first.names) if first is not None else ", ".join(p.name for p in (ladder.people.by_oid(o) for o in plan.approvers) if p is not None)
@@ -313,8 +307,9 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
         if len(rows) == 1:
             plan, case, record = rows[0]
             steps = store.escalations_of(plan.plan_id)
+            told, pending = brief_mod.told_lines(steps, record.number)
             letter = letters.escalation_letter(plan, case, person, ladder.base, now, ladder.contacts, source=record.source, asked=_asked(ladder, plan, steps),
-                                               notes=tuple(NOTES.get(n, "") for n in record.notes), told=_told(steps, record.number), first=first,
+                                               notes=tuple(NOTES.get(n, "") for n in record.notes), told=told, pending=pending, first=first,
                                                put_off=sum(1 for r in steps if r.kind == "snooze"))
             result = ladder.mailer.send_escalation(target, letter, "escalation", plan.plan_id, record.number, record.source)
         else:

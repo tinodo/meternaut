@@ -430,7 +430,7 @@ def _days(days: int) -> str:
 
 
 def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), *, source: str, asked: str = "",
-                      notes: Sequence[str] = (), told: Sequence[str] = (), first: bool = False, put_off: int = 0) -> Letter:
+                      notes: Sequence[str] = (), told: Sequence[str] = (), pending: Sequence[str] = (), first: bool = False, put_off: int = 0) -> Letter:
     """One request that has waited without an answer, to the person that the ladder has come to: why this person is told (and, to a person who never heard of Meternaut, who writes), the
     request as its page has it (title, place, figure with its level), how long it has waited, what waiting has cost so far, who was told before and when, and what the person can do. Names
     come from a directory and are cut and escaped. A saving that nobody measured says so, and no cost of waiting is worked out for it."""
@@ -452,6 +452,8 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     rows = [("Waiting", f"{_days(days)}, since {_data(started(plan)[:10], 12)}"),
             ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
             ("Told before", "; ".join(_data(t, 160) for t in told[:4]) or "Nobody else yet.")]
+    if pending:
+        rows.append(("Not told yet", "; ".join(_data(t, 160) for t in pending[:4])))
     if put_off:
         rows.append(("Put off", f"{put_off} time{'s' if put_off != 1 else ''} by the people who were asked."))
     doc.facts(*rows)

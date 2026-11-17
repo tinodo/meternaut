@@ -554,6 +554,8 @@ class TheTold(unittest.TestCase):
         world.tick(2)
         (letter,) = world.mail.sent_to("mae@example.com")
         self.assertIn("Ada (asked first): held: Quiet hours", letter[2])
+        self.assertIn("Not told yet", letter[2], "a message that was held is not a message that told somebody, and has a label of its own")
+        self.assertIn("Nobody else yet.", letter[2], "so the line 'Told before' has nobody under it")
 
 
 OTHER = "11111111-2222-4333-8444-666666666666"
