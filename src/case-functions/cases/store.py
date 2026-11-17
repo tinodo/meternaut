@@ -269,6 +269,10 @@ class TableStore:
         plans = self._records(self._query(PLANS, "PartitionKey eq 'p' and state ne 'held'", PAGE), PlanRecord)
         return sorted(plans, key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
 
+    def plans_expired(self) -> list[PlanRecord]:
+        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'expired'", PAGE * MAX_PAGES)
+        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         row, _ = self._get(PLANS, "p", plan_id)
         return None if row is None else self._records([row], PlanRecord)[0]
@@ -439,9 +443,6 @@ class TableStore:
     def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
         found = self._records(self._query(ESCALATIONS, f"PartitionKey eq '{self._quoted(plan_id)}'", PAGE), EscalationRecord)
         return sorted(found, key=lambda r: (r.kind, r.number))
-
-    def escalations_recent(self, limit: int = 500) -> list[EscalationRecord]:
-        return sorted(self._records(self._query(ESCALATIONS, "", limit), EscalationRecord), key=lambda r: (r.at, r.plan_id, r.kind, r.number), reverse=True)
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)

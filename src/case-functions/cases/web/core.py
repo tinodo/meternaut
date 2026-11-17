@@ -254,15 +254,15 @@ class Ctx:
         return self.services.store
 
     def ladder(self, plan_id: str) -> list:
-        """The records of the ladder of a request (cases/escalation.py): every request's are read in one call for the whole page. Empty when the store cannot say: a page is shown without them."""
+        """The records of the ladder of a request (cases/escalation.py), read for the request itself. Empty when the store cannot say: a page is shown without them."""
         if self._ladders is None:
             self._ladders = {}
+        if plan_id not in self._ladders:
             try:
-                for record in self.store.escalations_recent(1000):
-                    self._ladders.setdefault(record.plan_id, []).append(record)
+                self._ladders[plan_id] = self.store.escalations_of(plan_id)
             except Exception:  # noqa: BLE001 (the ladder is an addition to a page, never a reason to refuse it)
-                pass
-        return sorted(self._ladders.get(plan_id, []), key=lambda r: (r.kind, r.number))
+                self._ladders[plan_id] = []
+        return self._ladders[plan_id]
 
     def url(self, path: str) -> str:
         return f"{self.services.base.rstrip('/')}{path}"

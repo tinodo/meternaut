@@ -75,6 +75,9 @@ class MemoryStore:
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
         return sorted((p for p in self.plans.values() if p.state != "held"), key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
 
+    def plans_expired(self) -> list[PlanRecord]:
+        return sorted((p for p in self.plans.values() if p.state == "expired"), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         return self.plans.get(plan_id)
 
@@ -207,8 +210,7 @@ class MemoryStore:
     def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
         return sorted((r for r in self.escalations.values() if r.plan_id == plan_id), key=lambda r: (r.kind, r.number))
 
-    def escalations_recent(self, limit: int = 500) -> list[EscalationRecord]:
-        return sorted(self.escalations.values(), key=lambda r: (r.at, r.plan_id, r.kind, r.number), reverse=True)[:limit]
+
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self.lessons[lesson.lesson_id] = lesson

@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from dataclasses import dataclass, replace
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from . import brief as brief_mod
 from . import letters
@@ -73,21 +73,19 @@ def clock_closed(plan: PlanRecord) -> bool:
 
 def revive(store: Store, now: dt.datetime, emit: Callable[..., object] = lambda kind, **fields: None) -> list[PlanRecord]:
     """Opens again, with their own start, the newest request of each resource that the clock closed and that nobody answered, and puts its case back to what it was before. Nothing is changed
-    for a resource that has an open request, a request that a person answered, a case that moved on, or a request that Meternaut took back with a reason. It is the same at each run: a request
-    that is open is not touched. Returns the requests that it opened."""
+    for a resource that has an open request, a request that a person answered, a case that moved on (its request now is another one), or a request that Meternaut took back with a reason. It is the same at
+    each run: a request that is open is not touched. Returns the requests that it opened."""
     try:
-        newest: dict[str, PlanRecord] = {}
-        for plan in store.plans_recent(500):
-            newest.setdefault(plan.resource_id.lower(), plan)
         waiting = {plan.resource_id.lower() for plan in store.plans_open()}
         opened = []
-        for key, plan in newest.items():
+        for plan in store.plans_expired():  # newest first
             case = store.case_get(plan.case_id)
-            if key in waiting or case is None or case.status != "expired" or not clock_closed(plan):
+            if plan.resource_id.lower() in waiting or not clock_closed(plan) or case is None or case.status != "expired" or case.plan_id != plan.plan_id:
                 continue
             if any(d.decision in ("approve", "decline", "not_mine") for d in store.decisions_of_plan(plan.plan_id)):
                 continue
             store.plan_put(replace(plan, state="open"))
+            waiting.add(plan.resource_id.lower())
             before = (plan.preconditions or {}).get("caseStatus") if plan.family == ADVISE else "awaiting_ok"
             store.case_put(replace(case, status=before if before in ("proposed", "needs_human", "awaiting_ok") else "needs_human", plan_id=plan.plan_id, updated_at=stamp(now)))
             emit("plan.revived", planId=plan.plan_id, family=plan.family, daysWaiting=waited(plan, now))
@@ -201,13 +199,18 @@ def _mark(ladder: Ladder, record: EscalationRecord, **changes: object) -> Escala
     return changed
 
 
+def _records(store: Store, plans: Iterable[PlanRecord]) -> dict[str, list[EscalationRecord]]:
+    """The records of the ladder of each request, read for the request itself: a store that lists by key cannot be asked for the newest rows of all of them."""
+    return {plan.plan_id: store.escalations_of(plan.plan_id) for plan in plans}
+
+
 def deliver(ladder: Ladder) -> int:
     """Tells the people that the steps have come to, once a day at most for each person: one letter for one request, one letter that lists several. A person that is not to be written to now (a
     switch, a pause, quiet hours, the rule of a message a day) keeps the step as held, with the reason, and is tried again; a message that failed is tried again later. Returns the letters sent."""
     now, store = ladder.clock(), ladder.store
     by_person: dict[str, list[tuple[PlanRecord, EscalationRecord]]] = {}
     plans = {p.plan_id: p for p in store.plans_open() if p.state == "open"}
-    for record in (r for r in store.escalations_recent(1000) if r.kind == "step" and r.plan_id in plans):
+    for record in (r for rs in _records(store, plans.values()).values() for r in rs if r.kind == "step"):
         if record.outcome == "failed" and record.last_try and now < parse(record.last_try) + dt.timedelta(minutes=RETRY_MINUTES if record.tries < FAST_TRIES else 1440):
             continue
         for oid in record.who:
@@ -256,7 +259,7 @@ def weekly(ladder: Ladder) -> int:
     now, store = ladder.clock(), ladder.store
     waiting = [p for p in store.plans_open() if p.state == "open"]
     plans = [p for p in waiting if waited(p, now) > 7]
-    recent = store.escalations_recent(1000)
+    recent = [r for rs in _records(store, waiting).values() for r in rs]
     problems = []
     if any("no_permission" in r.notes and r.at >= stamp(now - WEEK) for r in recent):
         problems.append(NOTES["no_permission"] + " The permission is Microsoft Graph User.Read.All for the app's identity, which a person with the right Entra role grants (docs/proposals/30-escalation.md).")
@@ -287,11 +290,10 @@ def tick(ladder: Ladder) -> int:
     made = 0
     try:
         now = ladder.clock()
-        records: dict[str, list[EscalationRecord]] = {}
-        for record in ladder.store.escalations_recent(1000):
-            records.setdefault(record.plan_id, []).append(record)
-        for plan in [p for p in ladder.store.plans_open() if p.state == "open"]:
-            mine = sorted(records.get(plan.plan_id, []), key=lambda r: r.number)
+        plans = [p for p in ladder.store.plans_open() if p.state == "open"]
+        records = _records(ladder.store, plans)
+        for plan in plans:
+            mine = sorted(records[plan.plan_id], key=lambda r: r.number)
             steps, snoozes = [r for r in mine if r.kind == "step"], [r for r in mine if r.kind == "snooze"]
             last = steps[-1].at if steps else ""
             number = due_number(plan, steps, snoozes, any(r.kind == "pass" and r.at > last for r in mine), ladder.settings, now)

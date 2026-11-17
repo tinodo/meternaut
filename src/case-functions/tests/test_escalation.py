@@ -11,9 +11,11 @@ from cases.escalation import Ladder
 from cases.memory_store import MemoryStore, parse, stamp
 from cases.models import DecisionRecord, EscalationRecord, SettingsRecord
 from cases.people import Person
+from cases.store import TableStore, table_calls
 
 from test_directory import A, CONTACT, MANAGER, NO_CONTACT, OWNER, PEOPLE, Graph, directory_of, profile
 from test_letters import make_case, make_plan
+from test_store import ACCOUNT, FakeTables
 
 START = dt.datetime(2026, 11, 2, 10, 0, 0, tzinfo=dt.timezone.utc)
 SENDER = "meternaut-ai@example.com"
@@ -56,9 +58,9 @@ def advice(plan_id="p1", case_id="c1", created=START, **changes):
 
 
 class World:
-    def __init__(self, *, managers=True, people=PEOPLE, graph=None, settings=None, plans=1):
+    def __init__(self, *, managers=True, people=PEOPLE, graph=None, settings=None, plans=1, store=None):
         self.clock, self.mail, self.store = Clock(), SendMail(), None
-        self.store = MemoryStore(self.clock)
+        self.store = store(self.clock) if store else MemoryStore(self.clock)
         self.graph = graph or Graph(managers={A: profile(MANAGER, "mae@example.com", "Mae")}, users={MANAGER: profile(MANAGER, "mae@example.com", "Mae")})
         self.people, self.ids = people, itertools.count(1)
         self.settings = settings or loop_config.EscalationSettings(to="managers" if managers else "contacts")
@@ -412,6 +414,21 @@ class TheHeldFindingDoesNotWait(unittest.TestCase):
         shown = brief_mod.build_brief(world.store.case_get("c1"), world.store.plan_get("p1"), None, (), now=world.clock.now)
         self.assertIsNone(shown.waiting)
         self.assertEqual(world.store.plans_open(), [])
+
+
+class TheTableStore(unittest.TestCase):
+    def test_a_request_whose_rows_are_past_the_first_thousand_of_the_table_still_moves_and_is_still_shown(self):
+        service = FakeTables()  # it answers as the table service does: the first rows in the order of their keys, not the newest
+        client = http.Client(table_calls(ACCOUNT), str, transport=service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        world = World(store=lambda clock: TableStore(client, lambda resource: "token", ACCOUNT, clock=clock))
+        for n in range(1100):  # the rows of requests that were closed long ago, whose keys come before the one of the open request
+            world.store.escalation_put(EscalationRecord(f"a{n:04d}", "step", 1, stamp(START), "same", (A,), ("Ada",), (A,), "email", "sent"))
+        world.clock.advance(days=3)
+        world.tick()
+        world.clock.advance(days=5)
+        world.tick()
+        self.assertEqual([r.number for r in world.steps()], [1, 2], "the second step is made once: the open request is read for itself")
+        self.assertEqual(len(world.mail.sent_to("ada@example.com")), 1)
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):
