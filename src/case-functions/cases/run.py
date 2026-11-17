@@ -529,8 +529,12 @@ def _take_back_gone(s: Services, estate: "detectors.Estate", say: Callable[[str]
     def full(subscription: str) -> bool:
         found = estate.collected.get(subscription)
         return found is not None and found.sources_failed == 0 and found.context.recent is not None and found.context.managed_groups is not None
+    def members(plan):
+        case = s.extras.store.case_get(plan.case_id)
+        grouped = case is not None and isinstance(case.facts, dict) and GROUP_FACT in case.facts
+        return _members(case) if grouped else [plan.resource_id]  # a group is gone only when every resource of it is
     try:
-        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full)
+        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full, members)
         closed = s.extras.approvals.take_back_gone([plan_id for plan_id, word in answer.items() if word == "gone"])
         if closed:
             say(f"{len(closed)} request{'s were' if len(closed) != 1 else ' was'} taken back: the resource is gone")

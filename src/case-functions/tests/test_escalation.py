@@ -580,6 +580,24 @@ class Azure:
 
 
 class TheResourceThatIsGone(unittest.TestCase):
+    def test_a_group_is_gone_only_when_every_one_of_its_resources_is_and_certain_for_each(self):
+        group = [f"{GROUP}/providers/microsoft.compute/disks/g{n}" for n in range(3)]
+        request = advice("group", resource_id=group[0])
+        here = lambda *ids: Azure(resources=[(i, "microsoft.compute/disks") for i in ids])
+        members = lambda plan: group
+        self.assertEqual(escalation.existence(here(), [request], members=members), {"group": "gone"}, "all of them are gone")
+        self.assertEqual(escalation.existence(here(group[1], group[2]), [request], members=members), {"group": "there"}, "the first is gone and two are still there: the request stays")
+        self.assertEqual(escalation.existence(here(group[2]), [request], members=members), {"group": "there"}, "two are gone and one is there")
+        self.assertEqual(escalation.existence(here(*group), [request], members=members), {"group": "there"}, "none is gone")
+        unlisted = lambda plan: [group[0], f"{GROUP}/providers/microsoft.foo/bars/b2"]
+        self.assertEqual(escalation.existence(here(), [request], members=unlisted), {"group": "type"}, "one is gone and the other cannot be judged")
+        self.assertEqual(escalation.existence(here(), [request], lambda subscription: False, members), {"group": "partial"}, "a read in part judges none of them")
+        self.assertEqual(escalation.existence(here(), [request], members=lambda plan: []), {"group": "members"}, "a request that does not name all of its resources is not judged")
+
+    def test_a_read_that_fails_judges_no_resource_of_a_group(self):
+        request = advice("group", resource_id=GONE_DISK)
+        self.assertEqual(escalation.existence(Azure(fail=RuntimeError("down")), [request], members=lambda plan: [GONE_DISK, LOWER]), {"group": "read"})
+
     def test_a_resource_is_gone_only_when_it_is_certain_and_never_for_a_type_that_resource_graph_does_not_list(self):
         plans = [advice("there", resource_id=LOWER), advice("gone", resource_id=GONE_DISK), advice("group", resource_id=f"{DELETED}/providers/microsoft.foo/bars/b1"),
                  advice("deleted", resource_id=DELETED), advice("unlisted", resource_id=f"{GROUP}/providers/microsoft.foo/bars/b2"),
@@ -621,20 +639,16 @@ class TheTakingBack(unittest.TestCase):
         shown = brief_mod.build_brief(world.store.case_get("c1"), after, None, (), now=world.clock.now).outcome
         self.assertEqual((shown.title, shown.lines[0]), ("Taken back: the resource is gone", brief_mod.TAKEN_BACK["gone"]))
 
-    def test_the_ladder_takes_back_a_request_whose_resource_is_gone_before_a_step_and_never_on_a_read_that_failed(self):
-        for label, arm, state, steps in (("gone", Azure(), "expired", 0), ("there", Azure(resources=((GONE_DISK, "microsoft.compute/disks"),)), "open", 1),
-                                         ("throttled", Azure(fail=http.HttpError(429, "slow down", retry_after=20)), "open", 1)):
-            with self.subTest(label):
-                clock, mailer = Clock(), SendMail()
-                store = MemoryStore(clock)
-                store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1"))
-                store.plan_put(advice(resource_id=GONE_DISK))
-                on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=mailer, sleep=lambda s: None,
-                                           monotonic=lambda: 0.0, clock=clock, approvals=Approvals(store, ApprovalSettings(change_scopes=()), clock))
-                clock.advance(days=3)
-                self.assertEqual(on_round(arm, lambda kind, **fields: None), steps)
-                after = store.plan_get("p1")
-                self.assertEqual((after.state, after.preconditions.get("takenBack", ""), len(store.escalations_of("p1")), len(mailer.calls)), (state, "gone" if state == "expired" else "", steps, steps))
+    def test_the_timer_never_judges_a_resource_so_it_never_takes_a_request_back_and_only_the_watch_that_read_in_full_does(self):
+        clock, mailer, arm = Clock(), SendMail(), Azure()  # the disk is not in Azure any more
+        store = MemoryStore(clock)
+        store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1"))
+        store.plan_put(advice(resource_id=GONE_DISK))
+        on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=mailer, sleep=lambda s: None,
+                                   monotonic=lambda: 0.0, clock=clock)
+        clock.advance(days=3)
+        self.assertEqual(on_round(arm, lambda kind, **fields: None), 1, "the step is made: the timer has no full read of the subscription to go by")
+        self.assertEqual((store.plan_get("p1").state, [q for q in arm.queries if "existence" in q]), ("open", []))
 
     def test_the_watch_takes_back_only_in_a_subscription_that_it_read_in_full_and_says_why_it_did_not_look(self):
         def read(failed=0, recent=set(), groups=set()):
@@ -654,6 +668,65 @@ class TheTakingBack(unittest.TestCase):
                 services = SimpleNamespace(arm=arm, extras=SimpleNamespace(store=store, approvals=Approvals(store, ApprovalSettings(change_scopes=()), clock)), redact=str)
                 run_mod._take_back_gone(services, SimpleNamespace(collected=collected), notes.append)
                 self.assertEqual((store.plan_get("p1").state, notes), (state, said))
+
+    def test_the_watch_takes_back_a_request_of_a_group_only_when_all_its_resources_are_gone_and_its_case_goes_on_waiting_otherwise(self):
+        group = [f"{GROUP}/providers/microsoft.compute/disks/g{n}" for n in range(3)]
+        full = SimpleNamespace(sources_failed=0, context=SimpleNamespace(recent=set(), managed_groups=set()))
+        for label, left, state, case_status in (("the first is gone and two are left", group[1:], "open", "needs_human"), ("none is left", [], "expired", "expired")):
+            with self.subTest(label):
+                clock = Clock()
+                store, notes = MemoryStore(clock), []
+                store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1", facts={"group": {"count": 3, "members": ["a", "b", "c"], "resourceIds": group}}))
+                store.plan_put(advice(resource_id=group[0]))
+                services = SimpleNamespace(arm=Azure(resources=[(i, "microsoft.compute/disks") for i in left]), redact=str,
+                                           extras=SimpleNamespace(store=store, approvals=Approvals(store, ApprovalSettings(change_scopes=()), clock)))
+                run_mod._take_back_gone(services, SimpleNamespace(collected={SUB: full}), notes.append)
+                self.assertEqual((store.plan_get("p1").state, store.case_get("c1").status), (state, case_status))
+
+
+class TheWorkOfARound(unittest.TestCase):
+    @staticmethod
+    def counting(world):
+        reads = Counter()
+        original = world.store.escalations_of
+        world.store.escalations_of = lambda plan_id: (reads.update([plan_id]), original(plan_id))[1]
+        return reads
+
+    def test_a_quiet_round_reads_each_request_that_it_looks_at_once_and_looks_at_no_more_than_the_cap(self):
+        world = World(plans=60)
+        reads = self.counting(world)
+        world.tick()
+        self.assertEqual((len(reads), max(reads.values())), (escalation.ROUND_PLANS, 1), "the steps of a request are read once for the three parts of a round, and never for more than the cap")
+
+    def test_every_request_is_looked_at_within_a_few_minutes_however_many_wait(self):
+        world = World(plans=60)
+        reads = self.counting(world)
+        for _ in range(3):
+            world.tick()
+            world.clock.advance(minutes=1)
+        self.assertEqual(len(reads), 60)
+
+    def test_a_weekly_letter_that_fails_is_tried_every_15_minutes_12_times_and_then_once_a_day(self):
+        world = World()
+        world.add("p9", "c9", created=START - 20 * DAY)
+        world.mail.status = 500
+        for _ in range(24 * 12):  # a day, in rounds of five minutes
+            world.tick()
+            world.clock.advance(minutes=5)
+        weekly = [m for oid in (CONTACT, OWNER) for m in world.store.mails_since(oid, "2000-01-01T00:00:00Z") if m.kind == "escalation-weekly"]
+        self.assertTrue(weekly)
+        for oid in {m.oid for m in weekly}:
+            tries = [m for m in weekly if m.oid == oid]
+            self.assertLessEqual(len(tries), escalation.FAST_TRIES + 1, f"{len(tries)} tries in a day")
+
+    def test_a_request_that_was_taken_back_with_a_reason_costs_no_read_at_a_revival(self):
+        clock = Clock()
+        store, asked = MemoryStore(clock), []
+        for n in range(30):
+            store.plan_put(advice(f"p{n}", case_id=f"c{n}", state="expired", expires_at=stamp(START + dt.timedelta(days=1)), preconditions={"family": "advise", "takenBack": "rules"}))
+        original = store.case_get
+        store.case_get = lambda case_id: (asked.append(case_id), original(case_id))[1]
+        self.assertEqual((escalation.revive(store, START + 2 * DAY), asked), ([], []))
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):

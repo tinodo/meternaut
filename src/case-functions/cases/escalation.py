@@ -18,7 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from dataclasses import dataclass, replace
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Sequence
 
 from . import brief as brief_mod
 from . import letters
@@ -34,6 +34,7 @@ EPOCH = "2000-01-01T00:00:00Z"
 MIN_GAP = dt.timedelta(days=1)  # a request that has waited long is caught up one step a day, never in a burst
 GONE_BATCH = 40  # the ids of a Resource Graph query that asks whether resources are still there
 RETRY_MINUTES, FAST_TRIES = 15, 12  # a message that failed is tried again every 15 minutes, 12 times, and after that once a day for as long as it is not delivered
+ROUND_PLANS = 25  # the requests that one round of the ladder looks at: a round is a minute of the timer, and each request costs one read of the table, so no round reads more than this
 WEEK = dt.timedelta(days=7)
 CLOCK_TTL_HOURS = range(1, 337)  # what the old setting PLAN_TTL_HOURS allowed: a request closed at its creation plus a whole number of these hours was closed by the clock
 
@@ -79,8 +80,10 @@ def revive(store: Store, now: dt.datetime, emit: Callable[..., object] = lambda 
         waiting = {plan.resource_id.lower() for plan in store.plans_open()}
         opened = []
         for plan in store.plans_expired():  # newest first
+            if not clock_closed(plan) or plan.resource_id.lower() in waiting:  # the cheap tests first: a request that was taken back with a reason costs no read
+                continue
             case = store.case_get(plan.case_id)
-            if plan.resource_id.lower() in waiting or not clock_closed(plan) or case is None or case.status != "expired" or case.plan_id != plan.plan_id:
+            if case is None or case.status != "expired" or case.plan_id != plan.plan_id:
                 continue
             if any(d.decision in ("approve", "decline", "not_mine") for d in store.decisions_of_plan(plan.plan_id)):
                 continue
@@ -122,34 +125,46 @@ def tag_reader(arm: object, name: str) -> Callable[[PlanRecord], str]:
 
 
 UNCHECKED = {"partial": "the subscription was not read in full", "read": "the read failed or the service asked to wait", "invisible": "the subscription did not answer",
-             "type": "Resource Graph does not list this type of resource"}
+             "type": "Resource Graph does not list this type of resource", "members": "the request does not name all of its resources"}
 LISTED = ("microsoft.compute/disks", "microsoft.compute/virtualmachines", "microsoft.network/publicipaddresses", "microsoft.network/loadbalancers", "microsoft.network/privateendpoints",
           "microsoft.web/serverfarms")  # the types that the detectors read from Resource Graph
 
 
-def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str], bool] = lambda subscription: True) -> dict[str, str]:
-    """Whether the resource of each request is still in Azure: `gone`, `there`, or a word of UNCHECKED that says why nobody knows. It is `gone` only when it is certain: the reads of Resource Graph for
-    the subscription all worked, `in_full` calls the subscription read in full, the subscription answered, and either the resource group is not there or the resource is not there and Resource Graph
-    lists its type (a type that it does not list would look gone for ever). Only an id of the shape of an id goes into a query."""
-    by_subscription: dict[str, list[PlanRecord]] = {}
-    for plan in plans:
-        found = re.match(rf"/subscriptions/({GUID})/", plan.resource_id or "", re.I)
-        if found is not None and re.fullmatch(SCOPE, plan.resource_id, re.I):
-            by_subscription.setdefault(found.group(1).lower(), []).append(plan)
+def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str], bool] = lambda subscription: True,
+              members: Callable[[PlanRecord], Sequence[str]] | None = None) -> dict[str, str]:
+    """Whether what each request is about is still in Azure: `gone`, `there`, or a word of UNCHECKED that says why nobody knows. A resource is gone only when it is certain: the reads of Resource Graph
+    for its subscription all worked, `in_full` calls the subscription read in full, the subscription answered, and either the resource group is not there or the resource is not there and Resource Graph
+    lists its type (a type that it does not list would look gone for ever). A request about several resources (a group: `members` names them) is gone only when every one of them is, and is not checked
+    when `members` cannot name all of them. Only an id of the shape of an id goes into a query."""
+    def subscription_of(resource_id: str) -> str:
+        found = re.match(rf"/subscriptions/({GUID})/", resource_id or "", re.I)
+        return found.group(1).lower() if found is not None and re.fullmatch(SCOPE, resource_id, re.I) else ""
 
-    def group_of(plan: PlanRecord) -> str:
-        parts = plan.resource_id.split("/")
+    def group_of(resource_id: str) -> str:
+        parts = resource_id.split("/")
         return "/".join(parts[:5]) if len(parts) > 4 and parts[3].lower() == "resourcegroups" else ""
 
-    def type_of(plan: PlanRecord) -> str:
-        tail = plan.resource_id.lower().partition("/providers/")[2].split("/")
+    def type_of(resource_id: str) -> str:
+        tail = resource_id.lower().partition("/providers/")[2].split("/")
         return "/".join([tail[0], *tail[1::2]]) if len(tail) > 2 else ""
     answer: dict[str, str] = {}
-    for subscription, requests in by_subscription.items():
+    wanted: dict[str, list[str]] = {}
+    for plan in plans:
+        named = list(members(plan)) if members is not None else [plan.resource_id]
+        if not named:
+            answer[plan.plan_id] = "members"
+        elif all(subscription_of(i) for i in named):
+            wanted[plan.plan_id] = named
+    by_subscription: dict[str, set[str]] = {}
+    for named in wanted.values():
+        for i in named:
+            by_subscription.setdefault(subscription_of(i), set()).add(i)
+    verdict: dict[str, str] = {}
+    for subscription, found in by_subscription.items():
         if not in_full(subscription):
-            answer.update({plan.plan_id: "partial" for plan in requests})
+            verdict.update({i: "partial" for i in found})
             continue
-        ids = sorted({f"/subscriptions/{subscription}", *(i for plan in requests for i in (plan.resource_id, group_of(plan)) if i)}, key=str.lower)
+        ids = sorted({f"/subscriptions/{subscription}", *found, *(group_of(i) for i in found)} - {""}, key=str.lower)
         seen: set[str] = set()
         try:
             for start in range(0, len(ids), GONE_BATCH):
@@ -158,12 +173,15 @@ def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str],
                     seen |= {str(row.get("id") or "").lower() for row in arm.graph(subscription, f"// meternaut:existence\n{table} | where id =~ '{match}' | project id")}  # type: ignore[attr-defined]
             listed = {str(row.get("type") or "").lower() for row in arm.graph(subscription, "// meternaut:existence-types\nresources | summarize count() by type")}  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 (a read that failed or was told to wait tells nothing)
-            answer.update({plan.plan_id: "read" for plan in requests})
+            verdict.update({i: "read" for i in found})
             continue
-        for plan in requests:
-            group = group_of(plan)
-            answer[plan.plan_id] = ("invisible" if f"/subscriptions/{subscription}" not in seen else "there" if plan.resource_id.lower() in seen
-                                    else "gone" if (group and group.lower() not in seen) or type_of(plan) in {*listed, *LISTED} else "type")
+        for i in found:
+            group = group_of(i)
+            verdict[i] = ("invisible" if f"/subscriptions/{subscription}" not in seen else "there" if i.lower() in seen
+                          else "gone" if (group and group.lower() not in seen) or type_of(i) in {*listed, *LISTED} else "type")
+    for plan_id, named in wanted.items():
+        words = {verdict[i] for i in named}
+        answer[plan_id] = "gone" if words == {"gone"} else "there" if "there" in words else next(word for word in UNCHECKED if word in words)
     return answer
 
 
@@ -181,7 +199,6 @@ class Ladder:
     contacts: tuple[str, ...] = ()  # the people responsible for Meternaut, for the last line of a letter
     tag: Callable[[PlanRecord], str] = lambda plan: ""
     emit: Callable[..., object] = lambda kind, **fields: None
-    gone: Callable[[list[PlanRecord]], set[str]] = lambda plans: set()  # takes back the requests whose resource is not in Azure any more and returns their ids
 
 
 def _names(targets: tuple[Target, ...]) -> tuple[str, ...]:
@@ -252,13 +269,25 @@ def _records(store: Store, plans: Iterable[PlanRecord]) -> dict[str, list[Escala
     return {plan.plan_id: store.escalations_of(plan.plan_id) for plan in plans}
 
 
-def deliver(ladder: Ladder) -> int:
+def _window(plans: list[PlanRecord], now: dt.datetime) -> list[PlanRecord]:
+    """The requests that a round looks at: all of them while there are no more than ROUND_PLANS, else the next ROUND_PLANS in the order of their start (who waits longest first), a different part each
+    minute, so that every request is looked at within a few minutes and no round costs more than ROUND_PLANS reads, however many requests wait."""
+    ordered = sorted(plans, key=lambda plan: (started(plan), plan.plan_id))
+    part = int(now.timestamp() // 60) % max(-(-len(ordered) // ROUND_PLANS), 1)
+    return ordered[part * ROUND_PLANS:(part + 1) * ROUND_PLANS]
+
+
+def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, records: Mapping[str, list[EscalationRecord]] | None = None) -> int:
     """Tells the people that the steps have come to, once a day at most for each person: one letter for one request, one letter that lists several. A person that is not to be written to now (a
-    switch, a pause, quiet hours, the rule of a message a day) keeps the step as held, with the reason, and is tried again; a message that failed is tried again later. Returns the letters sent."""
+    switch, a pause, quiet hours, the rule of a message a day) keeps the step as held, with the reason, and is tried again; a message that failed is tried again later. The requests and their records
+    are the ones that the round read (`tick`). Returns the letters sent."""
     now, store = ladder.clock(), ladder.store
     by_person: dict[str, list[tuple[PlanRecord, EscalationRecord]]] = {}
-    plans = {p.plan_id: p for p in store.plans_open() if p.state == "open"}
-    for record in (r for rs in _records(store, plans.values()).values() for r in rs if r.kind == "step"):
+    if plans is None:
+        plans = {p.plan_id: p for p in store.plans_open() if p.state == "open"}
+    if records is None:
+        records = _records(store, plans.values())
+    for record in (r for rs in records.values() for r in rs if r.kind == "step"):
         if record.outcome == "failed" and record.last_try and now < parse(record.last_try) + dt.timedelta(minutes=RETRY_MINUTES if record.tries < FAST_TRIES else 1440):
             continue
         for oid in record.who:
@@ -301,19 +330,18 @@ def deliver(ladder: Ladder) -> int:
     return sent
 
 
-def weekly(ladder: Ladder) -> int:
+def weekly(ladder: Ladder, plans: Iterable[PlanRecord] | None = None, records: Mapping[str, list[EscalationRecord]] | None = None) -> int:
     """The weekly letter, while a request has waited more than a week: to every escalation contact (the owners when none is set), every request that waits with its own figure and how long, and, to
-    the owners as well, what stops the ladder (a permission that is missing, a message that could not be delivered). Not more than once in six days for a person, not on a day that another
-    escalation letter went to them."""
+    the owners as well, what stops the ladder (a permission that is missing, a message that could not be delivered, as far as the records of this round show). Not more than once in six days for a
+    person, not on a day that another escalation letter went to them. A weekly letter that fails is tried again every 15 minutes, 12 times, and then once a day, like the other letters."""
     now, store = ladder.clock(), ladder.store
-    waiting = [p for p in store.plans_open() if p.state == "open"]
+    waiting = [p for p in (store.plans_open() if plans is None else plans) if p.state == "open"]
     due = any(waited(p, now) > 7 for p in waiting)
-    recent = [r for rs in _records(store, waiting).values() for r in rs]
+    recent = [r for rs in (_records(store, waiting) if records is None else records).values() for r in rs]
     problems = []
     if any("no_permission" in r.notes and r.at >= stamp(now - WEEK) for r in recent):
         problems.append(NOTES["no_permission"] + " The permission is Microsoft Graph User.Read.All for the app's identity, which a person with the right Entra role grants (docs/proposals/30-escalation.md).")
-    ids = {p.plan_id for p in waiting}
-    if any(r.outcome == "failed" and r.kind == "step" and r.tries >= FAST_TRIES and r.plan_id in ids for r in recent):
+    if any(r.outcome == "failed" and r.kind == "step" and r.tries >= FAST_TRIES for r in recent):
         problems.append("A message about a waiting request could not be delivered after many tries. It is tried again every day, and the pages show which.")
     contacts = ladder.directory.contacts().targets
     owners = ladder.directory.owners()
@@ -323,8 +351,10 @@ def weekly(ladder: Ladder) -> int:
             break
         tried = [m for m in store.mails_since(target.oid, stamp(now - dt.timedelta(days=6))) if m.kind in ESCALATION_KINDS]
         week = [m for m in tried if m.status == "sent"]
+        failed = sum(1 for m in tried if m.kind == "escalation-weekly" and m.status == "failed")
+        again = stamp(now - (dt.timedelta(minutes=RETRY_MINUTES) if failed < FAST_TRIES else dt.timedelta(days=1)))
         if (any(m.kind == "escalation-weekly" for m in week) or any(m.sent_at >= stamp(now - dt.timedelta(days=1)) for m in week) or ladder.mailer.hold_reason(target.oid, "escalation-weekly")
-                or any(m.kind == "escalation-weekly" and m.sent_at > stamp(now - dt.timedelta(minutes=RETRY_MINUTES)) for m in tried)):
+                or any(m.kind == "escalation-weekly" and m.sent_at > again for m in tried)):
             continue
         person = ladder.people.by_oid(target.oid) or Person(target.oid, target.name, (), target.mail)
         mine = waiting if due and target in contacts else []
@@ -335,35 +365,33 @@ def weekly(ladder: Ladder) -> int:
 
 
 def tick(ladder: Ladder) -> int:
-    """One round of the ladder: the steps that are due (at most one for each request), then the letters that wait to go, then the weekly letter. Returns the steps made. It never raises."""
+    """One round of the ladder: the steps that are due (at most one for each request), then the letters that wait to go, then the weekly letter. A round looks at ROUND_PLANS requests at most (see
+    `_window`), and each of them is read once for the three parts of it. Returns the steps made. It never raises."""
     made = 0
     try:
         now = ladder.clock()
         plans = [p for p in ladder.store.plans_open() if p.state == "open"]
-        records = _records(ladder.store, plans)
-        due = []
-        for plan in plans:
+        looked = _window(plans, now)
+        records = _records(ladder.store, looked)
+        for plan in looked:
             mine = sorted(records[plan.plan_id], key=lambda r: r.number)
             steps, snoozes = [r for r in mine if r.kind == "step"], [r for r in mine if r.kind == "snooze"]
             last = steps[-1].at if steps else ""
             number = due_number(plan, steps, snoozes, any(r.kind == "pass" and r.at > last for r in mine), ladder.settings, now)
-            if number is not None:
-                due.append((plan, number, steps))
-        gone = ladder.gone([plan for plan, _, _ in due]) if due else set()  # no step is made about a resource that is not there any more
-        for plan, number, steps in due:
-            if plan.plan_id not in gone and make_step(ladder, plan, number, steps):
+            if number is not None and make_step(ladder, plan, number, steps):
                 made += 1
-        deliver(ladder)
-        weekly(ladder)
+                records[plan.plan_id] = ladder.store.escalations_of(plan.plan_id)  # the new step goes out in this round
+        deliver(ladder, {plan.plan_id: plan for plan in looked}, records)
+        weekly(ladder, plans, records)
     except Exception as error:  # noqa: BLE001 (a round of the ladder never stops the timer; the next minute tries again)
         ladder.emit("run.note", note=f"the ladder could not finish a round: {type(error).__name__}")
     return made
 
 
 def hook(env: Mapping[str, str], settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
-         clock: Callable[[], dt.datetime], approvals: object = None) -> Callable[..., int]:
-    """What the timer calls every minute: `on_round(arm, emit)` makes one round of the ladder (`tick`) with the directory of this round, and returns the steps made. `approvals` takes back the
-    requests whose resource is gone (Approvals.take_back_gone)."""
+         clock: Callable[[], dt.datetime]) -> Callable[..., int]:
+    """What the timer calls every minute: `on_round(arm, emit)` makes one round of the ladder (`tick`) with the directory of this round, and returns the steps made. The timer never takes a request
+    back, whatever it reads of Azure: that is the Watch's, which has read the subscription in full (`existence`)."""
     from .notify import build_mailer, contacts_of  # imported here: notify imports the web pages, which import a good part of the app
     mailer = build_mailer(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     mailer.deny = tuple(item.strip().lower() for item in settings.escalation.deny)
@@ -372,13 +400,6 @@ def hook(env: Mapping[str, str], settings: LoopSettings, store: Store, people: P
         client = Client(directory_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         found = Directory(client, token, people, managers=settings.escalation.managers, deny=settings.escalation.deny)
         reader = tag_reader(arm, settings.escalation.tag) if arm is not None else (lambda plan: "")
-
-        def gone(plans: list[PlanRecord]) -> set[str]:
-            if arm is None or approvals is None:
-                return set()
-            ids = {plan_id for plan_id, word in existence(arm, plans).items() if word == "gone"}
-            approvals.take_back_gone(ids)  # type: ignore[attr-defined]
-            return ids
-        return tick(Ladder(store, people, mailer, found, settings.escalation, settings.base_url, clock, contacts_of(people), reader, emit, gone))
+        return tick(Ladder(store, people, mailer, found, settings.escalation, settings.base_url, clock, contacts_of(people), reader, emit))
 
     return on_round
