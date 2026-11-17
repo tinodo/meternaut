@@ -91,6 +91,17 @@ def priced_request() -> tuple:
     return case, plan
 
 
+def worst_priced_request() -> tuple:
+    """The longest basis that a figure from the bill lines can have: a group priced for 40 of its 60 resources by an assumption, with lines that were not counted and Advisor's figure beside it."""
+    digest = {"action": "reduce", "price": {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "lines": 12, "resources": 40, "members": 60, "skipped": 12, "advisorUsd": 1234.56,
+                                            "form": "assumed", "away": [0.3, 0.6]}}
+    case = make_advice_case(case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_type="microsoft.example/things", resource_group="rg-thing", saving_usd_month=12345.67,
+                            cost_usd_30d=200000.0, plan_id="plan7100", facts={"basis": "oversized", "proposal": "change", "change": digest})
+    plan = make_advice(plan_id="plan7100", case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_group="rg-thing", saving_usd_month=12345.67,
+                       title="Consider changing the resource thing-7100 in group rg-thing")
+    return case, plan
+
+
 def decision_cases() -> list[Case]:
     """The requests that wait, one for each state of the figure and each kind of request."""
     cost_only = storage_account("plan5000", None, 358.11)
@@ -107,6 +118,7 @@ def decision_cases() -> list[Case]:
         Case("a reason of the finding's own", *tier),
         Case("one request for many resources", *private_endpoints()),
         Case("a saving that code computed from the bill lines the finding names", *priced_request()),
+        Case("the longest basis that such a saving can have", *worst_priced_request()),
     ]
 
 
@@ -171,6 +183,13 @@ class ThePageTheLetterAndTheCardShowOneFigure(unittest.TestCase):
                 self.assertEqual(card_sub, page_sub)
                 self.assertEqual(letter_sub, page_sub)
                 self.assertEqual((letter_money, card_money), (MONEY, MONEY) if shown else ("", ""), "said once, where an amount is shown")
+
+    def test_the_longest_basis_is_shown_whole_on_the_card_and_in_the_letter_and_its_last_part_is_not_cut(self):
+        fixture = next(f for f in decision_cases() if f.label.startswith("the longest basis"))
+        _, page_sub = page_figure(fixture.page())
+        self.assertGreater(len(page_sub), 240, "the fixture is a long one")
+        for sub in (page_sub, card_figure(fixture.card())[1], letter_figure(fixture.letter())[1]):
+            self.assertTrue(sub.endswith("Azure Advisor's $1,234.56 is not added."), sub)
 
     def test_a_change_that_ran_shows_the_figure_of_the_page_and_says_verified_only_when_the_cost_lines_confirm_it(self):
         for fixture in done_cases()[:3]:

@@ -413,6 +413,14 @@ class TheMeters(unittest.TestCase):
         self.assertEqual((line.scope, line.words, line.usd, line.quantity, line.resources, line.days), ("r1", SPIKY, 40.0, 4.0, None, 7))
         self.assertEqual(sorted(line.daily.items()), [(dt.date(2026, 11, 1), 30.0), (dt.date(2026, 11, 3), 10.0)])
 
+    def test_a_later_shorter_read_never_replaces_a_longer_one_in_the_register_and_a_longer_one_replaces_a_shorter(self):
+        for first, second, kept in ((30, 7, 30), (7, 30, 30), (30, 14, 30), (14, 7, 14), (7, 14, 14), (30, 30, 30)):
+            with self.subTest(first=first, second=second):
+                estate, box = self.box()
+                ask(box, "cost_meters", handle="r1", days=first)
+                ask(box, "cost_meters", handle="r1", days=second)
+                self.assertEqual(({line.days for line in box.meters.values()}, sorted(box.meters)), ({kept}, ["m1", "m2"]), "the same handles, and the longest window that was read")
+
     def test_a_handle_is_the_same_for_the_same_meter_of_the_same_scope_in_every_call_and_another_for_another_scope(self):
         estate, box = self.box()
         first = ask(box, "cost_meters", handle="r1", days=7)

@@ -641,7 +641,8 @@ def _skeptic_text(findings: list[Finding], toolbox: Toolbox, level: tuple, left_
         rows = [_row(item, toolbox, count, fields, sku, properties) for item in f.items if item.handle not in left_out]
         said = {"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
                 "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)}
-        model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out) if f.priced is not None else None
+        kept = {item.handle for item in f.items}
+        model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out | (set(f.handles) - kept)) if f.priced is not None else None
         if model and model["effects"]:
             said["change"] = model  # the model of the saving, for the Skeptic to judge: the lines that it rests on and what remains of them, never the words of the AI for a person
         listed.append(said)

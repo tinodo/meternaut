@@ -362,7 +362,8 @@ class TheAgentDefinitions(unittest.TestCase):
 
     def test_the_investigator_is_told_to_cover_the_estate_from_the_dearest_service_and_to_prefer_a_call_for_a_whole_type(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
-        self.assertIn("2. Cover the estate before you go deep. Work down the cost by service that the overview of the estate shows, from the dearest, and do not stop "
+        self.assertIn("2. Cover the estate before you go deep. When your input names a beat", text)
+        self.assertIn("Without a beat, work down the cost by service that the overview of the estate shows, from the dearest, and do not stop "
                       "while you have calls left and the list has services that you did not look at. Prefer a call that covers a whole type (a table of every resource "
                       "of a type, a measurement across the whole type) to calls for single resources, and use single-resource calls only for what a whole type shows "
                       "to be unusual.", text)
@@ -435,8 +436,10 @@ class TheAgentDefinitions(unittest.TestCase):
         for sentence in ("Something larger than its use needs is not found by looking for idle: for anything that comes in a size, a tier or a number of units, compare what it can carry with the highest value "
                          "of what it carries, read at the finest grain that your tools offer and not as an average",
                          "say what the next smaller option would still have to carry and what would then remain on the bill",
-                         "A quiet average under a busy peak is not waste, and a low peak is."):
+                         "An average can hide the peak that decides what a thing must carry."):
             self.assertIn(sentence, text)
+        for rule_of_waste in ("is not waste", "low peak"):
+            self.assertNotIn(rule_of_waste, text, "a principle says what to compare and what to say, never what counts as waste (rule 30)")
         self.assertLess(text.index("4. Waste is one of these"), text.index("Something larger than its use needs is not found"))
         self.assertLess(text.index("Something larger than its use needs is not found"), text.index("5. An absent measurement"))
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")

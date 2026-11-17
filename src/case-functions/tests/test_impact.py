@@ -410,6 +410,34 @@ def case_with(found, **changes):
     return endpoint_case(recommendation="investigate", saving_usd_month=None, facts=facts, **changes)
 
 
+class AFigureFromTheBillNeverSwitchesOffTheCheckOfWhatDependsOnAResource(unittest.TestCase):
+    """What a change would save and whether anything uses the resource are two questions: a finding that names the bill lines that it would shrink keeps the verdict that code made of what depends on
+    the resource, the question whether it is still used, and the risk of acting on it."""
+
+    PRICE = {"action": "remove", "price": {"lowUsd": 80.0, "highUsd": 80.0, "billUsd": 80.0, "lines": 1, "resources": 1, "form": "none"}}
+
+    def pair(self, verdict):
+        made = case_with(digest_of(verdict), cost_usd_30d=100.0)
+        plain = dataclasses.replace(made, facts={**{key: value for key, value in made.facts.items() if key != "asked"}, "basis": "no-usage"})  # a finding of no use that the AI proposes as a look
+        return plain, dataclasses.replace(plain, facts={**plain.facts, "change": self.PRICE})
+
+    def test_the_verdict_the_question_of_use_and_the_risk_are_the_same_with_the_figure_as_without_it(self):
+        for verdict, level in (("keep", "high"), ("safe", "medium"), ("check", "high")):
+            with self.subTest(verdict=verdict):
+                plain, priced = self.pair(verdict)
+                for case in (plain, priced):
+                    b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
+                    self.assertEqual((b.impact.verdict if b.impact is not None else None, brief.still_used(case), b.risk.level), (verdict, True, level))
+                self.assertEqual(brief.acting_risk(plain), brief.acting_risk(priced))
+
+    def test_the_unproven_sentence_of_the_risk_stays_and_the_figure_is_shown_beside_it(self):
+        plain, priced = self.pair("check")
+        self.assertIn(brief.UNPROVEN, brief.acting_risk(priced).text)
+        b = brief.build_brief(priced, endpoint_plan(priced, saving_usd_month=None), now=WEB_NOW, may_answer=True)
+        self.assertEqual((b.saving.monthly, b.saving.level), (80.0, "Expected"))
+        self.assertEqual(b.check_first, brief.build_brief(plain, endpoint_plan(plain, saving_usd_month=None), now=WEB_NOW, may_answer=True).check_first)
+
+
 class WhatAPersonReads(unittest.TestCase):
     def test_the_page_says_the_verdict_the_reasons_where_each_fact_was_read_what_removal_does_how_to_undo_it_and_what_was_not_checked(self):
         found = digest_of("safe")

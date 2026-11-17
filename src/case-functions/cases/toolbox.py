@@ -52,10 +52,9 @@ What the investigation may rely on after a run (it reads these and changes none)
                                           MAX_WRITER_KINDS]}: what data_writers showed for a kind of data
       "history"                           {"age_days", "created_by", "changed_days", "changed_by", "written_14d"}: what changes or profile showed of the age of h and its last change, as numbers
                                           and words (ownership.history): a kind of identity is a word and never an identity, and what no source said is "not-recorded"
-  Toolbox.table_names(h)  what the table handles of h stand for in this run (t1 is the name of a table that the platform did not make), for the page of a person and never for an agent
   Toolbox.meters[m]     the Meter (cases/meters.py) of a meter handle m (m1, m2, ...) that cost_meters showed: its scope (the handle of a resource, or a resource type), the six words of the meter as Cost
                         Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
-                        the same scope has the same handle all through the run, and the numbers are those of the last call that showed it. A line that no resource owns has no handle.
+                        the same scope has the same handle all through the run, and the numbers are those of the longest window that a call showed it for. A line that no resource owns has no handle.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -964,11 +963,6 @@ class Toolbox:
     def specs(self) -> tuple[FunctionTool, ...]:
         """The function tools that the agent is defined with."""
         return SPECS
-
-    def table_names(self, handle: str) -> dict[str, str]:
-        """What the table handles of one resource stand for in this run (t1 is the name of a table that the platform did not make): for the page of a person, never for an agent."""
-        space = self._spaces.get(handle)
-        return space.tables.handled() if space is not None else {}
 
     def known_of(self, handle: str) -> tuple[str | None, dict[str, "bool | int | float | str | list"]]:
         """The SKU name and the typed properties (typed_properties) of a resource, as the toolbox holds them for its handle: for the code of a case, never for an agent. (None, {}) for a handle that
@@ -2447,14 +2441,18 @@ class Toolbox:
         return answer
 
     def _meter_handle(self, line: Meter) -> str | None:
-        """The handle of a meter of a scope: the same one whenever it is shown again in the run. None when the handles are used up."""
+        """The handle of a meter of a scope: the same one whenever it is shown again in the run. None when the handles are used up. The register keeps the longest window that was read for it: a
+        later, shorter read does not replace it (the saving of a change counts only a meter read over the full window)."""
         key = (line.scope, line.service, line.words)
         if key not in self._meter_keys:
             if len(self._meter_keys) >= HANDLE_LIMIT:
                 return None
             self._meter_keys[key] = f"m{len(self._meter_keys) + 1}"
-        self.meters[self._meter_keys[key]] = line
-        return self._meter_keys[key]
+        handle = self._meter_keys[key]
+        held = self.meters.get(handle)
+        if held is None or held.days < line.days:
+            self.meters[handle] = line
+        return handle
 
     def _meters_for(self, entry: _Entry, days: int) -> "tuple[list, dict] | Failed":
         """What one resource is billed for, meter by meter, for each of the last `days` closed days, as Cost Management gave it, read once in a run (the read of a handle that cost_meters makes is this one)."""
