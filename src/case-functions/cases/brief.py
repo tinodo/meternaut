@@ -70,6 +70,7 @@ AUTOMATION_DAYS = 14
 HELD_REASONS = ("automation", "unchecked", "impact")
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
 IMPACT = "impact"
+CHANGE = pricing.KEY  # the key of the change that a finding states, kept in the facts of the case (cases/pricing.py makes its digest)
 IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
 NOT_ANALYSED = "Impact not analysed: Meternaut did not look at what depends on it."
 SAFE_RISK = "Nothing that Meternaut could read depends on it, and it could not read everything."

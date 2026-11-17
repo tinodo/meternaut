@@ -15,9 +15,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
-from ..pricing import KEY as CHANGE
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
