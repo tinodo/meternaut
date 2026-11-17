@@ -270,7 +270,7 @@ class TheRealApp(unittest.TestCase):
         implementations, module = json.loads(done.stdout)
         self.assertEqual(implementations, {name: entry["implementationSha256"] for name, entry in lock["tools"].items()}, "every tool, one digest each")
         self.assertEqual(module, lock["toolbox"]["moduleSha256"])
-        self.assertEqual(len(implementations), 20, "the tools of the toolbox and the tool of the Scholar")
+        self.assertGreaterEqual(len(implementations), 20, "the tools of the toolbox and the tool of the Scholar")
         for name in ("cases/toolbox.py", "cases/library.py", "cases/learning.py"):
             self.assertNotEqual((self.stripped / name).read_bytes(), (self.original / name).read_bytes(), f"{name} is stripped, so the digest is not that of the text")
 

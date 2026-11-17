@@ -10,11 +10,12 @@ import datetime as dt
 import math
 import re
 import threading
-from typing import Callable, NamedTuple, Sequence
+from typing import Callable, Mapping, NamedTuple, Sequence
 from urllib.parse import quote, urlsplit
 
 from .http import AI_ACCOUNT, ARM_HOST, DNS_ZONE, ENDPOINT, GUID, LOG_ANALYTICS_HOST, LOG_ANALYTICS_RESOURCE, SCOPE, WORKSPACE, Client, HttpError
 from .identity import IdentityError
+from .metrics import DAILY, GRAINS, MAX_POINTS, MetricPoint, Plan
 
 ARM = f"https://{ARM_HOST}"
 GRAPH_API = "2022-10-01"
@@ -65,6 +66,7 @@ GROUP_SCOPE = re.compile(r"^(/subscriptions/[^/]+/resourceGroups/[^/]+)", re.I)
 RESOURCE_PATH = re.compile(r"/providers/[^/]+/[^/]+/[^/]+", re.I)
 DIMENSION = re.compile(r"[A-Za-z][A-Za-z0-9]{0,40}")  # the name of a dimension of a metric, as Azure Monitor gives it
 METRIC_TIME = "%Y-%m-%dT%H:%M:%SZ"
+METER_DIMENSIONS = ("UsageDate", "MeterCategory", "MeterSubCategory", "Meter", "PricingModel", "ChargeType", "UnitOfMeasure")  # a day, and what a line was billed for
 TABLE_FIELDS = ("plan", "retentionInDays", "totalRetentionInDays", "retentionInDaysAsDefault", "totalRetentionInDaysAsDefault", "protectionLevel", "provisioningState")
 
 
@@ -89,21 +91,16 @@ class ScopeCost(NamedTuple):
     rows: int
 
 
-class MetricPoint(NamedTuple):
-    """One daily bucket of a metric. An aggregation that the metric does not have, or that has no value in the bucket, is None."""
-
-    time: str
-    total: float | None
-    maximum: float | None
-    average: float | None
-
-
 def _bad(what: str) -> HttpError:
     return HttpError(200, f"{what} gave an answer that the app does not understand")
 
 
 class TooManyPages(HttpError):
     """A Resource Graph result that has more pages than the app reads. It is an HttpError (status 0) as it always was; graph_many tells it from the others."""
+
+
+class TimeUp(HttpError):
+    """A read that was not started because the time that its caller set aside for it was used up: nothing was asked of Azure."""
 
 
 def _number(value: object) -> float | None:
@@ -242,20 +239,22 @@ class Arm:
         return str(link)
 
     def _cost_rows(self, subscription: str, start: dt.date, end: dt.date, dimensions: tuple[str, ...], *, kind: str = "ActualCost", daily: bool = False,
-                   where: tuple[str, tuple[str, ...]] | None = None) -> list[tuple[list[str], float, str]]:
+                   where: tuple[str, tuple[str, ...]] | None = None, usage: bool = False, also: tuple[str, tuple[str, ...]] | None = None) -> list[tuple]:
         """Every row of one Cost Management query (Learn, "Query - Usage") that groups the cost from start to end (both days included) by the dimensions: the value of each
         dimension in the order asked for, the sum of the cost and its currency ("" when the answer has no currency column). `kind` is ActualCost or AmortizedCost. With `daily` the
-        granularity is Daily and the answer has a column UsageDate (a number such as 20261031), which a dimension of that name asks for: it is not a grouping. `where` is a dimension and the
-        values that a row must have (an In filter)."""
+        granularity is Daily and the answer has a column UsageDate (a number such as 20261031), which a dimension of that name asks for: it is not a grouping. `where` and `also` are a dimension
+        and the values that a row must have (an In filter each; both when both are given). With `usage` the sum of the quantity (UsageQuantity) is asked for too, and is the fourth value of a row."""
         grouping = [{"type": "Dimension", "name": name} for name in dimensions if name != "UsageDate"]
-        dataset: dict[str, object] = {"granularity": "Daily" if daily else "None", "aggregation": {"totalCost": {"name": "Cost", "function": "Sum"}}}
+        aggregation = {"totalCost": {"name": "Cost", "function": "Sum"}, **({"totalQuantity": {"name": "UsageQuantity", "function": "Sum"}} if usage else {})}
+        dataset: dict[str, object] = {"granularity": "Daily" if daily else "None", "aggregation": aggregation}
         if grouping:
             dataset["grouping"] = grouping
-        if where is not None:
-            dataset["filter"] = {"dimensions": {"name": where[0], "operator": "In", "values": list(where[1])}}
+        filters = [{"dimensions": {"name": pair[0], "operator": "In", "values": list(pair[1])}} for pair in (where, also) if pair is not None]
+        if filters:
+            dataset["filter"] = filters[0] if len(filters) == 1 else {"and": filters}
         body = {"type": kind, "timeframe": "Custom", "timePeriod": {"from": f"{start.isoformat()}T00:00:00Z", "to": f"{end.isoformat()}T23:59:59Z"}, "dataset": dataset}
         url: str | None = f"{ARM}/subscriptions/{subscription}/providers/Microsoft.CostManagement/query?api-version={COST_API}"
-        found: list[tuple[list[str], float, str]] = []
+        found: list[tuple] = []
         for _ in range(MAX_PAGES):
             data = self.client.request("POST", url, headers={**self._headers(), "ClientType": CLIENT_TYPE}, body=body, timeout=60, retries=COST_RETRIES, retry_after_max=COST_WAIT_MAX).json()
             properties = data.get("properties") if isinstance(data, dict) else None
@@ -265,17 +264,19 @@ class Arm:
             cost = next((names.index(n) for n in ("cost", "pretaxcost") if n in names), None)
             places = [names.index(name.lower()) if name.lower() in names else None for name in dimensions]
             currency = names.index("currency") if "currency" in names else None
-            if cost is None or None in places:
+            quantity = names.index("usagequantity") if "usagequantity" in names else None
+            if cost is None or None in places or (usage and quantity is None):
                 raise _bad("Cost Management")
             for row in properties.get("rows") or []:
                 try:
                     values, amount = [str(row[place]) for place in places], float(row[cost])
                     code = str(row[currency]).upper() if currency is not None else ""
+                    used = (float(row[quantity] or 0),) if usage else ()
                 except (IndexError, TypeError, ValueError):
                     raise _bad("Cost Management") from None
-                if not math.isfinite(amount):
+                if not math.isfinite(amount) or not all(math.isfinite(number) for number in used):
                     raise _bad("Cost Management")
-                found.append((values, amount, code))
+                found.append((values, amount, code, *used))
             url = self._next(properties.get("nextLink"), subscription, "Microsoft.CostManagement")
             if not url:
                 return found
@@ -376,6 +377,26 @@ class Arm:
         with the words as Cost Management gives them. A purchase is spread over its term, and a part of a commitment that nothing used is a charge of its own. Learn, "Query - Usage"."""
         return [(values[0], values[1], amount, code) for values, amount, code in self._cost_rows(subscription, start, end, ("PricingModel", "ChargeType"), kind="AmortizedCost")]
 
+    def meter_days(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]],
+                   also: tuple[str, tuple[str, ...]] | None = None) -> list[tuple[dt.date, tuple[str, ...], float, float, str]]:
+        """What the actual cost was billed for, for each day from start to end (both days included): (day, the six words of the meter as Cost Management gives them (category, subcategory, name,
+        pricing model, kind of charge, unit of measure), cost, quantity, currency). `where` (and `also`) is the dimension and the values that a line must have (ResourceId, ResourceType, ServiceName).
+        Learn, "Query - Usage"."""
+        found = []
+        for values, amount, code, quantity in self._cost_rows(subscription, start, end, METER_DIMENSIONS, daily=True, where=where, usage=True, also=also):
+            try:
+                found.append((dt.datetime.strptime(values[0][:8], "%Y%m%d").date(), tuple(values[1:]), amount, quantity, code))
+            except ValueError:
+                raise _bad("Cost Management") from None
+        return found
+
+    def meter_resources(self, subscription: str, start: dt.date, end: dt.date, where: tuple[str, tuple[str, ...]], also: tuple[str, tuple[str, ...]] | None = None) -> dict[tuple[str, ...], int]:
+        """How many resources have a cost line for each meter over the same days: one query by meter and by resource, with no days."""
+        found: dict[tuple[str, ...], set[str]] = {}
+        for values, _, _ in self._cost_rows(subscription, start, end, METER_DIMENSIONS[1:] + ("ResourceId",), where=where, also=also):
+            found.setdefault(tuple(values[:-1]), set()).add(values[-1].lower())
+        return {meter: len(resources - {""}) for meter, resources in found.items()}
+
     def _pages(self, subscription: str, url: str, service: str, headers: dict[str, str] | None = None) -> list[dict]:
         found: list[dict] = []
         link: str | None = url
@@ -412,31 +433,82 @@ class Arm:
         url = f"{ARM}{scope}/providers/Microsoft.Insights/metricDefinitions?api-version={METRIC_DEFINITIONS_API}"
         return self._pages(scope.split("/")[2], url, "Microsoft.Insights")
 
+    def _metric_items(self, scope: str, names: Sequence[str], plan: Plan, start: dt.datetime, end: dt.datetime, extra: str = "", stop: Callable[[], bool] | None = None) -> dict[str, list]:
+        """One read of Azure Monitor (Learn, "Metrics - List": at most 20 names, which must have the grain in common) of the metrics `names` of one resource at the grain and with the
+        aggregations of `plan`, in windows of at most MAX_POINTS points to a series; `extra` is more of the query. For each name that the answer holds, in lower case: [the name, its unit,
+        its code (Success, or the platform's own word) and its series, each by the values of its dimensions: (the metadata, the points)]. No window is started once `stop` says that the time is used up."""
+        if not names or any(not name.strip() or len(name) > 100 or "," in name for name in names):
+            raise HttpError(0, "the metric name is not a plain name")
+        total = "count" if plan.aggregations == ("Count",) else "total"
+        found: dict[str, list] = {}
+        start, end = _utc(start), _utc(end)
+        step, first = dt.timedelta(seconds=GRAINS[plan.grain] * MAX_POINTS), start
+        while first < end:
+            if stop is not None and stop():
+                raise TimeUp(0, "the time for reading the metrics was used up", unsent=True)
+            last = min(first + step, end)
+            span = "/".join(_utc(moment).strftime(METRIC_TIME) for moment in (first, last))
+            url = (f"{ARM}{scope}/providers/Microsoft.Insights/metrics?api-version={METRICS_API}&metricnames={','.join(quote(name, safe='') for name in names)}"
+                   f"&timespan={span}&interval={plan.grain}&aggregation={','.join(plan.aggregations)}{extra}")
+            data = self.client.request("GET", url, headers=self._headers(), timeout=30, retries=1).json()
+            if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+                raise _bad("Azure Monitor")
+            for item in (item for item in data["value"] if isinstance(item, dict)):
+                code = re.sub(r"[^A-Za-z0-9]", "", str(item.get("errorCode") or "Success"))[:40]
+                series = item.get("timeseries")
+                if code.lower() == "success" and not isinstance(series, list):
+                    raise _bad("Azure Monitor")
+                label = item.get("name")
+                label = str(label.get("value") or "") if isinstance(label, dict) else ""
+                entry = found.setdefault(names[0].lower() if len(names) == 1 else label.lower(), [label, "", code, {}])
+                entry[1], entry[2] = str(item.get("unit") or entry[1]), code if code.lower() != "success" else entry[2]
+                for element in [element for element in (series if isinstance(series, list) else []) if isinstance(element, dict)][:None if extra else 1]:
+                    meta = [value for value in element.get("metadatavalues") or [] if isinstance(value, dict)]
+                    points = entry[3].setdefault(tuple(str(value.get("value")) for value in meta), (meta, []))[1]
+                    points += [MetricPoint(str(point.get("timeStamp") or ""), _number(point.get(total)), _number(point.get("maximum")), _number(point.get("average")))
+                               for point in element.get("data") or [] if isinstance(point, dict)]
+            first = last
+        return found
+
     def metrics(self, resource_id: str, metric: str, start: dt.datetime, end: dt.datetime) -> tuple[str, list[MetricPoint]]:
         """One metric of one resource in daily buckets from start to end (a time without a zone is UTC): its unit, and a point for each bucket that Azure
         Monitor returned. Without a filter the answer holds one time series, with the dimensions of the metric summed up."""
-        scope = self._resource_scope(resource_id)
-        if not metric.strip() or len(metric) > 100 or "," in metric:
-            raise HttpError(0, "the metric name is not a plain name")
-        span = "/".join(_utc(moment).strftime(METRIC_TIME) for moment in (start, end))
-        url = (f"{ARM}{scope}/providers/Microsoft.Insights/metrics?api-version={METRICS_API}&metricnames={quote(metric, safe='')}"
-               f"&timespan={span}&interval=P1D&aggregation=Total,Maximum,Average")
-        data = self.client.request("GET", url, headers=self._headers(), timeout=30, retries=1).json()
-        if not isinstance(data, dict) or not isinstance(data.get("value"), list):
-            raise _bad("Azure Monitor")
-        found = next((item for item in data["value"] if isinstance(item, dict)), None)
+        found = next(iter(self._metric_items(self._resource_scope(resource_id), [metric], DAILY, start, end).values()), None)
         if found is None:
             return "", []
-        code = re.sub(r"[^A-Za-z0-9]", "", str(found.get("errorCode") or "Success"))[:40]
-        if code.lower() != "success":
-            raise HttpError(200, f"Azure Monitor could not read the metric ({code})")
-        series = found.get("timeseries")
-        if not isinstance(series, list):
-            raise _bad("Azure Monitor")
-        element = next((item for item in series if isinstance(item, dict)), {})
-        points = [MetricPoint(str(item.get("timeStamp") or ""), _number(item.get("total")), _number(item.get("maximum")), _number(item.get("average")))
-                  for item in element.get("data") or [] if isinstance(item, dict)]
-        return str(found.get("unit") or ""), points
+        if found[2].lower() != "success":
+            raise HttpError(200, f"Azure Monitor could not read the metric ({found[2]})", code=found[2])
+        return found[1], next(iter(found[3].values()), ([], []))[1]
+
+    def metric_reads(self, resource_id: str, plans: Mapping[str, Plan], start: dt.datetime, end: dt.datetime, stop: Callable[[], bool] | None = None) -> "dict[str, tuple[str, list[MetricPoint]] | HttpError]":
+        """Several metrics of one resource, one request for each group of them that has its time grain and its aggregations in common (Azure Monitor refuses names that have no grain in common, and
+        takes 20 at most): for each metric, as asked, its unit and its buckets at the grain of its plan, or the error that it ended in. A request that is refused with 400 is made again for each name of
+        its group, so that a name that is refused does not take the others with it. A metric that the answer does not hold has no unit and no bucket. `stop` ends the read with TimeUp."""
+        scope, groups, done = self._resource_scope(resource_id), {}, {}
+        for name, plan in plans.items():
+            groups.setdefault(plan[:2], []).append(name)
+
+        def read(names: list[str], plan: Plan) -> None:
+            try:
+                found = self._metric_items(scope, names, plan, start, end, stop=stop)
+            except TimeUp:
+                raise
+            except HttpError as error:
+                if error.status == 400 and len(names) > 1:
+                    for name in names:
+                        read([name], plan)
+                else:
+                    done.update(dict.fromkeys(names, error))
+                return
+            for name in names:
+                item = found.get(name.lower())
+                done[name] = ("", []) if item is None else HttpError(200, f"Azure Monitor could not read the metric ({item[2]})", code=item[2]) if item[2].lower() != "success" \
+                    else (item[1], next(iter(item[3].values()), ([], []))[1])
+
+        for names in groups.values():
+            for place in range(0, len(names), 20):
+                read(names[place:place + 20], plans[names[0]])
+        return done
 
     @staticmethod
     def _lock_scopes(locks: list[dict]) -> list[str]:
@@ -463,42 +535,26 @@ class Arm:
         url = f"{ARM}{scope}/providers/Microsoft.Authorization/locks?api-version={LOCKS_API}&$filter=atScope()"
         return self._lock_scopes(self._pages(subscription, url, "Microsoft.Authorization"))
 
-    def metrics_split(self, resource_id: str, metric: str, dimension: str, start: dt.datetime, end: dt.datetime, top: int = 50) -> tuple[str, list[tuple[str, list[MetricPoint]]]]:
-        """One metric of one resource in daily buckets from start to end, with one time series for each value of one dimension of the metric (Learn, "Metrics - List": $filter=<dimension> eq '*'
-        returns a series for every value, `top` is the most that it returns for the resource): the unit, and for each series the value of the dimension as Azure Monitor gives it (text from the
-        estate: the caller turns it into a handle or a label and never shows it) with its points. A time without a zone is UTC."""
+    def metrics_split(self, resource_id: str, metric: str, dimension: str, start: dt.datetime, end: dt.datetime, top: int = 50,
+                      plan: Plan = DAILY) -> tuple[str, list[tuple[str, list[MetricPoint]]]]:
+        """One metric of one resource from start to end at the grain of `plan` (daily buckets by default), with one time series for each value of one dimension of the metric (Learn, "Metrics - List":
+        $filter=<dimension> eq '*' returns a series for every value, `top` is the most that it returns for the resource): the unit, and for each series the value of the dimension as Azure Monitor
+        gives it (text from the estate: the caller turns it into a handle or a label and never shows it) with its points. A time without a zone is UTC."""
         scope = self._resource_scope(resource_id)
-        if not metric.strip() or len(metric) > 100 or "," in metric:
-            raise HttpError(0, "the metric name is not a plain name")
         if not DIMENSION.fullmatch(dimension):
             raise HttpError(0, "the dimension is not a plain name")
-        span = "/".join(_utc(moment).strftime(METRIC_TIME) for moment in (start, end))
         everything = quote(f"{dimension} eq '*'", safe="")
-        url = (f"{ARM}{scope}/providers/Microsoft.Insights/metrics?api-version={METRICS_API}&metricnames={quote(metric, safe='')}&timespan={span}&interval=P1D"
-               f"&aggregation=Total,Maximum,Average&$filter={everything}&top={int(top)}")
-        data = self.client.request("GET", url, headers=self._headers(), timeout=30, retries=1).json()
-        if not isinstance(data, dict) or not isinstance(data.get("value"), list):
-            raise _bad("Azure Monitor")
-        found = next((item for item in data["value"] if isinstance(item, dict)), None)
+        found = next(iter(self._metric_items(scope, [metric], plan, start, end, f"&$filter={everything}&top={int(top)}").values()), None)
         if found is None:
             return "", []
-        code = re.sub(r"[^A-Za-z0-9]", "", str(found.get("errorCode") or "Success"))[:40]
-        if code.lower() != "success":
-            raise HttpError(200, f"Azure Monitor could not read the metric ({code})")
-        series = found.get("timeseries")
-        if not isinstance(series, list):
-            raise _bad("Azure Monitor")
+        if found[2].lower() != "success":
+            raise HttpError(200, f"Azure Monitor could not read the metric ({found[2]})", code=found[2])
         result: list[tuple[str, list[MetricPoint]]] = []
-        for element in series:
-            if not isinstance(element, dict):
-                continue
-            values = [item.get("value") for item in element.get("metadatavalues") or []
-                      if isinstance(item, dict) and isinstance(item.get("name"), dict) and str(item["name"].get("value", "")).lower() == dimension.lower()]
+        for meta, points in found[3].values():
+            values = [item.get("value") for item in meta if isinstance(item.get("name"), dict) and str(item["name"].get("value", "")).lower() == dimension.lower()]
             label = values[0] if values and isinstance(values[0], (str, int)) and not isinstance(values[0], bool) else ""
-            points = [MetricPoint(str(item.get("timeStamp") or ""), _number(item.get("total")), _number(item.get("maximum")), _number(item.get("average")))
-                      for item in element.get("data") or [] if isinstance(item, dict)]
             result.append((str(label), points))
-        return str(found.get("unit") or ""), result
+        return found[1], result
 
     # -- the deeper reads: Log Analytics, deployments, diagnostic settings, the activity log, the platform's purchase recommendations ----------------------------------------------
 

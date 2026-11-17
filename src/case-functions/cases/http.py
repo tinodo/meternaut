@@ -56,14 +56,17 @@ class HttpError(Exception):
     challenge of the runner). It is never part of the text of the error, so it reaches no log, no History line and no page.
 
     `unsent` is true when the request never left the app: no time was left for it, or the connection could not be made (urllib raises URLError only while it connects and sends the request out; what
-    comes when the answer is awaited or read is another error). A call that failed so can be made again without a risk of doing it twice."""
+    comes when the answer is awaited or read is another error). A call that failed so can be made again without a risk of doing it twice.
 
-    def __init__(self, status: int, message: str, retry_after: float | None = None, challenge: str = "", unsent: bool = False) -> None:
+    `code` is the platform's error code word (`error.code` of the body, or `code`), letters and digits only: the one part of an error that a tool may show, because its text can carry ids."""
+
+    def __init__(self, status: int, message: str, retry_after: float | None = None, challenge: str = "", unsent: bool = False, code: str = "") -> None:
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
         self.challenge = challenge
         self.unsent = unsent
+        self.code = code
 
 
 class Refused(Exception):
@@ -246,6 +249,16 @@ def error_text(status: int, body: bytes, redact: Callable[[str], str]) -> str:
     return redact(f"{status} {' '.join(text.split())}".strip())
 
 
+def error_code(body: bytes) -> str:
+    """The code word of an error body of Azure (`error.code`, or `code` at the top): letters and digits only, at most 40; empty when the body has none."""
+    try:
+        document = json.loads(body.decode("utf-8", "replace"))
+    except (ValueError, RecursionError):
+        return ""
+    found = document.get("error") if isinstance(document, dict) and isinstance(document.get("error"), dict) else document
+    return re.sub(r"[^A-Za-z0-9]", "", str(found.get("code") or ""))[:40] if isinstance(found, dict) else ""
+
+
 class Client:
     """Makes the calls of the list. `deadline` is an absolute time on the `monotonic` clock: no call starts after it, no timeout reaches past it and no
     pause is taken that would end after it."""
@@ -313,4 +326,4 @@ class Client:
                     attempt += 1
                     continue
             message = answer.decode("utf-8", "replace") if status == 0 else error_text(status, answer, self.redact)
-            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait, challenge_of(status, answer_headers), unsent)
+            raise HttpError(status, f"{method} {urlsplit(url).netloc}: {message}", wait, challenge_of(status, answer_headers), unsent, error_code(answer) if status else "")

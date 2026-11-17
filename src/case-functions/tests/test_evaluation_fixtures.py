@@ -14,6 +14,7 @@ from support import REPO_ROOT
 from cases import deeper, toolbox as tb
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
 from test_toolbox import DISK, Estate, ask, point, row, standard, toolbox
+from test_toolbox_meters import FIXED, WIDGET, billed, widgets
 
 METRIC = "Processed Prompt Tokens"
 SKIPPED = {"rows", "cols", "same", "properties", "cost_by_service"}  # the cells of a table, and keys that are the data: the tests of the columns and of the cells look at them
@@ -164,10 +165,49 @@ class TheOlderTools(Base):
         summary = ask(box, "metric_summary", handles=["r1", "r2"], metric="Network In Total")
         self.same_shape(summary, self.fixture("unknown-metric-state", "metric_summary", handles=["r1", "r2"], metric="PEBytesIn"))
         self.assertEqual([r["error"] for r in summary["results"]], ["unavailable", "unavailable"])
+        self.assertEqual([r["code"] for r in summary["results"]], [evals.FAILED_CODE] * 2, "the platform's code word of a failed read is in the row, and never its text")
         measure = ask(box, "measure", type=VM, metric="Network In Total")
         fake = self.fixture("unknown-metric-state", "measure", type="microsoft.network/privateendpoints", metric="PEBytesIn")
         self.same_shape(measure, fake)
         self.assertEqual((measure["failed"], fake["failed"], measure["rows"], fake["rows"]), (["r1", "r2"], ["r1", "r2", "r3"], [], []))
+        self.assertEqual((measure["failed_codes"], fake["failed_codes"]), ([evals.FAILED_CODE], [evals.FAILED_CODE]))
+
+    def test_several_metrics_and_the_grain_by_the_hour_are_answered_in_the_shape_of_the_real_tools(self):
+        ask(self.box, "list_resources", type=VM)
+        self.estate.series[(self.estate.id_of("vm-1").lower(), "Network In Total")] = [point(1, 1.5, 4, 0.5), point(2, 2.5, 5, 1.5)]
+        invented = {**ROWS["some-without-data"], "metric": "Network In Total"}
+        names = ["Network In Total", "A Name That The Type Does Not Offer"]
+        summary = ask(self.box, "metric_summary", handles=["r1", "r2"], metrics=names, grain="hour")
+        fake = self.fixture(invented, "metric_summary", handles=["r1", "r3"], metrics=names, grain="hour")
+        self.same_shape(summary, fake)
+        self.assertEqual((summary["metrics"], fake["metrics"], summary["unknown_metrics"], fake["unknown_metrics"]), (["Network In Total"],) * 2 + (1, 1))
+        self.assertTrue({"metric", "peak", "p95"} <= set(summary["results"][0]) and {"metric", "peak", "p95"} <= set(fake["results"][0]))
+        measure = ask(self.box, "measure", type=VM, metrics=names, grain="hour")
+        fake = self.fixture(invented, "measure", type=invented["type"], metrics=names, grain="hour")
+        self.same_shape(measure, fake)
+        self.same_columns(measure, fake)
+        self.same_cells(measure, fake)
+        self.assertEqual(fake["cols"][:2] + fake["cols"][-2:], ["handle", "metric", "peak", "p95"])
+        self.assertEqual(ask(self.box, "metric_summary", handles=["r1"], metrics=["Nothing", "Nowhere"]), {"error": "unknown-metric"})
+        self.assertEqual(self.fixture(invented, "metric_summary", handles=["r1"], metrics=["Nothing", "Nowhere"]), {"error": "unknown-metric"})
+        for arguments in ({"handles": ["r1"], "metric": "Network In Total", "metrics": ["Network In Total"]}, {"handles": ["r1"]}, {"handles": ["r1"], "metric": "Network In Total", "grain": "minute"}):
+            self.assertEqual(ask(self.box, "metric_summary", **arguments), {"error": "bad-arguments"}, arguments)
+            self.assertEqual(self.fixture(invented, "metric_summary", **arguments), {"error": "bad-arguments"}, arguments)
+
+    def test_a_type_that_offers_no_platform_metrics_says_no_metrics_in_the_four_tools_that_read_a_metric(self):
+        estate = widgets(1)
+        estate.no_metrics = {WIDGET}
+        box = toolbox(estate)
+        ask(box, "list_resources", type=WIDGET)
+        invented = {**ROWS[DISK_ROW], "no_metrics": True}
+        for tool, real_arguments, fake_arguments in (
+                ("metric_names", {"type": WIDGET}, {"type": invented["type"]}),
+                ("metric_summary", {"handles": ["r1"], "metric": "Day Metric"}, {"handles": ["r1"], "metric": invented["metric"]}),
+                ("measure", {"type": WIDGET, "metrics": ["Day Metric"]}, {"type": invented["type"], "metrics": [invented["metric"]]}),
+                ("metric_split", {"handle": "r1", "metric": "Day Metric", "dimension": "Dim"}, {"handle": "r1", "metric": invented["metric"], "dimension": "Dim"})):
+            self.assertEqual(ask(box, tool, **real_arguments), {"error": "no-metrics"}, tool)
+            self.assertEqual(self.fixture(invented, tool, **fake_arguments), {"error": "no-metrics"}, tool)
+        self.assertNotEqual(self.fixture(ROWS[DISK_ROW], "metric_names", type=invented["type"]).get("error"), "no-metrics", "a row that says nothing of it offers its metric")
 
     def test_the_cost_lines_the_advice_and_the_paid_features(self):
         self.same_shape(ask(self.box, "cost_lines", limit=3), self.fixture(DISK_ROW, "cost_lines", limit=3))
@@ -179,7 +219,7 @@ class TheOlderTools(Base):
         metric = ROWS["empty-estate"]["metric"]
         for tool, arguments in (("estate_overview", {}), ("list_resources", {"type": DISK}), ("metric_names", {"type": DISK}), ("metric_summary", {"handles": ["r1"], "metric": metric}),
                                 ("measure", {"type": DISK, "metric": metric}), ("cost_lines", {}), ("cost_lines", {"type": DISK}), ("advisor_items", {}), ("paid_features", {}),
-                                ("describe", {"handle": "r1"}), ("cost_history", {"type": DISK})):
+                                ("describe", {"handle": "r1"}), ("cost_history", {"type": DISK}), ("cost_meters", {"type": DISK})):
             real, fake = ask(box, tool, **arguments), self.fixture("empty-estate", tool, **arguments)
             self.same_shape(real, fake)
             if "cols" in real:
@@ -199,8 +239,9 @@ class TheOlderTools(Base):
 class TheArguments(Base):
     """What each tool takes, and what it does with a call that does not pass."""
 
-    VALID = {"type": "microsoft.compute/disks", "metric": "Percentage CPU", "handle": "r1", "handles": ["r1"], "dimension": "StatusCode", "table": "Heartbeat", "service": "Storage",
-             "order_by": "cost", "basis": "actual", "days": 30, "limit": 5, "offset": 0}
+    VALID = {"type": "microsoft.compute/disks", "metric": "Percentage CPU", "metrics": ["Percentage CPU"], "handle": "r1", "handles": ["r1"], "dimension": "StatusCode", "table": "Heartbeat",
+             "service": "Storage", "order_by": "cost", "basis": "actual", "grain": "hour", "days": 30, "limit": 5, "offset": 0}
+    ONE_OF = {"metric_summary": {"metric": "Percentage CPU"}, "measure": {"metric": "Percentage CPU"}, "cost_meters": {"handle": "r1"}}  # what a call needs besides the required, as the tool decides it
 
     def test_what_every_tool_takes_is_what_the_toolbox_declares(self):
         self.assertEqual(set(evals.PARAMETERS), set(tb.TOOLS))
@@ -209,19 +250,23 @@ class TheArguments(Base):
             self.assertEqual(list(declared), [param.name for param in tool.params], name)
             for param in tool.params:
                 kind, required, limits = declared[param.name]
-                self.assertEqual((kind, required), ({"integer": "int", "handles": "list", "choice": "choice"}.get(param.kind, "text"), param.required), (name, param.name))
+                self.assertEqual((kind, required), ({"integer": "int", "handles": "list", "metrics": "list", "choice": "choice"}.get(param.kind, "text"), param.required), (name, param.name))
                 if kind == "int":
                     self.assertEqual(limits, (param.low, param.high), (name, param.name))
                 if kind == "choice":
                     self.assertEqual(limits, param.choices, (name, param.name))
+                if kind == "list":
+                    self.assertEqual(limits or (1, 60), (1, tb.MAX_METRICS if param.kind == "metrics" else tb.MAX_MEASURED), (name, param.name))
 
     def test_a_call_that_does_not_pass_is_bad_arguments_for_the_tool_and_for_the_fixtures(self):
         bad = {"int": ["x", True, -1, 100001], "choice": ["nope", 3], "text": [5, ["r1"], ""], "list": ["r1", [], [7]]}
         for name, declared in evals.PARAMETERS.items():
-            good = {param: self.VALID[param] for param in declared if declared[param][1]}
+            good = {**{param: self.VALID[param] for param in declared if declared[param][1]}, **self.ONE_OF.get(name, {})}
             cases = [{**good, "unknown": 1}] + [{**good, param: value} for param, (kind, required, limits) in declared.items() for value in bad[kind]
                                                  if not (kind == "int" and isinstance(value, int) and not isinstance(value, bool) and limits[0] <= value <= limits[1])]
             cases += [{key: value for key, value in good.items() if key != param} for param in good]
+            if name in self.ONE_OF and "metric" in good:
+                cases.append({**good, "metrics": ["Percentage CPU"]})  # the one name and the list, never both
             for arguments in cases:
                 real = ask(toolbox(deeper_estate()), name, **arguments)
                 fake = self.fixture(WORKSPACE_ROW, name, **arguments)
@@ -229,7 +274,7 @@ class TheArguments(Base):
 
     def test_a_call_that_passes_is_answered_and_the_bounds_are_the_ones_of_the_toolbox(self):
         for name, declared in evals.PARAMETERS.items():
-            good = {param: self.VALID[param] for param in declared if declared[param][1]}
+            good = {**{param: self.VALID[param] for param in declared if declared[param][1]}, **self.ONE_OF.get(name, {})}
             if name == "cost_history":
                 good = {"handle": "r1"}
             self.assertNotEqual(self.fixture(WORKSPACE_ROW, name, **good), {"error": "bad-arguments"}, name)
@@ -259,7 +304,7 @@ class TheDeeperTools(Base):
         self.assertEqual(self.fixture(WORKSPACE_ROW, "describe", handle="r1")["reads"], list(deeper.OFFERS[WORKSPACE]))
 
     def test_the_constants_of_the_fixtures_are_the_ones_of_the_toolbox(self):
-        self.assertEqual((evals.READER_SOURCES, evals.CHILD_COLUMNS, evals.FIXED_FIELDS), (tb.READER_SOURCES, tb.CHILD_COLUMNS, tb.FIXED_FIELDS))
+        self.assertEqual((evals.READER_SOURCES, evals.CHILD_COLUMNS, evals.FIXED_FIELDS, evals.METER_COLUMNS), (tb.READER_SOURCES, tb.CHILD_COLUMNS, tb.FIXED_FIELDS, tb.METER_COLUMNS))
         self.assertEqual((evals.WORKSPACE, evals.DEPLOYMENT, evals.COLLECTION_RULE), (WORKSPACE, "microsoft.cognitiveservices/accounts/deployments", COLLECTION))
         self.assertEqual(evals.DAYS, tb.MAX_DAYS)
         real = ask(self.box, "data_writers", handle=self.machine)["diagnostic_settings"]["cols"]
@@ -379,6 +424,50 @@ class TheDeeperTools(Base):
         self.assertEqual(self.fixture(ACCOUNT_ROW, "metric_split", handle="r1", metric="Nope", dimension="ModelDeploymentName"), {"error": "unknown-metric"})
         self.assertEqual(ask(self.box, "metric_split", handle=self.account, metric=METRIC, dimension="Nope"), {"error": "bad-arguments"})
         self.assertEqual(self.fixture(ACCOUNT_ROW, "metric_split", handle="r1", metric=METRIC, dimension="Nope"), {"error": "bad-arguments"})
+
+
+class TheBill(Base):
+    """What a resource, or a type, is billed for, meter by meter: the real tool on the fake estate of its own tests (one meter for the scope), and the fixtures, asked the same."""
+
+    def setUp(self):
+        self.estate = widgets(2)
+        billed(self.estate, self.estate.id_of("w1").lower(), FIXED, [10.0] * 7, 24.0)
+        self.box = toolbox(self.estate)
+        ask(self.box, "list_resources", type=WIDGET)
+
+    def test_one_resource_a_type_and_a_service_are_answered_in_the_shape_of_the_real_tool(self):
+        for arguments in ({"handle": "r1", "days": 7}, {"type": WIDGET, "days": 7}):
+            real = ask(self.box, "cost_meters", **arguments)
+            fake = self.fixture(DISK_ROW, "cost_meters", **{**arguments, **({"type": "microsoft.compute/disks"} if "type" in arguments else {})})
+            self.same_shape(real, fake)
+            self.same_columns(real, fake)
+            self.same_cells(real, fake)
+            self.assertEqual((fake["meters"], len(fake["rows"]), fake["rows"][0][0]), (1, 1, "m1"), "a meter handle, as the real tool gives it")
+        self.assertEqual(self.fixture(DISK_ROW, "cost_meters", type="microsoft.compute/disks", days=7)["cols"][-1], "resources")
+        real = ask(self.box, "cost_meters", type=WIDGET, service="Another Service", days=7)
+        fake = self.fixture(DISK_ROW, "cost_meters", type="microsoft.compute/disks", service="Another Service", days=7)
+        self.same_shape(real, fake)
+        self.assertEqual((real["meters"], fake["meters"], real["rows"], fake["rows"]), (0, 0, [], []))
+
+    def test_the_daily_shape_of_the_fixture_is_worked_out_from_the_cost_of_each_day(self):
+        fake = self.fixture({**ROWS[DISK_ROW], "history": {"r1": [0.0] * 25 + [10.0, 0.0, 30.0, 0.0, 20.0]}}, "cost_meters", handle="r1")
+        cells = dict(zip(fake["cols"], fake["rows"][0]))
+        self.assertEqual((cells["usd"], cells["days"], cells["avg_day"], cells["min_day"], cells["max_day"], cells["first_day"], cells["last_day"]), (60, 3, 20, 10, 30, 5, 1))
+        self.assertEqual((fake["usd_total"], cells["share"], cells["cv"]), (60, 1.0, 3.266), "the mean over the 30 days is 2, the spread is the square root of 1280 / 30, so cv is 3.266")
+
+    def test_a_call_that_cannot_be_answered_gets_the_word_of_the_real_tool(self):
+        for arguments in ({}, {"handle": "r1", "type": WIDGET}, {"handle": "r1", "days": 6}, {"handle": "r1", "days": 31}):
+            self.assertEqual(ask(self.box, "cost_meters", **arguments), {"error": "bad-arguments"}, arguments)
+            self.assertEqual(self.fixture(DISK_ROW, "cost_meters", **{**arguments, **({"type": "microsoft.compute/disks"} if "type" in arguments else {})}), {"error": "bad-arguments"}, arguments)
+        self.assertEqual(ask(self.box, "cost_meters", handle="r77"), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(DISK_ROW, "cost_meters", handle="r77"), {"error": "unknown-handle"})
+
+    def test_a_part_of_a_resource_has_no_line_of_its_own(self):
+        box = toolbox(deeper_estate())
+        account = ask(box, "list_resources", type=ACCOUNT)["rows"][0][0]
+        child = ask(box, "children", handle=account)["rows"][0][0]
+        self.assertEqual(ask(box, "cost_meters", handle=child), {"error": "not-offered"})
+        self.assertEqual(self.fixture(ACCOUNT_ROW, "cost_meters", handle="r2"), {"error": "not-offered"})
 
 
 class TheEvidence(Base):
