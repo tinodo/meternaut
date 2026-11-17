@@ -8,12 +8,12 @@ from unittest import mock
 
 import support  # noqa: F401  (it puts the app on the path)
 from support import APP_ROOT, TOKEN
-from cases import activity, investigate
+from cases import activity, investigate, pricing, roles
 from cases import toolbox as tb
 from cases.arm import ALIAS_PAGES, Arm, _alias_paths
 from cases.http import Client, HttpError, Refused, allowed_calls
 from cases.redact import Redactor
-from test_toolbox import SUB, SUB2, Estate, ask, row, toolbox
+from test_toolbox import SUB, SUB2, Estate, ask, everything_listed, listing, row, toolbox
 from test_toolbox_depth import DepthEstate, table
 
 GADGET, PART = "microsoft.example/gadgets", "microsoft.example/gadgets/parts"
@@ -241,11 +241,11 @@ LINK = f"https://management.azure.com/subscriptions/{SUB}/providers/Microsoft.Ex
 
 
 class TheReadOfTheList(unittest.TestCase):
-    def test_the_paths_of_a_type_are_the_default_path_and_every_path_of_each_alias_in_lower_case_without_array_marks_and_the_first_properties(self):
-        arm, calls = scripted([(200, provider(("Gadgets", [alias("properties.networkAcls.ipRules[*].value", "properties.ip.rules[*].Value"), alias("sku.name"), alias("properties.mode"),
+    def test_the_paths_of_a_type_are_the_default_path_and_every_path_of_each_alias_in_the_platforms_spelling_without_array_marks_and_the_first_properties(self):
+        arm, calls = scripted([(200, provider(("Gadgets", [alias("properties.networkAcls.ipRules[*].value", "properties.ip.rules[*].Value"), alias("sku.name"), alias("Properties.mode"),
                                                           alias("properties.rules[*]"), alias("tags")]), ("Gadgets/Parts", []), ("Empty", [{"name": "x"}])))])
         found = arm.provider_paths(SUB, "Microsoft.Example")
-        self.assertEqual(found, {"gadgets": frozenset({("networkacls", "iprules", "value"), ("ip", "rules", "value"), ("sku", "name"), ("mode",), ("rules",), ("tags",)})})
+        self.assertEqual(found, {"gadgets": frozenset({("networkAcls", "ipRules", "value"), ("ip", "rules", "Value"), ("sku", "name"), ("mode",), ("rules",), ("tags",)})})
         self.assertEqual(len(calls), 1)
         method, url = calls[0]
         self.assertEqual(method, "GET")
@@ -338,6 +338,82 @@ class TheCallThatReadsTheList(unittest.TestCase):
         found = [(method, pattern.pattern) for method, pattern in allowed_calls() if pattern.fullmatch(self.URL)]
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0][0], "GET")
+
+
+class ThePlatformsSpellingOfAPath(unittest.TestCase):
+    PLATFORM = listing("networkAcls", "networkAcls.defaultAction", "rules", "rules.state", "sku.tier")
+
+    def test_a_path_is_shown_as_the_platform_spells_it_and_never_as_the_resource_does(self):
+        found = dict(tb.typed_properties({"NETWORKACLS": {"DEFAULTACTION": "Deny"}, "RULES": [{"STATE": "On"}]}, {"TIER": "Premium"}, self.PLATFORM))
+        self.assertEqual(found, {"networkAcls.defaultAction": "Deny", "rulesCount": 1, "rules.state": "On", "sku.tier": "Premium"})
+        self.assertEqual(dict(tb.typed_properties({"networkacls": {"defaultaction": "Deny"}}, None, self.PLATFORM)), {"networkAcls.defaultAction": "Deny"})
+
+    def test_two_spellings_of_one_path_in_a_resource_are_one_entry_that_holds_both_values(self):
+        both = {"NETWORKACLS": {"DEFAULTACTION": "Deny"}, "networkacls": {"defaultaction": "Allow"}, "networkAcls": {"defaultAction": "Deny"}}
+        self.assertEqual(tb.typed_properties(both, None, self.PLATFORM), [("networkAcls.defaultAction", ["Deny", "Allow"])])
+
+    def test_a_list_of_the_platform_that_spells_a_path_two_ways_gives_one_of_them_always_and_a_listed_path_before_the_beginning_of_a_longer_one(self):
+        two = tb.Listing(frozenset({("Foo", "bar"), ("foo", "bar"), ("a", "B", "c"), ("a", "b")}))
+        self.assertEqual((two.spelled[("foo", "bar")], two.spelled[("foo",)]), (("Foo", "bar"), ("Foo",)), "the first in the order of the text")
+        self.assertEqual((two.spelled[("a", "b")], two.spelled[("a", "b", "c")], two.whole), (("a", "b"), ("a", "B", "c"), frozenset({("foo", "bar"), ("a", "b", "c"), ("a", "b")})))
+
+    def test_the_exact_paths_are_shown_as_they_are_written_in_the_module_whatever_the_case_of_the_resource(self):
+        self.assertEqual(dict(tb.typed_properties({"POWERSTATE": {"CODE": "PowerState/running"}}, None, None)), {"powerState.code": "PowerState/running"})
+        self.assertEqual(dict(tb.typed_properties({"powerstate": {"code": "PowerState/running"}}, None, listing("powerstate.code"))), {"powerState.code": "PowerState/running"})
+
+    def test_every_answer_and_the_evidence_hold_the_platforms_spelling_for_every_resource_of_a_type(self):
+        estate = the_estate()
+        estate.rows[0]["properties"] = {"NETWORKACLS": {"DEFAULTACTION": "Deny"}, "REPLICACOUNT": 2}
+        estate.rows[1]["properties"] = {"networkacls": {"defaultaction": "Allow"}, "replicacount": 3}
+        box = toolbox(estate)
+        answer = ask(box, "list_resources", type=GADGET)
+        self.assertEqual([name for name in answer["cols"] if name.lower() == "networkacls.defaultaction"], ["networkAcls.defaultAction"], "one column, and the platform's")
+        self.assertEqual([name for name in answer["cols"] if name.lower() == "replicacount"], ["replicaCount"])
+        envelope = lambda properties: {path: value for path, value in properties.items() if not path.startswith("sku.")}  # noqa: E731 (the sku is the envelope's: its paths are not the point here)
+        self.assertEqual(envelope(ask(box, "describe", handle="r1")["properties"]), {"networkAcls.defaultAction": "Deny", "replicaCount": 2})
+        self.assertEqual(envelope(ask(box, "describe", handle="r2")["properties"]), {"networkAcls.defaultAction": "Allow", "replicaCount": 3})
+        self.assertEqual({handle: set(envelope(box.evidence[handle]["properties"])) for handle in ("r1", "r2")}, {"r1": {"networkAcls.defaultAction", "replicaCount"}, "r2": {"networkAcls.defaultAction", "replicaCount"}})
+        self.assertEqual(envelope(box.known_of("r2")[1]), {"networkAcls.defaultAction": "Allow", "replicaCount": 3})
+
+
+class TheNameThatAFindingCanCite(unittest.TestCase):
+    def test_one_constant_is_the_bound_of_the_name_that_pricing_accepts_and_of_the_path_that_the_toolbox_shows(self):
+        self.assertIs(tb.MAX_CITED_NAME, roles.MAX_CITED_NAME)
+        bound = roles.MAX_CITED_NAME
+        self.assertTrue(pricing.NAME.fullmatch("a" * bound))
+        self.assertIsNone(pricing.NAME.fullmatch("a" * (bound + 1)))
+        self.assertTrue(all(len(".".join(path)) <= bound for path in tb.KNOWN_PATHS), "the exact paths are shown whatever the list says, so each of them must be one that can be cited")
+
+    def test_a_path_of_more_than_the_bound_is_not_shown_and_every_path_that_is_shown_is_one_that_a_finding_can_cite(self):
+        bound = tb.MAX_CITED_NAME
+        for total in range(6, bound + 30):
+            key = "x" * (total - 5) + "Count"
+            shown = dict(tb.typed_properties({key: 1}, None, listing(key)))
+            self.assertEqual(bool(shown), total <= bound, total)
+            self.assertTrue(all(pricing.NAME.fullmatch(path) for path in shown), total)
+        first, second = "a" * (bound // 2), "b" * (bound // 2)
+        deep = {first: {second: {"someCount": 1}}}
+        self.assertEqual(dict(tb.typed_properties(deep, None, listing(first, f"{first}.{second}", f"{first}.{second}.someCount"))), {}, "listed by the platform, and too long to cite")
+
+    def test_the_length_of_a_list_counts_its_suffix_in_the_bound(self):
+        room = tb.MAX_CITED_NAME - len("Count")
+        for size, shown in ((room, True), (room + 1, False)):
+            key = "l" * size
+            self.assertEqual(bool(tb.typed_properties({key: [1]}, None, listing(key))), shown, size)
+
+    def test_a_path_that_does_not_begin_with_a_letter_is_not_shown_because_a_finding_cannot_cite_it(self):
+        for key in ("9startCount", "_startCount"):
+            self.assertEqual(tb.typed_properties({key: 1}, None, listing(key)), [], key)
+        self.assertEqual(tb.typed_properties({"startCount": 1}, None, listing("startCount")), [("startCount", 1)])
+
+    def test_a_long_path_that_the_platform_lists_is_in_no_answer_of_the_toolbox(self):
+        half = "a" * tb.MAX_CITED_NAME
+        long = f"{half}.{'b' * 10}Count"
+        estate = the_estate([*PLATFORM, long])
+        estate.rows[0]["properties"][half] = {f"{'b' * 10}Count": 5}
+        box = toolbox(estate)
+        self.assertEqual(described(box)["properties"], LEGIT)
+        self.assertNotIn(half, "\n".join(everything(box)))
 
 
 class TheModuleAfterTheChange(unittest.TestCase):

@@ -88,6 +88,7 @@ from .http import HttpError, Refused
 from .identity import IdentityError
 from .meters import Meter, fold, shape
 from .models import CapabilityRecord, StoreError
+from .roles import MAX_CITED_NAME
 
 MAX_RESULT_CHARS = 6000
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
@@ -207,7 +208,12 @@ KNOWN_PATHS = frozenset(tuple(path.split(".")) for path in (
     "extended.instanceView.powerState.code", "powerState.code", "agentPoolProfiles.powerState.code",
     "functionAppConfig.scaleAndConcurrency.alwaysReady.instanceCount",
     "virtualRouterAutoScaleConfiguration.minCapacity"))
-_KNOWN_PREFIXES = frozenset(path[:length] for path in KNOWN_PATHS for length in range(1, len(path) + 1))
+def _lowered(path: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(key.lower() for key in path)
+
+
+# The paths of KNOWN_PATHS and every beginning of them, found by their keys in lower case, each as the platform spells it.
+_KNOWN_SPELLED = {_lowered(path[:length]): path[:length] for path in sorted(KNOWN_PATHS) for length in range(1, len(path) + 1)}
 # Names that hold somebody's text, an address or a secret, or that hold a dictionary whose keys somebody chose. A property is not shown by this list: the platform's list for the type decides
 # (Listing), and a list of names is incomplete by nature. cases/neighbors.py uses it for the one thing that is left, which keys of a resource it reads a reference from. A key is denied when the
 # whole of it is one of these names, or when one of the words of its camel case is one of the DENIED_WORDS (nodeLabels, appSettings).
@@ -411,18 +417,22 @@ def _leaf(path: tuple[str, ...], node: object) -> "bool | int | float | str | No
 
 
 class Listing:
-    """The property paths that the platform lists for one resource type (cases/arm.py, provider_paths), as tuples of lower-case keys: `paths` are the ones that may be shown, and `prefixes`, which
-    hold every beginning of them, the ones that may be followed. A key of a resource is looked up in lower case, and a key that is not plain ASCII is never found."""
+    """The property paths that the platform lists for one resource type (cases/arm.py, provider_paths), as tuples of keys in the platform's own spelling. A key of a resource is found by its
+    letters in lower case, and a path is shown as the platform spells it, never as the resource does, so that one property is not shown twice under two cases: `spelled` holds each listed path and
+    each beginning of one, found by its lower-case keys, as the list gives it (the first in the order of the text when it gives a path in two spellings, and a listed path before the beginning of a
+    longer one), and `whole` the lower-case paths that may be shown, which the others may only be followed to. A key that is not plain ASCII is never found."""
 
-    __slots__ = ("paths", "prefixes")
+    __slots__ = ("spelled", "whole")
 
     def __init__(self, paths: "frozenset[tuple[str, ...]]") -> None:
-        self.paths = paths
-        self.prefixes = frozenset(path[:length] for path in paths for length in range(1, len(path) + 1))
-
-    def knows(self, path: tuple[str, ...], whole: bool) -> bool:
-        keys = tuple(key.lower() for key in path if key.isascii())
-        return len(keys) == len(path) and keys in (self.paths if whole else self.prefixes)
+        ordered = sorted(paths)
+        self.spelled: dict[tuple[str, ...], tuple[str, ...]] = {}
+        for path in ordered:
+            self.spelled.setdefault(_lowered(path), path)
+        self.whole = frozenset(self.spelled)
+        for path in ordered:
+            for length in range(1, len(path)):
+                self.spelled.setdefault(_lowered(path[:length]), path[:length])
 
 
 def _rank(leaf: str) -> int:
@@ -443,38 +453,48 @@ def typed_properties(properties: object, sku: object = None, listed: "Listing | 
     path, the last one too, so a map that somebody fills shows at most as its own name, and nothing under it is followed) or at an exact path of KNOWN_PATHS; with no list (None: it could
     not be read, or the platform has none for the type) only at the paths of KNOWN_PATHS, and no length of a list.
 
+    A path is shown as the platform spells it (Listing.spelled, and the paths of KNOWN_PATHS as they are written there), never as the resource spells it, so the keys of the answer are
+    the same for every resource and one property is not shown twice under two cases (the values of the two are one list of up to three). A path of more than MAX_CITED_NAME characters, or that
+    does not begin with a letter, is not shown: a finding cannot cite it.
+
     The items of a list are followed under the key of the list, so the value of a path is that of every item: one value when they agree, else up to three."""
     found: dict[str, list] = {}
     budget = [MAX_NODES]
 
-    def add(path: tuple[str, ...], value: "bool | int | float | str") -> None:
-        values = found.setdefault(".".join(path), [])
+    def add(shown: tuple[str, ...], value: "bool | int | float | str") -> None:
+        text = ".".join(shown)
+        if len(text) > MAX_CITED_NAME or not (text[:1].isascii() and text[:1].isalpha()):
+            return
+        values = found.setdefault(text, [])
         if not any(type(seen) is type(value) and seen == value for seen in values):
             values.append(value)
 
-    def walk(node: object, path: tuple[str, ...]) -> None:
+    def walk(node: object, lower: tuple[str, ...], shown: tuple[str, ...]) -> None:
         budget[0] -= 1
         if budget[0] < 0:
             return
         if isinstance(node, dict):
             for key, value in node.items():
-                if isinstance(key, str) and ((*path, key) in _KNOWN_PREFIXES or (listed is not None and listed.knows((*path, key), False))):
-                    walk(value, (*path, key))
+                if isinstance(key, str) and key.isascii():
+                    step = (*lower, key.lower())
+                    named = _KNOWN_SPELLED.get(step) or (listed.spelled.get(step) if listed is not None else None)
+                    if named is not None:
+                        walk(value, step, named)
         elif isinstance(node, list):
-            if path:
+            if shown:
                 if listed is not None:
-                    add((*path[:-1], f"{path[-1]}Count"), len(node))
+                    add((*shown[:-1], f"{shown[-1]}Count"), len(node))
                 for item in node[:LIST_ITEMS]:
                     if isinstance(item, dict):
-                        walk(item, path)
-        elif path and (path in KNOWN_PATHS or (listed is not None and listed.knows(path, True))):
-            value = _leaf(path, node)
+                        walk(item, lower, shown)
+        elif shown and (shown in KNOWN_PATHS or (listed is not None and lower in listed.whole)):
+            value = _leaf(shown, node)
             if value is not None:
-                add(path, value)
+                add(shown, value)
 
-    walk(properties, ())
+    walk(properties, (), ())
     if isinstance(sku, dict):
-        walk({"sku": sku}, ())
+        walk({"sku": sku}, (), ())
     ranked = sorted(found.items(), key=lambda item: _order(item[0]))[:DESCRIBED_PROPERTIES]
     return [(path, values[0] if len(values) == 1 else values[:3]) for path, values in ranked]
 

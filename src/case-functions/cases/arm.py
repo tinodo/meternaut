@@ -131,9 +131,9 @@ def scopes_of(resource_id: str) -> list[str]:
 
 
 def _alias_paths(item: object) -> set[tuple[str, ...]]:
-    """The property paths of one resource type in the answer of a provider: the default path of each alias and each path that it has (they differ between API versions), as tuples of lower-case
-    keys, without the array marks and without the first `properties`, which the properties of a resource do not hold (the paths of the envelope, `sku.name`, stay as they are). A text that is not a
-    dotted name of letters, digits and underscores is no path."""
+    """The property paths of one resource type in the answer of a provider: the default path of each alias and each path that it has (they differ between API versions), as tuples of keys in the
+    platform's own spelling, without the array marks and without the first `properties`, which the properties of a resource do not hold (the paths of the envelope, `sku.name`, stay as they are). A
+    text that is not a dotted name of letters, digits and underscores is no path."""
     found: set[tuple[str, ...]] = set()
     for alias in (item.get("aliases") if isinstance(item, dict) else None) or []:
         if not isinstance(alias, dict):
@@ -141,8 +141,8 @@ def _alias_paths(item: object) -> set[tuple[str, ...]]:
         more = alias.get("paths") if isinstance(alias.get("paths"), list) else []
         for text in (alias.get("defaultPath"), *(path.get("path") for path in more if isinstance(path, dict))):
             if isinstance(text, str) and ALIAS_PATH.fullmatch(text):
-                keys = text.replace("[*]", "").lower().split(".")
-                found.add(tuple(map(sys.intern, keys[1:] if keys[0] == "properties" and len(keys) > 1 else keys)))
+                keys = text.replace("[*]", "").split(".")
+                found.add(tuple(map(sys.intern, keys[1:] if keys[0].lower() == "properties" and len(keys) > 1 else keys)))
     return found
 
 
@@ -758,8 +758,8 @@ class Arm:
 
     def provider_paths(self, subscription: str, namespace: str) -> dict[str, frozenset[tuple[str, ...]]]:
         """The property paths that the platform lists for each resource type of one namespace (Learn, "Providers - Get" with $expand=resourceTypes/aliases: the aliases of Azure Policy):
-        {the type without its namespace, in lower case: its paths}, each path as _alias_paths gives it. A type that lists no path is not in it. An answer larger than ALIAS_BYTES or with more than
-        ALIAS_PATHS paths, or one that goes on for more than ALIAS_PAGES pages, is an error, and nothing of it is kept."""
+        {the type without its namespace, in lower case: its paths}, each path as _alias_paths gives it, in the platform's spelling. A type that lists no path is not in it. An answer larger than
+        ALIAS_BYTES or with more than ALIAS_PATHS paths, or one that goes on for more than ALIAS_PAGES pages, is an error, and nothing of it is kept."""
         if not NAMESPACE_NAME.fullmatch(namespace):
             raise HttpError(0, "the namespace is not the name of a resource provider")
         found: dict[str, set[tuple[str, ...]]] = {}

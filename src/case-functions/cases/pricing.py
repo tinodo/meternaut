@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Collection, Mapping, NamedTuple, Sequence
 
 from .meters import Meter, shape
-from .roles import clean_text
+from .roles import MAX_CITED_NAME, clean_text
 
 KEY = "change"  # the key of the facts of a case
 ACTIONS = ("remove", "reduce", "switch", "schedule", "commit", "none")
@@ -33,7 +33,7 @@ MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
 WINDOW = 30  # the closed days that a figure a month rests on
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
-NAME = re.compile(r"[A-Za-z][A-Za-z0-9 ._/-]{0,63}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
+NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
     "lines": "No saving was worked out: the bill lines that the AI named were not found for this resource over the last 30 days.",
