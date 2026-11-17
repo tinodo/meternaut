@@ -138,6 +138,21 @@ def counted(history: object) -> bool:
     return isinstance(history, dict) and any(isinstance(history.get(key), int) and not isinstance(history.get(key), bool) for key in ("age_days", "changed_days"))
 
 
+def complete(part: dict) -> bool:
+    """Whether a part of a profile was read in full, so that a repeat of it would show the same: no section of it is `unread` or `unavailable`, no metric or meter read failed and the references of the
+    estate were read to their end. A part that is not complete is read again."""
+    if any(isinstance(value, str) and value in (UNREAD, "unavailable", "not visible with this access") for value in part.values()):
+        return False
+    metrics, meters, links = part.get("metrics"), part.get("meters"), part.get("links")
+    if isinstance(metrics, str) and metrics not in ("no-metrics",):
+        return False
+    if isinstance(metrics, dict) and (metrics.get("failed") or metrics.get("failed_codes")):
+        return False
+    if isinstance(meters, str) or (isinstance(meters, dict) and (meters.get("error") or meters.get("code"))):
+        return False
+    return not (isinstance(links, dict) and (links.get("complete") is False or links.get("unavailable")))
+
+
 def read_by(part: dict) -> str:
     """What a profile of one resource holds data of, as letters: `m` when a metric answered (with a value or with none), `d` when anything else is a row, a number or a link (a meter, a link, an Advisor
     item, an age or a last change, a part, a diagnostic setting). A part that was not read, that failed or that the type does not have holds none, so nothing is credited for it."""

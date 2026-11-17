@@ -66,9 +66,9 @@ INVESTIGATE_BEAT_TOKENS = "INVESTIGATE_BEAT_TOKENS"
 INVESTIGATE_TOTAL_TOKENS = "INVESTIGATE_TOTAL_TOKENS"
 DEFAULT_INVESTIGATE_BEATS = 6
 LIMIT_INVESTIGATE_BEATS = 8
-DEFAULT_BEAT_CALLS = 8
+DEFAULT_BEAT_CALLS = 3
 LIMIT_BEAT_CALLS = 16
-DEFAULT_BEAT_SECONDS = 160
+DEFAULT_BEAT_SECONDS = 220
 LIMIT_BEAT_SECONDS = 300
 DEFAULT_BEAT_TOKENS = 100_000
 LIMIT_BEAT_TOKENS = 200_000
@@ -80,9 +80,10 @@ DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
 DEFAULT_MODEL_SKEPTIC = "gpt-6.1-sol"
 DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40
-# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,080 is the reads that code makes for six beats (250 seconds on the real estate), 100 seconds of model for each beat and 120 for the checks and the Skeptic, with room over;
-# the Watch that holds it (reading the subscriptions took 345 seconds for ten of them) ends inside the 38 minutes that the Hub waits for (its container group has 45). The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
-DEFAULT_INVESTIGATE_SECONDS = 1080
+# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,440 is six beats of 220 seconds and 120 for the checks and the Skeptic. A beat has the reads that code makes for it (250 seconds in all on the real estate) and then at most
+# half of its 220 seconds for tool calls and 60 more to write its answer; the Watch that holds it (reading the subscriptions took 345 seconds for ten of them) ends inside the 38 minutes that the Hub waits for (its container group has 45) at the usual reading time
+# and not at the slowest: see proposal 25. The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
+DEFAULT_INVESTIGATE_SECONDS = 1440
 LIMIT_INVESTIGATE_SECONDS = 1500
 LIMIT_INVESTIGATE_TOKENS = 600_000
 

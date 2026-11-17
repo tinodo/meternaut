@@ -25,7 +25,10 @@ SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before t
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
 SEED_CALLS = SEED_RESOURCES + 2  # the reads that this takes at most: a listing for each kind that is seeded, and a picture at the hour and one at the day
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
-MODEL_SECONDS = 100  # the time that the model and its tool calls have in a beat, whatever the reads that code made for it took: measured seeds took 7 to 104 seconds, and the beat has this on top of them
+SOFT_SHARE = 0.5  # the share of the seconds of a beat after which its tool calls are refused and the agent is told to write its answer (it was 0.7 for the whole run): the model and its tools have this much, and the rest is for the answer
+ANSWER_SECONDS = 60  # what the agent has after that to write its answer: the hard time of a beat is its soft time and this (never more than the seconds of the beat), so that the rounds of an answer always fit
+SALVAGE_SECONDS = 25  # a beat that is cut off (its hard time, its tokens, or three rounds that gave no text) is asked once more to write its answer, with no tool, and this long to do it
+SALVAGE_MIN_LEFT = 40  # and only when at least this many seconds are left in the time of the beats
 SEED_ESTIMATE_SECONDS = 60  # what the reads of a beat are expected to take before any beat has been read; later, what the beats before it took (on average)
 SEED_PICTURE_SECONDS = 25  # the time that each picture that code reads for a beat may take (the toolbox's budget of one measurement, 60 seconds, is lowered to this for those two calls): a part that did not finish is `unread` and named, and the Investigator may read it itself
 STEP_SECONDS = 30  # nor does it ask the model when less than this is left after the reads that code made for it: one step could not end inside its hard time
@@ -168,8 +171,16 @@ class Result:
     looked: int = 0
     found: int = 0
     note: str = ""
+    salvaged: bool = False
     examined: list[str] = field(default_factory=list)
     lines: list[dict] = field(default_factory=list)
+
+
+def times(allowed: float) -> tuple[float, float]:
+    """The soft time and the hard time of a beat that has `allowed` seconds for the model and its tool calls, on top of the reads that code made for it: its tool calls are refused after SOFT_SHARE of
+    them, and it has ANSWER_SECONDS more to write its answer, never more than `allowed` in all. The seconds of the beat are the setting, whatever the reads took."""
+    soft = SOFT_SHARE * allowed
+    return soft, min(soft + ANSWER_SECONDS, allowed)
 
 
 def looked(toolbox: object, beat: Beat, start: int) -> int:

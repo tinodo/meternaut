@@ -9,7 +9,7 @@ from unittest import mock
 from support import APP_ROOT, RG, SUBSCRIPTION, Ticker
 
 import test_investigate as ti
-from cases import activity, agents, beats, investigate
+from cases import activity, agents, beats, config, investigate
 from cases import toolbox as tb
 from cases.detectors import Context
 from cases.foundry import AgentRun, FoundryError
@@ -247,14 +247,15 @@ class BeatFoundry(ti.FakeFoundry):
     def read_agent(self, name):
         return self.stored.get(name)
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None, max_tokens=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None, max_tokens=None, soft_seconds=None, salvage=None):
         if stop is not None:
             why = stop(AgentRun(text=""))
             if why:
                 raise FoundryError(f"Foundry run stopped by the harness: {why}")
         if not agent.startswith(agents.INVESTIGATOR_NAME):
             return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
-        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "max_tokens": max_tokens, "handler": handler})
+        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "max_tokens": max_tokens, "handler": handler, "soft_seconds": soft_seconds,
+                          "salvage": salvage})
         if self.after_run:
             self.after_run(agent)
         script = self.beats.pop(0)
@@ -265,7 +266,7 @@ class BeatFoundry(ti.FakeFoundry):
             calls.append({"name": name, "arguments": arguments, "ok": True, "chars": len(handler(name, arguments))})
         calls += [{"name": name, "arguments": arguments, "ok": False, "chars": 30, "refused": True} for name, arguments in script.get("refused", ())]
         return AgentRun(text=script["text"], calls=calls, input_tokens=script["tokens"][0], output_tokens=script["tokens"][1], responses=len(calls) + 1,
-                        out_of_tokens=bool(script.get("out_of_tokens")))
+                        out_of_tokens=bool(script.get("out_of_tokens")) or script.get("salvaged") == "tokens", out_of_time=script.get("salvaged") == "time", salvaged=bool(script.get("salvaged")))
 
     def investigator_runs(self):
         return [run for run in self.runs if run["agent"].startswith(agents.INVESTIGATOR_NAME)]
@@ -292,7 +293,7 @@ def pooled(by_kind=None, per_kind=2):
 
 def rig(beats_, *, by_kind=None, per_kind=2, skeptic=None, foundry=None, **settings):
     found, costs = pooled(by_kind, per_kind)
-    values = dict(investigate_beats=3, investigate_max_seconds=1080)
+    values = dict(investigate_beats=3, investigate_max_seconds=1080, investigate_beat_calls=8, investigate_beat_seconds=100)  # the settings of the first beats (8 calls, 100 seconds): the new ones are tested by name
     values.update(settings)
     h = ti.Harness(foundry or BeatFoundry(beats_, skeptic=skeptic), SeedToolbox(found), ti.make_settings(**values), with_store=True)
     h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs=costs, currency="USD")}
@@ -476,7 +477,7 @@ class TheInvestigationInBeats(unittest.TestCase):
         h.ticker, h.s.monotonic = ticker, ticker
         h.go()
         runs = foundry.investigator_runs()
-        self.assertEqual([round(run["max_seconds"]) for run in runs], [beats.MODEL_SECONDS], "the reads took 80 seconds, and the model has its 100 on top of them")
+        self.assertEqual([round(run["max_seconds"]) for run in runs], [100], "the reads took 80 seconds, and the model has the 100 of the setting on top of them")
         self.assertTrue([n for n in h.notes if "the time of the investigation was used up after 1 of 3 beats" in n], h.notes)
         (record,) = h.store.investigations_recent()
         self.assertEqual([(b["n"], b["kinds"], b["end"], b["calls"], b["tokens"]) for b in record.beats], [(1, [list(KINDS)[0]], "answered", 1, 44_000), (2, [list(KINDS)[1]], "time", 0, 0), (3, [list(KINDS)[2]], "time", 0, 0)],
@@ -518,6 +519,54 @@ class TheInvestigationInBeats(unittest.TestCase):
             h.go()
             self.assertEqual(len(foundry.investigator_runs()), beats_run, f"{seconds}: about {seconds * 3 // 4 - 160} seconds are left after the first beat; its reads (40) and the 40 of the model need 80, and a beat never starts with less than {beats.MIN_SECONDS}")
 
+    def test_the_session_of_the_model_in_a_beat_is_the_seconds_of_the_setting_and_not_100_its_tool_calls_stop_at_half_of_them_and_its_hard_time_adds_a_minute_for_the_answer(self):
+        for seconds, soft, hard in ((100, 50, 100), (220, 110, 170), (300, 150, 210), (40, 20, 40)):
+            foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+            h = rig(None, foundry=foundry, investigate_max_seconds=1500, investigate_beat_seconds=seconds)
+            h.go()
+            first = foundry.investigator_runs()[0]
+            self.assertEqual((first["soft_seconds"], round(first["max_seconds"])), (soft, hard), f"a setting of {seconds} seconds")
+        self.assertEqual(beats.times(220), (110.0, 170.0))
+        foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+        h = rig(None, foundry=foundry, investigate_beat_calls=config.DEFAULT_BEAT_CALLS, investigate_beat_seconds=config.DEFAULT_BEAT_SECONDS, investigate_max_seconds=config.DEFAULT_INVESTIGATE_SECONDS)
+        h.go()
+        first = foundry.investigator_runs()[0]
+        self.assertEqual((first["max_calls"], first["soft_seconds"], round(first["max_seconds"])), (3, 110, 170), "what the app starts with: three calls, and 110 seconds before the answer is asked for")
+
+    def test_a_beat_is_not_started_when_what_is_left_cannot_pay_for_its_reads_and_the_whole_session_of_the_setting_and_the_minute_for_its_answer(self):
+        ticker = Ticker()
+        found, _ = pooled()
+
+        class Reads(SeedToolbox):
+            def call(self, name, arguments):
+                ticker.jump(20)
+                return super().call(name, arguments)
+
+        foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+        foundry.after_run = lambda agent: ticker.jump(100) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+        h = rig(None, foundry=foundry, investigate_max_seconds=414, investigate_beat_seconds=220)
+        h.toolbox = Reads(found)
+        h.ticker, h.s.monotonic = ticker, ticker
+        h.go()
+        self.assertEqual(len(foundry.investigator_runs()), 1, "about 150 seconds are left after the first beat: more than its reads (40) and 100, less than its reads and the 170 that its session and its answer may take")
+        self.assertTrue([n for n in h.notes if "the time of the investigation was used up after 1 of 3 beats" in n], h.notes)
+
+    def test_a_beat_that_was_cut_off_and_gave_its_answer_when_it_was_asked_once_more_counts_and_says_so_in_its_line_and_the_last_request_has_25_seconds_when_40_are_left(self):
+        ticker = Ticker()
+        foundry = BeatFoundry([script(one("r1"), salvaged="time"), script(one("r3")), script(one("r5"), salvaged="tokens")])
+        h = rig(None, foundry=foundry, investigate_max_seconds=1080)
+        h.ticker, h.s.monotonic = ticker, ticker
+        result = h.go()
+        lines = h.of("investigation.beat")
+        self.assertEqual([(line["beat"], line["end"], line["ok"], line.get("salvaged")) for line in lines], [(1, "time", True, True), (2, "answered", True, None), (3, "tokens", True, True)])
+        self.assertEqual([beat.found for beat in result.beats], [1, 1, 1], "what a cut-off beat wrote counts")
+        self.assertEqual(len([n for n in h.notes if "gave its answer when it was asked once more" in n]), 2, h.notes)
+        salvage = foundry.investigator_runs()[0]["salvage"]
+        ticker.now = 1000 + 960 - 60
+        self.assertEqual(salvage(), beats.SALVAGE_SECONDS)
+        ticker.now = 1000 + 960 - 20
+        self.assertEqual(salvage(), 0.0, "less than 40 seconds are left in the time of the beats: no last request")
+
     def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
         for seconds in (1080, 600):
             h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=1, investigate_max_seconds=seconds), with_store=True)
@@ -534,7 +583,7 @@ class TheInvestigationInBeats(unittest.TestCase):
         h.go()
         runs = foundry.investigator_runs()
         self.assertEqual(len(runs), 2, "the third beat had 25 seconds: not enough to start")
-        self.assertEqual(round(runs[1]["max_seconds"]), beats.MODEL_SECONDS, "the model has its allowance, which is less than what was left")
+        self.assertEqual(round(runs[1]["max_seconds"]), 100, "the model has the seconds of the setting, which is less than what was left")
         self.assertTrue([n for n in h.notes if "the time of the investigation" in n and "2 of 3 beats" in n], h.notes)
         self.assertEqual(len(foundry.skeptic_runs()), 1)
 

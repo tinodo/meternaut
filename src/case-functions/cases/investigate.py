@@ -864,7 +864,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.beats.append(result)
         if focused:
             h.emit("investigation.beat", beat=result.beat.number, of=result.beat.of, kinds=len(result.beat.kinds), billing=result.beat.billing, seeded=result.seeded, looked=result.looked,
-                   toolCalls=result.calls, tokens=result.tokens, seconds=result.seconds, end=result.end, ok=ok, findings=result.found)
+                   toolCalls=result.calls, tokens=result.tokens, seconds=result.seconds, end=result.end, ok=ok, findings=result.found, **({"salvaged": True} if result.salvaged else {}))
 
     # The time of a tool call is taken from the toolbox's own clock, so that the lines of the calls read no clock of the run.
     tool_clock = getattr(toolbox, "monotonic", time.monotonic)
@@ -893,6 +893,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     toolbox.budget_seconds = kept_budget
             try:
                 fields = beats.call_fields(name, arguments, text, tool_clock() - began)
+                saved = toolbox.log[-1].get("saved") if toolbox.log and isinstance(toolbox.log[-1], dict) else None
+                if fields and isinstance(saved, (int, float)) and not isinstance(saved, bool) and saved > 0:
+                    fields["savedSeconds"] = round(float(saved), 1)  # a picture that was kept: the seconds that its read took, which this call did not spend
             except Exception:  # noqa: BLE001 (the same: nothing that the line needs may fail a call)
                 fields = {}
             if fields:
@@ -931,7 +934,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     for position, beat in enumerate(plan):
         at = s.monotonic()
         # A beat starts only when it can afford its own reads and its allowance for the model: the reads of the beats before it took what they took, and one that is not read yet is estimated.
-        needs = max(beats.MIN_SECONDS, (sum(seeds) / len(seeds) if seeds else beats.SEED_ESTIMATE_SECONDS) + min(st.investigate_beat_seconds, beats.MODEL_SECONDS))
+        needs = max(beats.MIN_SECONDS, (sum(seeds) / len(seeds) if seeds else beats.SEED_ESTIMATE_SECONDS) + beats.times(st.investigate_beat_seconds)[1])
         if out.beats and beats_deadline - at < needs:
             not_started(plan[position:], "time", "the time of the investigation was used up")
             break
@@ -953,9 +956,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
         if focused:
             seeds.append(s.monotonic() - at)
-        # The model and its tool calls have a time of their own, whatever the reads of the beat took (and the setting may lower it), inside what is left of the time of the investigation.
-        seconds = max(1.0, min(st.investigate_beat_seconds, beats.MODEL_SECONDS, beats_deadline - s.monotonic())) if focused else min(beats.OPEN_SECONDS, max(1.0, budget - reserve))
-        if focused and seconds < beats.STEP_SECONDS:
+        # The model and its tool calls have the seconds of the setting, whatever the reads of the beat took, inside what is left of the time of the investigation: its tool calls are refused after half of them
+        # and it has a minute more to write its answer (beats.times).
+        allowed = max(1.0, min(st.investigate_beat_seconds, beats_deadline - s.monotonic())) if focused else 0.0
+        soft_seconds, seconds = beats.times(allowed) if focused else (None, min(beats.OPEN_SECONDS, max(1.0, budget - reserve)))
+        if focused and allowed < beats.STEP_SECONDS:
             # What is left after the reads that code made does not pay for one step of the model: the model is not asked, and the beat fails at no cost in tokens.
             result.end, result.note = "time", f"no time was left for the model after the reads that code made for the beat"
             last_note = result.note
@@ -967,11 +972,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         handler = recorded(beat, "agent", number)
         if harness is not None and out.beats:
             harness.again(spec_i)  # each beat is a run of its own: its own tokens, its own refusals and its own line
+        # A beat that is cut off is asked once more, with no tool, to write its answer, when at least beats.SALVAGE_MIN_LEFT seconds are left in the time of the beats.
+        timing = {"soft_seconds": soft_seconds, "salvage": lambda: beats.SALVAGE_SECONDS if beats_deadline - s.monotonic() >= beats.SALVAGE_MIN_LEFT else 0.0} if focused else {}
         try:
             if harness is None:
-                answer = s.foundry.run(investigator_ref, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+                answer = s.foundry.run(investigator_ref, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}), **timing)
             else:
-                answer = harness.run(investigator_ref, spec_i, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+                answer = harness.run(investigator_ref, spec_i, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}), **timing)
         except FoundryError as error:
             partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
             say_refused(beat, number, partial)
@@ -1003,7 +1010,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                                        + (f", {refused} refused after the {'time' if out_of_time else 'tokens' if out_of_tokens else 'budget'}" if refused else ""))
         result.seconds = beat_steps[beat.number]["ms"] // 1000
         if refused:
-            spent = (f"its time for tool calls ({int(SOFT_TIME_SHARE * seconds)} seconds) was used up" if out_of_time
+            spent = (f"its time for tool calls ({int(soft_seconds if soft_seconds is not None else SOFT_TIME_SHARE * seconds)} seconds) was used up" if out_of_time
                      else f"its tokens for tool calls ({cap}) were used up" if out_of_tokens else f"its budget of {calls if focused else st.investigate_max_calls} was used up")
             note(f"{who}the investigator asked for {refused} more tool call{'' if refused == 1 else 's'} after {spent}, and was refused")
         flush_notes()
@@ -1022,6 +1029,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.examined += examined
         raw_total += len(raw_findings)
         result.end, result.examined, result.found = activity.end_of_run(False, answer, True), examined, min(len(raw_findings), agents.MAX_FINDINGS)
+        result.salvaged = bool(getattr(answer, "salvaged", False))
+        if result.salvaged:
+            note(f"{who}the investigator was cut off by its {'tokens' if out_of_tokens else 'time'} and gave its answer when it was asked once more")
         if len(raw_findings) > agents.MAX_FINDINGS:
             note(f"{who}the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
 

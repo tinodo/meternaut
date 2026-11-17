@@ -241,11 +241,12 @@ class Interface(unittest.TestCase):
         self.assertEqual([(p.name, p.kind.name, p.default) for p in run.values()],
                          [("self", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("agent", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty),
                           ("user_input", "POSITIONAL_OR_KEYWORD", inspect.Parameter.empty), ("handler", "POSITIONAL_OR_KEYWORD", None),
-                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None), ("stop", "KEYWORD_ONLY", None), ("max_tokens", "KEYWORD_ONLY", None)])
+                          ("max_calls", "KEYWORD_ONLY", 20), ("max_seconds", "KEYWORD_ONLY", None), ("stop", "KEYWORD_ONLY", None), ("max_tokens", "KEYWORD_ONLY", None),
+                          ("soft_seconds", "KEYWORD_ONLY", None), ("salvage", "KEYWORD_ONLY", None)])
         self.assertEqual([f.name for f in dataclasses.fields(FunctionTool)], ["name", "description", "parameters"])
         self.assertEqual([f.name for f in dataclasses.fields(AgentSpec)], ["name", "description", "model", "instructions", "tools", "reasoning_effort"])
         self.assertIsNone(AgentSpec("n", "d", "m", "i").reasoning_effort, "the effort is left out unless a spec asks for one")
-        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time", "out_of_tokens"])
+        self.assertEqual([f.name for f in dataclasses.fields(AgentRun)], ["text", "calls", "input_tokens", "output_tokens", "responses", "out_of_time", "out_of_tokens", "salvaged"])
         for frozen, cls in ((True, FunctionTool), (True, AgentSpec), (False, AgentRun)):
             self.assertEqual(cls.__dataclass_params__.frozen, frozen, cls.__name__)
 
@@ -933,6 +934,57 @@ class SoftBudget(unittest.TestCase):
         partial = raised.exception.partial
         self.assertEqual(([bool(c.get("refused")) for c in partial.calls], partial.out_of_time), ([False] + [True] * 4, True))
         self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
+
+
+class Salvage(unittest.TestCase):
+    """A run that is cut off (its hard time, its tokens, or the rounds that it was given) is asked once more, with no tool, to write its answer, when the caller allows it: then its text counts."""
+
+    asks = staticmethod(SoftBudget.asks)
+    TEXT = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": fo.SALVAGE_TEXT}]}
+
+    def test_a_run_that_is_cut_off_by_its_time_gives_its_answer_when_it_is_asked_once_more_and_the_conversation_is_still_deleted(self):
+        rig = Rig()
+        rig.service.advance = 10
+        handler = Handler()
+        result = rig.run(self.asks("c1"), self.asks("c2"), self.asks("c3"), reply([message("the answer")], 7, 3), handler=handler, max_calls=1, max_seconds=35, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_time, result.out_of_tokens, result.responses), ("the answer", True, True, False, 4))
+        self.assertEqual((result.input_tokens, result.output_tokens), (37, 18), "the tokens of the last request are counted")
+        self.assertEqual(SoftBudget.posted(rig)[-1], [output_of("c3", SoftBudget.REFUSED), self.TEXT], "the answers that were waiting, and the instruction")
+        self.assertEqual((rig.service.routes()[-1], rig.service.conversations, len(handler.calls)), ("DELETE conversation", {}, 1))
+
+    def test_without_a_time_for_it_or_when_it_asks_for_a_tool_again_the_run_ends_as_it_did_and_keeps_what_was_gathered(self):
+        for allowed, last, requests in ((lambda: 0.0, None, 3), (None, None, 3), (lambda: 25.0, SoftBudget.asks("c4"), 4)):
+            rig = Rig()
+            rig.service.advance = 10
+            replies = [self.asks("c1"), self.asks("c2"), self.asks("c3"), *([last] if last else [])]
+            with self.assertRaises(FoundryError) as raised:
+                rig.run(*replies, handler=Handler(), max_calls=1, max_seconds=35, **({"salvage": allowed} if allowed else {}))
+            self.assertEqual(str(raised.exception), "Foundry run stopped: the time allowed (35 seconds) was used up after 1 tool calls and 2 that were refused")
+            self.assertEqual((raised.exception.partial.responses, raised.exception.partial.text, raised.exception.partial.salvaged), (requests, "", False))
+            self.assertEqual((rig.service.routes()[-1], rig.service.conversations), ("DELETE conversation", {}))
+
+    def test_a_reason_to_stop_that_is_the_tokens_of_a_beat_leaves_the_last_request_and_any_other_reason_does_not(self):
+        rig = Rig()
+        stop = lambda progress: fo.Salvageable("the token budget of the run is used up") if progress.input_tokens + progress.output_tokens >= 40 else None  # noqa: E731
+        result = rig.run(self.asks("c1", tokens=(30, 10)), reply([message("tokens answer")], 5, 2), handler=Handler(), max_calls=40, stop=stop, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_tokens, result.out_of_time), ("tokens answer", True, True, False))
+        rig = Rig()
+        with self.assertRaises(FoundryError) as raised:
+            rig.run(self.asks("c1"), reply([message("never")]), handler=Handler(), max_calls=40, stop=lambda progress: "a refusal" if progress.responses else None, salvage=lambda: 25.0)
+        self.assertEqual(str(raised.exception), "Foundry run stopped by the harness: a refusal")
+        self.assertEqual(raised.exception.partial.responses, 1, "no last request for a brake that is not the tokens")
+
+    def test_an_agent_that_asks_after_the_rounds_that_it_was_given_is_asked_once_more_for_its_text_and_the_rounds_are_not_the_time_or_the_tokens(self):
+        rig = Rig()
+        result = rig.run(*[self.asks(f"c{i}") for i in range(1, 6)], reply([message("grace answer")]), handler=Handler(), max_calls=1, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_time, result.out_of_tokens, result.responses), ("grace answer", True, False, False, 6))
+
+    def test_the_soft_time_of_a_run_may_be_given_and_then_it_is_not_70_percent_of_its_seconds(self):
+        rig = Rig()
+        rig.service.advance = 10  # the first response comes at 20, the second at 30 and the third at 40, which is after the soft time of 35
+        handler = Handler()
+        result = rig.run(*[self.asks(f"c{i}") for i in range(1, 5)], reply([message("final")]), handler=handler, max_calls=40, max_seconds=100, soft_seconds=35)
+        self.assertEqual(([c.get("refused") for c in result.calls], result.out_of_time, len(handler.calls)), ([None, None, True, True], True, 2))
 
 
 class Shapes(unittest.TestCase):
