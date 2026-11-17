@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -927,15 +928,19 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertEqual([name for name in names if "\\" in name or name.endswith("/") or "__pycache__" in name], [], "forward slashes, no entry for a folder and no compiled cache")
         self.assertEqual(self.inner_zip(self.sources_archive(fresh=True)).namelist(), names, "the same order every time")
 
-    def test_the_archive_unpacks_with_zipfile_to_the_files_and_the_bytes_of_the_source_tree(self):
+    def test_the_archive_unpacks_with_zipfile_to_the_files_of_the_source_tree_with_the_python_files_stripped_of_their_comments_and_docstring_text(self):
         data = self.sources_archive()
         root = ROOT / "src" / "case-functions"
+        spec = importlib.util.spec_from_file_location("strip_sources_of_the_publish_tests", ROOT / "tools" / "strip-sources.py")
+        stripper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stripper)
         with tempfile.TemporaryDirectory() as tmp:
             self.inner_zip(data).extractall(tmp)
             unpacked = sorted(path.relative_to(tmp).as_posix() for path in Path(tmp).rglob("*") if path.is_file())
             self.assertEqual(unpacked, self.expected_sources("cases"))
             for name in unpacked:
-                self.assertEqual((Path(tmp) / name).read_bytes(), (root / name).read_bytes(), name)
+                original = (root / name).read_bytes()
+                self.assertEqual((Path(tmp) / name).read_bytes(), stripper.stripped(original) if name.endswith(".py") else original, name)
 
     def test_the_archive_is_at_least_a_quarter_smaller_than_the_same_files_each_compressed_alone_and_stays_within_its_ceiling(self):
         data = self.sources_archive()
