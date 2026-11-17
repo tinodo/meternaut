@@ -231,7 +231,7 @@ class Investigation(unittest.TestCase):
     def test_the_beats_have_defaults_and_ceilings_that_a_setting_can_lower_and_never_raise(self):
         settings = config.load(ENV)
         self.assertEqual((settings.investigate_beats, settings.investigate_beat_calls, settings.investigate_beat_seconds, settings.investigate_beat_tokens, settings.investigate_total_tokens),
-                         (6, 3, 220, 100_000, 800_000))
+                         (8, 3, 220, 100_000, 800_000))
         self.assertEqual((config.LIMIT_INVESTIGATE_BEATS, config.LIMIT_BEAT_CALLS, config.LIMIT_BEAT_SECONDS, config.LIMIT_BEAT_TOKENS, config.LIMIT_TOTAL_TOKENS), (8, 16, 300, 200_000, 1_200_000))
         self.assertEqual(config.load({**ENV, "INVESTIGATE_BEATS": "1", "INVESTIGATE_BEAT_CALLS": "1", "INVESTIGATE_BEAT_SECONDS": "30", "INVESTIGATE_BEAT_TOKENS": "10000",
                                       "INVESTIGATE_TOTAL_TOKENS": "10000"}).investigate_beats, 1)
@@ -242,7 +242,7 @@ class Investigation(unittest.TestCase):
             self.assertEqual(str(raised.exception), f"{name} is not between {low} and {high}")
         for name in ("INVESTIGATE_BEATS", "INVESTIGATE_BEAT_CALLS", "INVESTIGATE_BEAT_SECONDS", "INVESTIGATE_BEAT_TOKENS", "INVESTIGATE_TOTAL_TOKENS"):
             self.assertNotIn(name, config.REQUIRED)
-        self.assertLessEqual(config.DEFAULT_INVESTIGATE_BEATS * config.DEFAULT_BEAT_SECONDS + 120, config.DEFAULT_INVESTIGATE_SECONDS, "six beats and the checks fit in the seconds of the investigation")
+        self.assertLessEqual(config.DEFAULT_INVESTIGATE_BEATS * 140 + 120, config.DEFAULT_INVESTIGATE_SECONDS, "eight beats of about 140 seconds (the reads, three calls and the answer) and the checks fit in the seconds of the investigation")
         self.assertLessEqual(config.DEFAULT_INVESTIGATE_BEATS * config.DEFAULT_BEAT_TOKENS, config.DEFAULT_TOTAL_TOKENS, "and their tokens in the tokens of the investigation")
         self.assertLessEqual(2 * config.DEFAULT_BEAT_TOKENS, config.LIMIT_INVESTIGATE_TOKENS, "the brake of the harness for a beat, twice its tokens, is inside the brake of a run")
 

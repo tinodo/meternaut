@@ -74,8 +74,8 @@ class Counting(unittest.TestCase):
     def test_a_history_counts_the_lines_that_it_wrote_by_kind(self):
         recorded = history()
         with LogCapture() as capture:
-            for kind in self.KINDS:
-                recorded.emit(kind, note="x")
+            for number, kind in enumerate(self.KINDS):
+                recorded.emit(kind, note=f"x{number}")
         self.assertEqual(dict(recorded.counts), {"run.started": 1, "run.note": 2, "investigation.started": 1, "investigation.finding": 2, "investigation.finished": 1,
                                                  "case.result": 1})
         self.assertEqual(recorded.lines(), len(capture.messages()), "one count for each line that went to the log")
@@ -83,11 +83,38 @@ class Counting(unittest.TestCase):
     def test_the_lines_of_a_prefix_are_the_lines_of_the_kinds_that_start_with_it(self):
         recorded = history()
         with LogCapture():
-            for kind in self.KINDS:
-                recorded.emit(kind, note="x")
+            for number, kind in enumerate(self.KINDS):
+                recorded.emit(kind, note=f"x{number}")
         self.assertEqual((recorded.lines("investigation."), recorded.lines("run."), recorded.lines("case."), recorded.lines("investigation.finding"), recorded.lines()),
                          (4, 3, 1, 2, 8))
         self.assertEqual((recorded.lines("nothing."), recorded.lines("investigation"), recorded.lines("finding")), (0, 4, 0))
+
+    def test_a_note_that_comes_again_in_a_run_is_written_once_and_told_with_its_count_when_the_run_ends_and_any_text_is_treated_alike(self):
+        recorded = history()
+        sentence = "the Activity Log of some resources was not read: the reads of one run for owner hints were used up"
+        with LogCapture() as capture:
+            recorded.emit("run.started")
+            for _ in range(50):
+                recorded.emit("run.note", note=sentence)
+            recorded.emit("run.note", note="another")
+            recorded.emit("run.note", note="another")
+            recorded.emit("run.note", note="once")
+            recorded.emit("run.finished")
+        notes = [event["note"] for event in capture.events() if event["type"] == "run.note"]
+        self.assertEqual(notes, [sentence, "another", "once", f"{sentence} x 50", "another x 2"], "each note once, and the repeated ones told with their count before the end")
+        self.assertEqual([event["type"] for event in capture.events()][-2:], ["run.note", "run.finished"])
+        self.assertEqual(recorded.counts["run.note"], 5)
+        again = history()
+        with LogCapture() as capture:
+            again.emit("run.note", note="same")
+            again.emit("run.note", note="same")
+            again.emit("run.failed", reason="x")
+            again.emit("run.failed", reason="x")
+        self.assertEqual([event.get("note") for event in capture.events() if event["type"] == "run.note"], ["same", "same x 2"], "the count is told once")
+
+    def test_the_notes_that_a_run_keeps_are_each_once_with_their_count_in_the_order_of_their_first_appearance(self):
+        self.assertEqual(events.collapse(["a", "b", "a", "c", "a", "b"]), ["a x 3", "b x 2", "c"])
+        self.assertEqual(events.collapse([]), [])
 
     def test_a_history_that_wrote_nothing_has_counted_nothing_and_each_history_counts_only_its_own_lines(self):
         first, second = history(), history()

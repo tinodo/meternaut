@@ -124,9 +124,19 @@ class Finding:
     unproven: int = 0
     repeated: int = 0
     surpassed: int = 0  # the resources that a later finding, which was surer of them, took from this one
+    # Why the claims of the finding were not confirmed, as counts (the diagnosis of a run, from the History alone): the resources that it lists and gave no measurement for, and the measurements
+    # that it cites for a resource that no tool measured, for a metric that no tool returned for the resource, or with a total that none of the tools' totals equals; and, for a claim of no usage,
+    # the cited measurements that match the tools and still prove nothing: one that shows use, and one of too few days or with gaps.
+    no_entry: int = 0
+    not_measured: int = 0
+    metric_unknown: int = 0
+    total_differs: int = 0
+    shows_use: int = 0
+    too_brief: int = 0
     recent: int = 0
     guarded: int = 0
     capped: int = 0
+    small: int = 0  # the resources of a finding that together costs less than CASE_MIN_USD in the last 30 days: too small to ask a person for, so the finding opens no case (counted, never shown with a cost)
     seen: set[str] = field(default_factory=set)  # the short ids of every resource that the finding names and that the tools showed, whatever became of it
     stood: list[CaseRecord] = field(default_factory=list)  # the cases of a group, judged lately, that a resource of the finding is the first of: what the finding may be covered by
     silenced: int = 0  # the resources that a person marked do-not-touch and that the case of the group leaves out
@@ -394,6 +404,16 @@ def _subscription_name(s: "Services", subscription: str) -> str:
         return ""
 
 
+def _metric_of(recorded: dict[str, dict], name: str) -> str | None:
+    """The metric of the evidence of a resource that a name of the agent stands for: the same name, or the same name in another case or with spaces round it (the same metric written another way),
+    and only when one metric of the resource has that name; None when the tools returned no metric of that name for the resource."""
+    if name in recorded:
+        return name
+    folded = name.strip().casefold()
+    same = [known for known in recorded if known.strip().casefold() == folded]
+    return same[0] if len(same) == 1 else None
+
+
 def _outranks(finding: Finding, earlier: "Finding | None") -> bool:
     """A later finding takes a resource from an earlier one only when it is surer of it (its confidence is higher); with the same confidence the earlier keeps it."""
     return earlier is not None and earlier is not finding and finding.confidence > earlier.confidence
@@ -421,23 +441,36 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
     for entry in (entries if isinstance(entries, list) else [])[:MAX_ENTRIES]:
         if not isinstance(entry, dict) or not isinstance(entry.get("handle"), str) or entry["handle"] not in cited or not isinstance(entry.get("metric"), str):
             continue
-        finding.listed.setdefault(entry["handle"], set()).add(entry["metric"])
-        handle, said = entry["handle"], _number(entry.get("total"))
-        shown = recorded[handle].get(entry["metric"])
-        if said is None or shown is None:
+        handle = entry["handle"]
+        metric = _metric_of(recorded[handle], entry["metric"])  # the name as the tools gave it: the same name, or the same name in another case, and nothing else
+        finding.listed.setdefault(handle, set()).add(metric or entry["metric"])
+        said = _number(entry.get("total"))
+        shown = recorded[handle].get(metric) if metric is not None else None
+        if shown is None:
+            if recorded[handle]:
+                finding.metric_unknown += 1  # the resource was measured, and no tool returned a metric of this name for it
+            else:
+                finding.not_measured += 1  # no tool measured the resource at all
+            continue
+        if said is None:
+            finding.total_differs += 1
             continue
         total = next((t for t in shown["totals"] if t is not None and math.isclose(said, t, rel_tol=1e-6, abs_tol=0.0)), None)
         if total is None:
+            finding.total_differs += 1  # a number that none of the totals that the tools returned for the metric equals
             continue  # an entry that is not a number of the tools is thrown away, and an absent measurement proves nothing
         if finding.basis == "no-usage":
             numbers = [t for t in shown["totals"] if t is not None]
             if any(t != 0 for t in numbers):
+                finding.shows_use += 1
                 contradicted.add(handle)
                 continue
             if not _quiet(shown):
+                finding.too_brief += 1
                 continue  # a measurement that was absent at some time, or that has values on too few days, proves nothing
         if len(cited[handle]) < MAX_FACT_METRICS:
-            cited[handle][entry["metric"]] = total
+            cited[handle][metric] = total
+    finding.no_entry = sum(1 for handle in known if handle not in finding.listed)  # the resources that the finding lists and that it gave no measurement for
     if finding.basis == "no-usage":
         kept = [handle for handle in known if cited[handle] and handle not in contradicted]
         finding.unproven = len(known) - len(kept)
@@ -982,6 +1015,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         except FoundryError as error:
             partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
             say_refused(beat, number, partial)
+            if getattr(partial, "salvage_failed", ""):
+                note(f"{who}the last request for the answer of {'beat ' + str(beat.number) if focused else 'the investigator'} failed: {clean_text(partial.salvage_failed, 40)}")
             result.calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log) - calls_from
             result.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
             out.answer, out.tool_calls, out.tokens = partial, out.tool_calls + result.calls, out.tokens + result.tokens
@@ -1031,7 +1066,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         result.end, result.examined, result.found = activity.end_of_run(False, answer, True), examined, min(len(raw_findings), agents.MAX_FINDINGS)
         result.salvaged = bool(getattr(answer, "salvaged", False))
         if result.salvaged:
-            note(f"{who}the investigator was cut off by its {'tokens' if out_of_tokens else 'time'} and gave its answer when it was asked once more")
+            note(f"{who}the investigator was cut off by its {result.end if result.end in ('time', 'tokens', 'calls') else 'limit'} and gave its answer when it was asked once more")
         if len(raw_findings) > agents.MAX_FINDINGS:
             note(f"{who}the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
 
@@ -1099,10 +1134,17 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 if _members_of(old) & finding.seen and old.case_id[1:] not in finding.seen and all(old.case_id != known.case_id for known in finding.stood) and _recent(s, old, None, open_questions):
                     finding.stood.append(old)  # a group that stands for resources of this finding although the resource that it belongs to is not one of them
         room += _settle(finding, marked)
+        if (st.case_min_usd > 0 and finding.items and all(states[item.handle] == cost_words.LINES and item.lead.cost_usd_30d is not None for item in finding.items)
+                and sum(item.lead.cost_usd_30d for item in finding.items) < st.case_min_usd):  # type: ignore[misc]
+            # A finding whose resources that are left together cost less than the floor is too small to ask a person for: no case, and a count. A resource of which the cost is not known, or none, makes the
+            # finding not small, and a finding at the floor or over it keeps every resource however small it is alone (twenty small things that are idle are 73 dollars, which is not small).
+            room += len(finding.items)
+            finding.small += len(finding.items)
+            finding.items = []
         known = [i.lead.cost_usd_30d for i in finding.items if i.lead.cost_usd_30d is not None]
         finding.covered_usd = round(sum(known), 2) if known else None
         if not finding.items:
-            parts = [f"{n} {what}" for n, what in ((finding.guarded, "held back by a guard"), (finding.recent, "judged lately"),
+            parts = [f"{n} {what}" for n, what in ((finding.guarded, "held back by a guard"), (finding.recent, "judged lately"), (finding.small, "too small to open a case"),
                                                   (finding.capped, "beyond the cap of cases for one run")) if n]
             finding.reason = "no resource of it is left: " + ", ".join(parts)
     survivors = [f for f in findings if f.reason is None]
@@ -1176,7 +1218,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         saved = [point for item in finding.items if (point := pricing.point(item.lead.facts, item.lead.cost_usd_30d)) is not None]
         h.emit("investigation.finding", finding=finding.number, basis=finding.basis or None, proposal=finding.proposal or None, confidence=finding.confidence,
                claimed=finding.claimed, handles=len(finding.items), unknown=finding.unknown, unproven=finding.unproven, repeated=finding.repeated,
-               judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, unmeasured=sum(1 for item in finding.items if not item.metrics),
+               noEntry=finding.no_entry, totalDiffers=finding.total_differs, metricUnknown=finding.metric_unknown, notMeasured=finding.not_measured, showsUse=finding.shows_use, tooBrief=finding.too_brief,
+               judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, tooSmall=finding.small, unmeasured=sum(1 for item in finding.items if not item.metrics),
                shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd, change=finding.change.action if finding.change else None,
                pricedHandles=len(saved), savingUsdMonth=_figure(sum(saved)) if saved else None,
                verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary,
@@ -1198,6 +1241,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if out.guarded:
         note(f"the investigation held back {out.guarded} resource{'' if out.guarded == 1 else 's'} with a guard: " + ", ".join(f"{n} {name}" for name, n in sorted(held.items())))
     capped = sum(f.capped for f in findings)
+    small, small_findings = sum(f.small for f in findings), sum(1 for f in findings if f.small)
+    if small:
+        note(f"{small_findings} finding{'' if small_findings == 1 else 's'} whose resources together cost less than the floor of the setting CASE_MIN_USD open{'s' if small_findings == 1 else ''} no case "
+             f"({small} resource{'' if small == 1 else 's'} in all)")
     if capped:
         note(f"{capped} resource{'' if capped == 1 else 's'} of the findings {'is' if capped == 1 else 'are'} not listed as cases: a run opens at most {MAX_CASES}")
     for finding in survivors:
