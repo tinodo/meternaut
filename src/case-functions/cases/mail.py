@@ -54,8 +54,8 @@ from .people import ADDRESS, GUID, People, Person
 GRAPH_RESOURCE = "https://graph.microsoft.com"
 SENDER = re.compile(r"^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,24}$")
 KIND = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "unsure", "digest", "alert", "escalation", "escalation-weekly")
-ESCALATION_KINDS = ("escalation", "escalation-weekly")  # the kinds that the one exception to the closed list of people covers (send_escalation)
+BUDGET_FREE_KINDS = ("approval", "first_contact", "notice", "verified", "unsure", "digest", "alert")
+ESCALATION_KINDS = ("escalation", "escalation-weekly")  # the kinds that the one exception to the closed list of people covers (send_escalation); the weekly budget neither counts nor holds them
 NOT_MESSAGES = ("card-closed",)  # a card that closes itself is edited in place (cases/offers.py): no message, so no budget counts it
 DESK_KINDS = ("digest", *ESCALATION_KINDS)  # a person who chose the weekly desk gets an escalation too: it is what keeps a request from fading
 SWITCHES = ("messages", "all")
@@ -182,8 +182,8 @@ class Mailer:
                     return MailResult("held", f"This person paused messages until {settings.paused_until}.")
             if quiet.inside(settings, now):
                 return MailResult("held", quiet.WAITING)
-            if kind not in BUDGET_FREE_KINDS:
-                sent = [m for m in self.store.mails_since(listed.oid, _stamp(_week_start(now))) if m.status == "sent" and m.kind not in BUDGET_FREE_KINDS + NOT_MESSAGES]
+            if kind not in BUDGET_FREE_KINDS + ESCALATION_KINDS:
+                sent = [m for m in self.store.mails_since(listed.oid, _stamp(_week_start(now))) if m.status == "sent" and m.kind not in BUDGET_FREE_KINDS + ESCALATION_KINDS + NOT_MESSAGES]
                 if len(sent) >= settings.weekly_budget:
                     return MailResult("held", f"The weekly budget of {settings.weekly_budget} messages is reached ({len(sent)} sent since Monday).")
             if settings.channel == "desk" and kind not in DESK_KINDS:

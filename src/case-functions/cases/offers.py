@@ -47,7 +47,7 @@ from .events import History
 from .http import Client, default_transport
 from .identity import Identity
 from .loop_config import LoopSettings
-from .mail import BUDGET_FREE_KINDS, NOT_MESSAGES
+from .mail import BUDGET_FREE_KINDS, ESCALATION_KINDS, NOT_MESSAGES
 from .memory_store import parse, stamp, utc_now
 from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, MailRecord, PlanRecord, Store
 from .people import People, Person
@@ -188,7 +188,7 @@ class Offers:
         if quiet.inside(settings, now):
             return quiet.WAITING
         if kind not in FREE_KINDS:
-            sent = [m for m in self.store.mails_since(person.oid, _week_start(now).strftime(TIME_FORMAT)) if m.status == "sent" and m.kind not in FREE_KINDS + BUDGET_FREE_KINDS + NOT_MESSAGES]
+            sent = [m for m in self.store.mails_since(person.oid, _week_start(now).strftime(TIME_FORMAT)) if m.status == "sent" and m.kind not in FREE_KINDS + BUDGET_FREE_KINDS + ESCALATION_KINDS + NOT_MESSAGES]
             if len(sent) >= settings.weekly_budget:
                 return f"The weekly budget of {settings.weekly_budget} messages is reached ({len(sent)} sent since Monday)."
         return None

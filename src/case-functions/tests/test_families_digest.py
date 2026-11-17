@@ -35,7 +35,7 @@ CHECKED = frozenset(field.name for field in dataclasses.fields(PlanRecord)) - se
 def different(value, name=""):
     """A value of the same type as `value` that is not equal to it (a time stays a time that can be read)."""
     if name in ("created_at", "expires_at"):
-        return stamp(parse(value) + dt.timedelta(days=1))
+        return stamp(parse(value) + dt.timedelta(days=1)) if value else "2026-11-01T00:00:00Z"  # a plan has no end time any more: any time is another value
     if isinstance(value, bool):
         return not value
     if isinstance(value, (int, float)):
