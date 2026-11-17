@@ -110,17 +110,35 @@ class TheTypedWordsOfABeat(unittest.TestCase):
 
 
 class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
-    def test_the_dearest_resource_of_each_kind_comes_first_then_the_next_dearest_of_each_and_one_picture_is_read_of_them(self):
+    def test_the_dearest_resource_of_each_kind_comes_first_then_the_next_dearest_of_each_and_two_pictures_are_read_of_them_the_dearest_three_at_the_hour(self):
         by_kind = {"contoso.compute/rigs": [resource_of(n, "contoso.compute/rigs") for n in (1, 2, 3, 4)], "fabrikam.store/vaults": [resource_of(n, "fabrikam.store/vaults") for n in (5, 6)],
                    "northwind.net/links": [resource_of(7, "northwind.net/links")]}
         box = SeedToolbox(by_kind)
         found = beats.seed(box.call, beats.Beat(1, tuple(by_kind), False, 0, 1))
         self.assertEqual(found.handles, ["r1", "r5", "r7", "r2", "r6"], "the dearest of each kind, then the second dearest of each, five in all")
         self.assertEqual(found.counts, {"contoso.compute/rigs": 4, "fabrikam.store/vaults": 2, "northwind.net/links": 1})
-        self.assertEqual([entry["name"] for entry in box.log], ["list_resources"] * 3 + ["profile"], "three listings and one picture: the reads that the Investigator would have made")
-        self.assertEqual(box.log[-1]["arguments"], {"handles": ["r1", "r5", "r7", "r2", "r6"], "days": None, "grain": None})
-        self.assertEqual([p["handle"] for p in found.pictures["profiles"]], found.handles)
+        self.assertEqual([entry["name"] for entry in box.log], ["list_resources"] * 3 + ["profile"] * 2, "three listings and two pictures: the reads that the Investigator could have made")
+        self.assertEqual([entry["arguments"] for entry in box.log[-2:]], [{"handles": ["r1", "r5", "r7"], "days": None, "grain": "hour"}, {"handles": ["r2", "r6"], "days": None, "grain": "day"}],
+                         "the dearest three at the hour, which shows the peak that decides what a thing must carry, and the others at the day")
+        self.assertEqual([p["handle"] for answer in found.pictures for p in answer["profiles"]], found.handles)
         self.assertEqual(found.failed, 0)
+
+    def test_three_resources_or_fewer_are_one_picture_at_the_hour_and_none_at_the_day(self):
+        box = SeedToolbox({"contoso.compute/rigs": [resource_of(n, "contoso.compute/rigs") for n in (1, 2, 3)]})
+        found = beats.seed(box.call, beats.Beat(1, ("contoso.compute/rigs",), False, 0, 1))
+        self.assertEqual([(entry["name"], entry["arguments"].get("grain")) for entry in box.log], [("list_resources", None), ("profile", "hour")])
+        self.assertEqual((len(found.pictures), found.failed), (1, 0))
+
+    def test_a_picture_that_gives_no_answer_is_counted_and_the_other_is_kept(self):
+        class HourFails(SeedToolbox):
+            def call(self, name, arguments):
+                answer = super().call(name, arguments)
+                return "not json" if name == "profile" and arguments["grain"] == "hour" else answer
+
+        box = HourFails({"contoso.compute/rigs": [resource_of(n, "contoso.compute/rigs") for n in (1, 2, 3, 4, 5)]})
+        found = beats.seed(box.call, beats.Beat(1, ("contoso.compute/rigs",), False, 0, 1))
+        self.assertEqual(found.failed, 1)
+        self.assertEqual([[p["handle"] for p in answer["profiles"]] for answer in found.pictures], [["r4", "r5"]], "what was read at the day stays")
 
     def test_a_read_that_gives_no_answer_is_counted_and_the_beat_goes_on_with_what_it_has(self):
         box = SeedToolbox({"contoso.compute/rigs": [resource_of(1, "contoso.compute/rigs")]}, answers={"list_resources": '{"error":"unavailable"}'})
@@ -149,11 +167,11 @@ class WhatABeatIsToldOfTheBeatsBeforeIt(unittest.TestCase):
 
     def test_the_input_of_a_beat_holds_its_focus_its_counts_its_pictures_and_what_the_beats_before_it_concluded(self):
         beat = beats.Beat(2, ("contoso.compute/rigs",), True, 4, 3)
-        seeded = beats.Seed({"contoso.compute/rigs": 2}, ["r1"], {"profiles": [{"handle": "r1"}]})
+        seeded = beats.Seed({"contoso.compute/rigs": 2}, ["r1"], [{"profiles": [{"handle": "r1"}]}])
         earlier = [{"beat": 1, "kinds": ["fabrikam.store/vaults"], "findings": [], "examined": ["a phrase"]}]
         body = json.loads(beats.beat_input(beat, 8, seeded, earlier))
         self.assertEqual(body, {"budget": {"toolCalls": 8}, "beat": {"number": 2, "of": 3, "focus": ["contoso.compute/rigs"], "billingOnly": True, "moreKinds": 4},
-                                "counts": {"contoso.compute/rigs": 2}, "pictures": {"profiles": [{"handle": "r1"}]}, "earlier": earlier})
+                                "counts": {"contoso.compute/rigs": 2}, "pictures": [{"profiles": [{"handle": "r1"}]}], "earlier": earlier})
 
     def test_a_beat_that_gave_no_answer_is_carried_as_one_that_did_not_conclude_so_that_the_next_one_knows_its_kinds_were_not_judged(self):
         done = beats.Result(beats.Beat(1, ("contoso.compute/rigs",)), end="answered", examined=["a phrase"], lines=[{"basis": "no-usage", "proposal": "delete", "handles": ["r1"]}])
@@ -295,7 +313,7 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([i["beat"] for i in inputs], [{"number": n, "of": 3, "focus": [kind]} for n, kind in enumerate(KINDS, 1)])
         self.assertEqual([i["budget"] for i in inputs], [{"toolCalls": 8}] * 3)
         self.assertEqual([i["counts"] for i in inputs], [{kind: 2} for kind in KINDS])
-        self.assertEqual([[p["handle"] for p in i["pictures"]["profiles"]] for i in inputs], [["r1", "r2"], ["r3", "r4"], ["r5", "r6"]])
+        self.assertEqual([[p["handle"] for answer in i["pictures"] for p in answer["profiles"]] for i in inputs], [["r1", "r2"], ["r3", "r4"], ["r5", "r6"]])
         self.assertEqual([(run["max_calls"], run["max_tokens"]) for run in runs], [(8, 100_000)] * 3)
         self.assertTrue(all(0 < run["max_seconds"] <= 160 for run in runs), [run["max_seconds"] for run in runs])
         self.assertEqual([entry["name"] for entry in h.toolbox.log], ["list_resources", "profile", "tool_one"] * 3, "what code reads for a beat and the call of the beat are in one log")
@@ -650,9 +668,9 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         h.go()
         self.assertEqual(h.toolbox.preloaded, [["contoso.compute/rigs", "contoso.compute/racks"]], "a beat of one kind has nothing to read at the same time")
         self.assertEqual(self.lines(h), [(1, 1, "code", "preload", None, 0, None), (1, 2, "code", "list_resources", "contoso.compute/rigs", 0, None),
-                                         (1, 3, "code", "list_resources", "contoso.compute/racks", 0, None), (1, 4, "code", "profile", None, 4, None),
+                                         (1, 3, "code", "list_resources", "contoso.compute/racks", 0, None), (1, 4, "code", "profile", None, 3, None), (1, 5, "code", "profile", None, 1, None),
                                          (2, 1, "code", "list_resources", "fabrikam.store/vaults", 0, None), (2, 2, "code", "profile", None, 2, None)])
-        self.assertEqual([c["name"] for c in h.toolbox.log], ["list_resources", "list_resources", "profile", "list_resources", "profile"], "the read ahead is no call of the toolbox")
+        self.assertEqual([c["name"] for c in h.toolbox.log], ["list_resources", "list_resources", "profile", "profile", "list_resources", "profile"], "the read ahead is no call of the toolbox")
 
     def test_a_read_ahead_that_fails_costs_nothing_the_listings_read_for_themselves(self):
         kinds = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0}
@@ -664,14 +682,14 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         h.toolbox.preload = broken
         result = h.go()
         self.assertEqual(result.state, "ran")
-        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile"])
+        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile", "profile"])
 
     def test_a_toolbox_with_no_read_ahead_is_seeded_as_before(self):
         kinds = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0}
         h = rig([script(one("r1"), calls=())], by_kind=kinds)
         h.toolbox.preload = None
         h.go()
-        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile"])
+        self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile", "profile"])
 
     def test_one_session_with_no_beats_has_the_same_lines_for_the_calls_of_the_agent_alone(self):
         h = ti.Harness(BeatFoundry([script(one("r1"), calls=(("profile", {"handles": ["r1"]}), ("estate_overview", {})))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)

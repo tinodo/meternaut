@@ -22,7 +22,8 @@ FLOOR_PERCENT = 95  # the dearest kinds that together make this share of the cos
 BEAT_KINDS = 3  # the most kinds of one beat, of one service when they belong together
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
-SEED_CALLS = SEED_RESOURCES + 1  # the reads that this takes at most: a listing for each kind that is seeded, and one picture
+SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
+SEED_CALLS = SEED_RESOURCES + 2  # the reads that this takes at most: a listing for each kind that is seeded, and a picture at the hour and one at the day
 MIN_SECONDS = 45  # a beat does not start with less time than this, and not with fewer tokens than MIN_TOKENS
 MIN_TOKENS = 30_000
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
@@ -97,11 +98,12 @@ def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
 
 @dataclass
 class Seed:
-    """What code read for a beat before the Investigator started: how many resources each kind has, the handles of the dearest ones, their picture (the answer of the tool `profile`) and how many reads gave no answer."""
+    """What code read for a beat before the Investigator started: how many resources each kind has, the handles of the dearest ones, their pictures (the answers of the tool `profile`: the dearest few at
+    the grain of the hour, the others at the day) and how many reads gave no answer."""
 
     counts: dict[str, int] = field(default_factory=dict)
     handles: list[str] = field(default_factory=list)
-    pictures: dict | None = None
+    pictures: list[dict] | None = None
     failed: int = 0
 
 
@@ -115,8 +117,9 @@ def _said(text: object) -> dict:
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
     """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
-    and the picture of those. It costs no model tokens, and what it shows is registered as evidence like any answer of a tool. `warm` reads the resources of the kinds at the same time first (the
-    toolbox's `preload`), so that the listings find them in its caches; a read ahead that fails leaves the listings to make their own."""
+    and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. It costs no model
+    tokens, and what it shows is registered as evidence like any answer of a tool. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the listings find
+    them in its caches; a read ahead that fails leaves the listings to make their own."""
     found, lists = Seed(), []
     if warm is not None and len(beat.kinds) > 1:
         try:
@@ -134,9 +137,13 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
         rows = listing.get("rows") if isinstance(listing.get("rows"), list) else []
         lists.append([row[0] for row in rows if isinstance(row, list) and row and isinstance(row[0], str)])
     found.handles = [handle for rank in zip_longest(*lists) for handle in rank if handle][:SEED_RESOURCES]
-    if found.handles:
-        found.pictures = _said(call("profile", {"handles": found.handles, "days": None, "grain": None})) or None
-        if found.pictures is None:
+    for grain, handles in (("hour", found.handles[:SEED_HOURLY]), ("day", found.handles[SEED_HOURLY:])):
+        if not handles:
+            continue
+        picture = _said(call("profile", {"handles": handles, "days": None, "grain": grain}))
+        if picture:
+            found.pictures = [*(found.pictures or []), picture]
+        else:
             found.failed += 1
     return found
 
