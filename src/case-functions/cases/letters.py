@@ -399,6 +399,6 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     if only is not None:
         doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:
-        doc.button("Open the decisions", f"{base}/")
+        doc.button("Open the decisions" if rows else "See the held findings", f"{base}/")
     doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
     return doc.build()

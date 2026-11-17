@@ -463,6 +463,13 @@ class TheDecisionsPageListsWhatIsHeldForThePerson(unittest.TestCase):
         self.assertFalse(console.get("/", oid=MAYA).links().count("/why/k-automation"), "a person who is not named for it is not shown it")
         self.assertIn("Held back: 2 findings", console.get("/", oid=MAYA).content, "the count is everybody's, as it was")
 
+    def test_a_held_finding_of_another_detector_is_listed_too_because_the_weekly_letter_links_to_this_page(self):
+        console = held_console("nothing")
+        reply = console.get("/")
+        self.assertIn("Held back: 1 finding", reply.content)
+        self.assertEqual([href for href in reply.links() if "/why/k-" in href], ["/why/k-nothing"])
+        self.assertIn("Meternaut has nothing to say about it yet", reply.content)
+
     def test_a_held_finding_is_no_decision_and_no_row_of_the_page(self):
         console = held_console("automation")
         reply = console.get("/")
@@ -568,6 +575,7 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         self.assertTrue(all(brief.HOLD_WORDS[r][2] in " ".join(lines) for r in ("automation", "unchecked")))
         self.assertIn("Found, and held back from a request. Nothing is asked of you to approve, and nothing changes in Azure.", content)
         self.assertEqual(content.count("https://"), 1, "one link, as every letter has")
+        self.assertIn("See the held findings", content)
         for word in ("Approve", "Decline", "Worth acting on"):
             self.assertNotIn(word, content)
 

@@ -4,7 +4,7 @@
 
 ## What was wrong
 
-In the real runs of 16 and 17 November the Investigator found things that Meternaut then held back, and a person saw only counts on the start page: "held back: managed by an automation" for ten findings (private endpoints, and the deployments and the account of a Foundry resource, the dearest worth hundreds of dollars a month) and "held back: not checked who changed it" for six. The guards were right. A change by hand on a resource that something rewrites by itself is undone, a deletion is not asked on a log that was not read, and an impact that was not checked to the end is not asked. They were wrong to make the finding invisible: the waste is real, and the person who can act is not an approver of a click but whoever looks after what rewrites the resource, or after the facts that are missing. A finding that nobody sees is a saving that does not happen.
+In the real runs of 16 and 17 November the Investigator found things that Meternaut then held back, and a person saw only counts on the start page: "held back: managed by an automation" for ten findings (the dearest worth hundreds of dollars a month) and "held back: not checked who changed it" for six. The guards were right. A change by hand on a resource that something rewrites by itself is undone, a deletion is not asked on a log that was not read, and an impact that was not checked to the end is not asked. They were wrong to make the finding invisible: the waste is real, and the person who can act is not an approver of a click but whoever looks after what rewrites the resource, or after the facts that are missing. A finding that nobody sees is a saving that does not happen.
 
 ## What existed
 
