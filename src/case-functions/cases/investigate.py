@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import activity, agents, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
+from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -65,6 +65,9 @@ MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox reco
 SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, at most
 SKEPTIC_PROPERTIES = 8  # the properties of one resource that the Skeptic sees
 SKEPTIC_CHARS = 30000  # the size of the Skeptic's input
+EXAMINED_KEPT = 24  # the phrases of examined that the investigation keeps from all its beats
+SKEPTIC_CALLS = 4  # the calls of the Skeptic that findings are shared among when they do not fit in one input: a finding that gets none is left to a person
+RICH_ROWS = 1  # the findings of one call of the Skeptic are the most that all keep the rows of this level of DETAIL, the second richest
 RESERVE_SECONDS = 120.0  # what the Investigator leaves of its time for the checks and the Skeptic, at most
 MAX_IMPACTS = 6  # the resources of one run whose impact is checked: each check takes about a dozen reads. A resource beyond this keeps the digest of its earlier case, and the cases with the oldest digest or none go first
 LOG = logging.getLogger("meternaut.investigate")
@@ -131,6 +134,7 @@ class Finding:
     change: pricing.Change | None = None  # the change that the Investigator stated, read strictly (cases/pricing.py); None when it stated none
     priced: pricing.Priced | None = None  # what code made of it for the resources that are left: the figure of each, or why it has none
     fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
+    beat: int = 1  # the beat of the investigation whose session wrote it (cases/beats.py)
 
 
 @dataclass
@@ -168,6 +172,7 @@ class Investigation:
     answer: object = None
     examined: list[str] = field(default_factory=list)
     findings: list = field(default_factory=list)
+    beats: list = field(default_factory=list)  # what each beat came to (cases/beats.py Result): the record of the run keeps them
 
     @property
     def state(self) -> str:
@@ -628,35 +633,48 @@ def _row(item: Item, toolbox: Toolbox, count: int, fields: tuple[str, ...], sku:
     return row
 
 
+def _skeptic_text(findings: list[Finding], toolbox: Toolbox, level: tuple, left_out: set[str] | frozenset[str] = frozenset()) -> str:
+    """The input of the Skeptic for these findings at one level of DETAIL, without the resources of `left_out`."""
+    count, fields, sku, properties = level
+    listed = []
+    for index, f in enumerate(findings):
+        rows = [_row(item, toolbox, count, fields, sku, properties) for item in f.items if item.handle not in left_out]
+        said = {"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
+                "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)}
+        model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out) if f.priced is not None else None
+        if model and model["effects"]:
+            said["change"] = model  # the model of the saving, for the Skeptic to judge: the lines that it rests on and what remains of them, never the words of the AI for a person
+        listed.append(said)
+    return agents.skeptic_input(listed)
+
+
 def _skeptic_input(findings: list[Finding], toolbox: Toolbox) -> tuple[str, set[str]]:
     """The input of the Skeptic and the handles of the resources that it shows. It shows every resource that will be a case, with the richest rows that fit
     SKEPTIC_CHARS. When even the poorest rows do not fit, the cheapest resources are left out, and the case of a resource that was not shown needs a person."""
     items = [item for finding in findings for item in finding.items]
     left_out: set[str] = set()
-
-    def build(level: tuple) -> str:
-        count, fields, sku, properties = level
-        listed = []
-        for index, f in enumerate(findings):
-            rows = [_row(item, toolbox, count, fields, sku, properties) for item in f.items if item.handle not in left_out]
-            said = {"index": index, "basis": f.basis, "proposal": f.proposal, "confidence": f.confidence, "summary": f.summary, "resources": len(f.items),
-                    "costUsd30d": f.covered_usd, "evidence": rows, "evidenceShown": len(rows)}
-            model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out) if f.priced is not None else None
-            if model and model["effects"]:
-                said["change"] = model  # the model of the saving, for the Skeptic to judge: the lines that it rests on and what remains of them, never the words of the AI for a person
-            listed.append(said)
-        return agents.skeptic_input(listed)
-
     for level in DETAIL:
-        text = build(level)
+        text = _skeptic_text(findings, toolbox, level)
         if len(text) <= SKEPTIC_CHARS:
             return text, {item.handle for item in items}
     for item in sorted(items, key=lambda i: (i.lead.cost_usd_30d or 0.0, i.handle)):
         left_out.add(item.handle)
-        text = build(DETAIL[-1])
+        text = _skeptic_text(findings, toolbox, DETAIL[-1], left_out)
         if len(text) <= SKEPTIC_CHARS:
             break
     return text, {item.handle for item in items} - left_out
+
+
+def _batches(findings: list[Finding], toolbox: Toolbox) -> list[tuple[list[Finding], str, set[str]]]:
+    """The findings in the groups that the Skeptic judges one call each, with the input of each and the handles that it shows. A finding joins the group before it while all of them keep the rows of level
+    RICH_ROWS of DETAIL within SKEPTIC_CHARS, so that the Skeptic is not given poorer rows for being given more findings; a finding that does not fit alone is cut as it always was (_skeptic_input)."""
+    groups: list[list[Finding]] = []
+    for finding in findings:
+        if groups and len(_skeptic_text(groups[-1] + [finding], toolbox, DETAIL[RICH_ROWS])) <= SKEPTIC_CHARS:
+            groups[-1].append(finding)
+        else:
+            groups.append([finding])
+    return [(group, *_skeptic_input(group, toolbox)) for group in groups]
 
 
 # -- the cases ---------------------------------------------------------------------------------------------------------------------------------------
@@ -747,6 +765,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     budget = max(1.0, float(st.investigate_max_seconds))
     deadline = began + budget
     s.client.deadline = deadline
+    # The parts of the estate that the Investigator looks at one after the other, dearest first (cases/beats.py). When no cost is known to rank by, or INVESTIGATE_BEATS is 1 (the way back), one open
+    # beat is the whole estate, as one session always looked at it.
+    plan = (beats.plan(*beats.spend(contexts), st.investigate_beats) if st.investigate_beats > 1 else []) or [beats.Beat()]
+    focused = not plan[0].open
     built_here = toolbox is None
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
@@ -755,9 +777,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
         # The Activity Logs that the tools read (age and last change of a resource) are kept where the reads for the cases keep them, so that nothing is read twice, and they have a budget of their own, so
-        # that an agent that asks for many cannot use up the reads that the cases need for who changed a resource.
+        # that an agent that asks for many cannot use up the reads that the cases need for who changed a resource. The budget is that of one beat for each beat.
         out.owners = out.owners or OwnerReader(s.arm, s.clock())
-        toolbox.owners = out.owners.sharing(max_reads=OWNER_READS, seconds=OWNER_SECONDS)
+        toolbox.owners = out.owners.sharing(max_reads=OWNER_READS * len(plan), seconds=OWNER_SECONDS * len(plan))
     out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
@@ -782,11 +804,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                                           capability.probe(s.arm, st.subscriptions, st.quota_ids, contexts, h.run_id, s.clock()))
     out.profile = getattr(toolbox, "profile", None)
     h.emit("investigation.started", investigator=investigator_ref, skeptic=skeptic_ref, modelInvestigator=st.foundry_model_investigator,
-           modelSkeptic=st.foundry_model_skeptic, maxCalls=st.investigate_max_calls, maxSeconds=int(budget))
+           modelSkeptic=st.foundry_model_skeptic, maxCalls=len(plan) * st.investigate_beat_calls if focused else st.investigate_max_calls, maxSeconds=int(budget),
+           **({"beats": len(plan)} if focused else {}))
 
     def finished(ok: bool, **fields: object) -> None:
         out.seconds = int(s.monotonic() - began)
-        h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **fields)
+        h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **({"beats": len(out.beats)} if focused else {}), **fields)
 
     def step(name: str, model: str, started: float, ok: bool, tokens: tuple[int, int] | None, text: str | None) -> dict:
         return {"step": name, "model": model, "promptTokens": tokens[0] if tokens else None, "completionTokens": tokens[1] if tokens else None,
@@ -803,66 +826,126 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     note(text)
                 shown[key] = len(texts)
 
-    # 1. The Investigator reads the estate with the tools, inside its own budget of calls and time.
+    # 1. The Investigator reads the estate with the tools, one beat after another (cases/beats.py): each beat is a session of its own, in a budget of calls, seconds and tokens of its own, on this one toolbox, so
+    # that nothing that a beat read is read again. It is given what code read of its dearest resources and what the beats before it concluded. A beat that fails is a note and the others go on; the harness
+    # refusing any of them holds the whole investigation.
     reserve = min(RESERVE_SECONDS, budget / 4)
-    run_seconds = max(1.0, budget - reserve)
-    started = s.monotonic()
+    beats_deadline = deadline - reserve
     max_calls = harness.budget.tool_calls if harness is not None else st.investigate_max_calls
-    try:
-        if harness is None:
-            answer = s.foundry.run(investigator_ref, agents.investigator_input(max_calls), toolbox.call, max_calls=max_calls, max_seconds=run_seconds)
-        else:
-            answer = harness.run(investigator_ref, spec_i, agents.investigator_input(max_calls), toolbox.call, max_calls=max_calls, max_seconds=run_seconds)
-    except FoundryError as error:
-        partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
-        out.answer = partial
-        out.tool_calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log)
-        out.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
-        flush_notes()
-        _own_words(note, error)
-        out.held = isinstance(error, HarnessRefused)
-        out.note = f"the investigator gave no answer ({_why(s, error)})"
-        finished(False, note=out.note)
-        return out
-    made = _made(answer.calls)
-    refused = len(answer.calls) - len(made)
-    out.answer = answer
-    out.tool_calls, out.tokens = len(made), answer.input_tokens + answer.output_tokens
-    failed_calls = sum(1 for call in made if isinstance(call, dict) and call.get("ok") is False)
-    out_of_time = answer.out_of_time
-    investigator_step = step("investigator", st.foundry_model_investigator, started, True, (answer.input_tokens, answer.output_tokens),
-                             f"{out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}" + (f", {failed_calls} failed" if failed_calls else "")
-                             + (f", {refused} refused after the {'time' if out_of_time else 'budget'}" if refused else ""))
-    if refused:
-        spent = (f"its time for tool calls ({int(SOFT_TIME_SHARE * run_seconds)} seconds) was used up" if out_of_time
-                 else f"its budget of {st.investigate_max_calls} was used up")
-        note(f"the investigator asked for {refused} more tool call{'' if refused == 1 else 's'} after {spent}, and was refused")
-    flush_notes()
-    try:
-        raw_findings, examined = parse_answer(answer.text)
-    except RoleError as error:
-        if harness is not None:
-            harness.guard_failed(spec_i.name, "unreadable")
-        out.note = f"the investigator gave no answer that could be read ({clean_text(error, 200)})"
-        finished(False, note=out.note)
-        return out
-    out.ran = True
-    out.examined = examined
-    if len(raw_findings) > agents.MAX_FINDINGS:
-        note(f"the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
-
-    # 2. Code checks the findings against what the tools showed, then the recheck and the guards hold every resource.
+    if focused:
+        toolbox.extra_calls = len(plan) * (st.investigate_beat_calls + beats.SEED_CALLS)
     findings: list[Finding] = []
     out.findings = findings
     taken: set[str] = set()
-    for number, raw in enumerate(raw_findings[: agents.MAX_FINDINGS], 1):
-        finding, handles, entries = parse_finding(number, raw)
-        if finding.reason is None:
-            _verify(finding, handles, entries, toolbox, taken)
-            _hold_delete(finding, toolbox)
-            if finding.unknown and harness is not None:
-                harness.guard_failed(spec_i.name, "unknown-handle")  # an answer that cites a handle that no tool returned is a failure of the run, and a third failure trips the brake
-        findings.append(finding)
+    beat_steps: dict[int, dict] = {}
+    raw_total, last_note = 0, ""
+
+    def close(result: beats.Result, ok: bool, at: float, log_before: int) -> None:
+        result.seconds = result.seconds or int(s.monotonic() - at)
+        result.looked = beats.looked(toolbox, result.beat, log_before)
+        out.beats.append(result)
+        if focused:
+            h.emit("investigation.beat", beat=result.beat.number, of=result.beat.of, kinds=len(result.beat.kinds), billing=result.beat.billing, seeded=result.seeded, looked=result.looked,
+                   toolCalls=result.calls, tokens=result.tokens, seconds=result.seconds, end=result.end, ok=ok, findings=result.found)
+
+    for beat in plan:
+        at = s.monotonic()
+        if out.beats and beats_deadline - at < beats.MIN_SECONDS:
+            note(f"the time of the investigation was used up after {len(out.beats)} of {len(plan)} beats, so the kinds of the others were not looked at")
+            break
+        if out.beats and focused and st.investigate_total_tokens - out.tokens < beats.MIN_TOKENS:
+            note(f"the tokens of the investigation ({st.investigate_total_tokens}) were used up after {len(out.beats)} of {len(plan)} beats, so the kinds of the others were not looked at")
+            break
+        calls, cap = (st.investigate_beat_calls, min(st.investigate_beat_tokens, st.investigate_total_tokens - out.tokens)) if focused else (max_calls, None)
+        result = beats.Result(beat, max_calls=calls)
+        log_before = len(toolbox.log)
+        seeded = beats.seed(toolbox.call, beat) if focused else None
+        calls_from = len(toolbox.log) if focused or out.beats else 0  # the calls of the beat's own session are the ones after the reads that code made for it
+        if seeded is not None:
+            result.seeded = len(seeded.handles)
+            if seeded.failed:
+                note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
+        seconds = max(1.0, min(st.investigate_beat_seconds, beats_deadline - at) - (s.monotonic() - at)) if focused else max(1.0, budget - reserve)
+        what = beats.beat_input(beat, calls, seeded, beats.carry(out.beats))
+        who = f"beat {beat.number}: " if focused else ""
+        if harness is not None and out.beats:
+            harness.again(spec_i)  # each beat is a run of its own: its own tokens, its own refusals and its own line
+        try:
+            if harness is None:
+                answer = s.foundry.run(investigator_ref, what, toolbox.call, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+            else:
+                answer = harness.run(investigator_ref, spec_i, what, toolbox.call, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+        except FoundryError as error:
+            partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
+            result.calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log) - calls_from
+            result.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
+            out.answer, out.tool_calls, out.tokens = partial, out.tool_calls + result.calls, out.tokens + result.tokens
+            flush_notes()
+            _own_words(note, error)
+            result.end = activity.end_of_run(isinstance(error, HarnessRefused), partial, False)
+            result.note = last_note = f"the investigator gave no answer ({_why(s, error)})"
+            close(result, False, at, log_before)
+            if isinstance(error, HarnessRefused):
+                out.ran, out.held, out.note = False, True, result.note  # whatever the beats before it found is held with it: nobody judged it
+                finished(False, note=out.note)
+                return out
+            if focused:
+                note(f"{who}{result.note}; the other beats go on")
+            continue
+        made = _made(answer.calls)
+        refused = len(answer.calls) - len(made)
+        out.answer = answer
+        result.calls, result.tokens = len(made), answer.input_tokens + answer.output_tokens
+        out.tool_calls, out.tokens = out.tool_calls + result.calls, out.tokens + result.tokens
+        failed_calls = sum(1 for call in made if isinstance(call, dict) and call.get("ok") is False)
+        out_of_time, out_of_tokens = answer.out_of_time, getattr(answer, "out_of_tokens", False)
+        beat_steps[beat.number] = step("investigator", st.foundry_model_investigator, at, True, (answer.input_tokens, answer.output_tokens),
+                                       (f"beat {beat.number} of {beat.of}, " if focused else "") + f"{result.calls} tool call{'' if result.calls == 1 else 's'}" + (f", {failed_calls} failed" if failed_calls else "")
+                                       + (f", {refused} refused after the {'time' if out_of_time else 'tokens' if out_of_tokens else 'budget'}" if refused else ""))
+        result.seconds = beat_steps[beat.number]["ms"] // 1000
+        if refused:
+            spent = (f"its time for tool calls ({int(SOFT_TIME_SHARE * seconds)} seconds) was used up" if out_of_time
+                     else f"its tokens for tool calls ({cap}) were used up" if out_of_tokens else f"its budget of {calls if focused else st.investigate_max_calls} was used up")
+            note(f"{who}the investigator asked for {refused} more tool call{'' if refused == 1 else 's'} after {spent}, and was refused")
+        flush_notes()
+        try:
+            raw_findings, examined = parse_answer(answer.text)
+        except RoleError as error:
+            if harness is not None:
+                harness.guard_failed(spec_i.name, "unreadable")
+            result.end = "failed"
+            result.note = last_note = f"the investigator gave no answer that could be read ({clean_text(error, 200)})"
+            close(result, False, at, log_before)
+            if focused:
+                note(f"{who}{result.note}; the other beats go on")
+            continue
+        out.ran = True
+        out.examined += examined
+        raw_total += len(raw_findings)
+        result.end, result.examined, result.found = activity.end_of_run(False, answer, True), examined, min(len(raw_findings), agents.MAX_FINDINGS)
+        if len(raw_findings) > agents.MAX_FINDINGS:
+            note(f"{who}the investigator gave {len(raw_findings)} findings; the first {agents.MAX_FINDINGS} were taken")
+
+        # 2. Code checks the findings against what the tools showed.
+        for raw in raw_findings[: agents.MAX_FINDINGS]:
+            finding, handles, entries = parse_finding(len(findings) + 1, raw)
+            finding.beat = beat.number
+            if finding.reason is None:
+                _verify(finding, handles, entries, toolbox, taken)
+                _hold_delete(finding, toolbox)
+                if finding.unknown and harness is not None:
+                    harness.guard_failed(spec_i.name, "unknown-handle")  # an answer that cites a handle that no tool returned is a failure of the run, and a third failure trips the brake
+                if finding.reason is None:
+                    result.lines.append({"basis": finding.basis, "proposal": finding.proposal, "handles": finding.handles[: beats.CARRY_ITEMS]})
+            findings.append(finding)
+        close(result, True, at, log_before)
+    if not out.ran:
+        out.note = last_note  # no beat gave an answer that code could read
+        finished(False, note=out.note)
+        return out
+    out.examined = out.examined[:EXAMINED_KEPT]
+
+    # 2. Then the recheck and the guards hold every resource of the findings of all the beats.
     locks: dict[str, list[str] | None] = {}
     room = MAX_CASES
     held: dict[str, int] = {}
@@ -915,22 +998,28 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             finding.reason = "no resource of it is left: " + ", ".join(parts)
     survivors = [f for f in findings if f.reason is None]
 
-    # 3. The Skeptic tries to break the findings that are left, in one run. It is shown every resource that will be a case, as far as its input allows.
-    skeptic_step: dict | None = None
+    # 3. The Skeptic tries to break the findings that are left. It is shown every resource that will be a case, as far as its input allows: the findings that do not fit in one input go to it in as many calls
+    # as they take (SKEPTIC_CALLS at most, inside the time that is left), each with the richest rows that fit, and a finding that gets no call is left to a person.
+    skeptic_steps: dict[int, dict] = {}  # the step of the Skeptic's run that had a finding, by the number of the finding
     unjudged = hidden = 0  # the findings that got no verdict, and the resources that the Skeptic was not shown
     if survivors:
-        started = s.monotonic()
-        left = deadline - started
-        if left <= 1.0:
-            skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, None, "no time was left for the Skeptic")
-        else:
+        batches = _batches(survivors, toolbox)
+        for position, (group_, skeptic_text, shown_handles) in enumerate(batches):
+            started = s.monotonic()
+            left = deadline - started
+            if position >= SKEPTIC_CALLS or left <= 1.0:
+                no_call = step("skeptic", st.foundry_model_skeptic, started, False, None, "no time was left for the Skeptic" if left <= 1.0 else "no call of the Skeptic was left for this finding")
+                skeptic_steps.update({finding.number: no_call for finding in group_})
+                continue
+            if position and harness is not None:
+                harness.again(spec_s)  # each call of the Skeptic is a run of its own
             tokens: tuple[int, int] | None = None
+            batch_hidden = 0
             try:
-                skeptic_text, shown_handles = _skeptic_input(survivors, toolbox)
-                for finding in survivors:
+                for finding in group_:
                     for item in finding.items:
                         item.shown = item.handle in shown_handles
-                hidden = sum(1 for finding in survivors for item in finding.items if not item.shown)
+                batch_hidden = sum(1 for finding in group_ for item in finding.items if not item.shown)
                 if harness is None:
                     judged = s.foundry.run(skeptic_ref, skeptic_text, None, max_calls=0, max_seconds=left)
                 else:
@@ -938,23 +1027,23 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 tokens = (judged.input_tokens, judged.output_tokens)
                 out.tokens += judged.input_tokens + judged.output_tokens
                 try:
-                    verdicts = parse_verdicts(judged.text, len(survivors))
+                    verdicts = parse_verdicts(judged.text, len(group_))
                 except RoleError:
                     if harness is not None:
                         harness.guard_failed(spec_s.name, "unreadable")
                     raise
                 for index, verdict in verdicts.items():
-                    survivors[index].verdict = verdict
-                unjudged = len(survivors) - len(verdicts)
-                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, True, tokens, None)
+                    group_[index].verdict = verdict
+                unjudged += len(group_) - len(verdicts)
+                hidden += batch_hidden
+                made_step = step("skeptic", st.foundry_model_skeptic, started, True, tokens, None)
             except (FoundryError, RoleError) as error:
                 partial = getattr(error, "partial", None)
                 if tokens is None and partial is not None:
                     tokens = (partial.input_tokens, partial.output_tokens)
                     out.tokens += partial.input_tokens + partial.output_tokens
-                skeptic_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, _why(s, error))
-                _own_words(note, error)
-                hidden = 0  # the run did not judge anything, and its note says why
+                made_step = step("skeptic", st.foundry_model_skeptic, started, False, tokens, _why(s, error))
+                _own_words(note, error)  # the run did not judge anything, and its note says why
                 if isinstance(error, HarnessRefused):
                     # The harness stopped the Skeptic after the Investigator had run (a switch pulled or a brake tripped in between): the investigation is held like one that was refused at the
                     # start, so that no case is opened from findings that nobody judged, and only the planted waste goes on (cases/run.py).
@@ -963,9 +1052,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                     flush_notes()
                     finished(False, note=out.note)
                     return out
+            skeptic_steps.update({finding.number: made_step for finding in group_})
             flush_notes()
-        if not skeptic_step["ok"] or unjudged:
-            reason = skeptic_step["note"] if not skeptic_step["ok"] else f"no verdict for {unjudged} of {len(survivors)} findings"
+        failed_steps = [made for made in skeptic_steps.values() if not made["ok"]]
+        if failed_steps or unjudged:
+            reason = failed_steps[0]["note"] if failed_steps else f"no verdict for {unjudged} of {len(survivors)} findings"
             note(f"the Skeptic could not judge every finding ({reason}); a finding without a verdict needs a person")
         if hidden:
             note(f"{hidden} resource{'' if hidden == 1 else 's'} of the findings {'was' if hidden == 1 else 'were'} not shown to the Skeptic, whose input is limited to "
@@ -979,7 +1070,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, unmeasured=sum(1 for item in finding.items if not item.metrics),
                shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd, change=finding.change.action if finding.change else None,
                pricedHandles=len(saved), savingUsdMonth=_figure(sum(saved)) if saved else None,
-               verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary)
+               verdict=finding.verdict.verdict if finding.verdict else None, kept=finding.reason is None, reason=finding.reason, note=finding.note, summary=finding.summary,
+               **({"beat": finding.beat} if focused else {}))
     models = {"investigator": st.foundry_model_investigator, "skeptic": st.foundry_model_skeptic}
     out.impact_due = _impact_due(survivors)
     number = 0
@@ -987,13 +1079,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         group = _group_of(finding)
         for item in (group[:1] if group else finding.items):
             number += 1
-            steps = tuple(x for x in (investigator_step, _skeptic_step_of(skeptic_step, finding, item)) if x is not None)
+            steps = tuple(x for x in (beat_steps.get(finding.beat), _skeptic_step_of(skeptic_steps.get(finding.number), finding, item)) if x is not None)
             _open_case(s, out, finding, item, models, steps, f"{h.run_id[:8]}-i{number}", **({"group": group} if group else {}))
         if group:
             left_out = f"; {finding.silenced} more that a person marked do-not-touch {'is' if finding.silenced == 1 else 'are'} left out" if finding.silenced else ""
             note(f"finding {finding.number}: its {len(group)} resources are one case and one question to a person, which belong to the dearest of them{left_out}")
     out.kept = len(survivors)
-    out.dropped_findings = len(raw_findings) - len(survivors)
+    out.dropped_findings = raw_total - len(survivors)
     if out.guarded:
         note(f"the investigation held back {out.guarded} resource{'' if out.guarded == 1 else 's'} with a guard: " + ", ".join(f"{n} {name}" for name, n in sorted(held.items())))
     capped = sum(f.capped for f in findings)
@@ -1005,9 +1097,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if out.unmeasured:
         note(f"{out.unmeasured} resource{'' if out.unmeasured == 1 else 's'} of the findings {'has' if out.unmeasured == 1 else 'have'} no measurement that backs the "
              f"finding, so a person has to judge {'it' if out.unmeasured == 1 else 'them'}")
-    finished(True, examined=examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
-    note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {len(raw_findings)} finding"
-         f"{'' if len(raw_findings) == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
+    finished(True, examined=out.examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
+    note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {raw_total} finding"
+         f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
     return out
 
 

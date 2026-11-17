@@ -662,7 +662,7 @@ class ReadsTheBill(FakeFoundry):
     def ask(self, handler, name: str, **arguments) -> dict:
         return json.loads(handler(name, {**dict.fromkeys(self.NAMES[name]), **arguments}))
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, max_tokens=None):
         if not agent.startswith(agents.INVESTIGATOR_NAME):
             return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
         self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})

@@ -206,7 +206,7 @@ class Parsing(unittest.TestCase):
             from cases import events as writer
         finally:
             sys.path.remove(app)
-        self.assertEqual(writer.INVESTIGATION_KINDS, ("investigation.started", "investigation.finding", "investigation.finished"))
+        self.assertEqual(writer.INVESTIGATION_KINDS, ("investigation.started", "investigation.beat", "investigation.finding", "investigation.finished"))
         record = (ROOT / "docs" / "proposals" / "06-foundry-agents.md").read_text(encoding="utf-8")
         source = (ROOT / "src" / "case-functions" / "cases" / "investigate.py").read_text(encoding="utf-8")
         run = (ROOT / "src" / "case-functions" / "cases" / "run.py").read_text(encoding="utf-8")

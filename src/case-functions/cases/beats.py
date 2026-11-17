@@ -143,6 +143,7 @@ class Result:
     end: str = "failed"
     seeded: int = 0
     looked: int = 0
+    found: int = 0
     note: str = ""
     examined: list[str] = field(default_factory=list)
     lines: list[dict] = field(default_factory=list)

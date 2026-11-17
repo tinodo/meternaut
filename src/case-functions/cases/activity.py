@@ -90,15 +90,25 @@ def costs_by_kind(contexts: Mapping[str, "Context"]) -> tuple[dict[str, float], 
     return {kind: amount for kind, amount in by_kind.items() if amount > 0}, read
 
 
-def end_of(out: "Investigation") -> str:
-    """How the Investigator's run ended (models.INVESTIGATION_ENDS): held by the harness, out of time or of calls (also with no answer to read), answered, or failed."""
-    answer = out.answer
-    if out.held:
+def end_of_run(held: bool, answer: object, ran: bool) -> str:
+    """How one run of the Investigator ended (models.INVESTIGATION_ENDS): held by the harness, out of time, of tokens or of calls (also with no answer to read), answered, or failed."""
+    if held:
         return "refused"
     if getattr(answer, "out_of_time", False):
         return "time"
+    if getattr(answer, "out_of_tokens", False):
+        return "tokens"
     refused = any(isinstance(call, dict) and call.get("refused") for call in getattr(answer, "calls", ()))
-    return "calls" if refused else "answered" if out.ran else "failed"
+    return "calls" if refused else "answered" if ran else "failed"
+
+
+def end_of(out: "Investigation") -> str:
+    """How the Investigator's work ended. One run: as end_of_run says. Beats: held when the harness held it, else the first of time, tokens and calls that a beat ran out of, else answered, or failed
+    when no beat answered."""
+    if not out.beats:
+        return end_of_run(out.held, out.answer, out.ran)
+    ends = {beat.end for beat in out.beats}
+    return "refused" if out.held else next((word for word in ("time", "tokens", "calls") if word in ends), "answered" if out.ran else "failed")
 
 
 def stop_of(harness: object) -> str:

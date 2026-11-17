@@ -34,9 +34,9 @@ ENDPOINT = "https://example.services.ai.azure.com/api/projects/meternaut"
 
 
 def make_settings(**changes) -> cfg.Settings:
-    """The settings of the app as cases.config loads them, with the investigation on."""
+    """The settings of the app as cases.config loads them, with the investigation on, and as one session for the whole estate (one beat): the tests of the beats ask for more (tests/test_beats.py)."""
     values = dict(investigate=True, foundry_endpoint=ENDPOINT, foundry_model_investigator="model-investigator", foundry_model_skeptic="model-skeptic",
-                  investigate_max_calls=30, investigate_max_seconds=600)
+                  investigate_max_calls=30, investigate_max_seconds=600, investigate_beats=1)
     values.update(changes)
     return replace(cfg.load(dict(ENV)), **values)
 
@@ -130,8 +130,8 @@ class FakeFoundry:
         self.specs.append(spec)
         return f"{spec.name}:3"
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
-        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, max_tokens=None):
+        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "max_tokens": max_tokens, "handler": handler})
         if self.after_run:
             self.after_run(agent)
         if agent.startswith(agents.INVESTIGATOR_NAME):
@@ -2548,7 +2548,7 @@ class ScriptedAgent(FakeFoundry):
         self.answers.setdefault(name, json.loads(text))
         return json.loads(text)
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, max_tokens=None):
         if not agent.startswith(agents.INVESTIGATOR_NAME):
             return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
         self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})

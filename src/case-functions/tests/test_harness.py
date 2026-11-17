@@ -978,7 +978,7 @@ class StoredFoundry(ti.FakeFoundry):
     def read_agent(self, name):
         return self.stored.get(name)
 
-    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None):
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None, stop=None, max_tokens=None):
         if stop is not None:
             why = stop(foundry.AgentRun(text=""))  # the brake before a request, as the real client asks it before the first one too
             if why:
