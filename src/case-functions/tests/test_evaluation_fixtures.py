@@ -9,12 +9,14 @@ import json
 import re
 import sys
 import unittest
+from unittest import mock
 
 from support import REPO_ROOT
 from cases import deeper, toolbox as tb
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
-from test_toolbox import DISK, Estate, ask, point, row, standard, toolbox
-from test_toolbox_meters import FIXED, WIDGET, billed, widgets
+from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
+from test_toolbox_depth import profiled
+from test_toolbox_meters import FIXED, WIDGET, at, billed, day, widgets
 
 METRIC = "Processed Prompt Tokens"
 SKIPPED = {"rows", "cols", "same", "properties", "cost_by_service"}  # the cells of a table, and keys that are the data: the tests of the columns and of the cells look at them
@@ -256,7 +258,7 @@ class TheArguments(Base):
                 if kind == "choice":
                     self.assertEqual(limits, param.choices, (name, param.name))
                 if kind == "list":
-                    self.assertEqual(limits or (1, 60), (1, tb.MAX_METRICS if param.kind == "metrics" else tb.MAX_MEASURED), (name, param.name))
+                    self.assertEqual(limits or (1, 60), (1, tb.MAX_METRICS if param.kind == "metrics" else param.high or tb.MAX_MEASURED), (name, param.name))
 
     def test_a_call_that_does_not_pass_is_bad_arguments_for_the_tool_and_for_the_fixtures(self):
         bad = {"int": ["x", True, -1, 100001], "choice": ["nope", 3], "text": [5, ["r1"], ""], "list": ["r1", [], [7]]}
@@ -468,6 +470,67 @@ class TheBill(Base):
         child = ask(box, "children", handle=account)["rows"][0][0]
         self.assertEqual(ask(box, "cost_meters", handle=child), {"error": "not-offered"})
         self.assertEqual(self.fixture(ACCOUNT_ROW, "cost_meters", handle="r2"), {"error": "not-offered"})
+
+
+class TheDepth(Base):
+    """neighbors, profile and changes: the real tools on the fake estate of their own tests (a service with a metric, a bill and no reference), and the fixtures, asked the same."""
+
+    def estate(self, data=True):
+        estate = profiled(2)
+        estate.definitions[WIDGET] = [definition("Day Metric", "Count", "Total")]
+        if data:
+            estate.series[(estate.id_of("w1").lower(), "Day Metric")] = [at(day(30), total=3, maximum=3, average=3)]
+        billed(estate, estate.id_of("w1").lower(), FIXED, [10.0] * 7, 24.0)
+        return estate
+
+    def box(self, estate=None):
+        box = toolbox(estate or self.estate())
+        ask(box, "list_resources", type=WIDGET)
+        box.arm.activity_events = mock.Mock(side_effect=tb.HttpError(403, "no"))  # a Watch whose identity cannot read the Activity Log: nothing is known of the age, like an invented resource
+        return box
+
+    def test_the_references_of_a_resource_are_answered_in_the_shape_of_the_real_tool(self):
+        box = self.box()
+        for arguments in ({"handle": "r1"}, {"handle": "r1", "direction": "refers_to"}, {"handle": "r1", "direction": "referred_by"}, {"handle": "r1", "offset": 20}):
+            real, fake = ask(box, "neighbors", **arguments), self.fixture(DISK_ROW, "neighbors", **arguments)
+            self.same_shape(real, fake)
+            for side in ("refers_to", "referred_by"):
+                if side in real:
+                    self.same_columns(real[side], fake[side])
+                self.assertEqual(side in real, side in fake, arguments)
+        self.assertEqual(ask(box, "neighbors", handle="r99"), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(DISK_ROW, "neighbors", handle="r99"), {"error": "unknown-handle"})
+
+    def test_a_profile_is_answered_in_the_shape_of_the_real_tool_by_the_day_and_by_the_hour(self):
+        box = self.box()
+        for arguments in ({"handles": ["r1"]}, {"handles": ["r1", "r2"], "days": 7}, {"handles": ["r1"], "grain": "hour"}):
+            real, fake = ask(box, "profile", **arguments), self.fixture(DISK_ROW, "profile", **arguments)
+            self.same_shape(real, fake)
+            for one, other in zip(real["profiles"], fake["profiles"]):
+                self.assertEqual((one["metrics"]["cols"], one["links"]["referred_by"]["cols"], one["sends_to"]["cols"]), (other["metrics"]["cols"], other["links"]["referred_by"]["cols"],
+                                                                                                                         other["sends_to"]["cols"]))
+        self.assertEqual(ask(box, "profile", handles=["r99"]), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(DISK_ROW, "profile", handles=["r1", "r99"]), {"error": "unknown-handle"})
+
+    def test_a_metric_that_has_no_data_is_listed_by_name_and_a_type_with_no_metrics_says_so_in_a_profile(self):
+        real = ask(self.box(self.estate(data=False)), "profile", handles=["r1"])["profiles"][0]["metrics"]
+        fake = self.fixture({**ROWS[DISK_ROW], "resources": [{"h": "r1", "usd": 30.0, "total": None}]}, "profile", handles=["r1"])["profiles"][0]["metrics"]
+        self.same_shape(real, fake)
+        self.assertEqual((real["rows"], fake["rows"], len(real["no_data"]), len(fake["no_data"])), ([], [], 1, 1))
+        estate = self.estate()
+        estate.no_metrics = {WIDGET}
+        self.assertEqual(ask(self.box(estate), "profile", handles=["r1"])["profiles"][0]["metrics"], "no-metrics")
+        self.assertEqual(self.fixture({**ROWS[DISK_ROW], "no_metrics": True}, "profile", handles=["r1"])["profiles"][0]["metrics"], "no-metrics")
+
+    def test_the_age_and_the_last_change_are_answered_in_the_shape_of_the_real_tool(self):
+        box = self.box()
+        real, fake = ask(box, "changes", handles=["r1", "r2"]), self.fixture(DISK_ROW, "changes", handles=["r1", "r2"])
+        self.same_shape(real, fake)
+        self.same_columns(real, fake)
+        self.assertEqual((len(real["rows"]), len(fake["rows"])), (2, 2))
+        self.assertEqual(ask(box, "changes", handles=["r99"]), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(DISK_ROW, "changes", handles=["r99"]), {"error": "unknown-handle"})
+        self.assertEqual({cell for line in fake["rows"] for cell in line[1:]}, {"not-recorded"}, "an invented resource has no source that says how old it is")
 
 
 class TheEvidence(Base):

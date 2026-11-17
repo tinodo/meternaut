@@ -25,9 +25,9 @@ MAX_KIND = 80  # a kind of resource that is longer than this is left out
 MAX_KINDS = 20  # the kinds of each list that a record keeps
 NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word that may be a resource's name: a full stop or a dash ends it unless a letter follows
 MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # objections of the second AI that a record keeps, and the longest of one of them and of a note of code
-# What each tool does to the kinds that it names or whose handles it is given (a letter of INVESTIGATION_TOUCHES). The other tools show a list and touch no kind: a test fails for one that is in neither.
+# What each tool does to the kinds that it names or whose handles it is given (the letters of INVESTIGATION_TOUCHES: a profile measures and describes). The other tools show a list and touch no kind: a test fails for one that is in neither.
 VERBS = {"list_resources": "l", "cost_lines": "l", "cost_history": "l", "cost_meters": "l", "measure": "m", "metric_summary": "m", "describe": "d", "children": "d", "data_volume": "d",
-         "data_readers": "d", "data_writers": "d", "metric_split": "s"}
+         "data_readers": "d", "data_writers": "d", "metric_split": "s", "neighbors": "d", "profile": "md", "changes": "d"}
 LEFT = ("unknown", "unproven", "repeated", "guarded", "recent", "capped")  # why resources of a finding left it (investigate.Finding)
 
 
@@ -56,7 +56,8 @@ def known(toolbox: object, costs: Mapping[str, float]) -> set[str]:
 
 
 def touched(toolbox: object, exist: set[str]) -> dict[str, str]:
-    """The kinds among `exist` that the tools touched, with the letters of what was done. A failed call touched nothing."""
+    """The kinds among `exist` that the tools touched, with the letters of what was done. A failed call touched nothing. A tool that gives a picture of resources says in its log entry which of them its answer
+    held data of (`read`: handle -> the letters of what), and only those are credited, and only for those letters; for any other tool every handle that it was given is."""
     handles = getattr(toolbox, "handles", {})
     found: dict[str, set[str]] = {}
     for call in getattr(toolbox, "log", []):
@@ -64,9 +65,13 @@ def touched(toolbox: object, exist: set[str]) -> dict[str, str]:
         verb = VERBS.get(call.get("name")) if isinstance(arguments, dict) else None
         if verb is None:
             continue
+        read = call.get("read") if isinstance(call.get("read"), dict) else None
         asked = arguments.get("handles") if isinstance(arguments.get("handles"), list) else [arguments.get("handle")]
-        for kind in ({type_word(arguments.get("type"))} | {type_word(getattr(handles.get(h), "resource_type", None)) for h in asked if isinstance(h, str)}) & exist:
-            found.setdefault(kind, set()).add(verb)
+        credit = [(type_word(arguments.get("type")), verb)]
+        credit += [(type_word(getattr(handles.get(h), "resource_type", None)), verb if read is None else "".join(letter for letter in verb if letter in str(read.get(h) or ""))) for h in asked if isinstance(h, str)]
+        for kind, letters in credit:
+            if kind in exist and letters:
+                found.setdefault(kind, set()).update(letters)
     return {kind: "".join(letter for letter in INVESTIGATION_TOUCHES if letter in verbs) for kind, verbs in sorted(found.items())}
 
 

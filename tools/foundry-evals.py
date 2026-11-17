@@ -73,6 +73,11 @@ PRICING = {"tier": "PerGB2018", "retention_days": 30, "ingestion": "RespectQuota
 FAILED_CODE = "Failed"  # the platform's code word for a read that failed, as the real tools show it (never its text)
 METER_COLUMNS = ("meter", "category", "subcategory", "name", "pricing", "charge", "unit", "quantity", "usd", "share", "days", "avg_day", "min_day", "max_day", "cv", "first_day", "last_day")
 METER = ("Standard", "Usage Units", "OnDemand", "Usage", "1 Hour")  # the subcategory, name, pricing, charge and unit of the one meter that an invented scope is billed for
+LINK_COLUMNS = ("handle", "type", "relation", "usd30d", "sku", "kind", "state")  # what neighbors tells of each resource that a reference joins
+LINK_SUMMARY = ("type", "relation", "count", "usd30d")  # a row of the links in a profile
+METRIC_COLUMNS = ("metric", "unit", "total", "max", "avg", "days")  # what a profile tells of each metric that has data
+HISTORY = ("age_days", "created_by", "changed_days", "changed_by", "written_14d")  # what changes tells of a resource: an invented one has no source that says it
+NOT_RECORDED = "not-recorded"
 ROW_FIELDS = ("id", "kind", "type", "metric", "resources", "expect")  # what every row has
 OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics")  # what a row may have besides
 _TEXT, _OFFSET, _DAYS = ("text", False, ()), ("int", False, (0, 100000)), ("int", False, (1, DAYS))
@@ -95,6 +100,9 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
     "commitments": {},
     "cost_history": {"handle": _TEXT, "type": _TEXT, "days": ("int", False, (7, 90)), "basis": ("choice", False, ("actual", "amortized"))},
     "cost_meters": {"handle": _TEXT, "type": _TEXT, "service": _TEXT, "days": ("int", False, (7, DAYS)), "offset": _OFFSET},
+    "neighbors": {"handle": ("text", True, ()), "direction": ("choice", False, ("refers_to", "referred_by")), "offset": _OFFSET},
+    "profile": {"handles": ("list", True, (1, 5)), "days": ("int", False, (7, DAYS)), "grain": _GRAIN},
+    "changes": {"handles": ("list", True, (1, 5))},
     "recall_lessons": {"type": ("text", True, ())},
     "recall_knowledge": {"type": ("text", True, ())},
     "recall_open_questions": {},
@@ -556,6 +564,75 @@ def _cost_meters(row: dict, arguments: dict) -> dict:
             "offset": offset, "returned": len(rows), **({"next_offset": offset + len(rows)} if more else {}), "cols": columns, "rows": rows}
 
 
+def _links_of(row: dict, handle: str) -> dict:
+    """What a resource of a fixture refers to and what refers to it: nothing, as no fixture has a reference. A part that is not listed as a resource says so."""
+    if any(part["h"] == handle for part in _parts(row)):
+        return {"listed": False}
+    return {side: {"total": 0, "cols": list(LINK_SUMMARY), "rows": []} for side in ("refers_to", "referred_by")}
+
+
+def _neighbors(row: dict, arguments: dict) -> dict:
+    """What a resource refers to and what refers to it, in the shape of the real tool: a fixture holds no reference, so both tables are empty."""
+    handle, direction = arguments["handle"], arguments["direction"]
+    kind = known_handles(row).get(handle)
+    if kind is None:
+        return _error("unknown-handle")
+    graph = {"resources": len(_resources(row)), "edges": 0, "outside": 0}
+    sides = [direction] if direction else ["referred_by"] if arguments["offset"] else ["refers_to", "referred_by"]
+    return {"handle": handle, "type": kind, "graph": graph, **({"listed": False} if "listed" in _links_of(row, handle) else {}),
+            **{side: {"total": 0, "cols": list(LINK_COLUMNS), "rows": []} for side in sides}}
+
+
+def _metrics_of(row: dict, resource: dict, hourly: bool) -> "dict | str":
+    """The metrics of a profile for one resource: the one metric of the fixture, as a row when it has data and by name when it has none."""
+    if row.get("no_metrics"):
+        return "no-metrics"
+    columns = [*METRIC_COLUMNS, *(["peak", "p95"] if hourly else [])]
+    if row.get("unavailable"):
+        return {"offered": 1, "with_data": 0, "cols": columns, "rows": [], "failed": [row["metric"]], "failed_codes": [FAILED_CODE]}
+    data = bool(resource["days"])
+    total = resource["total"]
+    return {"offered": 1, "with_data": int(data), "cols": columns, "rows": [[row["metric"], _unit(row), total, total, total, resource["days"], *([total, total] if hourly else [])]] if data else [],
+            **({} if data else {"no_data": [row["metric"]]})}
+
+
+def _profile(row: dict, arguments: dict) -> dict:
+    """The picture of up to five resources, in the shape of the real tool, from what the other tools of a fixture show: no reference, no Advisor item, no age and no setting that sends data."""
+    handles, days, hourly = arguments["handles"], arguments["days"] or DAYS, arguments["grain"] == "hour"
+    known = known_handles(row)
+    if any(handle not in known for handle in handles):
+        return _error("unknown-handle")
+    resources = {r["h"]: r for r in _resources(row)}
+    profiles = []
+    for handle in handles:
+        described = _describe(row, {"handle": handle})
+        kind = described["type"]
+        part: dict = {"handle": handle, "type": kind, "region": REGION, "managed": False, **{key: described[key] for key in ("cost30d", "cost_by_service", "part_of") if key in described},
+                      "properties": described["properties"]}
+        resource = resources.get(handle)
+        if resource is not None:
+            billed = _cost_meters(row, {"handle": handle, "type": None, "service": None, "days": days, "offset": 0})
+            part["meters"] = {key: billed[key] for key in ("usd_total", "meters", "same", "cols", "rows") if key in billed}
+            part["metrics"] = _metrics_of(row, resource, hourly)
+        else:
+            part["metrics"] = {"offered": 0, "with_data": 0, "cols": [*METRIC_COLUMNS, *(["peak", "p95"] if hourly else [])], "rows": []}
+        part["links"] = _links_of(row, handle)
+        part["history"] = dict.fromkeys(HISTORY, NOT_RECORDED)
+        if "children" in OFFERS.get(kind, ()):
+            part["children"] = {key: value for key, value in _children(row, {"handle": handle}).items() if key not in ("handle", "returned")}
+        if "data_writers" not in OFFERS.get(kind, ()):
+            part["sends_to"] = {"total": 0, "cols": list(DIAGNOSTIC_COLUMNS), "rows": []}
+        profiles.append(part)
+    return {"days": days, "grain": arguments["grain"] or "day", "partial": False, "profiles": profiles}
+
+
+def _changes(row: dict, arguments: dict) -> dict:
+    """How old each resource is and what was last written to it: an invented resource has no source that says it, so every cell is not-recorded."""
+    if any(handle not in known_handles(row) for handle in arguments["handles"]):
+        return _error("unknown-handle")
+    return {"log_days": 90, "cols": ["handle", *HISTORY], "rows": [[handle, *([NOT_RECORDED] * len(HISTORY))] for handle in arguments["handles"]]}
+
+
 def _recall_lessons(row: dict, arguments: dict) -> dict:
     """What a memory with nothing in it yet answers (docs/proposals/15-learning.md), in the shape of the real tool: a test holds it to the real toolbox."""
     return {"type": arguments["type"], "closed": 0, "source": "how people answered past requests of this type: counts, not facts about this estate", "history": "no history yet"}
@@ -590,8 +667,8 @@ def answers_of(row: dict) -> dict:
         ("estate_overview", _overview), ("list_resources", _list_resources), ("describe", _describe), ("metric_names", _metric_names), ("metric_summary", _metric_summary),
         ("measure", _measure), ("cost_lines", _cost_lines), ("advisor_items", _advisor_items), ("paid_features", _paid_features), ("data_volume", _data_volume),
         ("data_readers", _data_readers), ("data_writers", _data_writers), ("children", _children), ("metric_split", _metric_split), ("commitments", _commitments),
-        ("cost_history", _cost_history), ("cost_meters", _cost_meters), ("recall_lessons", _recall_lessons), ("recall_knowledge", _recall_knowledge),
-        ("recall_open_questions", _recall_open_questions))}
+        ("cost_history", _cost_history), ("cost_meters", _cost_meters), ("neighbors", _neighbors), ("profile", _profile), ("changes", _changes), ("recall_lessons", _recall_lessons),
+        ("recall_knowledge", _recall_knowledge), ("recall_open_questions", _recall_open_questions))}
 
 
 def evidence_total(row: dict, handle: object, metric: object) -> tuple[bool, object]:

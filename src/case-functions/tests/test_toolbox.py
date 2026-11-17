@@ -257,13 +257,14 @@ class Clock:
 
 
 class TheSpecs(unittest.TestCase):
-    def test_there_are_twenty_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
+    def test_there_are_twenty_three_tools_and_each_schema_lists_every_parameter_as_required_and_allows_no_other(self):
         specs = Toolbox(None, (), NOW, []).specs
-        # Twenty since cost_meters, which reads what a resource or a type is billed for, meter by meter. The last three (recall_lessons, recall_knowledge, recall_open_questions) read what
-        # Meternaut kept and make no call to Azure, except that the last reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
+        # Twenty since cost_meters, which reads what a resource or a type is billed for, meter by meter, and twenty-three since neighbors (what a resource refers to and what refers to it), profile (the
+        # whole picture of up to five resources in one call) and changes (how old a resource is and what was last written to it). The last three (recall_lessons, recall_knowledge,
+        # recall_open_questions) read what Meternaut kept and make no call to Azure, except that the last reads the resources of the open questions by id, like an id from a cost line, to give each a handle.
         self.assertEqual([s.name for s in specs], ["estate_overview", "list_resources", "metric_names", "metric_summary", "measure", "cost_lines", "advisor_items", "paid_features",
                                                    "describe", "data_volume", "data_readers", "data_writers", "children", "metric_split", "commitments", "cost_history",
-                                                   "cost_meters", "recall_lessons", "recall_knowledge", "recall_open_questions"])
+                                                   "cost_meters", "neighbors", "profile", "changes", "recall_lessons", "recall_knowledge", "recall_open_questions"])
         for spec in specs:
             schema = spec.parameters
             self.assertEqual((schema["type"], schema["additionalProperties"]), ("object", False), spec.name)

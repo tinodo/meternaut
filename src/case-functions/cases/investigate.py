@@ -45,7 +45,7 @@ from .memory_store import parse, stamp
 from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
+from .toolbox import OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
 
 if TYPE_CHECKING:
     from .run import Services
@@ -754,6 +754,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
+        # The Activity Logs that the tools read (age and last change of a resource) are kept where the reads for the cases keep them, so that nothing is read twice, and they have a budget of their own, so
+        # that an agent that asks for many cannot use up the reads that the cases need for who changed a resource.
+        out.owners = out.owners or OwnerReader(s.arm, s.clock())
+        toolbox.owners = out.owners.sharing(max_reads=OWNER_READS, seconds=OWNER_SECONDS)
     out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
