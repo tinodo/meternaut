@@ -483,7 +483,7 @@ class TagArm:
         if self.fail:
             raise RuntimeError("down")
         resource, group, sub = self.values
-        if query.startswith("resources "):
+        if "\nresources |" in query:
             return [{"tags": {"Escalation": resource}}] if resource else []
         return ([{"id": GROUP, "tags": {"ESCALATION": group}}] if group else []) + ([{"id": f"/subscriptions/{SUB}", "tags": {"escalation": sub}}] if sub else [])
 
@@ -575,7 +575,7 @@ class Azure:
             raise self.fail
         if "count() by type" in query:
             return [{"type": t, "count_": 1} for t in sorted(set(self.resources.values()))]
-        table = self.containers if query.startswith("resourcecontainers ") else set(self.resources)
+        table = self.containers if "\nresourcecontainers |" in query else set(self.resources)
         return [{"id": i} for i in sorted({i.lower() for i in re.findall(r"id =~ '([^']+)'", query)} & table)]
 
 

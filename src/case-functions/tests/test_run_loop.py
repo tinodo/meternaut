@@ -281,5 +281,39 @@ class WithoutTheLoop(unittest.TestCase):
         self.assertNotIn("plan.created", [e["type"] for e in events])
 
 
+class TheLoopTakesBackWhatIsGone(unittest.TestCase):
+    def setUp(self):
+        self.clock = Moving()
+        self.extras = loop_for(self.clock)
+        self.store = self.extras.store
+        estate = estate_with()
+        row = estate.graph["orphan-managed-disk"][0]
+        estate.locks_at[row["id"].lower()] = [{"id": f"{row['id']}/providers/Microsoft.Authorization/locks/keep"}]
+        watch(estate, self.extras, self.clock)  # a locked disk: nobody changes it, and a person is asked what to do about it
+        (self.plan,) = self.store.plans_open()
+
+    def next_watch(self, failures=None):
+        estate = FakeEstate()  # the disk is not in Azure any more: Resource Graph still lists its subscription and its group
+        estate.graph["existence"] = [{"id": f"/subscriptions/{SUBSCRIPTION}"}, {"id": f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"}]
+        estate.graph["existence-types"] = [{"type": "microsoft.compute/disks"}]
+        estate.failures.update(failures or {})
+        watch(estate, self.extras, self.clock)
+        return self.store.runs_recent()[0]
+
+    def test_a_watch_that_read_the_subscription_in_full_takes_back_the_request_about_a_disk_that_is_gone(self):
+        run = self.next_watch()
+        after = self.store.plan_get(self.plan.plan_id)
+        self.assertEqual((after.state, after.preconditions["takenBack"], self.store.case_get(self.plan.case_id).status), ("expired", "gone", "expired"))
+        self.assertIn("1 request was taken back: the resource is gone", run.notes)
+
+    def test_a_watch_that_read_it_in_part_or_was_told_to_wait_takes_back_nothing_and_says_why(self):
+        for label, failures, why in (("a source failed", {"graph:orphan-public-ip": 500}, "the subscription was not read in full"),
+                                     ("told to wait", {"graph:existence": 429}, "the read failed or the service asked to wait")):
+            with self.subTest(label):
+                run = self.next_watch(failures)
+                self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "open")
+                self.assertIn(f"1 request: whether the resource is still there was not checked ({why})", run.notes)
+
+
 if __name__ == "__main__":
     unittest.main()

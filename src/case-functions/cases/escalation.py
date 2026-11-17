@@ -103,8 +103,8 @@ def tag_reader(arm: object, name: str) -> Callable[[PlanRecord], str]:
         if found is None or not re.fullmatch(SCOPE, plan.resource_id, re.I):
             return ""
         subscription, group = found.group(1), (found.group(1) + found.group(2) if found.group(2) else "")
-        queries = [f"resources | where id =~ '{plan.resource_id}' | project tags"] if "/providers/" in plan.resource_id else []
-        queries.append("resourcecontainers | where id =~ '" + "' or id =~ '".join(i for i in (group, subscription) if i) + "' | project id, tags")
+        queries = [f"// meternaut:escalation-tag\nresources | where id =~ '{plan.resource_id}' | project tags"] if "/providers/" in plan.resource_id else []
+        queries.append("// meternaut:escalation-tag\nresourcecontainers | where id =~ '" + "' or id =~ '".join(i for i in (group, subscription) if i) + "' | project id, tags")
         rows: list[dict] = []
         for query in queries:
             try:
@@ -155,8 +155,8 @@ def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str],
             for start in range(0, len(ids), GONE_BATCH):
                 match = "' or id =~ '".join(ids[start:start + GONE_BATCH])
                 for table in ("resourcecontainers", "resources"):
-                    seen |= {str(row.get("id") or "").lower() for row in arm.graph(subscription, f"{table} | where id =~ '{match}' | project id")}  # type: ignore[attr-defined]
-            listed = {str(row.get("type") or "").lower() for row in arm.graph(subscription, "resources | summarize count() by type")}  # type: ignore[attr-defined]
+                    seen |= {str(row.get("id") or "").lower() for row in arm.graph(subscription, f"// meternaut:existence\n{table} | where id =~ '{match}' | project id")}  # type: ignore[attr-defined]
+            listed = {str(row.get("type") or "").lower() for row in arm.graph(subscription, "// meternaut:existence-types\nresources | summarize count() by type")}  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001 (a read that failed or was told to wait tells nothing)
             answer.update({plan.plan_id: "read" for plan in requests})
             continue
