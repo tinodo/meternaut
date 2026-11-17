@@ -18,7 +18,7 @@ import json
 from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
-from .common import action_block, confidence, detector_cell, kind_text, read
+from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
 from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_for, risk_chip, series_of, series_reason, title_of, under, use_block
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
@@ -43,7 +43,7 @@ def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
     return join([back, fmt('<div class="head"><div><h1>{title}</h1>{meta}</div></div>', title=title, meta=meta)])
 
 
-def _waiting(brief: Brief) -> Safe:
+def _waiting(ctx: Ctx, brief: Brief) -> Safe:
     """What an open request has waited for, with whom it is now, what waiting has cost so far (by code, from the figure of the request) and who was told, in a few rows. Nothing for a request that is
     not open."""
     waiting = brief.waiting
@@ -57,7 +57,7 @@ def _waiting(brief: Brief) -> Safe:
         rows.append(("Not told yet", "; ".join(waiting.pending)))
     if waiting.put_off:
         rows.append(("Put off", f"{waiting.put_off} time{'s' if waiting.put_off != 1 else ''}"))
-    return join([Safe("<h2>Waiting</h2>"), summary(rows)])
+    return join([Safe("<h2>Waiting</h2>"), summary(rows), off_notice(ctx)])
 
 
 def _chips(brief: Brief) -> Safe:
@@ -374,7 +374,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _waiting(brief)]
+    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

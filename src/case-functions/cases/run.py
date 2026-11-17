@@ -706,6 +706,8 @@ def execute(s: Services, trigger: str) -> Summary:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
         _revive(s, say)
+        if not s.extras.escalating:
+            h.emit("escalation.off", reason="no mail sender")  # a request that nobody answers is not passed on without one: the History says so at each Watch
     summary.held += sum(held.values())
     for reason, count in held.items():
         if count:

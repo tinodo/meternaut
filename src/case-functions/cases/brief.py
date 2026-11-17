@@ -120,6 +120,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
 WITH_WHOM = {"same": "the people it was made for", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
              "contact": "the escalation contact", "owners": "the owners of Meternaut"}
 SAID_HOW = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
+ESCALATION_OFF = "Escalation is not running: no mail sender is set up, so a request that nobody answers is not passed on."
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")

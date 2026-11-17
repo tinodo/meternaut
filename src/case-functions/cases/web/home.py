@@ -15,7 +15,7 @@ from typing import Mapping, Sequence
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import brief_of, cases_by_id, counted as _count, decisions_for, may_answer, measured_tile, read, verified_brief
+from .common import brief_of, cases_by_id, counted as _count, decisions_for, may_answer, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
                       use_block)
@@ -441,5 +441,5 @@ def home(ctx: Ctx) -> Response:
                     _lane(ctx, "ready", "Ready to decide", f"A change in Azure that you may approve. {order}", ready, largest, show, True),
                     _lane(ctx, "look", "Worth a closer look", f"No change is proposed yet. A saving here is an estimate, and a cost is the most that a change could save. {order}", look, largest,
                           show, False),
-                    more, _longest(ctx, rows), _held(ctx)])
+                    more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

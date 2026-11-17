@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from ..brief import HOLD_WORDS
 from ..models import HELD, PlanRecord
 from . import words
-from .common import MORE, brief_of, counted, figure_cell, measured_tile, read, saving_cell, verified_brief
+from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
 from .figures import NO_LINES, WEAKEST_FIRST, a_year, cost_of, figure_for, title_of
 from .layout import head, kpi, kpis, link, notice, page, paragraph, table
@@ -150,7 +150,7 @@ def _longest_wait(ctx: Ctx) -> Safe:
     waited = brief_of(ctx, plan, case).waiting
     if waited is None:
         return Safe("")
-    return paragraph(f"The request that has waited longest has waited {waited.days} day{'s' if waited.days != 1 else ''}, and it is with {waited.with_whom}. {waited.cost}".rstrip())
+    return join([paragraph(f"The request that has waited longest has waited {waited.days} day{'s' if waited.days != 1 else ''}, and it is with {waited.with_whom}. {waited.cost}".rstrip()), off_notice(ctx)])
 
 
 def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:

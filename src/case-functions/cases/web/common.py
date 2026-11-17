@@ -5,12 +5,12 @@ from __future__ import annotations
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..brief import Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
+from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
 from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
-from .layout import code, kpi, nowrap, paragraph, summary
+from .layout import code, kpi, nowrap, notice, paragraph, summary
 
 T = TypeVar("T")
 MORE = " Not complete: there may be more."  # ends a tile's note when its figure was read in part
@@ -43,6 +43,11 @@ def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, acti
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
     return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready,
                        ladder=ctx.ladder(plan.plan_id) if plan is not None and plan.state == "open" else ())
+
+
+def off_notice(ctx: Ctx) -> Safe:
+    """What a page that says a request is passed on says when it is not: the ladder runs only where a mail sender is set up."""
+    return Safe("") if ctx.services.escalating else notice("warning", "", ESCALATION_OFF)
 
 
 def verified_brief(ctx: Ctx, plan: PlanRecord | None, action: ActionRecord | None) -> Brief | None:

@@ -1,9 +1,11 @@
+import dataclasses
 import re
 import unittest
 
 from test_web_support import MAYA, NOW, OPS, OWNER, SUB, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, at, make_action, make_case, make_plan, snapshot
 
 from cases import pricing
+from cases.brief import ESCALATION_OFF
 from cases.memory_store import MemoryStore
 from cases.models import CASE_STATUSES, StoreError
 
@@ -424,6 +426,19 @@ class WhatItShowsOfTheEstate(unittest.TestCase):
     def test_a_page_that_is_the_same_for_the_same_records(self):
         one, two = seeded().get(PATH), seeded().get(PATH)
         self.assertEqual(one.text, two.text)
+
+
+class TheNoticeWhenTheLadderDoesNotRun(unittest.TestCase):
+    def test_the_start_page_the_savings_page_and_the_request_page_say_that_nothing_is_passed_on_when_no_mail_sender_is_set_up_and_say_nothing_when_it_is(self):
+        console = Console()
+        console.store.case_put(make_case())
+        console.store.plan_put(make_plan())
+        paths = ("/", PATH, "/ok/plan0001")
+        for path in paths:
+            self.assertNotIn(ESCALATION_OFF, console.get(path).content, path)
+        console.services = dataclasses.replace(console.services, escalating=False)
+        for path in paths:
+            self.assertIn(ESCALATION_OFF, console.get(path).content, path)
 
 
 class WhoMayOpenIt(unittest.TestCase):

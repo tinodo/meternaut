@@ -38,6 +38,7 @@ class Extras:
     on_cards: Callable[[], int] = lambda: 0
     # What the timer calls every minute for the ladder of the requests that wait (cases/escalation.hook): `on_escalate(arm, emit)` makes one round and returns the steps made. It never raises.
     on_escalate: Callable[..., int] = lambda arm=None, emit=None: 0
+    escalating: bool = False  # the ladder is installed: it needs a mail sender
 
     def approvers(self) -> tuple[str, ...]:
         return tuple(p.oid for p in self.people.with_role("approver"))
@@ -73,6 +74,7 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
         extras.on_tick = waiting_hook(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
         from .escalation import hook as escalation_hook
         extras.on_escalate = escalation_hook(env, settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
+        extras.escalating = True
     # The cards: through the queue when TEAMS_CARDS_QUEUE is set and the way is the queue (the default), through the bot when TEAMS_DELIVERY says bot and its settings are complete. A bot way that is not
     # complete is off (loop_config.TeamsWay): no card is tried, whatever else is set, and the letters go.
     way = settings.teams.way

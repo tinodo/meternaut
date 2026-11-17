@@ -68,6 +68,13 @@ class WhatTheLoopKeeps(unittest.TestCase):
         self.assertEqual(run.finished_at, stamp(NOW))
         self.assertEqual(len(self.store.cases_recent()), 3)
 
+    def test_a_watch_without_the_ladder_says_so_in_the_history_and_a_watch_with_it_says_nothing(self):
+        _, events, _ = watch(estate_with(), self.extras, self.clock)
+        self.assertEqual([e["reason"] for e in events if e["type"] == "escalation.off"], ["no mail sender"])
+        self.extras.escalating = True
+        _, events, _ = watch(estate_with(), self.extras, self.clock)
+        self.assertEqual([e for e in events if e["type"] == "escalation.off"], [])
+
     def test_the_waste_that_meternaut_planted_is_taken_up_first_even_when_dearer_leads_are_there(self):
         _, events, _ = watch(estate_with(endpoints=5), self.extras, self.clock)
         first = next(e for e in events if e["type"] == "lead.found")
