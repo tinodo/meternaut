@@ -89,7 +89,7 @@ Added 2026-11-16. The Study was built and nothing gave the app its switch, so th
 
 Added 2026-11-17. The first real run (4 kinds, 8 pages, 93,768 tokens, about $0.5) took the kinds that the estate has most of, so the kinds that cost most would have waited weeks. The survey now ranks the waiting kinds by their cost over the last 30 closed days in US dollars, then by count, then by name; a kind with no cost line comes last. The cost is the Watch's own read (`Arm.costs`), and a subscription whose cost is not in dollars is left out. Only dollars rank ([rule 30](../../AGENTS.md)), and the Scholar gets no amount. A cost that cannot be read is no failure: the old order holds, and the log says so in one fixed sentence.
 
-A run takes eight kinds now (the limit of the settings), with the same eight pages and 400,000 tokens. The pages set the tokens, so a run should stay near the first one, about $0.5 (the ceiling is $2 to $3). Eight pages are one page a kind, where the first run read two; more pages cost more than their share, because every call sends the pages read so far again. Not measured: a run of eight kinds, the cost reads on the real estate, and whether the dearest kinds give better claims.
+A run takes eight kinds now (the limit of the settings), with the same eight pages and 400,000 tokens. The pages set the tokens, so a run should stay near the first one, about $0.5 (the ceiling is $2 to $3). Eight pages are one page a kind, where the first run read two; more pages cost more than their share, because each step is billed for every page read before it. Not measured: a run of eight kinds, the cost reads on the real estate, and whether the dearest kinds give better claims.
 
 ## The capability profile
 
