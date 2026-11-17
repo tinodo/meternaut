@@ -86,6 +86,12 @@ class WhatSaysNothing(unittest.TestCase):
         self.assertFalse(brief.says_nothing(finding(advice=words)))
         self.assertFalse(brief.says_nothing(finding(advice=words, resource_id=GROUP_ID, resource_name="rg-demo")))
 
+    def test_the_recommendations_of_advisor_are_enough_even_when_advisor_gave_no_words(self):
+        said = {"type": "t", "sub": "Reservations", "n": 1, "added": 1, "skipped": 0, "currencies": [], "usd": 120.0, "more": 0, "moreUsd": 0.0,
+                "rows": [["Standard_D2s_v6", 1, "swedencentral", "P1Y", 120.0, "USD", 30, "Single"]]}
+        self.assertFalse(brief.says_nothing(finding(facts={"category": "cost", "advisor": said})))
+        self.assertTrue(brief.says_nothing(finding(facts={"category": "cost", "advisor": {**said, "rows": []}})), "a digest that is not as it should be says nothing")
+
     def test_a_resource_that_has_a_name_says_what_it_is_and_one_that_is_only_an_id_of_a_kind_without_words_does_not(self):
         named = finding(resource_id=f"{GROUP_ID}/providers/Microsoft.Foo/bars/my-bar", resource_name="my-bar", resource_type="microsoft.foo/bars", resource_group="rg-demo")
         self.assertFalse(brief.says_nothing(named))

@@ -13,7 +13,7 @@ from unittest import mock
 from support import NOW, SUBSCRIPTION, disk_row
 from test_estate_watch import Tenant, of_type, sub_id, watch
 from test_run_loop import GROUP, PLANTED, Moving, loop_for
-from test_web_support import MAYA, TINO, Console, make_plan
+from test_web_support import MAYA, TINO, Console, make_case, make_decision, make_plan
 
 from cases import advisor, brief as brief_mod, cards, detectors, investigate, letters
 from cases.detectors import ADVISOR
@@ -167,6 +167,10 @@ class TheCasesOfTheWatch(unittest.TestCase):
         (row,) = [r for r in self.watched.case(SAVINGS_PLAN, SUB_B).facts["advisor"]["rows"] if r[3] == "P3Y"]
         self.assertEqual([row[0], row[3], row[5], row[6], row[7]], ["Compute_Savings_Plan", "P3Y", "USD", 30, "Single"])
 
+    def test_the_impact_that_advisor_gives_is_kept_as_a_typed_fact(self):
+        self.assertEqual(self.watched.case(VM).facts["impact"], "high")
+        self.assertEqual({c.facts["impact"] for c in self.watched.cases() if c.facts["advisor"]["type"] == DISKS}, {"medium"})
+
     def test_the_figure_is_a_scenario_that_says_it_is_advisors_own_and_that_the_rows_can_be_alternatives(self):
         case = self.watched.case(VM)
         plan = next(p for p in self.store_plans() if p.case_id == case.case_id)
@@ -239,6 +243,7 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         self.assertEqual(len(watched.cases()), 8)
         self.assertEqual(watched.case(VM).facts["advisor"]["n"], 15)
         self.assertEqual(watched.case(VM).runs_seen, 2)
+        self.assertEqual((watched.summary.cases, of_type(watched.events, "case.result")), (0, []), "a request that waits is not announced again, and the Watch does not count it as made")
 
     def test_what_a_person_declined_is_not_asked_again_for_a_month_and_the_other_requests_of_the_subscription_stay(self):
         watched = Watched().run()
@@ -284,6 +289,67 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
             self.assertNotIn("Advisor", prompt)
             self.assertNotIn("Standard HDD", prompt)
 
+    def test_the_page_names_both_sources_of_the_one_case(self):
+        watched = Watched(self.estate(planted=False)).run()
+        (case,) = [c for c in watched.store.cases_recent() if c.resource_id.lower().endswith("/disks/disk-0")]
+        plan = next(p for p in watched.store.plans_open() if p.case_id == case.case_id)
+        reply = Console(store=watched.store).get(f"/ok/{plan.plan_id}")
+        content = reply.content
+        self.assertEqual(reply.table("advisor").headers, ["What", "Where", "Saves a year"], "a disk has no term, look-back or scope: those columns are left out")
+        self.assertIn("Advisor's list", content)
+        self.assertIn("Also found by Meternaut", content)
+        self.assertIn("Not attached to any virtual machine", content)
+
+    def test_an_older_case_that_asks_to_delete_keeps_its_own_guards_and_gets_no_words_of_advisor_and_the_history_says_what_was_held(self):
+        disk = disk_id("disk-0")
+        lists = {SUBSCRIPTION: [rec(DISKS, SUBSCRIPTION, 0, annual=18.42, resource=disk)], SUB_B: []}
+        watched = Watched(estate(lists))
+        mate = make_case(case_id=f"k{detectors.ident('orphan-managed-disk', disk)}", detector="orphan-managed-disk", status="needs_human", recommendation="delete", resource_id=disk,
+                         resource_type="microsoft.compute/disks", resource_name="disk-0", resource_group="rg-app", subscription_id=SUBSCRIPTION, facts={"diskState": "unattached"}, advice={})
+        watched.store.case_put(mate)
+        watched.run()
+        found = watched.store.case_get(mate.case_id)
+        self.assertEqual((found.advice, found.detector, found.facts["advisor"]["n"]), ({}, "orphan-managed-disk", 1), "Advisor's figure is on its case, and its words are not")
+        self.assertEqual([p for p in watched.store.plans_open() if p.resource_id.lower() == disk.lower()], [], "nobody looked up who changed the disk: a deletion is not asked on that")
+        (held,) = [e for e in of_type(watched.events, "case.held") if e["caseId"] == mate.case_id]
+        self.assertEqual(held["reason"], "held back: not checked who changed it")
+        self.assertEqual(watched.summary.held, 1)
+
+
+class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
+    """The first version asked once for a whole subscription, with one figure for all of its recommendations. The requests for each kind replace it, unless a person has answered it."""
+
+    def old(self, watched):
+        about = f"/subscriptions/{SUBSCRIPTION}"
+        watched.store.case_put(make_case(case_id="kold", detector="advisor-cost", status="needs_human", resource_id=about, resource_type="microsoft.subscriptions/subscriptions",
+                                         resource_name="", resource_group="", subscription_id=SUBSCRIPTION, plan_id="pold", facts={"category": "cost", "impact": "high"},
+                                         advice={"problem": "Buy reservations", "solution": "Buy reservations"}))
+        watched.store.plan_put(make_plan(plan_id="pold", case_id="kold", family=ADVISE, resource_id=about, state="open", approvers=(TINO,),
+                                         preconditions={"family": ADVISE, "caseStatus": "needs_human"}, expires_at="2026-11-30T00:00:00Z"))
+
+    def test_the_request_that_nobody_answered_is_closed_with_its_reason_and_its_case_ends_and_the_new_requests_stay(self):
+        watched = Watched()
+        self.old(watched)
+        watched.run()
+        closed, ended = watched.store.plan_get("pold"), watched.store.case_get("kold")
+        self.assertEqual((closed.state, closed.preconditions["takenBack"], ended.status), ("expired", "advisor", "expired"))
+        self.assertEqual(len(watched.store.plans_open()), 8)
+        self.assertIn(brief_mod.TAKEN_BACK["advisor"], brief_mod.build_brief(ended, closed, now=NOW).outcome.lines)
+        self.assertTrue(any("earlier request" in e["note"] and "closed" in e["note"] for e in of_type(watched.events, "run.note")))
+
+    def test_a_request_that_a_person_put_off_stays_open_and_theirs(self):
+        watched = Watched()
+        self.old(watched)
+        watched.store.decision_put(make_decision(plan_id="pold", approver_oid=TINO, decision="later"))
+        watched.run()
+        self.assertEqual((watched.store.plan_get("pold").state, watched.store.case_get("kold").status), ("open", "needs_human"))
+
+    def test_nothing_is_closed_when_advisor_has_no_recommendation_now_to_replace_it(self):
+        watched = Watched(estate({SUBSCRIPTION: [], SUB_B: [rec(VM, SUB_B, 0)]}))
+        self.old(watched)
+        watched.run()
+        self.assertEqual((watched.store.plan_get("pold").state, watched.store.case_get("kold").status), ("open", "needs_human"))
+
 
 class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
     @classmethod
@@ -314,6 +380,13 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
             self.assertIn(words, content)
         self.assertNotIn("Why the AIs think so", content)
         self.assertIn("How sure Meternaut is", content)
+
+    def test_the_details_say_that_no_ai_looked_at_it_and_claim_no_text_or_fact_of_an_ai(self):
+        content = self.page.content
+        self.assertIn("No AI looked at this finding", content)
+        self.assertIn("The typed facts that Meternaut recorded", content)
+        for text in ("What the AIs wrote, in full", "The typed facts that the AIs saw", "The second AI was not asked"):
+            self.assertNotIn(text, content)
 
     def test_the_page_names_nothing_of_the_estate_that_other_requests_do_not_name(self):
         content = self.page.content

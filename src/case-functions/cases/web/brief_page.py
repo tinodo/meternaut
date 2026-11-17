@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_COLUMNS, ADVISOR_KEY, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -169,7 +169,7 @@ def _advisor(brief: Brief) -> Safe:
     if found is None:
         return Safe("")
     parts: list[object] = [Safe("<h3>What Azure Advisor says</h3>"), paragraph(found.sentence),
-                           table("advisor", "What Azure Advisor recommends", ADVISOR_COLUMNS, [list(row) for row in found.rows], row_header=True, quiet_caption=True)]
+                           table("advisor", "What Azure Advisor recommends", list(found.columns), [list(row) for row in found.rows], row_header=True, quiet_caption=True)]
     parts += [paragraph(found.more, "muted")] if found.more else []
     parts += [paragraph(found.note, "muted")] if found.note else []
     return join(block(part) for part in parts)

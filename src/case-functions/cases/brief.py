@@ -1295,11 +1295,12 @@ ADVISOR_SHORT = "Order of work: remove what is idle and resize what is too big f
 
 @dataclass(frozen=True)
 class Advisor:
-    """What Azure Advisor says in a case, in the words of code: the sentence that adds its figures up, the same in a short line for a row of evidence, up to ADVISOR_ROWS rows (each a tuple of
-    ADVISOR_COLUMNS), the line that counts the rest with its sum, and what was counted and not added up."""
+    """What Azure Advisor says in a case, in the words of code: the sentence that adds its figures up, the same in a short line for a row of evidence, up to ADVISOR_ROWS rows (each a tuple of the
+    cells of `columns`, which are those of ADVISOR_COLUMNS that Advisor filled), the line that counts the rest with its sum, and what was counted and not added up."""
 
     sentence: str
     line: str
+    columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
     more: str
     note: str
@@ -1357,6 +1358,8 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     if found is None or case is None:
         return None
     rows = tuple(row for row in (_advisor_row(item) for item in found["rows"][:ADVISOR_ROWS]) if row)
+    shown = [n for n in range(len(ADVISOR_COLUMNS)) if any(row[n] for row in rows)]  # a column that Advisor filled for none of the rows is left out
+    columns, rows = tuple(ADVISOR_COLUMNS[n] for n in shown), tuple(tuple(row[n] for n in shown) for row in rows)
     count, usd, left = found["n"], _figure(found["usd"]) or 0.0, _whole(found.get("more"))
     many = f"{number_text(count)} recommendation{'' if count == 1 else 's'}"
     rates = "based on your own rates and usage" if _commitment(case) else "at retail rates, so your own rates are not in it"
@@ -1367,7 +1370,7 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     note = (f"{number_text(skipped)} of the {number_text(count)} {'was' if skipped == 1 else 'were'} counted and not added up: Advisor gave no figure in dollars"
             f"{' (' + ', '.join(kinds) + ')' if kinds else ''}, and Meternaut does not change it into dollars.") if skipped else ""
     rest = f"and {number_text(left)} more, {usd_text(_figure(found.get('moreUsd')) or 0.0)} a year" if left else ""
-    return Advisor(f"{said}. {money}", f"{many}, {usd_text(usd)} a year added up" if usd > 0 else many, rows, rest, note)
+    return Advisor(f"{said}. {money}", f"{many}, {usd_text(usd)} a year added up" if usd > 0 else many, columns, rows, rest, note)
 
 
 def advisor_options(case: CaseRecord | None) -> tuple[Option, ...]:
