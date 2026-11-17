@@ -82,12 +82,14 @@ PROJECT_PRINCIPAL = SETTINGS["FOUNDRY_PROJECT_PRINCIPAL_ID"]
 # Thirteenth change (the first real planting of a machine, 2026-11-09, re-recorded on purpose): Standard_B2s is not available to the pilot's subscription in Sweden Central, so planted.parameters.json holds
 # plantedVmSize Standard_B4als_v2 (it has a smaller one in its series, Standard_B2als_v2); every other file and the output are what they were.
 # The files of the planted waste and the others are byte for byte what they were.
+# Fourteenth change (the Study can be switched on through the Hub, 2026-11-17, re-recorded on purpose): cases.parameters.json gained study (false: the variable STUDY of the hub is not set in these inputs); every
+# other file and the output are what they were.
 GOLDEN = {
     "aigateway-policies.json": "e6d99d1633ab16afc3410e50dbdcb7e290f0e125f4283b4b19f63a8eebb8395c",
     "aigateway-subnet.parameters.json": "a2a16b02fd7a1d54d8949ad89796d4ea89d6bf1907db1f5b621205699a5a0196",
     "aigateway.parameters.json": "5b4cf2135e25e92773937b758578a844cacf4b40443b44d896ae3186b8b391f8",
     "base.parameters.json": "942cff3133e4f0acba426335edcd41e177473802258db4fe2750d72610d692b9",
-    "cases.parameters.json": "ac128bf1263b9e05e69b4b5f1711fb536cdddf413cd6e79e6bc0270ebedf8964",
+    "cases.parameters.json": "0e2387349dc35ccb6e41676f1c68c5be98f032c31b6d1d0d514e9ad0a813cb08",
     "environment.parameters.json": "5a722678f859d67fd7ff7895b0150b048b97def6b094c723d70d5849d078a7f3",
     "foundry.parameters.json": "c9fad0683873d351abbc281322cb3e7bcb6d24bd56f378fade0333801e1e2503",
     "operator.parameters.json": "77f010f57ffcef1d1ab84dea95de7eea61e4ed5c5d2135faf4593c14b6a5b5a4",
