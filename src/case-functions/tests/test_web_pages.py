@@ -704,7 +704,7 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
         self.assertTrue(sub.startswith("Saves, Scenario. $12.00 a month. Based on the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, scaled by the change from 3 to 2: "
-                                       "the target is the AI's proposal."), sub)
+                                       "the AI's target."), sub)
 
     def test_the_bill_lines_that_it_would_shrink_are_a_fact_that_code_read(self):
         self.assertEqual(self.reply.measured()["Bill lines it would shrink"], ("2 lines, $36.00 in the last 30 days", "Azure cost lines"))

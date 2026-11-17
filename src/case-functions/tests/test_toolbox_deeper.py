@@ -107,17 +107,13 @@ class TheVolume(Base):
         ask(self.box, "data_volume", handle=handle)
         self.assertNotIn("volume", self.box.evidence.get(handle, {}))
 
-    def test_what_a_handle_of_a_table_stands_for_is_there_for_a_person_and_in_no_answer_and_no_record_of_the_agent(self):
+    def test_what_a_table_is_called_by_the_estate_is_in_no_answer_and_no_record_of_the_agent(self):
         self.estate.tables += [table(HOSTILE, plan="Analytics", kind="CustomLog")]
         self.estate.usage += [usage(9, HOSTILE, 500.0)]
         handle = self.handle(WORKSPACE)
-        self.assertEqual(self.box.table_names(handle), {}, "nothing was shown yet")
         answer = ask(self.box, "data_volume", handle=handle)
         self.clean(answer)
         self.clean(self.box.evidence[handle])
-        self.assertEqual(self.box.table_names(handle), {"t1": "AppLog_CL", "t2": HOSTILE}, "the largest first, as the answer lists them")
-        self.assertEqual(self.box.table_names("r99"), {})
-        self.assertEqual(self.box.table_names(self.handle(VM)), {})
 
     def test_a_second_ask_reads_nothing_again(self):
         handle = self.handle(WORKSPACE)

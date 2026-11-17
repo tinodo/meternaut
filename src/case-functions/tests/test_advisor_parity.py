@@ -468,6 +468,41 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
         self.assertEqual([e for e in watched.events if e.get("caseId") == mate.case_id], [], "no line of the History says that Advisor made or judged it")
         self.assertEqual((watched.summary.cases, watched.store.plans_open()), (0, []), "the Advisor step made and asked about nothing")
 
+    def test_a_disk_that_the_investigation_priced_and_advisor_lists_too_is_one_case_and_savings_found_counts_the_models_figure_once(self):
+        disk = disk_id("disk-0")
+        lists = {SUBSCRIPTION: [rec(DISKS, SUBSCRIPTION, 0, annual=18.42, resource=disk)], SUB_B: []}  # Advisor says 18.42 a year for it
+        watched = Watched(estate(lists))
+        digest = {"action": "remove", "price": {"lowUsd": 5.0, "highUsd": 5.0, "billUsd": 5.0, "lines": 1, "resources": 1, "form": "none"}}  # the investigation priced it at 5.00 a month
+        mate = make_case(case_id=f"k{detectors.ident('investigation', disk)}", detector="investigation", status="needs_human", recommendation="change", resource_id=disk,
+                         resource_type="microsoft.compute/disks", resource_name="disk-0", resource_group="rg-app", subscription_id=SUBSCRIPTION, saving_usd_month=5.0, cost_usd_30d=9.0,
+                         facts={"basis": "oversized", "proposal": "change", "metrics": {}, "change": digest}, advice={}, updated_at="2026-11-01T00:00:00Z", runs_seen=2)
+        watched.store.case_put(mate)
+        watched.run()
+        found = watched.store.case_get(mate.case_id)
+        self.assertEqual((found.facts["change"], found.facts["advisor"]["n"]), (digest, 1), "the case holds both: the model's price and what Advisor says")
+        self.assertEqual([c.case_id for c in watched.store.cases_recent() if c.resource_id.lower() == disk.lower()], [mate.case_id], "never two cases for one disk")
+        self.assertGreater(brief_mod.advisor_saving(found) or 0, 0, "Advisor's own figure is still read from its digest, beside the model's")
+        row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
+        self.assertTrue(row["Saving a year"].startswith("$60 a year"), "twelve times the model's 5.00 and nothing of Advisor's 18.42 a year added: " + row["Saving a year"])
+
+    def test_the_case_that_advisor_made_before_the_investigation_found_the_same_disk_leaves_savings_found_when_the_investigation_case_exists(self):
+        disk = disk_id("disk-0")
+        lists = {SUBSCRIPTION: [rec(DISKS, SUBSCRIPTION, 0, annual=18.42, resource=disk)], SUB_B: []}
+        watched = Watched(estate(lists)).run()
+        (own,) = [c for c in watched.store.cases_recent() if c.resource_id.lower() == disk.lower()]
+        self.assertEqual(own.detector, "advisor-cost", "an earlier Watch made Advisor's own case, which was counted at Advisor's figure")
+        digest = {"action": "remove", "price": {"lowUsd": 5.0, "highUsd": 5.0, "billUsd": 5.0, "lines": 1, "resources": 1, "form": "none"}}
+        mate = make_case(case_id=f"k{detectors.ident('investigation', disk)}", detector="investigation", status="needs_human", recommendation="change", resource_id=disk,
+                         resource_type="microsoft.compute/disks", resource_name="disk-0", resource_group="rg-app", subscription_id=SUBSCRIPTION, saving_usd_month=5.0, cost_usd_30d=9.0,
+                         facts={"basis": "oversized", "proposal": "change", "metrics": {}, "change": digest}, advice={}, updated_at="2026-11-01T00:00:00Z", runs_seen=2)
+        watched.store.case_put(mate)
+        watched.clock.advance(hours=1)
+        watched.run()
+        live = [c for c in watched.store.cases_recent() if c.resource_id.lower() == disk.lower() and c.status in ("needs_human", "proposed")]
+        self.assertEqual([c.case_id for c in live], [mate.case_id], "the disk is one case that waits for a person: Advisor's own case is closed")
+        row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
+        self.assertTrue(row["Saving a year"].startswith("$60 a year"), row["Saving a year"])
+
 
 class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
     """The first version asked once for a whole subscription, with one figure for all of its recommendations. The requests for each kind replace it, unless a person has answered it."""

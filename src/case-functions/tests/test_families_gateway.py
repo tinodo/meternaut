@@ -71,10 +71,6 @@ class TheSizesAndWhatEachCarries(unittest.TestCase):
         for units, wanted in ((2, 1), (12, 11), (20, 19), (40, 20), (60, 40), (200, 180), (21, 20), (25, 20), (39, 20)):
             self.assertEqual(capacity.one_step_down(units), wanted, units)
 
-    def test_the_smallest_size_for_the_most_connections_seen(self):
-        for peak, wanted in ((0, 1), (1, 1), (500, 1), (501, 4), (1000, 4), (1001, 7), (5000, 7), (5001, 11), (10000, 11), (10001, 40), (100000, 200), (100001, None)):
-            self.assertEqual(capacity.smallest_for(peak), wanted, peak)
-
     def test_only_a_whole_number_from_one_to_two_hundred_is_a_number_of_units(self):
         self.assertEqual([capacity.whole(value) for value in (1, 12, 200)], [1, 12, 200])
         for value in (True, False, 0, -1, 201, 12.0, 12.5, "12", None, [12]):

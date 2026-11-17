@@ -33,6 +33,7 @@ MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
 WINDOW = 30  # the closed days that a figure a month rests on
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
+NAME = re.compile(r"[A-Za-z][A-Za-z0-9 ._/-]{0,63}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
     "lines": "No saving was worked out: the bill lines that the AI named were not found for this resource over the last 30 days.",
@@ -88,12 +89,11 @@ class Row(NamedTuple):
 
 @dataclass
 class Priced:
-    """What code made of a change: a row for each resource that has a figure, the word of WHY for each that has none, and how many effects named a resource that is not the finding's."""
+    """What code made of a change: a row for each resource that has a figure, and the word of WHY for each that has none."""
 
     action: str
     rows: dict[str, Row] = field(default_factory=dict)
     why: dict[str, str] = field(default_factory=dict)
-    ignored: int = 0
 
 
 def _number(value: object) -> float | None:
@@ -148,10 +148,10 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
     if form == "alternative":
         return "later"
     if form == "ratio":
-        start, target = _number(said.get("from")), _number(said.get("to"))
-        if start is None or target is None or not 0 <= target < start or not _cited(block, said.get("on"), start):
+        start, target, name = _number(said.get("from")), _number(said.get("to")), said.get("on")
+        if start is None or target is None or not 0 <= target < start or not _cited(block, name, start) or not NAME.fullmatch(str(name)):
             return "remains"
-        return form, target / start, target / start, {"from": start, "to": target}
+        return form, target / start, target / start, {"from": start, "to": target, "on": name}
     if form == "share_of_days":
         days, span = _whole(said.get("days")), _whole(said.get("of"))
         if days is None or span is None or not 1 <= days < span <= 31:
@@ -210,8 +210,8 @@ def price(change: Change | None, handles: Collection[str], toolbox: object, cost
     failed: dict[str, list[str]] = {}
     for effect in change.effects:
         if effect.handle not in handles:
-            out.ignored += 1
-        elif blocked and effect.handle in blocked:
+            continue  # an effect for a resource that is not one of the finding's is not read
+        if blocked and effect.handle in blocked:
             failed.setdefault(effect.handle, []).append(blocked[effect.handle])
         else:
             block = evidence.get(effect.handle)
@@ -253,7 +253,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "to", "days", "span", "away")
+    keys = ("form", "from", "to", "on", "days", "span", "away")
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd")}
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
@@ -285,12 +285,14 @@ def _count(number: int, noun: str) -> str:
 
 
 def _basis(found: Mapping, form: str, low: float, high: float) -> str:
-    lines, many = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1
-    text = f"the {_count(lines, 'bill line')} of {_count(many, 'resource')} that the change would {'remove' if form == 'none' else 'shrink'}, over the last {WINDOW} days"
-    start, target, days, span, away = (found.get(key) for key in ("from", "to", "days", "span", "away"))
+    lines, many, members = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1, _whole(found.get("members"))
+    whose = f"{many} of {members} resources" if members and members > many else _count(many, "resource")  # how many of the resources are priced comes first: a card cuts the end of the line
+    text = f"the {_count(lines, 'bill line')} of {whose} that the change would {'remove' if form == 'none' else 'shrink'}, over the last {WINDOW} days"
+    start, target, days, span, away, on = (found.get(key) for key in ("from", "to", "days", "span", "away", "on"))
     if form == "ratio":
-        text += (f", scaled by the change from {start:g} to {target:g}" if _number(start) is not None and _number(target) is not None else ", scaled by the change that the AI proposed")
-        text += ": the target is the AI's proposal"
+        name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
+        text += (f", scaled by the change{name} from {start:g} to {target:g}" if _number(start) is not None and _number(target) is not None else ", scaled by the change that the AI proposed")
+        text += ": the AI's target"
     elif form == "share_of_days":
         text += f", scaled to {days} days of every {span}: the AI's proposal" if _whole(days) and _whole(span) else ", scaled to the days that it is needed: the AI's proposal"
     elif form == "assumed":
@@ -298,18 +300,15 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
         text += (f", of which {pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent would go away" if pair else ", of which a share would go away")
         text += ": the AI's own assumption, not checked by code"
     elif form == "mixed":
-        text += ", each by its own rule, added up; part of it rests on the AI's own proposals"
+        text += ", each by its own rule; part rests on the AI's own proposals"
     if high > low:
-        text += f"; it saves between {_usd(low)} and {_usd(high)} a month, and the figure shown is the lowest"
-    members = _whole(found.get("members"))
-    if members and members > many:
-        text += f"; {many} of {members} resources are priced"
+        text += f"; {_usd(low)} to {_usd(high)} a month"
     skipped = _whole(found.get("skipped"))
     if skipped:
-        text += f"; {_count(skipped, 'thing')} that it named could not be checked and {'is' if skipped == 1 else 'are'} not counted"
+        text += f"; {_count(skipped, 'named thing')} not counted"
     advisor = _number(found.get("advisorUsd"))
     if advisor is not None and advisor > 0:
-        text += f"; Azure Advisor's own estimate for it is {_usd(advisor)} a month, and the two are not added"
+        text += f"; Azure Advisor's {_usd(advisor)} is not added"
     return text
 
 
@@ -330,6 +329,11 @@ def point(facts: object, cost: float | None = None) -> float | None:
     """The figure that a case counts: the low end of what code computed from the bill lines."""
     found = saved(facts, cost)
     return found.low if found is not None else None
+
+
+def stated(facts: object) -> bool:
+    """Whether the facts of a case hold the change that a finding states, priced or not: the case then says what it is worth now, its own price or why it has none."""
+    return bool(_change(facts))
 
 
 def missing(facts: object) -> str:

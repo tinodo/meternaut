@@ -418,8 +418,10 @@ class TheAgentDefinitions(unittest.TestCase):
         for sentence in ("Something larger than its use needs is not found by looking for idle: for anything that comes in a size, a tier or a number of units, compare what it can carry with the highest value "
                          "of what it carries, read at the finest grain that your tools offer and not as an average",
                          "say what the next smaller option would still have to carry and what would then remain on the bill",
-                         "A quiet average under a busy peak is not waste, and a low peak is."):
+                         "An average can hide the peak that decides what a thing must carry."):
             self.assertIn(sentence, text)
+        for rule_of_waste in ("is not waste", "low peak"):
+            self.assertNotIn(rule_of_waste, text, "a principle says what to compare and what to say, never what counts as waste (rule 30)")
         self.assertLess(text.index("4. Waste is one of these"), text.index("Something larger than its use needs is not found"))
         self.assertLess(text.index("Something larger than its use needs is not found"), text.index("5. An absent measurement"))
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")

@@ -31,8 +31,3 @@ def mbps_of(units: int) -> int:
 def one_step_down(units: int) -> int | None:
     """The largest listed size below this one, or None for the smallest size: a gateway is never scaled below 1 unit."""
     return max((size for size in SIZES if size < units), default=None)
-
-
-def smallest_for(peak: float) -> int | None:
-    """The smallest listed size that supports at least `peak` connections at one time (1 unit when nobody was connected), or None when no size does."""
-    return next((size for size in SIZES if LIMITS[size] >= max(peak, 1)), None)

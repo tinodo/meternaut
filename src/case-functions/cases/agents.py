@@ -70,7 +70,7 @@ INVESTIGATOR_INSTRUCTIONS = (
     "4. Waste is one of these: something idle, something larger than its use needs, something duplicated, a feature that is paid for and not used, "
     "or a commitment that does not fit the use. Something larger than its use needs is not found by looking for idle: for anything that comes in a size, a tier or a number of units, compare "
     "what it can carry with the highest value of what it carries, read at the finest grain that your tools offer and not as an average, and say what the next smaller option would still have to "
-    "carry and what would then remain on the bill. A quiet average under a busy peak is not waste, and a low peak is.\n"
+    "carry and what would then remain on the bill. An average can hide the peak that decides what a thing must carry.\n"
     "5. An absent measurement is not proof that something is idle. Look at the window that the data covers, and say so in your summary when the window is "
     "short for your claim. But when a measurement has data for other resources of the same type over the same window and none at all for some, that "
     "difference is worth reporting: give the resources that have none as one finding with the basis other and the proposal investigate, with a lower confidence "

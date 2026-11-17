@@ -284,7 +284,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, 4)]}
         case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
         self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
-        self.assertTrue(brief.build_brief(case, None, now=WEB_NOW).saving.basis.endswith("; 3 of 7 resources are priced"))
+        self.assertIn("3 of 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):

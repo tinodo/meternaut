@@ -674,16 +674,11 @@ def _priced(case: CaseRecord | None) -> pricing.Saved | None:
     return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d))
 
 
-def _modelled(case: CaseRecord | None) -> bool:
-    """Whether a finding is about what a change would shrink in the bill, and not about whether one resource is still used: it has a figure of its own from the bill lines that it names, and it
-    does not ask to delete the resource (that is always the question whether anything uses it)."""
-    return case is not None and _priced(case) is not None and not _asked_delete(case)
-
-
 def impact_of(case: CaseRecord | None) -> Impact | None:
     """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
-    model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding."""
-    if case is None or not _idle(case) or _modelled(case):
+    model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding. A figure that code worked out from the bill lines does not switch
+    it off: what a change would save is not whether anything depends on the resource."""
+    if case is None or not _idle(case):
         return None
     found = _impact_digest(case.facts)
     if found is None:
@@ -739,8 +734,9 @@ def proposal_of(case: CaseRecord | None) -> str | None:
 
 def still_used(case: CaseRecord | None) -> bool:
     """Whether a finding of the investigation is the question whether one resource is still used: it asks for a look, it asked to delete the resource or says that nothing uses it, and either the
-    resource is one that others share or no measured zero lets it ask for more. A finding that names the bill lines that a change would shrink, and has a figure for them, is not this question."""
-    return (case is not None and _idle(case) and proposal_of(case) == "investigate" and group_of(case) is None and not _modelled(case)
+    resource is one that others share or no measured zero lets it ask for more. A figure that code worked out from the bill lines does not change that: what a change would save is not whether
+    anything uses the resource."""
+    return (case is not None and _idle(case) and proposal_of(case) == "investigate" and group_of(case) is None
             and (shared(case.resource_type) or _asked_delete(case) or not measured_zero(case.facts)))
 
 
@@ -757,9 +753,8 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
-    analysed = _modelled(case)  # a finding that has a figure of its own from the bill lines that it names is measured: it is not the question whether anything uses the resource
-    parts = ([UNPROVEN] if _idle(case) and not proven and not analysed else []) + ([SHARED_RISK] if others else [])
-    return Risk("high" if others and not proven and not analysed else "medium", ACTING + " ".join(parts or [RARE_USE if proven else CHANGE_RISK]))
+    parts = ([UNPROVEN] if _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
+    return Risk("high" if others and not proven else "medium", ACTING + " ".join(parts or [RARE_USE if proven else CHANGE_RISK]))
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
@@ -1235,10 +1230,14 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     scenario = advisor_saving(case)  # what Azure Advisor's own figures add up to, for a case that holds what Advisor says
     own = _figure(case.saving_usd_month) if case is not None else None
     # A case that holds what Advisor says and no figure of its own is worth what Advisor says now: the figure of a request is the one that code took when it was made, and a later Watch may have
-    # found Advisor's figures moved. That one stays in the plan as the record of what was asked.
-    current = fam is None and advisor_digest(case) is not None and (own is None or own <= 0)
+    # found Advisor's figures moved. That one stays in the plan as the record of what was asked. So is a case that holds the change that a finding states: it is worth what its own record says now (its
+    # price, or why it has none), and never the figure that its plan was made with, which would be shown as if Advisor had given it.
+    stated = fam is None and case is not None and pricing.stated(case.facts)
+    current = fam is None and (stated or (advisor_digest(case) is not None and (own is None or own <= 0)))
     if priced is not None:
         figure = priced.low
+    elif stated:
+        figure = own
     elif current or (plan is None and (figure is None or figure <= 0)):
         figure = scenario
     waiting = None if current or priced is not None else (_figure(plan.waiting_costs_usd_day) if plan is not None else None)

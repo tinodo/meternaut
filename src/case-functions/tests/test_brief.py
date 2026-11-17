@@ -508,7 +508,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         both = brief_of(priced_case(facts={"basis": "oversized", "proposal": "change", "metrics": {}, **change_facts(
             {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}, advisor=12.5)}), priced_plan(saving_usd_month=60.0)).saving
         self.assertEqual(both.monthly, 60.0)
-        self.assertIn("Azure Advisor's own estimate for it is $12.50 a month, and the two are not added", both.basis)
+        self.assertIn("Azure Advisor's $12.50 is not added", both.basis)
         only = brief_of(make_case(detector="investigation", recommendation="change"), make_plan()).saving
         self.assertEqual((only.level, only.basis), ("Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
 
@@ -528,27 +528,40 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertEqual(brief_of(priced_case(), priced_plan()).how, "Take it down a size.")
         self.assertEqual((brief_of(make_advice_case(), make_advice()).how, brief_of(priced_case(status="error"), priced_plan()).how), ("", ""))
 
-    def test_a_finding_that_names_the_bill_lines_it_would_shrink_is_not_the_question_whether_the_resource_is_still_used_unless_it_asks_to_delete(self):
+    def test_a_case_that_holds_a_change_is_worth_what_its_own_record_says_now_and_never_the_figure_that_its_plan_was_made_with(self):
+        lost = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}]}
+        b = brief_of(priced_case(lost, saving_usd_month=None, cost_usd_30d=80.0), priced_plan(saving_usd_month=30.0, waiting_costs_usd_day=1.0))
+        self.assertEqual((b.saving.monthly, b.saving.why_none, b.saving.specific), (None, pricing.WHY["lines"], True), "the lines are not found now: the old figure of the plan is not shown, nor under Advisor's name")
+        now = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}
+        self.assertEqual(brief_of(priced_case(now), priced_plan(saving_usd_month=99.0)).saving.monthly, 60.0, "its own price now, as before")
+        stated_none = brief_of(priced_case({"action": "none"}, recommendation="delete", saving_usd_month=44.0, cost_usd_30d=44.0), priced_plan(saving_usd_month=30.0)).saving
+        self.assertEqual(stated_none.monthly, 44.0, "a change that names no bill line leaves the figure that the case has now (the cost lines of a delete), and not the plan's")
+
+    def test_a_finding_that_is_worth_what_azure_advisor_says_still_takes_it_and_a_plain_case_keeps_the_figure_of_its_plan(self):
+        advisor = brief_of(make_case(detector="investigation", recommendation="change"), make_plan(saving_usd_month=30.0)).saving
+        self.assertEqual((advisor.level, advisor.basis), ("Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
+        self.assertEqual(brief_of(make_case(), make_plan(saving_usd_month=30.0)).saving.monthly, 30.0)
+
+    def test_a_figure_that_code_worked_out_never_switches_off_a_check_of_use_and_a_finding_with_one_still_says_something(self):
         asked = dict(detector="investigation", recommendation="investigate")
         plain = priced_case(facts={"basis": "unused-feature", "proposal": "investigate", "metrics": {}}, **asked)
-        self.assertEqual((brief.still_used(plain), brief.impact_of(plain) is not None), (True, True))
         modelled = priced_case(facts={**priced_case().facts, "basis": "unused-feature", "proposal": "investigate"}, **asked)
-        self.assertFalse(brief.still_used(modelled))
-        self.assertIsNone(brief.impact_of(modelled))
+        for case in (plain, modelled):
+            self.assertEqual((brief.still_used(case), brief.impact_of(case) is not None), (True, True))
         self.assertFalse(brief.says_nothing(modelled))
+        self.assertEqual(brief_of(modelled, priced_plan()).saving.monthly, 30.0, "and the figure is still shown")
         deleting = priced_case({"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}, recommendation="delete")
         self.assertIsNotNone(brief.impact_of(deleting), "a deletion is always the question what depends on the resource")
 
-    def test_a_finding_that_names_the_bill_lines_it_would_shrink_is_measured_even_for_a_resource_that_others_share_and_is_not_held_to_the_questions_of_use(self):
+    def test_the_risk_of_acting_on_a_resource_that_others_share_is_the_same_with_a_figure_and_without_one(self):
         shared = dict(detector="investigation", recommendation="investigate", resource_type="microsoft.network/privateendpoints")
         plain = priced_case(facts={"basis": "no-usage", "proposal": "investigate", "metrics": {}}, **shared)
-        self.assertTrue(brief.still_used(plain))
-        self.assertIsNotNone(brief.impact_of(plain))
-        self.assertEqual((brief.acting_risk(plain).level, bool(brief.check_first(plain))), ("high", True))
         modelled = priced_case(facts={**priced_case().facts, "basis": "no-usage", "proposal": "investigate"}, **shared)
-        self.assertFalse(brief.still_used(modelled))
-        self.assertIsNone(brief.impact_of(modelled))
-        self.assertEqual((brief.acting_risk(modelled).level, brief.check_first(modelled)), ("medium", ()))
+        for case in (plain, modelled):
+            risk = brief.acting_risk(case)
+            self.assertEqual((brief.still_used(case), risk.level, bool(brief.check_first(case))), (True, "high", True))
+            self.assertIn(brief.UNPROVEN, risk.text)
+            self.assertIn(brief.SHARED_RISK, risk.text)
 
 
 class TheOwner(unittest.TestCase):
