@@ -18,12 +18,11 @@ from typing import Callable, Mapping, Sequence
 
 from . import config as cfg
 from . import costs as cost_words
-from . import decide, detectors, evidence, guards, investigate, learning, roles, upkeep, usage, wiring
+from . import advisor, decide, detectors, evidence, guards, investigate, roles, upkeep, usage, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
 from .arm import Arm, scopes_of
-from .brief import says_nothing
 from .detectors import DETECTOR_NAMES, Context, Estate, Lead
 from .events import History
 from .evidence import EvidenceError
@@ -163,15 +162,7 @@ def work_case(s: Services, number: int, lead: Lead, context: Context, tokens_bef
                 subscription_name=lead.subscription_name or (old.subscription_name if old else ""), advice=lead.advice or (old.advice if old else {}), **upkeep.cost_fields(lead, old))
             ex.store.case_put(record)
             if status in ("proposed", "needs_human"):
-                plan = ex.approvals.plan_for(record, lead, ex.approvers())
-                if plan is not None:
-                    record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
-                    h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
-                    ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
-                else:
-                    why = ex.approvals.held_why(record)  # the rules that hold a deletion back whichever detector made the case (cases/brief.py held_reason)
-                    if (why or says_nothing(record)) and held is not None:
-                        held.append(upkeep.held(h, record, why))
+                upkeep.ask(ex, h, record, lead, held)
         except (StoreError, ValueError) as error:
             h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))
 
@@ -640,13 +631,19 @@ def execute(s: Services, trigger: str) -> Summary:
         if closed:
             say(f"{len(closed)} earlier request{'s' if len(closed) != 1 else ''} about single resources {'were' if len(closed) != 1 else 'was'} closed: the request for the group of resources that "
                 f"{'they belong' if len(closed) != 1 else 'it belongs'} to waits")
-    candidates = ranked
+    # What the two roles may judge: the leads of the fixed detectors, but not an Advisor recommendation (its case is made by code, below, whether or not the investigation ran) and not the lead
+    # of a resource that Advisor also names, which that case holds (waste that Meternaut planted itself keeps its own case, which then holds what Advisor says).
+    advised = advisor.resources(ranked)
+    judgeable = [lead for lead in ranked if lead.detector != detectors.ADVISOR and (lead.resource_id.lower() not in advised or planted(lead))]
+    if (covered := sum(1 for lead in ranked if lead.detector != detectors.ADVISOR) - len(judgeable)):
+        say(f"{covered} lead{'s' if covered != 1 else ''} about a resource that Azure Advisor also names {'are' if covered != 1 else 'is'} held by Advisor's case, which says that both found it")
+    candidates = judgeable
     if investigation.ran or investigation.held:
         # The investigation found the waste by itself, so the leads of the fixed detectors that are real resources are left to it. They stay in the History as leads. When the harness held
         # the investigation (a pulled switch, a lock that does not hold, a stored definition that differs) no new case of the investigation is opened, and these leads are not judged by the
         # two roles either: only the waste that Meternaut planted itself goes on, so that the loop stays proved.
-        candidates = [lead for lead in ranked if planted(lead)]
-        left_to_it = len(ranked) - len(candidates)
+        candidates = [lead for lead in judgeable if planted(lead)]
+        left_to_it = len(judgeable) - len(candidates)
         if investigation.held:
             say(f"the investigation is held: {investigation.note}")
         if left_to_it:
@@ -688,6 +685,10 @@ def execute(s: Services, trigger: str) -> Summary:
             summary.dropped += 1
         else:
             summary.errors += 1
+    if s.extras is not None:
+        made = advisor.make(s, ranked, contexts, say, held_ids, [sub for sub, found in estate.collected.items() if found.advisor_read])  # every recommendation of Azure Advisor is a case that a person is asked about, and none is judged by a model
+        summary.cases += made
+        summary.needs_human += made
     held = Counter(held_ids)  # the words of the History for each finding that was held back by a case of this Watch
     held[NOTHING_TO_SAY] += investigation.said_nothing
     held.update({HELD_BACK[why]: count for why, count in investigation.held_back.items()})

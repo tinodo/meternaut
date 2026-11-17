@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -163,19 +163,33 @@ def _gateways(brief: Brief) -> Safe:
     return join(block(part) for part in parts)
 
 
+def _advisor(brief: Brief) -> Safe:
+    """What Azure Advisor says, in the words of code: the sentence that adds its figures up, one row for each recommendation (at most twelve), the line that counts the rest, and what was not added up."""
+    found = brief.advisor
+    if found is None:
+        return Safe("")
+    parts: list[object] = [Safe("<h3>What Azure Advisor says</h3>"), paragraph(found.sentence),
+                           table("advisor", "What Azure Advisor recommends", list(found.columns), [list(row) for row in found.rows], row_header=True, quiet_caption=True)]
+    parts += [paragraph(found.more, "muted")] if found.more else []
+    parts += [paragraph(found.note, "muted")] if found.note else []
+    return join(block(part) for part in parts)
+
+
 def _measured(brief: Brief) -> Safe:
-    """What code read from the estate: each fact with its value and the place that it was read, the data that nothing reads when the finding is about a workspace, and what the gateways are
-    when it is about those."""
+    """What code read from the estate: each fact with its value and the place that it was read, the data that nothing reads when the finding is about a workspace, what the gateways are
+    when it is about those, and what Azure Advisor says when it says something."""
     rows = [[fact.label, fact.value, fmt('<span class="muted">{source}</span>', source=fact.source)] for fact in brief.facts]
     parts: list[object] = [Safe("<h2>What was measured</h2>"),
                            table("measured", "What was measured, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)
-                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief), _gateways(brief)]
+                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief), _gateways(brief), _advisor(brief)]
     return join(block(part) for part in parts)
 
 
 def _why(brief: Brief) -> Safe:
-    """How sure the AIs are and why, in their own words, each in a box that says that no code checked it, and how past requests like this were answered."""
-    parts: list[object] = [Safe("<h2>Why the AIs think so</h2>"), paragraph(fmt("<strong>How sure: {level}.</strong> {because}", level=brief.confidence.level, because=brief.confidence.because))]
+    """How sure the AIs are and why, in their own words, each in a box that says that no code checked it, and how past requests like this were answered. A request that no AI looked at says how sure
+    Meternaut is, and nothing of an AI."""
+    parts: list[object] = [Safe("<h2>Why the AIs think so</h2>" if brief.models else "<h2>How sure Meternaut is</h2>"),
+                           paragraph(fmt("<strong>How sure: {level}.</strong> {because}", level=brief.confidence.level, because=brief.confidence.because))]
     parts += [paragraph(line, "muted") for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
     if brief.reasoning:
         parts.append(quoted("The AI's reasoning (not checked by code)", brief.reasoning))
@@ -339,10 +353,12 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
     if case is not None:
-        parts.append(_ai_words(case))
-        parts += [Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT)}  # what code made of the estate is in the evidence above, and no AI saw it
-        parts.append(table("facts", "The typed facts that the AIs saw", ["Fact", "Value"], [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
+        by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
+        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
+            _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT, ADVISOR_KEY)}  # what code made of the estate is in the evidence above, and no AI saw it
+        parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
+                           [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))
         parts.append(join([paragraph("These guards fired. A guard stops a finding from becoming a request, and no model can lift it."),
                            summary([(guard, words.GUARD.get(guard, "")) for guard in case.guards])]) if case.guards else paragraph("No guard fired."))
@@ -372,4 +388,5 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
     reading = join(block(part) for part in (_impact(brief), _measured(brief), _options(brief), _check_first(brief), _why(brief), _whose(brief)))
     parts.append(fmt('<div class="cols{solo}"><div>{reading}</div>{side}</div>', solo="" if side is not None else " solo", reading=reading, side=side if side is not None else Safe("")))
     parts.append(_details(ctx, brief, case, plan, action))
-    return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=brief.models or None, why=why or "you opened a request that Meternaut made", wide=True)
+    return page(ctx, plain_title, join(block(p) for p in parts), status=status, ai=True, models=() if brief.by_code else brief.models or None,
+                why=why or "you opened a request that Meternaut made", wide=True)
