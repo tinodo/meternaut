@@ -34,6 +34,7 @@ from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of
 
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
+WEEKLY_LISTED = 10  # the lines of the weekly letter of the escalation contacts
 MAX_HELD = 3  # the findings that are held back which the weekly letter lists: a short block, and the page has the rest
 MAX_FACTS = 3
 
@@ -477,7 +478,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
         lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days), f"Why you are told: {_data(source, 20)}.") if part))
     doc.items(*lines)
     if count > MAX_LISTED:
-        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+        doc.paragraph(f"and {count - MAX_LISTED} more.")
     listed = bool(person.roles)
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
@@ -489,22 +490,22 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
 
 def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, rows: Sequence[tuple[PlanRecord, CaseRecord | None]], contacts: Sequence[str] = (),
                              problems: Sequence[str] = (), *, first: bool = False) -> Letter:
-    """The weekly letter to an escalation contact: the requests that have waited more than a week, each with its own figure and how long it has waited (no total: a total is no part of a case),
+    """The weekly letter to an escalation contact: every request that waits, oldest first and ten at most, each with its own figure and how long it has waited (no total: a total is no part of a case),
     and what stops Meternaut from finding people (a missing permission, a message that could not be delivered), once each."""
     base = _base(base_url)
     count = len(rows)
-    doc = _Doc(f"{count} decision{' has' if count == 1 else 's have'} waited more than a week" if count else "What stops Meternaut from escalating")
+    doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for an answer" if count else "What stops Meternaut from escalating")
     if first:
         doc.paragraph(ESCALATION_INTRO)
     lines = []
-    for plan, case in rows[:MAX_LISTED]:
+    for plan, case in rows[:WEEKLY_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
         lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days)) if part))
     if lines:
         doc.items(*lines)
-    if count > MAX_LISTED:
-        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+    if count > WEEKLY_LISTED:
+        doc.paragraph(f"and {count - WEEKLY_LISTED} more.")
     for problem in problems:
         doc.paragraph(_data(problem, 300))
     doc.button("Open the decisions", f"{base}/")

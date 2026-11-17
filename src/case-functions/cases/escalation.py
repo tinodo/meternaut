@@ -254,11 +254,11 @@ def deliver(ladder: Ladder) -> int:
 
 
 def weekly(ladder: Ladder) -> int:
-    """The weekly letter: to every escalation contact (the owners when none is set), the requests that have waited more than a week with their own figure and how long, and, to the owners as well, what
+    """The weekly letter: to every escalation contact (the owners when none is set), every request that waits with its own figure and how long, and, to the owners as well, what
     stops the ladder (a permission that is missing, a message that could not be delivered). Not more than once in six days for a person, not on a day that another escalation letter went to them."""
     now, store = ladder.clock(), ladder.store
     waiting = [p for p in store.plans_open() if p.state == "open"]
-    plans = [p for p in waiting if waited(p, now) > 7]
+    plans = waiting
     recent = [r for rs in _records(store, waiting).values() for r in rs]
     problems = []
     if any("no_permission" in r.notes and r.at >= stamp(now - WEEK) for r in recent):

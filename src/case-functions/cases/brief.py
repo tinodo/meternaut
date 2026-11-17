@@ -1640,7 +1640,7 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         if why:  # Meternaut took it back itself, and says why: nobody was too late
             title = {"released": "No longer held back", "left-alone": "Left alone"}.get(why, "Taken back")
             return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone") else "Taken back by Meternaut", "", plan.expires_at)
-        return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open. A request that nobody answered is opened again at the next Watch.", "Nothing changed."),
+        return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")

@@ -628,7 +628,8 @@ class TheOutcome(unittest.TestCase):
         found = self.outcome("expired")
         self.assertEqual((found.state, found.title, found.result, found.at), ("expired", "Taken back", "Closed by a timer", make_plan().expires_at))
         self.assertNotIn("Nobody answered in time", " ".join(found.lines))
-        self.assertIn("opened again at the next Watch", found.lines[0])
+        self.assertIn("A timer closed this request before Meternaut kept every request open.", found.lines[0])
+        self.assertNotIn("opened again", " ".join(found.lines))
 
     def test_a_request_that_meternaut_took_back_says_why(self):
         plan = make_plan(state="expired", preconditions={"takenBack": "group"})

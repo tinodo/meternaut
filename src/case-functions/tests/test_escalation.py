@@ -134,7 +134,7 @@ class TheLadder(unittest.TestCase):
         world.tick(3)
         (step,) = world.steps()
         self.assertEqual((step.outcome, step.tries, step.delivered), ("failed", 1, ()))
-        self.assertEqual(len(world.mail.calls), 1, "no retry in the same minute")
+        self.assertEqual(len(world.mail.sent_to("ada@example.com")), 1, "no retry in the same minute")
         world.mail.status = 202
         world.clock.advance(minutes=16)
         world.tick(2)
@@ -149,14 +149,14 @@ class TheLadder(unittest.TestCase):
         world.clock.advance(days=3)
         world.tick(2)
         (step,) = world.steps()
-        self.assertEqual((step.outcome, world.mail.calls), ("held", []))
+        self.assertEqual((step.outcome, world.mail.sent_to("ada@example.com")), ("held", []))
         self.assertTrue(step.detail.startswith("Quiet hours"), step.detail)
         world.store.settings_put(SettingsRecord(oid=A, paused_until="2026-12-31T00:00:00Z"))
         world.tick()
         self.assertIn("paused messages until", world.steps()[0].detail)
         world.store.settings_put(SettingsRecord(oid=A))
         world.tick()
-        self.assertEqual((world.steps()[0].outcome, len(world.mail.calls)), ("sent", 1), "delayed and then sent: never lost")
+        self.assertEqual((world.steps()[0].outcome, len(world.mail.sent_to("ada@example.com"))), ("sent", 1), "delayed and then sent: never lost")
 
     def test_one_letter_a_day_for_a_person_and_a_digest_when_several_requests_have_come_to_them(self):
         world = World(plans=2)
@@ -376,7 +376,16 @@ class TheWeeklyLetter(unittest.TestCase):
         self.assertGreaterEqual(len(weekly), 4)
         for earlier, later in zip(weekly, weekly[1:]):
             self.assertGreaterEqual((parse(later) - parse(earlier)).days, 6)
-        self.assertTrue(any("has waited more than a week" in call[2] for call in world.mail.sent_to("cora@example.com")))
+        self.assertTrue(any("for an answer" in call[2] for call in world.mail.sent_to("cora@example.com")))
+
+    def test_the_weekly_letter_lists_everything_that_waits_oldest_first_ten_at_most_and_says_how_many_more(self):
+        world = World(managers=False, plans=12)
+        world.clock.advance(days=1)
+        world.tick()
+        (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
+        self.assertIn("12 decisions wait for an answer", letter[2])
+        self.assertIn("and 2 more.", letter[2])
+        self.assertEqual(letter[2].count("Waiting 1 day."), 10)
 
     def test_a_missing_permission_is_named_to_the_owners_in_the_weekly_letter(self):
         world = World(graph=Graph(managers={A: 403}))
