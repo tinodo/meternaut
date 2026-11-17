@@ -5,7 +5,8 @@ lock of the agents is one of them), without the compiled caches. For each file t
 hashed, in the order of the paths, so that a checkout on Windows and one on Linux, and the folder of a build and the folder that the platform unpacked, give the same hash. A file
 that is added, removed, renamed or changed gives another one.
 
-The deployment workflow computes it from the folder that it zips (`python tools/package-digest.py <folder>`) and sets it as the app setting PACKAGE_SHA256; the app computes it over
+The deployment workflow computes it from the checkout (`python tools/source-digest.py src/case-functions`), which takes the comments and the docstring text out of the Python files in memory, as the pack step does, so that it
+is the digest of the files as they are shipped (`python tools/package-digest.py <folder>` makes it for a folder that holds them), and sets it as the app setting PACKAGE_SHA256; the app computes it over
 its own files at its start and the drift check holds the two together (cases/drift.py, control A-RELEASE). This module is standard library only and imports nothing of the package, so
 that the tool can load it from its own folder.
 """

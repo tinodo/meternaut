@@ -50,7 +50,24 @@ class Hashes(unittest.TestCase):
         self.assertEqual(lockfile.source_digest(unix), lockfile.source_digest("def f():\r\n    return 1\r\n"))
         self.assertEqual(lockfile.source_digest(unix), lockfile.source_digest("def f():   \n    return 1  \n\n\n"))
         self.assertNotEqual(lockfile.source_digest(unix), lockfile.source_digest("def f():\n    return 2\n"))
-        self.assertNotEqual(lockfile.source_digest(unix), lockfile.source_digest("def f():\n  return 1\n"), "the indentation is code")
+        self.assertNotEqual(lockfile.source_digest("if a:\n    b()\n    c()\n"), lockfile.source_digest("if a:\n    b()\nc()\n"), "the structure that the indentation makes is code")
+
+    def test_a_comment_a_docstring_and_the_white_space_are_not_code_and_a_string_that_is_data_is(self):
+        code = "def f(x):\n    return [x, '# not a comment']\n"
+        for same in ('def f(x):\n    """Says."""\n    return [x, "# not a comment"]  # note\n', "# first\ndef f( x ):\n\n    return [ x,'# not a comment' ]\n", 'def f(x):\n    ""\n    return [x, "# not a comment"]\n'):
+            with self.subTest(same=same):
+                self.assertEqual(lockfile.source_digest(code), lockfile.source_digest(same))
+        for other in ("def f(x):\n    return [x, '# a comment']\n", "def f(x):\n    'Says.'\n    return [x, '# not a comment']\n    'data'\n", "def f(y):\n    return [y, '# not a comment']\n"):
+            with self.subTest(other=other):
+                self.assertNotEqual(lockfile.source_digest(code), lockfile.source_digest(other))
+
+    def test_a_method_is_hashed_as_it_stands_in_its_class_and_the_form_is_the_one_of_every_python_that_runs_the_tests(self):
+        method = '    @staticmethod\n    def _tool_a(x):\n        """Doc."""\n        return """\ncolumn zero\n"""  # data above\n'
+        self.assertEqual(lockfile.source_digest(method), lockfile.source_digest(method.replace('"""Doc."""', '""')), "a string at the start of a line that is data does not break it")
+        self.assertRegex(lockfile.source_digest(method), r"^[0-9a-f]{64}$")
+        self.assertNotIn("type_params", lockfile.code_form("def f(): pass\n"), "the empty fields that Python 3.12 shows and 3.13 leaves out are in no form")
+        self.assertEqual(lockfile.code_form("x = None\ny = 0\n"), "['Module', ['body', [['Assign', ['targets', [['Name', ['id', \"'x'\"], ['ctx', ['Store']]]]], ['value', ['Constant']]], "
+                                                            "['Assign', ['targets', [['Name', ['id', \"'y'\"], ['ctx', ['Store']]]]], ['value', ['Constant', ['value', '0']]]]]]]")
 
     def test_the_digest_of_the_code_of_a_tool_changes_with_its_code_and_a_tool_that_has_no_method_has_none(self):
         class First:
