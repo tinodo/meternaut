@@ -37,7 +37,7 @@ def imported(path):
 
 class ThePackage(unittest.TestCase):
     def test_the_files_are_where_they_should_be_and_nothing_else_is(self):
-        self.assertEqual([p.name for p in modules()], ["__init__.py", "approval.py", "brief_page.py", "common.py", "core.py", "figures.py", "history.py", "home.py", "layout.py",
+        self.assertEqual([p.name for p in modules()], ["__init__.py", "activity.py", "approval.py", "brief_page.py", "common.py", "core.py", "figures.py", "history.py", "home.py", "layout.py",
                                                        "notebook.py", "notes.py", "ops.py", "router.py", "savings.py", "settings.py", "style.py", "words.py"])
         self.assertEqual(sorted(p.name for p in WEB.iterdir() if p.name != "__pycache__"), [p.name for p in modules()])
 
@@ -49,8 +49,8 @@ class ThePackage(unittest.TestCase):
                     if level == 0:
                         self.assertIn(module.split(".")[0], standard)
                     elif level == 1:
-                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "approval", "brief_page", "figures", "history", "home", "notebook", "notes", "ops", "router",
-                                                             "savings", "settings", "style"})
+                        self.assertIn(module.split(".")[0], {"", "core", "layout", "common", "words", "activity", "approval", "brief_page", "figures", "history", "home", "notebook", "notes", "ops",
+                                                             "router", "savings", "settings", "style"})
                     else:
                         self.assertEqual(level, 2)
                         # `usage` joined the three modules of the contract with the chart of use: a table of data and a few pure functions that reads nothing (the test below pins that). `costs` and
@@ -140,7 +140,7 @@ class ThePackage(unittest.TestCase):
         with mock.patch.object(socket, "socket", refuse), mock.patch.object(socket, "create_connection", refuse), mock.patch.object(subprocess, "Popen", refuse):
             for oid in (TINO, MAYA, OPS):
                 for path in ("/", "/ok/plan0001", "/why/case0001", "/history", "/me/decisions", "/me/activity", "/me/settings", "/me/notes", "/ops", "/ops/runs", "/ops/permissions",
-                             "/ops/savings", "/ops/pause", "/ops/two-people", "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24):
+                             "/ops/savings", "/ops/activity", "/ops/pause", "/ops/two-people", "/arm/return?code=" + "c" * 24 + "&state=" + "s" * 24):
                     console.get(path, oid=oid)
             form = console.get("/me/settings").form("/me/settings/export")
             self.assertEqual(console.submit(form).status, 200)
@@ -156,14 +156,14 @@ class ThePackage(unittest.TestCase):
             ("POST", "/ok/<id>/not-mine"), ("GET", "/arm/return"), ("GET", "/why/<id>"),
             ("GET", "/history"), ("GET", "/me/decisions"), ("GET", "/me/activity"), ("GET", "/me/settings"), ("POST", "/me/settings"), ("POST", "/me/settings/export"),
             ("POST", "/me/settings/delete"), ("GET", "/me/notes"), ("POST", "/me/notes"), ("POST", "/me/notes/<id>/delete"), ("GET", "/ops"), ("GET", "/ops/runs"),
-            ("GET", "/ops/permissions"), ("GET", "/ops/savings"), ("GET", "/ops/pause"), ("POST", "/ops/pause"), ("GET", "/ops/two-people"), ("POST", "/ops/two-people"), ("POST", "/ops/drift"),
-            ("POST", "/ops/answers")})
+            ("GET", "/ops/permissions"), ("GET", "/ops/savings"), ("GET", "/ops/activity"), ("GET", "/ops/pause"), ("POST", "/ops/pause"), ("GET", "/ops/two-people"), ("POST", "/ops/two-people"),
+            ("POST", "/ops/drift"), ("POST", "/ops/answers")})
         self.assertNotIn(("POST", "/ok/<id>/withdraw"), shown, "an approval cannot be cancelled: the change is made right after the sign-in")
         self.assertEqual({method for method, *_ in router.ROUTES}, {"GET", "POST"}, "a page that shows something is a GET and a change is a POST")
         needs = {(method, re.sub(r"\(\?P<\w+>[^)]*\)", "<id>", pattern)): tuple(roles) for method, pattern, _, roles in router.ROUTES if roles}
         self.assertEqual(needs, {("GET", "/ops"): ("ops",), ("GET", "/ops/runs"): ("ops",), ("GET", "/ops/permissions"): ("ops", "owner"), ("GET", "/ops/savings"): ("ops", "owner"),
-                                 ("GET", "/ops/pause"): ("ops",), ("POST", "/ops/pause"): ("ops",), ("GET", "/ops/two-people"): ("ops", "owner"), ("POST", "/ops/two-people"): ("owner",),
-                                 ("POST", "/ops/drift"): ("ops",), ("POST", "/ops/answers"): ("ops",)})
+                                 ("GET", "/ops/activity"): ("ops", "owner"), ("GET", "/ops/pause"): ("ops",), ("POST", "/ops/pause"): ("ops",), ("GET", "/ops/two-people"): ("ops", "owner"),
+                                 ("POST", "/ops/two-people"): ("owner",), ("POST", "/ops/drift"): ("ops",), ("POST", "/ops/answers"): ("ops",)})
         self.assertNotIn(("GET", "/arm/return"), needs, "any listed person may come back from the sign-in: the delegate checks that the sign-in was started by this person")
 
 

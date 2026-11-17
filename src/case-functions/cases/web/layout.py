@@ -45,6 +45,7 @@ NAV = (
     ("/me/settings", "Settings", ()),
     ("/ops", "Operations", ("ops",)),
     ("/ops/savings", "Savings found", ("ops", "owner")),
+    ("/ops/activity", "What the AI looked at", ("ops", "owner")),
 )
 
 
