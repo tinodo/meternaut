@@ -279,6 +279,7 @@ class TheRun(unittest.TestCase):
         self.assertNotIn("approve everything", json.dumps(world.events), "the text of a claim that code threw away is in no line")
         (finished,) = world.of("study.finished")
         self.assertEqual((finished["state"], finished["kept"], finished["rejected"], finished["types"], finished["studied"]), ("ran", 3, 1, 3, 2))
+        self.assertEqual(finished["pages"], 3, "the pages that the page reader gave: each address once, however many windows of it were read")
         self.assertEqual([e["type"] for e in world.events][:1] + [e["type"] for e in world.events][-1:], ["study.started", "study.finished"])
 
     def test_a_kind_that_the_scholar_read_about_and_that_has_no_claim_is_marked_and_a_kind_that_it_did_not_list_is_not(self):
@@ -415,7 +416,9 @@ class TheRun(unittest.TestCase):
     def test_a_page_that_cannot_be_read_is_a_word_for_the_scholar_and_a_line_for_the_history(self):
         world = World(foundry=ScholarFoundry(reads=[(REFERENCE[WIDGETS], 0), (PRICING, 0)], answer=self.answer_with(studied=(WIDGETS,))), web=Web({REFERENCE[WIDGETS]: html("<p>x</p>")}))
         world.go()
-        self.assertTrue(any("calls of the page reader were refused or failed" in event["note"] for event in world.of("study.note")))
+        notes = [event["note"] for event in world.of("study.note")]
+        self.assertIn("1 of 2 calls of the page reader were refused or failed (unavailable 1)", notes, "the words of the library say why, and never the address")
+        self.assertEqual((world.of("study.finished")[0]["pages"], world.summary.state), (1, "ran"))
         self.assertEqual(world.summary.state, "ran")
 
 

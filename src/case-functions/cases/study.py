@@ -63,6 +63,7 @@ class Summary:
     stale: int = 0  # claims read again, whose quote the page no longer holds
     tokens: int = 0
     tool_calls: int = 0
+    pages: int = 0  # pages that the page reader gave
     seconds: int = 0
 
 
@@ -198,7 +199,7 @@ def execute(s: Services, trigger: str) -> Summary:
             s.harness.close()  # the line of the Scholar's run, and the brake for a run that misbehaved (cases/harness.py)
         out.seconds = int(s.monotonic() - began)
         h.emit("study.finished", state=out.state, ok=out.ok, types=out.types, studied=out.studied, kept=out.kept, rejected=out.rejected, rechecked=out.rechecked, stale=out.stale,
-               toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, note=out.note)
+               toolCalls=out.tool_calls, pages=out.pages, tokens=out.tokens, seconds=out.seconds, note=out.note)
     return out
 
 
@@ -261,6 +262,8 @@ def _study(s: Services, out: Summary, deadline: float) -> None:
         out.state, out.ok = ("held", True) if isinstance(error, HarnessRefused) else ("failed", False)
         note(f"the Scholar gave no answer ({clean_text(s.redact(getattr(error, 'route', '') or error), 200)})")
         return
+    finally:
+        out.pages = len(pages.pages)
     out.tokens = answer.input_tokens + answer.output_tokens
     out.tool_calls = len([call for call in answer.calls if isinstance(call, dict) and not call.get("refused")])
     try:
@@ -288,7 +291,8 @@ def _study(s: Services, out: Summary, deadline: float) -> None:
         note("claims thrown away: " + ", ".join(f"{reason} {thrown[reason]}" for reason in REASONS if thrown[reason]))
     refused = sum(1 for entry in pages.log if not entry["ok"])
     if refused:
-        h.emit("study.note", note=f"{refused} of {len(pages.log)} calls of the page reader were refused or failed")
+        why = ", ".join(f"{word} {n}" for word, n in Counter(pages.refused.values()).items())
+        h.emit("study.note", note=f"{refused} of {len(pages.log)} calls of the page reader were refused or failed" + (f" ({why})" if why else ""))
 
 
 # -- the entry ---------------------------------------------------------------------------------------------------------------------------------------

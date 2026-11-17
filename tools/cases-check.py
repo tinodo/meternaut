@@ -5,6 +5,8 @@
     python tools/cases-check.py functions --site <resource id of the cases app> [--minutes 15]
     python tools/cases-check.py run --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
                                     [--minutes 30] [--summary <file>] [--query-via arm|data-plane] [--counts-only]
+    python tools/cases-check.py study --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
+                                      [--minutes 20] [--summary <file>] [--query-via arm|data-plane]
 
 It uses the helpers of tools/check-helpers.py, which it loads from its own folder: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
@@ -20,6 +22,12 @@ run        Puts one message in the control queue of the cases (cases-control, in
            case came to, and fails when the run failed, when a case ended in an error, when the investigation was meant to run and did not, or when no end arrived. Only a GitHub Actions run
            may put the message in the queue (AGENTS.md rule 18). Nothing in the estate is changed by the run: it only reads. (The investigation makes its own agents and
            conversations in its own Foundry project: docs/proposals/06-foundry-agents.md.)
+study      Puts the control message of the job study in the control queue the way `run` does for the Watch, waits for the History lines study.started, study.claim and study.finished of that request,
+           and prints what one run of the Study came to (cases/study.py, docs/proposals/15-learning.md): its state, the kinds of resource given to the Scholar and read about, the pages read, the claims
+           kept and thrown away, the tokens, the seconds and the notes of the run, with every identifier masked. It always prints for a public log: counts and plain words, never a kind of resource, an address,
+           a name or a warning of the app. It fails when the Study did not end well (it is off, held or failed, or it ran and read no page although a kind of resource waited), when the app refused the message
+           and when no line of the Study arrived in time, and it says in plain words what to check. It changes nothing in the estate: the Study reads public documentation and the estate's kinds of resource,
+           keeps its claims in the app's own store and makes its own agent and conversations in the app's own Foundry project.
 
 --query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
            from public networks) or data-plane (through https://api.applicationinsights.io with a Microsoft Entra token, for a component that is private; run it
@@ -36,6 +44,7 @@ import json
 import re
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location("check_helpers", Path(__file__).with_name("check-helpers.py"))
@@ -50,12 +59,33 @@ CONTROL_QUEUE = "cases-control"
 EVENT_PREFIX = "meternaut_event "
 ENDS = ("run.finished", "run.failed")
 SECTION_TITLE = "### The Watch, started once, and what it said"
+STUDY_JOB = "study"
+STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
+STUDY_ENDS = ("study.finished", "run.failed")  # run.failed is how the app refuses a control message
+STUDY_TITLE = "### The Study, started once, and what it said"
 
 
 def clean(value, limit: int = 300) -> str:
     """Text from the estate or from a model, for a log line: one line, no control characters, nothing that a runner or Markdown would act on."""
     text = re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f\x7f]+", " ", "" if value is None else str(value))).strip()
     text = text.replace("::", ": :").replace("##[", "# #[").replace("`", "'")
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+RESOURCE_ID = re.compile(r"(?i)/(?:subscriptions|resourcegroups|providers|tenants)/[^\s'\",;)]*")
+GROUP_NAME = re.compile(r"(?i)\b(resource ?groups?)[ =:/]+[^\s'\",;)]+|\brg-[\w.()-]+")
+GUID_TEXT = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+ESTATE_HOST = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+(?:azurewebsites\.net|windows\.net|azure\.net|azure\.com|azure-api\.net|azurecr\.io|azconfig\.io|microsoft\.com|microsoftonline\.com|trafficmanager\.net)\b")
+PUBLIC_HOSTS = ("learn.microsoft.com", "azure.microsoft.com", "prices.azure.com", "management.azure.com", "login.microsoftonline.com")
+
+
+def public(value, limit: int = 300) -> str:
+    """Text of the app for a public log: clean(), and no identifier of the estate in it: no resource id or path, no resource group, no GUID and no host name of the estate (a few public hosts stay)."""
+    text = clean(value, 1_000_000)
+    text = RESOURCE_ID.sub("<resource id>", text)
+    text = GROUP_NAME.sub(lambda found: f"{found.group(1)} <name>" if found.group(1) else "<group>", text)
+    text = GUID_TEXT.sub("<id>", text)
+    text = ESTATE_HOST.sub(lambda found: found.group(0) if found.group(0).lower() in PUBLIC_HOSTS else "<host>", text)
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
@@ -118,8 +148,9 @@ def missing_lines(events: list[dict]) -> list[str]:
     return missing
 
 
-def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, interval: float = 30.0, counts_only: bool = False) -> list[dict]:
-    """The run's lines once its end has arrived and every line that the end counts. After the deadline, whatever has arrived."""
+def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, interval: float = 30.0, counts_only: bool = False, ends: tuple[str, ...] = ENDS,
+                 late=missing_lines, strict: bool = True) -> list[dict]:
+    """The run's lines once its end (one of `ends`) has arrived and every line that `late` says the end counts. After the deadline, whatever has arrived; with `strict`, a deadline without an end is a Problem."""
     deadline = azure.clock() + minutes * 60
     events: list[dict] = []
     while True:
@@ -127,11 +158,11 @@ def wait_for_run(azure: Azure, insights: str, request_id: str, minutes: float, i
             events = events_for(azure, insights, request_id)
         except Problem as e:
             print("The telemetry could not be read yet (what Azure said is not shown in a public log); waiting." if counts_only else f"The telemetry could not be read yet ({e}); waiting.", flush=True)
-        ended = any(e["type"] in ENDS for e in events)
-        if ended and not missing_lines(events):
+        ended = any(e["type"] in ends for e in events)
+        if ended and not late(events):
             return events
         if azure.clock() >= deadline:
-            if not ended:
+            if strict and not ended:
                 raise Problem(f"no end of the run arrived in the telemetry within {minutes:g} minutes ({len(events)} lines of the run arrived)")
             return events
         azure.sleep(interval)
@@ -301,6 +332,106 @@ def summary_lines(request_id: str, events: list[dict], counts_only: bool = False
     return lines
 
 
+def figure(value) -> str:
+    """A count from a line of the History: a whole number, else the word unknown. Never text."""
+    return str(value) if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else "unknown"
+
+
+def whole(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def study_missing(events: list[dict]) -> list[str]:
+    """The claim lines that the end of the Study counts and the telemetry has not delivered yet."""
+    finished = next((e for e in events if e["type"] == "study.finished"), None)
+    kept, have = whole(finished.get("kept")) if finished else None, count(events, "study.claim")
+    return [f"study.claim: {have} of {kept}"] if kept is not None and have < kept else []
+
+
+# What a person checks for each note of the app that says that the Study did not work: the first line whose words the notes hold. The notes are the app's own fixed words (cases/study.py).
+STUDY_ADVICE = (
+    ("the Study is switched off", "STUDY is off in the app: set the variable STUDY of the environment hub to on, run the action cases (it gives the app the setting), and run study-run again."),
+    ("no Foundry endpoint is set", "The app has no Foundry project: run foundry and then cases. The Study needs the project, as the investigation does."),
+    ("no store keeps the claims", "The app has no store for the claims: run cases, which gives it its storage settings."),
+    ("the switch all or the switch investigation is pulled", "A switch stops the Study: the switch all or the switch investigation is pulled, by a person or by the safeguards, or it could not be read. Release it, or find out why it was pulled."),
+    ("the Scholar could not be made ready", "The Scholar was not made: the Foundry project refused it, or its stored definition is not the one in the lock. Run agents-drift, and check that the app's identity holds Foundry User on the project."),
+    ("the Scholar gave no answer that could be read", "The Scholar's last text was not one list of claims: the model answered in another form."),
+    ("the Scholar gave no answer", "The Scholar's run did not end well: the note says why (a model call that the AI Gateway refused, a limit, or a time-out). Check the AI Gateway's limits and that the app's identity holds AI Gateway Models User."),
+    ("the survey or the re-read of the claims could not be made", "The app could not read the estate or its store of claims: check its read roles (Reader and Cost Management Reader) and its roles on the storage account."),
+)
+NO_NETWORK = ("The documentation could not be reached from the app's network. The landing zone's firewall, or its DNS, has to let the app's subnet reach learn.microsoft.com, azure.microsoft.com and "
+              "prices.azure.com on port 443. Meternaut opens nothing itself: the platform team decides.")
+NO_CALLS = "The Scholar made no call of the page reader: the model did not use its one tool. Check the model of the Scholar and the AI Gateway."
+NOT_ARRIVED = ("that the message was put in the queue (the lines above say so); that the cases app is running and has the code of the Study (run cases: its functions include study-weekly); "
+               "that the queue cases-control-poison holds no message; and that its telemetry reaches its Application Insights.")
+
+
+def study_lines(request_id: str, events: list[dict], minutes: float) -> tuple[list[str], bool]:
+    """What one run of the Study came to, in plain words for a public log, and whether the check fails: counts and the words of code, the app's notes with every identifier masked, and what to check."""
+    started = next((e for e in events if e["type"] == "study.started"), None)
+    finished = next((e for e in events if e["type"] == "study.finished"), None)
+    refused = next((e for e in events if e["type"] == "run.failed"), None)
+    lines = [f"Request {request_id}:"]
+    if started:
+        lines.append(f"  The Study started (by the {word(started.get('trigger'), 12) or 'unknown'}); its limits: {figure(started.get('maxTypes'))} kinds of resource, {figure(started.get('maxPages'))} pages, "
+                     f"{figure(started.get('maxSeconds'))} seconds, {figure(started.get('maxTokens'))} tokens.")
+    if finished is None:
+        if refused:
+            reason = public(refused.get("reason"), 200)
+            lines.append(f"  The app refused the message: {reason}.")
+            lines.append("  What to check: " + ("the app is older than the Study: run cases to publish the current code, and run study-run again." if "does not know" in reason
+                                                else "the app read the message too late (it waited more than 15 minutes in the queue): run study-run again." if "stale" in reason
+                                                else "the reason above says why."))
+        elif started:
+            lines.append(f"  The Study started and its end did not arrive in the telemetry within {minutes:g} minutes: the run may have been stopped, or the telemetry is late.")
+            lines.append("  What to check: the History of the app in its Application Insights, and whether the platform restarted the app (a deploy while the Study ran).")
+        else:
+            lines.append(f"  No line of the Study arrived in the telemetry within {minutes:g} minutes.")
+            lines.append("  What to check: " + NOT_ARRIVED)
+        lines.append("  The Study did not pass.")
+        return lines, True
+    state, ok = word(finished.get("state"), 12) or "unknown", finished.get("ok") is True
+    lines.append(f"  The Study ended: {state}, {'well' if ok else 'badly'}, after {figure(finished.get('seconds'))} seconds.")
+    lines.append(f"  Kinds of resource given to the Scholar: {figure(finished.get('types'))}; it says it read about: {figure(finished.get('studied'))}.")
+    lines.append("  Pages read: " + (figure(finished.get("pages")) if "pages" in finished else "not reported (the app is older than this change)")
+                 + f"; tool calls of the page reader: {figure(finished.get('toolCalls'))}.")
+    kinds = Counter(word(e.get("claimKind"), 30) or "other" for e in events if e["type"] == "study.claim")
+    lines.append(f"  Claims kept: {figure(finished.get('kept'))}" + (f" ({', '.join(f'{name} {n}' for name, n in sorted(kinds.items()))})" if kinds else "")
+                 + f"; thrown away: {figure(finished.get('rejected'))}; read again and still on their page: {figure(finished.get('rechecked'))}; read again and stale: {figure(finished.get('stale'))}.")
+    lines.append(f"  Tokens through Foundry: {figure(finished.get('tokens'))}.")
+    late = study_missing(events)
+    if late:
+        lines.append(f"  Lines that the end counts and the telemetry has not delivered: {', '.join(late)}.")
+    notes: list[str] = []
+    for text in [e.get("note") for e in events if e["type"] == "study.note"] + [finished.get("note")]:
+        shown = public(text)
+        if shown and shown not in notes:
+            notes.append(shown)
+    if notes:
+        lines.append("  Notes of the run (the app's own words, with every identifier masked):")
+        lines.extend(f"    - {text}" for text in notes[:12])
+        if len(notes) > 12:
+            lines.append(f"    ... and {len(notes) - 12} more, in the History.")
+    passed, types, pages = state == "ran" and ok, whole(finished.get("types")), whole(finished.get("pages"))
+    checks: list[str] = []
+    if not passed:
+        said = " | ".join(notes)
+        checks.append(next((advice for words, advice in STUDY_ADVICE if words in said), f"The Study did not do its work (state {state}): the notes above say why, and the History in the app's Application Insights has the rest."))
+    elif types == 0:
+        lines.append("  Nothing waited to be studied: every kind of resource of the estate has a claim that is current or a mark that it was studied.")
+    elif pages == 0:
+        passed = False
+        checks.append(NO_NETWORK if (whole(finished.get("toolCalls")) or 0) > 0 else NO_CALLS)
+    elif whole(finished.get("kept")) == 0:
+        lines.append("  No claim was kept: the quotes did not hold, or the pages held nothing worth filing. The notes say how many claims were thrown away, and why.")
+    if passed:
+        lines.append("  The Study ran and read pages: passed." if pages else "  The Study ran: passed.")
+    else:
+        lines.append("  The Study did not pass.")
+        lines.extend(f"  What to check: {advice}" for advice in checks)
+    return lines, not passed
+
+
 def command_functions(args, azure: Azure) -> int:
     names = wait_for_functions(azure, rc.check_site(args.site), args.minutes)
     print(f"The cases app lists {len(names)} functions:")
@@ -333,6 +464,22 @@ def command_run(args, azure: Azure) -> int:
     return 1 if bad else 0
 
 
+def command_study(args, azure: Azure) -> int:
+    rc.only_in_actions()
+    insights = rc.check_insights(args.insights)
+    rc.choose_query_path(azure, args.query_via, insights)
+    request_id = uuid.uuid4().hex
+    rc.send_control_message(azure, args.storage_account, STUDY_JOB, request_id, queue=CONTROL_QUEUE)
+    print(f"Put the control message for one Study in the queue (request {request_id}); waiting for the History of the run in the telemetry.", flush=True)
+    events = wait_for_run(azure, insights, request_id, args.minutes, counts_only=True, ends=STUDY_ENDS, late=study_missing, strict=False)
+    lines, bad = study_lines(request_id, events, args.minutes)
+    print("\n".join(lines))
+    if args.summary:
+        with open(args.summary, "a", encoding="utf-8") as summary:
+            summary.write(STUDY_TITLE + "\n\n```\n" + "\n".join(lines) + "\n```\n")
+    return 1 if bad else 0
+
+
 def main(argv=None, azure: Azure | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -347,10 +494,16 @@ def main(argv=None, azure: Azure | None = None) -> int:
     run.add_argument("--summary")
     run.add_argument("--counts-only", action="store_true", help="print counts, statuses and numbers, and no text from the estate or from an agent (for the log of a public repository)")
     rc.add_query_via(run)
+    study = commands.add_parser("study", help="put the control message of the job study in the queue and read the History of the run from the telemetry; prints counts and plain words only")
+    study.add_argument("--storage-account", required=True)
+    study.add_argument("--insights", required=True)
+    study.add_argument("--minutes", type=float, default=20)
+    study.add_argument("--summary")
+    rc.add_query_via(study)
     args = parser.parse_args(argv)
     azure = azure or Azure()
     try:
-        return {"whoami": rc.command_whoami, "functions": command_functions, "run": command_run}[args.command](args, azure)
+        return {"whoami": rc.command_whoami, "functions": command_functions, "run": command_run, "study": command_study}[args.command](args, azure)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

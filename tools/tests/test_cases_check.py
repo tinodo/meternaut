@@ -700,6 +700,273 @@ class Clean(unittest.TestCase):
         self.assertEqual(cc.clean("x" * 10, 5), "xx...")
 
 
+class Clean(unittest.TestCase):
+    def test_what_clean_does(self):
+        self.assertEqual(cc.clean(None), "")
+        self.assertEqual(cc.clean("a\n\n b\t c"), "a b c")
+        self.assertEqual(cc.clean("::error::x"), ": :error: :x")
+        self.assertEqual(cc.clean("`a`"), "'a'")
+        self.assertEqual(cc.clean("x" * 10, 5), "xx...")
+
+
+STUDY_URL = "https://learn.microsoft.com/en-us/azure/templates/microsoft.example/widgets"
+GUID_IN_A_NOTE = "99999999-aaaa-bbbb-cccc-dddddddddddd"
+
+
+def a_study(**finished):
+    """The lines that one run of the Study writes (cases/study.py), with the fields that the check reads."""
+    return [
+        event("study.started", trigger="control", maxTypes=4, maxPages=8, maxSeconds=300, maxTokens=400000),
+        event("study.note", note="claims thrown away: quote 1, cap 1"),
+        event("study.claim", claimId="a" * 24, resourceType="microsoft.example/widgets", claimKind="minimum-charge", url=STUDY_URL),
+        event("study.claim", claimId="b" * 24, resourceType="microsoft.example/widgets", claimKind="quota-limit", url=STUDY_URL),
+        event("study.claim", claimId="c" * 24, resourceType="microsoft.example/gadgets", claimKind="quota-limit", url=STUDY_URL),
+        event("study.finished", **{"state": "ran", "ok": True, "types": 4, "studied": 3, "kept": 3, "rejected": 2, "rechecked": 1, "stale": 0, "toolCalls": 11, "pages": 5, "tokens": 123456,
+                                   "seconds": 142, "note": "", **finished}),
+    ]
+
+
+class TheStudy(unittest.TestCase):
+    """The action study-run: the Operator puts the control message of the job study in the queue and reads the History of that request from the telemetry, and the public log gets counts and plain words."""
+
+    def go(self, answers, *extra, post_status=201, env=ENV, extra_args=("--insights", INSIGHTS)):
+        """Runs the check. `answers` are the answers of the telemetry, one for each query, the last one repeated. `posted` says what was put in the queue."""
+        asked, posted = [], []
+        queue = list(answers)
+
+        def runner(args):
+            if args[:2] == ["account", "get-access-token"]:
+                return 0, SECRET + "\n", ""
+            asked.append(args)
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            if answer is Exception:
+                return 1, "", "ERROR: Forbidden\nmore"
+            return 0, json.dumps(answer), ""
+
+        def post(url, headers, body):
+            posted.append((url, body))
+            return post_status, b""
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(cc.uuid, "uuid4", return_value=mock.Mock(hex=ID)), redirect_stdout(out), redirect_stderr(err):
+            code = cc.main(["study", "--storage-account", ACCOUNT, *extra_args, *extra], azure(runner, post))
+        return code, out.getvalue(), err.getvalue(), asked, posted
+
+    def test_the_message_names_the_job_study_and_the_request_and_nothing_else_and_goes_to_the_control_queue(self):
+        _, _, _, _, posted = self.go([telemetry(a_study())])
+        ((url, body),) = posted
+        self.assertEqual(url, f"https://{ACCOUNT}.queue.core.windows.net/cases-control/messages?messagettl=3600&timeout=30")
+        text = re.search(rb"<MessageText>([^<]+)</MessageText>", body).group(1)
+        self.assertEqual(json.loads(base64.b64decode(text, validate=True)), {"job": "study", "requestId": ID})
+        self.assertEqual(cc.STUDY_JOB, "study", "the job that cases/control.py starts a Study for")
+
+    def test_a_good_study_passes_and_says_the_counts_in_plain_words(self):
+        code, out, err, _, _ = self.go([telemetry(a_study())])
+        self.assertEqual((code, err), (0, ""))
+        for text in (f"Request {ID}:", "The Study started (by the control); its limits: 4 kinds of resource, 8 pages, 300 seconds, 400000 tokens.",
+                     "The Study ended: ran, well, after 142 seconds.", "Kinds of resource given to the Scholar: 4; it says it read about: 3.",
+                     "Pages read: 5; tool calls of the page reader: 11.", "Claims kept: 3 (minimum-charge 1, quota-limit 2); thrown away: 2; read again and still on their page: 1; read again and stale: 0.",
+                     "Tokens through Foundry: 123456.", "claims thrown away: quote 1, cap 1", "The Study ran and read pages: passed."):
+            self.assertIn(text, out)
+        self.assertNotIn("microsoft.example", out, "a kind of resource of the estate is not named in a public log")
+        self.assertNotIn("learn.microsoft.com", out)
+        self.assertNotIn(SECRET, out)
+
+    def test_the_query_is_made_for_this_request_only_and_through_the_resource_manager(self):
+        _, _, _, asked, _ = self.go([telemetry(a_study())])
+        args = asked[0]
+        self.assertEqual(args[args.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
+        query = json.loads(args[args.index("--body") + 1])["query"]
+        self.assertIn(ID, query)
+        self.assertRegex(query, r"^traces \| where timestamp > ago\(3h\)")
+
+    def test_it_waits_for_the_claim_lines_that_the_end_counts_and_after_the_deadline_says_which_did_not_arrive(self):
+        everything = a_study()
+        early = [e for e in everything if e["type"] != "study.claim"]
+        code, out, _, asked, _ = self.go([telemetry(early), telemetry(everything)])
+        self.assertEqual((code, len(asked)), (0, 2))
+        self.assertIn("Claims kept: 3 (minimum-charge 1, quota-limit 2)", out)
+        code, out, _, _, _ = self.go([telemetry(early)], "--minutes", "1")
+        self.assertEqual(code, 0, "the end says that it ran well; what the telemetry lost is said, not hidden")
+        self.assertIn("the telemetry has not delivered: study.claim: 0 of 3", out)
+
+    def test_a_hostile_note_is_printed_with_every_identifier_masked_and_cannot_start_a_command_or_run_long(self):
+        hostile = [f"could not read /subscriptions/{GUID_IN_A_NOTE}/resourceGroups/rg-secret/providers/Microsoft.Compute/disks/disk-secret (HTTP 403)",
+                   "the group resourceGroups/rg-secret and resource group rg-secret2 and rg-secret3 were read",
+                   f"object {GUID_IN_A_NOTE.upper()} and {GUID_IN_A_NOTE} are in the text",
+                   "host func-meternaut-cases-0123abcd.azurewebsites.net and stexample.queue.core.windows.net and aif-x.services.ai.azure.com are the estate's",
+                   "GET management.azure.com and learn.microsoft.com are public", "line one\n::error::fake\r\n##[group]x `tick` ```", "x" * 5000 + "\x00\x1b[31m"]
+        events = a_study()
+        events[1:1] = [event("study.note", note=text) for text in hostile]
+        events[-1] = event("study.finished", state="failed", ok=False, types=1, studied=0, kept=0, rejected=0, rechecked=0, stale=0, toolCalls=0, pages=0, tokens=0, seconds=3,
+                           note=f"the survey or the re-read of the claims could not be made (the client {GUID_IN_A_NOTE} has no right over /subscriptions/{GUID_IN_A_NOTE})")
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 1)
+        for secret in (GUID_IN_A_NOTE, GUID_IN_A_NOTE.upper(), "rg-secret", "disk-secret", "func-meternaut-cases-0123abcd", "stexample", "aif-x", "Microsoft.Compute"):
+            self.assertNotIn(secret, out, secret)
+        for kept in ("<id>", "<resource id>", "<host>", "management.azure.com", "learn.microsoft.com", "HTTP 403"):
+            self.assertIn(kept, out, kept)
+        for printed in out.splitlines():
+            self.assertFalse(printed.lstrip().startswith("::"), printed)
+            self.assertNotIn("##[", printed)
+            self.assertNotIn("```", printed)
+            self.assertNotIn("\x1b", printed)
+            self.assertLessEqual(len(printed), 700, printed[:80])
+
+    def test_a_number_that_is_not_a_number_is_never_printed(self):
+        code, out, _, _, _ = self.go([telemetry(a_study(seconds="::error::x", tokens=True, types="9" * 40, kept=-1, pages=2.5, toolCalls=None, state="RAN!"))])
+        self.assertEqual(code, 1)
+        for text in ("::error::x", "9" * 40, "RAN!"):
+            self.assertNotIn(text, out)
+        self.assertIn("after unknown seconds", out)
+        self.assertIn("Tokens through Foundry: unknown.", out)
+
+    def test_a_study_that_is_off_fails_and_says_what_to_set_and_what_to_run(self):
+        events = [e for e in a_study() if e["type"] == "study.started"] + [event("study.finished", state="off", ok=True, types=0, studied=0, kept=0, rejected=0, rechecked=0, stale=0,
+                                                                                  toolCalls=0, pages=0, tokens=0, seconds=0, note="the Study is switched off")]
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 1)
+        for text in ("The Study ended: off, well, after 0 seconds.", "the Study is switched off", "STUDY is off in the app: set the variable STUDY of the environment hub to on, run the action cases",
+                     "and run study-run again.", "The Study did not pass."):
+            self.assertIn(text, out)
+
+    def test_each_note_of_the_app_that_means_it_did_not_work_has_its_own_words_for_what_to_check(self):
+        known = (("held", "the switch all or the switch investigation is pulled, or cannot be read", "A switch stops the Study"),
+                 ("held", "the Scholar could not be made ready (Foundry create agent failed: HTTP 403)", "The Scholar was not made"),
+                 ("failed", "the Scholar could not be made ready (Foundry create agent failed: HTTP 403)", "The Scholar was not made"),
+                 ("failed", "the Scholar gave no answer (Foundry response failed: HTTP 429)", "The Scholar's run did not end well"),
+                 ("failed", "the Scholar gave no answer that could be read (the answer holds no list of claims)", "The Scholar's last text was not one list of claims"),
+                 ("failed", "the survey or the re-read of the claims could not be made (HTTP 403)", "The app could not read the estate or its store of claims"),
+                 ("off", "no Foundry endpoint is set", "The app has no Foundry project: run foundry and then cases"),
+                 ("off", "no store keeps the claims, so there is nothing to study for", "The app has no store for the claims"),
+                 ("failed", "something nobody foresaw", "The Study did not do its work"))
+        for state, note, advice in known:
+            events = [event("study.started", trigger="control"), event("study.finished", state=state, ok=state == "held" or state == "off", types=1, studied=0, kept=0, rejected=0, rechecked=0,
+                                                                        stale=0, toolCalls=0, pages=0, tokens=0, seconds=1, note=note)]
+            code, out, _, _, _ = self.go([telemetry(events)])
+            self.assertEqual(code, 1, note)
+            self.assertIn(advice, out, note)
+            self.assertIn("What to check:", out)
+
+    def test_a_study_that_ran_and_read_no_page_says_that_the_documentation_could_not_be_reached_and_what_the_network_has_to_allow(self):
+        no_pages = [e for e in a_study(pages=0, kept=0, studied=0, toolCalls=6) if e["type"] != "study.claim"]
+        code, out, _, _, _ = self.go([telemetry(no_pages)])
+        self.assertEqual(code, 1)
+        for text in ("Pages read: 0; tool calls of the page reader: 6.", "The documentation could not be reached from the app's network",
+                     "learn.microsoft.com, azure.microsoft.com and prices.azure.com on port 443", "Meternaut opens nothing itself", "The Study did not pass."):
+            self.assertIn(text, out)
+        code, out, _, _, _ = self.go([telemetry([e for e in a_study(pages=0, kept=0, studied=0, toolCalls=0) if e["type"] != "study.claim"])])
+        self.assertEqual(code, 1)
+        self.assertIn("The Scholar made no call of the page reader", out)
+        self.assertNotIn("could not be reached", out)
+
+    def test_a_study_with_nothing_waiting_passes_and_says_so_and_one_that_read_pages_and_kept_nothing_passes_and_says_so(self):
+        nothing = [e for e in a_study(types=0, studied=0, kept=0, rejected=0, rechecked=0, toolCalls=0, pages=0, note="no kind of resource waits to be studied") if e["type"] != "study.claim"]
+        code, out, _, _, _ = self.go([telemetry(nothing)])
+        self.assertEqual(code, 0)
+        self.assertIn("Nothing waited to be studied", out)
+        none_kept = [e for e in a_study(kept=0, rejected=4) if e["type"] != "study.claim"]
+        code, out, _, _, _ = self.go([telemetry(none_kept)])
+        self.assertEqual(code, 0)
+        self.assertIn("No claim was kept", out)
+        self.assertIn("passed", out)
+
+    def test_an_app_that_does_not_report_the_pages_yet_is_not_failed_for_it(self):
+        events = a_study()
+        del events[-1]["pages"]
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 0)
+        self.assertIn("Pages read: not reported (the app is older than this change); tool calls of the page reader: 11.", out)
+
+    def test_an_app_that_refuses_the_message_is_said_with_what_to_do(self):
+        for reason, advice in (("the control message names a job that the app does not know: study", "the app is older than the Study: run cases"),
+                               ("stale control message", "the app read the message too late"), ("something else", "The app refused the message")):
+            code, out, _, _, _ = self.go([telemetry([event("run.failed", reason=reason)])])
+            self.assertEqual(code, 1, reason)
+            self.assertIn(f"The app refused the message: {reason}.", out)
+            self.assertIn(advice, out)
+
+    def test_a_study_that_never_started_fails_after_the_wait_and_says_what_to_check_and_asks_for_no_warning_of_the_app(self):
+        empty = {"tables": [{"rows": []}]}
+        code, out, _, asked, _ = self.go([empty], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("No line of the Study arrived in the telemetry within 1 minutes.", out)
+        for text in ("that the cases app is running and has the code of the Study (run cases: its functions include study-weekly)", "that its telemetry reaches its Application Insights"):
+            self.assertIn(text, out)
+        self.assertTrue(all("/query?" in " ".join(args) for args in asked) and len(asked) == 3, "only the History is asked for: the warnings of the app are not printed in a public log")
+        self.assertNotIn("The last warnings and errors", out)
+
+    def test_a_study_that_started_and_did_not_end_fails_and_says_so(self):
+        code, out, _, _, _ = self.go([telemetry([a_study()[0]])], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("The Study started and its end did not arrive in the telemetry within 1 minutes", out)
+        self.assertNotIn("passed", out)
+
+    def test_a_telemetry_that_cannot_be_read_yet_is_waited_for_and_what_azure_said_is_not_printed(self):
+        code, out, _, _, _ = self.go([Exception, telemetry(a_study())])
+        self.assertEqual(code, 0)
+        self.assertIn("The telemetry could not be read yet (what Azure said is not shown in a public log); waiting.", out)
+        self.assertNotIn("Forbidden", out)
+
+    def test_a_line_of_another_request_is_not_this_studys(self):
+        other = [{**e, "requestId": "d" * 32} for e in a_study()]
+        code, out, _, _, _ = self.go([telemetry(other)], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("No line of the Study arrived", out)
+
+    def test_a_refused_message_stops_before_anything_is_waited_for_and_only_a_github_actions_run_may_send_one(self):
+        code, _, err, asked, _ = self.go([telemetry([])], post_status=403)
+        self.assertEqual((code, asked), (1, []))
+        self.assertIn("403", err)
+        code, _, err, asked, posted = self.go([telemetry([])], env={"GITHUB_ACTIONS": ""})
+        self.assertEqual((code, asked, posted), (1, [], []))
+        self.assertIn("only a GitHub Actions run may do that", err)
+
+    def test_bad_names_are_refused_before_anything_is_sent_and_the_public_log_has_no_other_mode(self):
+        for extra_args in (("--insights", "/subscriptions/x"), ("--insights", INSIGHTS, "--counts-only"), ("--insights", INSIGHTS, "--namespace", "x")):
+            with redirect_stderr(io.StringIO()):
+                try:
+                    code, _, _, _, posted = self.go([telemetry([])], extra_args=extra_args)
+                except SystemExit as stop:
+                    code, posted = stop.code, []
+            self.assertNotEqual(code, 0, extra_args)
+            self.assertEqual(posted, [], extra_args)
+
+    def test_the_summary_file_gets_the_same_lines_under_its_own_title(self):
+        with TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            code, out, _, _, _ = self.go([telemetry(a_study())], "--summary", str(summary))
+            text = summary.read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertIn(cc.STUDY_TITLE, text)
+        self.assertNotEqual(cc.STUDY_TITLE, cc.SECTION_TITLE)
+        for printed in out.splitlines():
+            if "Tokens through Foundry" in printed:
+                self.assertIn(printed, text)
+
+    def test_the_lines_and_the_fields_are_the_ones_the_app_writes_and_the_functions_that_the_job_needs_are_listed(self):
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import events as writer
+        finally:
+            sys.path.remove(app)
+        self.assertEqual(writer.STUDY_KINDS, cc.STUDY_KINDS)
+        source = (ROOT / "src" / "case-functions" / "cases" / "study.py").read_text(encoding="utf-8")
+        for name in ("state", "ok", "types", "studied", "kept", "rejected", "rechecked", "stale", "toolCalls", "pages", "tokens", "seconds", "note", "trigger", "maxTypes", "maxPages", "maxSeconds",
+                     "maxTokens", "claimKind"):
+            self.assertIn(f"{name}=", source, name)
+        self.assertIn("study-weekly", cc.FUNCTIONS, "the list that is waited for before the message is sent holds the function of the Study")
+
+    def test_public_masks_what_identifies_the_estate_and_leaves_plain_words(self):
+        self.assertEqual(cc.public("the cases app func-x.azurewebsites.net could not read /subscriptions/1/resourceGroups/g (HTTP 403)"), "the cases app <host> could not read <resource id> (HTTP 403)")
+        self.assertEqual(cc.public("claims thrown away: quote 1, cap 2"), "claims thrown away: quote 1, cap 2")
+        self.assertEqual(cc.public(None), "")
+        self.assertEqual(cc.public("x" * 400, 50), "x" * 47 + "...")
+        self.assertEqual(cc.public("model gpt-5.5 on learn.microsoft.com"), "model gpt-5.5 on learn.microsoft.com")
+
+
 class TheCheckerAsksForNoKeyAndCallsNothingElse(unittest.TestCase):
     def test_no_call_to_the_estate_and_no_key(self):
         source = (ROOT / "tools" / "cases-check.py").read_text(encoding="utf-8")
