@@ -288,11 +288,11 @@ class Client:
 
     def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None, xml: str | None = None,
                 timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
-                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0) -> Response:
+                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0, limit: int | None = None) -> Response:
         """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
 
         `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form) and `xml` as XML text (the Queue service takes its messages so). A call has one of
-        them or none.
+        them or none. `limit` is the most of the answer that the transport reads (a call that asks for a page of a list sets it, and checks that the answer is shorter).
 
         A call that is retried waits as long as the service says (Retry-After, up to `retry_after_max`). When the service says nothing the pause is `backoff` seconds
         (with jitter) before the first repeat, twice that before the second, and so on, up to `backoff_max`."""
@@ -317,7 +317,7 @@ class Client:
                 raise HttpError(0, f"{method} {urlsplit(url).netloc}: the deadline of the run was reached", unsent=True)
             unsent = False
             try:
-                status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)))
+                status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)), *(() if limit is None else (limit,)))
             except (OSError, TimeoutError, HTTPException, urllib.error.URLError) as error:
                 status, answer_headers, answer = 0, {}, self.redact(f"network error: {type(error).__name__}").encode()
                 unsent = isinstance(error, urllib.error.URLError)

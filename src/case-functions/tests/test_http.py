@@ -51,6 +51,14 @@ def ok(document=None):
 
 
 class TheList(unittest.TestCase):
+    def test_a_limit_is_passed_to_the_transport_only_when_the_call_sets_one(self):
+        seen = []
+        c = http.Client(http.allowed_calls(), Redactor(), transport=lambda *args: (seen.append(args), (200, {}, b"{}"))[1], sleep=lambda s: None)
+        c.request("GET", SUBSCRIPTIONS)
+        c.request("GET", SUBSCRIPTIONS, limit=100)
+        self.assertEqual([len(args) for args in seen], [5, 6], "a transport that takes no limit keeps working")
+        self.assertEqual(seen[1][5], 100)
+
     def test_the_calls_of_the_app_are_allowed(self):
         c, script, _ = client(ok())
         for method, url in (("POST", ARG), ("POST", COST), ("GET", ADVISOR), ("GET", LOCKS), ("POST", CHAT), ("GET", SUBSCRIPTIONS)):

@@ -76,8 +76,8 @@ def address(service: str, region: str, product: str | None) -> str:
     return f"https://{PRICES_HOST}{PRICES_PATH}?api-version={API_VERSION}&currencyCode='{CURRENCY}'&$filter={quote(condition, safe='')}"
 
 
-def _bad(what: str) -> HttpError:
-    return HttpError(200, f"the price list {what}")
+def _bad(what: str, code: str = "") -> HttpError:
+    return HttpError(200, f"the price list {what}", code=code)
 
 
 def _next(link: object) -> str:
@@ -96,25 +96,28 @@ def _number(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
 
 
-def _keep(found: dict, item: object) -> None:
-    """One line of a page: kept when it is a pay-as-you-go price in dollars with words of the length of a platform's, as the price of its first step and the steps that it has. A line with no region is
-    one that holds in every region."""
-    if not isinstance(item, dict) or item.get("type") != "Consumption" or item.get("currencyCode") != CURRENCY:
+def _keep(found: dict, item: object, service: str, regions: frozenset) -> None:
+    """One line of a page: kept when it is a pay-as-you-go price in dollars of the service that was asked for, in a region that was asked for (a line with no region holds in every region), with
+    words of the length of a platform's, as the price of its first step and the steps that it has. The filter of the address is the list's to keep; a line of another service or region is not priced."""
+    if not isinstance(item, dict) or item.get("type") != "Consumption" or item.get("currencyCode") != CURRENCY or item.get("serviceName") != service:
         return
     region = item.get("armRegionName")
     texts = (*(item.get(name) for name in ("productName", "skuName", "meterName", "unitOfMeasure")), GLOBAL if region == "" else region)
     price, tier = _number(item.get("retailPrice")), _number(item.get("tierMinimumUnits"))
-    if price is not None and tier is not None and all(isinstance(text, str) and 0 < len(text) <= MAX_TEXT for text in texts):
+    if price is not None and tier is not None and all(isinstance(text, str) and 0 < len(text) <= MAX_TEXT for text in texts) and texts[4] in regions:
         found.setdefault(texts, {}).setdefault(tier, set()).add(price)
 
 
 def read(client: Client, service: str, region: str, product: str | None, monotonic: Callable[[], float] = time.monotonic, seconds: float = SECONDS) -> Book:
-    """The prices of a service in a region, and of one product of it when there is one, read a page at a time up to the caps and never for longer than `seconds`: a try takes at most ATTEMPT seconds and
-    at most the time that is left, a host that gives no answer is tried once, and a second try (for a list that is busy or fails) is made only when the time that is left holds it. Raises HttpError
-    when the first page cannot be read: a call that failed, an answer that is not the list, a page that is too large or a next page somewhere else. A failure after a page that was read ends the read
-    there: the book holds what was read, is not complete and has the failure. A price that the list gives twice with two values is left out."""
+    """The prices of a service in a region, and of one product of it when there is one, read a page at a time up to the caps and never for longer than `seconds`: a try takes at most ATTEMPT seconds
+    (the timeout of one socket operation, so a host that sends one byte at a time can take longer: the time is checked between pages) and at most the time that is left, a host that gives no answer is
+    tried once, and a second try (for a list that is busy or fails) is made only when the time that is left holds it. The transport reads at most MAX_PAGE_LENGTH + 1 of a page, so a page cannot fill
+    the memory, and a longer one is refused with the code word TooLarge. Raises HttpError when the first page cannot be read: a call that failed, an answer that is not the list, a page that is too large
+    or a next page somewhere else. A failure after a page that was read ends the read there: the book holds what was read, is not complete and has the failure. A price that the list gives twice with
+    two values is left out, and so is a price of nothing: it is no price of any alternative."""
     found: dict = {}
     url: str | None = address(service, region, product)
+    regions = frozenset((GLOBAL,) if region == GLOBAL else (region, GLOBAL))
     stop, pages, error = monotonic() + seconds, 0, None
     while url and pages < MAX_PAGES and len(found) < MAX_LINES:
         left = stop - monotonic()
@@ -122,9 +125,9 @@ def read(client: Client, service: str, region: str, product: str | None, monoton
             break
         try:
             response = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=min(ATTEMPT, left), retries=1 if left >= 2 * ATTEMPT + PAUSE else 0, retry_after_max=PAUSE,
-                                      retry_network=False)
+                                      retry_network=False, limit=MAX_PAGE_LENGTH + 1)
             if len(response.body) > MAX_PAGE_LENGTH:
-                raise _bad("gave a page that is too large to read")
+                raise _bad("gave a page that is too large to read", "TooLarge")
             data = response.json()
             items = data.get("Items") if isinstance(data, dict) else None
             if not isinstance(items, list):
@@ -136,10 +139,10 @@ def read(client: Client, service: str, region: str, product: str | None, monoton
             error = failure
             break
         for item in items:
-            _keep(found, item)
+            _keep(found, item, service, regions)
         pages += 1
         url = following
-    lines = tuple(Line(service, *texts[:4], next(iter(steps[0])), texts[4], len(steps)) for texts, steps in found.items() if 0 in steps and len(steps[0]) == 1)
+    lines = tuple(Line(service, *texts[:4], price, texts[4], len(steps)) for texts, steps in found.items() if 0 in steps and len(steps[0]) == 1 and (price := next(iter(steps[0]))) > 0)
     return Book(lines[:MAX_LINES], url is None and len(lines) <= MAX_LINES, error)
 
 

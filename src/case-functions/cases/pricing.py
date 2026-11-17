@@ -16,8 +16,9 @@ forms that code can check against what the tools showed in the same run:
 
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
-share that remains is one number for every rate: the price of the alternative per unit (times the rate that the bill pays against list, when the tool found the line of the meter) over what the bill paid per
-unit over the window. The price must be one that the tool showed in this run for that meter, in its unit, and one price for the whole quantity.
+share that remains is one number for every rate: the price of the alternative per unit over the list price of the meter's own line, like for like (the rate that the bill pays against list is carried over),
+and over what the bill paid per unit over the window for the other end of the range (list prices alone); both must save, and a meter whose own list price the tool did not find is not priced. The price must be
+one that the tool showed in this run for that meter, in its unit, one price for the whole quantity, and above nothing.
 
 A meter that no tool showed, that belongs to another resource or to a whole type, or that gives no rate (a read of under 7 days, or fewer than 3 days of cost) is not counted; a bill line is counted
 once in a finding; what could not be checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
@@ -47,6 +48,7 @@ EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
 NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
+PLAIN = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+){0,5}")  # a word of an alternative that the Skeptic is shown, beside the check of the tools: letters, digits and single spaces, at most 6 words and 40 characters
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
     "lines": f"No saving was worked out: the bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
@@ -56,6 +58,7 @@ WHY = {
     "credit": "No saving was worked out: what is given back on the bill of this resource is as much as the bill lines that the AI named cost.",
     "alternative": "No saving was worked out: the alternative that the AI named is not a price that the tool for alternatives showed for this bill line in this run, or its price changes with the quantity.",
     "units": "No saving was worked out: the units differ, so the alternative cannot be priced against the bill line.",
+    "listed": "No saving was worked out: the list price of the current meter is not known, so the alternative cannot be compared with it like for like.",
     "dearer": "No saving was worked out: at the rate of the bill, or at list prices, the alternative costs as much as the bill line or more.",
     "quantity": "No saving was worked out: the bill line has no cost per unit to price the alternative by (no quantity, or no cost over its window).",
 }
@@ -221,40 +224,42 @@ class Part(NamedTuple):
 
 
 class Market(NamedTuple):
-    """What the run showed of the price list (the registers `prices`, `rates` and `offers` of cases/toolbox.py): the lines by price handle, the rate that the bill pays against list for each meter, and
-    the price handles that were shown for each meter. Read, never written."""
+    """What the run showed of the price list (the registers `prices`, `retail` and `offers` of cases/toolbox.py): the lines by price handle, the list price of the line of each meter, and the price
+    handles that were shown for each meter. Read, never written."""
 
     prices: Mapping
-    rates: Mapping
+    retail: Mapping
     offers: Mapping
 
 
 def _switch(effect: Effect, offer: str, used: Sequence[tuple[str, Rates, Meter]], market: Market) -> tuple[float, float, dict, tuple] | str:
     """The smallest and the largest share of what the meter costs that remains after a switch to the price `offer`, the numbers that go into the digest and what the Skeptic is shown, or the word of
     WHY. The same quantity at the same monthly rate as the cost that it replaces is the cost per unit that the bill paid over the window (`paid`) against the alternative's price: the share is one number
-    for every rate. The rate that the bill pays against list (`ratio`: what it paid for a unit over the list price of the meter's own line) is carried over to the alternative, and list prices alone are
-    the other end of the range; a meter whose line the tool did not find is priced at list prices. A share of 1 or more at either end is no saving."""
+    for every rate. Like for like, the alternative costs its list price over the list price of the meter's own line (`retail`: the rate that the bill pays against list is carried over, whether it is
+    above 1 or below); at list prices alone it costs its list price over `paid`. Both ends must save: a share of 1 or more at either is no saving, and a meter whose own list price is not known is not priced."""
     if len(effect.meters) != 1:
         return "remains"
     name, _, meter = used[0]
     held = market.offers.get(name)
     line = market.prices.get(offer) if isinstance(held, (set, frozenset, list, tuple)) and offer in held else None
     usd, unit, service, tiers = (getattr(line, key, None) for key in ("usd", "unit", "service", "tiers"))
-    if _number(usd) is None or usd < 0 or tiers != 1 or len(meter.words) != 6 or service != meter.words[0]:
+    if _number(usd) is None or usd <= 0 or tiers != 1 or len(meter.words) != 6 or service != meter.words[0]:
         return "alternative"
     if unit != meter.words[5]:
         return "units"
+    retail = _number(market.retail.get(name))
+    if retail is None or retail <= 0:
+        return "listed"
     if not (_number(meter.quantity) and meter.quantity > 0 and meter.usd > 0):
         return "quantity"
     paid = meter.usd / meter.quantity
-    ratio = _number(market.rates.get(name))
-    ratio = ratio if ratio is not None and ratio > 0 else None
-    shares = [usd / paid] + ([usd * ratio / paid] if ratio is not None else [])
+    shares = (usd / retail, usd / paid)
     least, most = min(shares), max(shares)
     if most >= 1:
         return "dearer"
     words = tuple(getattr(line, key, "") for key in ("product", "sku", "meter"))
-    return least, most, {"offer": offer, "list": usd, **({"ratio": ratio} if ratio is not None else {})}, ({"meter": name, "words": words, "list": usd, "ratio": ratio, "remains": (least, most)},)
+    ratio = round(paid / retail, 4)
+    return least, most, {"offer": offer, "list": usd, "ratio": ratio}, ({"meter": name, "words": words, "list": usd, "ratio": ratio, "remains": (least, most)},)
 
 
 def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: set, word: Callable[[object], str | None] | None, market: Market) -> Part | str:
@@ -346,16 +351,22 @@ def _held(toolbox: object, name: str) -> Mapping:
     return found if isinstance(found, Mapping) else {}
 
 
+def _plain(text: object, word: Callable[[object], str | None]) -> str:
+    """A word of an alternative as the Skeptic is shown it: the text when it passes the check of the tools and is made of letters, digits and single spaces, in at most 6 words and 40 characters
+    (a sentence in Title Case passes the check of the tools and is not a name), else `other`."""
+    return text if isinstance(text, str) and len(text) <= 40 and PLAIN.fullmatch(text) and word(text) == text else "other"
+
+
 def price(change: Change | None, handles: Collection[str], toolbox: object, costs: Mapping[str, float | None], blocked: Mapping[str, str] | None = None,
           word: Callable[[object], str | None] | None = None) -> Priced:
     """The rows of a change for the resources `handles` of a finding. `toolbox` holds the meters (`meters`) and the evidence of the run, and the prices of the list that the tool for alternatives showed
-    (`prices`, `rates`, `offers`), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources that have no figure from outside, by the word of WHY (a cost that is not
+    (`prices`, `retail`, `offers`), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources that have no figure from outside, by the word of WHY (a cost that is not
     in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept)."""
     out = Priced(change.action if change is not None else "")
     if change is None:
         return out
     registry, evidence = _held(toolbox, "meters"), _held(toolbox, "evidence")
-    market = Market(_held(toolbox, "prices"), _held(toolbox, "rates"), _held(toolbox, "offers"))
+    market = Market(_held(toolbox, "prices"), _held(toolbox, "retail"), _held(toolbox, "offers"))
     owned: dict[str, list[Meter]] = {}
     for meter in registry.values():
         if isinstance(meter, Meter):
@@ -485,8 +496,7 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
         text += ": the AI's own assumption, not checked by code"
     elif form == "alternative":
         ratio = _number(found.get("ratio"))
-        text += (f", repriced at the alternative's list price scaled by your bill's rate, ratio {ratio:g}, or at list prices" if ratio is not None and ratio > 0
-                 else ", repriced at list prices because the rate that your bill pays for this line was not found")
+        text += ", repriced at the alternative's list price" + (f" scaled by your bill's rate, ratio {ratio:g}, or at list prices" if ratio is not None and ratio > 0 else "")
         text += ": the alternative has not been checked for features"
     elif form == "mixed":
         text += ", each by its own rule; part rests on the AI's own proposals"
@@ -579,7 +589,7 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
             more["moved"] = got.since is not None and abs(got.week - got.since) > DIFFER * max(got.week, got.since)
         said = {key: (word(value) or "other" if key == "unit" else value) for key, value in row.said.items()} if row.form != "alternative" else {}  # the unit of a meter is a word of the platform, shown through the check of the tools
         if row.alts:  # a switch: the words of the price (through the same check), its list price, the rate of the bill against list (None: the line of the meter was not found) and the shares that remain
-            more["alternatives"] = [{"meter": alt["meter"], "words": [word(text) or "other" for text in alt["words"]], "list": alt["list"], "ratio": alt["ratio"],
+            more["alternatives"] = [{"meter": alt["meter"], "words": [_plain(text, word) for text in alt["words"]], "list": alt["list"], "ratio": alt["ratio"],
                                      "remains": [round(alt["remains"][0], 4), round(alt["remains"][1], 4)]} for alt in row.alts]
         effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **said, **more})
     return {"action": change.action, "effects": effects}

@@ -40,13 +40,14 @@ class PricedEstate(BillingEstate):
         self.lines, self.page_size, self.failure, self.urls, self.price_calls, self.link, self.body, self.wait = catalogue(), 1000, None, [], [], None, None, None
         self.hook, self.unfiltered = None, False  # a function (estate, url, timeout) that answers instead; and a list that gives every line whatever the filter says
 
-    def __call__(self, method, url, headers, data, timeout):
+    def __call__(self, method, url, headers, data, timeout, limit=None):
         parts = urlsplit(url)
         self.urls.append(url)
         if parts.netloc != PRICES_HOST:
             return super().__call__(method, url, headers, data, timeout)
-        self.price_calls.append({"method": method, "url": url, "path": parts.path, "query": parse_qs(parts.query), "headers": dict(headers), "timeout": timeout})
-        return self.hook(self, url, timeout) if self.hook else self.price_answer(url)
+        self.price_calls.append({"method": method, "url": url, "path": parts.path, "query": parse_qs(parts.query), "headers": dict(headers), "timeout": timeout, "limit": limit})
+        status, answered, body = self.hook(self, url, timeout) if self.hook else self.price_answer(url)
+        return status, answered, body if limit is None else body[:limit]  # a transport reads at most `limit` of the answer, as the real one does
 
     def price_answer(self, url):
         parts = urlsplit(url)
@@ -276,7 +277,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual(box.prices["p2"], prices.Line(SERVICE, PRODUCT, "Basic", "Fixed Hours", "1 Hour", 0.5, "swedencentral", 1))
         self.assertEqual((box.prices["p3"].region, box.prices["p5"].product), (prices.GLOBAL, OTHER_PRODUCT))
         self.assertEqual(sorted(box.prices), ["p1", "p2", "p3", "p4", "p5"], "a handle is there only for a line that an answer showed: the line in another unit has none")
-        self.assertEqual(box.rates, {"m1": 0.8333})
+        self.assertEqual(box.retail, {"m1": 0.5}, "the list price of the line of the meter, for the code that prices a switch")
 
     def test_the_pages_of_a_long_table_follow_one_another_and_no_answer_is_longer_than_the_cap(self):
         estate, box = priced()
@@ -315,17 +316,17 @@ class TheMatch(unittest.TestCase):
     def test_skus_of_one_meter_that_share_a_price_are_one_line_and_lines_that_disagree_are_none_of_them(self):
         estate, box = priced()
         estate.lines += [line("Other", "Fixed Hours", 0.5)]
-        self.assertEqual((ask(box, "price_alternatives", meter="m1")["match"], box.rates), ("found", {"m1": 0.8333}))
+        self.assertEqual((ask(box, "price_alternatives", meter="m1")["match"], box.retail), ("found", {"m1": 0.5}))
         estate, box = priced()
         estate.lines += [line("Other", "Fixed Hours", 0.6)]
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["match"], "current" in answer, box.rates), ("several", False, {}), "no rate is carried when the words do not tell the line")
+        self.assertEqual((answer["match"], "current" in answer, box.retail), ("several", False, {}), "no list price is kept when the words do not tell the line")
         self.assertEqual(answer["lines"], 5, "the table is still shown")
 
-    def test_a_meter_that_no_line_names_has_the_table_and_no_rate(self):
+    def test_a_meter_that_no_line_names_has_the_table_and_no_list_price(self):
         estate, box = priced(words=meter(name="Unknown Hours"))
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["match"], "current" in answer, answer["lines"], box.rates), ("none", False, 4, {}))
+        self.assertEqual((answer["match"], "current" in answer, answer["lines"], box.retail), ("none", False, 4, {}))
 
     def test_a_unit_that_is_not_the_meters_is_counted_and_not_listed(self):
         estate, box = priced(words=meter(name="Data Units", unit="1 GB"), quantity=7.0)
@@ -334,25 +335,26 @@ class TheMatch(unittest.TestCase):
         self.assertEqual([found["meter"] for found in prices_of(answer)], ["Data Units"])
         estate, box = priced(words=meter(name="Fixed Hours", unit="1 Day"))
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["rows"], answer["lines"], answer["other_units"], answer["match"], box.rates), ([], 0, 5, "none", {}), "the same words in another unit are no line")
+        self.assertEqual((answer["rows"], answer["lines"], answer["other_units"], answer["match"], box.retail), ([], 0, 5, "none", {}), "the same words in another unit are no line")
 
-    def test_a_rate_is_what_the_bill_paid_for_a_unit_over_the_list_price_and_may_be_above_one(self):
+    def test_a_rate_is_what_the_bill_paid_for_a_unit_over_the_list_price_and_may_be_above_one_and_the_list_price_is_kept_whatever_the_bill_paid(self):
         estate, box = priced(usd=10.0, quantity=12.0)  # 70 dollars for 84 hours: 0.833333 an hour against 0.5
         self.assertEqual(ask(box, "price_alternatives", meter="m1")["current"], {"line": "p2", "retail": 0.5, "paid": 0.833333, "rate_ratio": 1.6667})
-        self.assertEqual(box.rates, {"m1": 1.6667})
+        self.assertEqual(box.retail, {"m1": 0.5})
 
-    def test_a_rate_is_not_worked_out_for_a_price_with_steps_a_price_of_nothing_or_a_quantity_of_nothing(self):
+    def test_a_rate_is_not_worked_out_for_a_price_with_steps_and_a_line_of_nothing_is_no_line_and_a_quantity_of_nothing_keeps_the_list_price(self):
         estate, box = priced()
         estate.lines = [line("Basic", "Fixed Hours", 0.5), line("Basic", "Fixed Hours", 0.4, tier=100)]
         answer = ask(box, "price_alternatives", meter="m1")
         self.assertEqual(answer["current"], {"line": None, "retail": 0.5, "paid": 0.416667, "rate_ratio": None, "steps": 2})
-        self.assertEqual(prices_of(answer)[0]["steps"], 2)
+        self.assertEqual((prices_of(answer)[0]["steps"], box.retail), (2, {}), "a price with steps is no list price of the meter")
         estate, box = priced()
         estate.lines = [line("Basic", "Fixed Hours", 0.0)]
-        self.assertEqual(ask(box, "price_alternatives", meter="m1")["current"], {"line": "p1", "retail": 0, "paid": 0.416667, "rate_ratio": None})
+        answer = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual((answer["match"], "current" in answer, answer["lines"], box.retail), ("none", False, 0, {}), "a price of nothing is no price: the line of the meter is not found")
         estate, box = priced(quantity=0.0)
         self.assertEqual(ask(box, "price_alternatives", meter="m1")["current"], {"line": "p2", "retail": 0.5, "rate_ratio": None})
-        self.assertEqual(box.rates, {})
+        self.assertEqual(box.retail, {"m1": 0.5})
 
     def test_a_resource_in_the_region_global_is_asked_for_the_prices_that_the_list_writes_for_global(self):
         estate, box = priced(location="global")
@@ -380,22 +382,33 @@ class TheWords(unittest.TestCase):
         estate.lines += [line("Basic", "Long " * 30, 0.7)]
         self.assertEqual(ask(box, "price_alternatives", meter="m1")["lines"], 4)
 
-    def test_a_product_and_a_region_that_the_list_gives_and_that_are_no_word_of_the_platform_are_other_and_never_the_text(self):
+    def test_a_product_that_the_list_gives_and_that_is_no_word_of_the_platform_is_other_and_never_the_text(self):
         estate, box = priced()
         estate.unfiltered = True
-        estate.lines += [line("Basic", "Odd Hours", 0.7, product=SENTENCE), line("Basic", "Strange Hours", 0.8, region=HOSTILE)]
+        estate.lines += [line("Basic", "Odd Hours", 0.7, product=SENTENCE)]
         raw = box.call("price_alternatives", {"meter": "m1", "within": "service"})
         found = {item["meter"]: item for item in prices_of(json.loads(raw))}
-        self.assertEqual((found["Odd Hours"]["product"], found["Strange Hours"]["region"]), ("other", "other"))
+        self.assertEqual(found["Odd Hours"]["product"], "other")
         for marker in (*MARKERS, SENTENCE):
             self.assertNotIn(marker, raw)
 
-    def test_a_bill_that_gave_money_back_or_cost_nothing_has_no_price_that_was_paid_and_so_no_rate(self):
+    def test_a_region_that_is_no_word_of_the_platform_is_other_and_never_the_text_even_in_a_book_that_the_read_could_not_make(self):
+        estate, box = priced()
+        box._books[(SERVICE, "swedencentral", PRODUCT)] = prices.Book((prices.Line(SERVICE, PRODUCT, "Basic", "Fixed Hours", "1 Hour", 0.5, "swedencentral", 1),
+                                                                     prices.Line(SERVICE, PRODUCT, "Basic", "Strange Hours", "1 Hour", 0.8, HOSTILE, 1)), True)
+        raw = box.call("price_alternatives", {"meter": "m1"})
+        found = {item["meter"]: item for item in prices_of(json.loads(raw))}
+        self.assertEqual(found["Strange Hours"]["region"], "other")
+        for marker in (*MARKERS, SENTENCE):
+            self.assertNotIn(marker, raw)
+        self.assertEqual(estate.price_calls, [], "the book was held")
+
+    def test_a_bill_that_gave_money_back_or_cost_nothing_has_no_price_that_was_paid_and_so_no_rate_and_the_list_price_is_still_kept(self):
         for usd in (-10.0, 0.0):
             estate, box = priced(usd=usd)
             answer = ask(box, "price_alternatives", meter="m1")
             self.assertEqual(answer["current"], {"line": "p2", "retail": 0.5, "rate_ratio": None}, usd)
-            self.assertEqual(box.rates, {}, usd)
+            self.assertEqual(box.retail, {"m1": 0.5}, usd)
 
     def test_a_hostile_word_of_the_bill_is_never_sent(self):
         for words in (meter(category=HOSTILE), meter(category="Example' or 1 eq 1"), meter(name=SENTENCE), meter(unit=HOSTILE)):
@@ -460,33 +473,33 @@ class TheFailures(unittest.TestCase):
         self.assertEqual(estate.price_calls, [])
 
 
-class TheRates(unittest.TestCase):
+class TheListPrice(unittest.TestCase):
     def longer(self, estate):
         """The resource billed for 23 more days before the 7 of priced(), 230 dollars and 276 hours more: 30 days are 300 dollars and 444 hours."""
         for n in range(23):
             estate.bill.append((SUB, dt.date(2026, 10, 27) - dt.timedelta(days=n), estate.rows[0]["id"].lower(), "Example Service", FIXED, 10.0, 12.0))
 
-    def test_a_rate_is_dropped_when_a_longer_window_replaces_the_meter_that_it_came_from_and_is_worked_out_again_from_the_new_numbers(self):
+    def test_the_list_price_of_the_line_of_the_meter_stays_when_a_longer_window_replaces_the_meter_because_it_does_not_depend_on_the_numbers_of_the_bill(self):
         estate, box = priced()
         self.longer(estate)
         ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((box.meters["m1"].days, box.rates), (7, {"m1": 0.8333}))
+        self.assertEqual((box.meters["m1"].days, box.retail), (7, {"m1": 0.5}))
         ask(box, "cost_meters", handle="r1", days=30)
-        self.assertEqual((box.meters["m1"].days, box.meters["m1"].usd, box.rates), (30, 300.0, {}), "the rate of 7 days is not the rate of the meter of 30 days")
+        self.assertEqual((box.meters["m1"].days, box.meters["m1"].usd, box.retail), (30, 300.0, {"m1": 0.5}), "a rate of 7 days would not be the rate of 30 days; a list price is the same")
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["current"]["paid"], answer["current"]["rate_ratio"], box.rates), (0.675676, 1.3514, {"m1": 1.3514}), "300 dollars for 444 hours, against 0.5 an hour")
+        self.assertEqual((answer["current"]["paid"], answer["current"]["rate_ratio"], box.retail), (0.675676, 1.3514, {"m1": 0.5}), "300 dollars for 444 hours, against 0.5 an hour")
         ask(box, "cost_meters", handle="r1", days=7)
-        self.assertEqual((box.meters["m1"].days, box.rates), (30, {"m1": 1.3514}), "a shorter read later replaces neither the meter nor its rate")
+        self.assertEqual((box.meters["m1"].days, box.retail), (30, {"m1": 0.5}))
 
-    def test_a_rate_is_dropped_when_a_later_ask_for_the_meter_gives_none(self):
+    def test_a_list_price_is_taken_away_when_a_later_ask_for_the_meter_does_not_find_the_line(self):
         estate, box = priced()
         estate.page_size = 1
         estate.lines.insert(0, estate.lines.pop())  # the other product first, so that a read of the whole service that stops at its first page does not reach the line of the meter
         with mock.patch.object(prices, "MAX_PAGES", 1):
             self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found")
-            self.assertEqual(box.rates, {"m1": 0.8333})
+            self.assertEqual(box.retail, {"m1": 0.5})
             answer = ask(box, "price_alternatives", meter="m1", within="service")
-        self.assertEqual((answer["match"], answer["complete"], box.rates), ("none", False, {}), "a rate that the last ask could not work out is not one that code may use")
+        self.assertEqual((answer["match"], answer["complete"], box.retail), ("none", False, {}), "a list price that the last ask did not find is not one that code may use")
 
 
 class TheTime(unittest.TestCase):
@@ -587,15 +600,94 @@ class TheCaps(unittest.TestCase):
                 self.assertEqual((len(book.lines), book.complete), (lines, complete))
         self.assertEqual(len(estate.price_calls), 4, "one page each")
 
-    def test_a_page_that_is_too_large_is_refused_before_it_is_read_and_a_real_page_is_far_below_the_cap(self):
+    def test_a_page_that_is_too_large_is_refused_with_a_code_word_and_the_transport_is_asked_for_no_more_than_the_cap_and_one_more(self):
         estate, box = priced()
         client = Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None)
         with mock.patch.object(prices, "MAX_PAGE_LENGTH", 500):
-            with self.assertRaises(prices.HttpError):
+            with self.assertRaises(prices.HttpError) as refused:
                 prices.read(client, SERVICE, "swedencentral", PRODUCT)
-            self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
+            self.assertEqual((refused.exception.status, refused.exception.code, estate.price_calls[-1]["limit"]), (200, "TooLarge", 501), "the transport gave 501 of the page and the app knows that it is longer")
+            self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable", "code": "TooLarge"})
         self.assertEqual(len(prices.read(client, SERVICE, "swedencentral", PRODUCT).lines), 5)
-        self.assertTrue(1_000_000 < prices.MAX_PAGE_LENGTH <= 5_000_000, "a page of 1,000 lines of the real list is about 600,000 bytes")
+        self.assertEqual(estate.price_calls[-1]["limit"], prices.MAX_PAGE_LENGTH + 1)
+        self.assertTrue(1_000_000 < prices.MAX_PAGE_LENGTH <= 5_000_000, "a page of 1,000 lines of the real list is about 600,000 long")
+
+    def test_a_page_of_exactly_the_cap_is_read_and_one_character_more_is_not(self):
+        estate = PricedEstate()
+        client = Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None)
+        size = len(estate.price_answer(prices.address(SERVICE, "swedencentral", PRODUCT))[2])
+        for cap, read in ((size, True), (size - 1, False)):
+            with self.subTest(cap=cap), mock.patch.object(prices, "MAX_PAGE_LENGTH", cap):
+                if read:
+                    self.assertEqual(len(prices.read(client, SERVICE, "swedencentral", PRODUCT).lines), 5)
+                else:
+                    with self.assertRaises(prices.HttpError):
+                        prices.read(client, SERVICE, "swedencentral", PRODUCT)
+
+
+class TheListsThatAreNotWhatWasAsked(unittest.TestCase):
+    def test_a_line_of_another_service_or_another_region_is_never_kept_whatever_the_list_gave_and_a_line_with_no_region_holds_everywhere(self):
+        estate = PricedEstate()
+        estate.unfiltered = True
+        estate.lines = [line("Basic", "Fixed Hours", 0.5), line("Basic", "Foreign Hours", 0.1, service="Example Storage"), line("Basic", "Far Hours", 0.1, region="norwayeast"),
+                        line("Basic", "Global Hours", 0.1, region="Global"), line("Basic", "Empty Hours", 0.1, region=""), line("Basic", "Odd Hours", 0.1, region=["swedencentral"]),
+                        line("Basic", "Odder Hours", 0.1, service=["Example Compute"]), line("Basic", "Case Hours", 0.1, service=SERVICE.lower())]
+        client = Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None)
+        book = prices.read(client, SERVICE, "swedencentral", None)
+        self.assertEqual(sorted(found.meter for found in book.lines), ["Empty Hours", "Fixed Hours", "Global Hours"])
+        self.assertEqual({found.service for found in book.lines}, {SERVICE})
+        self.assertEqual(sorted(found.meter for found in prices.read(client, SERVICE, "Global", None).lines), ["Empty Hours", "Global Hours"], "a resource in the region global is asked for the lines that hold everywhere")
+
+    def test_the_tool_never_shows_or_offers_a_line_that_is_not_of_the_service_and_the_region_of_the_meter(self):
+        estate, box = priced()
+        estate.unfiltered = True
+        estate.lines += [line("Basic", "Foreign Hours", 0.1, service="Example Storage"), line("Basic", "Far Hours", 0.1, region="norwayeast")]
+        answer = ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertNotIn("Foreign Hours", json.dumps(answer))
+        self.assertNotIn("Far Hours", json.dumps(answer))
+        self.assertEqual(sorted({found.service for found in box.prices.values()}), [SERVICE])
+
+
+class TheZeroPrices(unittest.TestCase):
+    def test_a_price_of_nothing_is_no_price_it_is_not_in_the_table_has_no_handle_and_is_not_offered_and_the_cheapest_real_price_comes_first(self):
+        estate, box = priced()
+        estate.lines += [line("Basic", "Free Operations", 0.0), line("Basic", "Free Hours", 0.0, unit="1 Hour"), line("Basic", "Free Steps", 0.0, tier=0), line("Basic", "Free Steps", 0.3, tier=10)]
+        answer = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(([found["meter"] for found in prices_of(answer)], answer["lines"], answer["other_units"]), (["Light Hours", "Fixed Hours", "Global Hours", "Heavy Hours"], 4, 1),
+                         "the lines of nothing are not counted, whatever the unit, and a price with a free first step is one of them")
+        self.assertEqual((sorted(box.prices), box.offers["m1"]), (["p1", "p2", "p3", "p4"], {"p1", "p2", "p3", "p4"}))
+        self.assertTrue(all(found.usd > 0 for found in box.prices.values()))
+        wide = ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertEqual(prices_of(wide)[0]["usd"], 0.25)
+
+    def test_a_meter_whose_own_line_is_a_price_of_nothing_has_no_line_and_no_list_price(self):
+        estate, box = priced(words=meter(name="Free Hours"))
+        estate.lines.append(line("Basic", "Free Hours", 0.0))
+        answer = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual((answer["match"], "current" in answer, box.retail), ("none", False, {}))
+
+
+class TheSteps(unittest.TestCase):
+    def test_a_price_with_steps_comes_after_the_prices_without_whatever_its_first_step_costs_and_has_no_handle(self):
+        estate, box = priced()
+        estate.lines += [line("Basic", "Cheap Units", 0.01), line("Basic", "Cheap Units", 0.4, tier=100)]
+        answer = ask(box, "price_alternatives", meter="m1")
+        found = prices_of(answer)
+        self.assertEqual([(item["meter"], item.get("steps"), item["price"]) for item in found],
+                         [("Light Hours", None, "p1"), ("Fixed Hours", None, "p2"), ("Global Hours", None, "p3"), ("Heavy Hours", None, "p4"), ("Cheap Units", 2, None)])
+        self.assertEqual(sorted(box.prices), ["p1", "p2", "p3", "p4"], "the register holds no price that has steps, so that the code which prices a switch cannot take one")
+        self.assertTrue(all(line.tiers == 1 for line in box.prices.values()))
+        wide = ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertEqual([item["meter"] for item in prices_of(wide)][-2:], ["Elite Hours", "Cheap Units"])
+        self.assertEqual(sorted(box.prices), ["p1", "p2", "p3", "p4", "p5"])
+
+    def test_the_line_of_the_meter_that_has_steps_has_no_handle_either(self):
+        estate, box = priced()
+        estate.lines = [line("Basic", "Fixed Hours", 0.5), line("Basic", "Fixed Hours", 0.4, tier=100), line("Basic", "Light Hours", 0.25)]
+        answer = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(answer["current"], {"line": None, "retail": 0.5, "paid": 0.416667, "rate_ratio": None, "steps": 2})
+        self.assertEqual(sorted(box.prices), ["p1"])
+        self.assertEqual(box.retail, {})
 
 
 class TheEmptyRegion(unittest.TestCase):
@@ -619,29 +711,6 @@ class TheEmptyRegion(unittest.TestCase):
         self.assertEqual(sorted(found["meter"] for found in prices_of(ask(box, "price_alternatives", meter="m1"))), sorted(["Light Hours", "Fixed Hours", "Global Hours", "Heavy Hours", "Elite Hours"]))
 
 
-class TheSteps(unittest.TestCase):
-    def test_a_price_with_steps_comes_after_the_prices_without_whatever_its_first_step_costs_and_has_no_handle(self):
-        estate, box = priced()
-        estate.lines += [line("Basic", "Free Units", 0.0), line("Basic", "Free Units", 0.4, tier=100)]
-        answer = ask(box, "price_alternatives", meter="m1")
-        found = prices_of(answer)
-        self.assertEqual([(item["meter"], item.get("steps"), item["price"]) for item in found],
-                         [("Light Hours", None, "p1"), ("Fixed Hours", None, "p2"), ("Global Hours", None, "p3"), ("Heavy Hours", None, "p4"), ("Free Units", 2, None)])
-        self.assertEqual(sorted(box.prices), ["p1", "p2", "p3", "p4"], "the register holds no price that has steps, so that the code which prices a switch cannot take one")
-        self.assertTrue(all(line.tiers == 1 for line in box.prices.values()))
-        wide = ask(box, "price_alternatives", meter="m1", within="service")
-        self.assertEqual([item["meter"] for item in prices_of(wide)][-2:], ["Elite Hours", "Free Units"])
-        self.assertEqual(sorted(box.prices), ["p1", "p2", "p3", "p4", "p5"])
-
-    def test_the_line_of_the_meter_that_has_steps_has_no_handle_either(self):
-        estate, box = priced()
-        estate.lines = [line("Basic", "Fixed Hours", 0.5), line("Basic", "Fixed Hours", 0.4, tier=100), line("Basic", "Light Hours", 0.25)]
-        answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual(answer["current"], {"line": None, "retail": 0.5, "paid": 0.416667, "rate_ratio": None, "steps": 2})
-        self.assertEqual(sorted(box.prices), ["p1"])
-        self.assertEqual(box.rates, {})
-
-
 class TheOffers(unittest.TestCase):
     def test_the_register_names_the_prices_that_were_shown_for_the_meter_and_for_no_other(self):
         estate, box = priced(also=(meter(name="Light Hours"),))
@@ -655,7 +724,7 @@ class TheOffers(unittest.TestCase):
     def test_only_the_prices_of_the_pages_that_were_shown_are_offered_and_a_price_with_steps_is_never_one(self):
         estate, box = priced()
         estate.lines = ([line("Basic", "Fixed Hours", 5.0)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(99)]
-                        + [line("Basic", "Free Units", 0.0), line("Basic", "Free Units", 0.4, tier=100)])  # the line of the meter is the dearest: it is on the last page and is the current line of the first
+                        + [line("Basic", "Cheap Units", 0.01), line("Basic", "Cheap Units", 0.4, tier=100)])  # the line of the meter is the dearest: it is on the last page and is the current line of the first
         first = ask(box, "price_alternatives", meter="m1")
         self.assertNotIn(first["current"]["line"], {found["price"] for found in prices_of(first)})
         self.assertEqual(box.offers["m1"], {found["price"] for found in prices_of(first)} | {first["current"]["line"]})

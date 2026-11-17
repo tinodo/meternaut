@@ -406,9 +406,9 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 11,000 since the form alternative of a change was added to the 10,500 of the beats: about 250 characters that say how to state a switch of one meter to a price that the tool for alternatives showed
-        # (the instructions say, in item 4, that a change to another tier or size can be priced and that the alternative must still be shown to do what is needed, and nothing names a kind of resource or a price).
-        # 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
+        # 11,000 since the price of an alternative was added to the 10,277 of main (the beats and their tuning): 601 characters, to 10,878. 356 say that a change to another tier or size can be priced and
+        # that the alternative must still be shown to do what is needed (item 4), and 245 say how to state a switch of one meter to a price that the tool for alternatives showed (the form alternative); nothing
+        # names a kind of resource or a price. Before that: 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
         # lines of the bill that no resource owns, and about 550 that say how code works a saving out as a monthly rate and when a ratio on a property is right; every step of an investigation reads them
         # again (it was 9,500 since the change that a finding states, 7,000 since the whole that a resource belongs to, 6,500 since the meters, 5,600 since the data that is stored, 5,000 before).
         self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 11000)
@@ -463,8 +463,8 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
-                         "or alternative with alternatives, one for each meter that is switched, with the words of the alternative, its list price (list), the rate that the bill pays against list (ratio, null "
-                         "when the line of the meter was not found, so that it is priced at list prices) and the smallest and the largest share that remains (remains)",
+                         "or alternative with alternatives, one for each meter that is switched, with the words of the alternative, its list price (list), the rate that the bill pays against list (ratio) "
+                         "and the smallest and the largest share that remains (remains)",
                          "And an alternative, whose price shows neither its features nor its limits?",
                          "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
                          "ratio or quantity with from and to and, for a quantity, unit and moved",

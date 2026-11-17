@@ -58,15 +58,15 @@ What the investigation may rely on after a run (it reads these and changes none)
                         Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
                         the same scope has the same handle all through the run, and the numbers are those of the longest window that a call showed it for. A line that no resource owns has no handle.
   Toolbox.prices[p]     the Line (cases/prices.py) of a price handle p (p1, p2, ...) that price_alternatives showed: its service, product, SKU, meter, unit of measure, the price of one unit in US dollars, its region
-                        (`Global` for a price that holds in every region) and how many price steps it has. The same line has the same handle all through the run. Only a line with ONE price (tiers == 1) has a
-                        handle: a price with steps shows with `steps` and no handle, so that the code which prices a switch to a line cannot take the price of a first step for the price of a quantity. That code must
-                        still refuse tiers > 1, a unit that is not the meter's and a service that is not the meter's: the register does not know the meter.
-  Toolbox.rates[m]      the rate ratio of the meter handle m, worked out from the numbers that `meters[m]` holds NOW: what the bill paid for one unit over its window divided by the list price of the line that the
-                        words of the meter name. The two registers move together: a rate is dropped when a longer window replaces `meters[m]` (the rate of 7 days is not the rate of 30), and when a later ask for m
-                        could not work one out, so a rate that is there was worked out from the meter that is there. A meter has none when it was not asked about, when no line (or several that disagree) has its
-                        words, when its list price has steps or is nothing, when the bill paid nothing or gave money back, or when the bill had no quantity.
-  Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps). The form `alternative`
-                        of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
+                        (`Global` for a price that holds in every region) and how many price steps it has. The same line has the same handle all through the run. Only a line with ONE price (tiers == 1) and a price
+                        above nothing has a handle and is in the table: a price with steps shows with `steps` and no handle, and a price of nothing (a free line of the list, which would save all that a meter costs) is
+                        no price and is not shown, so that the code which prices a switch to a line cannot take the price of a first step for the price of a quantity, nor a free line for an alternative. That code
+                        must still refuse tiers > 1 and a price of nothing, a unit that is not the meter's and a service that is not the meter's: the register does not know the meter.
+  Toolbox.retail[m]     the list price of one unit of the line that the words of the meter handle m name, as price_alternatives showed it (its `retail`): the like-for-like price against which the code that prices a
+                        switch compares an alternative, whatever the bill pays. It depends on the words of the meter and not on its window, so a longer window does not drop it. A meter has none when it was not
+                        asked about, when no line (or several that disagree) has its words, or when its list price has steps; a later ask that does not find the line takes it away. No list price, no switch is priced.
+  Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps or of nothing). The
+                        form `alternative` of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -1021,7 +1021,7 @@ class Toolbox:
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
-        self.rates: dict[str, float] = {}  # meter handle -> the rate ratio that price_alternatives showed for it, of the numbers that the meter has in `meters` now: what the bill paid for one unit divided by the list price of the line that its words name
+        self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing)
         self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
@@ -2642,7 +2642,6 @@ class Toolbox:
         held = self.meters.get(handle)
         if held is None or held.days < line.days:
             self.meters[handle] = line
-            self.rates.pop(handle, None)  # a rate was worked out from the numbers of the meter that this one replaces
         return handle
 
     def _meters_for(self, entry: _Entry, days: int) -> "tuple[list, dict] | Failed":
@@ -2806,10 +2805,10 @@ class Toolbox:
             answer["current"]["line"] = self._price_handle(current)
             if answer["current"]["line"] is not None:
                 offered.add(answer["current"]["line"])
-        if ratio is not None:
-            self.rates[name] = ratio
+        if current is not None and current.tiers == 1:
+            self.retail[name] = current.usd
         else:
-            self.rates.pop(name, None)  # the last ask could not work one out, so there is none
+            self.retail.pop(name, None)  # the last ask did not find the one-price line of the meter, so its list price is not known
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------

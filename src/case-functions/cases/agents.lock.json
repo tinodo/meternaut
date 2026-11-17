@@ -53,7 +53,7 @@
     },
     "meternaut-skeptic": {
       "connection": "aigateway",
-      "instructionsSha256": "d892f6024c80692bcd9c8657e86feca000de81f018eec1052d963bcda2e22598",
+      "instructionsSha256": "d01f986d4eda75a7c74c9496d9b8840f3f508206a25c8114538319e6b753a9c5",
       "kind": "prompt",
       "model": "gpt-6.1-sol",
       "options": {
@@ -71,7 +71,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "268407da93ebf4ee4bbf55ed4c49e57157ee56ad99f3e24f7f74f0016574e24c"
+    "moduleSha256": "7b4860a1a253faf2419b799ab001886aebb46ef448053ff7e377181aaa1ad5b0"
   },
   "tools": {
     "advisor_items": {
@@ -155,7 +155,7 @@
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
     },
     "price_alternatives": {
-      "implementationSha256": "bae13a02bc4f3d1928e64ee0842d110fac6adb076f8406619cd77c905360a91f",
+      "implementationSha256": "d782ddaf5518f5041f49edfff1900e7d6f7d6f93973e5aac119f208c6f8e8350",
       "schemaSha256": "8fc3eeab1300e459aa3c5efece66a900c1e1f299224b823cf1eb09e1b0918b54"
     },
     "profile": {

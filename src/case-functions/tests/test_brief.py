@@ -490,7 +490,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         start = dt.date(2026, 10, 5)
         meter = Meter("r1", None, pricing_words(1), 600.0, 60.0, {start + dt.timedelta(days=n): 2.0 for n in range(30)}, None, start, 30)
         box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"p1": Listed("Example Compute", "Basic Tier", "Small", "Meter 1", "1 Hour", 0.0625, "swedencentral", 1)},
-                              rates={"m1": 0.8}, offers={"m1": {"p1"}})
+                              retail={"m1": 0.125}, offers={"m1": {"p1"}})
         change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "p1"}}], "how": "Take the basic tier."})
         facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None), "r1")}
         b = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
