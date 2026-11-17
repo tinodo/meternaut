@@ -904,14 +904,14 @@ class TheChecksBuildTheCallOfTheOperatorTool(unittest.TestCase):
         done, calls = self.run_check(self.CASES)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         (argv,) = calls
-        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30 --counts-only", 2400))
+        self.assertEqual(argv[:-1], self.expected("cases-check", ["cases-check.py", "check-helpers.py"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 38 --counts-only", 2700))
         self.assertTrue(argv[-1].endswith("summary.md"), "the log of the container goes into the summary of the run")
         args, plain, secure, servers, files = self.accepted_by_the_tool(argv)
         self.assertEqual((secure, servers), ([], ["10.20.0.4", "10.20.0.5"]), "no secure value: nothing in the call is a secret")
-        self.assertEqual(plain["TOOL_ARGS"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 30 --counts-only")
+        self.assertEqual(plain["TOOL_ARGS"], f"run --storage-account stexample --insights {self.INSIGHTS} --minutes 38 --counts-only")
         self.assertEqual(sorted(files), ["cases-check.py", "check-helpers.py", "run-tool.sh"], "cases-check.py loads check-helpers.py from its own folder")
         self.assertEqual(files["run-tool.sh"], (ROOT / "operator" / "run-tool.sh").read_bytes().replace(b"\r\n", b"\n"))
-        self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (2400, "op-check-1234567890", 1.0, 1.5))
+        self.assertEqual((args.timeout_seconds, args.name, args.cpu, args.memory), (2700, "op-check-1234567890", 1.0, 1.5))
 
     def test_the_landing_zone_s_dns_servers_are_given_one_flag_each_and_none_when_there_are_none(self):
         for dns, servers in (("10.20.0.4", ["10.20.0.4"]), ("10.20.0.4,10.20.0.5,10.20.0.6", ["10.20.0.4", "10.20.0.5", "10.20.0.6"]), ("", [])):

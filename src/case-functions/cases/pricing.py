@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Collection, Iterable, Mapping, NamedTuple, Sequence
 
 from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
-from .roles import clean_text
+from .roles import MAX_CITED_NAME, clean_text
 
 KEY = "change"  # the key of the facts of a case
 ACTIONS = ("remove", "reduce", "switch", "schedule", "commit", "none")
@@ -42,7 +42,7 @@ ALIKE = 0.05  # two rates that differ by no more than this share of the larger a
 DIFFER = 0.25  # two rates that differ by more than this share of the larger are far apart: the figure is then a Scenario whatever its form, because the bill alone does not say what it will be
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
-NAME = re.compile(r"[A-Za-z][A-Za-z0-9 ._/-]{0,63}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
+NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 WHY = {
     "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
