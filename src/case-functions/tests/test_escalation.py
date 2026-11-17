@@ -380,12 +380,26 @@ class TheWeeklyLetter(unittest.TestCase):
 
     def test_the_weekly_letter_lists_everything_that_waits_oldest_first_ten_at_most_and_says_how_many_more(self):
         world = World(managers=False, plans=12)
-        world.clock.advance(days=1)
+        world.clock.advance(days=8)
         world.tick()
         (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
         self.assertIn("12 decisions wait for an answer", letter[2])
         self.assertIn("and 2 more.", letter[2])
-        self.assertEqual(letter[2].count("Waiting 1 day."), 10)
+        self.assertEqual(letter[2].count("Waiting 8 days."), 10)
+
+    def test_a_request_that_has_waited_longer_than_a_week_brings_the_letter_and_the_younger_ones_are_in_it_and_no_letter_comes_before(self):
+        world = World(managers=False, plans=1)
+        world.add("p2", "c2", created=START + 7 * DAY)
+        world.clock.advance(days=6)
+        world.tick()
+        self.assertEqual([call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]], [], "nothing has waited more than a week yet")
+        world.clock.advance(days=2)
+        world.tick()
+        world.clock.advance(days=1)
+        world.tick()
+        (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
+        self.assertIn("2 decisions wait for an answer", letter[2])
+        self.assertIn("Waiting 2 days.", letter[2])
 
     def test_a_missing_permission_is_named_to_the_owners_in_the_weekly_letter(self):
         world = World(graph=Graph(managers={A: 403}))

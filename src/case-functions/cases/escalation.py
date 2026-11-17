@@ -254,11 +254,12 @@ def deliver(ladder: Ladder) -> int:
 
 
 def weekly(ladder: Ladder) -> int:
-    """The weekly letter: to every escalation contact (the owners when none is set), every request that waits with its own figure and how long, and, to the owners as well, what
-    stops the ladder (a permission that is missing, a message that could not be delivered). Not more than once in six days for a person, not on a day that another escalation letter went to them."""
+    """The weekly letter, while a request has waited more than a week: to every escalation contact (the owners when none is set), every request that waits with its own figure and how long, and, to
+    the owners as well, what stops the ladder (a permission that is missing, a message that could not be delivered). Not more than once in six days for a person, not on a day that another
+    escalation letter went to them."""
     now, store = ladder.clock(), ladder.store
     waiting = [p for p in store.plans_open() if p.state == "open"]
-    plans = waiting
+    due = any(waited(p, now) > 7 for p in waiting)
     recent = [r for rs in _records(store, waiting).values() for r in rs]
     problems = []
     if any("no_permission" in r.notes and r.at >= stamp(now - WEEK) for r in recent):
@@ -270,7 +271,7 @@ def weekly(ladder: Ladder) -> int:
     owners = ladder.directory.owners()
     sent = 0
     for target in dict.fromkeys(contacts + (owners if problems else ())):
-        if not (plans or problems):
+        if not (due or problems):
             break
         tried = [m for m in store.mails_since(target.oid, stamp(now - dt.timedelta(days=6))) if m.kind in ESCALATION_KINDS]
         week = [m for m in tried if m.status == "sent"]
@@ -278,7 +279,7 @@ def weekly(ladder: Ladder) -> int:
                 or any(m.kind == "escalation-weekly" and m.sent_at > stamp(now - dt.timedelta(minutes=RETRY_MINUTES)) for m in tried)):
             continue
         person = ladder.people.by_oid(target.oid) or Person(target.oid, target.name, (), target.mail)
-        mine = plans if target in contacts else []
+        mine = waiting if due and target in contacts else []
         letter = letters.escalation_weekly_letter(person, ladder.base, now, [(p, store.case_get(p.case_id)) for p in sorted(mine, key=started)], ladder.contacts, problems, first=_first_contact(ladder, target.oid))
         if (mine or problems) and ladder.mailer.send_escalation(target, letter, "escalation-weekly", None, 0, "weekly").status == "sent":
             sent += 1
