@@ -415,7 +415,8 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.INVESTIGATOR_INSTRUCTIONS
         for sentence in ("When your input names a beat, cover that part of the estate, which code chose by what it costs",
                          "do not repeat what the beats before it concluded", "Leave it only when the links of a resource lead elsewhere.",
-                         "The lines of the bill that no resource owns can be a beat of their own.", "Without a beat, work down the cost by service that the overview of the estate shows"):
+                         "The lines of the bill that no resource owns can be a beat of their own.", "Without a beat, work down the cost by service that the overview of the estate shows",
+                         "The pictures that you are given already hold what a call would read again: judge them first, ask for more only for a resource or a fact that they lack, and write your answer as soon as you can say what you found."):
             self.assertIn(sentence, text)
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
 

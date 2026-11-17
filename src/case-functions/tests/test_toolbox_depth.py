@@ -712,6 +712,34 @@ class TheProfile(unittest.TestCase):
         shown = ask(small, "profile", handles=["r1"], grain="hour")["profiles"][0]["metrics"]
         self.assertEqual(([c["query"]["interval"] for c in few.requests()], "at_hour" in shown), ([["PT1H"]], False), "a resource that offers no more than 20 is read at the hour at once, with no day read")
 
+    def test_a_plain_repeat_of_a_picture_is_answered_from_the_kept_one_with_no_request_and_the_seconds_that_it_saved_are_in_the_log_and_a_part_that_was_not_read_in_full_is_read_again(self):
+        estate, box = opened(self.estate())
+        clock = Clock()
+        box.monotonic = clock
+        real = box.arm.metric_reads
+        box.arm.metric_reads = lambda *args, **kwargs: (clock.advance(12.0), real(*args, **kwargs))[1]
+        first = ask(box, "profile", handles=["r1", "r2"], grain="hour")
+        before = len(estate.calls)
+        self.assertNotIn("saved", box.log[-1], "the first read saved nothing")
+        for handles in (["r1", "r2"], ["r2"], ["r2", "r1"]):
+            again = ask(box, "profile", handles=handles, grain="hour")
+            self.assertEqual(again["profiles"], [next(part for part in first["profiles"] if part["handle"] == handle) for handle in handles], handles)
+            self.assertEqual((again["partial"], len(estate.calls)), (False, before), "nothing is asked of Azure again")
+            self.assertGreaterEqual(box.log[-1]["saved"], 12.0 if len(handles) == 2 else 6.0, "the seconds that the read of those parts took")
+        before = len(estate.calls)
+        ask(box, "profile", handles=["r1", "r2"])
+        self.assertGreater(len(estate.calls), before, "another grain is another picture")
+        ask(box, "profile", handles=["r1", "r2"], days=7, grain="hour")
+        self.assertGreater(len(estate.calls), before, "and so are other days")
+        estate, fresh = opened(self.estate())
+        fresh.budget_seconds = 0.0
+        late = ask(fresh, "profile", handles=["r1"])
+        self.assertTrue(late["partial"])
+        fresh.budget_seconds = 60.0
+        before = len(estate.calls)
+        ask(fresh, "profile", handles=["r1"])
+        self.assertGreater(len(estate.calls), before, "a part that was not read in full is not kept")
+
     def test_a_type_that_keeps_no_metrics_says_so_and_a_failed_metric_is_named_with_the_code_of_the_platform_and_is_not_no_data(self):
         estate, box = opened(self.estate())
         estate.rows.append(row(GADGET, "g1"))

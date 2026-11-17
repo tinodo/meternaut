@@ -40,7 +40,7 @@ from typing import Callable, Mapping
 
 from . import alerts, drift_rules, lockfile, release, switches
 from .agents import SCHOLAR_NAME
-from .foundry import NO_TEXT, AgentRun, AgentSpec, FoundryError, ToolHandler, definition_of
+from .foundry import NO_TEXT, AgentRun, AgentSpec, FoundryError, Salvageable, ToolHandler, definition_of
 from .memory_store import stamp
 from .models import SwitchRecord
 
@@ -391,7 +391,7 @@ class Harness:
 
     # -- during a run ----------------------------------------------------------------------------------------------------------------------------
     def run(self, reference: str, spec: AgentSpec, user_input: str, handler: ToolHandler | None, *, max_calls: int | None = None, max_seconds: float,
-            max_tokens: int | None = None) -> AgentRun:
+            max_tokens: int | None = None, soft_seconds: float | None = None, salvage: Callable[[], float] | None = None) -> AgentRun:
         """Runs the agent through the Foundry loop with the guard on its tool calls and the brake before each request to its model. The budget of tool calls is the harness's (Budget)
         unless the caller gives one: the Skeptic has no tools, so its caller gives 0. A caller that gives `max_tokens` has the agent told to stop calling tools once its run has used that many
         tokens (it then gives its answer), and the brake stops the run at twice that: the tokens of a beat are a budget, and an agent that goes on after it is a loop."""
@@ -416,9 +416,9 @@ class Harness:
                 return "the switch investigation or the switch all is pulled, or cannot be read"
             if record.tokens >= limit:
                 if beat:
-                    record.over = True  # a failed beat, not a trip
-                else:
-                    record.breach = "tokens"
+                    record.over = True  # a failed beat, not a trip, unless the run gives its answer when it is asked once more (`salvage`)
+                    return Salvageable("the token budget of the run is used up")
+                record.breach = "tokens"
                 return "the token budget of the run is used up"
             if record.failures() >= self.budget.trip_limit:
                 record.breach = "refusals"
@@ -427,7 +427,8 @@ class Harness:
 
         try:
             result = self.foundry.run(reference, user_input, handle, max_calls=calls, max_seconds=max_seconds, stop=stop,  # type: ignore[attr-defined]
-                                      **({"max_tokens": max_tokens} if max_tokens else {}))
+                                      **({"max_tokens": max_tokens} if max_tokens else {}), **({"soft_seconds": soft_seconds} if soft_seconds is not None else {}),
+                                      **({"salvage": salvage} if salvage is not None else {}))
         except FoundryError as error:
             partial = getattr(error, "partial", None)
             if partial is not None:
@@ -459,7 +460,9 @@ class Harness:
         self._count(record, result)
         record.outcome = "ok"
         record.seconds = int(self.monotonic() - record.began)
-        if record.tokens > limit:
+        if getattr(result, "salvaged", False):
+            record.reason, record.over = "salvaged", False  # cut off, and then gave its answer when it was asked once more: an answer, whatever it cost
+        elif record.tokens > limit:
             if beat:
                 record.outcome, record.reason = "failed", "tokens"
                 over = BeatOverTokens(f"the beat used {record.tokens} tokens, over its limit of {limit}")
