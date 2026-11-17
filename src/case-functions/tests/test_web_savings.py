@@ -457,5 +457,46 @@ class WhoMayOpenIt(unittest.TestCase):
         self.assertEqual(len([1 for _, pattern, _, _ in router.ROUTES if "savings" in pattern]), 1, "a GET and nothing that writes")
 
 
+class TheSavingsOfAzureAdvisor(unittest.TestCase):
+    """Advisor's own recommendations are findings at the level Scenario, each counted once; a finding that Meternaut's own check or an AI made too keeps its own figure."""
+
+    @staticmethod
+    def digest(yearly: float, n: int = 3) -> dict:
+        row = ["Standard_D2s_v6", 1, "swedencentral", "P1Y", round(yearly / n, 2), "USD", 60, "Single"]
+        return {"type": "84b1a508-0000-4000-8000-000000000001", "sub": "Reservations", "n": n, "added": n, "skipped": 0, "currencies": [], "usd": yearly, "rows": [row] * n, "more": 0, "moreUsd": 0.0}
+
+    def advisor_case(self, case_id: str, yearly: float, **more):
+        return make_case(case_id=case_id, detector="advisor-cost", status="needs_human", saving_usd_month=None, cost_usd_30d=None, models={}, steps=(), recommendation="change", summary="",
+                         objections=(), resource_id=f"/subscriptions/{SUB}", resource_type="microsoft.subscriptions/subscriptions", resource_name="", resource_group="",
+                         facts={"category": "cost", "advisor": self.digest(yearly)}, advice={"problem": "Buy reservations", "solution": "Buy reservations"}, **more)
+
+    def row(self, console: Console) -> dict:
+        return rows_of(console.get(PATH))["Waiting for a person"]
+
+    def test_the_cases_of_advisor_are_added_at_the_level_scenario_once_each_with_no_other_level_mixed_in(self):
+        console = Console()
+        console.store.case_put(self.advisor_case("a1", 1200.0))
+        console.store.case_put(self.advisor_case("a2", 600.0))
+        row = self.row(console)
+        self.assertEqual(row["Findings"], "2")
+        self.assertIn("Saves, Scenario", row["Saving a year"])
+        self.assertIn("$1,800", row["Saving a year"], "1,200 and 600 a year, each once")
+        self.assertNotIn("Expected", row["Saving a year"])
+        self.assertIn("Azure Advisor's own estimate of the smallest of its variants", console.get(PATH).content.replace("&#x27;", "'"))
+
+    def test_a_finding_that_advisor_also_names_is_counted_with_its_own_figure_and_advisors_is_not_added_to_it(self):
+        console = Console()
+        console.store.case_put(make_case(case_id="c-own", status="needs_human", saving_usd_month=20.0, cost_usd_30d=20.0, facts={"diskState": "unattached", "advisor": self.digest(480.0)}))
+        console.store.case_put(make_case(case_id="c-none", status="needs_human", saving_usd_month=None, cost_usd_30d=None, facts={"diskState": "unattached", "advisor": self.digest(120.0)}))
+        row = self.row(console)
+        self.assertEqual(row["Findings"], "2")
+        self.assertIn("Saves, Expected", row["Saving a year"])
+        self.assertIn("$240", row["Saving a year"], "its own figure, 20 a month")
+        self.assertIn("Saves, Scenario", row["Saving a year"])
+        self.assertIn("$120", row["Saving a year"], "Advisor's figure for the finding that has none of its own: 10 a month")
+        self.assertNotIn("$480", row["Saving a year"])
+        self.assertNotIn("$840", row["Saving a year"])
+
+
 if __name__ == "__main__":
     unittest.main()

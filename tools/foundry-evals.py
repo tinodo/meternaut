@@ -30,6 +30,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import math
 import re
 import sys
 import time
@@ -69,15 +70,19 @@ FIXED_FIELDS = ("usd30d", "service", "sub", "sku", "kind", "region", "managed")
 DIAGNOSTIC_COLUMNS = ("logs", "metrics", "workspace", "storage", "event_hub", "partner", "own_tables")
 COST_METRIC = re.compile(r"Cost (actual|amortized) USD ([0-9]{1,2})d")
 PRICING = {"tier": "PerGB2018", "retention_days": 30, "ingestion": "RespectQuota", "query_access": "Enabled"}  # how an invented workspace is priced, kept and asked, as the real read shows it
+FAILED_CODE = "Failed"  # the platform's code word for a read that failed, as the real tools show it (never its text)
+METER_COLUMNS = ("meter", "category", "subcategory", "name", "pricing", "charge", "unit", "quantity", "usd", "share", "days", "avg_day", "min_day", "max_day", "cv", "first_day", "last_day")
+METER = ("Standard", "Usage Units", "OnDemand", "Usage", "1 Hour")  # the subcategory, name, pricing, charge and unit of the one meter that an invented scope is billed for
 ROW_FIELDS = ("id", "kind", "type", "metric", "resources", "expect")  # what every row has
-OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments")  # what a row may have besides
+OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics")  # what a row may have besides
 _TEXT, _OFFSET, _DAYS = ("text", False, ()), ("int", False, (0, 100000)), ("int", False, (1, DAYS))
+_METRICS, _GRAIN = ("list", False, (1, 8)), ("choice", False, ("day", "hour"))
 PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name -> (kind, required, bounds or choices); a call that does not pass is bad-arguments there and here
     "estate_overview": {},
     "list_resources": {"type": ("text", True, ()), "order_by": ("choice", False, ("cost", "count")), "limit": ("int", False, (1, 40)), "offset": _OFFSET},
     "metric_names": {"type": ("text", True, ()), "offset": _OFFSET},
-    "metric_summary": {"handles": ("list", True, ()), "metric": ("text", True, ()), "days": _DAYS},
-    "measure": {"type": ("text", True, ()), "metric": ("text", True, ()), "days": _DAYS, "limit": ("int", False, (1, 80)), "offset": _OFFSET},
+    "metric_summary": {"handles": ("list", True, ()), "metric": _TEXT, "metrics": _METRICS, "days": _DAYS, "grain": _GRAIN},
+    "measure": {"type": ("text", True, ()), "metric": _TEXT, "metrics": _METRICS, "days": _DAYS, "limit": ("int", False, (1, 80)), "offset": _OFFSET, "grain": _GRAIN},
     "cost_lines": {"service": _TEXT, "type": _TEXT, "limit": ("int", False, (1, 40))},
     "advisor_items": {"offset": _OFFSET},
     "paid_features": {},
@@ -89,6 +94,7 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
     "metric_split": {"handle": ("text", True, ()), "metric": ("text", True, ()), "dimension": ("text", True, ()), "days": _DAYS, "limit": ("int", False, (1, 20))},
     "commitments": {},
     "cost_history": {"handle": _TEXT, "type": _TEXT, "days": ("int", False, (7, 90)), "basis": ("choice", False, ("actual", "amortized"))},
+    "cost_meters": {"handle": _TEXT, "type": _TEXT, "service": _TEXT, "days": ("int", False, (7, DAYS)), "offset": _OFFSET},
     "recall_lessons": {"type": ("text", True, ())},
     "recall_knowledge": {"type": ("text", True, ())},
     "recall_open_questions": {},
@@ -103,7 +109,7 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
 # The fields of a row: id, kind, type, metric, resources (h, usd, total and, when there are fewer, days with data) and expect (propose, never); and, all optional, inject (a text for a
 # handle), service, unit, dimensions (of the metric), unavailable (the metric of every resource cannot be read), history (the cost of each of the 30 days of a handle), workspaces (by
 # handle: its pricing, tables with their volume and readers, the sources that were read, collection rules and the writers of a table), parts (the deployments of an account, with their
-# traffic) and commitments (how the cost was paid for, and the recommendations of the platform).
+# traffic), commitments (how the cost was paid for, and the recommendations of the platform) and no_metrics (the type offers no platform metrics: the tools that read a metric say so).
 
 
 def _error(word: str) -> dict:
@@ -131,7 +137,8 @@ def checked_arguments(tool: str, arguments: object) -> dict | None:
             if not isinstance(value, str) or value not in limits:
                 return None
         elif kind == "list":
-            if not isinstance(value, list) or not 1 <= len(value) <= 60 or not all(isinstance(item, str) and item for item in value):
+            low, high = limits or (1, 60)
+            if not isinstance(value, list) or not low <= len(value) <= high or not all(isinstance(item, str) and item for item in value):
                 return None
             value = list(dict.fromkeys(value))
         elif not isinstance(value, str) or not value:
@@ -254,47 +261,78 @@ def _describe(row: dict, arguments: dict) -> dict:
 
 def _metric_names(row: dict, arguments: dict) -> dict:
     offered = arguments["type"] == row["type"] and bool(row.get("resources"))
+    if offered and row.get("no_metrics"):
+        return _error("no-metrics")  # nothing to measure, and no sign of use
     names = [{"name": row["metric"], "unit": _unit(row), "aggregation": "Total", **({"dimensions": list(row["dimensions"])} if row.get("dimensions") else {})}] if offered else []
     return {"type": arguments["type"], "total": len(names), "offset": 0, "returned": len(names), "metrics": names}
 
 
-def _summary(resource: dict, row: dict) -> dict:
+def _names(arguments: dict) -> "list[str] | None":
+    """The metric names of a call, as the real tools take them: the one in `metric` or those in `metrics`, never both and never neither (None: bad-arguments)."""
+    if (arguments["metric"] is None) == (arguments["metrics"] is None):
+        return None
+    return [arguments["metric"]] if arguments["metric"] is not None else arguments["metrics"]
+
+
+def _summary(resource: dict, row: dict, hourly: bool = False) -> dict:
+    """The numbers of one resource: by the hour also the peak and p95 of the finer buckets (the invented metric offers the day only, so they are those of the daily ones)."""
     total = resource["total"]
-    return {"total": total, "max": total, "average": total, "days_with_data": resource["days"], **_noted(row, resource["h"])}
+    return {"total": total, "max": total, "average": total, "days_with_data": resource["days"], **({"peak": total, "p95": total} if hourly else {}), **_noted(row, resource["h"])}
 
 
 def _metric_summary(row: dict, arguments: dict) -> dict:
-    metric, days, asked = arguments["metric"], arguments["days"] or DAYS, arguments["handles"]
+    names, days, asked, hourly = _names(arguments), arguments["days"] or DAYS, arguments["handles"], arguments["grain"] == "hour"
+    if names is None:
+        return _error("bad-arguments")
+    many = arguments["metrics"] is not None
     resources = {r["h"]: r for r in _resources(row)}
     known = known_handles(row)
-    offered = metric == row["metric"] and bool(resources)
-    if any(handle in known for handle in asked) and not (offered and any(handle in resources for handle in asked)):
+    wanted = [handle for handle in asked if handle in known]
+    if row.get("no_metrics") and wanted and all(handle in resources for handle in wanted):
+        return _error("no-metrics")
+    echoed = [name for name in names if name == row["metric"]] if resources else []  # a name is echoed only when the type offers it
+    if any(handle in known for handle in asked) and not (echoed and any(handle in resources for handle in asked)):
         return _error("unknown-metric")
+    head = {"metric": echoed[0]} if many and echoed else {}
     rows, read = [], []
     for handle in asked:
         if handle not in known:
             rows.append({"handle": handle, "error": "unknown-handle"})
         elif handle not in resources:
-            rows.append({"handle": handle, "error": "unknown-metric"})
+            rows.append({"handle": handle, **head, "error": "unknown-metric"})
+        elif row.get("no_metrics"):
+            rows.append({"handle": handle, "error": "no-metrics"})
         elif row.get("unavailable"):
-            rows.append({"handle": handle, "error": "unavailable"})
+            rows.append({"handle": handle, **head, "error": "unavailable", "code": FAILED_CODE})
         else:
-            rows.append({"handle": handle, **_summary(resources[handle], row)})
+            rows.append({"handle": handle, **head, **_summary(resources[handle], row, hourly)})
             read.append(resources[handle])
-    answer = {"days": days, "unit": _unit(row) if read else None, "partial": False, "summary": _tally(read, days), "results": rows}
-    return {"metric": metric, **answer} if offered else answer
+    tally = _tally(read, days)
+    if not many:
+        answer = {"days": days, "unit": _unit(row) if read else None, "partial": False, "summary": tally, "results": rows}
+        return {"metric": echoed[0], **answer} if echoed else answer
+    answer = {"days": days, "partial": False, "summary": {name: tally for name in echoed}, "results": rows, **({"units": {name: _unit(row) for name in echoed}} if read else {}),
+              **({"unknown_metrics": len(names) - len(echoed)} if len(echoed) < len(names) else {})}
+    return {"metrics": echoed, **answer} if echoed else answer
 
 
 def _measure(row: dict, arguments: dict) -> dict:
+    names, hourly = _names(arguments), arguments["grain"] == "hour"
+    if names is None:
+        return _error("bad-arguments")
+    many = arguments["metrics"] is not None
     found = _resources(row) if arguments["type"] == row["type"] else []
-    metric, days, offset, limit = arguments["metric"], arguments["days"] or DAYS, arguments["offset"] or 0, arguments["limit"] or 40
+    days, offset, limit = arguments["days"] or DAYS, arguments["offset"] or 0, arguments["limit"] or max(1, 40 // len(names))
     page = found[offset:offset + limit]
-    if page and metric != row["metric"]:
+    if page and row.get("no_metrics"):
+        return _error("no-metrics")
+    echoed = [name for name in names if name == row["metric"]] if page else []
+    if page and not echoed:
         return _error("unknown-metric")
     failed = [r["h"] for r in page] if row.get("unavailable") else []
     kept = [r for r in page if r["h"] not in failed]
-    columns = ["handle", *(["usd30d"] if page else []), "total", "max", "avg", "days_with_data"]
-    rows = [[r["h"], _cents(r["usd"]), r["total"], r["total"], r["total"], r["days"]] for r in kept]
+    columns = ["handle", *(["metric"] if many else []), *(["usd30d"] if page else []), "total", "max", "avg", "days_with_data", *(["peak", "p95"] if hourly else [])]
+    rows = [[r["h"], *([echoed[0]] if many else []), _cents(r["usd"]), r["total"], r["total"], r["total"], r["days"], *([r["total"], r["total"]] if hourly else [])] for r in kept]
     if any(handle in (row.get("inject") or {}) for handle in (r["h"] for r in kept)):
         columns.append("note")
         for line, resource in zip(rows, kept):
@@ -302,9 +340,12 @@ def _measure(row: dict, arguments: dict) -> dict:
             while len(line) > len(columns) - 1 and line[-1] is None:
                 line.pop()
     more = offset + len(page) < len(found)
-    return {"type": arguments["type"], **({"metric": metric} if page else {}), "days": days, **({"unit": _unit(row)} if kept else {}), "partial": False, "total": len(found),
-            "offset": offset, "has_more": more, **({"next_offset": offset + len(page)} if more else {}), **({"failed": failed} if failed else {}), "summary": _tally(kept, days),
-            "cols": columns, "rows": rows}
+    tally = _tally(kept, days)
+    said = ({"metrics": echoed, **({"units": {name: _unit(row) for name in echoed}} if kept else {}), **({"unknown_metrics": len(names) - len(echoed)} if len(echoed) < len(names) else {})}
+            if many and page else {"metric": echoed[0]} if page else {})
+    return {"type": arguments["type"], **said, "days": days, **({"unit": _unit(row)} if kept and not many else {}), "partial": False, "total": len(found), "offset": offset, "has_more": more,
+            **({"next_offset": offset + len(page)} if more else {}), **({"failed": failed, "failed_codes": [FAILED_CODE]} if failed else {}),
+            "summary": {name: tally for name in echoed} if many else tally, "cols": columns, "rows": rows}
 
 
 def _cost_lines(row: dict, arguments: dict) -> dict:
@@ -432,6 +473,8 @@ def _metric_split(row: dict, arguments: dict) -> dict:
     kind = known_handles(row).get(handle)
     if kind is None:
         return _error("unknown-handle")
+    if kind == row["type"] and row.get("no_metrics"):
+        return _error("no-metrics")
     if kind != row["type"] or metric != row["metric"]:
         return _error("unknown-metric")
     if dimension not in (row.get("dimensions") or []):
@@ -481,6 +524,38 @@ def _cost_history(row: dict, arguments: dict) -> dict:
     return answer
 
 
+def _cost_meters(row: dict, arguments: dict) -> dict:
+    """What a resource, or all the resources of a type, is billed for, in the shape of the real tool: one meter for the scope (the row has no meters, so the invented one is billed at the cost of
+    the resources and in the quantity of their metric), and its daily shape worked out from the cost of each day (daily_cost). A part has no line of its own."""
+    handle, kind, service, days, offset = arguments["handle"], arguments["type"], arguments["service"], arguments["days"] or DAYS, arguments["offset"] or 0
+    if (handle is None) == (kind is None):
+        return _error("bad-arguments")
+    resources = {r["h"]: r for r in _resources(row)}
+    if handle is not None and handle not in known_handles(row):
+        return _error("unknown-handle")
+    if handle is not None and handle not in resources:
+        return _error("not-offered")
+    chosen = [resources[handle]] if handle is not None else _resources(row) if kind == row["type"] else []
+    if service and service.lower() != _service(row).lower():
+        chosen = []
+    series = [daily_cost(row, resource, days) for resource in chosen]
+    per_day = [round(sum(one[place] for one in series), 2) for place in range(days)]
+    total = round(sum(per_day), 2)
+    paid = [place for place, amount in enumerate(per_day) if amount != 0]
+    mean = total / days
+    lines = []
+    if paid:
+        costs = [per_day[place] for place in paid]
+        cv = math.sqrt(sum((amount - mean) ** 2 for amount in per_day) / days) / mean if mean > 0 else None
+        lines.append(["m1", _service(row), *METER, _number(sum(r["total"] or 0 for r in chosen)), _cents(total), 1.0, len(paid), _cents(sum(costs) / len(costs)), _cents(min(costs)),
+                      _cents(max(costs)), None if cv is None else round(cv, 3), days - paid[0], days - paid[-1], *([len(chosen)] if handle is None else [])])
+    columns = [*METER_COLUMNS, *(["resources"] if handle is None else [])]
+    rows = lines[offset:offset + 40]
+    more = offset + len(rows) < len(lines)
+    return {**({"handle": handle} if handle is not None else {"type": kind}), **({"service": service} if service else {}), "window_days": days, "usd_total": _cents(total), "meters": len(lines),
+            "offset": offset, "returned": len(rows), **({"next_offset": offset + len(rows)} if more else {}), "cols": columns, "rows": rows}
+
+
 def _recall_lessons(row: dict, arguments: dict) -> dict:
     """What a memory with nothing in it yet answers (docs/proposals/15-learning.md), in the shape of the real tool: a test holds it to the real toolbox."""
     return {"type": arguments["type"], "closed": 0, "source": "how people answered past requests of this type: counts, not facts about this estate", "history": "no history yet"}
@@ -515,7 +590,8 @@ def answers_of(row: dict) -> dict:
         ("estate_overview", _overview), ("list_resources", _list_resources), ("describe", _describe), ("metric_names", _metric_names), ("metric_summary", _metric_summary),
         ("measure", _measure), ("cost_lines", _cost_lines), ("advisor_items", _advisor_items), ("paid_features", _paid_features), ("data_volume", _data_volume),
         ("data_readers", _data_readers), ("data_writers", _data_writers), ("children", _children), ("metric_split", _metric_split), ("commitments", _commitments),
-        ("cost_history", _cost_history), ("recall_lessons", _recall_lessons), ("recall_knowledge", _recall_knowledge), ("recall_open_questions", _recall_open_questions))}
+        ("cost_history", _cost_history), ("cost_meters", _cost_meters), ("recall_lessons", _recall_lessons), ("recall_knowledge", _recall_knowledge),
+        ("recall_open_questions", _recall_open_questions))}
 
 
 def evidence_total(row: dict, handle: object, metric: object) -> tuple[bool, object]:
