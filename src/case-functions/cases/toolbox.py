@@ -50,6 +50,9 @@ What the investigation may rely on after a run (it reads these and changes none)
       "writers"                           {a kind of data as data_volume names it: [the resource types that wrote most of it on the last closed day, the largest first, at most
                                           MAX_WRITER_KINDS]}: what data_writers showed for a kind of data
   Toolbox.table_names(h)  what the table handles of h stand for in this run (t1 is the name of a table that the platform did not make), for the page of a person and never for an agent
+  Toolbox.meters[m]     the Meter (cases/meters.py) of a meter handle m (m1, m2, ...) that cost_meters showed: its scope (the handle of a resource, or a resource type), the six words of the meter as Cost
+                        Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
+                        the same scope has the same handle all through the run, and the numbers are those of the last call that showed it. A line that no resource owns has no handle.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 """
 from __future__ import annotations
