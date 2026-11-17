@@ -530,7 +530,14 @@ class TheQuantityOfAMeter(unittest.TestCase):
             with self.subTest(said=said):
                 found = self.price({"form": "quantity", "from": said, "to": 0})
                 self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
-        self.assertEqual(self.price({"form": "quantity", "from": 1440.0001, "to": 0}).rows["r1"].low, 201.6, "within a millionth, as for a number that a ratio cites")
+        self.assertEqual(self.price({"form": "quantity", "from": 1440.0001, "to": 0}).rows["r1"].low, 201.6, "within a hundred-thousandth")
+
+    def test_a_quantity_that_the_tool_showed_with_six_significant_digits_is_the_meters_quantity(self):
+        meter = billed_units(usd=100.0, quantity=1234.56789)
+        box = shown(meters={"m1": meter})
+        self.assertEqual(self.price({"form": "quantity", "from": 1234.57, "to": 0}, toolbox=box, costs={"r1": 100.0}).rows["r1"].low, 100.0, "the tool shows 1234.57")
+        found = self.price({"form": "quantity", "from": 1234.6, "to": 0}, toolbox=box, costs={"r1": 100.0})
+        self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
     def test_a_target_that_is_not_a_reduction_of_a_quantity_makes_no_figure(self):
         for start, target in ((1440, 1440), (1440, 1500), (1440, -1), (0, 0), (True, 0), (1440, True), ("1440", 0), (1440, "0"), (1440, None), (float("nan"), 0), (1440, float("inf"))):
@@ -657,7 +664,8 @@ class TheDigestAndWhatItSays(unittest.TestCase):
              "skipped": 12, "advisorUsd": 1234.56}
 
     def test_the_worst_case_of_the_basis_fits_what_a_card_shows_and_the_parts_that_are_cut_first_are_the_last_ones(self):
-        for more in ({"form": "assumed", "away": [0.3, 0.6]}, {"form": "ratio", "from": 120000.0, "to": 40000.0, "on": "a" * 24}, {"form": "share_of_days", "days": 20, "span": 31}, {"form": "mixed"}):
+        for more in ({"form": "assumed", "away": [0.3, 0.6]}, {"form": "ratio", "from": 120000.0, "to": 40000.0, "on": "a" * 24}, {"form": "quantity", "from": 1234567890.0, "to": 987654321.0, "unit": "a" * 24},
+                     {"form": "share_of_days", "days": 20, "span": 31}, {"form": "mixed"}):
             with self.subTest(form=more["form"]):
                 basis = pricing.saved({pricing.KEY: {"action": "reduce", "price": {**self.WORST, **more}}}).basis
                 self.assertLessEqual(len(basis), 390, f"a card cuts the line at 400 characters, 'Based on ' and the full stop included: {basis}")

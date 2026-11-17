@@ -231,7 +231,7 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
         return "lines" if skipped else "nothing"
     form, least, most, said = found
     if form == "quantity":  # a quantity is the quantity of one meter, in its own unit, and is the one that the tool showed for it
-        if len(effect.meters) != 1 or not math.isclose(said["from"], used[0][2].quantity, rel_tol=1e-6, abs_tol=0.0):
+        if len(effect.meters) != 1 or not math.isclose(said["from"], used[0][2].quantity, rel_tol=1e-5, abs_tol=0.0):  # the tool shows a quantity with six significant digits
             return "remains"
         unit = (used[0][2].words or ("",))[-1]
         said = {**said, **({"unit": unit} if UNIT.fullmatch(unit) else {})}
