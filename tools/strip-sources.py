@@ -4,7 +4,7 @@
     python tools/strip-sources.py <folder>
 
 The folder is the copy of the cases app that tools/build-function-app.sh packs for the Operator (FUNCTION_APP_SOURCES_ONLY=1). Every .py file under it is rewritten in place: a comment is cut off, with
-the white space in front of it, and a docstring (the first statement of a module, a class or a function, when it is a string) becomes "" and the empty lines that its text took. No line is added or removed,
+the white space in front of it (but in the braces of an f-string only the comment: Python keeps that white space as text when the expression has an `=`), and a docstring (the first statement of a module, a class or a function, when it is a string) becomes "" and the empty lines that its text took. No line is added or removed,
 so a traceback in Application Insights points at the same line as the file of the repository. Nothing else changes: a string that is data stays as it is, and so does every line of code. About a third of
 the bytes of the sources are comments and docstrings, and the request that carries the sources has a limit (docs/proposals/27-package-without-comments.md).
 
@@ -54,10 +54,15 @@ def strip(text: str) -> str:
     if "\r" in text:
         raise Problem("a line ends with a bare carriage return, which Python reads as a line end and this tool does not")
     lines = text.split("\n")
+    in_a_string = 0  # the depth of f-strings that the token is in: a comment is in the braces of one, and the white space before it may be part of the text of an `=`
     for token in tokenize.generate_tokens(io.StringIO("\n".join(lines)).readline):
-        if token.type == tokenize.COMMENT:
+        if token.type == tokenize.FSTRING_START:
+            in_a_string += 1
+        elif token.type == tokenize.FSTRING_END:
+            in_a_string -= 1
+        elif token.type == tokenize.COMMENT:
             row, column = token.start
-            lines[row - 1] = lines[row - 1][:column].rstrip()
+            lines[row - 1] = lines[row - 1][:column] if in_a_string else lines[row - 1][:column].rstrip()
     for body in lockfile.docstrings(ast.parse("\n".join(lines))):
         statement = body[0]
         first, last = statement.lineno - 1, statement.end_lineno - 1
@@ -65,7 +70,9 @@ def strip(text: str) -> str:
         tail = lines[last][_column(lines[last], statement.end_col_offset):]
         if first != last and tail.strip():
             continue
-        lines[first:last + 1] = [(head + '""' + (tail if first == last else "")).rstrip()] + [""] * (last - first)
+        rest = tail if first == last else ""
+        line = head + '""' + rest
+        lines[first:last + 1] = [line if rest.strip() else line.rstrip()] + [""] * (last - first)
     return "\n".join(lines)
 
 

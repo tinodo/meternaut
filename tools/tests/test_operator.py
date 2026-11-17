@@ -2498,7 +2498,7 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
         paragraph = self.section.split("**One build, in two places.**")[1].split("\n\n")[0]
         for words in ("stays the one place that knows how a package is built", "`--only-binary=:all:`, `--require-hashes`, the three manylinux platform flags, `--implementation cp --python-version 3.13`",
                       "By default it is the runner's build, with the guard that the running interpreter is Python 3.13, as before.",
-                      "`FUNCTION_APP_SOURCES_ONLY=1` copies the app's files and zips them and does nothing else", "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script, replaces the guard by two checks "
+                      "`FUNCTION_APP_SOURCES_ONLY=1` copies the app's files, takes the comments and the text of the docstrings out of the Python files (`tools/strip-sources.py`, [proposal 27](27-package-without-comments.md)) and zips them", "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script, replaces the guard by two checks "
                       "(pip runs, and the lock carries hashes), makes the zip with Python, and fails the build when pip left a compiled module for another Python than 3.13",
                       "The two switches cannot be set together, and any value but `1` is refused.", "pins that the pip words are identical and that the two zips hold the same files"):
             self.assertIn(words, paragraph, words)

@@ -939,19 +939,26 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
             (folder / name).write_bytes(data)
         return folder
 
-    def test_a_python_file_that_cannot_be_stripped_stops_the_pack_in_plain_words_and_no_archive_is_made(self):
-        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7", prior=self.sources_with_a_broken_file)
+    @staticmethod
+    def sources_with_a_broken_file_and_an_older_archive(tmp):
+        folder = TheBuildScriptInTheOperator.sources_with_a_broken_file(tmp)
+        (tmp / "out.zip").write_bytes(source_zip())
+        return folder
+
+    def test_a_python_file_that_cannot_be_stripped_stops_the_pack_in_plain_words_and_no_archive_is_left(self):
+        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7", prior=self.sources_with_a_broken_file_and_an_older_archive)
         self.assertEqual(done.returncode, 1)
         self.assertIn("error: cases/broken.py: it could not be stripped", done.stderr)
         self.assertIn("The sources were not stripped and nothing is packed.", done.stderr)
         self.assertEqual(done.stdout, "", "no count of files: nothing was packed")
-        self.assertIsNone(members, "no archive is made of sources that were not stripped")
+        self.assertIsNone(members, "the archive that an earlier run left in the place of the new one is gone, so that nothing can take it for the archive of this run")
 
-    def test_the_strip_is_a_step_of_the_pack_of_the_sources_before_the_zip_and_of_no_other_build_because_the_container_has_no_such_tool(self):
+    def test_the_strip_is_a_step_of_the_pack_of_the_sources_after_the_old_archive_is_removed_and_before_the_zip_is_made_and_of_no_other_build_because_the_container_has_no_such_tool(self):
         code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
         sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
         self.assertEqual(code.count("strip-sources.py"), 1)
-        self.assertLess(sources.index("strip-sources.py"), sources.index('rm -f "$zip_file"'), "the files are stripped before the zip is made")
+        self.assertLess(sources.index('rm -f "$zip_file"'), sources.index("strip-sources.py"), "under set -e a failed strip ends the script, so the old archive has to be removed before it runs")
+        self.assertLess(sources.index("strip-sources.py"), sources.index("import io, os, sys, zipfile"), "the files are stripped before the zip is made")
         self.assertTrue((ROOT / "tools" / "strip-sources.py").is_file())
         for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
             done, calls, members, folder = self.run_build(env=env, python=python, prior=self.sources_with_a_broken_file)

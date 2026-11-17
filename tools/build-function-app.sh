@@ -109,8 +109,8 @@ fi
 if [ -n "$sources_only" ]; then
   # The request that carries the sources is small (tools/operator-run.py, MAX_FILE_BYTES). A zip compresses each file alone, and the files of the app share most of their text, so one LZMA entry holds all of
   # them, in a zip of their own that stores them. operator/publish.sh opens the entry and then that zip.
-  python3 "$(dirname "${BASH_SOURCE[0]}")/strip-sources.py" "$build"
   rm -f "$zip_file"
+  python3 "$(dirname "${BASH_SOURCE[0]}")/strip-sources.py" "$build"
   python3 -c '
 import io, os, sys, zipfile
 root, target = sys.argv[1], sys.argv[2]

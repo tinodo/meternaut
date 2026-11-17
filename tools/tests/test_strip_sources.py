@@ -71,7 +71,9 @@ SAMPLES = {
                                                        "@decorator\n\n@other(\n    1,\n    2,\n)\nasync def g():\n    \"\"\n    value = 1 + \\\n        2\n\n    def inner():\n        \"\"\n        return value\n\n    return inner\n"),
     "a raw docstring": ('def f():\n    r"""A raw \\d docstring."""\n    return 1\n', 'def f():\n    ""\n    return 1\n'),
     "a docstring in parentheses, over lines": ('def f():\n    (\n        "a"\n        "b"\n    )\n    return 1\n\n\ndef g():\n    ("""doc""")\n    return 2\n', 'def f():\n    ""\n\n\n\n    return 1\n\n\ndef g():\n    ""\n    return 2\n'),
-    "a comment inside a replacement field": ('x = f"""{\n    1 + 1  # a comment of the field\n}"""\n', 'x = f"""{\n    1 + 1\n}"""\n'),
+    "a comment inside a replacement field": ('x = f"""{\n    1 + 1  # a comment of the field\n}"""\n', 'x = f"""{\n    1 + 1  \n}"""\n'),
+    "a comment in the braces of an f-string with an =, where the white space before it is text": ('a = 1\nx = f"""{\n    a =  # the comment\n}"""\ny = f"""{a = # c\n}"""\nw = f"""{\n    f\'{a}\'  # nested\n}"""\nv = f"{a}"  # the f-string is over\n',
+                                                                                                'a = 1\nx = f"""{\n    a =  \n}"""\ny = f"""{a = \n}"""\nw = f"""{\n    f\'{a}\'  \n}"""\nv = f"{a}"\n'),
     "no new line at the end": ("x = 1  # c", "x = 1"),
     "a comment and nothing else": ("# only a comment\n", "\n"),
     "nothing": ("", ""),
@@ -100,7 +102,7 @@ class TheStrip(unittest.TestCase):
                 self.assertEqual(result, source if expected is None else expected)
 
     def test_a_string_that_is_data_has_the_same_value_before_and_after(self):
-        for name in ("a hash in a string is data", "a multi-line string that is data", "a comment inside a replacement field"):
+        for name in ("a hash in a string is data", "a multi-line string that is data", "a comment inside a replacement field", "a comment in the braces of an f-string with an =, where the white space before it is text"):
             with self.subTest(name):
                 source = SAMPLES[name][0]
                 before, after = {}, {}
@@ -131,6 +133,14 @@ class TheCheck(unittest.TestCase):
                 with self.assertRaises(ss.Problem) as raised:
                     ss.check(self.GOOD, result)
                 self.assertIn(said, str(raised.exception))
+
+    def test_the_white_space_before_a_comment_in_the_braces_of_an_f_string_with_an_equals_sign_is_text_that_python_keeps_so_the_tool_keeps_it(self):
+        source = 'a = 1\nx = f"""{\n    a =  # the comment\n}"""\n'
+        self.assertEqual(ast.parse(source).body[1].value.values[0].value, "\n    a =  \n", "Python 3.12 and 3.13 keep the two spaces in the text of the f-string and leave the comment out of it")
+        with self.assertRaises(ss.Problem) as raised:
+            ss.check(source, 'a = 1\nx = f"""{\n    a =\n}"""\n')
+        self.assertIn("the code changed", str(raised.exception), "a result that cut the two spaces is not the same code")
+        self.assertEqual(ss.strip(source), 'a = 1\nx = f"""{\n    a =  \n}"""\n')
 
     def test_a_line_end_that_python_reads_and_the_tool_does_not_is_refused(self):
         with self.assertRaises(ss.Problem) as raised:
