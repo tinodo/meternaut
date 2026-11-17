@@ -24,13 +24,12 @@ import uuid
 from typing import Callable, Mapping
 
 from . import alerts, letters, quiet
-from .approvals import HELD_PLANS
 from .brief import contact_text
 from .http import Client
 from .loop_config import LoopSettings
 from .mail import Mailer, mail_calls
 from .memory_store import parse
-from .models import ADVISE, HELD, TIME_FORMAT, ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
+from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
 from .people import People, Person
 from .web.common import may_answer
 
@@ -66,7 +65,13 @@ def digest_for(person: Person, store: Store, people: People, base: str, now: dt.
     decided = store.decisions_by(person.oid, 200)
     later = {d.plan_id for d in decided if d.decision == "later"}
     seen = {d.plan_id for d in decided}
-    held = [(plan, store.case_get(plan.case_id)) for plan in store.plans_recent(HELD_PLANS) if plan.state == HELD and plan.plan_id not in seen and principal is not None and may_answer(principal, plan)]
+    held = []
+    for plan in store.plans_held():
+        if plan.plan_id in seen or principal is None or not may_answer(principal, plan):
+            continue
+        case = store.case_get(plan.case_id)
+        if case is not None and case.status in ("needs_human", "proposed"):  # the finding is one that still waits
+            held.append((plan, case))
     return letters.digest_letter(person, base, now, mine, contacts_of(people), later, held)
 
 

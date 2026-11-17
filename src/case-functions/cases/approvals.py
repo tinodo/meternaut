@@ -52,8 +52,7 @@ HELD_WORDS = {**HELD_BACK, "nothing": NOTHING_TO_SAY}
 # answers that ask for nothing. It is no open request, so ADVICE_OPEN_MAX does not count it, no card is made for it, and the Decisions page and the letters of a request do not list it.
 HELD_STATUSES = ("needs_human", "proposed")  # the statuses of the cases that wait with no request
 HELD_CASES = 300  # the latest cases of each of those statuses that settle reads (the start page and cases/learning.py read the same number)
-HELD_PLANS = 1000  # the latest plans that settle reads, and the pages that list the held requests (the store gives at most a thousand)
-HELD_ANSWERS = 200  # of those, the latest that are looked at for the answers that people gave lately (the number that advise reads)
+HELD_ANSWERS = 200  # the latest plans that settle looks at for the answers that people gave lately (the number that advise reads)
 HELD_NEW = 50  # the most held requests that one Watch makes: a Watch that finds more makes the rest at the next one
 HELD_DAYS = 30  # the time that a held request is stamped with: it is closed by settle when nothing holds the finding back, never by the clock
 HELD_NO_APPROVAL = "This finding is held back, so there is no request to approve. Nothing is approved."
@@ -246,7 +245,7 @@ class Approvals:
         if decision == "later":
             return DecideResult(True, "later", "Noted. Nothing is approved. The request stays open, in your list.", plan)
         if decision == "decline":
-            plan = _plan_with(plan, state="declined")
+            plan = _plan_with(plan, state="declined", **_answered(plan, now))
             self.store.plan_put(plan)
             self._set_case(plan.case_id, "declined")
             return DecideResult(True, "declined", "Declined. Nothing has changed.", plan)
@@ -255,7 +254,7 @@ class Approvals:
             self.store.plan_put(plan)
             self._set_case(plan.case_id, "acknowledged")
             return DecideResult(True, "acknowledged", "Recorded: worth acting on. Nothing was changed in Azure.", plan)
-        plan = _plan_with(plan, state="withdrawn")
+        plan = _plan_with(plan, state="withdrawn", **_answered(plan, now))
         self.store.plan_put(plan)
         self._set_case(plan.case_id, "needs_human")
         return DecideResult(True, "not_mine", "Recorded: this resource is not yours. Nothing is approved.", plan)
@@ -512,42 +511,40 @@ class Approvals:
         History line (cases/upkeep.py does, and counts none of them as held back)."""
         try:
             now = self.clock()
-            plans = self.store.plans_recent(HELD_PLANS)
             open_plans = self.store.plans_open()
-            held = {}
-            for plan in plans:
-                if plan.state == HELD:
-                    held.setdefault(plan.case_id, plan)  # newest first
+            silenced = {key.lower() for key in self.store.do_not_touch()}
+            held: dict[str, PlanRecord] = {}
+            for plan in self.store.plans_held():  # newest first
+                if plan.case_id in held:
+                    self._release(plan, now)  # a second request for one case (two Watches at once made it): the newest stays
+                else:
+                    held[plan.case_id] = plan
             released: list[tuple[PlanRecord, CaseRecord | None]] = []
             for case_id, plan in held.items():
                 case = self.store.case_get(case_id)
-                if case is None or case.status not in HELD_STATUSES or any(about_the_same(open_plan, case) for open_plan in open_plans):
+                if case is None or case.status not in HELD_STATUSES or case.resource_id.lower() in silenced or any(about_the_same(open_plan, case) for open_plan in open_plans):
                     ended = True
                 else:
                     why = self._guard(case)
                     ended = not why and case.updated_at > plan.created_at  # judged again, and nothing holds it back now
                     if not ended:
-                        changes = {"preconditions": {**(plan.preconditions or {}), HELD: why}} if why and why != (plan.preconditions or {}).get(HELD) else {}
-                        if changes:
-                            self.store.plan_put(_plan_with(plan, **changes))
+                        self._refresh(plan.plan_id, case, why)
                         if case.plan_id != plan.plan_id:
                             self.store.case_update(case.case_id, lambda kept, plan_id=plan.plan_id: _with(kept, plan_id=plan_id))
                 if ended:
-                    fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
-                    if fresh is not None and fresh.state == HELD:
-                        self.store.plan_put(_plan_with(fresh, state="expired", expires_at=stamp(now), preconditions={**(fresh.preconditions or {}), "takenBack": "released"}))
+                    fresh = self._release(plan, now)
+                    if fresh is not None:
                         released.append((fresh, case))
             if not approvers:
                 return released
             quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
-            answered = [p for p in plans[:HELD_ANSWERS] if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and parse(p.created_at) >= quiet]
-            silenced = {key.lower() for key in self.store.do_not_touch()}
+            answered = [p for p in self.store.plans_recent(HELD_ANSWERS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and parse(p.created_at) >= quiet]
             made = 0
             for status in HELD_STATUSES:
                 for case in self.store.cases_recent(HELD_CASES, status):
                     if made >= HELD_NEW:
                         return released
-                    if (case.case_id in held or case.resource_id.lower() in silenced or any(about_the_same(p, case) for p in (*open_plans, *answered))
+                    if (case.case_id in held or case.resource_id.lower() in silenced or any(about_the_same(p, case) for p in (*open_plans, *answered, *held.values()))
                             or why_not_ask(case) is not None):
                         continue
                     why = self._guard(case)
@@ -559,10 +556,34 @@ class Approvals:
                     plan = build_advice(case, approvers, now, self.settings, held=why)
                     self.store.plan_put(plan)
                     self.store.case_update(case.case_id, lambda kept, plan_id=plan.plan_id: _with(kept, plan_id=plan_id))
+                    held[case.case_id] = plan
                     made += 1
             return released
         except StoreError:
             return []
+
+    def _release(self, plan: PlanRecord, now: dt.datetime) -> PlanRecord | None:
+        """Closes a held request that nothing holds back any more, as expired and ending now, with the reason `released`. It is read again first: a person may have answered it since the list was read, and
+        an answer is never taken back. Returns the plan that it closed, or None."""
+        fresh = self.store.plan_get(plan.plan_id)
+        if fresh is None or fresh.state != HELD:
+            return None
+        fresh = _plan_with(fresh, state="expired", expires_at=stamp(now), preconditions={**(fresh.preconditions or {}), "takenBack": "released"})
+        self.store.plan_put(fresh)
+        return fresh
+
+    def _refresh(self, plan_id: str, case: CaseRecord, why: str) -> None:
+        """Gives a held request that is still held what the case says now: the reason when it changed, and the figure (the page and the letter read the figure of the request, which the Watch
+        judged earlier). It is read again first, and written only while it is still held: an answer that came in since is not undone."""
+        fresh = self.store.plan_get(plan_id)
+        if fresh is None or fresh.state != HELD:
+            return
+        saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
+        changes: dict = {name: value for name, value in (("saving_usd_month", saving), ("waiting_costs_usd_day", round(saving / 30, 2) if saving else None)) if getattr(fresh, name) != value}
+        if why and why != (fresh.preconditions or {}).get(HELD):
+            changes["preconditions"] = {**(fresh.preconditions or {}), HELD: why}
+        if changes:
+            self.store.plan_put(_plan_with(fresh, **changes))
 
     def create(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
         """The plan for a case, or None when no plan can be made (why_not says why). The case moves to awaiting_ok.
@@ -646,6 +667,12 @@ class Approvals:
             if plan is not None:
                 return plan
         return self.advise(case, approvers)
+
+
+def _answered(plan: PlanRecord, now: dt.datetime) -> dict:
+    """What a held request keeps of an answer that closes it (declined, or "not mine"): the time of the answer in `created_at`, so that the quiet days of the finding count from the answer, as they do
+    for a request that is answered within the days that it is open, and not from the day that the held request was made (it can be weeks old)."""
+    return {"created_at": stamp(now)} if plan.state == HELD else {}
 
 
 def _words(state: str) -> str:

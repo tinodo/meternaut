@@ -16,7 +16,7 @@ import re
 
 from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
-from ..models import ADVISE, DECLINE_REASONS, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
+from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
 from .common import brief_of, checked_brief, decisions_for, effective_state, may_answer, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
@@ -260,7 +260,8 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions.", history)
     if kind == "asked":
         plan = _plan_of(ctx, result, plan_id)
-        until = paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe("")
+        until = (paragraph("The finding stays held back until nothing holds it back any more.") if plan is not None and plan.state == HELD
+                 else paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe(""))
         return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet.", until)
     if kind == "later":
         return show("Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list.", back_to=("/", "Back to the decisions"))

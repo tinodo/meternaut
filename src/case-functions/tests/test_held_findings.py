@@ -22,7 +22,7 @@ from cases import brief, events, learning, letters, upkeep
 from cases.approvals import (ADVICE_OPEN_MAX, HELD_BACK, HELD_NEW, HELD_NO_APPROVAL, NOTHING_TO_SAY, RELEASED, ApprovalSettings, Approvals, why_not_ask)
 from cases.families.gates import ChangeScope
 from cases.memory_store import MemoryStore, stamp
-from cases.models import HELD, Principal
+from cases.models import HELD, NoteRecord, Principal
 
 GROUP = "rg-platform"
 BASE = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers"
@@ -136,7 +136,7 @@ class EachReasonMakesTheFindingVisible(Base):
         self.settle()
         first = self.held_of(case.case_id)
         self.assertEqual(self.settle(), [])
-        self.assertEqual([p.plan_id for p in self.store.plans_recent(10) if p.state == HELD], [first.plan_id])
+        self.assertEqual([p.plan_id for p in self.store.plans_held()], [first.plan_id])
 
     def test_the_figure_the_level_and_the_guards_words_are_those_of_the_finding(self):
         case = self.put("automation")
@@ -157,37 +157,37 @@ class EachReasonMakesTheFindingVisible(Base):
                 self.store.case_put(automation())
                 self.store.plan_put(plan)
                 self.settle()
-                self.assertEqual([p for p in self.store.plans_recent(10) if p.state == HELD], [])
+                self.assertEqual(self.store.plans_held(), [])
         self.setUp()
         self.store.case_put(automation())
         self.store.plan_put(make_advice(plan_id="p-old", case_id="k-automation", resource_id=automation().resource_id, state="declined", created_at=days_ago(40)))
         self.settle()
-        self.assertEqual(len([p for p in self.store.plans_recent(10) if p.state == HELD]), 1, "an answer is quiet for 30 days, and then the finding is shown again")
+        self.assertEqual(len(self.store.plans_held()), 1, "an answer is quiet for 30 days, and then the finding is shown again")
 
     def test_waste_that_meternaut_planted_in_a_group_where_it_may_change_is_never_held(self):
         group = "meternaut-test-rg"
         approvals = Approvals(self.store, ApprovalSettings(change_scopes=(ChangeScope(SUB, group),)), lambda: self.now)
         self.store.case_put(automation(resource_group=group))
         approvals.settle((TINO,))
-        self.assertEqual([p for p in self.store.plans_recent(10) if p.state == HELD], [])
+        self.assertEqual(self.store.plans_held(), [])
 
     def test_a_finding_with_little_at_stake_and_nothing_measured_is_not_made_a_request(self):
         quiet = automation(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0)
         self.assertIsNotNone(why_not_ask(quiet))
         self.store.case_put(quiet)
         self.settle()
-        self.assertEqual([p for p in self.store.plans_recent(10) if p.state == HELD], [])
+        self.assertEqual(self.store.plans_held(), [])
 
     def test_nobody_is_made_a_request_when_no_person_can_answer_and_at_most_so_many_are_made_at_a_time(self):
         self.put("automation")
         self.settle(())
-        self.assertEqual(self.store.plans_recent(10), [])
+        self.assertEqual(self.store.plans_held(), [])
         for number in range(HELD_NEW + 5):
             self.store.case_put(automation(case_id=f"k-many-{number}", resource_id=f"{BASE}/Microsoft.Foo/bars/b{number}", resource_name=f"b{number}"))
         self.settle()
-        self.assertEqual(len([p for p in self.store.plans_recent(500) if p.state == HELD]), HELD_NEW)
+        self.assertEqual(len(self.store.plans_held()), HELD_NEW)
         self.settle()
-        self.assertEqual(len([p for p in self.store.plans_recent(500) if p.state == HELD]), HELD_NEW + 6, "the rest at the next Watch (and the one that was there before)")
+        self.assertEqual(len(self.store.plans_held()), HELD_NEW + 6, "the rest at the next Watch (and the one that was there before)")
 
     def test_the_limit_of_open_requests_does_not_count_a_held_one_and_a_held_one_does_not_wait_for_a_place(self):
         for number in range(ADVICE_OPEN_MAX - 1):
@@ -197,7 +197,7 @@ class EachReasonMakesTheFindingVisible(Base):
         for reason in ("automation", "unchecked", "impact"):
             self.put(reason)
         self.settle()
-        self.assertEqual(len([p for p in self.store.plans_recent(100) if p.state == HELD]), 3, "the places for requests are full, and the held findings are shown all the same")
+        self.assertEqual(len(self.store.plans_held()), 3, "the places for requests are full, and the held findings are shown all the same")
         last = make_advice_case(case_id="k-last", resource_id=f"{BASE}/Microsoft.Foo/bars/last", resource_name="last", plan_id=None, status="needs_human")
         self.store.case_put(last)
         self.assertIsNotNone(self.approvals.advise(last, (TINO,)), "the nine that are open and the three that are held make twelve plans, and the tenth place is still free")
@@ -245,6 +245,24 @@ class TheAnswersAreTheOnesThatExist(Base):
     def test_only_a_person_who_is_named_for_it_may_answer(self):
         self.assertEqual(self.answer(self.plan, "ask", NOBODY, note="x").kind, "refused_role")
         self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [])
+
+    def test_the_quiet_days_count_from_the_answer_and_not_from_the_day_that_the_held_request_was_made(self):
+        self.store.plan_put(replace(self.plan, created_at=days_ago(40)))  # a held request is made long before a person gets to it
+        self.answer(self.plan, "not_mine")
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).created_at, stamp(self.now))
+        self.settle()
+        self.assertEqual(self.store.plans_held(), [], "it is not asked again for a month")
+        self.assertFalse(learning.OpenQuestions(self.store, self.now).is_open(self.store.case_get(self.case.case_id)))
+
+    def test_an_answer_to_a_held_request_is_no_lesson_about_what_gets_approved(self):
+        self.answer(self.plan, "decline", reason="handled")
+        self.assertEqual((learning.sync(self.store, self.now), self.store.lessons_recent(10)), (0, []))
+
+    def test_the_page_says_that_it_does_not_end_by_the_clock(self):
+        console = held_console("automation")
+        text = console.get("/why/k-automation").main.text()
+        self.assertIn("It ends when nothing holds the finding back any more.", text)
+        self.assertNotIn("open until", text)
 
     def test_the_answers_of_the_brief_have_no_approve_and_only_for_a_person_who_may_answer(self):
         mine = brief.build_brief(self.case, self.plan, now=NOW, may_answer=True)
@@ -308,6 +326,31 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
                 (closed,) = self.settle()
                 self.assertEqual((closed[0].plan_id, self.store.plan_get(self.plan.plan_id).state), (self.plan.plan_id, "expired"))
 
+    def test_a_finding_that_is_judged_again_with_another_figure_shows_the_new_figure_and_a_reason_that_changed_is_kept(self):
+        self.judged_again(self.case, saving_usd_month=60.0, cost_usd_30d=60.0)
+        self.assertEqual(self.settle(), [])
+        plan = self.held_of(self.case.case_id)
+        self.assertEqual((plan.plan_id, plan.saving_usd_month, plan.waiting_costs_usd_day), (self.plan.plan_id, 60.0, 2.0))
+        self.assertEqual(brief.build_brief(self.store.case_get(self.case.case_id), plan, now=self.now).saving.monthly, 60.0)
+        self.judged_again(self.store.case_get(self.case.case_id), owner={})
+        self.judged_again(self.store.case_get(self.case.case_id), recommendation="delete", facts=MEASURED, resource_type="microsoft.compute/disks")
+        self.settle()
+        self.assertEqual(brief.held_of(self.held_of(self.case.case_id)), "unchecked")
+
+    def test_a_do_not_touch_mark_that_is_made_after_the_request_closes_it(self):
+        self.store.note_put(NoteRecord(note_id="n1", oid=TINO, kind="do_not_touch", text="leave it", scope_resource_id=self.case.resource_id, created_at=stamp(self.now)))
+        (closed,) = self.settle()
+        self.assertEqual((closed[0].plan_id, self.store.plans_held()), (self.plan.plan_id, []))
+
+    def test_a_stray_second_request_for_one_case_is_closed_quietly_and_two_cases_of_one_resource_get_one_request(self):
+        self.store.plan_put(replace(self.plan, plan_id="p-stray", created_at=days_ago(2)))
+        self.assertEqual(self.settle(), [], "it is no news: nobody saw it twice")
+        self.assertEqual([p.plan_id for p in self.store.plans_held()], [self.plan.plan_id])
+        self.assertEqual(self.store.plan_get("p-stray").preconditions["takenBack"], "released")
+        self.store.case_put(automation(case_id="k-twin"))  # the same resource, found by another detector
+        self.settle()
+        self.assertEqual([p.plan_id for p in self.store.plans_held()], [self.plan.plan_id])
+
     def test_an_open_request_for_the_resource_closes_it_and_a_second_request_is_not_made_for_the_same_finding(self):
         self.store.plan_put(make_advice(plan_id="p-normal", case_id=self.case.case_id, resource_id=self.case.resource_id))
         (closed,) = self.settle()
@@ -353,6 +396,25 @@ class TheHistoryWordsStayAsTheyAre(Base):
         self.assertEqual(held["reason"], "held back: managed by an automation")
         self.assertEqual((self.store.plan_get("p-old").state, brief.held_of(self.held_of("k-automation"))), ("expired", "automation"))
         self.assertEqual([line for line in self.lines.found if line["type"] == "case.released"], [])
+
+
+class TheStoreKeepsThemApart(Base):
+    def test_the_recent_plans_leave_out_the_held_ones_so_that_a_bulk_of_them_crowds_nothing_and_they_have_a_query_of_their_own(self):
+        for reason in ("automation", "unchecked", "impact"):
+            self.put(reason)
+        self.settle()
+        self.store.plan_put(make_advice(plan_id="p-old", case_id="k-old", state="declined", created_at=days_ago(20)))
+        self.assertEqual([p.plan_id for p in self.store.plans_recent(10)], ["p-old"])
+        self.assertEqual(sorted(p.case_id for p in self.store.plans_held()), ["k-automation", "k-impact", "k-unchecked"])
+        self.assertEqual(self.store.plans_open(), [])
+
+
+class TheLettersAndPagesLeaveOutWhatDoesNotWaitAnyMore(unittest.TestCase):
+    def test_the_letter_does_not_mention_a_finding_that_was_dropped_since_its_request_was_made(self):
+        console = held_console("automation")
+        console.store.case_put(replace(console.store.case_get("k-automation"), status="dropped"))
+        self.assertEqual(desk(console).sent, [])
+        self.assertNotIn("/why/k-automation", console.get("/").links())
 
 
 class TheWordsAreWrittenOnce(unittest.TestCase):
@@ -435,7 +497,7 @@ class ThePageOfAHeldFinding(unittest.TestCase):
 
     def test_an_approval_posted_for_it_is_refused_and_records_nothing(self):
         console = held_console("automation")
-        plan = next(p for p in console.store.plans_recent(10) if p.state == HELD)
+        plan = console.store.plans_held()[0]
         reply = console.post(f"/ok/{plan.plan_id}", {"decision": "approve", "code": plan.code, "nonce": console.store.nonce_new(TINO, plan.plan_id), "note": ""})
         self.assertEqual(reply.status, 409)
         self.assertEqual((console.store.decisions_of_plan(plan.plan_id), console.store.plan_get(plan.plan_id).state, console.store.case_get("k-automation").status), ([], HELD, "needs_human"))
@@ -535,7 +597,8 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
         owner = {"lookedUp": True, "automatedAt": days_ago(2)}
         console.store.case_put(finding("needs_human", case_id="c-bill", owner=owner, detector="orphan-managed-disk", recommendation="investigate"))
-        console.store.case_put(finding("needs_human", case_id="c-advisor", owner=owner))
+        console.store.case_put(finding("needs_human", case_id="c-advisor", owner=owner, resource_id=f"{BASE}/Microsoft.Compute/disks/disk-advisor", resource_name="disk-advisor",
+                                       resource_group="rg-advisor"))
         approvals.settle((TINO,))
         table = console.get(SAVINGS).table("held-automation")
         levels = sorted(re.findall(r"Saves, (\w+)\.", " ".join(row["Saving a year"] for row in table.rows)))
@@ -581,7 +644,7 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
 
     def test_a_person_who_is_not_named_gets_none_and_one_who_answered_it_does_not_get_it_again(self):
         console = held_console("automation")
-        plan = next(p for p in console.store.plans_recent(10) if p.state == HELD)
+        plan = console.store.plans_held()[0]
         console.store.plan_put(replace(plan, approvers=(ENV_OPS,)))
         self.assertEqual(desk(console).sent, [], "nobody else is named")
         console.store.plan_put(replace(plan, approvers=(ENV_TINO,)))

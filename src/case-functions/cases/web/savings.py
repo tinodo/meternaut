@@ -140,8 +140,8 @@ def _row(group: Group) -> list:
 def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:
     """Takes the findings that a guard holds back (the request of each is in the state HELD) out of the row of what waits for a person and makes their own row of them, so that no finding is in
     two rows and no figure is added twice. None when no finding is held, or the plans cannot be read (they stay where they were)."""
-    plans, ok = read(lambda: ctx.store.plans_recent(PER), [])
-    held = {plan.case_id: plan for plan in reversed(plans) if plan.state == HELD}  # the newest request of a finding wins
+    plans, ok = read(lambda: ctx.store.plans_held(), [])
+    held = {plan.case_id: plan for plan in reversed(plans)}  # the newest request of a finding wins
     mine = [case for case in waiting.cases if ok and case.case_id in held and case.status in ("needs_human", "proposed")]
     if not mine:
         return None, {}

@@ -14,7 +14,7 @@ from typing import Mapping, Sequence
 
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
-from ..models import ADVICE_QUIET_DAYS, ADVISE, HELD, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
+from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import (brief_of, cases_by_id, counted as _count, decisions_for, effective_state, is_expired, may_answer, measured_tile, read,
                      verified_brief)
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
@@ -31,7 +31,6 @@ RECENT_ACTIONS = 100
 HELD_CASES = 300  # the cases of each status that are looked at for the findings that are held back (the same number as cases/learning.py reads)
 HELD_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as cases/learning.py reads)
 HELD_LISTED = 10  # the findings that a guard holds back which the start page lists, each with a link: the page of savings found has all of them
-HELD_READ = 1000  # the plans that are read for them (the store gives at most a thousand)
 SORTS = (("impact", "Impact", "Most at stake first."), ("age", "Age", "Waiting longest first."), ("risk", "Risk", "Lowest risk first."))
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
@@ -324,8 +323,8 @@ def _held(ctx: Ctx) -> Safe:
 
 def _held_rows(ctx: Ctx) -> list[tuple[str, Safe]]:
     """One line for each finding that a guard holds back and that this person is named for, with the id of its case: its title with a link to its page, its figure, and why no request was made."""
-    plans, _ = read(lambda: ctx.store.plans_recent(HELD_READ), [])
-    mine = [plan for plan in plans if plan.state == HELD and may_answer(ctx.principal, plan)]  # type: ignore[arg-type]
+    plans, _ = read(lambda: ctx.store.plans_held(), [])
+    mine = [plan for plan in plans if may_answer(ctx.principal, plan)]  # type: ignore[arg-type]
     cases = cases_by_id(ctx, {plan.case_id for plan in mine})
     rows = []
     for plan in mine:
