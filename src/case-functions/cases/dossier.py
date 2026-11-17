@@ -86,22 +86,15 @@ def _metrics(tb, box: "Toolbox", plans: "dict | str", found: object, hourly: boo
     return block, measured
 
 
-def _links(tb, box: "Toolbox", state, number: "int | None") -> dict:
+def _links(box: "Toolbox", state, number: "int | None") -> dict:
     """What a resource refers to and what refers to it, as a row for each type and relation with its count and the cost of those that have one (cases/neighbors.py)."""
+    if number is None:
+        return {"listed": False}  # a part that Resource Graph does not list as a resource, or one that the pass did not keep
+    box._prefetch_costs(sub for sub in {box._sub_of(state.names[other]) for edges in (state.out.get(number, []), state.into.get(number, [])) for other, _ in edges} if sub)
     block: dict = {}
-    for name, edges in (("refers_to", state.out.get(number, [])), ("referred_by", state.into.get(number, []))) if number is not None else ():
-        groups: dict[tuple[str, str], list] = {}
-        for other, relation in edges:
-            key = state.names[other]
-            usd = box._usd_of(key)
-            group = groups.setdefault((tb.type_word(tb.type_of_id(key)) or tb.OTHER, relation), [0, None])
-            group[0] += 1
-            group[1] = group[1] if usd is None else (group[1] or 0.0) + usd
-        ranked = sorted(groups.items(), key=lambda item: (-(item[1][1] or 0.0), -item[1][0], item[0]))
-        block[name] = {"total": len(edges), "cols": ["type", "relation", "count", "usd30d"],
-                       "rows": [[kind, relation, count, None if usd is None else tb._cents(tb._money(usd))] for (kind, relation), (count, usd) in ranked[:LINK_ROWS]]}
-        if len(ranked) > LINK_ROWS:
-            block[name]["rows_not_shown"] = len(ranked) - LINK_ROWS
+    for name, edges in (("refers_to", state.out.get(number, [])), ("referred_by", state.into.get(number, []))):
+        rows = box._grouped([(state.names[other], relation, box._usd_of(state.names[other])) for other, relation in edges])
+        block[name] = {"total": len(edges), "cols": ["type", "relation", "count", "usd30d"], "rows": rows[:LINK_ROWS], **({"rows_not_shown": len(rows) - LINK_ROWS} if len(rows) > LINK_ROWS else {})}
     return block
 
 
@@ -158,7 +151,7 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
         part["metrics"], measured = (word, {}) if word else _metrics(tb, box, plans[handle], found, hourly)
         if isinstance(part["metrics"], dict):
             lists += [(part["metrics"]["rows"], part["metrics"], "rows"), (part["metrics"].get("no_data", []), part["metrics"], "no_data")]
-        part["links"] = graph[0] or ({"complete": False} if not graph[1].done else _links(tb, box, graph[1], graph[1].ids.get(entry.key)))
+        part["links"] = graph[0] or ({"complete": False} if not graph[1].done else _links(box, graph[1], graph[1].ids.get(entry.key)))
         word, found = _outcome(tb, ("advisor", entry.sub), done, left)
         advice = [item for item in found or [] if item.resource_id.lower() == entry.key][:ADVISOR_ROWS]
         if word:

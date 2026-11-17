@@ -2619,17 +2619,22 @@ class Toolbox:
                 rows[-1].pop()
         block: dict = {"total": len(ordered), "cols": list(NEIGHBOR_COLUMNS), "rows": rows}
         if len(ordered) > FAN_IN and not offset:
-            groups: dict[tuple[str, str], list] = {}
-            for key, relation, usd in ordered:
-                group = groups.setdefault((type_word(type_of_id(key)) or OTHER, relation), [0, None])
-                group[0] += 1
-                group[1] = group[1] if usd is None else (group[1] or 0.0) + usd
-            counted = sorted(groups.items(), key=lambda item: (-(item[1][1] or 0.0), -item[1][0], item[0]))
-            block["summary"] = {"cols": ["type", "relation", "count", "usd30d"], "rows": [[kind, relation, count, None if usd is None else _cents(_money(usd))]
-                                                                                           for (kind, relation), (count, usd) in counted[:NEIGHBOR_GROUPS]]}
+            counted = self._grouped(ordered)
+            block["summary"] = {"cols": ["type", "relation", "count", "usd30d"], "rows": counted[:NEIGHBOR_GROUPS]}
             if len(counted) > NEIGHBOR_GROUPS:
                 block["summary"]["rows_not_shown"] = len(counted) - NEIGHBOR_GROUPS
         return block, rows, entries
+
+    @staticmethod
+    def _grouped(priced: "list[tuple[str, str, float | None]]") -> list[list]:
+        """The resources that links join (their lower-case id, the relation and the cost) as a row for each type and relation, the dearest first: [type, relation, count, the cost of those that have one]."""
+        groups: dict[tuple[str, str], list] = {}
+        for key, relation, usd in priced:
+            group = groups.setdefault((type_word(type_of_id(key)) or OTHER, relation), [0, None])
+            group[0] += 1
+            group[1] = group[1] if usd is None else (group[1] or 0.0) + usd
+        ranked = sorted(groups.items(), key=lambda item: (-(item[1][1] or 0.0), -item[1][0], item[0]))
+        return [[kind, relation, count, None if usd is None else _cents(_money(usd))] for (kind, relation), (count, usd) in ranked]
 
     def _tool_neighbors(self, args: dict) -> dict:
         entry, direction, offset = self._entry(args["handle"]), args["direction"], args["offset"] or 0
@@ -2656,6 +2661,7 @@ class Toolbox:
             lists.append((rows, block, "rows"))
             if "summary" in block:
                 lists.append((block["summary"]["rows"], block["summary"], "rows"))
+        answer.update(self._caveats([], {self._sub_of(state.names[number]) for name in wanted for number, _ in sides[name]} - {None}))
         self._fit(answer, lists)
         for name, (rows, entries) in zip(wanted, shown):
             block = answer[name]
@@ -2735,6 +2741,9 @@ class Toolbox:
             events, complete = found if isinstance(found, tuple) else (None, False)
             system, made = self._aged.get(entry.key, (None, None))
             record[handle] = ownership.history(self.now, system, made, events, complete, entry.resource.resource_id)
+        if self.owners is not None and self.owners.notes:
+            self.notes.extend(self.owners.notes)  # what the reader says of reads that its budget did not allow, or that failed
+            self.owners.notes.clear()
         return record
 
     def _tool_changes(self, args: dict) -> dict:

@@ -616,6 +616,17 @@ class TheProfile(unittest.TestCase):
         self.assertEqual(part["history"]["age_days"], "over-90")
         self.assertEqual(len(estate.requests()), 10, "five groups of metrics that share a grain and aggregations, and the metric of one minute in five windows of six days: not one for each metric")
 
+    def test_the_metrics_with_a_value_above_nil_come_first_and_then_the_zeros_each_by_name(self):
+        estate = profiled(1)
+        estate.definitions[WIDGET] = [definition(name) for name in ("A Zero", "B Zero", "C Positive", "D Positive", "E Empty")]
+        w1 = estate.id_of("w1").lower()
+        for name, total in (("A Zero", 0), ("B Zero", 0), ("C Positive", 4), ("D Positive", 5)):
+            estate.series[(w1, name)] = [at(day(30), total=total, maximum=total, average=total)]
+        estate, box = opened(estate, 1)
+        metrics = ask(box, "profile", handles=["r1"])["profiles"][0]["metrics"]
+        self.assertEqual([item["metric"] for item in table(metrics)], ["C Positive", "D Positive", "A Zero", "B Zero"])
+        self.assertEqual(metrics["no_data"], ["E Empty"])
+
     def test_the_metrics_of_mixed_grains_are_read_at_the_grain_that_each_offers_and_by_the_hour_with_the_peak_and_the_95th_percentile(self):
         estate, box = opened(self.estate())
         w1 = estate.id_of("w1").lower()

@@ -70,7 +70,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "9f4ace3f5d8ff88949af17dc523ac13492a19f98ce5feac8e9fb0d8af54a5855"
+    "moduleSha256": "0a41661f85698b2a3d2e7e8ba703444e61f70ad4d2af71712cad8e19a2015be8"
   },
   "tools": {
     "advisor_items": {
@@ -146,7 +146,7 @@
       "schemaSha256": "0960d57f469511f28b81b4d13c4fad30e41ee1dbdd61baec7345897c063b4869"
     },
     "neighbors": {
-      "implementationSha256": "7f318c9f1385161bc40961e46742f9d57eff96f5a13fb867b0a908f19d50af13",
+      "implementationSha256": "70aa77ec4c680a94ad52c021820aea5fb04d12d407be2d57dfc88874a9a4ec10",
       "schemaSha256": "2de4989081f20c825c059cbb097ad2665c8d315e22011218b3a57632a09a9afd"
     },
     "paid_features": {
