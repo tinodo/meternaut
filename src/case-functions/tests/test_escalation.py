@@ -2,11 +2,14 @@ import dataclasses
 import datetime as dt
 import itertools
 import json
+import re
 import unittest
 from collections import Counter
+from types import SimpleNamespace
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import brief as brief_mod, escalation, http, loop_config, mail
+from cases import brief as brief_mod, escalation, http, loop_config, mail, run as run_mod
+from cases.approvals import ApprovalSettings, Approvals
 from cases.escalation import Ladder
 from cases.memory_store import MemoryStore, parse, stamp
 from cases.models import DecisionRecord, EscalationRecord, SettingsRecord
@@ -246,6 +249,15 @@ class TheLadder(unittest.TestCase):
         to_contact = world.mail.sent_to("cora@example.com")
         self.assertTrue(any("Review and decide" in call[2] for call in to_contact))
         self.assertFalse(any("you are not on it yet" in call[2] for call in to_contact))
+
+    def test_a_request_that_carries_an_older_start_is_asked_by_that_start_and_never_in_a_burst(self):
+        world = World()
+        world.store.plan_put(dataclasses.replace(world.store.plan_get("p1"), waiting_since=stamp(START - 10 * DAY)))
+        world.tick(3)
+        self.assertEqual([r.number for r in world.steps()], [1], "one catch-up step for each round, and the next only a day later")
+        world.clock.advance(days=1)
+        world.tick()
+        self.assertEqual([r.number for r in world.steps()], [1, 2])
 
     def test_no_step_is_made_for_a_request_that_is_not_open(self):
         world = World()
@@ -542,6 +554,106 @@ class TheTold(unittest.TestCase):
         world.tick(2)
         (letter,) = world.mail.sent_to("mae@example.com")
         self.assertIn("Ada (asked first): held: Quiet hours", letter[2])
+
+
+OTHER = "11111111-2222-4333-8444-666666666666"
+SUBSCRIPTION = f"/subscriptions/{SUB}"
+DELETED = f"{SUBSCRIPTION}/resourcegroups/rg-deleted"
+GONE_DISK = f"{GROUP}/providers/microsoft.compute/disks/d2"
+
+
+class Azure:
+    """Resource Graph as far as the check of a resource needs it: the ids of its table of containers, the resources of its other table with their types, and what a read does (`fail` on a query
+    that holds `fail_on`)."""
+
+    def __init__(self, containers=(SUBSCRIPTION, GROUP), resources=((LOWER, "microsoft.compute/disks"),), fail=None, fail_on=""):
+        self.containers, self.resources, self.fail, self.fail_on, self.queries = {i.lower() for i in containers}, {i.lower(): t for i, t in resources}, fail, fail_on, []
+
+    def graph(self, subscription, query):
+        self.queries.append(query)
+        if self.fail and self.fail_on in query:
+            raise self.fail
+        if "count() by type" in query:
+            return [{"type": t, "count_": 1} for t in sorted(set(self.resources.values()))]
+        table = self.containers if query.startswith("resourcecontainers ") else set(self.resources)
+        return [{"id": i} for i in sorted({i.lower() for i in re.findall(r"id =~ '([^']+)'", query)} & table)]
+
+
+class TheResourceThatIsGone(unittest.TestCase):
+    def test_a_resource_is_gone_only_when_it_is_certain_and_never_for_a_type_that_resource_graph_does_not_list(self):
+        plans = [advice("there", resource_id=LOWER), advice("gone", resource_id=GONE_DISK), advice("group", resource_id=f"{DELETED}/providers/microsoft.foo/bars/b1"),
+                 advice("deleted", resource_id=DELETED), advice("unlisted", resource_id=f"{GROUP}/providers/microsoft.foo/bars/b2"),
+                 advice("elsewhere", resource_id=f"/subscriptions/{OTHER}/resourcegroups/rg-y/providers/microsoft.compute/disks/d9")]
+        self.assertEqual(escalation.existence(Azure(), plans), {"there": "there", "gone": "gone", "group": "gone", "deleted": "gone", "unlisted": "type", "elsewhere": "invisible"})
+
+    def test_an_id_that_is_not_one_and_a_subscription_are_never_asked_about(self):
+        arm = Azure()
+        plans = [advice("odd", resource_id=f"{LOWER}' | take 1"), advice("subscription", resource_id=SUBSCRIPTION), advice("none", resource_id="")]
+        self.assertEqual((escalation.existence(arm, plans), arm.queries), ({}, []))
+
+    def test_every_request_is_asked_about_however_many_there_are(self):
+        ids = [f"{GROUP}/providers/microsoft.compute/disks/n{n:03d}" for n in range(100)]
+        answer = escalation.existence(Azure(resources=[(i, "microsoft.compute/disks") for i in ids[:90]]), [advice(f"p{n}", resource_id=i) for n, i in enumerate(ids)])
+        self.assertEqual(Counter(answer.values()), Counter(there=90, gone=10))
+        self.assertEqual({word for plan_id, word in answer.items() if int(plan_id[1:]) >= 90}, {"gone"})
+
+    def test_a_subscription_that_the_watch_did_not_read_in_full_is_never_judged(self):
+        arm, asked = Azure(), []
+        self.assertEqual(escalation.existence(arm, [advice("gone", resource_id=GONE_DISK)], lambda subscription: asked.append(subscription) or False), {"gone": "partial"})
+        self.assertEqual((asked, arm.queries), ([SUB], []))
+
+    def test_a_read_that_fails_or_is_told_to_wait_judges_nothing_whichever_of_its_queries_it_is(self):
+        for fail in (http.HttpError(429, "slow down", retry_after=20), RuntimeError("down")):
+            for fail_on in ("resourcecontainers", "resources |", "count() by type"):
+                with self.subTest(fail=type(fail).__name__, query=fail_on):
+                    self.assertEqual(escalation.existence(Azure(fail=fail, fail_on=fail_on), [advice("gone", resource_id=GONE_DISK)]), {"gone": "read"})
+
+
+class TheTakingBack(unittest.TestCase):
+    def test_a_request_that_is_gone_is_taken_back_with_its_reason_shown_and_one_that_was_answered_meanwhile_stays(self):
+        world = World(plans=2)
+        world.store.plan_put(dataclasses.replace(world.store.plan_get("p2"), state="declined"))
+        closed = Approvals(world.store, ApprovalSettings(change_scopes=()), world.clock).take_back_gone(["p1", "p2", "nobody"])
+        self.assertEqual([plan.plan_id for plan in closed], ["p1"])
+        after = world.store.plan_get("p1")
+        self.assertEqual((after.state, after.preconditions["takenBack"], after.expires_at, world.store.case_get("c1").status), ("expired", "gone", stamp(world.clock.now), "expired"))
+        self.assertEqual(world.store.plan_get("p2").state, "declined")
+        shown = brief_mod.build_brief(world.store.case_get("c1"), after, None, (), now=world.clock.now).outcome
+        self.assertEqual((shown.title, shown.lines[0]), ("Taken back: the resource is gone", brief_mod.TAKEN_BACK["gone"]))
+
+    def test_the_ladder_takes_back_a_request_whose_resource_is_gone_before_a_step_and_never_on_a_read_that_failed(self):
+        for label, arm, state, steps in (("gone", Azure(), "expired", 0), ("there", Azure(resources=((GONE_DISK, "microsoft.compute/disks"),)), "open", 1),
+                                         ("throttled", Azure(fail=http.HttpError(429, "slow down", retry_after=20)), "open", 1)):
+            with self.subTest(label):
+                clock, mailer = Clock(), SendMail()
+                store = MemoryStore(clock)
+                store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1"))
+                store.plan_put(advice(resource_id=GONE_DISK))
+                on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=mailer, sleep=lambda s: None,
+                                           monotonic=lambda: 0.0, clock=clock, approvals=Approvals(store, ApprovalSettings(change_scopes=()), clock))
+                clock.advance(days=3)
+                self.assertEqual(on_round(arm, lambda kind, **fields: None), steps)
+                after = store.plan_get("p1")
+                self.assertEqual((after.state, after.preconditions.get("takenBack", ""), len(store.escalations_of("p1")), len(mailer.calls)), (state, "gone" if state == "expired" else "", steps, steps))
+
+    def test_the_watch_takes_back_only_in_a_subscription_that_it_read_in_full_and_says_why_it_did_not_look(self):
+        def read(failed=0, recent=set(), groups=set()):
+            return SimpleNamespace(sources_failed=failed, context=SimpleNamespace(recent=recent, managed_groups=groups))
+        for label, collected, arm, state, said in (
+                ("in full", {SUB: read()}, Azure(), "expired", ["1 request was taken back: the resource is gone"]),
+                ("a source failed", {SUB: read(failed=1)}, Azure(), "open", ["1 request: whether the resource is still there was not checked (the subscription was not read in full)"]),
+                ("no recent creations", {SUB: read(recent=None)}, Azure(), "open", ["1 request: whether the resource is still there was not checked (the subscription was not read in full)"]),
+                ("not read", {}, Azure(), "open", ["1 request: whether the resource is still there was not checked (the subscription was not read in full)"]),
+                ("throttled", {SUB: read()}, Azure(fail=http.HttpError(429, "slow down", retry_after=20)), "open",
+                 ["1 request: whether the resource is still there was not checked (the read failed or the service asked to wait)"])):
+            with self.subTest(label):
+                clock = Clock()
+                store, notes = MemoryStore(clock), []
+                store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1"))
+                store.plan_put(advice(resource_id=GONE_DISK))
+                services = SimpleNamespace(arm=arm, extras=SimpleNamespace(store=store, approvals=Approvals(store, ApprovalSettings(change_scopes=()), clock)), redact=str)
+                run_mod._take_back_gone(services, SimpleNamespace(collected=collected), notes.append)
+                self.assertEqual((store.plan_get("p1").state, notes), (state, said))
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):

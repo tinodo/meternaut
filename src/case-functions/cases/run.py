@@ -523,6 +523,23 @@ def _revive(s: Services, say: Callable[[str], None]) -> None:
         say(f"the requests that a clock closed could not be opened again ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
+def _take_back_gone(s: Services, estate: "detectors.Estate", say: Callable[[str], None]) -> None:
+    """Takes back the open requests whose resource is not in Azure any more (cases/escalation.py existence), and only in a subscription that this Watch read in full: one that was read in part, whose read
+    failed or was asked to wait is never judged, and the note says how many requests were not checked and why. It never fails the run."""
+    def full(subscription: str) -> bool:
+        found = estate.collected.get(subscription)
+        return found is not None and found.sources_failed == 0 and found.context.recent is not None and found.context.managed_groups is not None
+    try:
+        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full)
+        closed = s.extras.approvals.take_back_gone([plan_id for plan_id, word in answer.items() if word == "gone"])
+        if closed:
+            say(f"{len(closed)} request{'s were' if len(closed) != 1 else ' was'} taken back: the resource is gone")
+        for word, count in Counter(word for word in answer.values() if word in escalation.UNCHECKED).items():
+            say(f"{count} request{'s' if count != 1 else ''}: whether the resource is still there was not checked ({escalation.UNCHECKED[word]})")
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"whether the resources of the open requests are still there could not be checked ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
 def execute(s: Services, trigger: str) -> Summary:
     h, st = s.history, s.settings
     started = s.monotonic()
@@ -706,6 +723,7 @@ def execute(s: Services, trigger: str) -> Summary:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
         _revive(s, say)
+        _take_back_gone(s, estate, say)  # after the revival: a request that comes back for a resource that is gone is taken back at once
         if not s.extras.escalating:
             h.emit("escalation.off", reason="no mail sender")  # a request that nobody answers is not passed on without one: the History says so at each Watch
     summary.held += sum(held.values())

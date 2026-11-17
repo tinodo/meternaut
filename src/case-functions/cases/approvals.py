@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass, replace
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
@@ -502,6 +502,23 @@ class Approvals:
             return closed
         except StoreError:
             return []
+
+    def take_back_gone(self, plan_ids: Collection[str]) -> list[PlanRecord]:
+        """Takes back, as expired and ending now with the reason `gone`, the open requests whose resource is not in Azure any more (cases/escalation.py existence says which): there is nothing left
+        to decide, and nothing else ends a request now that no clock does. It is read again first, and a request that a person answered since stays. Returns the plans that it took back."""
+        closed = []
+        try:
+            for plan_id in plan_ids:
+                fresh = self.store.plan_get(plan_id)
+                if fresh is None or fresh.state != "open":
+                    continue
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": "gone"})
+                self.store.plan_put(fresh)
+                self._set_case(fresh.case_id, "expired")
+                closed.append(fresh)
+        except StoreError:
+            pass
+        return closed
 
     def _guard(self, case: CaseRecord) -> str:
         """The reason (a key of brief.HOLD_WORDS) that a guard holds a finding back now, or "" when none does: a rule of brief.held_reason, or a finding that cannot say what to look at."""

@@ -114,6 +114,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more.",
               "group": "Meternaut took this request back: it was one of several requests about single resources, and one request for the whole group of them waits now.",
               "nothing": "Meternaut took this request back: the finding does not say what to look at.",
+              "gone": "Meternaut took this request back: the resource is not in Azure any more, so there is nothing left to decide.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
@@ -1639,8 +1640,8 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            title = {"released": "No longer held back", "left-alone": "Left alone"}.get(why, "Taken back")
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone") else "Taken back by Meternaut", "", plan.expires_at)
+            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone"}.get(why, "Taken back")
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone", "gone") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
     if state == "declined":
