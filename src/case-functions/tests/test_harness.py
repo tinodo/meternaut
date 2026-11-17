@@ -734,6 +734,25 @@ class TheRun(unittest.TestCase):
         self.assertEqual((line["outcome"], line["reason"], line["tokens"]), ("failed", "tokens", 264_000), "the History says why")
         self.assertEqual((r.pulled(), r.letters), ([], []), "a beat that goes on after its cap is a failed beat and no trip: the switch stays as it was")
 
+    def test_a_beat_that_goes_over_its_tokens_and_is_asked_once_more_for_its_answer_is_an_answer_and_trips_nothing(self):
+        r = Rigged()
+        asks = [reply([one({"handle": f"r{n}"}, f"c{n}")], 60_000, 6_000) for n in range(1, 5)]
+        result = r.run(*asks, reply([message("saved")], 70_000, 1_000), max_tokens=100_000, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_tokens), ("saved", True, True))
+        with LogCapture() as capture:
+            r.harness.close()
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"], line["tokens"]), ("ok", "salvaged", 4 * 66_000 + 71_000), "a beat that was cut off and gave its answer: said so, whatever it cost")
+        self.assertEqual((r.pulled(), r.letters), ([], []))
+        r = Rigged()
+        with self.assertRaises(BeatOverTokens):
+            r.run(*asks, reply([one({"handle": "r9"}, "c9")], 70_000, 1_000), max_tokens=100_000, salvage=lambda: 25.0)
+        with LogCapture() as capture:
+            r.harness.close()
+        (line,) = lines(capture, "harness.run")
+        self.assertEqual((line["outcome"], line["reason"]), ("failed", "tokens"), "a last request that asks for a tool is no answer: the beat fails as it did")
+        self.assertEqual((r.pulled(), r.letters), ([], []))
+
     def test_the_hard_limit_of_a_beat_is_twice_its_cap_or_its_cap_and_sixty_thousand_when_that_is_more(self):
         self.assertEqual([hn.beat_limit(cap) for cap in (10_000, 30_000, 60_000, 100_000, 200_000)], [70_000, 90_000, 120_000, 200_000, 400_000])
 

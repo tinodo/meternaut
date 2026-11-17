@@ -56,6 +56,7 @@ INVESTIGATOR_INSTRUCTIONS = (
     "final answer from what you already have.\n"
     "2. Cover the estate before you go deep. When your input names a beat, cover that part of the estate, which code chose by what it costs: its kinds of resource from the first, starting from the pictures "
     "that your input holds, and do not repeat what the beats before it concluded. Leave it only when the links of a resource lead elsewhere. The lines of the bill that no resource owns can be a beat of their own. "
+    "The pictures that you are given already hold what a call would read again: judge them first, ask for more only for a resource or a fact that they lack, and write your answer as soon as you can say what you found. "
     "Without a beat, work down the cost by service that the overview of the estate shows, from the dearest, and do not stop while you "
     "have calls left and the list has services that you did not look at. Prefer a call that covers a whole type (a table of every resource of a type, a "
     "measurement across the whole type) to calls for single resources, and use single-resource calls only for what a whole type shows to be unusual. "

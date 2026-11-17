@@ -47,6 +47,7 @@ CUT_NOTE = " [cut: the answer was longer than the limit]"
 NO_TEXT = "the answer holds no text"
 BUDGET_USED_UP = '{"error":"budget-used-up"}'
 GRACE_ROUNDS = 3  # after the first answer that says so, the agent has this many more rounds to give its text
+SALVAGE_TEXT = "The time or the tokens for this part are used up. Write your final answer now, in the form that you were asked for, from what you have already read, and call no tool."
 # A call that may already have been carried out (a creation, a run) is repeated only when the service says "not now".
 NOT_NOW = {"retry_statuses": frozenset({429, 503}), "retry_network": False}
 # A model that has used the tokens of its deployment for the minute says "not now" (HTTP 429) to the next step of a run, and the first real runs showed that it says
@@ -200,6 +201,12 @@ class AgentRun:
     # True when a call was refused because the soft time of the run was used up (and not the budget of calls), and True when it was refused because the tokens of the run had passed `max_tokens`.
     out_of_time: bool = False
     out_of_tokens: bool = False
+    # True when the run was cut off (its hard time, its tokens, or the rounds that it was given to answer) and one last request, with no tool to call, gave its text: see Foundry.run, `salvage`.
+    salvaged: bool = False
+
+
+class Salvageable(str):
+    """A reason for a `stop` check to end a run that leaves room for the last request that `salvage` allows (the tokens of a beat); any other reason ends it as it always did."""
 
 
 # (tool name, arguments) -> the result as a JSON string that holds typed values only. It never raises.
@@ -375,7 +382,8 @@ class Foundry:
         return found, True
 
     def run(self, agent: str, user_input: str, handler: ToolHandler | None = None, *, max_calls: int = 20, max_seconds: float | None = None,
-            stop: Callable[[AgentRun], str | None] | None = None, max_tokens: int | None = None) -> AgentRun:
+            stop: Callable[[AgentRun], str | None] | None = None, max_tokens: int | None = None, soft_seconds: float | None = None,
+            salvage: Callable[[], float] | None = None) -> AgentRun:
         """Runs the agent on one input, answers each function call of it with `handler`, and returns when the agent gives its text.
 
         `agent` is what ensure_agent returned ("name:version": that version is run) or a name. The calls of one answer are all made and answered in one request.
@@ -395,7 +403,11 @@ class Foundry:
         starts that. A second failure is raised, and so is the first answer when the second one says that `agent` is deprecated: `agent_reference` then stays.
 
         `stop` is the brake of the harness (cases/harness.py): it is called with what the run has come to before every request to the model, the first one too, and a reason that it
-        returns (plain words) ends the run with a FoundryError. A `stop` that raises ends the run too: a brake that cannot decide is a brake that holds."""
+        returns (plain words) ends the run with a FoundryError. A `stop` that raises ends the run too: a brake that cannot decide is a brake that holds.
+
+        `soft_seconds` is the time after which the calls that the agent asks for are refused (the default is SOFT_TIME_SHARE of `max_seconds`). `salvage` is a function that says how many seconds a
+        last request may take (0 for none): when the run is cut off (its hard time, the rounds that it was given, or a `stop` that gives a `Salvageable` reason, the tokens of a beat), that request carries
+        the answers that are waiting and the instruction to write the answer now, and the run returns its text, with `salvaged` True; when it asks for a tool again or fails, the run ends as it would have."""
         reference = self._reference(agent)
         self._model = self._models.get(reference["name"])
         if not isinstance(user_input, str) or not user_input.strip():
@@ -410,7 +422,7 @@ class Foundry:
         now = self.client.monotonic
         began = now()
         deadline = None if max_seconds is None else began + max_seconds
-        soft = None if max_seconds is None else began + SOFT_TIME_SHARE * max_seconds
+        soft = None if max_seconds is None else began + (SOFT_TIME_SHARE * max_seconds if soft_seconds is None else soft_seconds)
         saved = self.client.deadline
         if deadline is not None:
             self.client.deadline = deadline if saved is None else min(saved, deadline)
@@ -420,8 +432,41 @@ class Foundry:
             pending: list[dict] = []
             purpose = "response"
             made = refused = told = 0  # tool calls that were run, tool calls that were refused for the budget, and answers that held a refused call
+
+            def rescue(cause: str) -> bool:
+                """The last request of a run that is cut off: the answers of the calls that are waiting, and the instruction to write the answer now, with a time of its own (`salvage` says how long,
+                0 for none). True when the agent gave its text; any failure is False and the run ends as it would have. A brake that is not the tokens of a beat still holds first."""
+                try:
+                    seconds = salvage() if salvage is not None else 0.0
+                    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not seconds > 0:
+                        return False
+                    if cause != "tokens" and stop is not None and stop(result):
+                        return False
+                except Exception:  # noqa: BLE001 (a check that cannot decide gives no last request)
+                    return False
+                self.client.deadline = now() + seconds if saved is None else min(saved, now() + seconds)
+                try:
+                    item = {"type": "message", "role": "user", "content": [{"type": "input_text", "text": SALVAGE_TEXT}]}
+                    document = self._respond(reference, conversation, [*pending, item], "salvage")
+                    result.responses += 1
+                    self._count(result, document, "salvage")
+                    output = self._output(document, "salvage")
+                    if self._calls(output, "salvage"):
+                        return False  # it asked for a tool again: there is no answer
+                    result.text = self._text(output, "salvage")
+                except FoundryError:
+                    return False
+                result.salvaged = True
+                if cause == "time":
+                    result.out_of_time = True
+                elif cause == "tokens":
+                    result.out_of_tokens = True
+                return True
+
             while True:
                 if deadline is not None and now() >= deadline:
+                    if rescue("time"):
+                        return result
                     raise self._error(f"Foundry run stopped: the time allowed ({max_seconds:g} seconds) was used up after {made} tool calls"
                                       + (f" and {refused} that were refused" if refused else ""))
                 if stop is not None:
@@ -430,6 +475,8 @@ class Foundry:
                     except Exception:  # noqa: BLE001 (a brake that cannot decide holds)
                         why = "the stop check failed"
                     if why:
+                        if isinstance(why, Salvageable) and rescue("tokens"):
+                            return result
                         raise self._error(f"Foundry run stopped by the harness: {why}")
                 document = self._respond(reference, conversation, pending, purpose)
                 result.responses += 1
@@ -458,7 +505,9 @@ class Foundry:
                 if refused > before:
                     told += 1
                     if told > GRACE_ROUNDS:
-                        spent = (f"the time for tool calls ({SOFT_TIME_SHARE * max_seconds:g} seconds) was used up" if result.out_of_time
+                        if rescue("grace"):
+                            return result
+                        spent = (f"the time for tool calls ({(SOFT_TIME_SHARE * max_seconds if soft_seconds is None else soft_seconds):g} seconds) was used up" if result.out_of_time
                                  else f"the tokens for tool calls ({max_tokens}) were used up" if result.out_of_tokens else f"the budget of {max_calls} tool calls was used up")
                         raise self._error(f"Foundry run stopped: {spent} and the agent still asked for a tool call after {GRACE_ROUNDS} more rounds, and gave no text")
                 purpose = "function output"
