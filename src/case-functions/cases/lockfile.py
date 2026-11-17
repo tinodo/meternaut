@@ -1,7 +1,7 @@
 """The lock of the agents: what each agent of the investigation is allowed to be, as hash values, and the one way to compare a definition with it.
 
 `agents.lock.json` (next to this file, so that it travels in the package) holds, for each agent, the model alias, the SHA-256 of its instructions, the SHA-256 of the
-canonical schemas of its tools and the options that are expected, and, for each tool, the SHA-256 of its schema and of the source of the code that runs it. It holds no id,
+canonical schemas of its tools and the options that are expected, and, for each tool, the SHA-256 of its schema and of the code that runs it (`code_form`: the syntax tree, not the text). It holds no id,
 no name and no address of an estate: a definition is made of what this repository says, and the lock is made from it by `tools/agents-lock.py write`. A changed definition is a
 release: one pull request changes the code and the lock together, and a test fails when they differ. Nobody changes an agent in the portal.
 
@@ -14,13 +14,14 @@ This module is standard library only and imports nothing of the package, so that
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import inspect
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
 
 SCHEMA = 1
 FILE_NAME = "agents.lock.json"
@@ -61,25 +62,55 @@ def digest(value: object) -> str:
     return sha256_text(canonical(value))
 
 
-def normalize_source(text: str) -> str:
-    """Source code as it is hashed: line ends are LF, no white space at the end of a line, no empty lines at the end. A checkout on Windows and one on Linux then hash alike."""
-    lines = [line.rstrip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-    return "\n".join(lines).rstrip("\n") + "\n"
+def docstrings(tree: ast.AST) -> Iterator[list]:
+    """The bodies of a syntax tree that start with a docstring: the first statement of a module, a class or a function, when it is a string."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                yield node.body
+
+
+def code_shape(node: object) -> object:
+    """A syntax tree as nested lists: each node by its name and its fields that are not None or empty. `ast.dump` is not used, because its text differs between Python 3.12 and 3.13."""
+    if isinstance(node, ast.AST):
+        return [type(node).__name__] + [[name, code_shape(value)] for name, value in ast.iter_fields(node) if value is not None and value != []]
+    if isinstance(node, list):
+        return [code_shape(item) for item in node]
+    return repr(node)
+
+
+def code_tree(text: str) -> ast.AST:
+    """The syntax tree of Python source without its docstrings. A method taken out of its class, which starts with white space, is read as the body of an `if`, so that a string at the start of
+    one of its lines, which is data, does not matter."""
+    try:
+        tree = ast.parse(text)
+    except IndentationError:
+        tree = ast.parse("if 1:\n" + text)
+    for body in list(docstrings(tree)):
+        del body[0]
+    return tree
+
+
+def code_form(text: str) -> str:
+    """Python source as it is hashed: its syntax tree without docstrings. A comment, white space, a line end and a docstring are not code, so the file of the repository and the file that is
+    shipped, which has none of them (tools/strip-sources.py), hash alike, and so do a checkout on Windows and one on Linux."""
+    return repr(code_shape(code_tree(text)))
 
 
 def source_digest(text: str) -> str:
-    return sha256_text(normalize_source(text))
+    return sha256_text(code_form(text))
 
 
 def implementation_digests(toolbox: type, names: Iterable[str]) -> dict[str, str]:
-    """For each tool name, the digest of the source of the method that runs it: `Toolbox._tool_<name>`. A tool whose method cannot be found or read has an empty digest,
+    """For each tool name, the digest of the code of the method that runs it: `Toolbox._tool_<name>`. A tool whose method cannot be found or read has an empty digest,
     which never equals a locked one."""
     found: dict[str, str] = {}
     for name in names:
         method = getattr(toolbox, f"_tool_{name}", None)
         try:
             found[name] = source_digest(inspect.getsource(method)) if method is not None else ""
-        except (OSError, TypeError):
+        except (OSError, TypeError, SyntaxError):
             found[name] = ""
     return found
 

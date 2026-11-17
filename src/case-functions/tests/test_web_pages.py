@@ -14,7 +14,7 @@ from cases.web import core, figures, history
 
 VM_ID = VM
 
-NAV_ALL = ["Decisions", "History", "Settings", "Operations", "Savings found"]
+NAV_ALL = ["Decisions", "History", "Settings", "Operations", "Savings found", "What the AI looked at"]
 HEADLINE = "Delete the unattached disk planted-disk-1 in group meternaut-test-rg"
 TITLE = "Delete the unattached disk planted-disk-1"  # the headline of a request page: without its place, which the line under it says
 
@@ -483,14 +483,14 @@ class TheNavigation(unittest.TestCase):
     def test_each_person_sees_the_pages_that_the_role_allows(self):
         self.assertEqual(self.names(TINO), NAV_ALL)
         self.assertEqual(self.names(MAYA), NAV_ALL[:3])
-        self.assertEqual(self.names(OWNER), NAV_ALL[:3] + NAV_ALL[4:], "the role owner sees Savings found and not Operations")
-        self.assertEqual(self.names(OPS), NAV_ALL, "the role ops sees Operations and Savings found")
+        self.assertEqual(self.names(OWNER), NAV_ALL[:3] + NAV_ALL[4:], "the role owner sees Savings found and What the AI looked at, and not Operations")
+        self.assertEqual(self.names(OPS), NAV_ALL, "the role ops sees Operations and the two pages that it shares with the owner")
 
     def test_the_page_that_is_open_is_marked(self):
         console = seeded()
         for path, name in (("/", "Decisions"), ("/history", "History"), ("/me/decisions", "History"), ("/me/activity", "History"), ("/me/settings", "Settings"),
                            ("/me/notes", "Settings"), ("/ops", "Operations"), ("/ops/runs", "Operations"), ("/ops/permissions", "Operations"), ("/ops/pause", "Operations"),
-                           ("/ops/savings", "Savings found")):
+                           ("/ops/savings", "Savings found"), ("/ops/activity", "What the AI looked at")):
             with self.subTest(path=path):
                 reply = console.get(path)
                 current = [a.text() for a in reply.root.find("nav").find_all("a") if a.attrs.get("aria-current") == "page"]

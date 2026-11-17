@@ -14,7 +14,7 @@ from typing import Callable
 
 from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
-from .detectors import Lead
+from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
 from .families import registry
 from .families.azure import Azure
@@ -137,7 +137,9 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
     of its own (a change has none: decide.py) but whose facts hold one that code worked out from the data that a workspace takes in and nothing reads (cases/unread.py) takes that one."""
     expires = stamp(now + dt.timedelta(hours=settings.ttl_hours))
     saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.scenario_saving(case)
-    judged = ("Judged: two AI reviewers agree that this looks wasted, and code checked again the numbers that the first one cited." if case.status == "proposed" else
+    by_advisor = case.detector == ADVISOR  # Azure Advisor's own recommendation, made by code: no AI looked at it
+    judged = ("Judged: no AI looked at it. It is Azure Advisor's own recommendation, and Meternaut has not checked it." if by_advisor else
+              "Judged: two AI reviewers agree that this looks wasted, and code checked again the numbers that the first one cited." if case.status == "proposed" else
               "Judged: the AI reviewers did not settle it, or a check by code held it back, so a person has to decide.")
     return plan_digest.sealed(PlanRecord(
         plan_id=new_id(), case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, resource_name=clean_text(case.resource_name, 120),
@@ -146,7 +148,14 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
         what_changes=brief.ADVICE_CHANGE,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.acting_risk(case).text, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
-        state="open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status}))
+        state="open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status, **({"source": ADVISOR} if by_advisor else {})}))
+
+
+def about_the_same(plan: PlanRecord, case: CaseRecord) -> bool:
+    """Whether a request is about what a case is about: the same resource, but for an Advisor recommendation about a whole subscription the same case (many of them are about one subscription)."""
+    if case.detector == ADVISOR and brief.scope_of_case(case) == "subscription":
+        return plan.case_id == case.case_id
+    return plan.resource_id.lower() == case.resource_id.lower()
 
 
 class Approvals:
@@ -522,20 +531,21 @@ class Approvals:
                 return None
             open_plans = self.store.plans_open()
             for plan in open_plans:
-                if plan.resource_id.lower() == case.resource_id.lower():
+                if about_the_same(plan, case):
                     if plan.state == "open" and plan.case_id == case.case_id and case.plan_id != plan.plan_id:
                         self.store.case_put(_with(case, plan_id=plan.plan_id))
                     return None
             if why_not_ask(case) is not None or brief.says_nothing(case) or self.held_why(case):
                 return None
-            if case.status == "needs_human" and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
-                                                    and (plan.preconditions or {}).get("caseStatus") == "needs_human") >= ADVICE_OPEN_MAX:
+            # Azure Advisor's own recommendations are neither held by the cap nor counted by it: they are claims with a figure, and the cap is for the findings that the AIs did not settle.
+            if case.status == "needs_human" and case.detector != ADVISOR and sum(1 for plan in open_plans if plan.family == ADVISE and plan.state == "open"
+                                                                              and (plan.preconditions or {}).get("caseStatus") == "needs_human"
+                                                                              and (plan.preconditions or {}).get("source") != ADVISOR) >= ADVICE_OPEN_MAX:
                 return None
             now = self.clock()
             quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
             for plan in self.store.plans_recent(200):
-                if (plan.resource_id.lower() == case.resource_id.lower() and plan.family == ADVISE and plan.state in ("declined", "consumed", "withdrawn")
-                        and parse(plan.created_at) >= quiet):
+                if about_the_same(plan, case) and plan.family == ADVISE and plan.state in ("declined", "consumed", "withdrawn") and parse(plan.created_at) >= quiet:
                     return None
             plan = build_advice(case, approvers, now, self.settings)
             self.store.plan_put(plan)

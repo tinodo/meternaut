@@ -16,8 +16,8 @@ from urllib.parse import quote
 
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, LessonRecord, MailRecord, NoteRecord, PlanRecord, Record, RunRecord, SettingsRecord,
-                     StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
+                     Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -33,7 +33,9 @@ RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS
 LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
 # The latest drift check of the app (cases/drift.py): one row.
 CHECKS = "mnchecks"
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS)
+# What each investigation looked at (cases/activity.py): one row each, the newest KEPT_INVESTIGATIONS.
+INVESTIGATIONS = "mninvestigations"
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -447,6 +449,15 @@ class TableStore:
     def profile_latest(self) -> CapabilityRecord | None:
         rows = self._query(PROFILES, "PartitionKey eq 'p'", 1)
         return self._records(rows, CapabilityRecord)[0] if rows else None
+
+    def investigation_put(self, record: InvestigationRecord) -> None:
+        self._upsert(INVESTIGATIONS, "i", f"{reverse_key(parse(record.at))}_{record.run_id}", record)
+        for row in self._query(INVESTIGATIONS, "PartitionKey eq 'i'", PAGE)[KEPT_INVESTIGATIONS:]:  # the keys sort the newest first
+            self._delete(INVESTIGATIONS, "i", _text(row.get("RowKey")))
+
+    def investigations_recent(self, limit: int = KEPT_INVESTIGATIONS) -> list[InvestigationRecord]:
+        found = self._records(self._query(INVESTIGATIONS, "PartitionKey eq 'i'", limit), InvestigationRecord)
+        return sorted(found, key=lambda r: (r.at, r.run_id), reverse=True)
 
     def check_latest(self) -> CheckRecord | None:
         row, _ = self._get(CHECKS, "d", "latest")

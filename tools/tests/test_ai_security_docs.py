@@ -38,7 +38,7 @@ def anchor(heading):
 
 class TheProposal(unittest.TestCase):
     def test_it_is_short_enough_and_linked_from_the_readme_and_the_bootstrap_page(self):
-        self.assertLessEqual(len(PROPOSAL.split()), 2500)
+        self.assertLessEqual(len(PROPOSAL.split()), 2600, "docs/proposals/10-ai-security-and-governance.md: at most 2,600 words (2,500 until the sources were shipped without comments and the paragraph on the release said so)")
         self.assertIn("(docs/proposals/10-ai-security-and-governance.md)", README)
         self.assertIn("(../docs/proposals/10-ai-security-and-governance.md)", section())
         self.assertIn(f"(../../environment/BOOTSTRAP.md#{anchor(HEADING)})", PROPOSAL)

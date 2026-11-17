@@ -112,7 +112,7 @@ def _units(rows: Sequence[Row]) -> list[Unit]:
     kinds: dict[tuple, list[Row]] = {}
     units = []
     for row in rows:
-        if row.brief.kind == "change" or row.brief.group is not None:
+        if row.brief.kind == "change" or row.brief.group is not None or row.brief.scope != "resource":  # a finding about a whole subscription or resource group is a row of its own too
             units.append(_unit([row]))
         else:
             kinds.setdefault((row.brief.family, row.brief.where.kind, row.case.recommendation if row.case is not None else "", row.later), []).append(row)

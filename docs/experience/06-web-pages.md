@@ -1,6 +1,6 @@
 # The owner's pages and the approval page
 
-**What this document answers.** Which pages a person can open and who each is for; how the pages are built to stay trustworthy; what the approval page shows, asks and refuses, and what happens when something goes wrong; and what an owner can read, correct and switch off.
+**What this document answers.** Which pages a person can open and who each is for; how they stay trustworthy; what the approval page shows, asks and refuses, and what happens when something goes wrong; what an owner can read, correct and switch off.
 
 ## The pages at a glance
 
@@ -15,13 +15,14 @@ Every page is a render of the decision brief, which lets a stranger answer eight
 | **Settings** `/me/settings` | Each person | Channel, quiet hours, the most messages a week, "Pause messages"; export and delete | Nothing |
 | **Operations** `/ops`, `/ops/runs` | The platform team | The switches, the runs and the cases | Never: no message links here |
 | **Savings found** `/ops/savings` | The platform team and the owner | Every saving that was found, by what became of it | Never: no message links here |
+| **What the AI looked at** `/ops/activity` | The platform team and the owner | What the AI examined and concluded | Never: no message links here |
 | **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 
 ## How the pages are built
 
 - **Plain pages.** Rendered on the server with no client framework; every page works without scripts. [Fluent 2 design tokens](https://fluent2.microsoft.design/design-tokens) as CSS custom properties give light and dark themes, and a `forced-colors` block gives Windows high contrast ([Learn](https://learn.microsoft.com/fluent-ui/web-components/design-system/high-contrast)).
-- **Headers set in code.** The page sets `Content-Security-Policy` with `frame-ancestors 'none'` plus `X-Frame-Options` (no framing, so no stolen clicks; [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html)), `Cache-Control: no-store` (nothing returns from the cache; [Learn](https://learn.microsoft.com/azure/security/develop/threat-modeling-tool-sensitive-data)) and a Referrer-Policy (the address holds the request id). Every form carries an anti-forgery token ([Learn](https://learn.microsoft.com/aspnet/core/security/anti-request-forgery)). A function app can declare fixed headers for all its HTTP responses in `host.json` ([Learn](https://learn.microsoft.com/azure/azure-functions/functions-bindings-http-webhook)).
+- **Headers set in code.** The page sets `Content-Security-Policy` with `frame-ancestors 'none'` plus `X-Frame-Options` (no framing, so no stolen clicks; [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html)), `Cache-Control: no-store` (nothing returns from the cache; [Learn](https://learn.microsoft.com/azure/security/develop/threat-modeling-tool-sensitive-data)) and a Referrer-Policy (the address holds the request id). Every form carries an anti-forgery token ([Learn](https://learn.microsoft.com/aspnet/core/security/anti-request-forgery)).
 - **The system browser.** Embedded web views cannot support browser-dependent sign-in such as FIDO2 security keys and passkeys ([Learn](https://learn.microsoft.com/entra/identity/authentication/concept-passkey-browser-authentication-federated-identity-provider)), so the link must open in the person's own browser. A card cannot force that: `Action.OpenUrl` opens an external or an embedded browser as the host decides ([Learn](https://learn.microsoft.com/adaptive-cards/schema-explorer/action-open-url)).
 - **The release gate.** A purchase always gets the approval-waiting e-mail as well as the card, which says "Opens in your browser. If Teams opens it in its own view and your passkey or security key is not accepted, use the link in the e-mail I sent." A one-person page gets it where the client matrix says the link opens in an embedded view. The device test on every Teams client gates the go-live of the cards and the pages ([testing](12-testing-the-experience.md)).
 - **Cold start.** The page starts with zero always-ready instances, so hosting cost follows executions ([Learn](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing)). The platform team adds always-ready instances only if the 95th-percentile first load takes over 5 seconds (a starting value).
@@ -37,7 +38,7 @@ The page of one request is its decision brief (`/ok/<requestId>`; `/why/<id>` sh
 - **One answer form.** One text box ("A question, an objection or something to remember"), a reason for a decline, and a button for each answer that exists now: Approve, Decline, This is not mine, Ask or tell, Decide later. Decline matches Approve in size; on a narrow screen the buttons stack. Without script, the form posts the plan code (a reference, not proof of authenticity) and the anti-forgery token. Approve is left out while the checks that run right before a change would refuse it: a box says why. If the page cannot look, one line says so and Approve stays.
 - **Details and footer.** Steps, models, tokens, guards and ids sit in one collapsed `details` element. The footer is one line: an AI wrote the page and which models, why the person sees it, and a person to talk to, as a name and an address in plain text.
 
-A finding that Meternaut may not change gets a request of the same shape, with the answers Worth acting on, Not worth it, This is not mine, Ask or tell and Decide later. Nothing changes in Azure ([the decision brief](../proposals/09-the-decision-brief.md#a-finding-that-meternaut-may-not-change)).
+A finding that Meternaut may not change gets a request of the same shape, with the answers Worth acting on, Not worth it, This is not mine, Ask or tell and Decide later. Nothing changes in Azure ([the decision brief](../proposals/09-the-decision-brief.md#a-finding-that-meternaut-may-not-change)). An Azure Advisor recommendation is one such request, with its figure and rows ([Advisor first class](../proposals/22-advisor-first-class.md)).
 
 ### Friction in proportion
 
@@ -130,7 +131,7 @@ The kill switch cannot recall a purchase already submitted.
 
 The pages borrow four patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign. The design copies neither styling nor wording.
 
-The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These shape the pages most:
+The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These matter most:
 
 - **Target size (2.5.8):** controls are at least 24 by 24 CSS pixels.
 - **Focus not obscured (2.4.11):** no sticky bar covers the focused control.
@@ -166,7 +167,4 @@ stateDiagram-v2
 ## Where to read next
 
 - [Messages and cards](04-messages-and-cards.md): cards.
-- [Attention and trust](08-attention-and-trust.md): attention rules.
-- [Access, language and inclusion](11-access-language-inclusion.md): full rules.
-- [Testing the experience](12-testing-the-experience.md): device test.
 - [Platform register](13-platform-register.md): platform status and fallbacks.

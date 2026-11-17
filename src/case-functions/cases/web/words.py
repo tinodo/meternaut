@@ -9,7 +9,7 @@ from ..brief import GUARD_WORDS, TYPE_WORDS, WAITING_FOR_THE_CHECK as WAITING_TE
 # state -> (short word, what it means)
 CASE_STATUS = {
     "proposed": ("Proposed", "A change is suggested. The first model recommended it, the second model agreed, and no guard stopped it."),
-    "needs_human": ("Needs a person", "A person has to look at it. A guard fired, the second model did not agree, or the first model was not sure enough."),
+    "needs_human": ("Needs a person", "A person has to look at it. A guard fired, the second model did not agree, the first model was not sure enough, or Azure Advisor recommends it and no AI looked at it."),
     "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
     "error": ("Error", "The finding could not be finished. A check or a model call failed."),
     "awaiting_ok": ("Waiting for an OK", "A request was made and waits for a person's OK."),

@@ -85,7 +85,9 @@ NOT_LOOKED_UP = "Not checked: who changed it."
 TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now.",
               "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
               "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
-              "impact": "Meternaut took this request back: nobody checked what depends on the resource."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty), in a sentence
+              "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
+              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
+              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), in a sentence
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
                "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
@@ -427,6 +429,10 @@ class Brief:
     check_first: tuple[str, ...] = ()
     # What removing the resource would do (impact_of); None for every request that is not advice about the use of a resource.
     impact: Impact | None = None
+    # What Azure Advisor says (advisor_of): its figure, its rows and what was not counted. None for a case that holds nothing of Advisor's. `by_code` is a request that Advisor's own recommendation made
+    # by code: no AI looked at it.
+    advisor: Advisor | None = None
+    by_code: bool = False
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -454,6 +460,13 @@ def plain(value: object, limit: int = MAX_NAME) -> str:
 
 
 text_of = plain  # the name that the first modules of the decision brief use
+
+# An id of the estate (a resource path or a GUID): the page "What the AI looked at" shows none.
+ID_TEXT = re.compile(r"(?i)/subscriptions/\S*|\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b")
+
+
+def without_ids(text: str) -> str:
+    return ID_TEXT.sub("(id removed)", text)
 
 
 def parse_time(value: object) -> dt.datetime | None:
@@ -626,10 +639,10 @@ def _id_like(label: str) -> bool:
 
 
 def says_nothing(case: CaseRecord | None) -> bool:
-    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads and no analysis of
-    gateways to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
+    """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads, no analysis of
+    gateways and no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
     a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
-    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None:
+    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None or advisor_says(advisor_digest(case)):
         return False
     if cost_words.is_container(case.resource_id):
         return True
@@ -775,6 +788,8 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     low, because a change is at least a medium risk; high for a resource that others share when nothing measured shows that nothing uses it."""
     if case is None:
         return Risk("medium", ACTING + CHANGE_RISK)
+    if _commitment(case):
+        return Risk("high", ACTING + ADVISOR_RISK)  # a commitment is a one-way door, whatever else is known
     verdict = (_impact_digest(case.facts) or {}).get("verdict")  # what the check of what depends on it found outranks the guess from the kind of resource
     if verdict in ("safe", "keep"):
         return Risk("medium" if verdict == "safe" else "high", ACTING + (SAFE_RISK if verdict == "safe" else KEEP_RISK))  # a change is never a low risk: the reads cannot see everything
@@ -886,6 +901,8 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
     verdict), no number backs a finding of the investigation, the first AI was not sure enough, or past requests like this were rarely approved. Medium: the rest."""
     if case is None:
         return Confidence("Low", "No record of the review is stored.")
+    if _by_advisor(case):
+        return Confidence("Medium", ADVISOR_SURE)
     held = _held_by_history(case)
     agreed = True if held else _agreed(case, plan)
     guards = [g for g in case.guards if isinstance(g, str)]
@@ -946,7 +963,7 @@ def reasoning_of(case: CaseRecord | None) -> str:
 
 def doubt_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> str:
     """The second AI's strongest objection: the first of its own, never a note that code wrote. When there is none, what the second AI did instead."""
-    if case is None or case.status == "error":
+    if case is None or case.status == "error" or _by_advisor(case):
         return ""
     own = [o for o in case.objections if isinstance(o, str) and o.strip() and not _code_note(o)]
     if own:
@@ -1261,8 +1278,156 @@ def gateway_options(found: Gateways | None) -> tuple[Option, ...]:
 
 
 def scenario_saving(case: CaseRecord | None) -> float | None:
-    """The figure that code worked out for a finding that has an analysis (the data that nothing reads, or gateways that carry more scale units than anybody uses), or None."""
-    return unread_saving(case) if _digest(case) is not None else gateways_saving(case)
+    """The figure that code worked out for a finding that has an analysis (the data that nothing reads, gateways that carry more scale units than anybody uses, or what Azure Advisor says), or None."""
+    if _digest(case) is not None:
+        return unread_saving(case)
+    return gateways_saving(case) if _gateway_digest(case) is not None else advisor_saving(case)
+
+
+# -- what Azure Advisor says ---------------------------------------------------------------------------------------------------------------------
+
+ADVISOR_KEY = "advisor"  # the key of the digest in the facts of a case (cases/advisor.py)
+ADVISOR_ROWS = 12
+ADVISOR_COLUMNS = ["What", "Where", "For how long", "Saves a year", "Looked back", "Applies to"]
+TERM = re.compile(r"^P([0-9]{1,2})([YM])$")
+ADVISOR_BASIS = "Azure Advisor's own estimate: no cost line of this resource backs it"
+ADVISOR_BASIS_MANY = "Azure Advisor's own estimate of the smallest of its variants: they are alternatives, and only one is bought"
+ADVISOR_BASIS_OVERLAP = "Azure Advisor's own estimate of the largest of its recommendations about one resource: they overlap, so only one counts"
+ADVISOR_ALT = ("Advisor lists another purchase for this subscription that saves more ({alt}). You buy one or the other, so only the larger is counted, and nothing is added for this request.")
+ADVISOR_SURE = "Azure Advisor's own estimate. No AI and no check by code looked at it, and Meternaut has not checked that what it covers will keep running."
+ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
+                 "and a discount lowers the rate and does not remove waste.")
+ADVISOR_FIRST_RISK = "Meternaut has not checked that what these cover is the right size or will keep running."
+ADVISOR_BUY = ("Then buy the one that fits, in the Azure portal under Reservations or Savings plans. Meternaut does not buy it: "
+               "the steps are in its proposal on reservations (docs/proposals/17-reservations-instructions-only.md).")
+ADVISOR_BUY_RISK = "A commitment is a one-way door: a refund counts against a yearly cap, and an exchange is limited."
+ADVISOR_RISK = "A commitment of one or three years locks in what runs today, and a refund or an exchange is limited."
+ADVISOR_SHORT = "Order of work: remove what is idle and resize what is too big first, then commit. Meternaut has not checked that what these cover is the right size."
+
+
+@dataclass(frozen=True)
+class Advisor:
+    """What Azure Advisor says in a case, in the words of code: the sentence that adds its figures up, the same in a short line for a row of evidence, up to ADVISOR_ROWS rows (each a tuple of the
+    cells of `columns`, which are those of ADVISOR_COLUMNS that Advisor filled), the line that counts the rest with its sum, and what was counted and not added up."""
+
+    sentence: str
+    line: str
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    more: str
+    note: str
+
+
+def advisor_digest(case: CaseRecord | None) -> dict | None:
+    """What Advisor says in a case, from its facts (cases/advisor.py), checked again: a digest that is not as it should be shows nothing."""
+    found = case.facts.get(ADVISOR_KEY) if case is not None and isinstance(case.facts, dict) else None
+    count, usd, rows = (found.get("n"), _figure(found.get("usd")), found.get("rows")) if isinstance(found, dict) else (None, None, None)
+    ok = isinstance(count, int) and not isinstance(count, bool) and 1 <= count <= MAX_GROUP and usd is not None and usd >= 0 and isinstance(rows, list) and bool(rows)
+    return found if ok else None  # type: ignore[return-value]
+
+
+def advisor_saving(case: CaseRecord | None) -> float | None:
+    """What Advisor's own figures add up to in US dollars a month (a year divided by twelve), or None when none of them has a figure in dollars."""
+    found = advisor_digest(case)
+    usd = _figure(found.get("usd")) if found is not None else None
+    return round(usd / 12, 2) if usd else None
+
+
+def advisor_says(found: dict | None) -> bool:
+    """Whether what Advisor says holds anything to look at: a figure in dollars, a product or a term. A recommendation with none of them, and no words, says nothing."""
+    return found is not None and (any((_figure(found.get(name)) or 0) > 0 for name in ("usd", "low", "high"))
+                                  or any(isinstance(row, list) and len(row) == 8 and (row[0] or row[3]) for row in found["rows"]))
+
+
+def _by_advisor(case: CaseRecord | None) -> bool:
+    """A case that Advisor's recommendations made, by code: no AI looked at it."""
+    return case is not None and case.detector == "advisor-cost" and not case.models and advisor_digest(case) is not None
+
+
+def _commitment(case: CaseRecord | None) -> bool:
+    """Whether a case is about a commitment (a reservation or a savings plan): one of its rows has a term."""
+    found = advisor_digest(case)
+    return found is not None and any(isinstance(row, list) and len(row) == 8 and row[3] for row in found["rows"])
+
+
+def _advisor_basis(case: CaseRecord | None) -> str:
+    found = advisor_digest(case)
+    return (ADVISOR_BASIS_MANY if _commitment(case) else ADVISOR_BASIS_OVERLAP) if found is not None and found["n"] > 1 else ADVISOR_BASIS
+
+
+def _advisor_missing(case: CaseRecord | None) -> str:
+    """Why a case that holds Advisor's recommendations has no figure counted: Advisor offers another purchase that saves more, and only the larger is counted."""
+    found = advisor_digest(case)
+    return ADVISOR_ALT.format(alt=text_of(found.get("alt"), 40)) if found is not None and found.get("alt") else ""
+
+
+def _term_text(term: object) -> str:
+    ended = TERM.match(str(term))
+    return f"{int(ended.group(1))} {'year' if ended.group(2) == 'Y' else 'month'}{'' if int(ended.group(1)) == 1 else 's'}" if ended else ""
+
+
+def _advisor_row(row: object) -> tuple[str, ...] | None:
+    """One recommendation as the cells of a row: what (its size or product and quantity), where, for how long, what it saves a year, how far back Advisor looked, and what it applies to."""
+    if not isinstance(row, list) or len(row) != 8:
+        return None
+    sku, qty, region, term, annual, currency, lookback, scope = row
+    figure = _figure(annual)
+    money = "No figure" if figure is None else (usd_text(figure) if currency == "USD" else f"{number_text(figure)} {text_of(currency, 3) or 'in no currency'}, not added")
+    scope_text = {"single": "one subscription", "shared": "all subscriptions"}.get(str(scope).lower(), text_of(scope, 40))
+    what = text_of(sku, 64) + (f" × {qty}" if isinstance(qty, int) and not isinstance(qty, bool) and qty > 0 else "")
+    back = days_text(lookback) if isinstance(lookback, int) and not isinstance(lookback, bool) else ""
+    return (what, text_of(region, 40), _term_text(term), money, back, scope_text)
+
+
+def advisor_of(case: CaseRecord | None) -> Advisor | None:
+    """What Advisor says in a case. The variants of one purchase (they differ by term and look-back) are alternatives, so the case counts the smallest and says the range; recommendations about one
+    resource overlap, so it counts the largest; a commitment that Advisor offers in another way that saves more is counted instead (`alt`), and this case counts nothing. A case that Advisor made is
+    "Azure Advisor lists", and one that an older check or the investigation made is "Azure Advisor also says so": it keeps its own figure, and this one is not added to it."""
+    found = advisor_digest(case)
+    if found is None or case is None:
+        return None
+    rows = tuple(row for row in (_advisor_row(item) for item in found["rows"][:ADVISOR_ROWS]) if row)
+    cells = list(zip(*rows)) or [()] * len(ADVISOR_COLUMNS)
+    shown = [n for n in range(len(ADVISOR_COLUMNS)) if any(cells[n]) and (n == 3 or len(rows) == 1 or len(set(cells[n])) > 1)]  # what is the same in every row is said once, in the sentence
+    same = ", ".join(cells[n][0] for n in range(len(ADVISOR_COLUMNS)) if cells[n] and cells[n][0] and n not in shown)
+    columns, rows = tuple(ADVISOR_COLUMNS[n] for n in shown), tuple(tuple(row[n] for n in shown) for row in rows)
+    count, usd, low, high = found["n"], _figure(found["usd"]) or 0.0, _figure(found.get("low")) or 0.0, _figure(found.get("high")) or 0.0
+    alt, left, commit = text_of(found.get("alt"), 40), _whole(found.get("more")), _commitment(case)
+    top = _term_text(found["rows"][-1][3]) if not left and isinstance(found["rows"][-1], list) and len(found["rows"][-1]) == 8 else ""
+    many = f"{number_text(count)} {'variant' if commit else 'recommendation'}{'' if count == 1 else 's'}"
+    rates = ", based on your own rates and usage" if commit else ""  # Learn: reservations and savings plans are priced on actual rates and usage; it says nothing of rates for the others that Advisor lists
+    differ = [word for n, word in ((0, "quantity"), (2, "term"), (4, "look-back")) if n in shown] or ["term", "look-back"]
+    what = (f"{many} of one purchase{f' ({same})' if same else ''} that differ by {', '.join(differ[:-1])}{' and ' if len(differ) > 1 else ''}{differ[-1]}"
+            if commit and count > 1 else many)
+    if alt:
+        money = ADVISOR_ALT.format(alt=alt)
+    elif usd <= 0:
+        money = "None of them has a figure in dollars."
+    elif count == 1:
+        money = f"Its figure is {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
+    elif commit:
+        money = (f"You buy one of them, so they are alternatives, and Meternaut counts the smallest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}. "
+                 f"The largest is {usd_text(high)} a year{f' with a term of {top}' if top else ''}.")
+    else:
+        money = f"They overlap, so Meternaut counts the largest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
+    skipped = _whole(found.get("skipped"))
+    kinds = [text_of(item, 3) for item in found.get("currencies", []) if isinstance(item, str)] if isinstance(found.get("currencies"), list) else []
+    note = (f"{number_text(skipped)} of the {number_text(count)} {'was' if skipped == 1 else 'were'} counted and not added up: Advisor gave no figure in dollars"
+            f"{' (' + ', '.join(kinds) + ')' if kinds else ''}, and Meternaut does not change it into dollars.") if skipped else ""
+    line = (f"{many}, none counted: an alternative" if alt else many if usd <= 0 else f"{many}, {usd_text(usd)} a year" + (f" counted (the {'smallest' if commit else 'largest'})" if count > 1 else ""))
+    who = "Azure Advisor lists" if case.detector == "advisor-cost" else "Azure Advisor also says so, with"
+    return Advisor(f"{who} {what}. {money}", line, columns, rows, f"and {number_text(left)} more variants" if left else "", note)
+
+
+def advisor_options(case: CaseRecord | None) -> tuple[Option, ...]:
+    """What a person could do about a commitment that Advisor recommends, in the order of work that the proposal on reservations gives, and what each puts at risk. The words are code's."""
+    return (Option(ADVISOR_FIRST, ADVISOR_FIRST_RISK), Option(ADVISOR_BUY, ADVISOR_BUY_RISK)) if _commitment(case) else ()
+
+
+def _also(case: CaseRecord) -> str:
+    """What the check of Meternaut that found the same resource read (the case is Advisor's, and its lead was left to it): its one fact, in the words of DETECTOR_STATE."""
+    found = advisor_digest(case) or {}
+    return next((DETECTOR_STATE[name][1] for name in found.get("also") or () if isinstance(name, str) and name in DETECTOR_STATE), "")
 
 
 # -- what the cost says -------------------------------------------------------------------------------------------------------------------------
@@ -1330,7 +1495,7 @@ def cost_link(subscription: str, resource_id: str, subscription_name: str, scope
 
 
 def _analysed(case: CaseRecord | None) -> bool:
-    return _digest(case) is not None or _gateway_digest(case) is not None
+    return _digest(case) is not None or _gateway_digest(case) is not None or advisor_digest(case) is not None
 
 
 def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None, state: str) -> Saving:
@@ -1378,15 +1543,15 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         specific = False
         if fam is not None and fam.no_figure:
             why, specific = fam.no_figure, True
-        elif _unread_missing(case) or _gateways_missing(case):
-            why, specific = _unread_missing(case) or _gateways_missing(case), True
+        elif _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case):
+            why, specific = _unread_missing(case) or _gateways_missing(case) or _advisor_missing(case), True
         return Saving(None, "", "", None, why, specific)
     if waiting is None:
         waiting = round(figure / 30, 2)
     if fam is not None and fam.saving_basis:
         return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
-        return Saving(round(figure, 2), "Scenario", _unread_basis(case) if _digest(case) is not None else _gateways_basis(), waiting, "")
+        return Saving(round(figure, 2), "Scenario", _unread_basis(case) if _digest(case) is not None else (_gateways_basis() if _gateway_digest(case) is not None else _advisor_basis(case)), waiting, "")
     advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
@@ -1486,6 +1651,11 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     words = advice_of(case)
     if words is not None:
         head.append(Fact("What to look at", words[1], "Azure Advisor"))  # Advisor's own words say what to look at, before any figure
+    said = advisor_of(case)
+    if said is not None and case is not None:
+        head.append(Fact("Advisor's list" if case.detector == "advisor-cost" else "Azure Advisor also says so", said.line, "Azure Advisor"))
+        if case.detector == "advisor-cost" and _also(case):
+            head.append(Fact("Also found by Meternaut", _also(case), RESOURCE_GRAPH))
     if group is not None:
         covered = _group_facts(group, case)
         head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the rows of gateways come before the examples
@@ -1717,11 +1887,11 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         models=models_of(case), outcome=_outcome(plan, state, action, decisions, case), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
-        unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found)) if kind == "advice" else (), group=together, gateways=found,
+        unread=unread, options=(options_of(unread, saving.monthly is not None) or gateway_options(found) or advisor_options(case)) if kind == "advice" else (), group=together, gateways=found,
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None)
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case))
 
 
 def order_key(brief: Brief) -> tuple:
