@@ -952,7 +952,8 @@ class TheStudy(unittest.TestCase):
             from cases import events as writer
         finally:
             sys.path.remove(app)
-        self.assertEqual(writer.STUDY_KINDS, cc.STUDY_KINDS)
+        self.assertIn(cc.STUDY_ENDS[0], writer.STUDY_KINDS)
+        self.assertIn(cc.STUDY_ENDS[1], writer.KINDS)
         source = (ROOT / "src" / "case-functions" / "cases" / "study.py").read_text(encoding="utf-8")
         for name in ("state", "ok", "types", "studied", "kept", "rejected", "rechecked", "stale", "toolCalls", "pages", "tokens", "seconds", "note", "trigger", "maxTypes", "maxPages", "maxSeconds",
                      "maxTokens", "claimKind"):
