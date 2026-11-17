@@ -832,7 +832,7 @@ TOOLS = {tool.name: tool for tool in (
           _OFFSET)),
     Tool("profile",
          "Gives the whole picture of 1 to 5 resources, named by handle, in one call: facts and typed properties; meters (the dearest 6 of what it is billed for); metrics (every platform metric that has data, "
-         "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95; the metrics with no data are listed by name); links (what it "
+         "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95, for the 20 with the greatest daily maximum if it offers more (at_hour; with_data counts all); the metrics with no data are listed by name); links (what it "
          "refers to and what refers to it, as count and usd30d for each type and relation: neighbors shows the handles); Advisor items; history (age_days, changed_days and written_14d, "
          "and created_by and changed_by as a kind of identity); its parts; and where it sends its own data. A part that was not read in time is in unread, by handle, and is not none; a "
          "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited like those of the other tools.",
