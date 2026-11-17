@@ -24,6 +24,38 @@ class Meter(NamedTuple):
     days: int
 
 
+WEEK, MONTH, FEWEST = 7, 30, 3  # the days of the recent rate, the days that a month is worked out from, and the fewest days of life that a rate rests on
+
+
+class Rates(NamedTuple):
+    """What a meter costs a month at two rates. `week` is the mean of its last 7 closed days times 30, days without a line counting as nothing (a meter that began later has only the days that it has).
+    `since` is the mean from its first day that has a cost to the last day of the window times 30, where a read can say it: the meter began inside the window, or the window is a month. `life` is the days
+    from that first day to the last day, `began` says that the first day is after the window began, `cv` is the spread of the daily cost over those days divided by its mean."""
+
+    week: float
+    since: float | None
+    life: int
+    began: bool
+    cv: float | None
+
+
+def rates(meter: Meter) -> Rates | None:
+    """The rates of a meter, or None when its days cannot give one: a window under 7 days, a number that is not one, no day with a cost, or fewer than FEWEST days from the first cost to the last
+    day (a single day may be a part of a day, a charge made once or a bill that is late, so it is not stretched into a month)."""
+    last = meter.start + dt.timedelta(days=meter.days - 1)
+    inside = {day: cost for day, cost in meter.daily.items() if meter.start <= day <= last}
+    paid = sorted(day for day, cost in inside.items() if cost != 0)
+    if meter.days < WEEK or not paid or not all(math.isfinite(cost) for cost in inside.values()):
+        return None
+    life = (last - paid[0]).days + 1
+    if life < FEWEST:
+        return None
+    series = [inside.get(paid[0] + dt.timedelta(days=n), 0.0) for n in range(life)]
+    mean, span, began = math.fsum(series) / life, min(WEEK, life), paid[0] > meter.start
+    spread = math.sqrt(math.fsum((cost - mean) ** 2 for cost in series) / life)
+    return Rates(math.fsum(series[-span:]) / span * MONTH, mean * MONTH if life > WEEK and (began or meter.days == MONTH) else None, life, began, spread / mean if mean > 0 else None)
+
+
 def fold(rows: Iterable[tuple[dt.date, tuple[str, ...], float, float]]) -> dict[tuple[str, ...], tuple[float, float, dict[dt.date, float]]]:
     """The lines of every day as one line for each meter: (the quantity, the cost, the cost of each day) by the six words of the meter."""
     found: dict[tuple[str, ...], tuple[float, float, dict[dt.date, float]]] = {}

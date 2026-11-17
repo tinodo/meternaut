@@ -19,7 +19,7 @@ from support import APP_ROOT, NOW, SUBSCRIPTION
 from cases import agents, brief, decide, investigate, pricing
 from cases.detectors import Context
 from cases.foundry import AgentRun
-from cases.meters import Meter
+from cases.meters import Meter, rates
 from cases.roles import DetectiveAnswer, SkepticAnswer
 from test_investigate import HOSTILE, SAFE, FakeFoundry, FakeToolbox, Harness, agree_all, answer, finding, handles_of, meter_line, metrics, resource, verdicts
 from test_toolbox import toolbox as real_toolbox
@@ -35,6 +35,13 @@ def line(scope: str, usd: float, words=COMPUTE, days: int = 30, service=None, re
     """A meter of one scope over `days` closed days that cost `usd` in all, the same on each day."""
     daily = {START + dt.timedelta(days=n): usd / days for n in range(days)}
     return Meter(scope, service, words, 24.0 * days, usd, daily, resources, START, days)
+
+
+def shaped(scope: str, costs, days: int = 30, words=COMPUTE) -> Meter:
+    """A meter of one scope over `days` closed days whose last len(costs) days cost what `costs` says, day by day: the days before have no line."""
+    first = days - len(costs)
+    daily = {START + dt.timedelta(days=first + n): cost for n, cost in enumerate(costs)}
+    return Meter(scope, None, words, 24.0 * len(costs), math.fsum(costs), daily, None, START, days)
 
 
 def registry() -> dict[str, Meter]:
@@ -62,6 +69,82 @@ def effect(handle="r1", meters=("m1", "m2"), remains=None):
 
 def priced(raw, handles=("r1", "r2"), toolbox=None, costs=None, blocked=None):
     return pricing.price(pricing.parse(raw), handles, toolbox or shown(), COSTS if costs is None else costs, blocked)
+
+
+class TheRatesOfAMeter(unittest.TestCase):
+    """What a meter costs a month, worked out by hand from its daily cost: at the rate of its last 7 days and at the mean since its first day, over the window of 30 days that starts on START."""
+
+    def check(self, found, week, since, life, began):
+        self.assertAlmostEqual(found.week, week, places=6)
+        self.assertEqual(None if found.since is None else round(found.since, 6), since)
+        self.assertEqual((found.life, found.began), (life, began))
+
+    def test_a_flat_meter_has_the_same_rate_on_every_basis(self):
+        found = rates(shaped("r1", [2.0] * 30))
+        self.check(found, 60.0, 60.0, 30, False)
+        self.assertAlmostEqual(found.cv, 0.0)
+
+    def test_a_meter_that_began_four_days_ago_has_the_rate_of_its_own_four_days_and_no_second_basis(self):
+        self.check(rates(shaped("r1", [8.0] * 4)), 240.0, None, 4, True)
+
+    def test_a_meter_that_began_inside_the_window_has_a_mean_since_it_began_when_it_has_more_than_a_week(self):
+        self.check(rates(shaped("r1", [3.0] * 7)), 90.0, None, 7, True)
+        self.check(rates(shaped("r1", [1.0] * 5 + [4.0] * 5)), 22.0 / 7 * 30, 75.0, 10, True)
+
+    def test_a_rate_that_doubled_in_the_last_week_has_the_new_rate_as_the_week_and_the_month_total_as_the_mean(self):
+        self.check(rates(shaped("r1", [1.0] * 23 + [2.0] * 7)), 60.0, 37.0, 30, False)
+
+    def test_a_rate_that_halved_in_the_last_week_has_the_new_rate_as_the_week_and_the_month_total_as_the_mean(self):
+        self.check(rates(shaped("r1", [2.0] * 23 + [1.0] * 7)), 30.0, 53.0, 30, False)
+
+    def test_a_meter_that_stopped_has_a_week_of_nothing_and_the_mean_of_what_it_billed(self):
+        self.check(rates(shaped("r1", [2.0] * 20 + [0.0] * 10)), 0.0, 40.0, 30, False)
+
+    def test_days_without_a_line_in_the_last_week_count_as_nothing(self):
+        self.check(rates(shaped("r1", [10.0] + [0.0] * 6 + [10.0] * 4)), 40.0 / 7 * 30, round(1500 / 11, 6), 11, True)
+
+    def test_an_uneven_meter_has_a_spread_larger_than_its_mean(self):
+        found = rates(shaped("r1", [10.0 if n % 5 == 0 else 0.0 for n in range(30)]))
+        self.check(found, 10.0 / 7 * 30, 60.0, 30, False)
+        self.assertAlmostEqual(found.cv, 2.0)
+
+    def test_a_spread_is_over_the_days_of_life_so_that_a_young_flat_meter_is_not_uneven(self):
+        self.assertAlmostEqual(rates(shaped("r1", [5.0] * 5)).cv, 0.0)
+
+    def test_fewer_than_three_days_of_life_are_no_rate_and_three_are(self):
+        for costs in ([5.0], [5.0, 5.0], [0.0, 0.0, 5.0]):
+            with self.subTest(costs=costs):
+                self.assertIsNone(rates(shaped("r1", costs)))
+        self.check(rates(shaped("r1", [5.0] * 3)), 150.0, None, 3, True)
+
+    def test_a_cost_on_one_day_only_is_not_stretched_into_a_month(self):
+        self.assertIsNone(rates(shaped("r1", [0.0] * 29 + [5.0])))
+        self.check(rates(shaped("r1", [5.0] + [0.0] * 19)), 0.0, 7.5, 20, True)
+
+    def test_a_read_of_14_days_gives_the_week_and_no_mean_when_its_first_day_has_a_cost_because_the_meter_may_be_older(self):
+        self.check(rates(shaped("r1", [2.0] * 14, days=14)), 60.0, None, 14, False)
+
+    def test_a_read_of_14_days_gives_both_when_the_meter_began_inside_it(self):
+        self.check(rates(shaped("r1", [1.0] * 5 + [4.0] * 5, days=14)), 22.0 / 7 * 30, 75.0, 10, True)
+
+    def test_a_read_of_less_than_a_week_gives_no_rate(self):
+        self.assertIsNone(rates(shaped("r1", [2.0] * 6, days=6)))
+        self.check(rates(shaped("r1", [2.0] * 7, days=7)), 60.0, None, 7, False)
+
+    def test_a_meter_with_no_cost_or_a_number_that_is_not_one_has_no_rate(self):
+        for costs in ([0.0] * 30, [float("nan")] * 30, [2.0] * 29 + [float("inf")]):
+            with self.subTest(costs=costs[-1]):
+                self.assertIsNone(rates(shaped("r1", costs)))
+
+    def test_a_credit_is_a_negative_rate_and_has_no_spread(self):
+        found = rates(shaped("r1", [-1.0] * 30))
+        self.check(found, -30.0, -30.0, 30, False)
+        self.assertIsNone(found.cv)
+
+    def test_a_day_that_is_outside_the_window_is_not_read(self):
+        meter = shaped("r1", [2.0] * 30)
+        daily = {**meter.daily, START - dt.timedelta(days=3): 900.0, START + dt.timedelta(days=30): 900.0}
+        self.check(rates(meter._replace(daily=daily)), 60.0, 60.0, 30, False)
 
 
 class WhatIsRead(unittest.TestCase):
