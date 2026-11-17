@@ -1,7 +1,8 @@
 """The digest of the app's own files: what is running, as one hash.
 
 It has to be the same for the folder of a build, for the folder that the platform unpacked and for a checkout on any system, and it has to change with every file that is added, removed,
-renamed or changed. The deployment sets it as PACKAGE_SHA256 with tools/package-digest.py, which makes it with this module.
+renamed or changed. The deployment sets it as PACKAGE_SHA256 with tools/source-digest.py, which takes the comments out of the Python files first, as the pack step does (the files that are shipped have none);
+tools/package-digest.py makes it with this module for a folder as it is.
 """
 import contextlib
 import importlib.util

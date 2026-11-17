@@ -62,9 +62,28 @@ Three tools read our own store and nothing of the estate. `recall_lessons` gives
 
 Once a week (the timer `study-weekly`, Mondays at 04:30 UTC) the Scholar, a third agent in the Foundry project, reads Microsoft's public pages about the kinds of resource that the estate has, at most four kinds a run. It is off until `STUDY` is on, needs the Foundry project, stops when the switch `all` or `investigation` is pulled, and calls its model through the AI Gateway. Its one tool, `fetch_doc`, reads only Microsoft's own documentation and price pages (Learn's `azure`, `rest` and `lifecycle` folders), with every redirect checked and a page cut into windows of 4,500 characters.
 
-A claim that passes the guard reaches the Investigator through `recall_knowledge`: text from outside the estate, the one exception to the typed values of [rule 30](../../AGENTS.md) (b), kept narrow by the guard and the data marking. The owner allows it: `STUDY` stays off until he says so.
+A claim that passes the guard reaches the Investigator through `recall_knowledge`: text from outside the estate, the one exception to the typed values of [rule 30](../../AGENTS.md) (b), kept narrow by the guard and the data marking. The owner allows it, and the switch is a variable of the Hub ([below](#how-the-study-is-switched-on-and-run)): `STUDY` stays off until it says on.
 
 A claim is kept only after a guard of code (`study.accept`): the type was asked for, the kind is on the closed list, the page is one that this run read, and the quote is plain words of 20 to 200 characters that the text of that page holds exactly. Anything else is thrown away and counted; at most four claims for a type and 16 a run. The kinds are in the input of a run, not in the instructions: nothing tells the Scholar what to find. A claim is current for 30 days and is read again after seven; a quote that is gone makes it stale. A run is held to 400,000 tokens: $2 to $3 a run and $9 to $13 a month of weekly runs at the price snapshot of 2026-10-31 ($5 per million input tokens, $30 output), a calculation and not a measurement. `tools/study-evals.py` replays the Scholar on invented pages against thresholds written first and grades it with the same guard; it has not run on Foundry.
+
+## How the Study is switched on and run
+
+Added 2026-11-16. The Study was built and nothing gave the app its switch, so the timer said `state: off` every Monday. Now one variable switches it and one Hub action runs it once.
+
+**The switch.** The variable `STUDY` of the environment `hub` is `on` or `off` (`1`, `true`, `yes` and `0`, `false`, `no` read the same; not set is off). It is plain configuration with no identifier of the estate, so it is a variable and not a secret ([rule 18](../../AGENTS.md) (b)). `tools/environment-params.py` refuses any other word, without echoing it, and gives the cases file one bool, which the template hands to the app as the setting `STUDY`. The app has it after the next run of `cases`. The limits `STUDY_MAX_*` are not passed: the defaults of the code hold (four kinds, eight pages, 300 seconds, 400,000 tokens). The action `cases` refuses `on` while the Foundry project is not in Azure, because the app reads `STUDY` on with no project as a mistake in its settings.
+
+**Running it once.** The action `study-run` is `cases-run` for the Study. The Operator, from inside the network, puts `{"job": "study", "requestId": ...}` in the private queue `cases-control` and reads the History of that request from Application Insights. It uses the container script and the tool of `cases-run` (`operator/run-tool.sh`, and the command `study` of `tools/cases-check.py`), so no new file goes to the Operator. The public log gets counts and plain words only: the state, the kinds of resource given to the Scholar and read about, the pages read, the claims kept and thrown away, the tokens, the seconds, and the notes of the run in the app's own words only (the detail of an error is not printed, because it can name a resource; it stays in the History). The step fails when the Study ended `failed`, `held` or `off`, when it ran and read no page although a kind of resource waited, when the app refused the message, or when no line arrived in 20 minutes. Each failure says in words what to check. The app reports one more number for it: `study.finished` carries `pages`, and the note about refused reads carries the closed words of the page reader (`unavailable 3`), never an address.
+
+**What must be true, and how the run shows it if it is not.**
+
+| What must be true | If it is not |
+|---|---|
+| `STUDY` is on, and `cases` ran after it was set | The step says that `STUDY` is off in the app |
+| The Foundry project is in Azure and the app's identity may use it | The step says that no Foundry project is set, or that the Scholar was not made |
+| The Scholar's stored definition is the one in `agents.lock.json`, and its model (the Investigator's alias) answers through the AI Gateway | The step says that the Scholar was not made or gave no answer, and the note names the route; `agents-drift` shows a stored definition that differs |
+| The app's network lets `learn.microsoft.com`, `azure.microsoft.com` and `prices.azure.com` through on port 443 (the landing zone's firewall and its DNS: nothing in Meternaut opens it, and the app's list of calls, `http.docs_calls`, is not widened) | The Scholar calls its tool and no page comes back: `Pages read: 0` and a note such as `unavailable 3`, and the step says that no page could be read and, when every call was unavailable, that the app's network may not let the documentation through. The platform team decides |
+
+**What is not proved.** Nothing here ran in Azure, on Foundry or on the Hub. Not known: that the Foundry service accepts the Scholar (it has never run there; the replay ran on invented pages), that the three hosts are reachable from the app's subnet, what a run costs, how many claims survive the guard on real pages, that a claim helps the Investigator, that the timer starts a run once the setting is on, and that the masking of the log holds against real telemetry (it was tested on invented lines). The first real run shows the first four: state `ran`, at least one kind given to the Scholar, at least one page read, and the tokens and seconds against their limits.
 
 ## The capability profile
 
@@ -85,10 +104,10 @@ The price sheet is read with the Cost Management Reader that the Watch has, and 
 | Lessons | A real request answered on the web page | A row in `mnlessons`; the line on the page |
 | The probes | A Watch run, then again after T1 to T3 are given | A row in `mnprofiles`; *not visible* becomes *visible* |
 | Open questions | A Watch run while earlier findings are undecided | A `recall_open_questions` call in the History |
-| The Study | A `study` control message with `STUDY` on | Rows in `mnclaims` whose quotes are on their pages |
+| The Study | The Hub action `study-run` with `STUDY` on | The lines `study.started`, `study.claim` and `study.finished` of that request, and rows in `mnclaims` whose quotes are on their pages |
 | The Scholar's replay | `tools/study-evals.py run` on the Operator | Its code graders against their thresholds |
 | The check on real requests | Operations, "Download the answers", then `tools/learning-check.py --real` on the file | Its thresholds, again, before the hold is on |
 
 ## What is not built
 
-The evaluators and the red team of the Foundry service for the Scholar and the `study` job in the Hub's control message (its block is written outside the repository, and no workflow has it): none means anything before it runs in Azure. Also not built: a check of T1 to T3 by the access tool, and any proof from Azure: whether the Foundry service accepts the Scholar, whether the documentation can be reached from the app's network, and what a run really costs.
+The evaluators and the red team of the Foundry service for the Scholar: none means anything before it runs in Azure. The Hub action `study-run` is built and has not run. Also not built: a check of T1 to T3 by the access tool, and any proof from Azure: whether the Foundry service accepts the Scholar, whether the documentation can be reached from the app's network, and what a run really costs.
