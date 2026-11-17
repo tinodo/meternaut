@@ -487,6 +487,40 @@ class TheTagSource(unittest.TestCase):
                 self.assertEqual((second.source, second.who), ("tag", expected))
 
 
+class TheTold(unittest.TestCase):
+    @staticmethod
+    def shown(world):
+        return brief_mod.build_brief(world.store.case_get("c1"), world.store.plan_get("p1"), None, (), now=world.clock.now, ladder=world.store.escalations_of("p1")).waiting
+
+    def test_only_a_message_that_was_sent_tells_somebody_and_a_held_or_failed_one_is_shown_as_such(self):
+        world = World()
+        world.store.settings_put(SettingsRecord(oid=A, quiet_from="00:00", quiet_to="23:59"))
+        world.clock.advance(days=3)
+        world.tick(2)
+        shown = self.shown(world)
+        self.assertEqual(shown.told, ())
+        self.assertTrue(shown.pending[0].startswith("Ada (asked first): held: Quiet hours"), shown.pending)
+        world.store.settings_put(SettingsRecord(oid=A))
+        world.tick()
+        shown = self.shown(world)
+        self.assertEqual((len(shown.told), shown.pending), (1, ()))
+        failing = World()
+        failing.clock.advance(days=3)
+        failing.mail.status = 500
+        failing.tick()
+        self.assertEqual(self.shown(failing).pending, ("Ada (asked first): could not be delivered",))
+
+    def test_the_letter_to_the_next_person_says_that_the_first_message_was_held(self):
+        world = World()
+        world.store.settings_put(SettingsRecord(oid=A, quiet_from="00:00", quiet_to="23:59"))
+        world.clock.advance(days=3)
+        world.tick()
+        world.clock.advance(days=5)
+        world.tick(2)
+        (letter,) = world.mail.sent_to("mae@example.com")
+        self.assertIn("Ada (asked first): held: Quiet hours", letter[2])
+
+
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):
     def test_the_person_of_the_list_with_no_address_is_never_a_target_and_the_deny_list_is_kept_in_the_settings(self):
         silent = Person(CONTACT, "Cora", ("escalation",), "")

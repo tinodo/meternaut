@@ -306,6 +306,7 @@ class Waiting:
     told: tuple[str, ...]
     put_off: int
     cost: str
+    pending: tuple[str, ...] = ()  # the people that a step has come to and that no message has reached yet, with why (held, not delivered)
 
 
 @dataclass(frozen=True)
@@ -1605,14 +1606,28 @@ def waiting_cost(monthly: float | None, level: str, days: int) -> str:
     return f"{days} day{'s' if days != 1 else ''} at {usd_text(monthly)} a month is {'about ' if level == 'Scenario' else ''}${monthly / 30 * days:,.0f}"
 
 
+def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Who the steps before step `before` told, and who they did not tell yet, as plain lines: only a message that was sent tells somebody. A held one says why, a failed one says so."""
+    told, pending = [], []
+    for step in sorted((s for s in steps if s.kind == "step" and s.number < before), key=lambda s: s.number):
+        how = SAID_HOW.get(step.source, "")
+        done = [plain(n, 80) for o, n in zip(step.who, step.names) if o in step.delivered]
+        left = [plain(n, 80) for o, n in zip(step.who, step.names) if o not in step.delivered]
+        if done:
+            told.append(f"{', '.join(done)} ({how}), {(step.last_try or step.at)[:10]}")
+        if left:
+            pending.append(f"{', '.join(left)} ({how}): " + (f"held: {plain(step.detail, 120)}" if step.outcome == "held" else "could not be delivered" if step.outcome == "failed" else "not sent yet"))
+    return tuple(told), tuple(pending)
+
+
 def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datetime) -> Waiting:
     """How long the request has waited since `plan.created_at`, from the records of its ladder (cases/escalation.py): with whom it is now, who was
     told and when, how often it was put off."""
     days, _ = ago_text(now, plan.created_at)
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
-    told = tuple(f"{', '.join(plain(n, 80) for n in r.names)} ({SAID_HOW.get(r.source, '')}), {r.at[:10]}" for r in steps if r.names)
+    told, pending = told_lines(steps)
     return Waiting(days or 0, plain(plan.created_at[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
-                   sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0))
+                   sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0), pending[-4:])
 
 
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:

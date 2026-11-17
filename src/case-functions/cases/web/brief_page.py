@@ -53,6 +53,8 @@ def _waiting(brief: Brief) -> Safe:
                                       ("What waiting has cost", waiting.cost or "No saving was measured, so what waiting costs is not worked out.")]
     if waiting.told:
         rows.append(("Told", "; ".join(waiting.told)))
+    if waiting.pending:
+        rows.append(("Not told yet", "; ".join(waiting.pending)))
     if waiting.put_off:
         rows.append(("Put off", f"{waiting.put_off} time{'s' if waiting.put_off != 1 else ''}"))
     return join([Safe("<h2>Waiting</h2>"), summary(rows)])

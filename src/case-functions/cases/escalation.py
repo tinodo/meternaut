@@ -34,7 +34,6 @@ EPOCH = "2000-01-01T00:00:00Z"
 MIN_GAP = dt.timedelta(days=1)  # a request that has waited long is caught up one step a day, never in a burst
 RETRY_MINUTES, FAST_TRIES = 15, 12  # a message that failed is tried again every 15 minutes, 12 times, and after that once a day for as long as it is not delivered
 WEEK = dt.timedelta(days=7)
-SAID = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
 CLOCK_TTL_HOURS = range(1, 337)  # what the old setting PLAN_TTL_HOURS allowed: a request closed at its creation plus a whole number of these hours was closed by the clock
 
 
@@ -179,8 +178,9 @@ def make_step(ladder: Ladder, plan: PlanRecord, number: int, steps: list[Escalat
 
 
 def _told(steps: list[EscalationRecord], before: int) -> tuple[str, ...]:
-    """Who was told before step `before`, and when, as plain lines: the people that the request was made for count as the first step."""
-    return tuple(f"{', '.join(s.names) or 'nobody'} ({SAID.get(s.source, s.source)}), {s.at[:10]}" for s in steps if s.kind == "step" and s.number < before and s.names)
+    """Who was told before step `before`, and who was not yet (held, not delivered), as plain lines."""
+    told, pending = brief_mod.told_lines(steps, before)
+    return told + pending
 
 
 def _asked(ladder: Ladder, plan: PlanRecord, steps: list[EscalationRecord]) -> str:
