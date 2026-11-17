@@ -75,7 +75,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import capability, deeper, dossier, learning, library
+from . import capability, deeper, dossier, learning, library, prices
 from . import metrics as mx
 from . import neighbors as nb
 from . import ownership
@@ -162,9 +162,10 @@ TYPE_PATTERN = r"^[a-z0-9.]+(/[a-z0-9._-]+){1,4}$"
 SERVICE_PATTERN = r"^[A-Za-z0-9 .&()-]{1,40}$"
 METRIC_PATTERN = r"^[A-Za-z0-9_./ ]{1,64}$"
 HANDLE_PATTERN = r"^r[0-9]{1,4}$"
+METER_PATTERN = r"^m[0-9]{1,4}$"  # the handle of a meter that cost_meters showed
 TABLE_PATTERN = r"^(t[0-9]{1,4}|[A-Za-z][A-Za-z0-9]{0,63})$"  # a kind of data of a resource: a handle of this run or the name that the platform gave it
 DIMENSION_PATTERN = r"^[A-Za-z][A-Za-z0-9]{0,40}$"  # the name of a dimension of a metric, as metric_names shows it
-TYPE, SERVICE, METRIC, HANDLE, TABLE, DIMENSION = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN, TABLE_PATTERN, DIMENSION_PATTERN))
+TYPE, SERVICE, METRIC, HANDLE, METER, TABLE, DIMENSION = (re.compile(pattern) for pattern in (TYPE_PATTERN, SERVICE_PATTERN, METRIC_PATTERN, HANDLE_PATTERN, METER_PATTERN, TABLE_PATTERN, DIMENSION_PATTERN))
 SERVICE_FORM = re.compile(r"[A-Za-z0-9.&()-]+(?: [A-Za-z0-9.&()-]+){0,4}")  # one to five words, one space between them
 METER_FORM = re.compile(r"[A-Za-z0-9.&()/:+-]+(?: [A-Za-z0-9.&()/:+-]+){0,9}")  # one to ten words, one space between them
 SKU_FORM = re.compile(r"[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+){0,2}")  # a SKU or a kind: one to three parts, separated by commas
@@ -595,8 +596,8 @@ class Param:
         elif self.kind == "metrics":
             body = {"type": typed("array"), "items": {"type": "string", "pattern": METRIC_PATTERN}, "minItems": 1, "maxItems": MAX_METRICS}
         else:
-            body = {"type": typed("string"), "pattern": {"type": TYPE_PATTERN, "service": SERVICE_PATTERN, "metric": METRIC_PATTERN, "handle": HANDLE_PATTERN, "table": TABLE_PATTERN,
-                                                        "dimension": DIMENSION_PATTERN}[self.kind]}
+            body = {"type": typed("string"), "pattern": {"type": TYPE_PATTERN, "service": SERVICE_PATTERN, "metric": METRIC_PATTERN, "handle": HANDLE_PATTERN, "meter": METER_PATTERN,
+                                                        "table": TABLE_PATTERN, "dimension": DIMENSION_PATTERN}[self.kind]}
         return {**body, "description": self.description}
 
     def check(self, value: object) -> object:
@@ -619,7 +620,7 @@ class Param:
                 raise BadArguments(self.name)
             return list(dict.fromkeys(value))
         text = {"type": type_word, "service": _service_form, "metric": lambda item: _match(METRIC, item), "handle": lambda item: _match(HANDLE, item),
-                "table": lambda item: _match(TABLE, item), "dimension": lambda item: _match(DIMENSION, item)}[self.kind](value)
+                "meter": lambda item: _match(METER, item), "table": lambda item: _match(TABLE, item), "dimension": lambda item: _match(DIMENSION, item)}[self.kind](value)
         if text is None:
             raise BadArguments(self.name)
         return text
@@ -776,6 +777,16 @@ TOOLS = {tool.name: tool for tool in (
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
           Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
+    Tool("price_alternatives",
+         "Shows prices from Azure's public price list for the service of one meter (meter: its handle from cost_meters), in the region of its resource, as a table of pay-as-you-go prices in US dollars "
+         "with the unit of the meter, the lowest first. The lines are those of the product of the meter (within product) or of the whole service (within service). cols names the columns and each "
+         "array in rows holds the values in that order: a price handle (p1, p2, ...) for this run only, the words of the line, usd (the price of one unit) and steps (above 1: the price changes "
+         "with the quantity); same holds a field with one value in every row. current is the line that the words of the meter name: retail (its price), paid (what the bill paid for one unit) and "
+         "rate_ratio (paid divided by retail, a rate to carry to another line); match says found, none or several. other_units counts the lines with another unit; complete says whether the whole "
+         "list was read. It shows prices only. A failed read says unavailable.",
+         (Param("meter", "meter", "The handle of a meter of one resource, as cost_meters showed it (m1, m2, ...). The meter of a whole type has no region and is not offered.", required=True),
+          Param("within", "choice", "product: the lines of the product that the meter belongs to. service: every product of the service, which can be long, so read it page by page. Null for product.",
+                choices=("product", "service")), _OFFSET)),
     Tool("neighbors",
          "Shows what one resource refers to and what refers to it, found from the references that the properties of the resources of the estate hold to one another, as tables of handles: "
          "refers_to and referred_by. A row: handle, type, relation (parent when the resource is a part of the other, refers for any other reference), usd30d, sku, kind and state as short words. "
@@ -821,6 +832,7 @@ TOOLS = {tool.name: tool for tool in (
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
 PLACEHOLDER_METER = f"m{HANDLE_LIMIT}"
+PLACEHOLDER_PRICE = f"p{HANDLE_LIMIT}"
 
 
 def result_cap(name: object) -> int:
@@ -952,6 +964,10 @@ class Toolbox:
         self._kept: dict[tuple, object] = {}  # what the deeper reads of the run have read, by what they asked for: a read is made once in a run, whether it worked or not
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
+        self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run
+        self.rates: dict[str, float] = {}  # meter handle -> the rate ratio that price_alternatives showed for it: what the bill paid for one unit divided by the list price of the line that its words name
+        self._price_keys: dict[tuple, str] = {}
+        self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
@@ -2541,6 +2557,61 @@ class Toolbox:
         for row, line, cell in zip(table, window, cells):
             if cell["meter"] is not None:
                 row[0] = self._meter_handle(line)
+        return answer
+
+    def _price_handle(self, line: prices.Line) -> str | None:
+        """The handle of a line of the price list: the same one whenever the line is shown again in the run, and None when the handles are used up."""
+        key = (line.service, line.product, line.sku, line.meter, line.unit, line.region)
+        if key not in self._price_keys:
+            if len(self._price_keys) >= HANDLE_LIMIT:
+                return None
+            self._price_keys[key] = f"p{len(self._price_keys) + 1}"
+        self.prices[self._price_keys[key]] = line
+        return self._price_keys[key]
+
+    def _tool_price_alternatives(self, args: dict) -> dict:
+        name, within, offset = args["meter"], args["within"] or "product", args["offset"] or 0
+        held = self.meters.get(name)
+        if held is None:
+            raise UnknownHandle(name)
+        entry = self._by_handle.get(held.scope)
+        _, subcategory, meter, _, _, unit = held.words
+        service, product = meter_word(held.words[0]), meter_word(subcategory)
+        region = prices.region_of(entry.location) if entry is not None and entry.part_of is None and entry.location != OTHER else None
+        if not service or not meter_word(meter) or not meter_word(unit) or region is None:
+            raise NotOffered(name)  # a meter of a whole type has no region, and a word that is no word of the platform is never sent anywhere
+        scope = product if within == "product" else None
+        key = (service, region, scope)
+        if key not in self._books:
+            if len(self._books) >= prices.MAX_BOOKS:
+                self.notes.append(f"price_alternatives: the prices of {prices.MAX_BOOKS} services or regions were read in this run, and the app reads no more")
+                return {"error": "unavailable"}
+            self._books[key] = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic))
+        book = self._books[key]
+        if isinstance(book, Failed):
+            self._fail("price_alternatives", "the price list", book)
+            return self._why(book.error)
+        same = sorted((line for line in book.lines if line.unit == unit), key=lambda line: (line.usd, line.product, line.sku, line.meter, line.region))
+        current, how = prices.match(book.lines, subcategory, meter, unit, region)
+        paid = held.usd / held.quantity if held.usd > 0 and held.quantity > 0 else None
+        ratio = round(paid / current.usd, 4) if current is not None and paid is not None and current.usd > 0 and current.tiers == 1 else None
+        window = same[offset:offset + MAX_LISTED]
+        cells = [[PLACEHOLDER_PRICE, _shown(meter_word, line.product), _shown(meter_word, line.sku), _shown(meter_word, line.meter), _measure(line.usd),
+                  "global" if line.region == prices.GLOBAL else _shown(region_word, line.region), line.tiers if line.tiers > 1 else None] for line in window]
+        shared, columns, table = prices.layout(("price", "product", "sku", "meter", "usd", "region", "steps"), cells)
+        answer: dict = {"meter": name, "service": service, "region": entry.location, "within": "product" if scope else "service", "unit": _shown(meter_word, unit), "match": how, "lines": len(same),
+                        "other_units": len(book.lines) - len(same), "complete": book.complete, "offset": offset, "returned": 0, "next_offset": None, **({"same": shared} if shared else {}),
+                        "cols": columns, "rows": table}
+        if current is not None:
+            answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
+                                 **({"steps": current.tiers} if current.tiers > 1 else {})}
+        _page(answer, table, offset, len(same))
+        for row, line in zip(table, window):
+            row[0] = self._price_handle(line)
+        if current is not None:
+            answer["current"]["line"] = self._price_handle(current)
+            if ratio is not None:
+                self.rates[name] = ratio
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------
