@@ -229,6 +229,10 @@ def probes(endpoint: str, gateway_host: str) -> list[tuple[str, tuple, str, str,
         ("another host by the study", docs, "GET", "https://example.invalid/en-us/probe", False),
         ("the estate by the study", docs, "GET", f"{ARM}/subscriptions", False),
         ("a documentation page by the watch", watch, "GET", page, False),
+        # The public price list, which the Watch's tool for the prices of alternatives reads (cases/prices.py): one GET with no token on its one path, and nothing else of that host.
+        ("the price list by the watch", watch, "GET", f"https://{http.PRICES_HOST}{http.PRICES_PATH}", True),
+        ("a post to the price list by the watch", watch, "POST", f"https://{http.PRICES_HOST}{http.PRICES_PATH}", False),
+        ("another path of the price list host by the watch", watch, "GET", f"https://{http.PRICES_HOST}/api/other", False),
     ]
     if gateway_host:
         route = f"https://{gateway_host}/default/models/openai/v1"

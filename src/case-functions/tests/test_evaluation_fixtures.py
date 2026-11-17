@@ -14,6 +14,7 @@ from unittest import mock
 from support import REPO_ROOT
 from cases import deeper, toolbox as tb
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
+from test_prices import priced
 from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
 from test_toolbox_depth import profiled
 from test_toolbox_meters import FIXED, WIDGET, at, billed, day, widgets
@@ -242,7 +243,7 @@ class TheArguments(Base):
     """What each tool takes, and what it does with a call that does not pass."""
 
     VALID = {"type": "microsoft.compute/disks", "metric": "Percentage CPU", "metrics": ["Percentage CPU"], "handle": "r1", "handles": ["r1"], "dimension": "StatusCode", "table": "Heartbeat",
-             "service": "Storage", "order_by": "cost", "basis": "actual", "grain": "hour", "days": 30, "limit": 5, "offset": 0}
+             "service": "Storage", "order_by": "cost", "basis": "actual", "grain": "hour", "days": 30, "limit": 5, "offset": 0, "meter": "m1"}
     ONE_OF = {"metric_summary": {"metric": "Percentage CPU"}, "measure": {"metric": "Percentage CPU"}, "cost_meters": {"handle": "r1"}}  # what a call needs besides the required, as the tool decides it
 
     def test_what_every_tool_takes_is_what_the_toolbox_declares(self):
@@ -470,6 +471,35 @@ class TheBill(Base):
         child = ask(box, "children", handle=account)["rows"][0][0]
         self.assertEqual(ask(box, "cost_meters", handle=child), {"error": "not-offered"})
         self.assertEqual(self.fixture(ACCOUNT_ROW, "cost_meters", handle="r2"), {"error": "not-offered"})
+
+
+class ThePrices(Base):
+    """price_alternatives: the real tool on the fake estate and the invented price list of test_prices (one meter, the line that its words name and the rate that the bill shows against its price), and the
+    fixtures, asked the same."""
+
+    def setUp(self):
+        self.estate, self.box = priced()
+
+    def test_the_table_the_line_of_the_meter_and_its_rate_are_answered_in_the_shape_of_the_real_tool(self):
+        real = ask(self.box, "price_alternatives", meter="m1")
+        fake = self.fixture(DISK_ROW, "price_alternatives", meter="m1")
+        self.same_shape(real, fake)
+        self.same_columns(real, fake, optional=("region",))
+        self.same_cells(real, fake)
+        self.assertEqual((set(real["current"]), set(real["same"]) | set(real["cols"])), (set(fake["current"]), set(fake["same"]) | set(fake["cols"])))
+        self.assertEqual((fake["current"]["line"], fake["rows"][1][0], fake["match"], fake["unit"]), ("p2", "p2", "found", "1 Hour"), "the line of the meter itself is one of the rows")
+        self.assertEqual(self.fixture(DISK_ROW, "price_alternatives", meter="m1", within="service")["within"], "service")
+        self.assertEqual((self.fixture(DISK_ROW, "price_alternatives", meter="m1", offset=1)["rows"][0][0], self.fixture(DISK_ROW, "price_alternatives", meter="m1", offset=3)["rows"]), ("p2", []))
+
+    def test_a_meter_that_nothing_showed_is_unknown_and_so_is_every_meter_of_an_estate_with_no_cost(self):
+        self.assertEqual(ask(self.box, "price_alternatives", meter="m77"), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(DISK_ROW, "price_alternatives", meter="m77"), {"error": "unknown-handle"})
+        self.assertEqual(ask(toolbox(Estate()), "price_alternatives", meter="m1"), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture("empty-estate", "price_alternatives", meter="m1"), {"error": "unknown-handle"})
+
+    def test_what_the_fixtures_say_of_the_unit_and_the_columns_is_what_the_toolbox_says(self):
+        self.assertEqual((evals.PRICE_COLUMNS, evals.METER[-1], evals.PRICE_LIST[1][1]), (("price", "sku", "meter", "usd"), "1 Hour", evals.METER[1]))
+        self.assertEqual(sorted(evals.PRICE_LIST, key=lambda line: line[2]), list(evals.PRICE_LIST), "the invented list is in the order of its prices, as the real tool gives it")
 
 
 class TheDepth(Base):

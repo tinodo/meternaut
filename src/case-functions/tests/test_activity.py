@@ -88,7 +88,7 @@ class WhatTheToolsTouched(unittest.TestCase):
         self.assertEqual(activity.known(None, {}), set())
 
     def test_every_tool_of_the_toolbox_touches_kinds_or_shows_a_list_and_a_new_tool_has_to_be_put_in_one_of_the_two(self):
-        shows_a_list = {"estate_overview", "metric_names", "advisor_items", "paid_features", "commitments", "recall_lessons", "recall_knowledge", "recall_open_questions"}
+        shows_a_list = {"estate_overview", "metric_names", "advisor_items", "paid_features", "commitments", "recall_lessons", "recall_knowledge", "recall_open_questions", "price_alternatives"}
         self.assertEqual(set(TOOLS) - set(activity.VERBS), shows_a_list)
         self.assertLessEqual(set(activity.VERBS) - set(TOOLS), set(), "no tool is named that the toolbox has not")
         self.assertLessEqual(set("".join(activity.VERBS.values())), set(INVESTIGATION_TOUCHES))

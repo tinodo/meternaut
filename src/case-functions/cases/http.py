@@ -139,6 +139,7 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
     searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties. The last call is the one to the public price list (PRICE_CALL): a GET that carries no token and needs no role."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
+        PRICE_CALL,
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
         ("POST", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/query", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/benefitRecommendations", re.I)),
@@ -168,7 +169,6 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
         # The display name of one subscription (Learn, "Subscriptions - Get"): the address is the subscription itself and nothing after it, so no resource of it is read this way.
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}", re.I)),
         ("GET", re.compile(arm + r"/subscriptions", re.I)),
-        PRICE_CALL,
     )
     if foundry_endpoint is not None:
         calls += foundry_calls(foundry_endpoint)
