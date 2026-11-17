@@ -49,6 +49,10 @@ class TheFocusThatCodeChooses(unittest.TestCase):
         self.assertEqual(len(plan), 7)
         self.assertEqual({beat.of for beat in plan}, {7})
 
+    def test_the_floor_is_reached_when_the_kinds_so_far_make_exactly_95_percent_and_the_next_one_waits_for_the_last_beat(self):
+        plan = beats.plan({"contoso.compute/a": 95.0, "fabrikam.store/b": 3.0, "northwind.net/c": 2.0}, 0.0, 6)
+        self.assertEqual(kinds_of(plan), [["contoso.compute/a"], ["fabrikam.store/b", "northwind.net/c"]])
+
     def test_a_plan_never_has_more_beats_than_it_may_and_the_last_one_takes_what_does_not_fit(self):
         plan = beats.plan(ESTATE, UNOWNED, 3)
         self.assertEqual(kinds_of(plan)[:2], [["contoso.compute/rigs", "contoso.compute/racks"], ["fabrikam.store/vaults", "fabrikam.store/lockers"]])
