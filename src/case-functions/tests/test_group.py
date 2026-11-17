@@ -643,7 +643,7 @@ class WhenAPersonMarkedAResourceDoNotTouch(unittest.TestCase):
         self.assertEqual(third.result.cases, 1)
         new = next(case for case in self.extras.store.cases_recent() if case.case_id != old.case_id)
         self.assertEqual((new.resource_name, new.facts[GROUP_FACT]["count"], new.facts[GROUP_FACT]["silenced"]), ("pe-09", 9, 1))
-        self.watch(raw_of(10, confidence=0.8), resources)  # the next Watch takes the old group's request back: the fresher request of the same finding stands for it
+        self.assertEqual(len(self.extras.approvals.supersede()), 1, "the Watch takes the old group's request back: the fresher request of the same finding stands for it")
         (plan,) = self.extras.store.plans_open()
         self.assertEqual(plan.case_id, new.case_id, "the request of the old group was taken back: one request for the finding waits")
         self.assertEqual(self.extras.store.case_get(old.case_id).status, "expired")

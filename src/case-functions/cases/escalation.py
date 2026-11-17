@@ -261,16 +261,18 @@ def weekly(ladder: Ladder) -> int:
     if any("no_permission" in r.notes and r.at >= stamp(now - WEEK) for r in recent):
         problems.append(NOTES["no_permission"] + " The permission is Microsoft Graph User.Read.All for the app's identity, which a person with the right Entra role grants (docs/proposals/30-escalation.md).")
     ids = {p.plan_id for p in waiting}
-    if any(r.outcome == "failed" and r.kind == "step" and r.plan_id in ids for r in recent):
-        problems.append("A message about a waiting request could not be delivered. It is tried again, and the pages show which.")
+    if any(r.outcome == "failed" and r.kind == "step" and r.tries >= FAST_TRIES and r.plan_id in ids for r in recent):
+        problems.append("A message about a waiting request could not be delivered after many tries. It is tried again every day, and the pages show which.")
     contacts = ladder.directory.contacts().targets
     owners = ladder.directory.owners()
     sent = 0
     for target in dict.fromkeys(contacts + (owners if problems else ())):
         if not (plans or problems):
             break
-        week = [m for m in store.mails_since(target.oid, stamp(now - dt.timedelta(days=6))) if m.kind in ESCALATION_KINDS and m.status == "sent"]
-        if any(m.kind == "escalation-weekly" for m in week) or any(m.sent_at >= stamp(now - dt.timedelta(days=1)) for m in week) or ladder.mailer.hold_reason(target.oid, "escalation-weekly"):
+        tried = [m for m in store.mails_since(target.oid, stamp(now - dt.timedelta(days=6))) if m.kind in ESCALATION_KINDS]
+        week = [m for m in tried if m.status == "sent"]
+        if (any(m.kind == "escalation-weekly" for m in week) or any(m.sent_at >= stamp(now - dt.timedelta(days=1)) for m in week) or ladder.mailer.hold_reason(target.oid, "escalation-weekly")
+                or any(m.kind == "escalation-weekly" and m.sent_at > stamp(now - dt.timedelta(minutes=RETRY_MINUTES)) for m in tried)):
             continue
         person = ladder.people.by_oid(target.oid) or Person(target.oid, target.name, (), target.mail)
         mine = plans if target in contacts else []
