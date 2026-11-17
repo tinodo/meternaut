@@ -252,7 +252,7 @@ def beat_lines(events: list[dict]) -> list[str]:
     beats = sorted((e for e in events if e["type"] == "investigation.beat"), key=lambda e: whole(e.get("beat")) or 0)
     return [f"  Beat {figure(e.get('beat'))} of {figure(e.get('of'))}: {figure(e.get('kinds'))} kinds{' and the lines of the bill that no resource owns' if e.get('billing') is True else ''}; "
             f"{figure(e.get('seeded'))} resources read by code first, {figure(e.get('looked'))} kinds looked at; {figure(e.get('toolCalls'))} tool calls, {figure(e.get('tokens'))} tokens, "
-            f"{figure(e.get('seconds'))} seconds; it ended {word(e.get('end'), 12) or 'unknown'}; findings {figure(e.get('findings'))}." for e in beats]
+            f"{figure(e.get('seconds'))} seconds; it ended {word(e.get('end'), 12) or 'unknown'}{' and gave its answer when it was asked once more' if e.get('salvaged') is True else ''}; findings {figure(e.get('findings'))}." for e in beats]
 
 
 def call_lines(events: list[dict]) -> list[str]:
@@ -279,6 +279,9 @@ def call_lines(events: list[dict]) -> list[str]:
                  + (f"; {len(shown) - TOOLS_SHOWN} more tools" if len(shown) > TOOLS_SHOWN else "") + ".")
     if why:
         lines.append("  Why calls gave no answer, by the word of the toolbox: " + ", ".join(f"{name} {n}" for name, n in sorted(why.items())) + ".")
+    kept = [seconds_of(e.get("savedSeconds")) for e in ran if seconds_of(e.get("savedSeconds")) > 0]
+    if kept:
+        lines.append(f"  Pictures that were kept and answered again with no read: {len(kept)} calls, {sum(kept):.1f} seconds that their reads took and that were not spent again.")
     return lines
 
 

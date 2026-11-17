@@ -600,6 +600,15 @@ class Run(unittest.TestCase):
         self.assertNotIn("Tool calls in the History", out, "a run that wrote no line of a call says nothing of calls")
         self.assertNotIn("Beat 1", out)
 
+    def test_a_beat_that_was_asked_once_more_for_its_answer_and_the_pictures_that_were_kept_are_told_in_counts(self):
+        events = self.a_run_with_beats_and_calls()
+        events[-2:-2] = [event("investigation.beat", beat=3, of=3, kinds=1, billing=False, seeded=2, looked=1, toolCalls=3, tokens=90000, seconds=170, end="time", ok=True, findings=1, salvaged=True),
+                         event("investigation.call", beat=3, n=1, by="agent", tool="profile", handles=1, ok=True, chars=300, seconds=0.0, savedSeconds=18.4)]
+        _, out, _, _ = self.go([telemetry(events)], "--counts-only")
+        self.assertIn("it ended time and gave its answer when it was asked once more; findings 1.", out)
+        self.assertIn("it ended answered; findings 2.", out, "the beats that were not cut off say what they said")
+        self.assertIn("Pictures that were kept and answered again with no read: 1 calls, 18.4 seconds that their reads took and that were not spent again.", out)
+
     def test_the_tools_that_are_named_are_the_first_twelve_by_their_seconds_and_the_others_are_counted(self):
         events = a_good_run()
         events[-1:-1] = [*an_investigation(), *[event("investigation.call", beat=1, n=n, by="agent", tool=f"tool_{chr(97 + n)}", handles=0, ok=True, chars=2, seconds=float(n)) for n in range(15)]]
