@@ -98,8 +98,9 @@ class TheInput(unittest.TestCase):
 class TheSettings(unittest.TestCase):
     def test_the_study_is_off_unless_it_is_switched_on_and_its_limits_start_at_their_defaults(self):
         settings = config.load(dict(ENV))
-        self.assertEqual((settings.study, settings.study_max_types, settings.study_max_pages, settings.study_max_seconds, settings.study_max_tokens), (False, 4, 8, 300, 400_000))
-        self.assertEqual([config.OPTIONAL[name] for name in ("STUDY_MAX_TYPES", "STUDY_MAX_PAGES", "STUDY_MAX_SECONDS", "STUDY_MAX_TOKENS")], ["4", "8", "300", "400000"])
+        self.assertEqual(settings.study_max_types, 8)
+        self.assertEqual((settings.study, settings.study_max_pages, settings.study_max_seconds, settings.study_max_tokens), (False, 8, 300, 400_000))
+        self.assertEqual([config.OPTIONAL[name] for name in ("STUDY_MAX_TYPES", "STUDY_MAX_PAGES", "STUDY_MAX_SECONDS", "STUDY_MAX_TOKENS")], ["8", "8", "300", "400000"])
         for name in ("STUDY", "STUDY_MAX_TYPES", "STUDY_MAX_PAGES", "STUDY_MAX_SECONDS", "STUDY_MAX_TOKENS"):
             self.assertNotIn(name, config.REQUIRED)
 
