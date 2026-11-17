@@ -659,12 +659,14 @@ class TheEvaluations(unittest.TestCase):
                         self.assertIsInstance(answer(arguments), dict, (tool, arguments))
                     fitting = {name: values[name] for name, (kind, required, limits) in evals.PARAMETERS[tool].items() if (required or name in ("table", "metric")) and name in values}
                     fitting = {"type": row["type"]} if tool in ("cost_history", "cost_meters") else fitting
+                    fitting = {name: value[:evals.PARAMETERS[tool][name][2][1]] if evals.PARAMETERS[tool][name][0] == "list" and evals.PARAMETERS[tool][name][2] else value
+                               for name, value in fitting.items()}  # a call names no more handles than the tool takes
                     self.assertIsNotNone(evals.checked_arguments(tool, fitting), (tool, fitting))
-                    self.assertLessEqual(len(json.dumps(answer(fitting), separators=(",", ":"))), toolbox.MAX_RESULT_CHARS, tool)
+                    self.assertLessEqual(len(json.dumps(answer(fitting), separators=(",", ":"))), toolbox.result_cap(tool), tool)
                     if "metrics" in evals.PARAMETERS[tool]:
                         several = {**{name: value for name, value in fitting.items() if name != "metric"}, "metrics": [row["metric"], "Another Metric"], "grain": "hour"}
                         self.assertIsNotNone(evals.checked_arguments(tool, several), (tool, several))
-                        self.assertLessEqual(len(json.dumps(answer(several), separators=(",", ":"))), toolbox.MAX_RESULT_CHARS, tool)
+                        self.assertLessEqual(len(json.dumps(answer(several), separators=(",", ":"))), toolbox.result_cap(tool), tool)
 
     def test_the_thresholds_are_read_from_the_file_and_a_threshold_that_is_missed_is_a_failure(self):
         thresholds = json.loads((ROOT / "evaluation" / "thresholds.json").read_text(encoding="utf-8"))["codeGraders"]
