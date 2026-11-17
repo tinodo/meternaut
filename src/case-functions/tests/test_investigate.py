@@ -393,9 +393,10 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed (it was 5,600 since the data that
+        # 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a finer grain than a day
+        # (it was 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since the data that
         # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 6100)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 6500)
 
     def test_the_investigator_is_told_to_cite_the_volume_and_the_readers_of_data_that_is_stored_and_not_read_and_that_a_source_it_could_not_read_is_unknown(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
