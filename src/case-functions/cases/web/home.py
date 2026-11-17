@@ -14,13 +14,13 @@ from typing import Mapping, Sequence
 
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
-from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
+from ..models import ADVICE_QUIET_DAYS, ADVISE, HELD, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import (brief_of, cases_by_id, counted as _count, decisions_for, effective_state, is_expired, may_answer, measured_tile, read,
                      verified_brief)
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
                       use_block)
-from .layout import code, details, kpi, kpis, notice, page, paragraph, table
+from .layout import code, details, kpi, kpis, link, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
 ROWS_MAX = 100
@@ -30,6 +30,8 @@ RECENT_PLANS = 60
 RECENT_ACTIONS = 100
 HELD_CASES = 300  # the cases of each status that are looked at for the findings that are held back (the same number as cases/learning.py reads)
 HELD_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as cases/learning.py reads)
+HELD_LISTED = 10  # the findings that a guard holds back which the start page lists, each with a link: the page of savings found has all of them
+HELD_READ = 1000  # the plans that are read for them (the store gives at most a thousand)
 SORTS = (("impact", "Impact", "Most at stake first."), ("age", "Age", "Waiting longest first."), ("risk", "Risk", "Lowest risk first."))
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
@@ -301,7 +303,7 @@ def held_by_rules(ctx: Ctx) -> int:
 def _held(ctx: Ctx) -> Safe:
     """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because an automation manages the
     resource or nobody looked up who changed it. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
-    nothing here: the list above says so."""
+    nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing."""
     cases, _ = read(lambda: held_cases(ctx), [])
     if not cases:
         return Safe("")
@@ -312,7 +314,32 @@ def _held(ctx: Ctx) -> Safe:
     if rest:
         many = rest != 1
         lines.append(paragraph(f"No measurement backs {'them' if many else 'it'} yet, or the places for requests are full. The AIs look at {'them' if many else 'it'} again at the next investigation."))
+    lines.append(_held_list(ctx))
     return details(f"Held back: {_count(held, 'finding')}", *lines)
+
+
+def _held_list(ctx: Ctx) -> Safe:
+    """One line for each finding that a guard holds back and that this person is named for: its title with a link to its page, its figure, and why no request was made."""
+    plans, _ = read(lambda: ctx.store.plans_recent(HELD_READ), [])
+    mine = [plan for plan in plans if plan.state == HELD and may_answer(ctx.principal, plan)]  # type: ignore[arg-type]
+    cases = cases_by_id(ctx, {plan.case_id for plan in mine})
+    rows = []
+    for plan in mine:
+        case = cases.get(plan.case_id)
+        if case is None or case.status not in ("needs_human", "proposed"):
+            continue
+        found = brief_of(ctx, plan, case)
+        rows.append(fmt('<li><span>{title}</span><span class="quiet">{figure} · {heading}</span></li>', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title_of(found)[1]),
+                        figure=_stake_words(found, case), heading=found.hold.heading if found.hold else ""))
+    return fmt('<p>These are held back, and nothing is asked of you to approve:</p><ul class="recent">{rows}</ul>', rows=join(rows[:HELD_LISTED])) if rows else Safe("")
+
+
+def _stake_words(found: Brief, case: CaseRecord) -> str:
+    """The figure of a finding in a few words, as a list of requests says it ("$1,682 a year, Expected")."""
+    figure = figure_for([found], [cost_of(found, case)])
+    if figure.monthly is None:
+        return "cost not visible"
+    return f"{a_year(figure.monthly)} a year, {figure.level}" if figure.state == "save" else f"costs {a_year(figure.monthly)} a year, saving not measured"
 
 
 def _open(ctx: Ctx) -> tuple[list[Row], bool]:

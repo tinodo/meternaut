@@ -23,12 +23,13 @@ import uuid
 from typing import Callable, Mapping
 
 from . import alerts, letters, quiet
+from .approvals import HELD_PLANS
 from .brief import contact_text
 from .http import Client
 from .loop_config import LoopSettings
 from .mail import Mailer, mail_calls
 from .memory_store import parse
-from .models import ADVISE, TIME_FORMAT, ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
+from .models import ADVISE, HELD, TIME_FORMAT, ActionRecord, CaseRecord, PlanRecord, RunRecord, Store
 from .people import People, Person
 from .web.common import may_answer
 
@@ -57,11 +58,15 @@ def contacts_of(people: People) -> tuple[str, ...]:
 
 def digest_for(person: Person, store: Store, people: People, base: str, now: dt.datetime) -> letters.Letter | None:
     """The weekly summary for a person, or None when nothing waits for them (it is sent only then). The requests that the Decisions page shows this person: the ones that they may answer (the
-    page's own rule), and the ones that they put off are marked, as the page marks them."""
+    page's own rule), and the ones that they put off are marked, as the page marks them. Then the findings that a guard holds back and that they are named for (cases/approvals.py
+    Approvals.settle), unless they have answered one already: one short block that asks for nothing."""
     principal = people.principal(person.oid)
     mine = [(plan, store.case_get(plan.case_id)) for plan in store.plans_open() if plan.state == "open" and principal is not None and may_answer(principal, plan)]
-    later = {d.plan_id for d in store.decisions_by(person.oid, 200) if d.decision == "later"}
-    return letters.digest_letter(person, base, now, mine, contacts_of(people), later)
+    decided = store.decisions_by(person.oid, 200)
+    later = {d.plan_id for d in decided if d.decision == "later"}
+    seen = {d.plan_id for d in decided}
+    held = [(plan, store.case_get(plan.case_id)) for plan in store.plans_recent(HELD_PLANS) if plan.state == HELD and plan.plan_id not in seen and principal is not None and may_answer(principal, plan)]
+    return letters.digest_letter(person, base, now, mine, contacts_of(people), later, held)
 
 
 def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: People, token: Callable[[str], str], redact: Callable[[str], str], *,

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..brief import HOLD_WORDS
+from ..models import HELD, PlanRecord
 from . import words
-from .common import MORE, brief_of, counted, figure_cell, measured_tile, read, verified_brief
-from .core import Ctx, Response, Safe, fmt, join, number
-from .figures import NO_LINES, WEAKEST_FIRST, a_year, cost_of, figure_for
+from .common import MORE, brief_of, counted, figure_cell, measured_tile, read, saving_cell, verified_brief
+from .core import Ctx, Response, Safe, fmt, join, link_part, number
+from .figures import NO_LINES, WEAKEST_FIRST, a_year, cost_of, figure_for, title_of
 from .layout import head, kpi, kpis, link, notice, page, paragraph, table
 
 PER = 1000  # the most that one read of the store gives
@@ -30,6 +32,11 @@ GROUPS = (
     ("Dropped", ("dropped",), "No change is suggested. The AIs advised keeping the resource.", False),
     ("Could not be finished", ("error", "failed"), "A check or a model call failed, or the change failed or was stopped.", False),
 )
+HELD_NAME = "Found, and held back from a request"
+HELD_MEANING = "Meternaut found these and made no request for a change, for the reason under each heading. Nothing changes in Azure."
+HELD_LEAD = ("Meternaut found these and asked nobody to approve a change, for the reason under each heading. Nothing changes in Azure. Each finding has a page with its evidence, "
+             "and a person who is named for it can ask, say that it is not theirs, decide later or say that it is not worth it.")
+HELD_HEADERS = ["Finding", "Saving a year", "How sure", "Why no request was made", "Who may know"]
 
 
 @dataclass
@@ -109,10 +116,11 @@ def _money(label: str, groups: list, tail: str) -> Safe:
     return _tile(label, groups, a_year(sum(line[0] for line in lines)), "a year", f"{rest} · {levels}. {tail}", True)
 
 
-def _tiles(groups: list, measured: list, failed: bool, cut: bool) -> Safe:
-    """Saving measured adds up every confirmed change, as the Decisions page does for the changes of one person."""
+def _tiles(groups: list, measured: list, failed: bool, cut: bool, held: int = 0) -> Safe:
+    """Saving measured adds up every confirmed change, as the Decisions page does for the changes of one person. The tile of everything that was found says how many of those findings are held back."""
     saved = kpi("Saving measured", "—", "", "Cannot be read now.") if failed else measured_tile(sum(measured), len(measured), cut)
-    return kpis(_money("Found in all", [group for group in groups if group.added], "The basis is in the table."), _money("Waiting for a person", groups[:1], "A person has to answer or look at it."), saved)
+    found = f"Of which held back: {held}. The basis is in the table." if held else "The basis is in the table."
+    return kpis(_money("Found in all", [group for group in groups if group.added], found), _money("Waiting for a person", groups[:1], "A person has to answer or look at it."), saved)
 
 
 def _row(group: Group) -> list:
@@ -129,19 +137,57 @@ def _row(group: Group) -> list:
     return [name, found, join(saving, "<br>") if saving else "Nothing to add up.", join(none, "<br>") if none else "None."]
 
 
+def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:
+    """Takes the findings that a guard holds back (the request of each is in the state HELD) out of the row of what waits for a person and makes their own row of them, so that no finding is in
+    two rows and no figure is added twice. None when no finding is held, or the plans cannot be read (they stay where they were)."""
+    plans, ok = read(lambda: ctx.store.plans_recent(PER), [])
+    held = {plan.case_id: plan for plan in reversed(plans) if plan.state == HELD}  # the newest request of a finding wins
+    mine = [case for case in waiting.cases if ok and case.case_id in held and case.status in ("needs_human", "proposed")]
+    if not mine:
+        return None, {}
+    waiting.cases = [case for case in waiting.cases if case not in mine]
+    return Group(HELD_NAME, HELD_MEANING, True, mine, waiting.failed, waiting.cut, waiting.dead), held
+
+
+def _held_section(ctx: Ctx, group: Group, held: dict[str, PlanRecord]) -> Safe:
+    """The findings that are held back, one table for each reason under its heading: the finding with a link to its page, its figure with its level and its basis, how sure the AIs are, the guard's
+    sentence and who may know. The sentences are those of cases/brief.py HOLD_WORDS, the ones of the page of the finding and of the weekly letter."""
+    parts: list[object] = [Safe("<h2>Found, and held back from a request</h2>"), paragraph(HELD_LEAD)]
+    for reason, (heading, _, needs) in HOLD_WORDS.items():
+        rows = []
+        for case in group.cases:
+            plan = held[case.case_id]
+            if plan.preconditions.get(HELD) != reason:
+                continue
+            brief = brief_of(ctx, plan, case)
+            title = title_of(brief)[1]
+            kind = fmt('<span class="muted">{kind}{place}</span>', kind=brief.where.kind, place=f", resource group {brief.where.group}" if brief.where.group else "")
+            rows.append([fmt('{title}<br>{kind}', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title), kind=kind), saving_cell(ctx, case),
+                         f"{brief.confidence.level} confidence. {brief.confidence.because}", brief.hold.why if brief.hold else "", brief.owner.text])
+        if rows:
+            parts += [fmt("<h3>{heading}</h3>", heading=heading), paragraph(needs), table(f"held-{reason}", heading, HELD_HEADERS, rows, row_header=True, quiet_caption=True)]
+    return join(parts)
+
+
 def savings_page(ctx: Ctx) -> Response:
     groups = [_read(ctx, *spec) for spec in GROUPS]
+    held_group, held = _held_out(ctx, groups[0])
+    if held_group is not None:
+        groups.insert(1, held_group)
     changes, newest, failed, cut = _changes(ctx)
     confirmed = dict(reversed(changes))  # the newest change of a finding wins
     for group in groups:
         if group.added:
             _add(ctx, group, confirmed, newest)
-    parts = [head("Savings found", LEAD), _tiles(groups, [brief.saving.monthly for _, brief in changes], failed, cut)]
+    counted_held = sum(line[2] for line in held_group.levels.values()) if held_group is not None else 0
+    parts = [head("Savings found", LEAD), _tiles(groups, [brief.saving.monthly for _, brief in changes], failed, cut, counted_held)]
     if failed or any(group.failed for group in groups):
         title = "The findings cannot be read" if all(group.dead for group in groups) else "Part of the findings cannot be read"
         parts.append(notice("error", title, "I cannot read all of them now, so some counts and figures are missing or are at least. Nothing has changed."))
     headers = ["What became of it", "Findings", "Saving a year", "Findings with no saving figure"]
     parts += [table("savings", "Savings found, by what became of each finding", headers, [_row(group) for group in groups], row_header=True), paragraph(NOTE)]
+    if held_group is not None:
+        parts.append(_held_section(ctx, held_group, held))
     if ctx.principal.has("ops"):  # the page of every run is for that role alone
         parts.append(paragraph(link(ctx.url("/ops/runs"), "Every run and every finding")))
     return page(ctx, "Savings found", join(parts), current="/ops/savings", ai=True, why="your role ops or owner lets you see every saving that was found", wide=True)

@@ -15,10 +15,10 @@ from typing import Sequence
 from . import brief
 from . import costs as cost_words
 from . import learning
-from .approvals import HELD_BACK, NOTHING_TO_SAY
+from .approvals import HELD_BACK, HELD_WORDS, NOTHING_TO_SAY, RELEASED
 from .detectors import Lead
 from .events import History
-from .models import CaseRecord, StoreError
+from .models import HELD, CaseRecord, PlanRecord, StoreError
 from .roles import clean_text
 
 
@@ -92,5 +92,17 @@ def ask(ex, history: History, record: CaseRecord, lead: Lead, holds: list[str] |
 
 def take_back(ex, history: History) -> Counter:
     """Takes back the open requests of the findings that cannot say what to look at, that the rules hold back or that were made under rules that have changed, when nobody has answered them
-    (Approvals.hold_back_empty), says each in the History and returns how many there were of each reason, in the words that the History says."""
-    return Counter(held(history, case, brief.taken_back(plan)) for plan, case in ex.approvals.hold_back_empty())
+    (Approvals.hold_back_empty), says each in the History and returns how many there were of each reason, in the words that the History says. Then it keeps the held requests (Approvals.settle: a
+    finding that a guard holds back is shown, and one that nothing holds back any more is closed and said in the History with `case.released`, which no count of what was held back includes)."""
+    taken = Counter(held(history, case, brief.taken_back(plan)) for plan, case in ex.approvals.hold_back_empty())
+    for plan, case in ex.approvals.settle(ex.approvers()):
+        released(history, plan, case)
+    return taken
+
+
+def released(history: History, plan: PlanRecord, case: CaseRecord | None) -> str:
+    """Says in the History that a finding is held back no longer, with the reason that it was held for. It holds no figure: the History keeps no amount of money. Returns the words that it said."""
+    reason = (plan.preconditions or {}).get(HELD)  # the reason that the request was made for stays in its preconditions when it is closed
+    history.emit("case.released", caseId=plan.case_id, detector=case.detector if case is not None else "", resourceType=clean_text(case.resource_type, 120) if case is not None else "",
+                 resourceName=clean_text(case.resource_name, 120) if case is not None else "", reason=RELEASED, was=HELD_WORDS.get(reason, "") if isinstance(reason, str) else "")
+    return RELEASED

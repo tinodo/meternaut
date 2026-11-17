@@ -52,7 +52,7 @@ def _chips(brief: Brief) -> Safe:
     if brief.kind == "change":
         chips.append(chip("Can be undone", "low", "circle") if brief.undo.reversible else chip("Cannot be undone", "high", "diamond"))
     elif brief.kind == "advice":
-        chips.append(chip("Answering changes nothing in Azure"))
+        chips.append(chip("Held back from a request", "mid", "triangle") if brief.hold is not None else chip("Answering changes nothing in Azure"))
     return fmt('<p class="chips">{chips}</p>', chips=join(chips))
 
 
@@ -64,6 +64,12 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     kind = {"expired": "warning", "failed": "error", "done": "success", "verified": "success"}.get(outcome.state, "info")
     when = paragraph(ctx.when(outcome.at)) if outcome.at else Safe("")
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
+
+
+def _hold(brief: Brief) -> Safe:
+    """Why no request was made, at the top of the page of a finding that a guard holds back: the guard's sentence and what it still needs. Nothing asks the person to approve anything here."""
+    found = brief.hold
+    return notice("info", found.heading, found.why, found.needs) if found is not None else Safe("")
 
 
 def _look(brief: Brief) -> Safe:
@@ -354,7 +360,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _decision(brief, case, ctx.now)]
+    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)
