@@ -19,8 +19,9 @@ list_resources and measure answer a table, to fit many resources in one answer: 
 a row lacks is null and a null at the end of a row is left out, "same" holds the fields that have one value in every row, and "has_more" with "next_offset" says whether
 and where the next page starts.
 measure and metric_summary also answer a "summary": {"resources", "with_data", "no_data", "zero", "positive", "days"}, the resources whose numbers an answer showed, counted
-by whether the metric had data in the window. no_data is a resource with no value on any day, positive one with a total above 0, and zero any other resource that has data
-(a total of 0, in practice); with_data is zero plus positive and resources is with_data plus no_data. For metric_summary it counts the resources of the call. For measure
+by whether the metric had data in the window. no_data is a resource with no value on any day, positive one with any aggregation above 0 (the total, the maximum or the average: a metric
+that offers no total has none), and zero any other resource that has data (every aggregation that it has is 0, in practice); with_data is zero plus positive and resources is with_data
+plus no_data. For metric_summary it counts the resources of the call. For measure
 it counts the resources of the type that this run has shown for that metric and window, in this answer and in the pages and calls before it, each resource once with its
 latest measurement, so that the last page of a type covers all of it. A resource that failed (it is in "failed"), was not read in time or was cut from the answer (it is
 in "unread") is in none of the counts until a read shows it; a read that fails changes no count. The summary is a count and nothing more: it names no resource, and the
@@ -659,7 +660,7 @@ TOOLS = {tool.name: tool for tool in (
          "Measures Azure Monitor metrics for up to 60 resources, named by handle, in daily buckets over the last days (at most 30): one metric (metric) or up to 8 (metrics). For each "
          "resource (and metric): total (the sum of the daily totals), max (of the daily maximums), average (the mean of the daily averages) and days_with_data; null when the metric has none. "
          "With grain hour a row also has peak (the greatest value of any finer bucket) and p95 (95 percent of those buckets are at or below it); read_at names a finer grain that was read. "
-         "summary counts the resources that were read by whether the metric had data in the window: resources, with_data (zero has a total of 0, positive a total above 0), no_data and days. "
+         "summary counts the resources that were read by whether the metric had data in the window: resources, with_data (positive: the total, maximum or average is above 0; zero: none is), no_data and days. "
          "A type that offers no platform metrics answers no-metrics, which is no sign of use. A read that failed says unavailable with the platform's code word. After 60 seconds "
          "the answer says partial and lists the handles that were not read.",
          (Param("handles", "handles", "Handles of resources that earlier answers showed, 1 to 60 of them.", required=True), _ONE, _MANY,
@@ -667,9 +668,9 @@ TOOLS = {tool.name: tool for tool in (
     Tool("measure",
          "Measures Azure Monitor metrics across the resources of one type, the dearest first, in daily buckets over the last days (at most 30), as a table: one metric (metric) or "
          "up to 8 (metrics). Each array in rows follows cols: one resource and metric: handle, metric, usd30d (dollars), total, max and avg (the sum of the daily "
-         "totals, greatest daily maximum, mean of the daily averages; null when the metric has none), days_with_data and, with grain hour, peak and p95 (95 percent of the finer "
+         "totals, greatest daily maximum, mean of the daily averages; null when the metric has none), days_with_data and, with grain hour, peak and p95 (95 percent of the "
          "buckets are at or below it); read_at names a finer grain that was read. summary counts the resources shown so far by whether the metric had data in the window: resources, "
-         "with_data (zero has a total of 0, positive a total above 0), no_data and days. failed lists the handles whose read failed, with failed_codes. A type that offers no platform "
+         "with_data (positive: a total, maximum or average above 0; zero: none), no_data and days. failed lists the handles whose read failed, with failed_codes. A type that offers no platform "
          "metrics answers no-metrics, which is no sign of use. After 60 seconds partial is true and unread lists the handles not read. When has_more is true, use next_offset.",
          (Param("type", "type", _TYPE, required=True), _ONE, _MANY, Param("days", "integer", "How many closed days to look back, 1 to 30. Null for 30.", low=1, high=MAX_DAYS),
           Param("limit", "integer", "How many resources to measure, 1 to 80. Null for 40.", low=1, high=MAX_MEASURE_ROWS), _OFFSET, _GRAIN)),
@@ -805,11 +806,13 @@ def _summarise(points: list[MetricPoint]) -> dict:
 
 
 def _bucket(summary: dict) -> str:
-    """How a measurement is counted in a summary: `no_data` when no day had a value, `positive` when the total is above 0, and `zero` for any other measurement that has
-    data. This only counts: it names no resource and says nothing about what a count means."""
+    """How a measurement is counted in a summary: `no_data` when no day had a value or no aggregation has one, `positive` when any aggregation that the metric has (the total, the maximum or the
+    average: a metric that offers no total has none) is above 0, and `zero` for any other measurement that has data. This only counts: it names no resource and says nothing about what a
+    count means."""
     if summary["days_with_data"] == 0:
         return "no_data"
-    return "positive" if summary["total"] is not None and summary["total"] > 0 else "zero"
+    found = [summary[name] for name in ("total", "max", "average") if summary.get(name) is not None]
+    return "no_data" if not found else "positive" if any(value > 0 for value in found) else "zero"
 
 
 def _tally(buckets: Iterable[str], days: int) -> dict:
@@ -2438,7 +2441,7 @@ class Toolbox:
                 for words, count in found[1].items():
                     carriers[words] = carriers.get(words, 0) + count
         if last is not None and len(failed) == len([sub for sub in subs if sub in outcomes]):
-            raise last
+            return self._why(last)  # unavailable with the platform's code word, never its text: the notes keep what the History needs
         folded = fold((day, words, cost, quantity) for day, words, cost, quantity, _ in rows)
         total = math.fsum(spent for _, spent, _ in folded.values())
         lines = [Meter(scope, service, words, used, spent, daily, None if handle is not None else carriers.get(words, 0), start, days)

@@ -39,7 +39,7 @@ class BillingEstate(Estate):
 
     def __init__(self):
         super().__init__()
-        self.splits, self.bill, self.no_metrics, self.refuse, self.currencies, self.unowned_type = {}, [], set(), set(), {}, None
+        self.splits, self.bill, self.no_metrics, self.refuse, self.currencies, self.unowned_type, self.group_limit = {}, [], set(), set(), {}, None, None
 
     def requests(self, word="/providers/microsoft.insights/metrics"):
         return [c for c in self.calls if c["path"].lower().endswith(word)]
@@ -99,6 +99,8 @@ class BillingEstate(Estate):
         failed = self._failure("meters")
         if failed:
             return self._refused(failed)
+        if self.group_limit is not None and len(body["dataset"]["grouping"]) > self.group_limit:
+            return self._json({"error": {"code": "BadRequest", "message": f"Query cannot have more than {self.group_limit} group by clauses"}}, 400)
         sub = re.search(r"/subscriptions/([^/]+)/", lower).group(1)
         dataset, asked = body["dataset"], body["dataset"].get("filter")
         conditions = asked["and"] if asked and "and" in asked else [asked] if asked else []
@@ -309,6 +311,17 @@ class TheMetricReads(unittest.TestCase):
         self.assertEqual(ask(box, "metric_summary", handles=["r1"], metrics=[SENTENCE, "Nothing Here"]), {"error": "unknown-metric"})
         self.assertEqual(ask(box, "measure", type=WIDGET, metrics=[SENTENCE]), {"error": "unknown-metric"})
 
+    def test_a_metric_that_offers_no_total_is_counted_by_its_maximum_and_average_and_what_it_saw_is_never_zero(self):
+        estate, box = opened(3)
+        for name, maximum, average in (("w1", 99.0, 82.5), ("w2", 0.0, 0.0)):
+            estate.series[(estate.id_of(name).lower(), "Fine Metric")] = [at("2026-10-30T12:00:00Z", maximum=maximum, average=average)]
+        said = {"resources": 3, "with_data": 2, "no_data": 1, "zero": 1, "positive": 1, "days": 30}
+        self.assertEqual(ask(box, "measure", type=WIDGET, metric="Fine Metric")["summary"], said)
+        again = toolbox(estate)
+        ask(again, "list_resources", type=WIDGET)
+        summary = ask(again, "metric_summary", handles=["r1", "r2", "r3"], metric="Fine Metric")
+        self.assertEqual((summary["summary"], [r["total"] for r in summary["results"]]), (said, [None, None, None]), "the same count by the other tool; none of them has a total")
+
     def test_one_name_or_a_list_of_up_to_eight_and_never_both_nor_neither(self):
         estate, box = opened()
         bad = '{"error":"bad-arguments"}'
@@ -467,13 +480,26 @@ class TheMeters(unittest.TestCase):
         ask(box, "cost_meters", handle="r1", days=8)
         self.assertEqual(len(estate.queries()), before + 1)
 
-    def test_a_read_that_fails_is_unavailable_and_is_not_made_again(self):
+    def test_a_read_that_fails_is_unavailable_with_the_code_word_and_is_not_made_again(self):
         estate, box = self.box()
         estate.failures["meters"] = 403
-        self.assertEqual(box.call("cost_meters", {"handle": "r1"}), '{"error":"unavailable"}')
+        self.assertEqual(box.call("cost_meters", {"handle": "r1"}), '{"error":"unavailable","code":"Failed"}')
         before = len(estate.queries())
-        self.assertEqual(box.call("cost_meters", {"handle": "r1"}), '{"error":"unavailable"}')
+        self.assertEqual(box.call("cost_meters", {"handle": "r1"}), '{"error":"unavailable","code":"Failed"}')
         self.assertEqual(len(estate.queries()), before)
+
+    def test_if_azure_enforces_its_documented_limit_of_two_groupings_the_tool_is_unavailable_with_the_code_word_and_never_its_text(self):
+        estate, box = self.box()
+        estate.group_limit = 2  # Learn documents two group by clauses; the query API took two to seven at subscription scope when this was probed (2026-11-17)
+        for arguments in ({"handle": "r1", "days": 7}, {"type": WIDGET, "days": 7}):
+            raw = box.call("cost_meters", arguments)
+            self.assertEqual(json.loads(raw), {"error": "unavailable", "code": "BadRequest"}, arguments)
+            self.assertNotIn("group by", raw)
+        self.assertEqual(len(estate.queries()), 2, "a refusal with 400 is not made again, and a type that is refused asks for no count of resources")
+        box.call("cost_meters", {"handle": "r1", "days": 7})
+        self.assertEqual(len(estate.queries()), 2, "and the refusal is kept for the run")
+        estate.group_limit = None
+        self.assertEqual(ask(box, "cost_meters", handle="r1", days=8)["meters"], 2, "a call that is not refused is read as it always was")
 
     def test_a_subscription_that_cannot_be_read_is_named_and_the_others_are_shown(self):
         estate, _ = self.box()

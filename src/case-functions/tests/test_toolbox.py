@@ -2317,13 +2317,13 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
         second = ask(box, "measure", type=VM, metric=VM1_METRIC)
         self.assertEqual((first["summary"], second["summary"]), (self.said(2, 1, 1, 0, 1), self.said(2, 2, 0, 0, 2)))
 
-    def test_a_resource_with_data_but_no_total_or_a_total_that_is_not_above_zero_is_counted_with_the_zero_ones_so_that_the_numbers_add_up(self):
+    def test_a_resource_with_data_and_no_total_is_counted_by_its_maximum_and_average_and_one_whose_every_aggregation_is_not_above_zero_is_a_zero_one(self):
         estate = self.estate([None, None, None, None])
         ids = [r["id"].lower() for r in estate.rows]
         estate.series[(ids[0], VM1_METRIC)] = [point(1, None, 3.0, 2.0)]
         estate.series[(ids[1], VM1_METRIC)] = [point(1, -2.0, 1.0, 1.0)]
         estate.series[(ids[2], VM1_METRIC)] = [point(1, 0.0, 0.0, 0.0), point(2, None, None, None)]
-        self.assertEqual(ask(toolbox(estate), "measure", type=VM, metric=VM1_METRIC)["summary"], self.said(4, 3, 1, 3, 0))
+        self.assertEqual(ask(toolbox(estate), "measure", type=VM, metric=VM1_METRIC)["summary"], self.said(4, 3, 1, 1, 2), "the maximum above 0 of the first two is something that was there")
 
     def test_the_numbers_always_add_up_whatever_the_data(self):
         rng = random.Random(5)
@@ -2364,9 +2364,20 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
 
     def test_a_summary_is_counted_by_the_one_function_that_looks_at_a_measured_value(self):
         self.assertEqual([tb._bucket({"days_with_data": days, "total": total}) for days, total in ((0, None), (0, 5.0), (1, 0), (1, 0.0), (1, 2), (3, 0.001), (1, None), (1, -1))],
-                         ["no_data", "no_data", "zero", "zero", "positive", "positive", "zero", "zero"])
+                         ["no_data", "no_data", "zero", "zero", "positive", "positive", "no_data", "zero"], "data on a day and no aggregation at all is unknown, and a value below 0 is not above 0")
         self.assertEqual(tb._tally(["no_data", "zero", "positive", "positive"], 7), self.said(4, 3, 1, 1, 2, days=7))
         self.assertEqual(tb._tally([], 30), self.said(0, 0, 0, 0, 0))
+
+    def test_a_measurement_is_positive_when_any_aggregation_that_the_metric_has_is_above_0_and_zero_only_when_every_one_it_has_is_not(self):
+        def bucket(days=1, total=None, maximum=None, average=None):
+            return tb._bucket({"days_with_data": days, "total": total, "max": maximum, "average": average})
+
+        self.assertEqual(bucket(maximum=99, average=82.5), "positive", "a metric that offers no total has none: its maximum and its average say that something was there")
+        self.assertEqual((bucket(maximum=7), bucket(average=0.5), bucket(total=4)), ("positive", "positive", "positive"))
+        self.assertEqual((bucket(maximum=0, average=0), bucket(maximum=0), bucket(average=0.0), bucket(total=0, maximum=0, average=0)), ("zero", "zero", "zero", "zero"))
+        # A total of 0 with a maximum above 0 can come only from values below 0 that cancel: something was there, so it is counted as positive, never as zero.
+        self.assertEqual((bucket(total=0, maximum=3, average=0.5), bucket(total=4, maximum=0, average=0)), ("positive", "positive"))
+        self.assertEqual((bucket(), bucket(days=0, maximum=5, average=5)), ("no_data", "no_data"), "data on a day and no aggregation at all stays unknown, and no day with a value is no data")
 
 
 class TheCostLines(unittest.TestCase):

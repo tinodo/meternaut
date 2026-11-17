@@ -31,7 +31,7 @@
         "recall_lessons",
         "recall_open_questions"
       ],
-      "toolsSha256": "47bfed7be026242876d8c0b4ac097cd463fbdb4fbc8261097430845f7504194d"
+      "toolsSha256": "063a90f9ab32d4059d0371b64157eee2f185bfca123fc70d3d7de49f412eadf6"
     },
     "meternaut-scholar": {
       "connection": "aigateway",
@@ -67,7 +67,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "91b51ff6da1d54267fbdbddd8ebf23ac6504e434465aba05945af58069f6df91"
+    "moduleSha256": "d241effab7efa782b41e420a36dfdba392c5b1cbfdfecf5db396f4495973eab8"
   },
   "tools": {
     "advisor_items": {
@@ -91,7 +91,7 @@
       "schemaSha256": "3debb75ad86a22576bdcb26e10900b6dccfb38e4a282bbfe7c0f8eccbf29a1c1"
     },
     "cost_meters": {
-      "implementationSha256": "a3b41c16151ea0773641b19dcacdd48679d883685ef30b1449623029747cc460",
+      "implementationSha256": "04654b832c4aaa3f37ca33ae5badde86756d21aff9d574ff83a4e1679f0b4a6b",
       "schemaSha256": "f913324ff561517b6000caaabffa4a1814e8be0d06a98adddbd27f0a52c5f693"
     },
     "data_readers": {
@@ -124,7 +124,7 @@
     },
     "measure": {
       "implementationSha256": "c6fd49b593e274dfe01d0dccb86019821d9ca661988788451fd08889cbc2a079",
-      "schemaSha256": "4212e88cead5e766501715b137f284175ba88c4f7d1e56574783fd83e9227151"
+      "schemaSha256": "2b01dfa44e0f4a083a3fef51096f863359b12afcbbe1939e09007e3a11ccba14"
     },
     "metric_names": {
       "implementationSha256": "63d8bee0f5b4dc8f283b659f617ad305f55131f7aaa170d7893a9450d9187eb1",
@@ -136,7 +136,7 @@
     },
     "metric_summary": {
       "implementationSha256": "1f84d2ce9c71a25e89da1ed85567a2cf5a6fb2f4838fc3af099bf680d6492750",
-      "schemaSha256": "f47454fabab6207643e79ba25e732aed8c485219d3c42f1a02df4e76daa862a3"
+      "schemaSha256": "0960d57f469511f28b81b4d13c4fad30e41ee1dbdd61baec7345897c063b4869"
     },
     "paid_features": {
       "implementationSha256": "5de1f3567a8fd44094be12f27b1d49b8ae6ef6076d66c513f883fb19db24a852",
