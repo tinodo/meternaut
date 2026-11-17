@@ -10,6 +10,7 @@ from support import APP_ROOT, RG, SUBSCRIPTION, Ticker
 
 import test_investigate as ti
 from cases import activity, agents, beats, investigate
+from cases import toolbox as tb
 from cases.detectors import Context
 from cases.foundry import AgentRun, FoundryError
 from cases.harness import HarnessRefused
@@ -180,15 +181,19 @@ def resource_of(number: int, kind: str, usd: float = 100.0):
 
 
 class SeedToolbox(ti.FakeToolbox):
-    """A toolbox that shows the handles of its kinds and answers the two reads that code makes for a beat: the listing of a kind and the picture of some resources. `answers` replaces an answer by a text."""
+    """A toolbox that shows the handles of its kinds and answers the two reads that code makes for a beat: the listing of a kind and the picture of some resources. `answers` replaces an answer by a text.
+    It keeps the limit of the real one: the calls beyond MAX_CALLS and what a run has added (`extra_calls`) answer limit and read nothing."""
 
     def __init__(self, by_kind, answers=None, **more):
         resources = [r for found in by_kind.values() for r in found]
         super().__init__(resources, evidence={r.handle: ti.metrics(MetricA=0) for r in resources}, **more)
-        self.by_kind, self.answers, self.extra_calls = by_kind, answers or {}, 0
+        self.by_kind, self.answers, self.extra_calls, self.limited = by_kind, answers or {}, 0, 0
 
     def call(self, name, arguments):
         self.log.append({"name": name, "arguments": arguments, "ok": True, "chars": 2})
+        if len(self.log) > tb.MAX_CALLS + self.extra_calls:
+            self.limited += 1
+            return '{"error":"limit"}'
         if name in self.answers:
             return self.answers[name]
         if name == "list_resources":
@@ -258,8 +263,8 @@ def pooled(by_kind=None, per_kind=2):
     return found, costs
 
 
-def rig(beats_, *, by_kind=None, skeptic=None, foundry=None, **settings):
-    found, costs = pooled(by_kind)
+def rig(beats_, *, by_kind=None, per_kind=2, skeptic=None, foundry=None, **settings):
+    found, costs = pooled(by_kind, per_kind)
     values = dict(investigate_beats=3, investigate_max_seconds=1080)
     values.update(settings)
     h = ti.Harness(foundry or BeatFoundry(beats_, skeptic=skeptic), SeedToolbox(found), ti.make_settings(**values), with_store=True)
@@ -285,7 +290,6 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([(run["max_calls"], run["max_tokens"]) for run in runs], [(8, 100_000)] * 3)
         self.assertTrue(all(0 < run["max_seconds"] <= 160 for run in runs), [run["max_seconds"] for run in runs])
         self.assertEqual([entry["name"] for entry in h.toolbox.log], ["list_resources", "profile", "tool_one"] * 3, "what code reads for a beat and the call of the beat are in one log")
-        self.assertEqual(h.toolbox.extra_calls, 3 * (8 + beats.SEED_CALLS), "the calls of every beat, and the reads that code makes for it, fit in the calls of the toolbox")
         self.assertEqual((result.tool_calls, result.tokens, result.cases), (3, 3 * 44_000 + 600, 3))
         self.assertEqual([e["finding"] for e in h.of("investigation.finding")], [1, 2, 3])
         self.assertEqual([e["beat"] for e in h.of("investigation.finding")], [1, 2, 3])
@@ -396,7 +400,30 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertNotIn("beats", h.of("investigation.started")[0])
         self.assertEqual([e["name"] for e in h.toolbox.log], ["tool_one"], "nothing is read by code for an open beat")
 
-    def test_a_plan_of_one_beat_is_the_way_back_one_session_for_the_whole_estate_even_when_the_cost_is_known(self):
+    def test_a_beat_that_starts_late_still_has_its_own_allowance_of_calls_on_the_shared_toolbox_which_allows_forty_and_what_is_added(self):
+        kinds = {f"contoso.thing{n}/kind": 100.0 for n in range(6)}
+        calls = [("tool_one", {"n": k}) for k in range(8)]
+        h = rig([script(one(f"r{n}"), calls=calls) for n in range(1, 7)], by_kind=kinds, per_kind=1, investigate_beats=6)
+        result = h.go()
+        self.assertEqual(len(h.foundry.investigator_runs()), 6)
+        self.assertEqual((h.toolbox.limited, len(h.toolbox.log)), (0, 6 * (1 + 1 + 8)), "sixty calls on a toolbox that allows forty: none was answered limit")
+        self.assertEqual((result.tool_calls, result.cases), (48, 6))
+        self.assertGreater(h.toolbox.extra_calls, 0)
+        self.assertGreaterEqual(tb.MAX_CALLS + h.toolbox.extra_calls, len(h.toolbox.log), "the toolbox allows what its beats used")
+
+    def test_the_allowance_of_a_beat_is_made_when_it_starts_from_the_calls_that_were_made_and_never_lowered(self):
+        seen = []
+        kinds = {f"contoso.thing{n}/kind": 100.0 for n in range(6)}
+        calls = [("tool_one", {"n": k}) for k in range(8)]
+        foundry = BeatFoundry([script(one(f"r{n}"), calls=calls) for n in range(1, 7)])
+        foundry.after_run = lambda agent: seen.append((len(h.toolbox.log), h.toolbox.extra_calls)) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+        h = rig(None, foundry=foundry, by_kind=kinds, per_kind=1, investigate_beats=6)
+        h.go()
+        self.assertEqual([made for made, _ in seen], [2, 12, 22, 32, 42, 52], "two reads of code in each beat and eight calls in each beat before it")
+        for made, extra in seen:
+            self.assertGreaterEqual(tb.MAX_CALLS + extra, made + 8, "at the start of a beat the toolbox allows the beat the calls that its session may make")
+        self.assertEqual(h.toolbox.limited, 0)
+        self.assertEqual(sorted(extra for _, extra in seen), [extra for _, extra in seen], "an allowance is never taken back")
         h = rig([script(one("r1"))], by_kind={"contoso.compute/rigs": 100.0}, investigate_beats=1)
         result = h.go()
         (run,) = h.foundry.investigator_runs()

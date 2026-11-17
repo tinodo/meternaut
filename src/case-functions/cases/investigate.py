@@ -45,7 +45,7 @@ from .memory_store import parse, stamp
 from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
+from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
 
 if TYPE_CHECKING:
     from .run import Services
@@ -833,8 +833,6 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     reserve = min(RESERVE_SECONDS, budget / 4)
     beats_deadline = deadline - reserve
     max_calls = harness.budget.tool_calls if harness is not None else st.investigate_max_calls
-    if focused:
-        toolbox.extra_calls = len(plan) * (st.investigate_beat_calls + beats.SEED_CALLS)
     findings: list[Finding] = []
     out.findings = findings
     taken: set[str] = set()
@@ -860,6 +858,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         calls, cap = (st.investigate_beat_calls, min(st.investigate_beat_tokens, st.investigate_total_tokens - out.tokens)) if focused else (max_calls, None)
         result = beats.Result(beat, max_calls=calls)
         log_before = len(toolbox.log)
+        if focused:
+            # Each beat has an allowance of calls of its own on the shared toolbox, whatever the beats before it used: the reads that code makes for it and the calls of its session (the toolbox allows MAX_CALLS and what is added).
+            toolbox.extra_calls = max(toolbox.extra_calls, log_before + beats.SEED_CALLS + calls - MAX_CALLS)
         seeded = beats.seed(toolbox.call, beat) if focused else None
         calls_from = len(toolbox.log) if focused or out.beats else 0  # the calls of the beat's own session are the ones after the reads that code made for it
         if seeded is not None:
