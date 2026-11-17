@@ -19,6 +19,7 @@ The drift check on the Operations page added CheckRecord (its own table, one row
 The work on names and on the cost that Cost Management shows added `CaseRecord.cost_state` (empty: a record of before, read from `cost_usd_30d` by cases/brief.py), `cost_by_service`, `estimate`,
 `subscription_name` and `advice` (all empty: nothing was looked up), and `RunRecord.held` (0). Nothing was renamed or removed. A series of daily costs that is kept with no number above nothing is
 not drawn (cases/web/figures.py), so a record of before that holds thirty zeros for a resource that had no cost line shows what a record of now shows: no line.
+The page "What the AI looked at" added InvestigationRecord (its own table) and no field of an older record.
 """
 from __future__ import annotations
 
@@ -78,6 +79,11 @@ ADVICE_QUIET_DAYS = 30
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
+# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time` or `calls` (its time for tool calls or its calls were used up), `refused` (the harness did not let it run
+# or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
+INVESTIGATION_ENDS = ("answered", "time", "calls", "refused", "failed")
+INVESTIGATION_TOUCHES = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
+KEPT_INVESTIGATIONS = 20
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
 INVESTIGATION = "investigation"
 # The key, in the facts of a case, of what a case stands for when its finding covers many resources and a person is asked about the finding and not about each resource (cases/investigate.py
@@ -413,6 +419,38 @@ class CapabilityRecord(Record):
 
 
 @dataclass(frozen=True)
+class InvestigationRecord(Record):
+    """What one investigation looked at and came to (made by cases/activity.py, shown by the page "What the AI looked at"): closed words, numbers, the AI's sentences cleaned of ids, and kinds of
+    resource; no name, tag or id of a resource. A run from before it has none, which is not a record of nothing."""
+
+    run_id: str
+    at: str  # when the investigation began
+    trigger: str = ""  # `timer`, or `request` (a person or a tool asked for the run)
+    investigator: str = ""  # the two models
+    skeptic: str = ""
+    calls: int = 0  # tool calls made, and allowed
+    max_calls: int = 0
+    tokens: int = 0
+    seconds: int = 0
+    max_seconds: int = 0
+    end: str = "failed"  # one of INVESTIGATION_ENDS
+    answered: bool = False  # the Investigator's answer could be read
+    stop: str = ""  # the code of cases/harness.py that refused or stopped the run
+    note: str = ""  # what the run said of itself when it ended in no answer
+    examined: tuple[str, ...] = ()  # the Investigator's own phrases about what it looked at
+    # One dict for each finding: n, basis, proposal, sure, resources, says, verdict, doubts, kept, left (resources left out, by reason), fates (by what became of them) and note (of code).
+    findings: tuple[dict, ...] = ()
+    # The kinds of resource that the run knows the estate has (known), those that the tools touched (looked) and, dearest first by the cost lines (no amount is kept), the first of the touched ones
+    # ([kind, what the tools did to it]) and of the others (unread).
+    known: int = 0
+    looked: int = 0
+    kinds: tuple[list, ...] = ()
+    unread: tuple[str, ...] = ()
+    subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars (which the order rests on)
+    subs_costed: int = 0
+
+
+@dataclass(frozen=True)
 class Principal:
     """The signed-in person, from the headers that the platform's sign-in adds. It is never read from a form or a link."""
 
@@ -552,6 +590,8 @@ class Store(Protocol):
     def claims_recent(self, limit: int = 500) -> list[ClaimRecord]: ...
     def profile_put(self, profile: CapabilityRecord) -> None: ...
     def profile_latest(self) -> CapabilityRecord | None: ...
+    def investigation_put(self, record: InvestigationRecord) -> None: ...  # keeps only the newest KEPT_INVESTIGATIONS
+    def investigations_recent(self, limit: int = KEPT_INVESTIGATIONS) -> list[InvestigationRecord]: ...
 
 
 class Decider(Protocol):

@@ -65,6 +65,7 @@ class Services:
     foundry: "Foundry | None" = None
     # What surrounds the agents (cases/harness.py). The client of the Foundry project that run_watch makes always has one; a test that plays the agents gives none, or its own.
     harness: "harness_module.Harness | None" = None
+    trigger: str = ""  # what started the run (execute sets it): cases/activity.py
 
 
 @dataclass
@@ -555,7 +556,7 @@ def execute(s: Services, trigger: str) -> Summary:
         scope, refusal = scope_mod.Scope((), "none"), clean_text(s.redact(error), 300)
     notes.extend(scope.notes)
     st = replace(st, subscriptions=scope.subscriptions, quota_ids=scope.quotas)
-    s = replace(s, settings=st)
+    s = replace(s, settings=st, trigger=trigger)
     # With many subscriptions the line carries their count and the first few ids, not all of them.
     h.emit("run.started", trigger=trigger, subscriptions=len(scope.subscriptions), scopes=[x[:8] for x in scope.subscriptions[:SCOPES_SHOWN]], scopeFrom=scope.source,
            detectors=list(DETECTOR_NAMES))
