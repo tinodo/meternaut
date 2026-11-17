@@ -112,7 +112,7 @@ class WhenTheTimeOfACallIsUsedUp(unittest.TestCase):
             self.assertLessEqual(len(answer["not_read"]["first"]), tb.NOT_READ_SHOWN)
             self.assertLess(calls, 10, "a call that reads nothing new would loop for ever")
         self.assertEqual(priced, sorted(priced), "the costs grow from call to call and never lose what an earlier call read")
-        self.assertEqual((priced[0], priced[-1]), (6, 20), "three subscriptions of two disks in the first 45 seconds after the read of Resource Graph and the read of the platform's list of the namespace (10 seconds each here), and all of them at the end")
+        self.assertEqual((priced[0], priced[-1]), (8, 20), "four subscriptions of two disks in the first 45 seconds after the read of Resource Graph (10 seconds each here); the read of the platform's list of the namespace has its own time (LIST_SECONDS) and takes none of them; all of them at the end")
         self.assertEqual(estate.graph_names(), ["type-resources"], "each subscription's resources were read once, in one query")
         self.assertEqual(sorted(reads_of(estate, "costmanagement").values()), [1] * 10)
         self.assertEqual(len(notes), calls - 1)

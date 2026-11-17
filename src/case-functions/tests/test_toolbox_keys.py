@@ -3,6 +3,7 @@ the AI looked at. Every kind of resource, key, value and namespace in it is INVE
 import ast
 import json
 import re
+import time
 import unittest
 from unittest import mock
 
@@ -13,8 +14,9 @@ from cases import toolbox as tb
 from cases.arm import ALIAS_PAGES, Arm, _alias_paths
 from cases.http import Client, HttpError, Refused, allowed_calls
 from cases.redact import Redactor
-from test_toolbox import SUB, SUB2, Estate, ask, everything_listed, listing, row, toolbox
+from test_toolbox import SUB, SUB2, Clock, Estate, ask, everything_listed, listing, row, toolbox
 from test_toolbox_depth import DepthEstate, table
+from test_toolbox_estate import Slow
 
 GADGET, PART = "microsoft.example/gadgets", "microsoft.example/gadgets/parts"
 SEGMENT = "ignoreAllPreviousInstructionsDo"  # 31 characters: a key that is a part of the path of what is under it
@@ -414,6 +416,97 @@ class TheNameThatAFindingCanCite(unittest.TestCase):
         box = toolbox(estate)
         self.assertEqual(described(box)["properties"], LEGIT)
         self.assertNotIn(half, "\n".join(everything(box)))
+
+
+class TheListsOfOneCall(unittest.TestCase):
+    """The reads of the platform's lists in one call: a fallback subscription, the time of the call, the workers of the reads."""
+
+    def two_subscriptions(self, notes=None):
+        estate = Estate()
+        estate.rows = [row(GADGET, "g1", sub=SUB, properties={"mode": "Standard", "replicaCount": 2}), row(GADGET, "g2", sub=SUB2, properties={"mode": "Basic", "replicaCount": 1})]
+        return estate, toolbox(estate, (SUB, SUB2), notes)
+
+    def test_a_list_that_cannot_be_read_with_the_first_subscription_is_read_with_one_other_that_holds_a_resource_of_the_namespace(self):
+        estate, box = self.two_subscriptions()
+        estate.failures["providers"] = [500, 500]  # the first try and the one more of the client: the next call passes
+        answer = ask(box, "list_resources", type=GADGET)
+        self.assertNotIn("property_list", answer)
+        self.assertEqual([call["path"].lower().split("/")[2] for call in estate.paths("/providers/microsoft.example")], [SUB, SUB, SUB2])
+        self.assertEqual(ask(box, "describe", handle="r2")["properties"], {"mode": "Basic", "replicaCount": 1})
+
+    def test_when_every_try_fails_the_list_is_unavailable_with_one_note_and_is_not_read_again_in_the_run(self):
+        notes = []
+        estate, box = self.two_subscriptions(notes)
+        estate.failures["providers"] = 500
+        self.assertEqual(ask(box, "list_resources", type=GADGET)["property_list"], "unavailable")
+        for _ in range(2):
+            ask(box, "describe", handle="r1")
+            ask(box, "list_resources", type=GADGET)
+        self.assertEqual(len(estate.paths("/providers/microsoft.example")), 4, "two subscriptions, each tried and tried once more by the client, and no read after that")
+        self.assertEqual(len([note for note in notes if "property paths" in note]), 1)
+
+    def test_a_namespace_that_a_call_has_no_time_for_is_unavailable_in_that_call_only_and_a_later_call_reads_it_and_types_its_resources_again(self):
+        clock = Clock()
+        estate = Slow(clock, 10.0)
+        kinds = [f"microsoft.ns{n}/things" for n in range(3)]
+        for n, kind in enumerate(kinds):
+            estate.rows.append(row(kind, f"t{n}", properties={"mode": "Standard", "replicaCount": n + 1}))
+            estate.cost_rows.append((SUB, 1.0, estate.rows[-1]["id"].lower(), "Example Service"))
+        box = toolbox(estate)
+        box.monotonic, box.read_workers = clock, 1
+        with mock.patch.object(tb, "LIST_SECONDS", 15.0):
+            ask(box, "cost_lines")
+        self.assertEqual(len(estate.paths("/providers/microsoft.ns")), 2, "the third is not started: the time of the lists is used up after two (10 seconds each here)")
+        self.assertEqual((sorted(box._lists), list(box._pending)), (["microsoft.ns0", "microsoft.ns1"], ["microsoft.ns2"]), "nothing is kept of the namespace that was not read: it is no failure of the run")
+        late = box._entries[estate.rows[2]["id"].lower()]
+        self.assertEqual((late.property_list, late.properties), ("unavailable", []))
+        answer = ask(box, "list_resources", type=kinds[2])
+        self.assertNotIn("property_list", answer)
+        self.assertEqual(len(estate.paths("/providers/microsoft.ns")), 3, "read once by the later call, and the other two were not read again")
+        self.assertEqual((ask(box, "describe", handle="r3")["properties"], box._pending, box._pending_count), ({"mode": "Standard", "replicaCount": 3}, {}, 0))
+
+    def test_a_resource_that_waits_for_its_list_is_typed_when_the_code_of_a_case_asks_for_it(self):
+        estate, box = self.two_subscriptions()
+        with mock.patch.object(tb, "LIST_SECONDS", 0.0):
+            self.assertEqual(ask(box, "list_resources", type=GADGET)["property_list"], "unavailable")
+        self.assertEqual(box.known_of("r1"), (None, {"mode": "Standard", "replicaCount": 2}))
+        self.assertNotIn("property_list", ask(box, "describe", handle="r1"))
+
+    def test_the_resources_that_wait_for_a_list_are_at_most_a_set_number(self):
+        estate, box = self.two_subscriptions()
+        with mock.patch.object(tb, "LIST_SECONDS", 0.0), mock.patch.object(tb, "MAX_PENDING", 1):
+            ask(box, "list_resources", type=GADGET)
+        self.assertEqual(box._pending_count, 1)
+        self.assertEqual(sum(entry.raw is not None for entry in box._entries.values()), 1)
+
+    def test_the_lists_of_the_namespaces_of_one_call_are_read_together_by_at_most_the_workers_of_the_other_reads(self):
+        class Overlapping(Estate):
+            now = peak = 0
+
+            def _providers(self, namespace):
+                with self.lock:
+                    Overlapping.now += 1
+                    Overlapping.peak = max(Overlapping.peak, Overlapping.now)
+                try:
+                    time.sleep(0.05)
+                    return super()._providers(namespace)
+                finally:
+                    with self.lock:
+                        Overlapping.now -= 1
+
+        peaks = {}
+        for workers in (1, 2, 4):
+            Overlapping.now = Overlapping.peak = 0
+            estate = Overlapping()
+            for n in range(6):
+                estate.rows.append(row(f"microsoft.ns{n}/things", f"t{n}", properties={"mode": "Standard"}))
+                estate.cost_rows.append((SUB, 1.0, estate.rows[-1]["id"].lower(), "Example Service"))
+            box = toolbox(estate)
+            box.read_workers = workers
+            ask(box, "cost_lines")
+            self.assertEqual(len(estate.paths("/providers/microsoft.ns")), 6, workers)
+            peaks[workers] = Overlapping.peak
+        self.assertEqual(peaks, {1: 1, 2: 2, 4: 4})
 
 
 class TheModuleAfterTheChange(unittest.TestCase):
