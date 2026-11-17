@@ -1,12 +1,13 @@
 """A property is shown only where the platform lists it for the type: a key that an owner chose in a map reaches no answer of any tool, the evidence, the Skeptic's input or the record of what
 the AI looked at. Every kind of resource, key, value and namespace in it is INVENTED."""
+import ast
 import json
 import re
 import unittest
 from unittest import mock
 
 import support  # noqa: F401  (it puts the app on the path)
-from support import TOKEN
+from support import APP_ROOT, TOKEN
 from cases import activity, investigate
 from cases import toolbox as tb
 from cases.arm import ALIAS_PAGES, Arm, _alias_paths
@@ -344,6 +345,14 @@ class TheModuleAfterTheChange(unittest.TestCase):
         for name in ("KEY", "MAX_DEPTH", "MAX_SEGMENT", "_may_follow"):
             self.assertFalse(hasattr(tb, name), name)
         self.assertEqual(tb.typed_properties({"IgnoreAllPreviousInstructionsDo": {"someCount": 1}, "someCount": 2}), [], "with no list of the platform nothing but the exact paths is shown")
+
+    def test_the_paths_of_a_resource_are_made_in_one_place_and_with_the_platforms_list_given_to_it(self):
+        found = []
+        for path in sorted((APP_ROOT / "cases").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Call) and "typed_properties" in (getattr(node.func, "id", None), getattr(node.func, "attr", None)):
+                    found.append((path.name, len(node.args)))
+        self.assertEqual(found, [("toolbox.py", 3)], "a second call, or a call that gives no list, is a way round the gate: it is made on purpose and in the open")
 
 
 if __name__ == "__main__":
