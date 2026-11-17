@@ -176,6 +176,10 @@ class WhatTheAIWritesInARecord(unittest.TestCase):
         text = f"r1 and r53: Thing-One is idle, see /subscriptions/{SUBSCRIPTION}/resourceGroups/rg/providers/x/y/z and {SUBSCRIPTION}, but prod-database is fine"
         self.assertEqual(activity.plain(text, 300, names), "r1 and r53: (name removed) is idle, see (id removed) and (id removed), but prod-database is fine")
 
+    def test_a_name_that_ends_a_sentence_or_sits_in_brackets_is_taken_out_too_and_a_longer_word_is_not(self):
+        text = "Nothing reads thing-one. Is (thing-one) used? THING-ONE: idle; thing-one-b and thing-one.example stay"
+        self.assertEqual(activity.plain(text, 300, frozenset({"thing-one"})), "Nothing reads (name removed). Is ((name removed)) used? (name removed): idle; thing-one-b and thing-one.example stay")
+
     def test_html_is_kept_as_text_for_the_page_to_escape_and_a_link_and_a_figure_are_taken_out(self):
         self.assertEqual(activity.plain("<b>bold</b> https://evil.example/x costs 500 USD a month", 300), "<b>bold</b> [link removed] costs [figure removed] a month")
 

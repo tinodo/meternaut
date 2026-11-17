@@ -24,6 +24,7 @@ LOG = logging.getLogger("meternaut.activity")
 OTHER = "other"  # the cost that is tied to no kind of resource
 MAX_KIND = 80  # a kind of resource that is longer than this is `other`
 MAX_KINDS = 40  # the dearest kinds of the cost that a record keeps
+NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word of the text that may be the name of a resource: a full stop or a dash ends it unless a letter follows
 MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # the objections of the second AI that a record keeps, and the most characters of one of them and of a note of code
 # What each tool does to the kinds of resource that it names or whose handles it is given, as a letter of INVESTIGATION_TOUCHES. A tool that is not here (the overview of the estate, the names of
 # the metrics, Advisor, the plans, what is recalled) shows the AI a list and touches no kind: a test fails when a tool is in neither list.
@@ -43,11 +44,11 @@ def _fit(text: str, size: int) -> str:
 
 
 def plain(text: object, size: int, names: frozenset[str] = frozenset()) -> str:
-    """Text of the AI for a record: cleaned (roles.clean_text), with no resource id, no subscription id and none of `names` (what the tools showed of the run), and at most `size` characters
-    of JSON."""
+    """Text of the AI for a record: cleaned (roles.clean_text), with no resource id, no subscription id and none of `names` (what the tools showed of the run, as words of letters, digits, dots and
+    dashes), and at most `size` characters of JSON."""
     text = without_ids(roles.clean_text(text, 4 * size))
     if names:
-        text = re.sub(r"[\w.-]+", lambda word: "(name removed)" if word[0].lower() in names else word[0], text)
+        text = NAME.sub(lambda word: "(name removed)" if word[0].lower() in names else word[0], text)
     return _fit(text, size)
 
 

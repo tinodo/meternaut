@@ -129,7 +129,7 @@ def _findings(record: InvestigationRecord) -> Safe:
 def _open(ctx: Ctx) -> tuple[dict[str, list[int]], bool, bool]:
     """The open requests and the open questions of each kind of resource, from the findings: a request waits for a person's answer, and a question is a finding that nobody has been asked about
     yet. Whether a read failed, and whether one read was full (there may be more)."""
-    plans, ok = read(ctx.store.plans_open, [])
+    plans, ok = read(lambda: ctx.store.plans_open(), [])
     asked = {plan.case_id for plan in plans if effective_state(ctx, plan) == "open"}
     counts: dict[str, list[int]] = {}
     cut = len(plans) >= PER
@@ -151,7 +151,8 @@ def _money(ctx: Ctx, record: InvestigationRecord) -> Safe:
         if none:
             seen = Safe("No tool can look at it: Cost Management ties it to no resource")
         elif verbs:
-            seen = fmt('{chip}<br><span class="muted">{verbs}</span>', chip=chip("Looked at", "low", "circle"), verbs=", ".join(INVESTIGATION_TOUCHES.get(letter, "") for letter in str(verbs)))
+            seen = fmt('{chip}<br><span class="muted">{verbs}</span>', chip=chip("Looked at", "low", "circle"),
+                       verbs=", ".join(INVESTIGATION_TOUCHES[letter] for letter in str(verbs) if letter in INVESTIGATION_TOUCHES))
         else:
             seen = chip("Not looked at", "mid", "triangle")
         asked, questions = counts.get(str(kind), [0, 0])
