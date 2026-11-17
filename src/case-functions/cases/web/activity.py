@@ -6,14 +6,14 @@ touched against the cost of those kinds. It shows no name, tag or id of a resour
 from __future__ import annotations
 
 from ..brief import BASIS_WORDS, plain, without_ids
-from ..models import CASE_OPEN, KEPT_INVESTIGATIONS, InvestigationRecord
+from ..models import INVESTIGATION_TOUCHES, KEPT_INVESTIGATIONS, InvestigationRecord
 from . import words
-from .common import counted, kind_text, read
+from .common import counted, effective_state, kind_text, read
 from .core import Ctx, Response, Safe, fmt, join
 from .figures import chip, dollars
 from .layout import head, items, kpi, kpis, link, notice, nowrap, page, paragraph, quoted, table
+from .savings import PER
 
-PER = 1000  # the most that one read of the store gives
 KINDS_SHOWN = 25  # the kinds of resource of the table of the money
 EARLIER = 10
 WHY = "your role ops or owner lets you see what the AI looked at"
@@ -23,21 +23,18 @@ LIMITS = ('The phrases are the AI\'s own claims, and code did not check them. "L
           "that the run read, in US dollars, and are here only to show how much of the bill the AI looked at: this is not a cost report, and Cost Management has the bill. A run from before this page "
           "existed was not recorded, which is not the same as nothing.")
 NOT_RECORDED = "Not recorded for earlier runs"
-STARTED = {"timer": "the daily timer", "control": "a person or a tool, through the control queue"}
+STARTED = {"timer": "the daily timer", "request": "a person or a tool that asked for a run"}
 # How the Investigator's run ended: the word of the tile, and what it means.
-ENDS = {"answered": ("It gave its answer", "It gave its answer before its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
-        "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."), "refused": ("It was not let run", "The safeguards around the agents did not let it run, or stopped it."),
+ENDS = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
+        "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."), "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
         "failed": ("It failed", "It gave no answer that could be read.")}
 STOPS = {"tokens": "its token limit was used up", "switch": "a switch that holds the agents is pulled", "refusals": "too many of its tool calls were refused"}
-STOP_OTHER = "what the agents would run on is not what the lock says"
 VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
 # What became of the resources of a finding: a request was made, it was left for a person, it was dropped, or a rule held the request back (the words that the History says: cases/approvals.py).
 FATES = {"request": "a request was made", "person": "left for a person, no request yet", "dropped": "dropped, no change is suggested", "nothing": "held back, nothing to say",
-         "automation": "held back, managed by an automation", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked", "rules": "held back, Meternaut's rules changed"}
+         "automation": "held back, managed by an automation", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked"}
 LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that proves it", "repeated": "that an earlier finding has", "guarded": "held back by a guard",
         "recent": "judged lately", "capped": "beyond the cap of one run"}
-VERBS = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
-STATUSES = ("proposed", "needs_human", "awaiting_ok", "approved", "running")
 
 
 def _share(part: object, whole: object) -> str | None:
@@ -68,7 +65,7 @@ def _tiles(record: InvestigationRecord | None) -> Safe:
     else:
         costed = f" The cost of {record.subs_costed} of {record.subs} subscriptions was read." if record.subs_costed < record.subs else ""
         looked = kpi("Looked at in the last run", share, "of the 30-day cost",
-                     f"{kinds} Counted: the cost of the kinds that its tools read, divided by all the cost that the run read, in US dollars.{costed}")
+                     f"{kinds} How it is counted: the cost of the kinds of resource that its tools read, divided by all the cost that the run read, in US dollars.{costed}")
     if record.answered:
         kept = sum(1 for found in record.findings if found.get("kept"))
         found_tile = kpi("Findings kept", f"{kept} of {len(record.findings)}", "findings", f"The checks of code kept {kept} of the {len(record.findings)} findings that the AI wrote.")
@@ -76,7 +73,7 @@ def _tiles(record: InvestigationRecord | None) -> Safe:
         found_tile = kpi("Findings kept", "—", "", "The AI gave no answer that code could read, so there is no finding to check.")
     word, meaning = ENDS.get(record.end, ENDS["failed"])
     used = f"It made {record.calls} of the {record.max_calls} tool calls that it was allowed and used {record.seconds} of the {record.max_seconds} seconds."
-    why = f" {STOPS.get(record.stop, STOP_OTHER).capitalize()}." if record.end == "refused" else ""
+    why = f" {STOPS[record.stop].capitalize()}." if record.end == "refused" and record.stop in STOPS else ""
     unread = " Its answer could not be read." if not record.answered and record.end in ("time", "calls") else ""
     return kpis(looked, found_tile, kpi("Stopped because", word, "", f"{used} {meaning}{why}{unread}"), label="The latest investigation")
 
@@ -84,7 +81,7 @@ def _tiles(record: InvestigationRecord | None) -> Safe:
 def _how(ctx: Ctx, record: InvestigationRecord) -> Safe:
     phrases = [_text(phrase, 100) for phrase in record.examined]
     body: list[object] = [paragraph(fmt("The investigation began {when}, started by {trigger}. The first AI was {first} and the second AI was {second}.", when=ctx.when(record.at),
-                                        trigger=STARTED.get(record.trigger, record.trigger or "a source that was not recorded"), first=_text(record.investigator, 60) or "not recorded",
+                                        trigger=STARTED.get(record.trigger, "a source that was not recorded"), first=_text(record.investigator, 60) or "not recorded",
                                         second=_text(record.skeptic, 60) or "not recorded"))]
     body += [quoted("Written by the AI", items(phrases)), paragraph(LABELS)] if phrases else [paragraph("The AI wrote no phrase about what it examined in this run.")]
     return join(body)
@@ -94,7 +91,7 @@ def _fates(found: dict) -> Safe:
     fates = found.get("fates") if isinstance(found.get("fates"), dict) else {}
     left = found.get("left") if isinstance(found.get("left"), dict) else {}
     lines = [f"{counted(_count(n), 'resource')}: {FATES.get(name, 'not known')}" for name, n in fates.items()]
-    gone = ", ".join(f"{_count(n)} {LEFT[name]}" for name, n in left.items() if name in LEFT and _count(n))
+    gone = ", ".join(f"{counted(_count(n), 'resource')} {LEFT[name]}" for name, n in left.items() if name in LEFT and _count(n))
     if not found.get("kept"):
         lines.append("Dropped: no resource of it was left" + (f" ({gone})" if gone else ""))
     elif gone:
@@ -130,17 +127,18 @@ def _findings(record: InvestigationRecord) -> Safe:
 
 
 def _open(ctx: Ctx) -> tuple[dict[str, list[int]], bool, bool]:
-    """The open requests and the open questions of each kind of resource, from the findings: a request is waiting for a person's answer, and a question is a finding that nobody has been asked
-    about yet. Whether a read failed, and whether one read was full (there may be more)."""
-    plans, ok = read(lambda: ctx.store.plans_open(), [])
-    asked = {plan.case_id for plan in plans if plan.state == "open"}
+    """The open requests and the open questions of each kind of resource, from the findings: a request waits for a person's answer, and a question is a finding that nobody has been asked about
+    yet. Whether a read failed, and whether one read was full (there may be more)."""
+    plans, ok = read(ctx.store.plans_open, [])
+    asked = {plan.case_id for plan in plans if effective_state(ctx, plan) == "open"}
     counts: dict[str, list[int]] = {}
     cut = len(plans) >= PER
-    for status in STATUSES:
+    for status in ("proposed", "needs_human", "awaiting_ok"):
         cases, fine = read(lambda status=status: ctx.store.cases_recent(PER, status), [])
         ok, cut = ok and fine, cut or len(cases) >= PER
         for case in cases:
-            counts.setdefault((case.resource_type or "").lower(), [0, 0])[0 if status in CASE_OPEN or case.case_id in asked else 1] += 1
+            if case.case_id in asked or status != "awaiting_ok":
+                counts.setdefault((case.resource_type or "").lower(), [0, 0])[0 if case.case_id in asked else 1] += 1
     return counts, not ok, cut
 
 
@@ -153,7 +151,7 @@ def _money(ctx: Ctx, record: InvestigationRecord) -> Safe:
         if none:
             seen = Safe("No tool can look at it: Cost Management ties it to no resource")
         elif verbs:
-            seen = fmt('{chip}<br><span class="muted">{verbs}</span>', chip=chip("Looked at", "low", "circle"), verbs=", ".join(VERBS.get(letter, "") for letter in str(verbs)))
+            seen = fmt('{chip}<br><span class="muted">{verbs}</span>', chip=chip("Looked at", "low", "circle"), verbs=", ".join(INVESTIGATION_TOUCHES.get(letter, "") for letter in str(verbs)))
         else:
             seen = chip("Not looked at", "mid", "triangle")
         asked, questions = counts.get(str(kind), [0, 0])
@@ -171,7 +169,7 @@ def _money(ctx: Ctx, record: InvestigationRecord) -> Safe:
                        ["Kind of resource", "Cost in 30 days", "Share of the cost read", "In the last investigation", "Open requests", "Open questions"], rows, row_header=True))
     share = _share(sum(entry[1] for entry in kinds), record.cost_total)
     if share is not None:
-        parts.append(paragraph(f"These {counted(len(rows), 'kind')} are {share} of the cost that the run read."))
+        parts.append(paragraph(f"The rows of this table are {share} of the cost that the run read."))
     return join(parts)
 
 
@@ -204,7 +202,7 @@ def activity_page(ctx: Ctx) -> Response:
         parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now, so a run with no record is not listed. Nothing has changed."))
     if latest is not None:
         if latest.end in ("failed", "refused") and latest.note:
-            parts.append(notice("warning", "It ended with no answer", _text(latest.note, 200)))
+            parts.append(notice("warning", "It did not finish", _text(latest.note, 200)))
         parts += [Safe("<h2>What the AI looked at and concluded</h2>"), _how(ctx, latest), Safe("<h2>Findings of the last run</h2>"), _findings(latest),
                   Safe("<h2>Where the money goes and what the AI did with it</h2>"), _money(ctx, latest)]
     else:

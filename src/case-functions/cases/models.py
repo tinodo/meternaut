@@ -80,8 +80,9 @@ ADVICE_QUIET_DAYS = 30
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
 # How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time` or `calls` (its time for tool calls or its calls were used up), `refused` (the harness did not let it run
-# or stopped it) and `failed`. The records of the investigations that the page "What the AI looked at" reads are kept for the newest KEPT_INVESTIGATIONS runs.
+# or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
 INVESTIGATION_ENDS = ("answered", "time", "calls", "refused", "failed")
+INVESTIGATION_TOUCHES = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
 KEPT_INVESTIGATIONS = 20
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
 INVESTIGATION = "investigation"
@@ -424,7 +425,7 @@ class InvestigationRecord(Record):
 
     run_id: str
     at: str  # when the investigation began
-    trigger: str = ""  # what started the run: timer or control
+    trigger: str = ""  # what started the run: `timer`, or `request` (a person or a tool asked for it)
     investigator: str = ""  # the two models
     skeptic: str = ""
     calls: int = 0  # tool calls made, and the most that the run allowed

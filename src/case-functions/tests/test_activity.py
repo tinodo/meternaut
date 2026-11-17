@@ -16,9 +16,10 @@ from cases.detectors import Context
 from cases.foundry import AgentRun, FoundryError
 from cases.harness import HarnessRefused
 from cases.memory_store import MemoryStore, stamp
-from cases.models import INVESTIGATION_ENDS, InvestigationRecord, StoreError
+from cases.models import INVESTIGATION_ENDS, INVESTIGATION_TOUCHES, InvestigationRecord, StoreError
 from cases.store import MAX_DATA
-from cases.toolbox import Resource
+from cases.toolbox import TOOLS, Resource
+from cases.web.activity import FATES
 
 WIDGETS, GADGETS, GIZMOS = "contoso.example/widgets", "contoso.example/gadgets", "contoso.example/gizmos"
 THINGS = "microsoft.example/things"  # the kind that test_investigate invents
@@ -57,7 +58,7 @@ class WhatTheToolsTouched(unittest.TestCase):
         found = self.touched(call("list_resources", type=WIDGETS), call("measure", type=GADGETS, metric="MetricA"), call("describe", handle="r20"),
                              call("metric_split", handle="r10", metric="MetricA", dimension="Dim"), call("data_volume", handle="r1"))
         self.assertEqual(found, {WIDGETS: "ld", GADGETS: "ms", GIZMOS: "d"}, "the letters come in the order listed, measured, described, split")
-        self.assertEqual([activity.WORDS[letter] for letter in "lmds"], ["listed", "measured", "described", "split"])
+        self.assertEqual(list(INVESTIGATION_TOUCHES.values()), ["listed", "measured", "described", "split"])
 
     def test_a_measurement_of_handles_touches_the_kind_of_each_handle_and_a_cost_read_touches_a_kind_only_when_it_names_one(self):
         found = self.touched(call("metric_summary", handles=["r1", "r10", "r99"], metric="MetricA"), call("cost_lines", type=GIZMOS), call("cost_lines", service="Some Service"),
@@ -70,6 +71,18 @@ class WhatTheToolsTouched(unittest.TestCase):
                              call("list_resources", type=["microsoft.compute/disks"]), {"name": "describe", "arguments": {"truncated": True}, "ok": True}, {"name": "describe", "ok": True},
                              call("a_tool_that_is_not_there", type=WIDGETS), "not a call")
         self.assertEqual(found, {})
+
+    def test_a_kind_that_no_handle_and_no_cost_line_shows_to_exist_is_not_one_that_a_tool_looked_at(self):
+        phantom = "contoso.example/phantoms"
+        log = [call("list_resources", type=phantom), call("measure", type=phantom, metric="MetricA"), call("list_resources", type=GIZMOS)]
+        self.assertEqual(activity.touched(toolbox_of(log, *self.WORLD)), {GIZMOS: "l"})
+        self.assertEqual(activity.touched(toolbox_of(log, *self.WORLD), [phantom]), {GIZMOS: "l", phantom: "lm"}, "a kind that has cost lines exists, whatever its handles")
+
+    def test_every_tool_of_the_toolbox_touches_kinds_or_shows_a_list_and_a_new_tool_has_to_be_put_in_one_of_the_two(self):
+        shows_a_list = {"estate_overview", "metric_names", "advisor_items", "paid_features", "commitments", "recall_lessons", "recall_knowledge", "recall_open_questions"}
+        self.assertEqual(set(TOOLS) - set(activity.VERBS), shows_a_list)
+        self.assertEqual(set(activity.VERBS) - set(TOOLS), set(), "and no tool is named that the toolbox has not")
+        self.assertLessEqual(set(activity.VERBS.values()), set(INVESTIGATION_TOUCHES))
 
     def test_a_toolbox_that_shows_nothing_touched_nothing(self):
         self.assertEqual(activity.touched(None), {})
@@ -210,8 +223,7 @@ def worst(char: str = "x"):
     for n in range(1, 9):
         verdict = roles.SkepticAnswer("unsure", tuple(char * 200 for _ in range(3)), "s")
         findings.append(investigate.Finding(n, basis="commitment-misfit", proposal="investigate", confidence=0.85, summary=char * 300, claimed=60, covered_usd=123456.78, items=[object()] * 60,
-                                            verdict=verdict, note=char * 300, unknown=60, unproven=60, repeated=60, guarded=60, recent=60, capped=60,
-                                            fates={"request": 60, "person": 60, "dropped": 60, "nothing": 60, "automation": 60, "unchecked": 60, "impact": 60, "rules": 60}))
+                                            verdict=verdict, note=char * 300, unknown=60, unproven=60, repeated=60, guarded=60, recent=60, capped=60, fates={word: 60 for word in FATES}))
     out = investigate.Investigation(ran=True, tokens=999999, tool_calls=40, seconds=600, toolbox=toolbox, examined=[char * 100] * 12, findings=findings, note=char * 300)
     out.answer = AgentRun(text="", calls=[{"name": "t", "ok": True}])
     costs = {rid(kind, n): 123456.78 + n for n, kind in enumerate(kinds)}
@@ -219,6 +231,8 @@ def worst(char: str = "x"):
 
 
 class TheSizeOfARecord(unittest.TestCase):
+    MAX_RECORD = 13_000  # the most characters that a record has at its limits (about 12.7 thousand); a usual one has about five thousand
+
     def s(self):
         return SimpleNamespace(settings=make_settings(subscriptions=(SUBSCRIPTION,)), history=SimpleNamespace(run_id="r" * 32))
 
@@ -226,10 +240,10 @@ class TheSizeOfARecord(unittest.TestCase):
         for char in ("x", '"', "\u00e9", "\u4e2d"):
             with self.subTest(char=char):
                 world, out = worst(char)
-                record = activity.record_of(self.s(), out, world.contexts, trigger="control", at=stamp(NOW), seconds=600)
+                record = activity.record_of(self.s(), out, world.contexts, trigger="control", at=stamp(NOW))
                 size = len(record.to_json())
                 self.assertEqual((len(record.examined), len(record.findings), len(record.kinds)), (12, 8, activity.MAX_KINDS))
-                self.assertLessEqual(size, activity.MAX_RECORD, f"{size} characters")
+                self.assertLessEqual(size, self.MAX_RECORD, f"{size} characters")
                 self.assertLess(size, MAX_DATA // 2)
                 self.assertEqual(InvestigationRecord.from_json(record.to_json()), record, "and it reads back as it was kept")
 
@@ -304,9 +318,11 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         (found,) = self.record(h).findings
         self.assertEqual((found["resources"], found["fates"]), (10, {"person": 10}), "ten resources, one case, no request: it costs too little to ask")
 
-    def test_the_trigger_is_what_started_the_run_and_empty_when_nothing_says(self):
-        self.assertEqual(self.record(self.run_one(trigger="control")).trigger, "control")
-        self.assertEqual(self.record(self.run_one(trigger="")).trigger, "")
+    def test_the_trigger_is_the_timer_or_a_request_and_never_the_words_that_a_message_carried(self):
+        self.assertEqual(self.record(self.run_one(trigger="timer")).trigger, "timer")
+        self.assertEqual(self.record(self.run_one(trigger="control")).trigger, "request")
+        self.assertEqual(self.record(self.run_one(trigger="<b>a message</b> /subscriptions/x")).trigger, "request")
+        self.assertEqual(self.record(self.run_one(trigger="")).trigger, "", "nothing says what started it")
 
     def test_a_run_that_used_up_its_calls_or_its_time_says_so(self):
         for label, change, word in (("calls", dict(refused_calls=2), "calls"), ("time", dict(refused_calls=1, out_of_time=True), "time")):
@@ -341,6 +357,15 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         record = self.record(h)
         self.assertEqual((record.end, record.stop, record.max_calls, record.calls), ("refused", "switch", 17, 0))
         self.assertTrue(h.result.held)
+
+    def test_a_second_ai_that_the_harness_did_not_let_run_leaves_the_answer_of_the_first_as_it_was_read(self):
+        foundry = FakeFoundry(answer(finding(handles=["r1", "r2"])), tool_calls=self.TOOLS)
+        foundry.skeptic_error = HarnessRefused("the harness refused the run: the switch is pulled")
+        h = self.run_one(foundry)
+        record = self.record(h)
+        self.assertEqual((record.end, record.answered, len(record.findings), record.examined), ("refused", True, 1, ("the biggest costs", "a group of look-alike resources")))
+        self.assertIn("the Skeptic was not let run", record.note)
+        self.assertEqual(h.result.cases, 0, "no case was opened from findings that nobody judged")
 
     def test_the_marks_of_people_that_could_not_be_read_are_a_failed_investigation_that_says_why(self):
         h = Harness(FakeFoundry(), with_store=True)

@@ -1,19 +1,19 @@
 """What an investigation looked at, kept as one compact record for the page "What the AI looked at" (docs/proposals/23-what-the-ai-looked-at.md).
 
-The record is made from what the run already knows: the tools that it called and the kinds of resource that they touched (the toolbox's log and its handles), the cost that the Watch read, by
-kind, the Investigator's own phrases, and each finding with what became of it. It holds the AI's sentences, cleaned of ids and of the names that the tools showed, and no name, tag or id of a
-resource. Keeping it is for the people who read the page: whatever goes wrong here is one line in the log, and the investigation goes on.
+It is made from what the run already knows: the tools that it called and the kinds of resource that they touched (the toolbox's log and handles), the cost that the Watch read, by kind, the
+Investigator's own phrases, and each finding with what became of it. The AI's sentences are cleaned of ids and of the names that the tools showed, and no name, tag or id of a resource is kept.
+Whatever goes wrong here is one line in the log: the investigation goes on.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Iterable, Mapping
 
 from . import agents, roles
 from .brief import without_ids
-from .models import InvestigationRecord
+from .models import INVESTIGATION_TOUCHES, InvestigationRecord
 from .toolbox import type_of_id, type_word
 
 if TYPE_CHECKING:
@@ -25,13 +25,10 @@ OTHER = "other"  # the cost that is tied to no kind of resource
 MAX_KIND = 80  # a kind of resource that is longer than this is `other`
 MAX_KINDS = 40  # the dearest kinds of the cost that a record keeps
 MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # the objections of the second AI that a record keeps, and the most characters of one of them and of a note of code
-MAX_RECORD = 13_000  # the most characters that a record has when every text of it is at its longest (about 12.7 thousand); a usual one has about five thousand: far below MAX_DATA of the store
-# What the tools did to a kind of resource, as the letters that the record keeps, in the order of ORDER. A tool that is not here (the overview of the estate, the names of the metrics,
-# Advisor, the plans, what is recalled) shows the AI a list and touches no kind.
+# What each tool does to the kinds of resource that it names or whose handles it is given, as a letter of INVESTIGATION_TOUCHES. A tool that is not here (the overview of the estate, the names of
+# the metrics, Advisor, the plans, what is recalled) shows the AI a list and touches no kind: a test fails when a tool is in neither list.
 VERBS = {"list_resources": "l", "cost_lines": "l", "cost_history": "l", "measure": "m", "metric_summary": "m", "describe": "d", "children": "d", "data_volume": "d", "data_readers": "d",
          "data_writers": "d", "metric_split": "s"}
-ORDER = "lmds"
-WORDS = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
 LEFT = ("unknown", "unproven", "repeated", "guarded", "recent", "capped")  # why resources of a finding left it: the counts of investigate.Finding
 
 
@@ -54,20 +51,22 @@ def plain(text: object, size: int, names: frozenset[str] = frozenset()) -> str:
     return _fit(text, size)
 
 
-def touched(toolbox: object) -> dict[str, str]:
-    """The kinds of resource that the tools of the run touched, each with the letters of what was done to it. A call that failed touched nothing."""
-    found: dict[str, set[str]] = {}
+def touched(toolbox: object, costed: Iterable[str] = ()) -> dict[str, str]:
+    """The kinds of resource that the tools of the run touched, each with the letters of what was done to it. A call that failed touched nothing, and a kind that no handle or cost line shows to
+    exist (`costed` holds the kinds of the cost lines) is not one that a tool looked at."""
     handles = getattr(toolbox, "handles", {})
+    exist = {type_word(r.resource_type) for r in handles.values()} | set(costed)
+    found: dict[str, set[str]] = {}
     for call in getattr(toolbox, "log", []):
         arguments = call.get("arguments") if isinstance(call, dict) and call.get("ok") else None
         verb = VERBS.get(call.get("name")) if isinstance(arguments, dict) else None
         if verb is None:
             continue
         asked = arguments.get("handles") if isinstance(arguments.get("handles"), list) else [arguments.get("handle")]
-        kinds = {type_word(arguments.get("type"))} | {type_word(getattr(handles.get(h), "resource_type", None)) for h in asked if isinstance(h, str)}
+        kinds = ({type_word(arguments.get("type"))} & exist) | {type_word(getattr(handles.get(h), "resource_type", None)) for h in asked if isinstance(h, str)}
         for kind in kinds - {None}:
-            found.setdefault(kind, set()).add(verb)  # type: ignore[arg-type]
-    return {kind: "".join(letter for letter in ORDER if letter in verbs) for kind, verbs in sorted(found.items())}
+            found.setdefault(kind, set()).add(verb)
+    return {kind: "".join(letter for letter in INVESTIGATION_TOUCHES if letter in verbs) for kind, verbs in sorted(found.items())}
 
 
 def costs_by_kind(contexts: Mapping[str, "Context"]) -> tuple[dict[str, float], int]:
@@ -115,21 +114,21 @@ def entry_of(finding: "Finding", names: frozenset[str]) -> dict:
     return {key: value for key, value in entry.items() if value not in ("", [], {}, None)}
 
 
-def record_of(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, at: str, seconds: int) -> InvestigationRecord:
-    """The record of an investigation that was tried: what `out` came to, the tools that it called and the cost that the Watch read."""
+def record_of(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, at: str) -> InvestigationRecord:
+    """The record of an investigation that was tried: what `out` came to, the tools that it called and the cost that the Watch read. The trigger is `timer`, or `request` for any other."""
     st, harness = s.settings, getattr(s, "harness", None)  # type: ignore[attr-defined]
     names = frozenset(r.name.lower() for r in getattr(out.toolbox, "handles", {}).values() if len(r.name) >= 4)
-    done = touched(out.toolbox)
     costs, costed = costs_by_kind(contexts)
+    done = touched(out.toolbox, costs)
     end = end_of(out)
     dearest = sorted(costs.items(), key=lambda item: (-item[1], item[0]))[:MAX_KINDS]
     return InvestigationRecord(
-        run_id=s.history.run_id, at=at, trigger=trigger, investigator=st.foundry_model_investigator, skeptic=st.foundry_model_skeptic, calls=out.tool_calls,  # type: ignore[attr-defined]
-        max_calls=harness.budget.tool_calls if harness is not None else st.investigate_max_calls, tokens=out.tokens, seconds=seconds, max_seconds=int(st.investigate_max_seconds), end=end,
-        answered=out.ran, stop=stop_of(harness) if end == "refused" else "", note=plain(out.note, NOTE, names), examined=tuple(plain(p, agents.MAX_EXAMINED_TEXT, names) for p in out.examined),
-        findings=tuple(entry_of(f, names) for f in out.findings), kinds=tuple([kind, round(amount, 2), done.get(kind, "")] for kind, amount in dearest), looked=len(done),
-        cost_total=round(sum(costs.values()), 2) if costed else None, cost_looked=round(sum(amount for kind, amount in costs.items() if kind in done), 2), subs=len(st.subscriptions),
-        subs_costed=costed)
+        run_id=s.history.run_id, at=at, trigger="timer" if trigger == "timer" else "request" if trigger else "", investigator=st.foundry_model_investigator,  # type: ignore[attr-defined]
+        skeptic=st.foundry_model_skeptic, calls=out.tool_calls, max_calls=harness.budget.tool_calls if harness is not None else st.investigate_max_calls, tokens=out.tokens, seconds=out.seconds,
+        max_seconds=int(st.investigate_max_seconds), end=end, answered=out.ran or bool(out.findings), stop=stop_of(harness) if end == "refused" else "", note=plain(out.note, NOTE, names),
+        examined=tuple(plain(p, agents.MAX_EXAMINED_TEXT, names) for p in out.examined), findings=tuple(entry_of(f, names) for f in out.findings),
+        kinds=tuple([kind, round(amount, 2), done.get(kind, "")] for kind, amount in dearest), looked=len(done), cost_total=round(sum(costs.values()), 2) if costed else None,
+        cost_looked=round(sum(amount for kind, amount in costs.items() if kind in done), 2), subs=len(st.subscriptions), subs_costed=costed)
 
 
 def keep(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, at: str) -> None:
@@ -139,6 +138,6 @@ def keep(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, 
     if out.off or extras is None:
         return
     try:
-        extras.store.investigation_put(record_of(s, out, contexts, trigger=trigger, at=at, seconds=out.seconds))
+        extras.store.investigation_put(record_of(s, out, contexts, trigger=trigger, at=at))
     except Exception as error:  # noqa: BLE001 (the record is for people to read: nothing that goes wrong here may stop the Watch)
         LOG.warning("the record of the investigation could not be kept (%s)", type(error).__name__)
