@@ -635,7 +635,7 @@ def says_nothing(case: CaseRecord | None) -> bool:
     """Whether a finding cannot say what to look at, so that no request is made for it: it has no words of Advisor and no group, no analysis of data that nothing reads, no analysis of
     gateways and no recommendations of Advisor to say it with, and it is about a whole subscription or resource group (a subscription costs what its resources cost: what to look at in it is not said by its name), or it is about
     a thing of a kind that has no words here whose name is no name at all (an id). A finding that stays in the History with the reason "held back: nothing to say"."""
-    if case is None or advice_of(case) is not None or group_of(case) is not None or     unread_of(case) is not None or gateways_of(case) is not None or advisor_says(advisor_digest(case)):
+    if case is None or advice_of(case) is not None or group_of(case) is not None or unread_of(case) is not None or gateways_of(case) is not None or advisor_says(advisor_digest(case)):
         return False
     if cost_words.is_container(case.resource_id):
         return True
