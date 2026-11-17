@@ -610,6 +610,11 @@ class TheProperties(unittest.TestCase):
         self.assertEqual(kelvin.lower(), "k")
         self.assertEqual(self.shown_by(listing("kCount", "lock", "lock.someCount"), {f"{kelvin}Count": 1, "kCount": 2, f"loc{kelvin}": {"someCount": 3}}), {"kCount": 2})
 
+    def test_a_scalar_at_a_path_that_the_platform_lists_only_as_the_beginning_of_longer_ones_is_not_shown(self):
+        platform = listing("group.deeperCount", "groupCount.deeperCount")
+        found = self.shown_by(platform, {"groupCount": 9, "group": {"deeperCount": 1, "otherCount": 2}})
+        self.assertEqual(found, {"group.deeperCount": 1}, "a leaf is shown at a path that the platform lists, and not at the beginning of one")
+
     def test_the_text_of_a_value_that_looks_like_a_flag_is_a_flag_and_a_number_in_text_is_a_number(self):
         self.assertEqual(self.shown({"aState": "True", "bState": "false", "cCount": "12", "dCount": 12.5, "eCount": True, "fCount": "12.5", "gCount": "-3", "hCount": "1e5",
                                      "iCount": "abc", "jCount": "1" * 16, "kCount": "0012"}),
