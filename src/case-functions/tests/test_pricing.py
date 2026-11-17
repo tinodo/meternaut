@@ -854,6 +854,14 @@ class TheAlternative(unittest.TestCase):
                          "the 1 bill line of 1 resource that the change would shrink, at the rate of the last 7 days, repriced at list prices because the rate that your bill pays for this line was not found: "
                          "the alternative has not been checked for features")
 
+    def test_the_sentence_that_the_alternative_has_not_been_checked_for_features_reaches_the_card_and_the_letter_whole(self):
+        for rate in (0.8, None):
+            with self.subTest(rate=rate):
+                note = f"Based on {pricing.saved(self.facts(rate=rate)).basis}."
+                shown_to_a_person = stake.stake_of_figure(Figure("save", "Saves, Scenario", 22.5, "Scenario", note))
+                self.assertIn("the alternative has not been checked for features", cards.md(shown_to_a_person.note, stake.NOTE_CHARS))
+                self.assertIn("the alternative has not been checked for features", letters._data(shown_to_a_person.line, stake.LINE_CHARS))
+
     def test_a_digest_that_holds_a_number_that_is_no_number_or_a_handle_that_is_no_handle_is_read_as_if_it_held_none_and_never_puts_it_into_a_sentence(self):
         good = self.facts()[pricing.KEY]
         for key, value in (("list", "<b>x</b>"), ("list", float("nan")), ("list", -1.0), ("ratio", "0.8"), ("ratio", 0.0), ("ratio", float("inf")), ("offer", "p1; drop"), ("offer", 5)):
