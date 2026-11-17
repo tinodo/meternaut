@@ -35,7 +35,7 @@
         "recall_lessons",
         "recall_open_questions"
       ],
-      "toolsSha256": "2efc6a0ceca77a822b61134067534637b7b907ffebe8a2206683ea72304af7d1"
+      "toolsSha256": "671ecfd81d3ff695381ef5f328bb847071098b6324d112b4734d889021d60729"
     },
     "meternaut-scholar": {
       "connection": "aigateway",
@@ -71,7 +71,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "a1d6f2fb7f976f17b104351a4f28001d2e1af52acc79f29b9f69aa21e7c8954b"
+    "moduleSha256": "dc63d738f14c7db004bfce590df3c9a44b015e6b66abcbbb3f07360e02b173d3"
   },
   "tools": {
     "advisor_items": {
@@ -155,8 +155,8 @@
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
     },
     "price_alternatives": {
-      "implementationSha256": "5348ab68da756f9219625f3e9f985f5c4117b1fcc4828f53b6275c0c1ecedee6",
-      "schemaSha256": "f22dc74757d3a67471a8ce05c2a330b33f07b68ec61877262999a7e9b77dc739"
+      "implementationSha256": "643277e5b936ba0a44b7cebf6c1a2024cbe6d722664d969a20ec1fd99a90115e",
+      "schemaSha256": "8fc3eeab1300e459aa3c5efece66a900c1e1f299224b823cf1eb09e1b0918b54"
     },
     "profile": {
       "implementationSha256": "5a773603d2432aa69baa32c38f139d586a8e6ffd94b6ae7c890b30c6fa0ad33b",

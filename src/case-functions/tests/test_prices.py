@@ -533,7 +533,7 @@ class TheTime(unittest.TestCase):
             return (swallowing(clock) if "$skip=" in url else taking(clock, 7))(found, url, timeout)
         estate.hook = hook
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["complete"], answer["stopped"], answer["lines"], len(estate.price_calls), clock.now), (False, "unavailable", 2, 2, 7 + prices.ATTEMPT))
+        self.assertEqual((answer["complete"], answer["ended"], answer["lines"], len(estate.price_calls), clock.now), (False, "unavailable", 2, 2, 7 + prices.ATTEMPT))
 
     def test_the_time_of_a_read_is_that_of_the_reads_of_the_other_tools_and_a_second_try_is_made_only_when_the_time_that_is_left_holds_it(self):
         estate, box, clock = self.clocked()
@@ -565,16 +565,16 @@ class ThePartialReads(unittest.TestCase):
             estate.hook = lambda found, url, timeout: (429, {}, b"{}")
             prices.read(client, SERVICE, "swedencentral", PRODUCT)
 
-    def test_the_tool_answers_with_what_was_read_says_why_it_stopped_and_does_not_read_again(self):
+    def test_the_tool_answers_with_what_was_read_says_why_it_was_cut_short_and_does_not_read_again(self):
         estate, box = priced()
         estate.page_size, estate.hook = 2, self.busy_after_the_first_page
         answer = ask(box, "price_alternatives", meter="m1")
-        self.assertEqual((answer["complete"], answer["stopped"], answer["code"], answer["match"], answer["lines"]), (False, "unavailable", "TooManyRequests", "found", 2))
+        self.assertEqual((answer["complete"], answer["ended"], answer["code"], answer["match"], answer["lines"]), (False, "unavailable", "TooManyRequests", "found", 2))
         self.assertEqual(answer["current"]["rate_ratio"], 0.8333)
         self.assertEqual(ask(box, "price_alternatives", meter="m1"), answer)
         self.assertEqual(len(estate.price_calls), 2)
         self.assertEqual(len([note for note in box.notes if note.startswith("price_alternatives")]), 1)
-        self.assertNotIn("stopped", ask(priced()[1], "price_alternatives", meter="m1"), "a read that was whole says nothing of it")
+        self.assertNotIn("ended", ask(priced()[1], "price_alternatives", meter="m1"), "a read that was whole says nothing of it")
 
 
 class TheCaps(unittest.TestCase):

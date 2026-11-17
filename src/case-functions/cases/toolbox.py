@@ -56,9 +56,13 @@ What the investigation may rely on after a run (it reads these and changes none)
                         Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
                         the same scope has the same handle all through the run, and the numbers are those of the longest window that a call showed it for. A line that no resource owns has no handle.
   Toolbox.prices[p]     the Line (cases/prices.py) of a price handle p (p1, p2, ...) that price_alternatives showed: its service, product, SKU, meter, unit of measure, the price of one unit in US dollars, its region
-                        (`Global` for a price that holds in every region) and how many price steps it has (1 for one price). The same line has the same handle all through the run.
-  Toolbox.rates[m]      the rate ratio that price_alternatives showed for the meter handle m: what the bill paid for one unit over the window divided by the list price of the line that the words of the
-                        meter name. A meter has none when it was not asked about, when no line (or several that disagree) has its words, when its list price has steps or is nothing, or when the bill had no quantity.
+                        (`Global` for a price that holds in every region) and how many price steps it has. The same line has the same handle all through the run. Only a line with ONE price (tiers == 1) has a
+                        handle: a price with steps shows with `steps` and no handle, so that the code which prices a switch to a line cannot take the price of a first step for the price of a quantity. That code must
+                        still refuse tiers > 1, a unit that is not the meter's and a service that is not the meter's: the register does not know the meter.
+  Toolbox.rates[m]      the rate ratio of the meter handle m, worked out from the numbers that `meters[m]` holds NOW: what the bill paid for one unit over its window divided by the list price of the line that the
+                        words of the meter name. The two registers move together: a rate is dropped when a longer window replaces `meters[m]` (the rate of 7 days is not the rate of 30), and when a later ask for m
+                        could not work one out, so a rate that is there was worked out from the meter that is there. A meter has none when it was not asked about, when no line (or several that disagree) has its
+                        words, when its list price has steps or is nothing, when the bill paid nothing or gave money back, or when the bill had no quantity.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -782,12 +786,12 @@ TOOLS = {tool.name: tool for tool in (
           Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
     Tool("price_alternatives",
-         "Shows prices from Azure's public price list for the service of one meter (meter: its handle from cost_meters), in the region of its resource, as a table of pay-as-you-go prices in US dollars "
-         "with the unit of the meter, the lowest first. The lines are those of the product of the meter (within product) or of the whole service (within service). cols names the columns and each "
-         "array in rows holds the values in that order: a price handle (p1, p2, ...) for this run only, the words of the line, usd (the price of one unit) and steps (above 1: the price changes "
-         "with the quantity); same holds a field with one value in every row. current is the line that the words of the meter name: retail (its price), paid (what the bill paid for one unit) and "
-         "rate_ratio (paid divided by retail, a rate to carry to another line); match says found, none or several. other_units counts the lines with another unit; complete says whether the whole "
-         "list was read. It shows prices only. A failed read says unavailable.",
+         "Shows prices from Azure's public price list for the service of one meter (meter: a handle from cost_meters), in the region of its resource, as a table of pay-as-you-go prices in US dollars "
+         "with the unit of the meter, the lowest first and those with steps last. The lines are those of the meter's product, or of the whole service (within). cols names the "
+         "columns and each array in rows holds the values in that order: a price handle for this run only (none for a price with steps), its words, usd (the price of one unit) and steps (above 1: the price "
+         "changes with quantity); same holds a field with one value in every row. current is the line that the words of the meter name: retail (its price), paid (what the bill paid for one unit) and "
+         "rate_ratio (paid divided by retail); match says found, none or several. other_units counts the lines with another unit; complete says whether the whole list was read (ended: a failure "
+         "cut it short). It shows prices only. A failed read says unavailable.",
          (Param("meter", "meter", "The handle of a meter of one resource, as cost_meters showed it (m1, m2, ...). The meter of a whole type has no region and is not offered.", required=True),
           Param("within", "choice", "product: the lines of the product that the meter belongs to. service: every product of the service, which can be long, so read it page by page. Null for product.",
                 choices=("product", "service")), _OFFSET)),
@@ -2579,12 +2583,12 @@ class Toolbox:
         return self._price_keys[key]
 
     @staticmethod
-    def _stopped(book: prices.Book) -> dict:
-        """What an answer says of a read that a failure ended after some pages: `stopped`, and the platform's code word for the failure when it gave one (never its text)."""
+    def _ended(book: prices.Book) -> dict:
+        """What an answer says of a read that a failure cut short after some pages: `ended`, and the platform's code word for the failure when it gave one (never its text)."""
         if book.error is None:
             return {}
         code = token_word(getattr(book.error, "code", None), 40)
-        return {"stopped": "unavailable", **({"code": code} if code else {})}
+        return {"ended": "unavailable", **({"code": code} if code else {})}
 
     def _tool_price_alternatives(self, args: dict) -> dict:
         name, within, offset = args["meter"], args["within"] or "product", args["offset"] or 0
@@ -2621,7 +2625,7 @@ class Toolbox:
                   "global" if line.region == prices.GLOBAL else _shown(region_word, line.region), line.tiers if line.tiers > 1 else None] for line in window]
         shared, columns, table = prices.layout(("price", "product", "sku", "meter", "usd", "region", "steps"), cells)
         answer: dict = {"meter": name, "service": service, "region": entry.location, "within": "product" if scope else "service", "unit": _shown(meter_word, unit), "match": how, "lines": len(same),
-                        "other_units": len(book.lines) - len(same), "complete": book.complete, **self._stopped(book), "offset": offset, "returned": 0, "next_offset": None,
+                        "other_units": len(book.lines) - len(same), "complete": book.complete, **self._ended(book), "offset": offset, "returned": 0, "next_offset": None,
                         **({"same": shared} if shared else {}), "cols": columns, "rows": table}
         if current is not None:
             answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
