@@ -881,7 +881,16 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         beat and `agent` for the calls of the Investigator."""
         def handler(name: str, arguments: dict) -> str:
             began = tool_clock()
-            text = toolbox.call(name, arguments)
+            # The picture that code reads for a beat has a time of its own, so that a resource with very many measurements cannot take the time of the beat: what does not finish is unread and named.
+            capped = by == "code" and name == "profile" and hasattr(toolbox, "budget_seconds")
+            if capped:
+                kept_budget = toolbox.budget_seconds
+                toolbox.budget_seconds = min(kept_budget, beats.SEED_PICTURE_SECONDS)
+            try:
+                text = toolbox.call(name, arguments)
+            finally:
+                if capped:
+                    toolbox.budget_seconds = kept_budget
             try:
                 fields = beats.call_fields(name, arguments, text, tool_clock() - began)
             except Exception:  # noqa: BLE001 (the same: nothing that the line needs may fail a call)
@@ -911,13 +920,23 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             return read
         return warm
 
-    for beat in plan:
+    seeds: list[float] = []  # the seconds that the reads of each beat took: what the next beat is expected to need before the model starts
+
+    def not_started(rest: list[beats.Beat], end: str, why: str) -> None:
+        """The beats that the investigation has no time or no tokens left for are in the record, with their kinds and no number, so that what was not looked at is said and not only missing."""
+        note(f"{why} after {len(out.beats)} of {len(plan)} beats, so the kinds of the others were not looked at")
+        for left in rest:
+            close(beats.Result(left, end=end), False, s.monotonic(), len(toolbox.log))
+
+    for position, beat in enumerate(plan):
         at = s.monotonic()
-        if out.beats and beats_deadline - at < beats.MIN_SECONDS:
-            note(f"the time of the investigation was used up after {len(out.beats)} of {len(plan)} beats, so the kinds of the others were not looked at")
+        # A beat starts only when it can afford its own reads and its allowance for the model: the reads of the beats before it took what they took, and one that is not read yet is estimated.
+        needs = max(beats.MIN_SECONDS, (sum(seeds) / len(seeds) if seeds else beats.SEED_ESTIMATE_SECONDS) + beats.MODEL_SECONDS)
+        if out.beats and beats_deadline - at < needs:
+            not_started(plan[position:], "time", "the time of the investigation was used up")
             break
         if out.beats and focused and st.investigate_total_tokens - out.tokens < beats.MIN_TOKENS:
-            note(f"the tokens of the investigation ({st.investigate_total_tokens}) were used up after {len(out.beats)} of {len(plan)} beats, so the kinds of the others were not looked at")
+            not_started(plan[position:], "tokens", f"the tokens of the investigation ({st.investigate_total_tokens}) were used up")
             break
         calls, cap = (st.investigate_beat_calls, min(st.investigate_beat_tokens, st.investigate_total_tokens - out.tokens)) if focused else (max_calls, None)
         result = beats.Result(beat, max_calls=calls)
@@ -932,7 +951,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             result.seeded = len(seeded.handles)
             if seeded.failed:
                 note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
-        seconds = max(1.0, min(st.investigate_beat_seconds, beats_deadline - at) - (s.monotonic() - at)) if focused else min(beats.OPEN_SECONDS, max(1.0, budget - reserve))
+        if focused:
+            seeds.append(s.monotonic() - at)
+        # The model and its tool calls have a time of their own, whatever the reads of the beat took (and the setting may lower it), inside what is left of the time of the investigation.
+        seconds = max(1.0, min(st.investigate_beat_seconds, beats.MODEL_SECONDS, beats_deadline - s.monotonic())) if focused else min(beats.OPEN_SECONDS, max(1.0, budget - reserve))
         if focused and seconds < beats.STEP_SECONDS:
             # What is left after the reads that code made does not pay for one step of the model: the model is not asked, and the beat fails at no cost in tokens.
             result.end, result.note = "time", f"no time was left for the model after the reads that code made for the beat"

@@ -447,18 +447,40 @@ class TheInvestigationInBeats(unittest.TestCase):
 
         class Slow(SeedToolbox):
             def call(self, name, arguments):
-                ticker.jump(40)
+                ticker.jump(95)
                 return super().call(name, arguments)
 
         foundry = BeatFoundry([script(one("r5"))])
-        h = rig(None, foundry=foundry, investigate_beat_seconds=100)
+        h = rig(None, foundry=foundry, investigate_max_seconds=280)
         h.toolbox = Slow(found)
         h.ticker, h.s.monotonic = ticker, ticker
         h.go()
         ends = [(e["beat"], e["end"], e["ok"]) for e in h.of("investigation.beat")]
-        self.assertEqual(ends[:2], [(1, "time", False), (2, "time", False)], "two reads of 40 seconds leave 20 of the 100: no step of the model fits")
+        self.assertEqual(ends, [(1, "time", False), (2, "time", False), (3, "time", False)], "two reads of 95 seconds leave 20 of the 210 that the beats have: no step of the model fits, and the others are not started")
         self.assertEqual(len(foundry.investigator_runs()), 0)
         self.assertTrue([n for n in h.notes if "no time was left for the model after the reads that code made" in n], h.notes)
+
+    def test_the_time_of_the_model_in_a_beat_does_not_depend_on_how_long_its_reads_took_and_a_beat_that_cannot_afford_its_reads_and_that_time_is_not_started(self):
+        ticker = Ticker()
+        found, _ = pooled()
+
+        class Slow(SeedToolbox):
+            def call(self, name, arguments):
+                ticker.jump(40)
+                return super().call(name, arguments)
+
+        foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+        foundry.after_run = lambda agent: ticker.jump(100) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+        h = rig(None, foundry=foundry, investigate_max_seconds=400)
+        h.toolbox = Slow(found)
+        h.ticker, h.s.monotonic = ticker, ticker
+        h.go()
+        runs = foundry.investigator_runs()
+        self.assertEqual([round(run["max_seconds"]) for run in runs], [beats.MODEL_SECONDS], "the reads took 80 seconds, and the model has its 100 on top of them")
+        self.assertTrue([n for n in h.notes if "the time of the investigation was used up after 1 of 3 beats" in n], h.notes)
+        (record,) = h.store.investigations_recent()
+        self.assertEqual([(b["n"], b["kinds"], b["end"], b["calls"], b["tokens"]) for b in record.beats], [(1, [list(KINDS)[0]], "answered", 1, 44_000), (2, [list(KINDS)[1]], "time", 0, 0), (3, [list(KINDS)[2]], "time", 0, 0)],
+                         "the beats that were not started are in the record with their kinds and no number")
 
     def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
         for seconds in (1080, 600):
@@ -476,7 +498,7 @@ class TheInvestigationInBeats(unittest.TestCase):
         h.go()
         runs = foundry.investigator_runs()
         self.assertEqual(len(runs), 2, "the third beat had 25 seconds: not enough to start")
-        self.assertTrue(100 < runs[1]["max_seconds"] < 126, runs[1]["max_seconds"])
+        self.assertEqual(round(runs[1]["max_seconds"]), beats.MODEL_SECONDS, "the model has its allowance, which is less than what was left")
         self.assertTrue([n for n in h.notes if "the time of the investigation" in n and "2 of 3 beats" in n], h.notes)
         self.assertEqual(len(foundry.skeptic_runs()), 1)
 
@@ -766,6 +788,24 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         h.toolbox.preload = None
         h.go()
         self.assertEqual([line[3] for line in self.lines(h)], ["list_resources", "list_resources", "profile", "profile"])
+
+    def test_the_pictures_that_code_reads_for_a_beat_have_a_time_of_their_own_and_the_calls_of_the_agent_keep_the_toolbox_s_budget(self):
+        seen = []
+
+        class Watching(SeedToolbox):
+            budget_seconds = 60.0
+
+            def call(self, name, arguments):
+                seen.append((name, self.budget_seconds))
+                return super().call(name, arguments)
+
+        found, _ = pooled()
+        h = rig([script(one("r1"), calls=(("profile", {"handles": ["r1"]}),)), script(), script()])
+        h.toolbox = Watching(found)
+        h.go()
+        profiles = [budget for name, budget in seen if name == "profile"]
+        self.assertEqual(profiles[:2], [beats.SEED_PICTURE_SECONDS, 60.0], "the picture that code reads is held to its time, the call that the agent makes is not")
+        self.assertEqual(h.toolbox.budget_seconds, 60.0, "and the budget is what it was after")
 
     def test_one_session_with_no_beats_has_the_same_lines_for_the_calls_of_the_agent_alone(self):
         h = ti.Harness(BeatFoundry([script(one("r1"), calls=(("profile", {"handles": ["r1"]}), ("estate_overview", {})))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)

@@ -25,6 +25,9 @@ SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before t
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
 SEED_CALLS = SEED_RESOURCES + 2  # the reads that this takes at most: a listing for each kind that is seeded, and a picture at the hour and one at the day
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
+MODEL_SECONDS = 100  # the time that the model and its tool calls have in a beat, whatever the reads that code made for it took: measured seeds took 7 to 104 seconds, and the beat has this on top of them
+SEED_ESTIMATE_SECONDS = 60  # what the reads of a beat are expected to take before any beat has been read; later, what the beats before it took (on average)
+SEED_PICTURE_SECONDS = 25  # the time that each picture that code reads for a beat may take (the toolbox's budget of one measurement, 60 seconds, is lowered to this for those two calls): a part that did not finish is `unread` and named, and the Investigator may read it itself
 STEP_SECONDS = 30  # nor does it ask the model when less than this is left after the reads that code made for it: one step could not end inside its hard time
 OPEN_SECONDS = 480  # the time that one open session has for tool calls, as it had it when the investigation had 600 seconds: the way back (INVESTIGATE_BEATS=1) is the old behaviour
 MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model costs 13 to 20 thousand, and a beat that starts with less cannot ask and be answered inside its hard limit (harness.beat_limit)
