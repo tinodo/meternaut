@@ -90,8 +90,19 @@ class WhatTheToolsTouched(unittest.TestCase):
     def test_every_tool_of_the_toolbox_touches_kinds_or_shows_a_list_and_a_new_tool_has_to_be_put_in_one_of_the_two(self):
         shows_a_list = {"estate_overview", "metric_names", "advisor_items", "paid_features", "commitments", "recall_lessons", "recall_knowledge", "recall_open_questions"}
         self.assertEqual(set(TOOLS) - set(activity.VERBS), shows_a_list)
-        self.assertLessEqual(set(activity.VERBS) - set(TOOLS), {"cost_meters"}, "no tool is named that the toolbox has not, except the one of the branch toolbox-meters, which merges next")
-        self.assertLessEqual(set(activity.VERBS.values()), set(INVESTIGATION_TOUCHES))
+        self.assertLessEqual(set(activity.VERBS) - set(TOOLS), set(), "no tool is named that the toolbox has not")
+        self.assertLessEqual(set("".join(activity.VERBS.values())), set(INVESTIGATION_TOUCHES))
+
+    def test_a_reference_a_profile_and_an_age_touch_the_kind_of_each_handle_and_a_profile_describes_and_measures(self):
+        found = self.touched(call("neighbors", handle="r1"), call("profile", handles=["r10", "r20"]), call("changes", handles=["r2"]))
+        self.assertEqual(found, {WIDGETS: "d", GADGETS: "md", GIZMOS: "md"}, "a profile of handles of two kinds touches both, and the page says measured and described")
+
+    def test_a_picture_credits_a_kind_only_for_the_resources_that_the_call_says_it_held_data_of_and_with_the_letters_of_what_it_held(self):
+        picture = {**call("profile", handles=["r10", "r20"]), "read": {"r10": "m"}}
+        found = self.touched(picture, {**call("neighbors", handle="r1"), "read": {}}, {**call("changes", handles=["r2", "r10"]), "read": {"r2": "d"}})
+        self.assertEqual(found, {GADGETS: "m", WIDGETS: "d"}, "no letter for what the answer held nothing of, and none for a kind of which no resource held anything")
+        self.assertEqual(self.touched({**call("profile", handles=["r10"]), "read": {"r10": "md"}}), {GADGETS: "md"})
+        self.assertEqual(self.touched({**call("profile", handles=["r10"]), "read": {"r1": "md", "r10": ""}}), {}, "a resource that the call was not given is not credited, and one with no letters has none")
 
     def test_a_toolbox_that_shows_nothing_touched_nothing(self):
         self.assertEqual(activity.touched(None, set()), {})

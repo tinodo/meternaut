@@ -50,11 +50,18 @@ What the investigation may rely on after a run (it reads these and changes none)
                                           resource that keeps records of the data written to it. `metrics` holds the first tables of it, as "Billable GB <table>"
       "writers"                           {a kind of data as data_volume names it: [the resource types that wrote most of it on the last closed day, the largest first, at most
                                           MAX_WRITER_KINDS]}: what data_writers showed for a kind of data
+      "history"                           {"age_days", "created_by", "changed_days", "changed_by", "written_14d"}: what changes or profile showed of the age of h and its last change, as numbers
+                                          and words (ownership.history): a kind of identity is a word and never an identity, and what no source said is "not-recorded"
   Toolbox.table_names(h)  what the table handles of h stand for in this run (t1 is the name of a table that the platform did not make), for the page of a person and never for an agent
   Toolbox.meters[m]     the Meter (cases/meters.py) of a meter handle m (m1, m2, ...) that cost_meters showed: its scope (the handle of a resource, or a resource type), the six words of the meter as Cost
                         Management gives them (for the code, never shown as they are), the quantity and the cost over its window, the cost of each day and how many resources carry it. The same meter of
                         the same scope has the same handle all through the run, and the numbers are those of the last call that showed it. A line that no resource owns has no handle.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
+
+neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
+refers to it, with one of two words of code for each (`parent` for the structure of an id, `refers` for a reference in a property) and never the key that held it. profile gives the picture of up to five resources in one call (cases/dossier.py: the same function, build_dossier, is for code that does not
+use the tools); its answer has a cap of its own, result_cap("profile"), because a picture of five resources does not fit under MAX_RESULT_CHARS, and a part of it that did not finish in the time of the call is
+`unread`, by handle. changes shows the age of a resource and its last change as numbers and the kind of identity as a word. Their numbers are in Toolbox.evidence like those of the other tools.
 """
 from __future__ import annotations
 
@@ -69,8 +76,10 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import capability, deeper, learning, library
+from . import capability, deeper, dossier, learning, library
 from . import metrics as mx
+from . import neighbors as nb
+from . import ownership
 from .arm import SCOPE_ID, Arm, CostLine, MetricPoint, TimeUp
 from .detectors import some
 from .foundry import FunctionTool
@@ -131,6 +140,17 @@ MAX_METRICS = 8  # the metrics that one call of metric_summary or measure reads
 METER_WORDS = ("category", "subcategory", "name", "pricing", "charge", "unit")  # the six words of a meter, in the order of the dimensions that Cost Management groups by
 METER_COLUMNS = ("meter", *METER_WORDS, "quantity", "usd", "share", "days", "avg_day", "min_day", "max_day", "cv", "first_day", "last_day")
 READER_SOURCES = ("rules", "saved_searches", "workbooks", "analytics_rules")  # what data_readers counts, in the order of its columns
+NEIGHBOR_COLUMNS = ("handle", "type", "relation", "usd30d", "sku", "kind", "state")  # what neighbors tells of each resource that a reference joins, in the order of its columns
+NEIGHBOR_ROWS = 20  # the handles of one page of neighbors
+FAN_IN = 10  # the resources that refer to one resource, above which neighbors also gives a row for each type and relation
+NEIGHBOR_GROUPS = 12  # the rows of that summary
+DOSSIER_WORKERS = 6  # the reads of one profile that are made at the same time
+OWNER_READS = 12  # the Activity Logs that the tools of one run read
+OWNER_SECONDS = 30.0  # and the time that those reads may take
+HISTORY_COLUMNS = ("handle", "age_days", "created_by", "changed_days", "changed_by", "written_14d")
+AGES = ("// meternaut:ages\nresources\n| where id in~ ({ids})\n| project id, sd = systemData, made = coalesce(tostring(properties.timeCreated), tostring(properties.creationTime), "
+        "tostring(properties.createdTime), tostring(properties.creationDate), tostring(properties.CreationDate), tostring(properties.createdDate), tostring(properties.dateCreated), "
+        "tostring(properties.createdAt))")
 CHILD_COLUMNS = ("model", "version", "sku", "capacity", "requests_per_minute", "tokens_per_minute", "state", "upgrade")  # what children tells of each part, in the order of its columns
 
 ERRORS = ("bad-arguments", "unknown-tool", "unknown-handle", "unknown-metric", "not-offered", "unavailable", "limit", "too-large", "failed", NO_METRICS)
@@ -572,7 +592,7 @@ class Param:
         elif self.kind == "choice":
             body = {"type": typed("string"), "enum": [*self.choices, None] if nullable else list(self.choices)}
         elif self.kind == "handles":
-            body = {"type": "array", "items": {"type": "string", "pattern": HANDLE_PATTERN}, "minItems": 1, "maxItems": MAX_MEASURED}
+            body = {"type": "array", "items": {"type": "string", "pattern": HANDLE_PATTERN}, "minItems": 1, "maxItems": self.high or MAX_MEASURED}
         elif self.kind == "metrics":
             body = {"type": typed("array"), "items": {"type": "string", "pattern": METRIC_PATTERN}, "minItems": 1, "maxItems": MAX_METRICS}
         else:
@@ -592,7 +612,7 @@ class Param:
                 raise BadArguments(self.name)
             return value
         if self.kind == "handles":
-            if not isinstance(value, list) or not 1 <= len(value) <= MAX_MEASURED or not all(isinstance(item, str) and HANDLE.fullmatch(item) for item in value):
+            if not isinstance(value, list) or not 1 <= len(value) <= (self.high or MAX_MEASURED) or not all(isinstance(item, str) and HANDLE.fullmatch(item) for item in value):
                 raise BadArguments(self.name)
             return list(dict.fromkeys(value))
         if self.kind == "metrics":
@@ -757,6 +777,28 @@ TOOLS = {tool.name: tool for tool in (
           Param("type", "type", "A resource type, in lower case, as estate_overview shows it. Null when a handle is given."),
           Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
+    Tool("neighbors",
+         "Shows what one resource refers to and what refers to it, found from the references that the properties of the resources of the estate hold to one another, as tables of handles: "
+         "refers_to and referred_by. A row: handle, type, relation (parent when the resource is a part of the other, refers for any other reference), usd30d, sku, kind and state as short words. "
+         "A large referred_by also has a row of count and usd30d for each type and relation; read the handles "
+         "page by page with offset. graph says how many resources and edges were read and how many references pointed outside this run. unavailable names subscriptions that could not be "
+         "read; partial means that the pass has more to read, so call again to go on. It shows no name, tag or text and says nothing about what a reference means.",
+         (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),
+          Param("direction", "choice", "refers_to: what it refers to. referred_by: what refers to it. Null for both; with an offset, null means referred_by.", choices=("refers_to", "referred_by")),
+          _OFFSET)),
+    Tool("profile",
+         "Gives the whole picture of 1 to 5 resources, named by handle, in one call: facts and typed properties; meters (the dearest 6 of what it is billed for); metrics (every platform metric that has data, "
+         "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95; the metrics with no data are listed by name); links (what it "
+         "refers to and what refers to it, as count and usd30d for each type and relation: neighbors shows the handles); Advisor items; history (age_days, changed_days and written_14d, "
+         "and created_by and changed_by as a kind of identity); its parts; and where it sends its own data. A part that was not read in time is in unread, by handle, and is not none; a "
+         "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited like those of the other tools.",
+         (Param("handles", "handles", "Handles of 1 to 5 resources that earlier answers showed.", required=True, high=dossier.MAX_HANDLES),
+          Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=dossier.MIN_DAYS, high=MAX_DAYS), _GRAIN)),
+    Tool("changes",
+         "Shows how old each of 1 to 5 resources is and what was last written to it, as numbers and words: age_days, created_by and changed_by (the kind of identity that did it: person, application, "
+         "managed-identity or unknown, never a name), changed_days and written_14d (true when something was written in the last 14 days). over-90 says that a log that was read to its end shows "
+         "nothing in its 90 days, and not-recorded that no source says. A handle that was not read in time is in unread, and is not none. It says nothing about what an age or a change means.",
+         (Param("handles", "handles", "Handles of 1 to 5 resources that earlier answers showed.", required=True, high=dossier.MAX_HANDLES),)),
     Tool("recall_lessons",
          "Shows how people answered the earlier proposals about resources of one resource type, as counts, for each kind of proposal: how many were answered, approved, declined (with the "
          "reasons that people could choose from a fixed list), said to be somebody else's, or left without an answer; how the saving that was measured after a change compares with the one "
@@ -780,6 +822,11 @@ TOOLS = {tool.name: tool for tool in (
 SPECS = tuple(tool.spec() for tool in TOOLS.values())
 PLACEHOLDER = f"r{HANDLE_LIMIT}"  # as long as any handle: an answer is cut to size with it, then given the real handles
 PLACEHOLDER_METER = f"m{HANDLE_LIMIT}"
+
+
+def result_cap(name: object) -> int:
+    """The most characters that the answer of a tool may have: MAX_RESULT_CHARS, and for `profile`, which answers for up to dossier.MAX_HANDLES resources, what a profile of that many may take."""
+    return dossier.MAX_HANDLES * dossier.PER_HANDLE if name == "profile" else MAX_RESULT_CHARS
 
 
 def _page(answer: dict, rows: list, offset: int, total: int) -> None:
@@ -907,6 +954,10 @@ class Toolbox:
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
+        self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
+        self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
+        self._edges: nb.Edges | None = None  # the pass over the references of the estate (neighbors): read once in a run, a page at a time
+        self._read: dict[str, str] | None = None  # for the tools that give a picture of resources: the handles that the call that is running held data of, with the letters of what (see Toolbox.log)
 
     @property
     def specs(self) -> tuple[FunctionTool, ...]:
@@ -931,7 +982,7 @@ class Toolbox:
         caches, so a later call goes on from there), and its answer says how many were not read (`not_read`) while a note says which."""
         with self._lock:
             self._calls += 1
-            self._began, self._timed, self._skipped = self.monotonic(), True, {}
+            self._began, self._timed, self._skipped, self._read = self.monotonic(), True, {}, None
             try:
                 answer = self._answer(name, arguments)
             finally:
@@ -945,10 +996,11 @@ class Toolbox:
                 self.notes.append(f"{_logged_name(name)}: the answer could not be written")
                 answer = {"error": "failed"}
                 text = _dump(answer)
-            if len(text) > MAX_RESULT_CHARS:
+            if len(text) > result_cap(name):
                 answer = {"error": "too-large"}
                 text = _dump(answer)
-            self.log.append({"name": _logged_name(name), "arguments": _logged_arguments(arguments), "ok": "error" not in answer, "chars": len(text)})
+            self.log.append({"name": _logged_name(name), "arguments": _logged_arguments(arguments), "ok": "error" not in answer, "chars": len(text),
+                             **({"read": self._read} if self._read is not None and "error" not in answer else {})})
             return text
 
     def _answer(self, name: object, arguments: object) -> dict:
@@ -1812,14 +1864,18 @@ class Toolbox:
             if entry is not None:
                 row["handle"] = self._show(entry, {})
                 if row["handle"] is not None:
-                    seen = self.evidence[row["handle"]].setdefault("advisor", [])
-                    facts = advice.facts
-                    month = _money(advice.annual / 12) if advice.annual is not None and advice.currency == "USD" else None  # a saving is in dollars only when Advisor says so
-                    item = {"savingUsdMonth": month, "annualSavings": advice.annual, "currency": advice.currency, "impact": facts["impact"], "typeId": facts["type_id"],
-                            "term": facts["term"], "lookback": facts["lookback"], "reservedType": facts["reserved_type"], "sku": facts["sku"]}
-                    if item not in seen:
-                        seen.append(item)
+                    self._record_advice(row["handle"], advice)
         return answer
+
+    def _record_advice(self, handle: str, advice: _Advice) -> None:
+        """Keeps an Advisor item that an answer showed for a resource, as the evidence that the investigation reads (the saving in dollars only when Advisor says that it is in dollars)."""
+        seen = self.evidence.setdefault(handle, {}).setdefault("advisor", [])
+        facts = advice.facts
+        month = _money(advice.annual / 12) if advice.annual is not None and advice.currency == "USD" else None  # a saving is in dollars only when Advisor says so
+        item = {"savingUsdMonth": month, "annualSavings": advice.annual, "currency": advice.currency, "impact": facts["impact"], "typeId": facts["type_id"],
+                "term": facts["term"], "lookback": facts["lookback"], "reservedType": facts["reserved_type"], "sku": facts["sku"]}
+        if item not in seen:
+            seen.append(item)
 
     def _pricings_for(self, sub: str) -> list[dict]:
         if sub not in self._pricings:
@@ -1958,14 +2014,14 @@ class Toolbox:
         return self._volumes[key]
 
     @staticmethod
-    def _fit(answer: dict, lists: "list[tuple[list, dict, str]]") -> None:
-        """Takes rows off the longest of the lists of an answer until it fits under the cap, and counts what it left out under `<key>_not_shown` in the dict that holds the list."""
-        while len(_dump(answer)) > MAX_RESULT_CHARS:
+    def _fit(answer: dict, lists: "list[tuple[list | dict, dict, str]]", cap: int = MAX_RESULT_CHARS) -> None:
+        """Takes rows off the longest of the lists of an answer (a dict loses its last item) until it fits under the cap, and counts what it left out under `<key>_not_shown` in the dict that holds the list."""
+        while len(_dump(answer)) > cap:
             longest = max(((rows, holder, key) for rows, holder, key in lists if rows), key=lambda item: len(item[0]), default=None)
             if longest is None:
                 raise TooLarge()
             rows, holder, key = longest
-            rows.pop()
+            rows.popitem() if isinstance(rows, dict) else rows.pop()
             holder[f"{key}_not_shown"] = holder.get(f"{key}_not_shown", 0) + 1
 
     def _tool_data_volume(self, args: dict) -> dict:
@@ -2399,7 +2455,13 @@ class Toolbox:
         self.meters[self._meter_keys[key]] = line
         return self._meter_keys[key]
 
-    def _tool_cost_meters(self, args: dict) -> dict:
+    def _meters_for(self, entry: _Entry, days: int) -> "tuple[list, dict] | Failed":
+        """What one resource is billed for, meter by meter, for each of the last `days` closed days, as Cost Management gave it, read once in a run (the read of a handle that cost_meters makes is this one)."""
+        today = self._today()
+        start, end = today - dt.timedelta(days=days), today - dt.timedelta(days=1)
+        return self._once(("meters", entry.sub, entry.resource.handle, None, days), lambda: (self.arm.meter_days(entry.sub, start, end, ("ResourceId", (entry.resource.resource_id,)), None), {}))
+
+    def _tool_cost_meters(self, args: dict, shown: int = MAX_LISTED) -> dict:
         handle, kind, service, days, offset = args["handle"], args["type"], args["service"], args["days"] or MAX_DAYS, args["offset"] or 0
         if (handle is None) == (kind is None):
             raise BadArguments("handle")
@@ -2418,10 +2480,14 @@ class Toolbox:
         also = ("ServiceName", (service,)) if service else None
 
         def read(sub: str) -> "tuple[list, dict] | Failed":
+            if handle is not None and service is None:
+                return self._meters_for(entry, days)
             return self._once(("meters", sub, scope, service, days), lambda: (self.arm.meter_days(sub, start, end, where, also),
                                                                             {} if handle is not None else self.arm.meter_resources(sub, start, end, where, also)))
 
-        outcomes = self._pool(subs, read)
+        ready = [sub for sub in subs if ("meters", sub, scope, service, days) in self._kept]  # a read that is kept is in the answer whatever the time: it costs none
+        outcomes = self._pool([sub for sub in subs if sub not in ready], read)
+        outcomes.update({sub: read(sub) for sub in ready})
         rows: list[tuple] = []
         carriers: dict[tuple[str, ...], int] = {}
         failed: list[str] = []
@@ -2454,7 +2520,7 @@ class Toolbox:
             if len(dollars) < len(subs):
                 self._listing(said, "not_in_dollars", dollars)
         said.update(self._unread())
-        window = lines[offset:offset + MAX_LISTED]
+        window = lines[offset:offset + shown]
         cells = []
         for line in window:
             numbers = shape(line, today)
@@ -2477,6 +2543,236 @@ class Toolbox:
         for row, line, cell in zip(table, window, cells):
             if cell["meter"] is not None:
                 row[0] = self._meter_handle(line)
+        return answer
+
+    # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------
+    def _load_edges(self) -> nb.Edges:
+        """The references of the estate, read once in a run, a page at a time (cases/neighbors.py). Resource Graph is asked for the subscriptions of the run that no earlier listing gave up on, all at once; when it
+        answers an error or a limit (a status from 400) they are asked one at a time, and one that cannot be read is named and not asked again. A call that has no time left ends, and the next one goes on from
+        the page where this one ended, so no page is read twice. When no subscription can be read the error is raised."""
+        state = self._edges
+        if state is None:
+            subs = [sub for sub in self.subscriptions if sub not in self._unlisted]
+            state = self._edges = nb.Edges([subs] if subs else [])
+        while state.todo and not self._late():
+            group, skip = state.todo[0]
+            if state.pages >= nb.MAX_PAGES:
+                self.notes.append(f"the references of the estate need more than {nb.MAX_PAGES} pages of Resource Graph, and the app reads no more")
+                state.failed += [sub for item, _ in state.todo for sub in item]
+                state.todo.clear()
+                break
+            try:
+                rows, skip = self.arm.graph_page(group, nb.QUERY, skip, nb.PAGE)
+            except HttpError as error:
+                if not 400 <= error.status < 600:
+                    raise
+                if len(group) > 1:
+                    state.todo[0:1] = [[[sub], None] for sub in group]
+                    continue
+                self._note(group[0], "the references", error)
+                state.failed.append(group[0])
+                state.error = state.error or error
+                state.todo.pop(0)
+                if error.status == 429:
+                    state.failed += [sub for item, _ in state.todo for sub in item]
+                    state.todo.clear()
+                    self.notes.append("the limit of Resource Graph holds, so the other subscriptions were not asked")
+                continue
+            state.pages += 1
+            state.add(rows)
+            if skip:
+                state.todo[0][1] = skip
+            else:
+                state.todo.pop(0)
+        if not state.todo and not state.done:
+            state.finish()
+        if state.subs and len(state.failed) == len(state.subs):
+            raise state.error or HttpError(0, "no subscription could be read for the references")
+        return state
+
+    @staticmethod
+    def _state_of(entry: _Entry) -> "tuple[str, bool | int | float | str] | None":
+        """The first property of a resource whose key ends in State, Status or Code, other than the provisioning state, with its value (the first of them when the items of a list differ)."""
+        for path, value in entry.properties:
+            leaf = path.rsplit(".", 1)[-1]
+            if leaf != "provisioningState" and _rank(leaf) <= SUFFIXES.index("Code"):
+                return path, value[0] if isinstance(value, list) else value
+        return None
+
+    def _usd_of(self, key: str) -> float | None:
+        sub = self._sub_of(key)
+        costs = self._costs_of(sub) if sub else None
+        return None if costs is None else _money(sum(costs.by_resource.get(key, {}).values()))
+
+    def _links(self, state: nb.Edges, links: "list[tuple[int, str]]", offset: int) -> tuple[dict, list, list]:
+        """One side of the answer of neighbors: the resources that a list of links joins, the dearest first, as a table, and a row of count and cost for each type and relation when there are more
+        than FAN_IN of them. Returns the block, its rows, and for each row the entry that it stands for (the handle is given once the rows that fit are known)."""
+        found = [(state.names[number], relation) for number, relation in links]
+        self._prefetch_costs(sub for sub in (self._sub_of(key) for key, _ in found) if sub)
+        priced = [(key, relation, self._usd_of(key)) for key, relation in found]
+        ordered = sorted(priced, key=lambda item: (-(item[2] or 0.0), type_of_id(item[0]) or "", item[1], item[0]))
+        page = ordered[offset:offset + NEIGHBOR_ROWS]
+        self._resolve_quietly([key for key, _, _ in page])
+        entries = [self._entries.get(key) for key, _, _ in page]
+        rows = []
+        for (key, relation, usd), entry in zip(page, entries):
+            looked = self._state_of(entry) if entry is not None else None
+            rows.append([PLACEHOLDER if entry is not None else None, type_word(type_of_id(key)) or OTHER, relation, None if usd is None else _cents(usd),
+                         entry.sku if entry is not None else None, entry.kind if entry is not None else None, looked[1] if looked else None])
+            while len(rows[-1]) > 1 and rows[-1][-1] is None:
+                rows[-1].pop()
+        block: dict = {"total": len(ordered), "cols": list(NEIGHBOR_COLUMNS), "rows": rows}
+        if len(ordered) > FAN_IN and not offset:
+            counted = self._grouped(ordered)
+            block["summary"] = {"cols": ["type", "relation", "count", "usd30d"], "rows": counted[:NEIGHBOR_GROUPS]}
+            if len(counted) > NEIGHBOR_GROUPS:
+                block["summary"]["rows_not_shown"] = len(counted) - NEIGHBOR_GROUPS
+        return block, rows, entries
+
+    @staticmethod
+    def _grouped(priced: "list[tuple[str, str, float | None]]") -> list[list]:
+        """The resources that links join (their lower-case id, the relation and the cost) as a row for each type and relation, the dearest first: [type, relation, count, the cost of those that have one]."""
+        groups: dict[tuple[str, str], list] = {}
+        for key, relation, usd in priced:
+            group = groups.setdefault((type_word(type_of_id(key)) or OTHER, relation), [0, None])
+            group[0] += 1
+            group[1] = group[1] if usd is None else (group[1] or 0.0) + usd
+        ranked = sorted(groups.items(), key=lambda item: (-(item[1][1] or 0.0), -item[1][0], item[0]))
+        return [[kind, relation, count, None if usd is None else _cents(_money(usd))] for (kind, relation), (count, usd) in ranked]
+
+    def _tool_neighbors(self, args: dict) -> dict:
+        entry, direction, offset = self._entry(args["handle"]), args["direction"], args["offset"] or 0
+        self._read = {}  # an answer that holds no link of the resource credits it with nothing
+        state = self._load_edges()
+        said: dict = {}
+        if state.failed:
+            self._listing(said, "unavailable", [sub for sub in self.subscriptions if sub in set(state.failed)])
+        answer: dict = {"handle": args["handle"], "type": type_word(entry.resource.resource_type)}
+        if not state.done:
+            return {**answer, "graph": {"resources": len(state.ids), "complete": False}, "partial": True, **said}
+        answer["graph"] = {"resources": len(state.ids), "edges": state.count, "outside": state.outside, **({"not_kept": state.not_kept} if state.not_kept else {})}
+        answer.update(said)
+        number = state.ids.get(entry.key)
+        if number is None:
+            answer["listed"] = False  # a part that Resource Graph does not list as a resource, or one that this pass did not keep
+        sides = {"refers_to": state.out.get(number, []), "referred_by": state.into.get(number, [])} if number is not None else {"refers_to": [], "referred_by": []}
+        wanted = [direction] if direction else ["referred_by"] if offset else ["refers_to", "referred_by"]
+        shown: list[tuple[list, list]] = []
+        lists: list[tuple[list, dict, str]] = []
+        for name in wanted:
+            block, rows, entries = self._links(state, sides[name], offset)
+            answer[name] = block
+            shown.append((rows, entries))
+            lists.append((rows, block, "rows"))
+            if "summary" in block:
+                lists.append((block["summary"]["rows"], block["summary"], "rows"))
+        answer.update(self._caveats([], {self._sub_of(state.names[number]) for name in wanted for number, _ in sides[name]} - {None}))
+        self._fit(answer, lists)
+        for name, (rows, entries) in zip(wanted, shown):
+            block = answer[name]
+            block.pop("rows_not_shown", None)
+            if offset + len(rows) < block["total"]:
+                block["next_offset"] = offset + len(rows)
+            for row, found in zip(rows, entries):
+                if found is not None:
+                    cell, looked = self._cells(found), self._state_of(found)
+                    seen: dict = {"managed": cell["managed"], "properties": {looked[0]: looked[1]} if looked else {}}
+                    seen.update({key: cell[field] for key, field in (("cost30d", "usd30d"), ("sku", "sku"), ("kind", "kind"), ("location", "region")) if field in cell})
+                    row[0] = self._show(found, seen)
+        if any(answer[name]["total"] for name in wanted):
+            self._read = {args["handle"]: "d"}
+        return answer
+
+    # -- the whole picture of a few resources, and their age -------------------------------------------------------------------------------------
+    def _run(self, tasks: "dict[object, Callable[[Callable[[], bool]], T]]") -> "tuple[dict[object, T | Failed], list]":
+        """Runs the reads at the same time, at most DOSSIER_WORKERS of them (and not more than `workers`), and starts none once the time of a measurement is used up (`budget_seconds`). Each read is
+        given the clock of the call, so that one that is under way can stop. Returns the result of each read, a Failed for one that ended in an error of the reads, and the keys of the reads that were
+        not started or did not finish in time."""
+        began = self.monotonic()
+
+        def late() -> bool:
+            return self.monotonic() - began >= self.budget_seconds
+
+        def guarded(task: "Callable[[Callable[[], bool]], T]") -> "T | Failed | TimeUp":
+            try:
+                return task(late)
+            except TimeUp as error:
+                return error
+            except READ_ERRORS as error:
+                return Failed(error)
+
+        queue, running, done = list(tasks), {}, {}
+        workers = max(1, min(DOSSIER_WORKERS, self.workers))
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
+            while queue or running:
+                while queue and len(running) < workers and not late():
+                    key = queue.pop(0)
+                    running[pool.submit(guarded, tasks[key])] = key
+                left = self.budget_seconds - (self.monotonic() - began)
+                if not running or left <= 0:
+                    break
+                finished, _ = wait(running, timeout=left, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    key, found = running.pop(future), future.result()
+                    if not isinstance(found, TimeUp):
+                        done[key] = found
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        return done, [key for key in tasks if key not in done]
+
+    def _owners(self) -> ownership.OwnerReader:
+        """The reader of the Activity Log that the tools of this run use: the investigation gives it one that shares what it keeps with the reads for its cases (so that nothing is read twice, and
+        these reads do not use up the budget of those), and a toolbox that is used without one makes its own."""
+        if self.owners is None:
+            self.owners = ownership.OwnerReader(self.arm, self.now, max_reads=OWNER_READS, seconds=OWNER_SECONDS)
+        return self.owners
+
+    def _ages_of(self, entries: list[_Entry]) -> None:
+        """What Resource Graph holds of the age of the resources (`systemData` and a creation time of their properties), read once for each of them: for a type that has neither, nothing."""
+        wanted = [entry for entry in entries if entry.key not in self._aged and SCOPE_ID.fullmatch(entry.resource.resource_id)]
+        if wanted:
+            rows = self.arm.graph_many(list(dict.fromkeys(entry.sub for entry in wanted)), AGES.format(ids=", ".join(f"'{entry.resource.resource_id}'" for entry in wanted)))
+            for entry in wanted:
+                self._aged[entry.key] = next(((row.get("sd"), row.get("made")) for row in rows if str(row.get("id") or "").lower() == entry.key), (None, None))
+
+    def _history(self, entries: list[_Entry], ages: object, logs: dict) -> dict[str, dict]:
+        """The history of each resource (ownership.history), by handle: the age that Resource Graph holds and the Activity Log that was read, each as far as it was read. A source that failed is said
+        once in a note and is `not-recorded` in the answer."""
+        for found, what in [(ages, "the ages")] + [(found, "the Activity Log") for found in logs.values()]:
+            if isinstance(found, Failed):
+                self._fail("history", what, found)
+        record: dict[str, dict] = {}
+        for entry in entries:
+            handle, found = entry.resource.handle, logs.get(entry.resource.handle)
+            events, complete = found if isinstance(found, tuple) else (None, False)
+            system, made = self._aged.get(entry.key, (None, None))
+            record[handle] = ownership.history(self.now, system, made, events, complete, entry.resource.resource_id)
+        if self.owners is not None and self.owners.notes:
+            self.notes.extend(self.owners.notes)  # what the reader says of reads that its budget did not allow, or that failed
+            self.owners.notes.clear()
+        return record
+
+    def _tool_changes(self, args: dict) -> dict:
+        entries = [self._entry(handle) for handle in args["handles"]]
+        tasks: dict = {("ages",): lambda late: self._ages_of(entries), **{(entry.resource.handle,): lambda late, entry=entry: self._owners().log(entry.resource.resource_id) for entry in entries}}
+        done, left = self._run(tasks)
+        found = self._history(entries, done.get(("ages",)), {entry.resource.handle: done.get((entry.resource.handle,)) for entry in entries})
+        unread = [entry.resource.handle for entry in entries if ("ages",) in left or (entry.resource.handle,) in left]
+        rows = []
+        self._read = {}
+        for entry in entries:
+            handle = entry.resource.handle
+            if handle not in unread:
+                self.evidence.setdefault(handle, {})["history"] = dict(found[handle])
+                rows.append([handle, *(found[handle][name] for name in HISTORY_COLUMNS[1:])])
+                if dossier.counted(found[handle]):
+                    self._read[handle] = "d"
+        return {"log_days": ownership.WINDOW_DAYS, "cols": list(HISTORY_COLUMNS), "rows": rows, **({"unread": unread} if unread else {})}
+
+    def _tool_profile(self, args: dict) -> dict:
+        answer = dossier.build_dossier(self, args["handles"], args["days"] or MAX_DAYS, args["grain"] or "day")
+        self._read = {part["handle"]: letters for part in answer["profiles"] if (letters := dossier.read_by(part))}
         return answer
 
     # -- what was learned: answers about people's earlier answers and about documentation that code checked, never about this estate ---------------------------------

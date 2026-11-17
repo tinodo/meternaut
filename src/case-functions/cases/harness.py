@@ -492,11 +492,12 @@ class Harness:
 
 
 def module_digest() -> str:
-    """One digest for the code of the modules that run the tools of the agents, in a fixed order: the tools of the toolbox, the tool of the Scholar and what the two tools that recall read
-    from (cases/toolbox.py, cases/library.py, cases/learning.py). A change to any of them is a change of the code that the lock holds."""
-    from . import learning, library, toolbox
+    """One digest for the code of the modules that run the tools of the agents, in a fixed order: the tools of the toolbox, the picture of a few resources and the references that two of them show,
+    the tool of the Scholar and what the two tools that recall read from (cases/toolbox.py, cases/dossier.py, cases/neighbors.py, cases/library.py, cases/learning.py). A change to any of them is a
+    change of the code that the lock holds."""
+    from . import dossier, learning, library, neighbors, toolbox
 
-    parts = [lockfile.code_form(Path(module.__file__).read_text(encoding="utf-8")) for module in (toolbox, library, learning)]
+    parts = [lockfile.code_form(Path(module.__file__).read_text(encoding="utf-8")) for module in (toolbox, dossier, neighbors, library, learning)]
     return lockfile.sha256_text("\n".join(parts))
 
 
