@@ -951,6 +951,36 @@ class AFindingThatWaitsForAPlaceIsShownLikeTheOthers(unittest.TestCase):
         self.assertIn(needs, line)
 
 
+class AHeldRequestNeverEndsByTheClock(Base):
+    """A request to a person never times out and never becomes invisible: a held request has no time at which it ends, whatever the time that it was stamped with."""
+
+    def test_settle_keeps_it_and_it_stays_open_for_an_answer_a_year_after_it_was_made(self):
+        case = self.put("unchecked")
+        self.settle()
+        plan = self.held_of(case.case_id)
+        for days in (31, 400):
+            with self.subTest(days=days):
+                self.now = NOW + dt.timedelta(days=days)
+                self.assertEqual(self.settle(), [])
+                kept = self.store.plan_get(plan.plan_id)
+                self.assertEqual((kept.state, self.held_of(case.case_id).plan_id), (HELD, plan.plan_id))
+                found = brief.build_brief(self.store.case_get(case.case_id), kept, now=self.now, may_answer=True)
+                self.assertEqual((found.state, found.answers), (HELD, ("decline", "not_mine", "ask", "later")))
+        self.assertTrue(self.answer(plan, "ask", note="who owns it?").ok)
+        self.assertEqual(self.store.plan_get(plan.plan_id).state, HELD)
+
+    def test_its_page_the_start_page_and_the_letter_still_show_it_a_year_later(self):
+        console = held_console("unchecked")
+        console.now = NOW + dt.timedelta(days=400)
+        reply = console.get("/why/k-unchecked")
+        self.assertEqual((reply.status, reply.problems), (200, []))
+        self.assertTrue(all(reply.has_button(label) for label in ("Not worth it", "Ask or tell", "Decide later", "This is not mine")))
+        self.assertIn("Held back: 1 finding", console.get("/").content)
+        (plan,) = console.store.plans_held()
+        person = SimpleNamespace(oid=TINO, name="Tino", mail="t@example.com", roles=("approver",))
+        self.assertIsNotNone(letters.digest_letter(person, "https://m.example", console.now, [], (), (), [(plan, console.store.case_get("k-unchecked"))]))
+
+
 class TheHistoryPageDoesNotCountThemAsUnanswered(unittest.TestCase):
     def test_a_note_that_was_closed_by_meternaut_is_no_request_that_nobody_answered(self):
         console = Console()
