@@ -931,7 +931,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     for position, beat in enumerate(plan):
         at = s.monotonic()
         # A beat starts only when it can afford its own reads and its allowance for the model: the reads of the beats before it took what they took, and one that is not read yet is estimated.
-        needs = max(beats.MIN_SECONDS, (sum(seeds) / len(seeds) if seeds else beats.SEED_ESTIMATE_SECONDS) + beats.MODEL_SECONDS)
+        needs = max(beats.MIN_SECONDS, (sum(seeds) / len(seeds) if seeds else beats.SEED_ESTIMATE_SECONDS) + min(st.investigate_beat_seconds, beats.MODEL_SECONDS))
         if out.beats and beats_deadline - at < needs:
             not_started(plan[position:], "time", "the time of the investigation was used up")
             break

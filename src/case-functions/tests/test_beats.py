@@ -482,6 +482,42 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([(b["n"], b["kinds"], b["end"], b["calls"], b["tokens"]) for b in record.beats], [(1, [list(KINDS)[0]], "answered", 1, 44_000), (2, [list(KINDS)[1]], "time", 0, 0), (3, [list(KINDS)[2]], "time", 0, 0)],
                          "the beats that were not started are in the record with their kinds and no number")
 
+    def test_a_beat_is_not_started_when_what_is_left_pays_for_its_reads_and_one_step_but_not_for_its_reads_and_the_time_of_the_model(self):
+        ticker = Ticker()
+        found, _ = pooled()
+
+        class Reads(SeedToolbox):
+            def call(self, name, arguments):
+                ticker.jump(20)
+                return super().call(name, arguments)
+
+        foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+        foundry.after_run = lambda agent: ticker.jump(100) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+        h = rig(None, foundry=foundry, investigate_max_seconds=367)
+        h.toolbox = Reads(found)
+        h.ticker, h.s.monotonic = ticker, ticker
+        h.go()
+        self.assertEqual(len(foundry.investigator_runs()), 1, "what is left after the first beat is about 115 seconds: more than the reads of a beat (40) and the 90 that a step needs, less than its reads and the 100 of the model")
+        self.assertTrue([n for n in h.notes if "the time of the investigation was used up after 1 of 3 beats" in n], h.notes)
+
+    def test_a_beat_that_is_given_less_time_for_the_model_by_a_setting_needs_that_much_and_never_less_than_the_floor(self):
+        for seconds, beats_run in ((367, 2), (327, 1)):
+            ticker = Ticker()
+            found, _ = pooled()
+
+            class Reads(SeedToolbox):
+                def call(self, name, arguments):
+                    ticker.jump(20)
+                    return super().call(name, arguments)
+
+            foundry = BeatFoundry([script(one("r1")), script(one("r3")), script(one("r5"))])
+            foundry.after_run = lambda agent: ticker.jump(100) if agent.startswith(agents.INVESTIGATOR_NAME) else None
+            h = rig(None, foundry=foundry, investigate_max_seconds=seconds, investigate_beat_seconds=40)
+            h.toolbox = Reads(found)
+            h.ticker, h.s.monotonic = ticker, ticker
+            h.go()
+            self.assertEqual(len(foundry.investigator_runs()), beats_run, f"{seconds}: about {seconds * 3 // 4 - 160} seconds are left after the first beat; its reads (40) and the 40 of the model need 80, and a beat never starts with less than {beats.MIN_SECONDS}")
+
     def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
         for seconds in (1080, 600):
             h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=1, investigate_max_seconds=seconds), with_store=True)
