@@ -529,13 +529,26 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertEqual((brief_of(make_advice_case(), make_advice()).how, brief_of(priced_case(status="error"), priced_plan()).how), ("", ""))
 
     def test_a_finding_that_names_the_bill_lines_it_would_shrink_is_not_the_question_whether_the_resource_is_still_used_unless_it_asks_to_delete(self):
-        facts = {"basis": "unused-feature", "proposal": "investigate", "metrics": {}}
-        modelled = priced_case(facts={**facts, **priced_case().facts})
+        asked = dict(detector="investigation", recommendation="investigate")
+        plain = priced_case(facts={"basis": "unused-feature", "proposal": "investigate", "metrics": {}}, **asked)
+        self.assertEqual((brief.still_used(plain), brief.impact_of(plain) is not None), (True, True))
+        modelled = priced_case(facts={**priced_case().facts, "basis": "unused-feature", "proposal": "investigate"}, **asked)
         self.assertFalse(brief.still_used(modelled))
         self.assertIsNone(brief.impact_of(modelled))
         self.assertFalse(brief.says_nothing(modelled))
         deleting = priced_case({"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}, recommendation="delete")
         self.assertIsNotNone(brief.impact_of(deleting), "a deletion is always the question what depends on the resource")
+
+    def test_a_finding_that_names_the_bill_lines_it_would_shrink_is_measured_even_for_a_resource_that_others_share_and_is_not_held_to_the_questions_of_use(self):
+        shared = dict(detector="investigation", recommendation="investigate", resource_type="microsoft.network/privateendpoints")
+        plain = priced_case(facts={"basis": "no-usage", "proposal": "investigate", "metrics": {}}, **shared)
+        self.assertTrue(brief.still_used(plain))
+        self.assertIsNotNone(brief.impact_of(plain))
+        self.assertEqual((brief.acting_risk(plain).level, bool(brief.check_first(plain))), ("high", True))
+        modelled = priced_case(facts={**priced_case().facts, "basis": "no-usage", "proposal": "investigate"}, **shared)
+        self.assertFalse(brief.still_used(modelled))
+        self.assertIsNone(brief.impact_of(modelled))
+        self.assertEqual((brief.acting_risk(modelled).level, brief.check_first(modelled)), ("medium", ()))
 
 
 class TheOwner(unittest.TestCase):
