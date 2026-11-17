@@ -60,7 +60,6 @@ EVENT_PREFIX = "meternaut_event "
 ENDS = ("run.finished", "run.failed")
 SECTION_TITLE = "### The Watch, started once, and what it said"
 STUDY_JOB = "study"
-STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
 STUDY_ENDS = ("study.finished", "run.failed")  # run.failed is how the app refuses a control message
 STUDY_TITLE = "### The Study, started once, and what it said"
 
@@ -332,13 +331,13 @@ def summary_lines(request_id: str, events: list[dict], counts_only: bool = False
     return lines
 
 
-def figure(value) -> str:
-    """A count from a line of the History: a whole number, else the word unknown. Never text."""
-    return str(value) if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else "unknown"
-
-
 def whole(value) -> int | None:
+    """A count from a line of the History: a whole number, else None. Never text."""
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def figure(value) -> str:
+    return "unknown" if whole(value) is None else str(value)
 
 
 def study_missing(events: list[dict]) -> list[str]:

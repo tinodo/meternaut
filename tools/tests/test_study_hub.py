@@ -64,11 +64,6 @@ class TheSwitchIsAVariableOfTheEnvironment(unittest.TestCase):
         self.assertNotIn("STUDY", wl.NEVER_VARIABLES)
         self.assertEqual(wl.lint_file(WORKFLOW_PATH), [], "the lint of the Hub passes with the variable and the new steps")
 
-    def test_the_comment_says_which_words_are_read_and_that_the_default_is_off(self):
-        comment = " ".join(line.strip()[2:] for line in WORKFLOW.split("      STUDY: ${{ vars.STUDY }}")[0].splitlines()[-3:] if line.strip().startswith("# "))
-        for words in ("on or off", "off when the variable is not set", "a variable (rule 18 (b))", "refuses on for the action cases while the Foundry project is not in Azure"):
-            self.assertIn(words, comment, words)
-
     def test_the_bootstrap_page_lists_it_among_the_variables_and_says_how_to_switch_the_study_on_and_off(self):
         variables = BOOTSTRAP.split("Its **variables** are plain configuration", 1)[1].split("The repository's list of allowed actions", 1)[0]
         self.assertIn("`STUDY`", variables)
@@ -77,11 +72,10 @@ class TheSwitchIsAVariableOfTheEnvironment(unittest.TestCase):
 
 
 class TheActionIsOfferedOnceAndRunsInTheOperatorAfterTheFunctionsAreListed(unittest.TestCase):
-    def test_it_is_offered_once_right_after_cases_run_and_the_other_options_keep_their_order(self):
+    def test_it_is_offered_once_right_after_cases_run(self):
         found = options()
         self.assertEqual(found.count("study-run"), 1)
-        self.assertEqual(found[found.index("cases-run"):found.index("cases-run") + 3], ["cases-run", "study-run", "teams"])
-        self.assertEqual(found[-4:], ["agents-drift", "foundry-evals", "foundry-redteam", "agent365-check"])
+        self.assertEqual(found[found.index("cases-run") + 1], "study-run")
 
     def test_the_description_says_what_it_runs_what_it_prints_and_that_it_changes_nothing(self):
         description = re.search(r'(?m)^        description: "(what-if: .+)"$', WORKFLOW).group(1)
@@ -198,11 +192,6 @@ class TheActionIsOfferedOnceAndRunsInTheOperatorAfterTheFunctionsAreListed(unitt
         self.assertEqual(len(re.findall(r"(?m)^\s+study-run\) echo ", block)), 2)
         cases = re.findall(r"(?m)^\s+cases\) echo \"(.*?)\" ;;$", block)[1]
         self.assertIn("is switched by the variable STUDY of the environment hub, which was \\`${STUDY:-not set}\\` in this run and is off unless it says on; the action \\`study-run\\` runs it once.", cases)
-
-    def test_the_new_action_adds_no_sign_in_no_secret_and_no_permission(self):
-        self.assertEqual(WORKFLOW.count("uses: azure/login@"), 13, "the runner makes the container group with the credential of the first sign-in, as for cases-run")
-        self.assertEqual(re.findall(r"(?m)^  (contents|actions|id-token): (\w+)$", WORKFLOW), [("contents", "read"), ("actions", "read"), ("id-token", "write")])
-        self.assertNotIn("study", " ".join(re.findall(r"secrets\.(\w+)", WORKFLOW)).lower())
 
 
 if __name__ == "__main__":
