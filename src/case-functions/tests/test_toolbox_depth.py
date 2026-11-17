@@ -167,6 +167,7 @@ class TheEdges(unittest.TestCase):
         estate = linked(fan=0)
         service, hub = rid(SERVICE, "svc"), rid(HUB, "hub")
         estate.rows.append(row(ATTACH, "mapped", properties={"actions": {key: {"id": service}, key + "A": {"resourceId": hub}}, key + "B": service, "plain": {key + "C": [hub]}}))
+        estate.platform[ATTACH] = [f"properties.{name}" for name in ("serviceLink", "serviceLink.targetServiceId", "serviceLink.linkState", "segment", "segment.id", "farAway", "selfId", "note", "actions", "plain")]
         box = listed(estate)
         names = {resource.name: handle for handle, resource in box.handles.items()}
         everything = []

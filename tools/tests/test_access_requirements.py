@@ -681,6 +681,8 @@ class TheCallsOfTheApp(unittest.TestCase):
         "billing-accounts-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Billing/billingAccounts"),
         "reservation-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Capacity/reservationOrders"),
         "savings-plan-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.BillingBenefits/savingsPlanOrders"),
+        # The property paths that the platform lists for the resource types of one provider (cases/arm.py, provider_paths): the address is the provider itself, and nothing after its namespace.
+        "provider-paths-read": lambda m, p: m == "GET" and p.endswith("/providers/[A-Za-z0-9]{1,40}(?:.[A-Za-z0-9]{1,40}){1,3}"),
     }
     # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
     NO_AZURE_ROLE: set = set()
