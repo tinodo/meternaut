@@ -80,8 +80,8 @@ DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
 DEFAULT_MODEL_SKEPTIC = "gpt-6.1-sol"
 DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40
-# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,080 is six beats of 160 seconds and 120 for the checks and the Skeptic; the Watch that holds it (reading
-# the subscriptions took 345 seconds for ten of them) ends inside the 30 minutes that the Hub waits for. The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
+# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,080 is the reads that code makes for six beats (250 seconds on the real estate), 100 seconds of model for each beat and 120 for the checks and the Skeptic, with room over;
+# the Watch that holds it (reading the subscriptions took 345 seconds for ten of them) ends inside the 38 minutes that the Hub waits for (its container group has 45). The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
 DEFAULT_INVESTIGATE_SECONDS = 1080
 LIMIT_INVESTIGATE_SECONDS = 1500
 LIMIT_INVESTIGATE_TOKENS = 600_000
