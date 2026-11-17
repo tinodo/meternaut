@@ -18,7 +18,7 @@ from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
 from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import brief_of, checked_brief, decisions_for, may_answer, read
+from .common import answerable, brief_of, checked_brief, decisions_for, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
@@ -66,15 +66,15 @@ def _not_found(ctx: Ctx) -> Response:
 
 
 def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
-    """Who may see and answer a plan: a person named in it, with the role approver (for advice, the owner too). Nobody else sees its details, and a person who may not approve
-    a change learns nothing about which ids exist."""
+    """Who may see and answer a plan: a person named in it, with the role approver (for advice, the owner too), or a contact with the role escalation whom the ladder has come to with this advice.
+    Nobody else sees its details, and a person who may not approve a change learns nothing about which ids exist."""
     principal = ctx.principal
-    if not (principal.has("approver") or principal.has("owner")):  # type: ignore[union-attr]
+    if not (principal.has("approver") or principal.has("owner") or principal.has("escalation")):  # type: ignore[union-attr]
         return None, _refused_role(ctx)
     plan = ctx.store.plan_get(plan_id)
     if plan is None:
         return None, (_not_found(ctx) if principal.has("approver") else _refused_role(ctx))  # type: ignore[union-attr]
-    if not may_answer(principal, plan):  # type: ignore[arg-type]
+    if not answerable(ctx, plan):
         return None, _refused_role(ctx)
     return plan, None
 
@@ -91,8 +91,10 @@ def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = N
     action, _ = read(lambda: ctx.store.action_get(plan.plan_id), None)
     brief = checked_brief(ctx, plan, case, action=action, decisions=decisions, answerable=True, ready=ready)
     answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
+    named = ctx.principal.oid.lower() in {a.lower() for a in plan.approvers}  # type: ignore[union-attr]
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
-                             why="you are named as an approver of this request, and you have the role approver", banner=_walking(ctx, plan))
+                             why="you are named as an approver of this request, and you have the role approver" if named else "the ladder of this request came to you, and you have the role escalation",
+                             banner=_walking(ctx, plan))
 
 
 def _walking(ctx: Ctx, plan: PlanRecord) -> Safe | None:

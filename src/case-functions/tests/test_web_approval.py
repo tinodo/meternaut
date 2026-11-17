@@ -1,14 +1,18 @@
 import re
 import unittest
 
-from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
+from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, PEOPLE, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
                               make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.brief import SECOND_WORDS
+from cases.approvals import ApprovalSettings, Approvals
 from cases.costs import analysis_url
-from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
+from cases.memory_store import MemoryStore, stamp
+from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, EscalationRecord, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
+
+CORA = "44444444-5555-6666-7777-888888888888"  # a contact of the ladder: the role escalation and no other
 
 APPROVE = "Approve"
 CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
@@ -1364,6 +1368,80 @@ class AgainstTheLoop(unittest.TestCase):
         reply = self.console.submit(self.form(), "This is not mine")
         self.assertEqual(reply.headings(1), ["Recorded: not yours"])
         self.assertEqual(self.console.store.plan_get("plan0001").state, "withdrawn")
+
+
+class WhenTheLadderComesToAContact(unittest.TestCase):
+    """A person whose role is only `escalation` answers the advice that the ladder has come to with them: every answer of advice, none of which changes Azure, and never a change
+    (cases/escalation.py, docs/proposals/30-escalation.md). A request that the ladder has not come to them with is not theirs."""
+
+    def setUp(self):
+        store = MemoryStore(lambda: NOW)
+        self.console = Console(decider=Approvals(store, ApprovalSettings(change_scopes=()), lambda: NOW), store=store,
+                               people=People((*PEOPLE.persons, Person(CORA, "Cora", ("escalation",), "cora@example.com"))))
+        self.console.seed()  # plan0001: a change that Tino may approve
+        self.console.store.case_put(make_advice_case())
+        self.console.store.plan_put(make_advice(approvers=(TINO,)))
+
+    def come_to(self, plan_id="plan0002"):
+        self.console.store.escalation_claim(EscalationRecord(plan_id, "step", 2, stamp(NOW), "contacts", (CORA,), ("Cora",), (), "email", "due"))
+
+    def test_a_contact_that_the_ladder_has_not_come_to_is_refused_and_nothing_is_shown_or_recorded(self):
+        before = snapshot(self.console.store)
+        for plan_id in ("plan0001", "plan0002"):
+            reply = self.console.get(f"/ok/{plan_id}", oid=CORA)
+            self.assertEqual((plan_id, reply.status, reply.root.find_all("button")), (plan_id, 403, []))
+            self.assertNotIn("oversized-vm-1", reply.content)
+            self.assertEqual(self.console.post(f"/ok/{plan_id}", {"decision": "decline", "code": "B4N8X2KM", "nonce": "x"}, oid=CORA).status, 403)
+        self.assertEqual(snapshot(self.console.store), before)
+
+    def test_a_contact_that_the_ladder_came_to_opens_the_advice_with_every_answer_of_advice_and_is_told_why_they_see_it(self):
+        self.come_to()
+        reply = self.console.get("/ok/plan0002", oid=CORA)
+        self.assertEqual(reply.status, 200)
+        self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
+        self.assertIn("the ladder of this request came to you, and you have the role escalation", reply.content)
+        self.assertNotIn("you have the role approver", reply.content)
+
+    def test_a_contact_never_answers_a_change_even_when_the_ladder_came_to_them_with_it(self):
+        self.come_to("plan0001")
+        before = snapshot(self.console.store)
+        self.assertEqual(self.console.get("/ok/plan0001", oid=CORA).status, 403)
+        for decision in ("approve", "decline", "not_mine", "later", "ask"):
+            self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "7F3K92QD", "nonce": "x"}, oid=CORA).status, 403, decision)
+        self.assertEqual((snapshot(self.console.store), self.console.delegate.begins), (before, []))
+
+    def test_the_loop_itself_refuses_a_contact_that_the_ladder_has_not_come_to_even_when_the_page_is_skipped(self):
+        principal = self.console.services.people.principal(CORA, "Cora")
+        self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
+        self.come_to()
+        self.assertNotEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role", "with the ladder come to them the loop goes on to its next check")
+
+    def test_each_answer_of_a_contact_is_recorded_with_their_name_and_changes_nothing_in_azure(self):
+        for button, title, state, case_status, note in (("Worth acting on", "Recorded: worth acting on", "consumed", "acknowledged", ""), ("Not worth it", "Recorded: not worth it", "declined", "declined", "no"),
+                                                        ("This is not mine", "Recorded: not yours", "open", "needs_human", ""), ("Ask or tell", "Recorded: your words", "open", "needs_human", "Who owns it?"),
+                                                        ("Decide later", "Noted", "open", "needs_human", "")):
+            with self.subTest(button):
+                self.setUp()
+                self.come_to()
+                (form,) = self.console.get("/ok/plan0002", oid=CORA).forms()
+                reply = self.console.submit(form, button, oid=CORA, **({"note": note} if note else {}))
+                self.assertEqual((reply.status, reply.headings(1)), (200, [title]))
+                (record,) = self.console.store.decisions_of_plan("plan0002")
+                self.assertEqual((record.approver_oid, record.approver_name), (CORA, "Cora"))
+                self.assertEqual((self.console.store.plan_get("plan0002").state, self.console.store.case_get("case0002").status), (state, case_status))
+                self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
+
+
+class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):
+    def test_the_steps_are_read_only_for_the_requests_that_it_shows_with_them_not_for_every_request_of_the_person(self):
+        console = Console()
+        for n in range(12):
+            console.store.case_put(make_advice_case(case_id=f"case{n:04d}", plan_id=f"plan{n:04d}", resource_id=f"{VM}{n}"))
+            console.store.plan_put(make_advice(plan_id=f"plan{n:04d}", case_id=f"case{n:04d}", resource_id=f"{VM}{n}", approvers=(TINO,), created_at=at(days=-n)))
+        reads, original = [], console.store.escalations_of
+        console.store.escalations_of = lambda plan_id: (reads.append(plan_id), original(plan_id))[1]
+        self.assertEqual(console.get("/").status, 200)
+        self.assertEqual((0 < len(set(reads)) <= 3, max(map(reads.count, reads))), (True, 1), "one read for each of the three that wait longest, and none for the rest")
 
 
 if __name__ == "__main__":

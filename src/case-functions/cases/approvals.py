@@ -22,7 +22,7 @@ from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError,
-                     TwoPeopleRule, started)
+                     TwoPeopleRule, escalated_to, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -191,8 +191,9 @@ class Approvals:
             return None, DecideResult(False, "refused_state", "This request does not exist. Nothing is approved.")
         advice = plan.family == ADVISE
         # A change is approved by an approver. An advise plan only records an opinion, so the owner may answer it too; either way the person has to be named on the plan. The one other person who may answer
-        # advice is an escalation contact, the last link of the ladder (cases/escalation.py): a request that nobody answers comes to them.
-        if not ((principal.has("approver") or (advice and principal.has("owner"))) and principal.oid.lower() in {a.lower() for a in plan.approvers}) and not (advice and principal.has("escalation")):
+        # advice is an escalation contact that the ladder has come to with this request (cases/escalation.py): the last link, who is told when nobody answers.
+        if not ((principal.has("approver") or (advice and principal.has("owner"))) and principal.oid.lower() in {a.lower() for a in plan.approvers}) and not (
+                advice and principal.has("escalation") and escalated_to(self.store.escalations_of(plan.plan_id), principal.oid)):
             return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
         if plan.state == "expired":  # the stored word for a request that Meternaut took back: no clock ends a request (AGENTS.md rule 38)
             return None, DecideResult(False, "expired", "Meternaut took this request back, so it cannot be answered. Nothing has changed.", plan)

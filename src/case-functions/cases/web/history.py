@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from ..brief import REASON_WORDS, TAKEN_BACK, plan_headline, taken_back
 from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
-from .common import may_answer, read
+from .common import answerable, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip, short_title
 from .layout import head, kpi, kpis, link, notice, page, paragraph
@@ -100,7 +100,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
     quiet: dict[str, list[str]] = {}  # the advice that Meternaut took back, for each day: one line, not one for each, and none of them takes a place of the plans that are read
     mine = []
     for plan in plans:
-        if may_answer(ctx.principal, plan) and plan.created_at >= old:  # type: ignore[arg-type]
+        if answerable(ctx, plan) and plan.created_at >= old:
             if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
                 continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
             if plan.family == "advise" and plan.state == "expired":

@@ -6,7 +6,7 @@ import math
 from typing import Callable, Iterable, TypeVar
 
 from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
-from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord
+from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
@@ -36,13 +36,14 @@ def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:
 
 
 def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False,
-             ready: Readiness | None = None) -> Brief:
+             ready: Readiness | None = None, ladder: bool = True) -> Brief:
     """The brief of one request, as the signed-in person sees it. A switch that holds this kind of answer (a change is held by `all` and `changes`, advice by `all`) takes the
     answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`. `ready` is a look at the resource
-    (look_at): when it says that the change would be refused, the brief has no answer that approves."""
+    (look_at): when it says that the change would be refused, the brief has no answer that approves. `ladder` False leaves out the steps of the request (one read of the table for each request):
+    its days of waiting are still there."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
     return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready,
-                       ladder=ctx.ladder(plan.plan_id) if plan is not None and plan.state == "open" else ())
+                       ladder=ctx.ladder(plan.plan_id) if ladder and plan is not None and plan.state == "open" else ())
 
 
 def off_notice(ctx: Ctx) -> Safe:
@@ -118,11 +119,18 @@ def pulled(ctx: Ctx, *names: str) -> bool:
     return False
 
 
-def may_answer(principal: Principal, plan: PlanRecord) -> bool:
+def may_answer(principal: Principal, plan: PlanRecord, escalated: bool = False) -> bool:
     """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too, and so may an
-    escalation contact: the last link, who is told when nobody answers (cases/escalation.py)."""
+    escalation contact that the ladder has come to with this request (`escalated`): the last link, who is told when nobody answers (cases/escalation.py). A person whose role is only `escalation`
+    has every answer of advice (worth acting on, not worth it, not mine, ask or tell, decide later: none changes anything in Azure) and none on a change, which an approver makes."""
     named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and principal.has("escalation"))
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and principal.has("escalation") and escalated)
+
+
+def answerable(ctx: Ctx, plan: PlanRecord) -> bool:
+    """`may_answer` for the person of this page. The ladder of the request is read only when nothing else lets the person answer it, they have the role `escalation`, and it is advice."""
+    principal = ctx.principal
+    return may_answer(principal, plan) or (plan.family == ADVISE and principal.has("escalation") and may_answer(principal, plan, escalated_to(ctx.ladder(plan.plan_id), principal.oid)))  # type: ignore[union-attr, arg-type]
 
 
 # -- what happened to the change ---------------------------------------------------------------------------------------------------------------------

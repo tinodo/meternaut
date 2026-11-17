@@ -383,6 +383,11 @@ class EscalationRecord(Record):
     last_try: str = ""
 
 
+def escalated_to(records: typing.Iterable[EscalationRecord], oid: str) -> bool:
+    """Whether a step of the ladder of a request has come to this person (cases/escalation.py). A person whose role is only `escalation` answers the requests that the ladder came to them with, and no other."""
+    return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.who} for r in records)
+
+
 @dataclass(frozen=True)
 class LessonRecord(Record):
     """What one closed request taught (docs/proposals/15-learning.md): typed values only, never a name and never a text of a person or of an estate. One lesson for each plan."""

@@ -6,7 +6,7 @@ came from the estate or from an AI is escaped and set in a labelled quote, never
 from __future__ import annotations
 
 from . import brief_page
-from .common import checked_brief, may_answer, read
+from .common import answerable as can_answer, checked_brief, read
 from .core import Ctx, Response
 from .layout import message_page
 
@@ -21,7 +21,7 @@ def notebook(ctx: Ctx, case_id: str) -> Response:
         plan, _ = read(lambda: ctx.store.plan_get(case.plan_id), None)
         action, _ = read(lambda: ctx.store.action_get(case.plan_id), None)
         decisions, _ = read(lambda: ctx.store.decisions_of_plan(case.plan_id), [])
-    answerable = plan is not None and may_answer(ctx.principal, plan)  # type: ignore[arg-type]
+    answerable = plan is not None and can_answer(ctx, plan)
     seen = decisions if answerable else []  # who answered is shown to the people who are named for the request, and to nobody else
     brief = checked_brief(ctx, plan, case, action=action, decisions=seen, answerable=answerable)  # the same look at the resource as on the page of the request: Approve is offered only when it can be made
     answer = brief_page.answer_form(ctx, plan, brief, {}, {}) if brief.answers and plan is not None else None
