@@ -18,8 +18,7 @@ from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer,
 from test_letters import BASE, CONTACTS, PERSON
 from test_missing_data import ABSENT, DISK, ENDPOINTS, PE, endpoint_case, endpoint_plan
 from test_run_loop import Moving, loop_for
-from test_unread import page_of, walk_blocks
-from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case
+from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case, page_of, walk_blocks
 
 from cases import brief, cards, evidence, impact, investigate, learning, letters, stake
 from cases.approvals import IMPACT_NOT_CHECKED
@@ -411,6 +410,34 @@ def case_with(found, **changes):
     return endpoint_case(recommendation="investigate", saving_usd_month=None, facts=facts, **changes)
 
 
+class AFigureFromTheBillNeverSwitchesOffTheCheckOfWhatDependsOnAResource(unittest.TestCase):
+    """What a change would save and whether anything uses the resource are two questions: a finding that names the bill lines that it would shrink keeps the verdict that code made of what depends on
+    the resource, the question whether it is still used, and the risk of acting on it."""
+
+    PRICE = {"action": "remove", "price": {"lowUsd": 80.0, "highUsd": 80.0, "billUsd": 80.0, "lines": 1, "resources": 1, "form": "none"}}
+
+    def pair(self, verdict):
+        made = case_with(digest_of(verdict), cost_usd_30d=100.0)
+        plain = dataclasses.replace(made, facts={**{key: value for key, value in made.facts.items() if key != "asked"}, "basis": "no-usage"})  # a finding of no use that the AI proposes as a look
+        return plain, dataclasses.replace(plain, facts={**plain.facts, "change": self.PRICE})
+
+    def test_the_verdict_the_question_of_use_and_the_risk_are_the_same_with_the_figure_as_without_it(self):
+        for verdict, level in (("keep", "high"), ("safe", "medium"), ("check", "high")):
+            with self.subTest(verdict=verdict):
+                plain, priced = self.pair(verdict)
+                for case in (plain, priced):
+                    b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
+                    self.assertEqual((b.impact.verdict if b.impact is not None else None, brief.still_used(case), b.risk.level), (verdict, True, level))
+                self.assertEqual(brief.acting_risk(plain), brief.acting_risk(priced))
+
+    def test_the_unproven_sentence_of_the_risk_stays_and_the_figure_is_shown_beside_it(self):
+        plain, priced = self.pair("check")
+        self.assertIn(brief.UNPROVEN, brief.acting_risk(priced).text)
+        b = brief.build_brief(priced, endpoint_plan(priced, saving_usd_month=None), now=WEB_NOW, may_answer=True)
+        self.assertEqual((b.saving.monthly, b.saving.level), (80.0, "Expected"))
+        self.assertEqual(b.check_first, brief.build_brief(plain, endpoint_plan(plain, saving_usd_month=None), now=WEB_NOW, may_answer=True).check_first)
+
+
 class WhatAPersonReads(unittest.TestCase):
     def test_the_page_says_the_verdict_the_reasons_where_each_fact_was_read_what_removal_does_how_to_undo_it_and_what_was_not_checked(self):
         found = digest_of("safe")
@@ -472,11 +499,11 @@ class WhatAPersonReads(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_what_only_code_worked_out(self):
         case = case_with(digest_of("safe"))
-        case = dataclasses.replace(case, facts={**case.facts, "gateways": {"gateways": 2, "counted": 5}})
+        case = dataclasses.replace(case, facts={**case.facts, "change": {"action": "remove", "how": "Remove it.", "missing": "none"}})
         reply, _ = page_of(case, endpoint_plan(case, saving_usd_month=None))
         self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"})
         self.assertNotIn("readAt", reply.content, "the digest is not printed as a row of raw JSON anywhere on the page")
-        self.assertEqual(sorted(case.facts), ["asked", "basis", "finding", "gateways", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
+        self.assertEqual(sorted(case.facts), ["asked", "basis", "change", "finding", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
 
     def test_an_unfinished_check_says_so_in_the_line_of_the_card_and_the_letter(self):
         azure = Azure()

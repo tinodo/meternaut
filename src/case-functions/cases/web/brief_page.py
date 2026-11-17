@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, COULD_NOT_LOOK, GATEWAYS, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, UNREAD, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, read
@@ -137,32 +137,6 @@ def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
                heading=heading, stake=_stake(brief, figure), facts=facts, plot=plot)
 
 
-def _unread(brief: Brief) -> Safe:
-    """The data that a workspace takes in and nothing reads: the method in one sentence, then a typed line for each kind of data, the largest first, and what was not counted."""
-    unread = brief.unread
-    if unread is None:
-        return Safe("")
-    lines = [fmt("<strong>{kind}</strong>: {gb} in {days}, {percent} of what is billed. {reads}.", kind=line.kind, gb=line.gb, days=unread.days, percent=line.percent, reads=line.reads)
-             for line in unread.lines]
-    parts: list[object] = [Safe("<h3>Data that nothing reads</h3>"), paragraph(f"{unread.sentence} {unread.volume}"), items(lines)]
-    if unread.more:
-        parts.append(paragraph(f"{unread.more} more kind{'' if unread.more == 1 else 's'} of data that nothing reads {'is' if unread.more == 1 else 'are'} not listed.", "muted"))
-    if unread.note:
-        parts.append(paragraph(unread.note, "muted"))
-    return join(block(part) for part in parts)
-
-
-def _gateways(brief: Brief) -> Safe:
-    """What a finding about point-to-site gateways says, in the words of code: what these gateways are, then what was found in figures, and what was not counted."""
-    found = brief.gateways
-    if found is None:
-        return Safe("")
-    parts: list[object] = [Safe("<h3>The gateways</h3>"), paragraph(found.what), paragraph(found.sentence)]
-    if found.note:
-        parts.append(paragraph(found.note, "muted"))
-    return join(block(part) for part in parts)
-
-
 def _advisor(brief: Brief) -> Safe:
     """What Azure Advisor says, in the words of code: the sentence that adds its figures up, one row for each recommendation (at most twelve), the line that counts the rest, and what was not added up."""
     found = brief.advisor
@@ -176,12 +150,11 @@ def _advisor(brief: Brief) -> Safe:
 
 
 def _measured(brief: Brief) -> Safe:
-    """What code read from the estate: each fact with its value and the place that it was read, the data that nothing reads when the finding is about a workspace, what the gateways are
-    when it is about those, and what Azure Advisor says when it says something."""
+    """What code read from the estate: each fact with its value and the place that it was read, and what Azure Advisor says when it says something."""
     rows = [[fact.label, fact.value, fmt('<span class="muted">{source}</span>', source=fact.source)] for fact in brief.facts]
     parts: list[object] = [Safe("<h2>What was measured</h2>"),
                            table("measured", "What was measured, and where it was read", ["Fact", "Value", "Where it was read"], rows, row_header=True, quiet_caption=True)
-                           if rows else paragraph("No fact is recorded for this finding."), _unread(brief), _gateways(brief), _advisor(brief)]
+                           if rows else paragraph("No fact is recorded for this finding."), _advisor(brief)]
     return join(block(part) for part in parts)
 
 
@@ -193,6 +166,8 @@ def _why(brief: Brief) -> Safe:
     parts += [paragraph(line, "muted") for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
     if brief.reasoning:
         parts.append(quoted("The AI's reasoning (not checked by code)", brief.reasoning))
+    if brief.how:
+        parts.append(quoted("What the AI says a person would do (not checked by code)", brief.how))
     if brief.doubt:
         parts.append(quoted("The second AI's doubt", brief.doubt))
     return join(block(part) for part in parts)
@@ -356,7 +331,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
         parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (UNREAD, GROUP_FACT, GATEWAYS, IMPACT, ADVISOR_KEY)}  # what code made of the estate is in the evidence above, and no AI saw it
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
                            [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))

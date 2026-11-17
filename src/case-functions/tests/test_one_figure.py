@@ -11,7 +11,6 @@ import unittest
 
 import support  # noqa: F401  (puts the app on the path)
 from test_cards import by_id, texts, walk
-from test_unread import case_and_plan, run_investigation, workspace_toolbox
 from test_web_support import NOW as WEB_NOW, SUB, TINO, VM, Console, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan
 
 from cases import brief as brief_mod, cardcheck, cards, letters, offers, stake
@@ -31,9 +30,9 @@ YEAR = re.compile(r"(?:\$[\d,]+|under \$1) a year")
 class Case:
     """One request in one state: its records, and how it is shown (a request that waits is a decision letter and a decision card, one that ran is a letter and a card of what became of it)."""
 
-    def __init__(self, label, case, plan, action=None, decisions=(), basis_in_letter=True, verified=False):
+    def __init__(self, label, case, plan, action=None, decisions=(), verified=False):
         self.label, self.case, self.plan, self.action, self.decisions = label, case, plan, action, list(decisions)
-        self.basis_in_letter, self.verified = basis_in_letter, verified
+        self.verified = verified
 
     @property
     def open(self) -> bool:
@@ -82,6 +81,27 @@ def private_endpoints() -> tuple:
     return case, plan
 
 
+def priced_request() -> tuple:
+    """One finding that states what a change would shrink in the bill, with the range of an assumption, and the one request about it: its figure is the low end and its basis says what it rests on."""
+    digest = {"action": "reduce", "how": "Take it down a size.", "price": {"lowUsd": 30.0, "highUsd": 60.0, "billUsd": 100.0, "lines": 2, "resources": 1, "form": "assumed", "away": [0.3, 0.6]}}
+    case = make_advice_case(case_id="case7000", resource_id=f"{VM}-7000", resource_name="thing-7000", resource_type="microsoft.example/things", resource_group="rg-thing", saving_usd_month=30.0,
+                            cost_usd_30d=100.0, plan_id="plan7000", facts={"basis": "oversized", "proposal": "change", "change": digest})
+    plan = make_advice(plan_id="plan7000", case_id="case7000", resource_id=f"{VM}-7000", resource_name="thing-7000", resource_group="rg-thing", saving_usd_month=30.0,
+                       title="Consider changing the resource thing-7000 in group rg-thing")
+    return case, plan
+
+
+def worst_priced_request() -> tuple:
+    """The longest basis that a figure from the bill lines can have: a group priced for 40 of its 60 resources by an assumption, with lines that were not counted and Advisor's figure beside it."""
+    digest = {"action": "reduce", "price": {"lowUsd": 12345.67, "highUsd": 123456.78, "billUsd": 123456.78, "lines": 12, "resources": 40, "members": 60, "skipped": 12, "advisorUsd": 1234.56,
+                                            "form": "assumed", "away": [0.3, 0.6]}}
+    case = make_advice_case(case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_type="microsoft.example/things", resource_group="rg-thing", saving_usd_month=12345.67,
+                            cost_usd_30d=200000.0, plan_id="plan7100", facts={"basis": "oversized", "proposal": "change", "change": digest})
+    plan = make_advice(plan_id="plan7100", case_id="case7100", resource_id=f"{VM}-7100", resource_name="thing-7100", resource_group="rg-thing", saving_usd_month=12345.67,
+                       title="Consider changing the resource thing-7100 in group rg-thing")
+    return case, plan
+
+
 def decision_cases() -> list[Case]:
     """The requests that wait, one for each state of the figure and each kind of request."""
     cost_only = storage_account("plan5000", None, 358.11)
@@ -89,7 +109,6 @@ def decision_cases() -> list[Case]:
     unknown = storage_account("plan5002", None, None)
     tier = (make_case(case_id="case8000", resource_name="premium-disk-1", saving_usd_month=None, cost_usd_30d=80.0, plan_id="plan8000"),
             make_plan(plan_id="plan8000", case_id="case8000", family="change-disk-tier", resource_name="premium-disk-1", saving_usd_month=None, waiting_costs_usd_day=None))
-    workspace, workspace_plan = case_and_plan(run_investigation(workspace_toolbox()))
     return [
         Case("a saving that is Expected", make_case(plan_id="plan0001"), make_plan()),
         Case("a saving that is a Scenario", make_advice_case(), make_advice()),
@@ -98,7 +117,8 @@ def decision_cases() -> list[Case]:
         Case("no cost line read yet", *unknown),
         Case("a reason of the finding's own", *tier),
         Case("one request for many resources", *private_endpoints()),
-        Case("the data that nothing reads", workspace, workspace_plan, basis_in_letter=False),
+        Case("a saving that code computed from the bill lines the finding names", *priced_request()),
+        Case("the longest basis that such a saving can have", *worst_priced_request()),
     ]
 
 
@@ -161,11 +181,15 @@ class ThePageTheLetterAndTheCardShowOneFigure(unittest.TestCase):
                 self.assertEqual(letter_year, page_year if shown else "")
                 self.assertEqual(card_year, page_year if shown else "")
                 self.assertEqual(card_sub, page_sub)
-                if fixture.basis_in_letter:
-                    self.assertEqual(letter_sub, page_sub)
-                else:
-                    self.assertTrue(page_sub.startswith(letter_sub), "a letter that says the basis in the lines that follow leaves it out of the line of the figure")
+                self.assertEqual(letter_sub, page_sub)
                 self.assertEqual((letter_money, card_money), (MONEY, MONEY) if shown else ("", ""), "said once, where an amount is shown")
+
+    def test_the_longest_basis_is_shown_whole_on_the_card_and_in_the_letter_and_its_last_part_is_not_cut(self):
+        fixture = next(f for f in decision_cases() if f.label.startswith("the longest basis"))
+        _, page_sub = page_figure(fixture.page())
+        self.assertGreater(len(page_sub), 240, "the fixture is a long one")
+        for sub in (page_sub, card_figure(fixture.card())[1], letter_figure(fixture.letter())[1]):
+            self.assertTrue(sub.endswith("Azure Advisor's $1,234.56 is not added."), sub)
 
     def test_a_change_that_ran_shows_the_figure_of_the_page_and_says_verified_only_when_the_cost_lines_confirm_it(self):
         for fixture in done_cases()[:3]:

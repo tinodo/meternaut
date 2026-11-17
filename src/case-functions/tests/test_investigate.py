@@ -6,6 +6,7 @@ cases/investigate.py is tested without a network. The run that wraps the investi
 import json
 import re
 import unittest
+import datetime as dt
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Callable
@@ -13,7 +14,7 @@ from unittest import mock
 
 from support import APP_ROOT, ENV, NOW, RG, SUBSCRIPTION, LogCapture, Ticker, fixed_clock
 
-from cases import agents, approvals, config as cfg, decide, investigate, loop_config, people as people_mod, roles, wiring
+from cases import agents, approvals, config as cfg, decide, investigate, loop_config, people as people_mod, pricing, roles, wiring
 from cases.approvals import Approvals
 from cases.brief import HELD_UNPROVEN
 from cases.detectors import Context
@@ -22,6 +23,7 @@ from cases.families.gates import ChangeScope
 from cases.foundry import SOFT_TIME_SHARE, AgentRun, AgentSpec, FoundryError, FunctionTool
 from cases.http import HttpError
 from cases.memory_store import MemoryStore, stamp
+from cases.meters import Meter
 from cases.redact import Redactor
 from cases.toolbox import Resource
 
@@ -63,6 +65,15 @@ def entry(handle: str, metric: str, total) -> dict:
     return {"handle": handle, "metric": metric, "total": total}
 
 
+METER_WORDS = ("Example Compute", "Standard Tier", "Fixed Hours", "OnDemand", "Usage", "1 Hour")
+
+
+def meter_line(scope: str, usd: float, words=METER_WORDS, days: int = 30) -> Meter:
+    """A meter of the register of the run (cases/meters.py): the bill line of one scope (a handle) that cost `usd` over `days` closed days, the same on each day. Its words are invented."""
+    start = dt.date(2026, 10, 5)
+    return Meter(scope, None, words, 24.0 * days, usd, {start + dt.timedelta(days=n): usd / days for n in range(days)}, None, start, days)
+
+
 def finding(handles=("r1", "r2"), basis="no-usage", proposal="delete", confidence=0.9, summary="Nothing used these in the window.", evidence=None, **more) -> dict:
     if evidence is None:
         evidence = [entry(handle, "MetricA", 0) for handle in handles]
@@ -78,13 +89,14 @@ def verdicts(*entries) -> str:
 
 
 class FakeToolbox:
-    """What a Toolbox shows after a run: the handles, the evidence and the log. `call` answers every tool with an empty object."""
+    """What a Toolbox shows after a run: the handles, the evidence, the register of the meters and the log. `call` answers every tool with an empty object."""
 
-    def __init__(self, resources=None, evidence=None, notes=None):
+    def __init__(self, resources=None, evidence=None, notes=None, meters=None):
         self.handles = {r.handle: r for r in (resources if resources is not None else [resource(n) for n in range(1, 6)])}
         self.evidence = evidence if evidence is not None else {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0), "r3": metrics(MetricA=0),
                                                                 "r4": metrics(MetricA=0), "r5": metrics(MetricA=0)}
         self.notes = notes if notes is not None else []
+        self.meters = meters if meters is not None else {}
         self.log: list[dict] = []
         self.specs = (FunctionTool("tool_one", "Shows something.", {"type": "object", "properties": {}}),
                       FunctionTool("tool_two", "Shows something else.", {"type": "object", "properties": {}}))
@@ -393,11 +405,53 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 7,000 since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says
-        # which level it judged (it was 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a
-        # finer grain than a day, 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since
-        # the data that is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 7000)
+        # 9,500 since the change that a finding states (the action, the meters that it would shrink and what remains of them, in four forms) was added, and the principle that something larger than
+        # its use needs is found by setting what it can carry beside the highest value of what it carries: about 2,400 characters in all, so that code can work out the saving from the bill (it was 7,000
+        # since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says which
+        # level it judged; 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a finer grain
+        # than a day; 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since the data that
+        # is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 9500)
+
+    def test_the_investigator_is_told_how_to_find_what_is_larger_than_its_use_needs_in_general_terms_and_never_by_the_average(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("Something larger than its use needs is not found by looking for idle: for anything that comes in a size, a tier or a number of units, compare what it can carry with the highest value "
+                         "of what it carries, read at the finest grain that your tools offer and not as an average",
+                         "say what the next smaller option would still have to carry and what would then remain on the bill",
+                         "An average can hide the peak that decides what a thing must carry."):
+            self.assertIn(sentence, text)
+        for rule_of_waste in ("is not waste", "low peak"):
+            self.assertNotIn(rule_of_waste, text, "a principle says what to compare and what to say, never what counts as waste (rule 30)")
+        self.assertLess(text.index("4. Waste is one of these"), text.index("Something larger than its use needs is not found"))
+        self.assertLess(text.index("Something larger than its use needs is not found"), text.index("5. An absent measurement"))
+        self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
+
+    def test_the_investigator_is_told_to_state_the_change_that_a_finding_proposes_and_what_remains_in_the_four_forms_that_code_can_check(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for key in ('"change"', '"action"', '"effects"', '"meters"', '"remains"', '"how"'):
+            self.assertIn(key, text)
+        self.assertEqual(pricing.ACTIONS, ("remove", "reduce", "switch", "schedule", "commit", "none"))
+        self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
+        for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
+                         "window that it offers, never those of a whole type)",
+                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
+                         "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
+                         "When you cannot name the meters, give the action none.",
+                         "A recommendation names the change and the bill lines that it would shrink, and says what remains of them",
+                         "say so when a saving rests on your own assumption"):
+            self.assertIn(sentence, text)
+        self.assertIn(f"at most {pricing.MAX_HOW} characters", text)
+        self.assertEqual(banned_in(text), [])
+        for tool in FakeToolbox().specs:
+            self.assertNotRegex(text, rf"\b{re.escape(tool.name)}\b")
+
+    def test_the_skeptic_is_told_to_judge_the_model_of_the_saving_and_that_a_wrong_or_doubtful_model_means_disagree_or_unsure(self):
+        text = agents.SKEPTIC_INSTRUCTIONS
+        for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
+                         "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
+                         "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why"):
+            self.assertIn(sentence, text)
+        self.assertEqual(banned_in(text), [])
 
     def test_the_investigator_is_told_in_general_words_to_judge_the_whole_that_a_resource_belongs_to_and_to_say_which_level_it_judged(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -447,7 +501,7 @@ class TheAgentDefinitions(unittest.TestCase):
         filled = re.sub(r"<the number that the tool returned>|<a number from 0 to 1>", "1", form)
         document = json.loads(filled)
         self.assertEqual(sorted(document), ["examined", "findings"])
-        self.assertEqual(sorted(document["findings"][0]), ["basis", "confidence", "handles", "metric_evidence", "proposal", "summary"])
+        self.assertEqual(sorted(document["findings"][0]), ["basis", "change", "confidence", "handles", "metric_evidence", "proposal", "summary"])
         self.assertEqual(len(document["examined"]), 1)
         self.assertTrue(document["examined"][0].startswith("<one short phrase for each service or type that you looked at"), document["examined"])
         verdict_form = next(line for line in agents.SKEPTIC_INSTRUCTIONS.splitlines() if line.startswith('{"verdicts"'))
@@ -962,7 +1016,8 @@ class AGoodInvestigation(unittest.TestCase):
         (line,) = self.h.of("investigation.finding")
         self.assertEqual({k: v for k, v in line.items() if k not in ("v", "ts", "runId", "requestId", "type")},
                          {"finding": 1, "basis": "no-usage", "proposal": "delete", "confidence": 0.9, "claimed": 2, "handles": 2, "unknown": 0, "unproven": 0, "repeated": 0,
-                          "judgedLately": 0, "guarded": 0, "capped": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "verdict": "agree", "kept": True,
+                          "judgedLately": 0, "guarded": 0, "capped": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "change": None, "pricedHandles": 0, "savingUsdMonth": None,
+                          "verdict": "agree", "kept": True,
                           "reason": None, "note": None, "summary": "Nothing used these in the window."})
 
     def test_the_end_says_what_was_examined_how_many_calls_tokens_and_seconds_and_what_was_kept_and_dropped(self):
