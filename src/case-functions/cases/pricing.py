@@ -112,7 +112,8 @@ class Row(NamedTuple):
         out: dict = {"lowUsd": self.low, "highUsd": self.high, "billUsd": self.bill, "weekUsd": self.week, "lines": self.lines, "resources": 1, "form": self.form, **self.said}
         if self.away is not None and self.form == "assumed":
             out["away"] = list(self.away)
-        for key, value in (("sinceUsd", self.since), ("steadyUsd", self.steady), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None), ("advisorUsd", advisor)):
+        for key, value in (("sinceUsd", self.since), ("steadyUsd", self.steady), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None),
+                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("advisorUsd", advisor)):
             if value is not None:
                 out[key] = value
         return out
@@ -319,6 +320,14 @@ def _own(meters: Iterable[Meter]) -> tuple[float, float] | None:
     return (min(math.fsum(week), math.fsum(since)), max(math.fsum(week), math.fsum(since))) if week else None
 
 
+def _rule(part: Part) -> tuple:
+    """What makes the rule of a part the one of another: for a switch the price that it goes to (the rate of the bill that was carried over differs from one meter to the next), else the form and the
+    shares."""
+    if part.form == "alternative":
+        return part.form, part.said.get("offer"), part.said.get("list")
+    return part.form, part.least, part.most, tuple(sorted(part.said.items()))
+
+
 def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: tuple[float, float] | None) -> Row | str:
     low = math.fsum(part.low * (1 - part.most) for part in parts)
     high = math.fsum(part.high * (1 - part.least) for part in parts)
@@ -338,10 +347,11 @@ def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: t
         low, high = min(low, reach), min(high, reach)
         if high <= 0:
             return "nothing"
-    alike = len({(part.form, part.least, part.most, tuple(sorted(part.said.items()))) for part in parts}) == 1
+    alike = len({_rule(part) for part in parts}) == 1
     form = parts[0].form if alike else "mixed"
-    away = (round(1 - parts[0].most, 4), round(1 - parts[0].least, 4)) if alike else None
-    return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, parts[0].said if alike else {}, away,
+    said = {key: value for key, value in parts[0].said.items() if not (form == "alternative" and key == "ratio" and len({part.said.get("ratio") for part in parts}) > 1)} if alike else {}
+    away = (round(1 - max(part.most for part in parts), 4), round(1 - min(part.least for part in parts), 4)) if alike else None
+    return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, said, away,
                failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
                sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts))
 
@@ -410,8 +420,17 @@ def digest(change: Change | None, priced: Priced, handle: str, advisor: float | 
     return out
 
 
+def _switched(price: Mapping) -> int:
+    """How many bill lines of a digest rest on an alternative."""
+    if price.get("form") == "alternative":
+        return _whole(price.get("lines")) or 0
+    held = _whole(price.get("switched"))
+    return held if held is not None and held > 0 else 0
+
+
 def combine(digests: Sequence[object], members: int) -> dict | None:
-    """The `change` of the case of a group from those of its resources: the sums of the figures, and the rule only when it is the same for all of them. None when there is none."""
+    """The `change` of the case of a group from those of its resources: the sums of the figures, and the rule only when it is the same for all of them (for a switch: the same price, whatever rate of
+    the bill each carried over, which is kept when it is the same). A figure that is a sum of rules says how many of its bill lines rest on an alternative. None when there is none."""
     kept = [item for item in digests if isinstance(item, Mapping)]
     if not kept:
         return None
@@ -419,7 +438,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "to", "on", "unit", "days", "span", "away", "offer", "list", "ratio")
+    keys = ("form", "from", "to", "on", "unit", "days", "span", "away", "offer", "list")
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
@@ -430,6 +449,10 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     lives, uneven = [price["life"] for price in prices if "life" in price], sum(price.get("uneven") or 0 for price in prices)
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
              **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
+    if alike and "ratio" in prices[0] and len({str(item.get("ratio")) for item in prices}) == 1:
+        price["ratio"] = prices[0]["ratio"]
+    if not alike and (switched := sum(_switched(item) for item in prices)):
+        price["switched"] = switched
     skipped = sum(price.get("skipped") or 0 for price in prices)
     return {**out, "price": {**price, **({"skipped": skipped} if skipped else {})}}
 
@@ -496,10 +519,11 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
         text += ": the AI's own assumption, not checked by code"
     elif form == "alternative":
         ratio = _number(found.get("ratio"))
-        text += ", repriced at the alternative's list price" + (f" scaled by your bill's rate, ratio {ratio:g}, or at list prices" if ratio is not None and ratio > 0 else "")
+        text += ", repriced at the alternative's list price scaled by " + (f"your bill's rate, ratio {ratio:g}" if ratio is not None and ratio > 0 else "the rate of each bill line") + ", or at list prices"
         text += ": the alternative has not been checked for features"
     elif form == "mixed":
         text += ", each by its own rule; part rests on the AI's own proposals"
+        text += "; the alternative has not been checked for features" if (_whole(found.get("switched")) or 0) > 0 else ""
     elif not _firm(found):
         text += ", a Scenario and not Expected, because the rate is uneven or has changed"
     if high > low:
@@ -588,7 +612,7 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
             got = rates(registry[row.meters[0]])
             more["moved"] = got.since is not None and abs(got.week - got.since) > DIFFER * max(got.week, got.since)
         said = {key: (word(value) or "other" if key == "unit" else value) for key, value in row.said.items()} if row.form != "alternative" else {}  # the unit of a meter is a word of the platform, shown through the check of the tools
-        if row.alts:  # a switch: the words of the price (through the same check), its list price, the rate of the bill against list (None: the line of the meter was not found) and the shares that remain
+        if row.alts:  # a switch: the words of the price (through the same check), its list price, the rate of the bill against list and the shares that remain
             more["alternatives"] = [{"meter": alt["meter"], "words": [_plain(text, word) for text in alt["words"]], "list": alt["list"], "ratio": alt["ratio"],
                                      "remains": [round(alt["remains"][0], 4), round(alt["remains"][1], 4)]} for alt in row.alts]
         effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **said, **more})

@@ -63,8 +63,9 @@ What the investigation may rely on after a run (it reads these and changes none)
                         no price and is not shown, so that the code which prices a switch to a line cannot take the price of a first step for the price of a quantity, nor a free line for an alternative. That code
                         must still refuse tiers > 1 and a price of nothing, a unit that is not the meter's and a service that is not the meter's: the register does not know the meter.
   Toolbox.retail[m]     the list price of one unit of the line that the words of the meter handle m name, as price_alternatives showed it (its `retail`): the like-for-like price against which the code that prices a
-                        switch compares an alternative, whatever the bill pays. It depends on the words of the meter and not on its window, so a longer window does not drop it. A meter has none when it was not
-                        asked about, when no line (or several that disagree) has its words, or when its list price has steps; a later ask that does not find the line takes it away. No list price, no switch is priced.
+                        switch compares an alternative, whatever the bill pays. It depends on the words of the meter and not on its window or on the ask, so a longer window does not drop it and neither does a
+                        later ask that did not reach the line (a cap may have cut the read before it). A meter has none when it was not asked about, when no line has its words so far, or when an ask found that its
+                        list price has steps or that several lines with its words disagree (which takes it away). No list price, no switch is priced.
   Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps or of nothing). The
                         form `alternative` of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
@@ -1021,7 +1022,7 @@ class Toolbox:
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
-        self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing)
+        self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing); only an ask that finds that the line has steps, or that lines disagree, takes it away
         self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
@@ -2807,8 +2808,8 @@ class Toolbox:
                 offered.add(answer["current"]["line"])
         if current is not None and current.tiers == 1:
             self.retail[name] = current.usd
-        else:
-            self.retail.pop(name, None)  # the last ask did not find the one-price line of the meter, so its list price is not known
+        elif how != "none":  # this ask found the line and it has steps, or found lines that disagree: the list says that the meter has no one list price. A line that this ask did not find says nothing (a cap may have cut the read before it)
+            self.retail.pop(name, None)
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------

@@ -491,7 +491,7 @@ class TheListPrice(unittest.TestCase):
         ask(box, "cost_meters", handle="r1", days=7)
         self.assertEqual((box.meters["m1"].days, box.retail), (30, {"m1": 0.5}))
 
-    def test_a_list_price_is_taken_away_when_a_later_ask_for_the_meter_does_not_find_the_line(self):
+    def test_a_list_price_stays_when_a_later_ask_for_the_meter_does_not_find_its_line_because_a_cap_cut_the_read_before_it(self):
         estate, box = priced()
         estate.page_size = 1
         estate.lines.insert(0, estate.lines.pop())  # the other product first, so that a read of the whole service that stops at its first page does not reach the line of the meter
@@ -499,7 +499,18 @@ class TheListPrice(unittest.TestCase):
             self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found")
             self.assertEqual(box.retail, {"m1": 0.5})
             answer = ask(box, "price_alternatives", meter="m1", within="service")
-        self.assertEqual((answer["match"], answer["complete"], box.retail), ("none", False, {}), "a list price that the last ask did not find is not one that code may use")
+        self.assertEqual((answer["match"], answer["complete"], "current" in answer, box.retail), ("none", False, False, {"m1": 0.5}), "the list price depends on the words of the meter and not on the ask: a read that was cut before the line says nothing against it")
+
+    def test_a_list_price_is_taken_away_only_when_a_later_ask_shows_that_the_meter_has_no_one_list_price(self):
+        for name, more in (("lines that disagree", line("Plus", "Fixed Hours", 0.6)), ("steps", line("Basic", "Fixed Hours", 0.4, tier=100))):
+            with self.subTest(name):
+                estate, box = priced()
+                estate.page_size = 1
+                estate.lines.insert(1, more)  # on the second page: a first read of one page does not see it, and a read of the whole service does
+                with mock.patch.object(prices, "MAX_PAGES", 1):
+                    self.assertEqual((ask(box, "price_alternatives", meter="m1")["match"], box.retail), ("found", {"m1": 0.5}))
+                answer = ask(box, "price_alternatives", meter="m1", within="service")
+                self.assertEqual((answer["match"], box.retail), ("several" if name == "lines that disagree" else "found", {}), "the list itself says that there is no one price to compare with")
 
 
 class TheTime(unittest.TestCase):
