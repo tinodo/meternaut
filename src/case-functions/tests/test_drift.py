@@ -459,10 +459,13 @@ class TheCallsOfTheCheck(unittest.TestCase):
         made = drift.probes(FOUNDRY_ENDPOINT, GATEWAY_HOST)
         what = {label: (method, expected) for label, _, method, _, expected in made}
         for label in ("ending an agent", "replacing an agent", "changing an agent", "a model call to the project direct", "a model call to a deployment direct", "listing the connections", "another project",
-                      "another host", "a change of a disk", "a role assignment", "another route of the gateway", "another gateway", "making an agent by the check", "a response by the check"):
+                      "another host", "a change of a disk", "a role assignment", "another route of the gateway", "another gateway", "making an agent by the check", "a response by the check",
+                      "a change of a profile by the escalation", "a change of a manager by the escalation", "the list of people by the escalation", "the groups of a person by the escalation",
+                      "the beta version by the escalation", "another host by the escalation", "the estate by the escalation", "the directory by the watch"):
             self.assertIn(label, what, label)
             self.assertFalse(what[label][1], f"{label} must be refused")
-        for label in ("a response of an agent", "making an agent", "reading an agent", "ending a conversation", "a chat completion of the gateway", "the list of agents", "the list of connections"):
+        for label in ("a response of an agent", "making an agent", "reading an agent", "ending a conversation", "a chat completion of the gateway", "the list of agents", "the list of connections",
+                      "a profile by the escalation", "a manager by the escalation", "a profile by address by the escalation"):
             self.assertTrue(what[label][1], f"{label} must be let through")
         self.assertEqual(len(drift.probes(FOUNDRY_ENDPOINT, "")), len(made) - 5, "without a gateway host the probes of the gateway are left out")
 
