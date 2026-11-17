@@ -710,7 +710,7 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
 
     A fault of its own, after some cases were opened, leaves the counts of those cases in the result, so that the end of the run counts the lines of the History."""
     out = Investigation()
-    at = stamp(s.clock())
+    opened = s.clock()
     try:
         return _investigate(s, contexts, notes, toolbox, out)
     except Exception as error:  # noqa: BLE001 (an investigation never stops the run)
@@ -722,7 +722,7 @@ def investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str]
         harness = getattr(s, "harness", None)
         if harness is not None:
             harness.close()  # the line of every agent run, and the brake for a run that misbehaved (cases/harness.py)
-        activity.keep(s, out, contexts, trigger=getattr(s, "trigger", ""), at=at)  # never raises
+        activity.keep(s, out, contexts, trigger=getattr(s, "trigger", ""), opened=opened)  # never raises
 
 
 def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str], toolbox: Toolbox | None, out: Investigation) -> Investigation:

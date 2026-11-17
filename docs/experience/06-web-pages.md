@@ -1,6 +1,6 @@
 # The owner's pages and the approval page
 
-**What this document answers.** Which pages a person can open and who each is for; how the pages are built to stay trustworthy; what the approval page shows, asks and refuses, and what happens when something goes wrong; and what an owner can read, correct and switch off.
+**What this document answers.** Which pages a person can open and who each is for; how they stay trustworthy; what the approval page shows, asks and refuses, and what happens when something goes wrong; what an owner can read, correct and switch off.
 
 ## The pages at a glance
 
@@ -15,7 +15,7 @@ Every page is a render of the decision brief, which lets a stranger answer eight
 | **Settings** `/me/settings` | Each person | Channel, quiet hours, the most messages a week, "Pause messages"; export and delete | Nothing |
 | **Operations** `/ops`, `/ops/runs` | The platform team | The switches, the runs and the cases | Never: no message links here |
 | **Savings found** `/ops/savings` | The platform team and the owner | Every saving that was found, by what became of it | Never: no message links here |
-| **What the AI looked at** `/ops/activity` | The platform team and the owner | What the AI examined and concluded, and what became of its findings | Never: no message links here |
+| **What the AI looked at** `/ops/activity` | The platform team and the owner | What the AI examined and concluded | Never: no message links here |
 | **Standing permissions** `/ops/permissions` | The platform owner and FinOps lead | What Meternaut can change in Azure: on its own, nothing. Read-only | Never: no message links here |
 | **The kill switch** `/ops/pause` | Platform owner, FinOps lead, security reviewers | Stop work at three levels | Never: no message links here |
 
@@ -131,7 +131,7 @@ The kill switch cannot recall a purchase already submitted.
 
 The pages borrow four patterns from the GOV.UK Design System, whose code is MIT-licensed and whose content is under the Open Government Licence v3.0: the [confirmation page](https://design-system.service.gov.uk/patterns/confirmation-pages/) after the OK; the [error summary](https://design-system.service.gov.uk/components/error-summary/), a focused list at the top of a refused page; the [summary list](https://design-system.service.gov.uk/components/summary-list/) for "What changes"; and [warning text](https://design-system.service.gov.uk/components/warning-text/) for "This cannot be undone", in words and a sign. The design copies neither styling nor wording.
 
-The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These shape the pages most:
+The bar is [WCAG 2.2](https://www.w3.org/TR/WCAG22/) level AA; [access, language and inclusion](11-access-language-inclusion.md) has the full rules. These matter most:
 
 - **Target size (2.5.8):** controls are at least 24 by 24 CSS pixels.
 - **Focus not obscured (2.4.11):** no sticky bar covers the focused control.
@@ -167,7 +167,4 @@ stateDiagram-v2
 ## Where to read next
 
 - [Messages and cards](04-messages-and-cards.md): cards.
-- [Attention and trust](08-attention-and-trust.md): attention rules.
-- [Access, language and inclusion](11-access-language-inclusion.md): full rules.
-- [Testing the experience](12-testing-the-experience.md): device test.
 - [Platform register](13-platform-register.md): platform status and fallbacks.

@@ -1,27 +1,26 @@
-"""What the AI looked at, for the roles ops and owner: the latest investigation as its two AIs left it, and how much of the 30-day cost its tools read (docs/proposals/23).
+"""What the AI looked at, for the roles ops and owner: the latest investigation as its two AIs left it, and which kinds of resource its tools read (docs/proposals/23).
 
-It shows what the app kept of each investigation (cases/activity.py) and no name, tag or id of a resource; the labels that the AI used inside a run (r1, r53) stay as written. It changes nothing.
+It shows what the app kept of each investigation (cases/activity.py): no name, tag, id or amount of money; the labels that the AI used inside a run (r1, r53) stay as written. It changes nothing.
 """
 from __future__ import annotations
 
 from ..brief import BASIS_WORDS, plain, without_ids
 from ..models import INVESTIGATION_TOUCHES, KEPT_INVESTIGATIONS, InvestigationRecord
 from . import words
-from .common import counted, effective_state, kind_text, read
+from .common import counted, kind_text, read
 from .core import Ctx, Response, Safe, fmt, join
-from .figures import chip, dollars
 from .layout import head, items, kpi, kpis, link, notice, nowrap, page, paragraph, quoted, table
-from .savings import PER
 
-KINDS_SHOWN = 25  # the kinds of resource of the table of the money
 EARLIER = 10
 WHY = "your role ops or owner lets you see what the AI looked at"
 LEAD = "The AI's own account of its latest investigation: what it looked at, what it concluded and what became of its findings. This page changes nothing."
 LABELS = "Labels such as r1 and r53 stand for a resource inside that run only. They mean nothing outside it, and this page does not say which resource they were."
-LIMITS = ('The phrases are the AI\'s own claims, and code did not check them. "Looked at" means that a tool read the kind of resource, not that the analysis went deep. The costs are the last 30 days '
-          "that the run read, in US dollars, and are here only to show how much of the bill the AI looked at: this is not a cost report, and Cost Management has the bill. A run from before this page "
-          "existed was not recorded, which is not the same as nothing.")
+LIMITS = ('The phrases are the AI\'s own claims, and code did not check them. "Looked at" means that a tool read the kind of resource. It does not mean that the AI judged all of it. '
+          "A run from before this page existed was not recorded, which is not the same as nothing.")
+KINDS = ("A kind of resource is a type that Azure gives to a resource. The estate has the kinds that the cost lines and the tools showed. They are in the order of what each cost in "
+         "the last 30 days, the dearest first, and no amount is shown. \"Looked at\" means that a tool read that kind in the last investigation. It does not mean that the AI judged all of it.")
 NOT_RECORDED = "Not recorded for earlier runs"
+NO_KINDS = "No kind of resource is known for this run: no cost line was read and no tool showed a resource."
 STARTED = {"timer": "the daily timer", "request": "a person or a tool that asked for a run"}
 # How the Investigator's run ended: the word of the tile, and what it means.
 ENDS = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
@@ -36,14 +35,6 @@ LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that 
         "recent": "judged lately", "capped": "beyond the cap of one run"}
 
 
-def _share(part: object, whole: object) -> str | None:
-    """A share as a whole percent ("under 1%" for a little), or None when there is nothing to divide by."""
-    if not isinstance(part, (int, float)) or not isinstance(whole, (int, float)) or whole <= 0:
-        return None
-    percent = 100 * part / whole
-    return "under 1%" if 0 < percent < 1 else f"{round(percent)}%"
-
-
 def _text(value: object, limit: int = 300) -> str:
     """Text that an AI wrote, as one safe line with no id: never trusted, escaped where it is put in."""
     return plain(without_ids("" if value is None else str(value)), limit)
@@ -53,18 +44,19 @@ def _count(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def _of(record: InvestigationRecord) -> str:
+    """How many of the kinds of resource that the estate is known to have the tools read: "12 of 41"."""
+    return f"{_count(record.looked)} of {_count(record.known)}"
+
+
 def _tiles(record: InvestigationRecord | None) -> Safe:
     if record is None:
         gone = "No investigation is recorded yet."
         return kpis(kpi("Looked at in the last run", "—", "", gone), kpi("Findings kept", "—", "", gone), kpi("Stopped because", "—", "", gone), label="The latest investigation")
-    share = _share(record.cost_looked, record.cost_total)
-    kinds = f"{counted(_count(record.looked), 'kind')} of resource."
-    if share is None:
-        looked = kpi("Looked at in the last run", "—", "", f"{kinds} No share can be told: the run read no cost in US dollars.")
+    if record.known:
+        looked = kpi("Looked at in the last run", _of(record), "kinds of resource", f"A tool read {_count(record.looked)} of the {counted(_count(record.known), 'kind')} of resource that the estate is known to have.")
     else:
-        costed = f" The cost of {record.subs_costed} of {record.subs} subscriptions was read." if record.subs_costed < record.subs else ""
-        looked = kpi("Looked at in the last run", share, "of the 30-day cost",
-                     f"{kinds} How it is counted: the cost of the kinds of resource that its tools read, divided by all the cost that the run read, in US dollars.{costed}")
+        looked = kpi("Looked at in the last run", "—", "", NO_KINDS)
     if record.answered:
         kept = sum(1 for found in record.findings if found.get("kept"))
         found_tile = kpi("Findings kept", f"{kept} of {len(record.findings)}", "findings", f"The checks of code kept {kept} of the {len(record.findings)} findings that the AI wrote.")
@@ -112,63 +104,31 @@ def _finding(found: dict) -> list[object]:
     says = fmt('{says}<br><span class="muted">{basis}. Proposal: {proposal}.</span>{note}', says=_text(found.get("says")) or "The AI wrote no sentence.", basis=basis, proposal=proposal,
                note=fmt('<br><span class="muted">Code: {note}</span>', note=_text(found.get("note"), 160)) if found.get("note") else "")
     resources = _count(found.get("resources"))
-    usd = found.get("usd")
-    cost = fmt('{usd}<br><span class="muted">What they cost, not what could be saved.</span>', usd=dollars(usd)) if isinstance(usd, (int, float)) else Safe("No cost line was read for them")
-    return [says, f"{sure:.2f}" if isinstance(sure, (int, float)) and not isinstance(sure, bool) else "none", str(resources) if found.get("kept") else f"{resources} listed", cost, _second(found), _fates(found)]
+    return [says, f"{sure:.2f}" if isinstance(sure, (int, float)) and not isinstance(sure, bool) else "none", str(resources) if found.get("kept") else f"{resources} listed", _second(found), _fates(found)]
 
 
 def _findings(record: InvestigationRecord) -> Safe:
     if not record.findings:
         return paragraph("The AI wrote no finding." if record.answered else "There is no finding: the AI gave no answer that code could read.")
     return join([paragraph("The sentences of the first column were written by the AI."),
-                 table("findings", "Findings of the last run. The cost is what the resources cost in 30 days, not what could be saved.",
-                       ["What it says", "How sure (0 to 1)", "Resources", "What they cost in 30 days", "The second AI", "What became of it"], [_finding(found) for found in record.findings])])
+                 table("findings", "Findings of the last run", ["What it says", "How sure (0 to 1)", "Resources", "The second AI", "What became of it"], [_finding(found) for found in record.findings])])
 
 
-def _open(ctx: Ctx) -> tuple[dict[str, list[int]], bool, bool]:
-    """The open requests (a person's answer is awaited) and the open questions (nobody has been asked yet) of each kind, whether a read failed, and whether one read was full."""
-    plans, ok = read(lambda: ctx.store.plans_open(), [])
-    asked = {plan.case_id for plan in plans if effective_state(ctx, plan) == "open"}
-    counts: dict[str, list[int]] = {}
-    cut = len(plans) >= PER
-    for status in ("proposed", "needs_human", "awaiting_ok"):
-        cases, fine = read(lambda status=status: ctx.store.cases_recent(PER, status), [])
-        ok, cut = ok and fine, cut or len(cases) >= PER
-        for case in cases:
-            if case.case_id in asked or status != "awaiting_ok":
-                counts.setdefault((case.resource_type or "").lower(), [0, 0])[0 if case.case_id in asked else 1] += 1
-    return counts, not ok, cut
-
-
-def _money(ctx: Ctx, record: InvestigationRecord) -> Safe:
-    counts, failed, cut = _open(ctx)
-    kinds = [entry for entry in record.kinds[:KINDS_SHOWN] if isinstance(entry, (list, tuple)) and len(entry) == 3 and isinstance(entry[1], (int, float))]
-    rows = []
-    for kind, usd, verbs in kinds:
-        none = kind == "other"
-        if none:
-            seen = Safe("No tool can look at it: Cost Management ties it to no resource")
-        elif verbs:
-            seen = fmt('{chip}<br><span class="muted">{verbs}</span>', chip=chip("Looked at", "low", "circle"),
-                       verbs=", ".join(INVESTIGATION_TOUCHES[letter] for letter in str(verbs) if letter in INVESTIGATION_TOUCHES))
-        else:
-            seen = chip("Not looked at", "mid", "triangle")
-        asked, questions = counts.get(str(kind), [0, 0])
-        unknown = "Cannot be read now" if failed else ("Not applicable" if none else None)
-        lead = "At least " if cut else ""
-        rows.append([Safe("Cost that no kind of resource has") if none else kind_text(str(kind)), dollars(usd, cents=False), _share(usd, record.cost_total) or "not known", seen,
-                     unknown or f"{lead}{asked}", unknown or f"{lead}{questions}"])
-    parts: list[object] = [paragraph("The dearest kinds of resource by their cost in the last 30 days, in US dollars, from the cost lines that the run read. \"Looked at\" means that a tool read that kind "
-                                     "in the last investigation. An open request waits for a person's answer. An open question is a finding that nobody has been asked about yet.")]
-    if failed:
-        parts.append(notice("error", "Part of the findings cannot be read", "I cannot read all of them now, so the open requests and questions are missing. Nothing has changed."))
-    if not rows:
-        return join([*parts, paragraph("No cost in US dollars was read in this run, so there is nothing to show.")])
-    parts.append(table("money", "The dearest kinds of resource, their cost in 30 days and what the AI did with them",
-                       ["Kind of resource", "Cost in 30 days", "Share of the cost read", "In the last investigation", "Open requests", "Open questions"], rows, row_header=True))
-    share = _share(sum(entry[1] for entry in kinds), record.cost_total)
-    if share is not None:
-        parts.append(paragraph(f"The rows of this table are {share} of the cost that the run read."))
+def _kinds(record: InvestigationRecord) -> Safe:
+    known, looked = _count(record.known), _count(record.looked)
+    if not known:
+        return paragraph(NO_KINDS)
+    parts: list[object] = [paragraph(KINDS)]
+    if not record.subs_costed:
+        parts.append(paragraph("No cost was read in US dollars, so the kinds are in the order of their names."))
+    elif record.subs_costed < record.subs:
+        parts.append(paragraph(f"The order rests on the cost of {record.subs_costed} of {record.subs} subscriptions."))
+    done = [[kind_text(str(k[0])), ", ".join(INVESTIGATION_TOUCHES[x] for x in str(k[1]) if x in INVESTIGATION_TOUCHES)] for k in record.kinds if isinstance(k, (list, tuple)) and len(k) == 2]
+    for table_id, title, count, rows, headers in (("looked", "Looked at", looked, done, ["Kind of resource", "What the tools did"]),
+                                                  ("unread", "Not looked at", max(0, known - looked), [[kind_text(str(k))] for k in record.unread], ["Kind of resource"])):
+        parts.append(paragraph(f"{title}: {count} of {counted(known, 'kind')}." + (f" The {len(rows)} dearest are shown." if count > len(rows) else "")))
+        if rows:
+            parts.append(table(table_id, f"{title}: kinds of resource, the dearest first", headers, rows, row_header=True))
     return join(parts)
 
 
@@ -181,18 +141,18 @@ def _earlier(ctx: Ctx, records: list[InvestigationRecord], unrecorded: list) -> 
         if isinstance(line, InvestigationRecord):
             kept = sum(1 for found in line.findings if found.get("kept"))
             rows.append([nowrap(ctx.when(line.at)), f"{line.calls} of {line.max_calls}", f"{kept} of {len(line.findings)}" if line.answered else "none: no answer",
-                         _share(line.cost_looked, line.cost_total) or "not known", ENDS.get(line.end, ENDS["failed"])[0]])
+                         _of(line) if line.known else "not known", ENDS.get(line.end, ENDS["failed"])[0]])
         else:
             rows.append([nowrap(ctx.when(line.started_at)), NOT_RECORDED, "—", "—", "—"])
-    return table("earlier", f"The {EARLIER} investigations before the latest, newest first", ["Started", "Tool calls", "Findings kept", "Share of the cost looked at", "Stopped because"], rows)
+    return table("earlier", f"The {EARLIER} investigations before the latest, newest first", ["Started", "Tool calls", "Findings kept", "Kinds looked at", "Stopped because"], rows)
 
 
 def activity_page(ctx: Ctx) -> Response:
     records = ctx.store.investigations_recent(KEPT_INVESTIGATIONS)  # a store that cannot be read is the fault page of the router: "I cannot reach my records"
     runs, runs_ok = read(lambda: ctx.store.runs_recent(KEPT_INVESTIGATIONS * 2), [])
     latest = records[0] if records else None
-    known = {record.run_id for record in records}
-    unrecorded = [run for run in runs if run.investigated and run.run_id not in known]
+    recorded = {record.run_id for record in records}
+    unrecorded = [run for run in runs if run.investigated and run.run_id not in recorded]
     parts: list[object] = [head("What the AI looked at", LEAD), _tiles(latest)]
     newer = [run for run in unrecorded if latest is not None and run.started_at > latest.at]
     if newer:
@@ -203,7 +163,7 @@ def activity_page(ctx: Ctx) -> Response:
         if latest.end in ("failed", "refused") and latest.note:
             parts.append(notice("warning", "It did not finish", _text(latest.note, 200)))
         parts += [Safe("<h2>What the AI looked at and concluded</h2>"), _how(ctx, latest), Safe("<h2>Findings of the last run</h2>"), _findings(latest),
-                  Safe("<h2>Where the money goes and what the AI did with it</h2>"), _money(ctx, latest)]
+                  Safe("<h2>Which kinds of resource the AI looked at</h2>"), _kinds(latest)]
     else:
         parts.append(notice("info", "", "No investigation is recorded yet. An investigation that ran before this page existed was not recorded."))
     parts += [Safe("<h2>Earlier runs</h2>"), _earlier(ctx, records[1:], unrecorded), Safe("<h2>What this page cannot tell</h2>"), paragraph(LIMITS)]

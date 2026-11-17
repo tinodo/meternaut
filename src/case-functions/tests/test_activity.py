@@ -7,11 +7,12 @@ import json
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest import mock
 
 from support import NOW, RG, SUBSCRIPTION, LogCapture, fixed_clock
-from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, finding, loop_for, make_settings, metrics, resource
+from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, finding, loop_for, make_settings, metrics, resource
 
-from cases import activity, investigate, roles
+from cases import activity, agents, investigate, roles
 from cases.detectors import Context
 from cases.foundry import AgentRun, FoundryError
 from cases.harness import HarnessRefused
@@ -51,8 +52,9 @@ def context(costs, currency="USD", **more) -> Context:
 class WhatTheToolsTouched(unittest.TestCase):
     WORLD = (member("r1", WIDGETS), member("r2", WIDGETS), member("r10", GADGETS), member("r20", GIZMOS))
 
-    def touched(self, *log):
-        return activity.touched(toolbox_of(list(log), *self.WORLD))
+    def touched(self, *log, costed=()):
+        toolbox = toolbox_of(list(log), *self.WORLD)
+        return activity.touched(toolbox, activity.known(toolbox, dict.fromkeys(costed, 1.0)))
 
     def test_a_kind_is_touched_by_the_tool_that_names_it_or_one_of_its_resources_and_the_record_says_how(self):
         found = self.touched(call("list_resources", type=WIDGETS), call("measure", type=GADGETS, metric="MetricA"), call("describe", handle="r20"),
@@ -62,79 +64,99 @@ class WhatTheToolsTouched(unittest.TestCase):
 
     def test_a_measurement_of_handles_touches_the_kind_of_each_handle_and_a_cost_read_touches_a_kind_only_when_it_names_one(self):
         found = self.touched(call("metric_summary", handles=["r1", "r10", "r99"], metric="MetricA"), call("cost_lines", type=GIZMOS), call("cost_lines", service="Some Service"),
-                             call("cost_history", handle="r2"))
-        self.assertEqual(found, {WIDGETS: "lm", GADGETS: "m", GIZMOS: "l"})
+                             call("cost_history", handle="r2"), call("cost_meters", handle="r10"), call("cost_meters", service="Some Service"))
+        self.assertEqual(found, {WIDGETS: "lm", GADGETS: "lm", GIZMOS: "l"})
 
     def test_a_tool_that_shows_a_list_touches_no_kind_and_neither_does_a_call_that_failed_or_that_names_nothing_that_exists(self):
         found = self.touched(call("estate_overview"), call("metric_names", type=WIDGETS), call("advisor_items"), call("paid_features"), call("commitments"), call("recall_lessons", type=WIDGETS),
                              call("recall_open_questions"), call("list_resources", ok=False, type=WIDGETS), call("describe", handle="r99"), call("list_resources", type="Not A Type!"),
-                             call("list_resources", type=["microsoft.compute/disks"]), {"name": "describe", "arguments": {"truncated": True}, "ok": True}, {"name": "describe", "ok": True},
+                             call("list_resources", type=[GIZMOS]), {"name": "describe", "arguments": {"truncated": True}, "ok": True}, {"name": "describe", "ok": True},
                              call("a_tool_that_is_not_there", type=WIDGETS), "not a call")
         self.assertEqual(found, {})
 
     def test_a_kind_that_no_handle_and_no_cost_line_shows_to_exist_is_not_one_that_a_tool_looked_at(self):
         phantom = "contoso.example/phantoms"
         log = [call("list_resources", type=phantom), call("measure", type=phantom, metric="MetricA"), call("list_resources", type=GIZMOS)]
-        self.assertEqual(activity.touched(toolbox_of(log, *self.WORLD)), {GIZMOS: "l"})
-        self.assertEqual(activity.touched(toolbox_of(log, *self.WORLD), [phantom]), {GIZMOS: "l", phantom: "lm"}, "a kind that has cost lines exists, whatever its handles")
+        self.assertEqual(self.touched(*log), {GIZMOS: "l"})
+        self.assertEqual(self.touched(*log, costed=[phantom]), {GIZMOS: "l", phantom: "lm"}, "a kind that has cost lines exists, whatever its handles")
+
+    def test_the_kinds_that_the_estate_has_are_those_of_the_handles_and_of_the_cost_lines_and_a_kind_that_is_too_long_is_not_one(self):
+        long = f"contoso.example/{'x' * 70}"
+        world = toolbox_of([], member("r1", WIDGETS), member("r2", long))
+        self.assertEqual(activity.known(world, {GADGETS: 5.0}), {WIDGETS, GADGETS})
+        self.assertEqual(activity.known(None, {}), set())
 
     def test_every_tool_of_the_toolbox_touches_kinds_or_shows_a_list_and_a_new_tool_has_to_be_put_in_one_of_the_two(self):
         shows_a_list = {"estate_overview", "metric_names", "advisor_items", "paid_features", "commitments", "recall_lessons", "recall_knowledge", "recall_open_questions"}
         self.assertEqual(set(TOOLS) - set(activity.VERBS), shows_a_list)
-        self.assertEqual(set(activity.VERBS) - set(TOOLS), set(), "and no tool is named that the toolbox has not")
+        self.assertLessEqual(set(activity.VERBS) - set(TOOLS), {"cost_meters"}, "no tool is named that the toolbox has not, except the one of the branch toolbox-meters, which merges next")
         self.assertLessEqual(set(activity.VERBS.values()), set(INVESTIGATION_TOUCHES))
 
     def test_a_toolbox_that_shows_nothing_touched_nothing(self):
-        self.assertEqual(activity.touched(None), {})
-        self.assertEqual(activity.touched(SimpleNamespace()), {})
+        self.assertEqual(activity.touched(None, set()), {})
+        self.assertEqual(activity.touched(SimpleNamespace(), {WIDGETS}), {})
 
 
-class TheCostByKind(unittest.TestCase):
-    """The cost of the run, by hand: 600 + 50 in widgets, 300 in gadgets, 40 + 10 in no kind, and a credit of 5 in gizmos."""
+class TheKindsOfTheRun(unittest.TestCase):
+    """The cost lines of the run, by hand: 600 + 50 in widgets, 300 in gadgets, 40 and 10 that no kind has, and a credit of 5 in gizmos. They only order the kinds: no amount is kept."""
 
     def costs(self):
         return {"1": context({rid(WIDGETS, 1): 600.0, rid(WIDGETS, 2): 50.0, rid(GADGETS, 3): 300.0, "": 40.0, f"/subscriptions/{SUBSCRIPTION}": 10.0, rid(GIZMOS, 4): -5.0}),
                 "2": context({rid(WIDGETS, 9): 77.0}, currency="EUR"), "3": context(None, cost_error=True), "4": context({}, currency=None)}
 
-    def test_it_adds_the_lines_of_the_subscriptions_that_were_read_in_dollars_by_kind_and_leaves_out_a_credit(self):
+    def test_it_adds_the_lines_of_the_subscriptions_that_were_read_in_dollars_by_kind_and_leaves_out_a_credit_and_a_line_of_no_kind(self):
         kinds, read = activity.costs_by_kind(self.costs())
-        self.assertEqual(kinds, {WIDGETS: 650.0, GADGETS: 300.0, "other": 50.0})
+        self.assertEqual(kinds, {WIDGETS: 650.0, GADGETS: 300.0})
         self.assertEqual(read, 2, "the one with lines in dollars and the one that was read and has no line; euros and a read that failed are not counted")
 
-    def test_a_kind_that_has_no_shape_of_a_kind_is_other(self):
+    def test_a_kind_that_has_no_shape_of_a_kind_is_left_out(self):
         long = f"{RG}/g/providers/Contoso.Example/{'a' * 48}/n1/{'b' * 48}/n2"
         kinds, _ = activity.costs_by_kind({"1": context({long: 3.0, f"{RG}/g/providers/Contoso.Example/{'x' * 90}/n": 4.0})})
-        self.assertEqual(kinds, {"other": 7.0}, "one is longer than a kind of resource is and the other has a part that a kind of resource has not")
+        self.assertEqual(kinds, {}, "one is longer than a kind of resource is and the other has a part that a kind of resource has not")
 
-    def test_the_record_says_how_much_of_the_cost_sits_in_the_kinds_that_the_tools_touched(self):
-        """Touched: widgets and gizmos. 650 of the 1,000 that was read is in widgets, and gizmos has no cost above nothing, so 65.0 percent, and two kinds."""
-        h = Harness(FakeFoundry(answer(finding()), tool_calls=(("list_resources", {"type": WIDGETS}), ("describe", {"handle": "r20"}))),
-                    FakeToolbox([member("r20", GIZMOS)], {"r20": metrics(MetricA=0)}), with_store=True)
+    def test_the_record_lists_the_kinds_that_the_tools_read_and_those_that_they_did_not_each_with_the_dearest_first_and_keeps_no_amount(self):
+        """Known: widgets (650), gadgets (300) and gizmos (a credit, so no cost, but its handle shows it). Read: widgets and gizmos. 2 of 3 kinds."""
+        h = Harness(FakeFoundry(answer(finding()), tool_calls=(("list_resources", {"type": WIDGETS}), ("describe", {"handle": "r20"}))), FakeToolbox([member("r20", GIZMOS)], {"r20": metrics(MetricA=0)}),
+                    with_store=True)
         h.contexts = self.costs()
         h.s.settings = replace(h.s.settings, subscriptions=("1", "2", "3", "4"))
         h.go()
         (record,) = h.store.investigations_recent()
-        self.assertEqual((record.cost_total, record.cost_looked, record.looked), (1000.0, 650.0, 2))
-        self.assertEqual(round(100 * record.cost_looked / record.cost_total, 1), 65.0)
-        self.assertEqual([list(k) for k in record.kinds], [[WIDGETS, 650.0, "l"], [GADGETS, 300.0, ""], ["other", 50.0, ""]], "the dearest first, each with what the tools did to it")
+        self.assertEqual((record.known, record.looked), (3, 2))
+        self.assertEqual([list(k) for k in record.kinds], [[WIDGETS, "l"], [GIZMOS, "d"]], "what the tools did to each, the dearest first")
+        self.assertEqual(record.unread, (GADGETS,))
         self.assertEqual((record.subs, record.subs_costed), (4, 2))
+        data = json.loads(record.to_json())
+        self.assertEqual([key for key in data if key.startswith("cost_") or "usd" in key], [], "no amount of money is in the record")
+        self.assertTrue(all(isinstance(word, str) for kind in record.kinds for word in kind), "a kind and the letters of what was done, and nothing else")
 
-    def test_a_run_whose_cost_could_not_be_read_in_dollars_has_no_total_and_says_so_and_does_not_say_zero(self):
-        h = Harness(FakeFoundry(answer(finding())), FakeToolbox(), with_store=True)
-        h.contexts = {"1": context(None, cost_error=True), "2": context({rid(WIDGETS, 1): 5.0}, currency="EUR")}
-        h.go()
-        (record,) = h.store.investigations_recent()
-        self.assertEqual((record.cost_total, record.cost_looked, record.kinds, record.subs_costed), (None, 0.0, (), 0))
-
-    def test_only_the_dearest_kinds_are_kept_and_the_total_still_counts_all_of_them(self):
-        costs = {rid(f"contoso.example/kind{n:02d}", n): float(n) for n in range(1, 61)}
-        h = Harness(FakeFoundry(answer(finding())), FakeToolbox(), with_store=True)
+    def test_the_order_is_by_the_cost_lines_and_a_kind_with_no_cost_comes_after_those_that_have_one_by_its_name(self):
+        costs = {rid(GADGETS, 1): 5.0, rid(WIDGETS, 2): 9.0, rid("contoso.example/anvils", 3): 7.0}
+        h = Harness(FakeFoundry(answer(finding()), tool_calls=(("describe", {"handle": "r20"}), ("describe", {"handle": "r21"}))),
+                    FakeToolbox([member("r20", GIZMOS), member("r21", "contoso.example/bolts")], {}), with_store=True)
         h.contexts = {"1": context(costs)}
         h.go()
         (record,) = h.store.investigations_recent()
-        self.assertEqual(len(record.kinds), activity.MAX_KINDS)
+        self.assertEqual([k[0] for k in record.kinds], ["contoso.example/bolts", GIZMOS], "read, and no cost line: by name")
+        self.assertEqual(record.unread, (WIDGETS, "contoso.example/anvils", GADGETS), "9, 7 and 5")
+
+    def test_a_run_whose_cost_could_not_be_read_in_dollars_orders_by_name_and_says_that_none_was_costed(self):
+        h = Harness(FakeFoundry(answer(finding())), FakeToolbox([member("r20", GIZMOS), member("r21", WIDGETS)], {}), with_store=True)
+        h.contexts = {"1": context(None, cost_error=True), "2": context({rid(WIDGETS, 1): 5.0}, currency="EUR")}
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual((record.known, record.looked, record.kinds, record.unread, record.subs_costed), (2, 0, (), (GIZMOS, WIDGETS), 0))
+
+    def test_only_the_first_kinds_of_each_list_are_kept_and_the_counts_still_count_all_of_them(self):
+        costs = {rid(f"contoso.example/kind{n:02d}", n): float(n) for n in range(1, 61)}
+        h = Harness(FakeFoundry(answer(finding()), tool_calls=tuple(("list_resources", {"type": f"contoso.example/kind{n:02d}"}) for n in range(31, 61))), FakeToolbox([], {}), with_store=True)
+        h.contexts = {"1": context(costs)}
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual((record.known, record.looked), (60, 30))
+        self.assertEqual((len(record.kinds), len(record.unread)), (activity.MAX_KINDS, activity.MAX_KINDS))
         self.assertEqual([k[0] for k in record.kinds[:2]], ["contoso.example/kind60", "contoso.example/kind59"])
-        self.assertEqual(record.cost_total, float(sum(range(1, 61))))
+        self.assertEqual(record.unread[:2], ("contoso.example/kind30", "contoso.example/kind29"))
 
 
 class HowTheRunEnded(unittest.TestCase):
@@ -200,15 +222,15 @@ class AFindingAsTheRecordKeepsIt(unittest.TestCase):
         base.update(changes)
         return investigate.Finding(**base)
 
-    def test_a_kept_finding_holds_what_the_page_shows(self):
+    def test_a_kept_finding_holds_what_the_page_shows_and_no_amount_of_money(self):
         f = self.made(items=[object()] * 3, verdict=roles.SkepticAnswer("disagree", ("one", "two", "three"), "A sentence."), fates={"request": 2, "nothing": 1}, guarded=1, recent=2)
-        self.assertEqual(activity.entry_of(f, frozenset()), {"n": 2, "basis": "no-usage", "proposal": "delete", "sure": 0.85, "resources": 3, "usd": 123.45, "says": "Nothing used these in the window.",
+        self.assertEqual(activity.entry_of(f, frozenset()), {"n": 2, "basis": "no-usage", "proposal": "delete", "sure": 0.85, "resources": 3, "says": "Nothing used these in the window.",
                                                               "verdict": "disagree", "doubts": ["one", "two"], "kept": True, "left": {"guarded": 1, "recent": 2},
                                                               "fates": {"request": 2, "nothing": 1}})
 
     def test_a_dropped_finding_says_what_the_ai_listed_and_what_became_of_it_and_a_finding_that_could_not_be_read_says_why(self):
         dropped = activity.entry_of(self.made(reason="no resource of it is left: 4 that no tool showed", unknown=4, covered_usd=None), frozenset())
-        self.assertEqual((dropped["kept"], dropped["resources"], dropped["left"], "verdict" in dropped, "usd" in dropped), (False, 4, {"unknown": 4}, False, False))
+        self.assertEqual((dropped["kept"], dropped["resources"], dropped["left"], "verdict" in dropped), (False, 4, {"unknown": 4}, False))
         unreadable = activity.entry_of(investigate.Finding(1, reason="its confidence is not a number"), frozenset())
         self.assertEqual((unreadable["kept"], unreadable["note"], "basis" in unreadable), (False, "its confidence is not a number", False))
 
@@ -217,25 +239,26 @@ class AFindingAsTheRecordKeepsIt(unittest.TestCase):
         self.assertEqual(entry_["note"], "others share this kind of resource, so this asks for a look and not for a deletion")
 
 
+LONGEST = [f"contoso.example/{'a' * 50}/{n:013d}" for n in range(60)]  # kinds of the longest shape that a kind has (80 characters)
+
+
 def worst(char: str = "x"):
-    """An investigation at its limits: twelve phrases of a hundred characters, eight findings with every text at its longest, forty kinds of cost, every kind touched in every way. `char` is what
-    the texts are made of: a character that json writes six characters long makes the same record or a smaller one."""
-    kinds = [f"contoso.example/kind-of-resource-{n:02d}" for n in range(60)]
-    log = [call(name, type=kind) for kind in kinds for name in ("list_resources", "measure", "describe", "metric_split")]
-    toolbox = toolbox_of(log)
+    """An investigation at its limits: twelve phrases of a hundred characters, eight findings with every text at its longest, kinds of the longest shape, 30 of them touched in every way and 30 not.
+    `char` is what the texts are made of: a character that json writes six characters long makes the same record or a smaller one."""
+    log = [call(name, type=kind) for kind in LONGEST[:30] for name in ("list_resources", "measure", "describe", "metric_split")]
     findings = []
     for n in range(1, 9):
         verdict = roles.SkepticAnswer("unsure", tuple(char * 200 for _ in range(3)), "s")
-        findings.append(investigate.Finding(n, basis="commitment-misfit", proposal="investigate", confidence=0.85, summary=char * 300, claimed=60, covered_usd=123456.78, items=[object()] * 60,
+        findings.append(investigate.Finding(n, basis="commitment-misfit", proposal="investigate", confidence=0.85, summary=char * 300, claimed=60, items=[object()] * 60,
                                             verdict=verdict, note=char * 300, unknown=60, unproven=60, repeated=60, guarded=60, recent=60, capped=60, fates={word: 60 for word in FATES}))
-    out = investigate.Investigation(ran=True, tokens=999999, tool_calls=40, seconds=600, toolbox=toolbox, examined=[char * 100] * 12, findings=findings, note=char * 300)
+    out = investigate.Investigation(ran=True, tokens=999999, tool_calls=40, seconds=600, toolbox=toolbox_of(log), examined=[char * 100] * 12, findings=findings, note=char * 300)
     out.answer = AgentRun(text="", calls=[{"name": "t", "ok": True}])
-    costs = {rid(kind, n): 123456.78 + n for n, kind in enumerate(kinds)}
+    costs = {f"{RG}/rg-app/providers/contoso.example/{'a' * 50}/n/{n:013d}/m": 1000.0 - n for n in range(60)}
     return SimpleNamespace(contexts={SUBSCRIPTION: context(costs)}), out
 
 
 class TheSizeOfARecord(unittest.TestCase):
-    MAX_RECORD = 13_000  # the most characters that a record has at its limits (about 12.7 thousand); a usual one has about five thousand
+    MAX_RECORD = 14_000  # the most characters that a record has at its limits (see worst: 13,649 with kinds of 80 characters); a usual one has about five thousand
 
     def s(self):
         return SimpleNamespace(settings=make_settings(subscriptions=(SUBSCRIPTION,)), history=SimpleNamespace(run_id="r" * 32))
@@ -244,9 +267,10 @@ class TheSizeOfARecord(unittest.TestCase):
         for char in ("x", '"', "\u00e9", "\u4e2d"):
             with self.subTest(char=char):
                 world, out = worst(char)
-                record = activity.record_of(self.s(), out, world.contexts, trigger="control", at=stamp(NOW))
+                record = activity.record_of(self.s(), out, world.contexts, trigger="control", at=stamp(NOW), seconds=out.seconds)
                 size = len(record.to_json())
-                self.assertEqual((len(record.examined), len(record.findings), len(record.kinds)), (12, 8, activity.MAX_KINDS))
+                self.assertEqual((len(record.examined), len(record.findings), len(record.kinds), len(record.unread)), (12, 8, activity.MAX_KINDS, activity.MAX_KINDS))
+                self.assertEqual((record.known, record.looked), (60, 30))
                 self.assertLessEqual(size, self.MAX_RECORD, f"{size} characters")
                 self.assertLess(size, MAX_DATA // 2)
                 self.assertEqual(InvestigationRecord.from_json(record.to_json()), record, "and it reads back as it was kept")
@@ -288,18 +312,44 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         self.assertEqual(record.examined, ("things: measured all 5", "gadgets: not examined"))
         self.assertTrue(h.result.ran, "and the investigation is what it was")
 
-    def test_the_coverage_of_a_run_is_worked_out_from_the_tools_that_it_called_and_the_cost_that_it_read(self):
-        """The five things cost 10, 20, 30, 40 and 50, and a gadget 50: 200 in all, and the tools touched the things (listed, measured and, for r1, described): 150 of 200."""
+    def test_the_kinds_that_the_tools_read_are_worked_out_from_the_calls_that_they_made_and_the_cost_lines_only_order_them(self):
+        """The five things cost 50, 40, 30, 20 and 10 and a gadget 50: the tools touched the things (listed, measured and, for r1, described), and the gadgets, the dearest of two, were not read."""
         record = self.record(self.run_one())
-        self.assertEqual((record.cost_total, record.cost_looked, record.looked), (200.0, 150.0, 1))
-        self.assertEqual([list(k) for k in record.kinds], [[THINGS, 150.0, "lmd"], [GADGETS, 50.0, ""]])
+        self.assertEqual((record.known, record.looked), (2, 1))
+        self.assertEqual([list(k) for k in record.kinds], [[THINGS, "lmd"]])
+        self.assertEqual(record.unread, (GADGETS,))
 
-    def test_a_finding_keeps_its_sentence_the_verdict_of_the_second_ai_what_it_covers_and_what_became_of_its_resources(self):
+    def test_a_finding_keeps_its_sentence_the_verdict_of_the_second_ai_and_what_became_of_its_resources_and_no_amount(self):
         record = self.record(self.run_one())
         (found,) = record.findings
         self.assertEqual((found["n"], found["basis"], found["proposal"], found["sure"], found["resources"], found["kept"]), (1, "no-usage", "delete", 0.9, 2, True))
-        self.assertEqual((found["says"], found["verdict"], found["usd"]), ("Nothing used these in the window.", "agree", 30.0))
+        self.assertEqual((found["says"], found["verdict"], "usd" in found), ("Nothing used these in the window.", "agree", False))
         self.assertEqual(found["fates"], {"request": 2}, "a request was made for each of the two")
+
+    def test_a_resource_that_says_nothing_is_held_back_and_the_record_says_so_beside_one_that_got_its_request(self):
+        toolbox = FakeToolbox([resource(1, name="aaaaaaaa-1111-4222-8333-444444444444"), resource(2)], {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"]), finding(handles=["r2"]))), toolbox, with_store=True)
+        h.go()
+        first, second = self.record(h).findings
+        self.assertEqual((first["fates"], second["fates"]), ({"nothing": 1}, {"request": 1}))
+
+    def test_a_finding_that_the_ais_advise_to_keep_is_dropped_and_each_of_its_resources_is_counted_as_dropped(self):
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"], proposal="keep"))), FakeToolbox(), with_store=True)
+        with mock.patch.object(agents, "PROPOSALS", (*agents.PROPOSALS, "keep")):  # the Investigator proposes none of them: the branch is what a finding that says keep comes to
+            h.go()
+        (found,) = self.record(h).findings
+        self.assertEqual((found["kept"], found["proposal"], found["fates"]), (True, "keep", {"dropped": 2}))
+
+    def test_a_run_that_failed_before_its_end_keeps_the_seconds_that_it_took(self):
+        clock = Moving()
+        foundry = FakeFoundry(tool_calls=self.TOOLS)
+        foundry.after_run = lambda agent: clock.advance(seconds=42)
+        foundry.investigator_error = RuntimeError("boom")
+        h = Harness(foundry, FakeToolbox(), with_store=True, clock=clock)
+        h.go()
+        record = self.record(h)
+        self.assertEqual((record.end, record.seconds), ("failed", 42))
+        self.assertIn("it failed (RuntimeError: boom)", record.note)
 
     def test_a_dropped_finding_is_kept_with_why_and_its_resources_are_the_ones_that_the_ai_listed(self):
         h = self.run_one(FakeFoundry(answer(finding(handles=["r1", "r2"]), finding(handles=["r98", "r99", "r97"], summary="Gone."))))

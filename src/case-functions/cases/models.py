@@ -438,14 +438,15 @@ class InvestigationRecord(Record):
     stop: str = ""  # the code of cases/harness.py that refused or stopped the run
     note: str = ""  # what the run said of itself when it ended in no answer
     examined: tuple[str, ...] = ()  # the Investigator's own phrases about what it looked at
-    # One dict for each finding: n, basis, proposal, sure, resources, usd (their 30-day cost: not a saving), says, verdict, doubts, kept, left (resources left out, by reason), fates (by what became
-    # of them) and note (of code).
+    # One dict for each finding: n, basis, proposal, sure, resources, says, verdict, doubts, kept, left (resources left out, by reason), fates (by what became of them) and note (of code).
     findings: tuple[dict, ...] = ()
-    kinds: tuple[list, ...] = ()  # [kind, 30-day cost in US dollars, what the tools did to it]: the dearest kinds of the cost that the run read
-    looked: int = 0  # how many kinds the tools touched
-    cost_total: float | None = None  # the cost that the run read in US dollars (None: none)
-    cost_looked: float = 0.0  # the part of it in the kinds that the tools touched
-    subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars
+    # The kinds of resource that the run knows the estate has (known), those that the tools touched (looked) and, dearest first by the cost lines (no amount is kept), the first of the touched ones
+    # ([kind, what the tools did to it]) and of the others (unread).
+    known: int = 0
+    looked: int = 0
+    kinds: tuple[list, ...] = ()
+    unread: tuple[str, ...] = ()
+    subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars (which the order rests on)
     subs_costed: int = 0
 
 

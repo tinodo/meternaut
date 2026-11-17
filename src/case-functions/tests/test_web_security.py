@@ -544,7 +544,7 @@ class XssEverywhere(unittest.TestCase):
         store.decision_put(make_decision(note=XSS, approver_name=XSS, plan_code=XSS))
         store.note_put(NoteRecord("n1", TINO, "note", XSS, XSS, XSS, XSS, at(days=-1), at(days=9), 3))
         store.switch_put(SwitchRecord("changes", True, XSS, at(minutes=-5), XSS))
-        store.investigation_put(record(investigator=XSS, skeptic=XSS, note=XSS, examined=(XSS,), findings=(finding(1, says=XSS, doubts=[XSS], note=XSS, verdict=XSS),), kinds=([XSS, 5.0, XSS],)))
+        store.investigation_put(record(investigator=XSS, skeptic=XSS, note=XSS, examined=(XSS,), findings=(finding(1, says=XSS, doubts=[XSS], note=XSS, verdict=XSS),), kinds=([XSS, XSS],), unread=(XSS,)))
         return console
 
     def test_the_payload_is_escaped_on_every_page_and_never_becomes_a_tag_or_a_handler(self):
