@@ -19,7 +19,7 @@ from cases.harness import HarnessRefused
 from cases.memory_store import MemoryStore, stamp
 from cases.models import INVESTIGATION_ENDS, INVESTIGATION_TOUCHES, InvestigationRecord, StoreError
 from cases.store import MAX_DATA
-from cases.toolbox import TOOLS, Resource
+from cases.toolbox import TOOLS, Resource, type_word
 from cases.web.activity import FATES
 
 WIDGETS, GADGETS, GIZMOS = "contoso.example/widgets", "contoso.example/gadgets", "contoso.example/gizmos"
@@ -81,7 +81,8 @@ class WhatTheToolsTouched(unittest.TestCase):
         self.assertEqual(self.touched(*log, costed=[phantom]), {GIZMOS: "l", phantom: "lm"}, "a kind that has cost lines exists, whatever its handles")
 
     def test_the_kinds_that_the_estate_has_are_those_of_the_handles_and_of_the_cost_lines_and_a_kind_that_is_too_long_is_not_one(self):
-        long = f"contoso.example/{'x' * 70}"
+        long = f"contoso.example/{'x' * 50}/{'y' * 20}"  # every part is as long as a part may be, and the whole is longer than MAX_KIND
+        self.assertEqual((len(long) > activity.MAX_KIND, type_word(long)), (True, long))
         world = toolbox_of([], member("r1", WIDGETS), member("r2", long))
         self.assertEqual(activity.known(world, {GADGETS: 5.0}), {WIDGETS, GADGETS})
         self.assertEqual(activity.known(None, {}), set())
@@ -258,7 +259,7 @@ def worst(char: str = "x"):
 
 
 class TheSizeOfARecord(unittest.TestCase):
-    MAX_RECORD = 14_000  # the most characters that a record has at its limits (see worst: 13,649 with kinds of 80 characters); a usual one has about five thousand
+    MAX_RECORD = 14_000  # the most characters that a record has at its limits (see worst: 13,649 with kinds of 80 characters); a usual one has two or three thousand
 
     def s(self):
         return SimpleNamespace(settings=make_settings(subscriptions=(SUBSCRIPTION,)), history=SimpleNamespace(run_id="r" * 32))
