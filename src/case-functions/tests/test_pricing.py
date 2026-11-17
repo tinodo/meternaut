@@ -9,6 +9,7 @@ import dataclasses
 import datetime as dt
 import json
 import math
+import re
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,9 +18,12 @@ from support import APP_ROOT, NOW, SUBSCRIPTION
 
 from cases import agents, brief, decide, investigate, pricing
 from cases.detectors import Context
+from cases.foundry import AgentRun
 from cases.meters import Meter
 from cases.roles import DetectiveAnswer, SkepticAnswer
-from test_investigate import HOSTILE, SAFE, FakeFoundry, FakeToolbox, Harness, answer, finding, meter_line, metrics, resource, verdicts
+from test_investigate import HOSTILE, SAFE, FakeFoundry, FakeToolbox, Harness, agree_all, answer, finding, handles_of, meter_line, metrics, resource, verdicts
+from test_toolbox import toolbox as real_toolbox
+from test_toolbox_meters import WIDGET, widgets
 
 START = dt.date(2026, 10, 5)
 COMPUTE = ("Example Compute", "Standard Tier", "Fixed Hours", "OnDemand", "Usage", "1 Hour")
@@ -131,7 +135,7 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
         for start, target in ((12, 12), (12, 13), (12, -1), (0, 0), (True, 4), (12, True), ("12", 4), (12, "4"), (12, None), (float("nan"), 4), (12, float("inf")), (10 ** 400, 4)):
             with self.subTest(start=start, target=target):
                 found = priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": start, "to": target})))
-                self.assertEqual(found.rows, {})
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
     def test_a_target_of_nothing_is_a_ratio_that_removes_everything(self):
         self.assertEqual(priced(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": 12, "to": 0}))).rows["r1"].low, 60.0)
@@ -143,7 +147,8 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
     def test_a_share_of_days_that_is_not_a_share_makes_no_figure(self):
         for days, span in ((7, 7), (8, 7), (0, 7), (-1, 7), (5, 0), (5, 32), (5.0, 7), (5, 7.5), (True, 7), (5, True), ("5", 7), (None, 7)):
             with self.subTest(days=days, span=span):
-                self.assertEqual(priced(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": days, "of": span}))).rows, {})
+                found = priced(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": days, "of": span})))
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
     def test_an_assumption_is_a_low_and_a_high_of_what_remains_the_point_is_the_low_figure_and_it_is_marked(self):
         row = priced(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7}))).rows["r1"]
@@ -155,7 +160,8 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
         self.assertEqual((row.low, row.high), (50.0, 50.0))
         for low, high in ((0.7, 0.4), (-0.1, 0.5), (0.2, 1.2), (None, 0.5), (0.2, "0.5"), (True, 0.5), (0.2, float("nan")), (1.5, 2)):
             with self.subTest(low=low, high=high):
-                self.assertEqual(priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": low, "high": high}))).rows, {})
+                found = priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": low, "high": high})))
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
     def test_an_assumption_that_everything_remains_saves_nothing_and_says_so(self):
         found = priced(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 1, "high": 1})))
@@ -372,6 +378,9 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         self.assertEqual((pricing.missing(refused), pricing.refused(refused)), (pricing.WHY["lines"], True))
         self.assertEqual((pricing.missing({}), pricing.refused({}), pricing.missing({pricing.KEY: {"missing": "<script>"}}), pricing.refused({pricing.KEY: {"missing": "<script>"}})), ("", False, "", False))
 
+    def test_a_finding_that_names_no_bill_line_says_that_a_line_that_no_resource_owns_has_no_handle_to_name(self):
+        self.assertIn("no resource owns", pricing.WHY["none"])
+
 
 class WhatTheSkepticIsShown(unittest.TestCase):
     def view(self, raw, limit=6, skip=(), handles=("r1", "r2")):
@@ -457,6 +466,309 @@ class WhatDecidesDoesWithIt(unittest.TestCase):
 
     def test_a_dropped_case_has_no_figure(self):
         self.assertIsNone(self.decided("keep", self.facts()).monthly_saving_usd)
+
+
+# -- whole investigations with fakes -----------------------------------------------------------------------------------------------------------------
+
+def holding(meters=None, evidence=None, costs=(100.0, 30.0)) -> FakeToolbox:
+    """What a toolbox shows after a run: resources r1 and r2 that cost `costs`, a measured zero for each, the number of units of r1 and the register of the meters."""
+    resources = [resource(n, cost_usd_30d=cost) for n, cost in enumerate(costs, 1)]
+    held = evidence if evidence is not None else {"r1": {**metrics(MetricA=0), "properties": {"units": 12}}, "r2": metrics(MetricA=0)}
+    return FakeToolbox(resources, held, meters=registry() if meters is None else meters)
+
+
+def crowd(count: int = 6) -> FakeToolbox:
+    """`count` resources that cost 10 times their number, each billed for one meter that costs 5 times its number."""
+    numbers = range(1, count + 1)
+    return FakeToolbox([resource(n, cost_usd_30d=10.0 * n) for n in numbers], {f"r{n}": metrics(MetricA=0) for n in numbers}, meters={f"m{n}": line(f"r{n}", 5.0 * n) for n in numbers})
+
+
+class WhenAnInvestigationPricesAChange(unittest.TestCase):
+    """The figure of a case is what code worked out from the meters that the finding names, whatever the AI wrote, and the Skeptic judges the model."""
+
+    def go(self, change=None, toolbox=None, skeptic=None, **more):
+        raw = finding(**more) if change is None else finding(change=change, **more)
+        h = Harness(FakeFoundry(answer(raw), skeptic=skeptic), toolbox or holding(), with_store=True)
+        h.go()
+        return h
+
+    @staticmethod
+    def figures(h):
+        return {r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}
+
+    @staticmethod
+    def facts(h):
+        return {r.resource_name: r.facts.get(pricing.KEY) for r in h.store.cases_recent()}
+
+    def test_a_case_is_saved_what_the_meters_that_the_finding_names_cost_and_not_what_the_resource_costs(self):
+        h = self.go(block("remove", effect("r1", ("m1",)), effect("r2", ("m3",))))
+        self.assertEqual(self.figures(h), {"thing-1": 60.0, "thing-2": 30.0})
+        self.assertEqual({r["resourceName"]: r["costUsd30d"] for r in h.of("case.result")}, {"thing-1": 100.0, "thing-2": 30.0})
+        (line_,) = h.of("investigation.finding")
+        self.assertEqual((line_["change"], line_["pricedHandles"], line_["savingUsdMonth"]), ("remove", 2, 90.0))
+        price = self.facts(h)["thing-1"]["price"]
+        self.assertEqual((self.facts(h)["thing-1"]["action"], price["form"], price["billUsd"], price["lines"]), ("remove", "none", 60.0, 1))
+
+    def test_a_count_that_is_reduced_is_checked_against_the_number_that_the_tools_showed_and_code_does_the_rest(self):
+        ratio = {"form": "ratio", "on": "units", "from": 12, "to": 3}
+        h = self.go(block("reduce", effect("r1", ("m1",), ratio)), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 45.0})
+        for wrong in ({**ratio, "from": 13}, {**ratio, "on": "tier"}):
+            with self.subTest(wrong=wrong):
+                h = self.go(block("reduce", effect("r1", ("m1",), wrong)), proposal="change", basis="oversized", handles=("r1",))
+                self.assertEqual((self.figures(h), self.facts(h)["thing-1"]["missing"]), ({"thing-1": None}, "remains"))
+
+    def test_an_assumption_is_a_range_that_is_marked_as_the_ais_and_the_case_counts_its_low_end(self):
+        h = self.go(block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.2, "high": 0.9})), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 6.0})
+        price = self.facts(h)["thing-1"]["price"]
+        self.assertEqual((price["form"], price["lowUsd"], price["highUsd"]), ("assumed", 6.0, 48.0))
+        found = pricing.saved({pricing.KEY: self.facts(h)["thing-1"]}, 100.0)
+        self.assertEqual(found.level, pricing.SCENARIO)
+        self.assertIn("the AI's own assumption", found.basis)
+
+    def test_a_share_of_days_is_the_ais_and_the_arithmetic_is_the_codes(self):
+        h = self.go(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7})), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 17.14})
+
+    def test_an_amount_that_the_ai_writes_into_the_block_or_the_answer_is_never_read(self):
+        raw = block("remove", {**effect("r1", ("m1",)), "monthlySavingUsd": 9999.5, "usd": 8888.5}, how="Saves 7777.5 a month.")
+        raw.update(savingUsd=6666.5, usd=5555.5)
+        h = self.go(raw, monthlySavingUsd=4444.5, handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 60.0})
+        everything = json.dumps([h.events, [r.facts for r in h.store.cases_recent()]])
+        for invented in ("9999.5", "8888.5", "7777.5", "6666.5", "5555.5", "4444.5"):
+            self.assertNotIn(invented, everything)
+
+    def test_a_meter_that_no_tool_showed_makes_no_figure_not_even_for_a_delete_and_the_case_says_why(self):
+        h = self.go(block("remove", effect("r1", ("m9",)), effect("r2", ("m3",))))
+        self.assertEqual(self.figures(h), {"thing-1": None, "thing-2": 30.0})
+        self.assertEqual(self.facts(h)["thing-1"]["missing"], "lines")
+        self.assertEqual(self.facts(h)["thing-2"]["price"]["lowUsd"], 30.0)
+
+    def test_a_delete_that_states_no_change_keeps_the_cost_lines_of_the_resource_as_it_always_did_and_the_action_none_is_the_same(self):
+        for change in (None, {"action": "none", "effects": [], "how": "Cannot say."}):
+            with self.subTest(change=change):
+                self.assertEqual(self.figures(self.go(change)), {"thing-1": 100.0, "thing-2": 30.0})
+
+    def test_a_meter_that_the_resource_does_not_own_adds_nothing_and_the_ones_that_it_owns_are_counted_once(self):
+        h = self.go(block("remove", effect("r1", ("m1", "m3", "m1")), effect("r2", ("m1",))))
+        self.assertEqual(self.figures(h), {"thing-1": 60.0, "thing-2": None})
+
+    def test_advisors_own_estimate_is_kept_beside_the_figure_and_never_added_to_it(self):
+        evidence = {"r1": {**metrics(MetricA=0), "advisor": [{"savingUsdMonth": 7.5}]}, "r2": metrics(MetricA=0)}
+        h = self.go(block("remove", effect("r1", ("m1",))), holding(evidence=evidence), handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 60.0})
+        found = pricing.saved({pricing.KEY: self.facts(h)["thing-1"]}, 100.0)
+        self.assertIn("Azure Advisor's own estimate for it is $7.50 a month, and the two are not added", found.basis)
+
+    def test_a_cost_that_is_not_in_dollars_makes_no_figure_and_says_so(self):
+        h = Harness(FakeFoundry(answer(finding(change=block("remove", effect("r1", ("m1",)))))), holding(costs=(None, None)), with_store=True)
+        h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs={resource(1).resource_id.lower(): 5.0}, currency="EUR")}
+        h.go()
+        self.assertEqual(self.figures(h), {"thing-1": None, "thing-2": None})
+        self.assertEqual(self.facts(h)["thing-1"]["missing"], "currency")
+
+    def test_the_skeptic_is_shown_the_model_in_typed_form_and_neither_the_words_of_the_ai_for_a_person_nor_a_name(self):
+        seen = {}
+
+        def skeptic(given):
+            seen.update(given)
+            return agree_all(given)
+
+        ratio = {"form": "ratio", "on": "units", "from": 12, "to": 3}
+        self.go(block("reduce", effect("r1", ("m1", "m2"), ratio), how="Take the spare units away."), skeptic=skeptic, proposal="change", basis="oversized", handles=("r1",))
+        model = seen["findings"][0]["change"]
+        (one,) = model["effects"]
+        self.assertEqual((model["action"], one["handle"], one["form"], one["usd"], one["from"], one["to"]), ("reduce", "r1", "ratio", 100.0, 12.0, 3.0))
+        self.assertEqual([(m["meter"], m["usd"], m["words"][2]) for m in one["lines"]], [("m1", 60.0, "Fixed Hours"), ("m2", 40.0, "Held Data")])
+        self.assertNotIn("how", model)
+        self.assertNotIn("spare units", json.dumps(seen))
+
+    def test_a_finding_that_states_no_change_shows_the_skeptic_no_model(self):
+        seen = {}
+        self.go(None, skeptic=lambda given: (seen.update(given), agree_all(given))[1])
+        self.assertNotIn("change", seen["findings"][0])
+
+    def test_a_skeptic_that_doubts_the_model_leaves_the_figure_as_it_is_and_the_finding_to_a_person(self):
+        h = self.go(block("remove", effect("r1", ("m1",))), skeptic=verdicts(("disagree", ("Half of it is fixed.",), "Contested.")), handles=("r1",))
+        (result,) = h.of("case.result")
+        self.assertEqual((result["status"], result["monthlySavingUsd"]), ("needs_human", 60.0))
+
+    def test_the_findings_that_the_retired_paths_priced_by_kind_follow_the_same_path_from_the_meters_that_they_name(self):
+        data = [resource(1, resource_type="microsoft.example/stores", cost_usd_30d=90.0), resource(2, resource_type="microsoft.example/stores", cost_usd_30d=40.0)]
+        meters = {"m1": line("r1", 50.0, STORAGE), "m2": line("r1", 40.0, COMPUTE), "m3": line("r2", 25.0, STORAGE), "m4": line("r2", 15.0, COMPUTE)}
+        stores = FakeToolbox(data, {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)}, meters=meters)
+        h = self.go(block("remove", effect("r1", ("m1",)), effect("r2", ("m3",))), stores)
+        self.assertEqual(self.figures(h), {"thing-1": 50.0, "thing-2": 25.0}, "what holds the data goes away and the compute that serves it stays")
+        gateway = [resource(1, resource_type="microsoft.example/gateways", cost_usd_30d=200.0)]
+        meters = {"m1": line("r1", 160.0, COMPUTE), "m2": line("r1", 40.0, NETWORK)}
+        held = {"r1": {**metrics(MetricA=0), "properties": {"units": 4}}}
+        h = self.go(block("reduce", effect("r1", ("m1",), {"form": "ratio", "on": "units", "from": 4, "to": 2})), FakeToolbox(gateway, held, meters=meters), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual(self.figures(h), {"thing-1": 80.0}, "half of the units that are billed per unit, and the fixed fee stays")
+
+
+class WhenAGroupIsPriced(unittest.TestCase):
+    """A finding for a group of resources is priced as the sum of its resources, each by its own meters, counted once: one case, one figure."""
+
+    def go(self, effects):
+        raw = finding(handles=[f"r{n}" for n in range(1, 7)], basis="other", proposal="investigate", change=block("remove", *effects))
+        h = Harness(FakeFoundry(answer(raw)), crowd(), with_store=True)
+        h.go()
+        return h
+
+    def test_the_figure_of_the_group_is_the_sum_of_its_resources_each_by_its_own_meters(self):
+        h = self.go([effect(f"r{n}", (f"m{n}",)) for n in range(1, 7)])
+        (result,) = h.of("case.result")
+        self.assertEqual((result["groupSize"], result["costUsd30d"], result["monthlySavingUsd"]), (6, 210.0, 105.0))
+        (line_,) = h.of("investigation.finding")
+        self.assertEqual((line_["pricedHandles"], line_["savingUsdMonth"]), (6, 105.0))
+        (record,) = h.store.cases_recent()
+        price = record.facts[pricing.KEY]["price"]
+        self.assertEqual((price["resources"], price["members"], price["lines"], price["billUsd"]), (6, 6, 6, 105.0))
+
+    def test_a_group_of_which_some_resources_have_no_figure_adds_up_the_others_and_says_how_many_are_priced(self):
+        h = self.go([effect(f"r{n}", (f"m{n}",)) for n in range(1, 5)])
+        (result,) = h.of("case.result")
+        self.assertEqual(result["monthlySavingUsd"], 50.0)
+        (record,) = h.store.cases_recent()
+        found = pricing.saved(record.facts, record.facts["costUsd30d"])
+        self.assertIn("4 of 6 resources are priced", found.basis)
+
+    def test_a_meter_of_another_resource_of_the_group_is_not_counted_for_this_one(self):
+        h = self.go([effect(f"r{n}", ("m1",)) for n in range(1, 7)])
+        (result,) = h.of("case.result")
+        self.assertEqual(result["monthlySavingUsd"], 5.0, "m1 is the meter of r1 only, and r2 to r6 name it in vain")
+
+
+# -- the real tools ----------------------------------------------------------------------------------------------------------------------------------
+
+def spend(estate, resource_id: str, words, daily: float, days: int = 30) -> None:
+    """The bill lines of one resource that cost `daily` on each of the last `days` closed days before the day of the fake clock (2026-11-04)."""
+    for n in range(days):
+        estate.bill.append((SUBSCRIPTION, dt.date(2026, 11, 3) - dt.timedelta(days=n), resource_id, "Example Service", words, daily, 24.0))
+
+
+class ReadsTheBill(FakeFoundry):
+    """An Investigator that asks the real tools what each widget is billed for and writes its answer from the handles that they returned. `claim` gets the meter handles of each resource,
+    dearest first, and under "type" those of a whole type."""
+
+    NAMES = {"list_resources": ("type", "order_by", "limit", "offset"), "cost_meters": ("handle", "type", "service", "days", "offset")}
+
+    def __init__(self, claim, days=None, **options):
+        super().__init__(**options)
+        self.claim, self.days = claim, days
+
+    def ask(self, handler, name: str, **arguments) -> dict:
+        return json.loads(handler(name, {**dict.fromkeys(self.NAMES[name]), **arguments}))
+
+    def run(self, agent, user_input, handler=None, *, max_calls=20, max_seconds=None):
+        if not agent.startswith(agents.INVESTIGATOR_NAME):
+            return super().run(agent, user_input, handler, max_calls=max_calls, max_seconds=max_seconds)
+        self.runs.append({"agent": agent, "input": user_input, "max_calls": max_calls, "max_seconds": max_seconds, "handler": handler})
+        handles = handles_of(self.ask(handler, "list_resources", type=WIDGET))
+        meters = {handle: [row[0] for row in self.ask(handler, "cost_meters", handle=handle, days=self.days)["rows"] if row[0]] for handle in handles}
+        meters["type"] = [row[0] for row in self.ask(handler, "cost_meters", type=WIDGET, days=self.days)["rows"] if row[0]]
+        text = json.dumps({"findings": self.claim(meters), "examined": ["the widgets, by what they are billed for"]})
+        calls = [{"name": "list_resources", "arguments": {}, "ok": True, "chars": 1}] + [{"name": "cost_meters", "arguments": {}, "ok": True, "chars": 1}] * (len(handles) + 1)
+        return AgentRun(text=text, calls=calls, input_tokens=2000, output_tokens=300, responses=len(calls) + 1)
+
+
+class WithTheRealBill(unittest.TestCase):
+    """The real tools over the fake estate of test_toolbox_meters: the meter handles are the ones that cost_meters showed, and the figure follows from the bill lines that they were read from."""
+
+    def setUp(self):
+        self.estate = widgets(2)
+        self.one, self.two = (self.estate.id_of(name).lower() for name in ("w1", "w2"))
+        self.estate.cost_rows = [(SUBSCRIPTION, 100.0, self.one, "Example Service"), (SUBSCRIPTION, 40.0, self.two, "Example Service")]
+        spend(self.estate, self.one, COMPUTE, 2.0)
+        spend(self.estate, self.one, STORAGE, 1.0)
+        spend(self.estate, self.two, COMPUTE, 1.0)
+
+    def go(self, claim, **options):
+        foundry = ReadsTheBill(claim, **options)
+        h = Harness(foundry, real_toolbox(self.estate), with_store=True)
+        h.go()
+        return h, foundry
+
+    @staticmethod
+    def removes(*handles):
+        def claim(meters):
+            effects = [effect(handle, meters[handle][:1]) for handle in handles]
+            return [finding(handles=list(handles), basis="low-usage", proposal="change", evidence=[], change=block("remove", *effects))]
+        return claim
+
+    def test_the_figure_is_the_cost_of_the_meters_that_the_real_tool_showed_for_the_resource(self):
+        h, _ = self.go(self.removes("r1", "r2"))
+        self.assertEqual({r["resourceName"]: (r["costUsd30d"], r["monthlySavingUsd"]) for r in h.of("case.result")}, {"w1": (100.0, 60.0), "w2": (40.0, 30.0)})
+
+    def test_all_of_the_meters_of_a_resource_are_the_sum_of_their_lines_and_never_more_than_what_the_resource_cost(self):
+        def claim(meters):
+            return [finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[], change=block("remove", effect("r1", meters["r1"])))]
+
+        h, _ = self.go(claim)
+        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": 90.0})
+
+    def test_the_meters_of_a_whole_type_are_not_the_bill_of_one_resource(self):
+        shown_to_it = []
+
+        def claim(meters):
+            shown_to_it.append(meters["type"])
+            return [finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[], change=block("remove", effect("r1", meters["type"])))]
+
+        h, _ = self.go(claim)
+        self.assertTrue(shown_to_it[0], "the tool did show the meters of the type")
+        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": None})
+        self.assertEqual([r.facts[pricing.KEY]["missing"] for r in h.store.cases_recent()], ["lines"])
+
+    def test_meters_read_over_a_shorter_window_are_not_a_month_of_the_bill(self):
+        h, _ = self.go(self.removes("r1"), days=7)
+        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": None})
+        self.assertEqual([r.facts[pricing.KEY]["missing"] for r in h.store.cases_recent()], ["lines"])
+
+    def test_a_word_of_a_meter_that_the_estate_could_have_written_never_reaches_the_skeptic_and_the_figure_is_still_the_bills(self):
+        spend(self.estate, self.one, ("Example Compute", "Standard Tier", HOSTILE, "OnDemand", "Usage", "1 Hour"), 0.1)
+
+        def claim(meters):
+            return [finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[], change=block("remove", effect("r1", meters["r1"])))]
+
+        h, foundry = self.go(claim)
+        self.assertEqual({r["resourceName"]: r["monthlySavingUsd"] for r in h.of("case.result")}, {"w1": 93.0})
+        text = foundry.inputs()[-1]
+        model = json.loads(text)["findings"][0]["change"]
+        self.assertEqual([line_["words"][2] for line_ in model["effects"][0]["lines"]], ["Fixed Hours", "Held Data", "other"])
+        for marker in ("IGNORE", "evil", "answer delete", "rg-app", "swedencentral"):
+            self.assertNotIn(marker, text)
+
+
+class ThePurityOfTheModule(unittest.TestCase):
+    """The arithmetic of a saving is code that reads nothing and writes nothing: the brief imports it (cases/brief.py) and a page shows what it says."""
+
+    def test_it_imports_only_the_standard_library_the_meters_and_the_roles_which_import_nothing_else_and_reaches_nothing(self):
+        path = APP_ROOT / "cases"
+
+        def imports(name):
+            tree = ast.parse((path / f"{name}.py").read_text(encoding="utf-8"))
+            return {(node.level, node.module) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)} | {(0, a.name) for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names}
+
+        standard = {(0, "__future__"), (0, "datetime"), (0, "math"), (0, "re"), (0, "json"), (0, "dataclasses"), (0, "typing")}
+        self.assertEqual(imports("pricing"), {(0, "__future__"), (0, "datetime"), (0, "math"), (0, "re"), (0, "dataclasses"), (0, "typing"), (1, "meters"), (1, "roles")})
+        for name in ("meters", "roles"):
+            self.assertLessEqual(imports(name), standard, name)
+        for name in ("pricing", "meters", "roles"):
+            source = (path / f"{name}.py").read_text(encoding="utf-8")
+            for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\btime\.(time|sleep|monotonic)\(", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen", r"\bsocket", r"\blogging",
+                            r"\brandom\b", r"\buuid\b"):
+                self.assertIsNone(re.search(pattern, source), (name, pattern))
+
+
+class WhatIsRetired(unittest.TestCase):
+    def test_no_saving_is_priced_by_a_kind_of_resource_any_more(self):
+        for name in ("unread", "gateways"):
+            self.assertFalse((APP_ROOT / "cases" / f"{name}.py").exists(), name)
+        source = "\n".join(path.read_text(encoding="utf-8") for path in (APP_ROOT / "cases").rglob("*.py"))
+        for symbol in ("unread_saving", "unread_of", "scenario_saving", "gateways_of", "gateway_options", "from . import unread", "from . import gateways", "from .. import unread"):
+            self.assertNotIn(symbol, source)
 
 
 if __name__ == "__main__":

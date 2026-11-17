@@ -429,7 +429,8 @@ class TheAgentDefinitions(unittest.TestCase):
             self.assertIn(key, text)
         self.assertEqual(pricing.ACTIONS, ("remove", "reduce", "switch", "schedule", "commit", "none"))
         self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
-        for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, never those of a whole type)",
+        for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
+                         "window that it offers, never those of a whole type)",
                          '{"form":"none"} when they go away entirely (the action remove)', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
                          "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
                          "When you cannot name the meters, give the action none.",

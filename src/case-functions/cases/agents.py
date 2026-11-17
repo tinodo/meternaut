@@ -102,7 +102,7 @@ INVESTIGATOR_INSTRUCTIONS = (
     "that rests on it. A finding without an entry that code could confirm is left to a person, whatever its basis; under the basis no-usage code drops the "
     "resources that it cannot confirm. A confidence that is not a number from 0 to 1 counts as 0.\n"
     f"State the change that a finding proposes in change, so that code can work out from the bill what it saves. An action is one of: {', '.join(ACTIONS)}. For each resource that the change "
-    "covers, effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, never those of a whole type) "
+    "covers, effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest window that it offers, never those of a whole type) "
     "and remains says what is left of them, in one of these forms: "
     '{"form":"none"} when they go away entirely (the action remove); '
     '{"form":"ratio","on":"<a property or a measurement, named exactly as a tool returned it>","from":<its number exactly as the tool returned it>,"to":<the number after the change>} '

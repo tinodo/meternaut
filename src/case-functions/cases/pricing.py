@@ -34,7 +34,7 @@ WINDOW = 30  # the closed days that a figure a month rests on
 EXPECTED, SCENARIO = "Expected", "Scenario"
 METER = re.compile(r"m[0-9]{1,4}")
 WHY = {
-    "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink.",
+    "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
     "lines": "No saving was worked out: the bill lines that the AI named were not found for this resource over the last 30 days.",
     "remains": "No saving was worked out: what would remain of the bill lines was not stated in a form that code can check.",
     "currency": "No saving was worked out: the cost is not in US dollars.",
