@@ -1936,7 +1936,7 @@ class WhatIsKept(unittest.TestCase):
         h.go()
         self.assertEqual((h.result.ran, h.result.cases, h.result.proposed), (True, 2, 2))
         notes = [e["note"] for e in h.of("run.note") if "could not be kept" in e["note"]]
-        self.assertEqual(notes, ["the case could not be kept in the store: the table service is down"] * 2)
+        self.assertEqual(notes, ["the case could not be kept in the store: the table service is down"], "the same note for the second case is not written again: a run says it once, and its count when it ends")
         self.assertEqual(len(h.of("case.result")), 2)
 
     def test_a_store_that_cannot_be_read_holds_nothing_back(self):

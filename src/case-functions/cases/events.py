@@ -9,7 +9,7 @@ import datetime as dt
 import json
 import logging
 from collections import Counter
-from typing import Callable
+from typing import Callable, Iterable
 
 EVENT_PREFIX = "meternaut_event "
 VERSION = 1
@@ -33,6 +33,15 @@ LOGGER = logging.getLogger("meternaut.history")
 
 # The texts of a line, in the order in which they are cut and, when that is not enough, dropped.
 TEXTS = ("summary", "note", "reason", "recommendation")
+END_KINDS = ("run.finished", "run.failed")  # a note that came more than once in a run is told once more, with its count, just before one of these
+
+
+def collapse(notes: Iterable[str]) -> list[str]:
+    """The notes of a run, each once, in the order in which it first came, and `x N` after a note that came N times: the same sentence 50 times (one for each resource) is one note with its count."""
+    counts: dict[str, int] = {}
+    for text in notes:
+        counts[text] = counts.get(text, 0) + 1
+    return [text if count == 1 else f"{text} x {count}" for text, count in counts.items()]
 
 
 def _fit(event: dict) -> str:
@@ -65,11 +74,22 @@ class History:
                  logger: logging.Logger = LOGGER) -> None:
         self.run_id, self.request_id, self.clock, self.redact, self.logger = run_id, request_id, clock, redact, logger
         self.counts: Counter[str] = Counter()  # the lines written so far, by kind
+        self.said: Counter[str] = Counter()  # the notes of the run so far, by their text: a note that comes again is counted and not written again
+        self.told: set[str] = set()  # the notes that came more than once and whose count was written at the end
 
     def emit(self, kind: str, **fields: object) -> dict:
         if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + TEAMS_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
+        if kind == "run.note" and isinstance(fields.get("note"), str):
+            self.said[fields["note"]] += 1  # type: ignore[index]
+            if self.said[fields["note"]] > 1:  # type: ignore[index]
+                return event  # the same note again: it is counted, and told with its count when the run ends
+        elif kind in END_KINDS:
+            for text, count in list(self.said.items()):
+                if count > 1 and text not in self.told:
+                    self.told.add(text)
+                    self.emit("run.note", note=f"{text} x {count}")
         self.logger.info(self.redact(_fit(event)))
         self.counts[kind] += 1
         return event
