@@ -7,11 +7,12 @@ from cases import control
 
 
 class FakeMessage:
-    """What the queue trigger hands over: the decoded text as bytes, and the time at which the queue says that the message was inserted."""
+    """What the queue trigger hands over: the decoded text as bytes, the time at which the queue says that the message was inserted, and how many times the queue has handed it over (1 the first time)."""
 
-    def __init__(self, body, inserted=None):
+    def __init__(self, body, inserted=None, dequeue_count=None):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
         self.insertion_time = inserted
+        self.dequeue_count = dequeue_count
 
     def get_body(self):
         return self._body
@@ -93,6 +94,40 @@ class Control(unittest.TestCase):
 
         with LogCapture(), self.assertRaises(RuntimeError):
             control.handle_message(FakeMessage(GOOD, NOW), fixed_clock, broken)
+
+    def test_a_message_that_the_queue_hands_over_again_is_refused_and_recorded_because_a_run_that_was_begun_is_never_begun_again(self):
+        for count in (2, 3, 5):
+            started, run, events = handle(FakeMessage(GOOD, NOW - dt.timedelta(seconds=5), count))
+            self.assertEqual((started, run.calls), (False, []), str(count))
+            (event,) = events
+            self.assertEqual((event["type"], event["requestId"]), ("run.failed", "a" * 32))
+            self.assertIn(f"delivered {count} times", event["reason"])
+            self.assertIn("each run costs money", event["reason"])
+
+    def test_the_first_delivery_and_a_message_that_has_no_count_are_run_as_before(self):
+        for count in (1, None):
+            started, run, events = handle(FakeMessage(GOOD, NOW - dt.timedelta(seconds=5), count))
+            self.assertEqual((started, run.calls, events), (True, [("control", "a" * 32)], []), str(count))
+
+    def test_a_run_that_was_cut_off_and_handed_over_again_is_not_run_a_second_time_not_even_within_the_fifteen_minutes_of_the_message(self):
+        def broken(trigger, request_id):
+            raise RuntimeError("the host stopped the function")
+
+        with LogCapture(), self.assertRaises(RuntimeError):
+            control.handle_message(FakeMessage(GOOD, NOW - dt.timedelta(minutes=2), 1), fixed_clock, broken)
+        started, run, events = handle(FakeMessage(GOOD, NOW - dt.timedelta(minutes=12), 2))
+        self.assertEqual((started, run.calls, events[0]["reason"].startswith("the control message was delivered 2 times")), (False, [], True))
+
+    def test_the_study_is_a_paid_run_too_and_the_card_test_is_not_held_by_the_count(self):
+        study = Recorder()
+        with LogCapture() as capture:
+            self.assertFalse(control.handle_message(FakeMessage({"job": "study", "requestId": "a" * 32}, NOW, 2), fixed_clock, Recorder(), study))
+            self.assertTrue(control.handle_message(FakeMessage({"job": "study", "requestId": "a" * 32}, NOW, 1), fixed_clock, Recorder(), study))
+        self.assertEqual(study.calls, [("control", "a" * 32)])
+        self.assertEqual([e["type"] for e in capture.events()], ["run.failed"])
+        sent = []
+        self.assertTrue(control.handle_message(FakeMessage({"job": "teams-card-test", "requestId": "a" * 32}, NOW, 3), fixed_clock, Recorder(), study, sent.append))
+        self.assertEqual(sent, ["a" * 32])
 
 
 if __name__ == "__main__":

@@ -79,9 +79,9 @@ ADVICE_QUIET_DAYS = 30
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
-# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time` or `calls` (its time for tool calls or its calls were used up), `refused` (the harness did not let it run
-# or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
-INVESTIGATION_ENDS = ("answered", "time", "calls", "refused", "failed")
+# How the Investigator's run ended (cases/activity.py): `answered` (within its limits), `time`, `calls` or `tokens` (its time, its calls or its tokens for tool calls were used up), `refused` (the harness did not
+# let it run or stopped it) and `failed`. What its tools did to a kind of resource, as the letters that the record keeps (in this order). The page "What the AI looked at" reads the newest KEPT_INVESTIGATIONS records.
+INVESTIGATION_ENDS = ("answered", "time", "calls", "tokens", "refused", "failed")
 INVESTIGATION_TOUCHES = {"l": "listed", "m": "measured", "d": "described", "s": "split"}
 KEPT_INVESTIGATIONS = 20
 # The detector of the cases that the investigation opens (cases/investigate.py): the Watch's other detectors judge their own leads again at every run.
@@ -448,6 +448,11 @@ class InvestigationRecord(Record):
     unread: tuple[str, ...] = ()
     subs: int = 0  # the subscriptions of the run, and those whose cost was read in dollars (which the order rests on)
     subs_costed: int = 0
+    # When the estate was looked at in beats (cases/beats.py), one dict for each: n, kinds (the words of its focus), billing (the lines of the bill that no resource owns were in it), more (kinds that the last one holds
+    # beyond those named), calls, max_calls, tokens, seconds, end (one of INVESTIGATION_ENDS), seeded (the resources whose picture code read), looked (how many of its kinds its tools read), found (findings that it wrote)
+    # and says (what it said that it examined). Counts and words, no amount. `more` counts the findings that the record had no room for.
+    beats: tuple[dict, ...] = ()
+    more: int = 0
 
 
 @dataclass(frozen=True)

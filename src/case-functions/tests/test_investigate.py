@@ -405,13 +405,22 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
+        # 10,000 since the principle of the beats was added: about 400 characters that say what to do with a part of the estate that code chose, and with the lines of the bill that no resource owns (it was
         # 9,500 since the change that a finding states (the action, the meters that it would shrink and what remains of them, in four forms) was added, and the principle that something larger than
-        # its use needs is found by setting what it can carry beside the highest value of what it carries: about 2,400 characters in all, so that code can work out the saving from the bill (it was 7,000
+        # its use needs is found by setting what it can carry beside the highest value of what it carries: about 2,400 characters in all, so that code can work out the saving from the bill; 7,000
         # since three sentences that say that a resource is often a symptom of something larger or a part of it, that one call can show the whole picture of a few resources, and that a finding says
         # which level it judged; 6,500 since two sentences that say that a tool shows what a resource is billed for, meter by meter, and that a measurement can cover several metrics and be read at a
         # finer grain than a day; 6,100 since three sentences that say that absence of data is not evidence of absence, that a status is no proof of non-use and when a deletion may be proposed, 5,600 since
         # the data that is stored and not read: the Investigator is told in two sentences to cite both the volume and the readers of a kind of data, 5,400 since the learning, and 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 9500)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 10000)
+
+    def test_the_investigator_is_told_in_general_words_what_to_do_with_a_beat_and_that_no_beat_means_the_whole_estate(self):
+        text = agents.INVESTIGATOR_INSTRUCTIONS
+        for sentence in ("When your input names a beat, cover that part of the estate, which code chose by what it costs",
+                         "do not repeat what the beats before it concluded", "Leave it only when the links of a resource lead elsewhere.",
+                         "The lines of the bill that no resource owns can be a beat of their own.", "Without a beat, work down the cost by service that the overview of the estate shows"):
+            self.assertIn(sentence, text)
+        self.assertEqual(banned_in(text), [], "it names no kind of resource, no measurement and no threshold")
 
     def test_the_investigator_is_told_in_general_words_to_judge_the_whole_that_a_resource_belongs_to_and_to_say_which_level_it_judged(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS

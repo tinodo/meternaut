@@ -3,15 +3,17 @@ Investigator starts, what a beat is told of the beats before it, and the investi
 import json
 import re
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from support import APP_ROOT, RG, SUBSCRIPTION, Ticker
 
 import test_investigate as ti
-from cases import agents, beats, investigate
+from cases import activity, agents, beats, investigate
 from cases.detectors import Context
 from cases.foundry import AgentRun, FoundryError
 from cases.harness import HarnessRefused
+from cases.store import MAX_DATA
 
 # An invented estate. The cost of the last 30 days of each kind, and of the lines that no resource owns; 11,000 in all, so that 95 percent is 10,450.
 ESTATE = {"contoso.compute/rigs": 3000.0, "contoso.compute/racks": 1500.0, "fabrikam.store/vaults": 2000.0, "fabrikam.store/lockers": 800.0, "northwind.net/links": 1200.0,
@@ -477,6 +479,58 @@ class WhenTheBeatsRunUnderTheHarness(unittest.TestCase):
         self.assertEqual([(line["tokens"], line["toolCalls"], line["outcome"]) for line in investigator], [(44_000, 1, "ok")] * 3, "three lines, each with the numbers of one beat")
         self.assertEqual((rigged.pulled(), rigged.letters), ([], []))
         self.assertEqual(len([line for line in runs if line["agent"] == agents.SKEPTIC_NAME]), 1)
+
+
+class WhatTheRecordKeepsOfTheBeats(unittest.TestCase):
+    def test_a_beat_is_a_line_with_its_kinds_its_calls_seconds_and_tokens_how_it_ended_how_many_of_its_kinds_were_looked_at_and_what_it_concluded(self):
+        h = rig([script(one("r1"), examined=("rigs: no idle finding",)), script(one("r3"), out_of_tokens=True), script(one("r5"))])
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual([(b["n"], b["kinds"], b["calls"], b["max_calls"], b["tokens"], b["end"], b["seeded"], b["looked"], b["found"]) for b in record.beats],
+                         [(n, [kind], 1, 8, 44_000, end, 2, 1, 1) for n, (kind, end) in enumerate(zip(KINDS, ("answered", "tokens", "answered")), 1)])
+        self.assertEqual(record.beats[0]["says"], ["rigs: no idle finding"])
+        self.assertEqual((record.calls, record.max_calls, record.tokens, record.end), (3, 24, 3 * 44_000 + 600, "tokens"))
+        self.assertEqual((record.known, record.looked), (3, 3), "the kinds that the tools of all the beats read, against the kinds that the estate has: a count")
+        self.assertEqual([f["beat"] for f in record.findings], [1, 2, 3])
+        self.assertNotRegex(json.dumps([record.beats, record.findings]), r"(?i)usd|cost|[$€£]|share|percent")
+
+    def test_a_record_of_one_open_beat_has_no_beats_and_the_ends_and_calls_are_what_they_were(self):
+        h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual((record.beats, record.more, record.max_calls, record.end), ((), 0, 30, "answered"))
+
+    def test_a_beat_that_failed_is_a_line_that_says_so_and_the_investigation_still_ends_as_answered(self):
+        h = rig([script(one("r1")), {"error": FoundryError("the project is busy")}, script(one("r5"))])
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual([(b["end"], b["found"]) for b in record.beats], [("answered", 1), ("failed", 0), ("answered", 1)])
+        self.assertEqual((record.end, record.answered), ("answered", True))
+        self.assertNotIn("busy", json.dumps(record.beats), "what a service said is not kept in a line of a beat")
+
+    def test_the_end_of_all_the_beats_is_the_first_of_time_tokens_and_calls_that_one_ran_out_of_and_failed_when_none_answered(self):
+        h = rig([{"error": FoundryError("busy")}] * 3)
+        h.go()
+        self.assertEqual(h.store.investigations_recent()[0].end, "failed")
+        for ends, word in ((("answered", "calls", "tokens"), "tokens"), (("answered", "calls", "time"), "time"), (("answered", "calls", "answered"), "calls")):
+            out = investigate.Investigation(ran=True, beats=[beats.Result(beats.Beat(n), end=end) for n, end in enumerate(ends, 1)])
+            self.assertEqual(activity.end_of(out), word, ends)
+        self.assertEqual(activity.end_of(investigate.Investigation(ran=True, held=True, beats=[beats.Result(beats.Beat(1), end="answered")])), "refused")
+
+    def test_a_record_of_many_beats_and_findings_that_would_not_fit_a_row_of_the_store_is_cut_to_fit_and_says_how_many_findings_it_left_out(self):
+        verdict = SimpleNamespace(verdict="disagree", objections=("o" * 300, "p" * 300))
+        findings = [investigate.Finding(n, basis="no-usage", proposal="delete", confidence=0.9, summary="s" * 300, note="n" * 300, verdict=verdict, claimed=60, fates={"request": 3, "person": 2},
+                                        guarded=1, recent=1, beat=1 + n % 8) for n in range(1, 41)]
+        results = [beats.Result(beats.Beat(n, tuple(f"{'k' * 20}{n}.{'a' * 20}/{'b' * 40}" for _ in range(8)), True, 20, 8), 8, 8, 100_000, 160, "answered", 5, 3, 8, "",
+                                ["x" * 100] * 12, [{}]) for n in range(1, 9)]
+        out = investigate.Investigation(ran=True, beats=results, findings=findings, examined=["e" * 100] * 24, toolbox=SeedToolbox(pooled()[0]))
+        s = SimpleNamespace(settings=ti.make_settings(), history=SimpleNamespace(run_id="r" * 32), harness=None)
+        record = activity.record_of(s, out, {}, trigger="timer", at="2026-11-17T05:30:00Z", seconds=1000)
+        self.assertLessEqual(len(record.to_json()), MAX_DATA)
+        self.assertEqual(len(record.beats), 8)
+        self.assertEqual((len(record.findings), record.more), (len(record.findings), 40 - len(record.findings)))
+        self.assertGreater(len(record.findings), 0)
+        self.assertEqual(type(record).from_json(record.to_json()), record)
 
 
 if __name__ == "__main__":

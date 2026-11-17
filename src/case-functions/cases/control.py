@@ -5,7 +5,8 @@ budget or a detector. A message that is older than 15 minutes (by the time the q
 History says so; a refusal is an answer, so the message is consumed and does not go back to the queue. The Functions host base64-decodes the message text before it gets here. The job
 `teams-card-test` (cases/offers.card_test) sends one test card to the owner through the bot and replaces it with a closing card, and writes only plain outcomes to the History.
 A function that raises is tried again, five times in all (the first try included), and the message then goes to the poison queue of the same name with the suffix -poison
-(https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-queue-trigger, "Poison messages").
+(https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-queue-trigger, "Poison messages"). The host also hands a message over again when the run that had it was cut off. A Watch or a
+Study costs money, so a message that the queue says it has handed over before (`dequeue_count` above 1) is refused and recorded, whatever its age: the run that had it was begun, and a new one is started by hand.
 """
 from __future__ import annotations
 
@@ -50,6 +51,12 @@ def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Cal
         refuse(f"the control message names a job that the app does not know: {clean_text(document.get('job'), 40)}", request_id, clock)
         return False
     inserted = getattr(message, "insertion_time", None)
+    delivered = getattr(message, "dequeue_count", None)
+    if job != TEAMS_JOB and isinstance(delivered, int) and not isinstance(delivered, bool) and delivered > 1:
+        # The host hands a message over again when the run that had it was cut off (a recycled worker, the time of the function) and not deleted. A Watch or a Study that was begun costs money, so it is
+        # never begun again: the owner starts a new one.
+        refuse(f"the control message was delivered {delivered} times: a run that was begun is never begun again, because each run costs money; start a new one", request_id, clock)
+        return False
     if isinstance(inserted, dt.datetime):
         if inserted.tzinfo is None:
             inserted = inserted.replace(tzinfo=dt.timezone.utc)

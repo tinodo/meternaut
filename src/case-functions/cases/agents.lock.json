@@ -2,7 +2,7 @@
   "agents": {
     "meternaut-investigator": {
       "connection": "aigateway",
-      "instructionsSha256": "181f4f2bf9154891170b17a5c3956c61afd4b1bf9922c92004e1c6579928a126",
+      "instructionsSha256": "5efd07aca5547746e287b9ebbbeca725975d45f11b77435a5d387e4c48b78835",
       "kind": "prompt",
       "model": "gpt-5.5",
       "options": {
