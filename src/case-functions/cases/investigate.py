@@ -874,7 +874,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             continue
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
         states = {handle: _cost_state(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower()), costs[handle]) for handle in finding.handles}
-        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY})
+        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY}, meter_word)
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)

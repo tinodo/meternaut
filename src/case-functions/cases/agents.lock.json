@@ -52,7 +52,7 @@
     },
     "meternaut-skeptic": {
       "connection": "aigateway",
-      "instructionsSha256": "0e28bd301d1f58b3bfa084557a5d21e6424cfa9fbdb03494992b988faf7cd378",
+      "instructionsSha256": "29c66ef525c8e53f5524fa2211dda7a033a8cf166f72d2d841dd60d4c9ca6cb4",
       "kind": "prompt",
       "model": "gpt-6.1-sol",
       "options": {

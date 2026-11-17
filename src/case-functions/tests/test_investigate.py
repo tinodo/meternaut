@@ -456,7 +456,10 @@ class TheAgentDefinitions(unittest.TestCase):
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
                          "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
-                         "ratio or quantity with from and to and, for a quantity, unit", "at the lower of two rates: week, the rate of their last week, and since, the mean since the first day that had a cost, null when the read cannot say it"):
+                         "ratio or quantity with from and to and, for a quantity, unit and moved",
+                         "at the lowest of three rates: week, the rate of their last week, since, the mean since the first day that had a cost, null when the read cannot say it, "
+                         "and steady, what a typical day costs for a month, null when too few days had a cost",
+                         "moved says that the rate of the last week is not the mean of the read, so that the share of the read that a quantity states is not the share of today"):
             self.assertIn(sentence, text)
         self.assertEqual(banned_in(text), [])
 
