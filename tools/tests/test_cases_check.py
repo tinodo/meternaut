@@ -206,12 +206,17 @@ class Parsing(unittest.TestCase):
             from cases import events as writer
         finally:
             sys.path.remove(app)
-        self.assertEqual(writer.INVESTIGATION_KINDS, ("investigation.started", "investigation.beat", "investigation.finding", "investigation.finished"))
+        self.assertEqual(writer.INVESTIGATION_KINDS, ("investigation.started", "investigation.beat", "investigation.call", "investigation.finding", "investigation.finished"))
         record = (ROOT / "docs" / "proposals" / "06-foundry-agents.md").read_text(encoding="utf-8")
         source = (ROOT / "src" / "case-functions" / "cases" / "investigate.py").read_text(encoding="utf-8")
+        beats_source = (ROOT / "src" / "case-functions" / "cases" / "beats.py").read_text(encoding="utf-8")
         run = (ROOT / "src" / "case-functions" / "cases" / "run.py").read_text(encoding="utf-8")
         for kind in writer.INVESTIGATION_KINDS:
             self.assertIn(f"`{kind}`", record, kind)
+        row = next(line for line in record.splitlines() if line.startswith("| `investigation.call` |"))
+        for name in ("beat", "n", "by", "tool", "resourceType", "handles", "metrics", "ok", "error", "chars", "seconds"):
+            self.assertIn(f"`{name}`", row, name)
+            self.assertTrue(f"{name}=" in source or f'"{name}"' in beats_source, name)
         for name in ("investigator", "skeptic", "modelInvestigator", "modelSkeptic", "maxCalls", "maxSeconds", "toolCalls", "findingsKept", "findingsDropped", "examined",
                      "finding", "basis", "proposal", "confidence", "claimed", "handles", "unknown", "unproven", "unmeasured", "shown", "repeated", "judgedLately", "guarded",
                      "capped", "coveredCostUsd30d", "verdict", "kept", "reason", "summary", "cases", "note"):

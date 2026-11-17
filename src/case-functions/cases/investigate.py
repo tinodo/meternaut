@@ -27,6 +27,7 @@ import datetime as dt
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
@@ -847,6 +848,37 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             h.emit("investigation.beat", beat=result.beat.number, of=result.beat.of, kinds=len(result.beat.kinds), billing=result.beat.billing, seeded=result.seeded, looked=result.looked,
                    toolCalls=result.calls, tokens=result.tokens, seconds=result.seconds, end=result.end, ok=ok, findings=result.found)
 
+    # The time of a tool call is taken from the toolbox's own clock, so that the lines of the calls read no clock of the run.
+    tool_clock = getattr(toolbox, "monotonic", time.monotonic)
+
+    def say_call(beat: beats.Beat, number: list[int], by: str, fields: dict) -> None:
+        number[0] += 1
+        try:
+            h.emit("investigation.call", beat=beat.number, n=number[0], by=by, **fields)
+        except Exception:  # noqa: BLE001 (a line of the History never costs the agent its answer)
+            LOG.warning("a line of a tool call could not be written")
+
+    def recorded(beat: beats.Beat, by: str, number: list[int]) -> Callable[[str, dict], str]:
+        """The handler of the tool calls of a beat: the toolbox's own, and one line of the History for each call that it runs (cases/beats.call_fields), `by` code for the reads that code makes for a
+        beat and `agent` for the calls of the Investigator."""
+        def handler(name: str, arguments: dict) -> str:
+            began = tool_clock()
+            text = toolbox.call(name, arguments)
+            try:
+                fields = beats.call_fields(name, arguments, text, tool_clock() - began)
+            except Exception:  # noqa: BLE001 (the same: nothing that the line needs may fail a call)
+                fields = {}
+            if fields:
+                say_call(beat, number, by, fields)
+            return text
+        return handler
+
+    def say_refused(beat: beats.Beat, number: list[int], run: object) -> None:
+        """A line for each of the first calls that the agent asked for after its budget was used up, and was refused: what it still wanted is what a person reading the History looks for."""
+        asked = [call for call in getattr(run, "calls", ()) if isinstance(call, dict) and call.get("refused")]
+        for call in asked[: beats.REFUSED_LINES]:
+            say_call(beat, number, "agent", beats.call_fields(call.get("name"), call.get("arguments"), None, 0.0, refused=True))
+
     for beat in plan:
         at = s.monotonic()
         if out.beats and beats_deadline - at < beats.MIN_SECONDS:
@@ -858,10 +890,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         calls, cap = (st.investigate_beat_calls, min(st.investigate_beat_tokens, st.investigate_total_tokens - out.tokens)) if focused else (max_calls, None)
         result = beats.Result(beat, max_calls=calls)
         log_before = len(toolbox.log)
+        number = [0]  # the tool calls of this beat that have a line in the History: the reads that code makes for it first, then the calls of its session
         if focused:
             # Each beat has an allowance of calls of its own on the shared toolbox, whatever the beats before it used: the reads that code makes for it and the calls of its session (the toolbox allows MAX_CALLS and what is added).
             toolbox.extra_calls = max(toolbox.extra_calls, log_before + beats.SEED_CALLS + calls - MAX_CALLS)
-        seeded = beats.seed(toolbox.call, beat) if focused else None
+        seeded = beats.seed(recorded(beat, "code", number), beat) if focused else None
         calls_from = len(toolbox.log) if focused or out.beats else 0  # the calls of the beat's own session are the ones after the reads that code made for it
         if seeded is not None:
             result.seeded = len(seeded.handles)
@@ -870,15 +903,17 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         seconds = max(1.0, min(st.investigate_beat_seconds, beats_deadline - at) - (s.monotonic() - at)) if focused else max(1.0, budget - reserve)
         what = beats.beat_input(beat, calls, seeded, beats.carry(out.beats))
         who = f"beat {beat.number}: " if focused else ""
+        handler = recorded(beat, "agent", number)
         if harness is not None and out.beats:
             harness.again(spec_i)  # each beat is a run of its own: its own tokens, its own refusals and its own line
         try:
             if harness is None:
-                answer = s.foundry.run(investigator_ref, what, toolbox.call, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+                answer = s.foundry.run(investigator_ref, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
             else:
-                answer = harness.run(investigator_ref, spec_i, what, toolbox.call, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
+                answer = harness.run(investigator_ref, spec_i, what, handler, max_calls=calls, max_seconds=seconds, **({"max_tokens": cap} if cap else {}))
         except FoundryError as error:
             partial = getattr(error, "partial", None)  # what the run had come to: the calls that it made and the tokens that it used
+            say_refused(beat, number, partial)
             result.calls = len(_made(partial.calls)) if partial is not None else len(toolbox.log) - calls_from
             result.tokens = partial.input_tokens + partial.output_tokens if partial is not None else 0
             out.answer, out.tool_calls, out.tokens = partial, out.tool_calls + result.calls, out.tokens + result.tokens
@@ -896,6 +931,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             continue
         made = _made(answer.calls)
         refused = len(answer.calls) - len(made)
+        say_refused(beat, number, answer)
         out.answer = answer
         result.calls, result.tokens = len(made), answer.input_tokens + answer.output_tokens
         out.tool_calls, out.tokens = out.tool_calls + result.calls, out.tokens + result.tokens

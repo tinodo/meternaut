@@ -16,6 +16,7 @@ from typing import Callable, Mapping, Sequence
 
 from . import activity
 from .detectors import Context
+from .toolbox import ERRORS, TOOLS, type_word
 
 FLOOR_PERCENT = 95  # the dearest kinds that together make this share of the cost of the last 30 days have a beat of their own; the cheaper ones are left to the last beat
 BEAT_KINDS = 3  # the most kinds of one beat, of one service when they belong together
@@ -27,6 +28,9 @@ MIN_TOKENS = 30_000
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
+REFUSED_LINES = 8  # the tool calls that a beat asked for after its budget was used up, and that get a line each in the History; the line of the beat counts the others
+BUDGET_USED_UP = "budget-used-up"  # what the client answers a call that it does not run (cases/foundry.py)
+CALL_ERRORS = ERRORS + (BUDGET_USED_UP,)  # the words that a line of a tool call may give as the reason why a call has no answer: the toolbox's own, and the refusal of a budget
 
 
 @dataclass(frozen=True)
@@ -189,3 +193,31 @@ def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[di
     if earlier:
         body["earlier"] = list(earlier)
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
+
+
+def _error_of(text: object) -> str | None:
+    """None when a tool answered, else the word of the toolbox that says why not; a word that is not on its list is `other`, and an answer that is no JSON object is `failed`."""
+    try:
+        answer = json.loads(text) if isinstance(text, str) else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        return "failed"
+    if "error" not in answer:
+        return None
+    return answer["error"] if answer["error"] in CALL_ERRORS else "other"
+
+
+def call_fields(name: object, arguments: object, text: object, seconds: float, *, refused: bool = False) -> dict:
+    """The fields of the History line of one tool call (`investigation.call`): words and numbers that code checks, and no text of the estate or of the agent. The tool (a name that the toolbox has, else
+    `unknown`), the resource type (`resourceType`, as the lines of the cases call it: not `type`, which is the kind of the line) when the arguments hold one that has the shape of a platform type
+    and never any other text of them, how many handles and metrics it asked about, whether it worked and, when it did not, the word of the toolbox that says why, the size of the answer and the
+    seconds that it took. A call that was refused for a budget ran nothing: it says so and has no answer and no time."""
+    asked = arguments if isinstance(arguments, dict) else {}
+    handles, metrics, kind = asked.get("handles"), asked.get("metrics"), asked.get("type")
+    count = len(handles) if isinstance(handles, list) else 1 if isinstance(asked.get("handle"), str) else 0
+    measured = len(metrics) if isinstance(metrics, list) else 1 if isinstance(asked.get("metric"), str) else 0
+    word = type_word(kind.lower()) if isinstance(kind, str) else None
+    error = BUDGET_USED_UP if refused else _error_of(text)
+    return {"tool": name if isinstance(name, str) and name in TOOLS else "unknown", **({"resourceType": word} if word else {}), "handles": min(count, 999), **({"metrics": min(measured, 99)} if measured else {}),
+            "ok": error is None, **({"error": error} if error else {}), "chars": 0 if refused or not isinstance(text, str) else len(text), "seconds": 0.0 if refused else round(max(0.0, float(seconds)), 1)}

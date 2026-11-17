@@ -996,7 +996,7 @@ class AGoodInvestigation(unittest.TestCase):
         run = self.h.foundry.runs[0]
         self.assertEqual((run["agent"], run["input"]), ("meternaut-investigator:3", agents.investigator_input(30)))
         self.assertEqual((run["max_calls"], run["max_seconds"]), (30, 600 - 120))
-        self.assertEqual(run["handler"], self.h.toolbox.call)
+        self.assertEqual(run["handler"].__name__, "handler", "the handler is the one that writes a line of the History for each call (cases/beats.call_fields)")
         self.assertEqual([(c["name"], c["arguments"]) for c in self.h.toolbox.log], [("tool_one", {"x": 1}), ("tool_two", {})])
 
     def test_the_skeptic_runs_once_with_no_tools_and_gets_the_findings(self):
@@ -1012,7 +1012,7 @@ class AGoodInvestigation(unittest.TestCase):
 
     def test_the_history_has_a_line_for_the_start_each_finding_each_case_and_the_end(self):
         self.assertEqual([e["type"] for e in self.h.events],
-                         ["investigation.started", "investigation.finding", "case.result", "case.result", "investigation.finished", "run.note"])
+                         ["investigation.started", "investigation.call", "investigation.call", "investigation.finding", "case.result", "case.result", "investigation.finished", "run.note"])
         for e in self.h.events:
             self.assertEqual((e["v"], e["ts"], e["runId"], e["requestId"]), (1, "2026-11-04T12:00:00Z", "r" * 32, "a" * 32))
 
@@ -2182,7 +2182,7 @@ class WhenItDoesNotRun(unittest.TestCase):
                 result = h.go()
                 self.assertEqual((result.ran, result.cases, result.tokens, result.tool_calls), (False, 0, 1200, 2))
                 self.assertTrue(result.note.startswith("the investigator gave no answer that could be read ("), result.note)
-                self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.finished"])
+                self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.call", "investigation.call", "investigation.finished"])
                 self.assertEqual((h.events[-1]["ok"], h.events[-1]["tokens"], h.events[-1]["toolCalls"]), (False, 1200, 2))
                 self.assertEqual(len(h.foundry.runs), 1)
 
@@ -2305,7 +2305,7 @@ class TheStateOfAnInvestigation(unittest.TestCase):
     def test_the_lines_that_it_wrote_are_the_ones_of_the_history_by_kind(self):
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]), finding(handles=["r2"]))))
         h.go()
-        self.assertEqual(h.s.history.lines("investigation."), 4, "the start, two findings and the end")
+        self.assertEqual(h.s.history.lines("investigation."), 6, "the start, two calls, two findings and the end")
         self.assertEqual((h.s.history.counts["investigation.finding"], h.s.history.counts["case.result"]), (2, 2))
 
 
@@ -2314,8 +2314,8 @@ class WhenItFindsNothing(unittest.TestCase):
         h = Harness(FakeFoundry('{"findings": [], "examined": ["the biggest costs"]}'))
         result = h.go()
         self.assertEqual((result.ran, result.note, result.cases, result.kept, result.dropped_findings, result.tool_calls), (True, "", 0, 0, 0, 2))
-        self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.finished", "run.note"])
-        self.assertEqual({k: v for k, v in h.events[1].items() if k in ("ok", "examined", "findingsKept", "findingsDropped", "cases", "tokens")},
+        self.assertEqual([e["type"] for e in h.events], ["investigation.started", "investigation.call", "investigation.call", "investigation.finished", "run.note"])
+        self.assertEqual({k: v for k, v in h.events[3].items() if k in ("ok", "examined", "findingsKept", "findingsDropped", "cases", "tokens")},
                          {"ok": True, "examined": ["the biggest costs"], "findingsKept": 0, "findingsDropped": 0, "cases": 0, "tokens": 1200})
         self.assertEqual(h.notes, ["the investigation made 2 tool calls, kept 0 of 0 findings and opened 0 cases"])
         self.assertEqual(len(h.foundry.runs), 1, "nothing to judge, so no Skeptic")
@@ -2491,7 +2491,7 @@ class WhatTheToolsSaid(unittest.TestCase):
         self.assertEqual(h.notes[0], "cost lines could not be read (saves [figure removed] [link removed]")
         self.assertEqual(len(h.notes[1]), 300)
         kinds = [e["type"] for e in h.events]
-        self.assertEqual(kinds[:4], ["investigation.started", "run.note", "run.note", "investigation.finding"])
+        self.assertEqual(kinds[:6], ["investigation.started", "investigation.call", "investigation.call", "run.note", "run.note", "investigation.finding"])
         self.assertEqual([e["note"] for e in h.of("run.note")][:2], h.notes[:2])
 
 
