@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import costs as cost_words
+from . import pricing
 from .detectors import ADVISOR, Lead
 from .guards import Guards
 from .roles import DetectiveAnswer, SkepticAnswer
@@ -52,10 +53,11 @@ def decide(lead: Lead, guards: Guards, detective: DetectiveAnswer, skeptic: Skep
         status = "needs_human"
     saving = None
     if status != "dropped":
-        if detective.recommendation == "delete":
+        saving = pricing.point(lead.facts, lead.cost_usd_30d)  # what code computed from the bill lines that the finding names: the first figure, and the only one that counts
+        if saving is None and detective.recommendation == "delete" and not pricing.refused(lead.facts):
             saving = saving_of(lead)
-        elif detective.recommendation == "change":
-            saving = lead.advisor_saving_usd  # a change has no figure of its own: only Advisor's, when a finding cites one
+        elif saving is None and detective.recommendation == "change":
+            saving = lead.advisor_saving_usd  # Advisor's own figure, when a finding cites one and no bill line of the model gave another: never added to it
     objections = skeptic.objections if skeptic else ()
     if skeptic and not objections and skeptic.verdict != "agree" and skeptic.summary:
         objections = (skeptic.summary,)

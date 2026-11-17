@@ -22,11 +22,10 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, GATEWAYS_SHORT, OPTIONS_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
+from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
 from .stake import chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
-MAX_KINDS = 3  # the kinds of data that nothing reads which a card lists
 KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result": "Recorded", "first_contact": "Hello", "closed": "Closed", "test": "Test"}
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
@@ -133,39 +132,6 @@ def _learned(brief: Brief) -> list[dict]:
 def _facts(brief: Brief) -> list[dict]:
     rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in brief.facts[:3]]
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
-
-
-def _unread(brief: Brief) -> list[dict]:
-    """The data that a workspace takes in and nothing reads, in the room that a card has: the method in one sentence, the first kinds of data (the largest first), what was not counted when
-    something was, and the choices in one line. The page has every line, the readers of each, the whole sentence about what was not counted and the whole of every choice."""
-    unread = brief.unread
-    if unread is None:
-        return []
-    shown = unread.lines[:MAX_KINDS]
-    left = len(unread.lines) - len(shown) + unread.more
-    blocks = [_block("unread", f"**Data that nothing reads.** {md(unread.sentence, 240)}")]
-    blocks += [_block(f"unread-{number}", f"{md(line.kind, 60)}, {md(line.gb, 24)} ({md(line.percent, 30)})") for number, line in enumerate(shown, 1)]
-    if left > 0:
-        blocks.append(_block("unread-more", f"{left} more"))
-    if unread.caveat:
-        blocks.append(_block("unread-caveat", md(unread.caveat, 200), isSubtle=True))
-    if brief.options:
-        blocks.append(_block("options", md(OPTIONS_SHORT, 200)))
-    return blocks
-
-
-def _gateways(brief: Brief) -> list[dict]:
-    """What a finding about point-to-site gateways says, in the room that a card has: what was found in one or two sentences, what was not counted when something was, and the choices in one
-    line. The page has what these gateways are and the whole of each choice."""
-    found = brief.gateways
-    if found is None:
-        return []
-    blocks = [_block("gateways", f"**Gateways.** {md(found.sentence, 300)}")]
-    if found.caveat:
-        blocks.append(_block("gateways-caveat", md(found.caveat, 120), isSubtle=True))
-    if brief.options:
-        blocks.append(_block("options", md(GATEWAYS_SHORT, 200)))
-    return blocks
 
 
 def _advisor(brief: Brief) -> list[dict]:
@@ -302,7 +268,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
     body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
-            *_facts(brief), *_unread(brief), *_gateways(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
+            *_facts(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 
 

@@ -687,6 +687,40 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         self.assertNotIn("https://evil.example", reply.links())
 
 
+PRICED = {**INVESTIGATED, "case_id": "case0101", "saving_usd_month": 12.0,
+          "facts": {**INVESTIGATED["facts"], "change": {"action": "reduce", "how": "Take it down one size.", "price": {
+              "lowUsd": 12.0, "highUsd": 12.0, "billUsd": 36.0, "lines": 2, "resources": 1, "form": "ratio", "from": 3.0, "to": 2.0}}}}
+
+
+class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
+    """The page of a finding whose saving code worked out from the bill lines that it names: the figure with its level and its basis, the lines, and the AI's own words apart."""
+
+    def setUp(self):
+        self.console = seeded()
+        self.console.store.case_put(make_case(**PRICED))
+        self.reply = self.console.get("/why/case0101")
+
+    def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
+        card = self.reply.main.find("section", class_="focus")
+        sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
+        self.assertTrue(sub.startswith("Saves, Scenario. $12.00 a month. Based on the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, scaled by the change from 3 to 2: "
+                                       "the AI's target."), sub)
+
+    def test_the_bill_lines_that_it_would_shrink_are_a_fact_that_code_read(self):
+        self.assertEqual(self.reply.measured()["Bill lines it would shrink"], ("2 lines, $36.00 in the last 30 days", "Azure cost lines"))
+
+    def test_what_the_ai_says_a_person_would_do_is_a_box_of_its_own_marked_as_not_checked_by_code_and_the_block_is_no_typed_fact(self):
+        labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
+        self.assertEqual(labels[:3], ["The AI's reasoning (not checked by code)", "What the AI says a person would do (not checked by code)", "The second AI's doubt"])
+        self.assertIn("Take it down one size.", self.reply.content)
+        self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"})
+
+    def test_a_finding_that_states_no_change_has_no_such_box(self):
+        self.console.store.case_put(make_case(**INVESTIGATED))
+        labels = [p.text() for p in self.console.get("/why/case0100").main.find_all("p", class_="quote-label")]
+        self.assertFalse([label for label in labels if "a person would do" in label])
+
+
 class TheRequestPage(unittest.TestCase):
     """The page of one request, drawn from the style guide: a card with what is at stake and what happens on a yes, what was measured and why beside the answer."""
 

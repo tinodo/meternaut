@@ -23,7 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Collection, Sequence
 
 from . import brief as brief_mod
@@ -35,8 +35,6 @@ from .stake import Stake, chips_of, decisions_of, place_of, stake_of, title_text
 SUBJECT_PREFIX = "[Meternaut]"
 MAX_LISTED = 5
 MAX_FACTS = 3
-MAX_KINDS = 3  # the kinds of data that nothing reads which a letter lists: a letter has no room for a table of five rows
-KIND_WORDS = 19  # the words that the lines of kinds, the line that counts the rest and what was not counted take together in a decision letter: three lines of five words, that line, and two words of room
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on. "save" is the green of the figure of a saving (the pages'
 # green for money saved); it never stands alone: the label "Saves, Expected" is beside it.
@@ -143,12 +141,10 @@ class _Doc:
     def paragraph(self, text: str, muted: bool = False, strong: bool = False) -> None:
         self.blocks.append(_Paragraph(text, muted, strong))
 
-    def figure(self, stake: Stake, basis_shown: bool = True, then: str = "") -> None:
-        """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. `basis_shown` is false for a letter that says the basis of a saving in the
-        lines that follow (the reason of a missing figure is always said). What the cost of a whole subscription is made of, and the estimate at list price for a disk that Azure has no cost
-        line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
-        shown = stake if basis_shown or stake.state != "save" else replace(stake, note="")
-        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(shown.line, 400), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
+    def figure(self, stake: Stake, then: str = "") -> None:
+        """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. What the cost of a whole subscription is made of, and the estimate at list
+        price for a disk that Azure has no cost line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
+        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, 400), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
 
     def facts(self, *rows: tuple[str, str]) -> None:
         if rows:
@@ -256,55 +252,6 @@ def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
 
 
-def _within(lines: Sequence[str], room: int) -> tuple[list[str], int]:
-    """The first of the lines of kinds that fit in `room` words, and the words that are left."""
-    kept: list[str] = []
-    for text in lines:
-        words = len(text.split())
-        if words > room:
-            break
-        kept.append(text)
-        room -= words
-    return kept, room
-
-
-def _unread_block(doc: "_Doc", brief: Brief, closing: bool = False, tight: bool = False) -> None:
-    """What a finding about the data that a workspace takes in and nothing reads adds to a letter, in the room that a letter has: the method in one sentence, the first kinds of data as
-    short lines (the largest first, at most MAX_KINDS of them), what was not counted when something was, and the choices in one line, with the closing sentence of the page's section when
-    `closing` is set. The page has every line, the readers of each, the whole of every choice and the whole sentence about what was not counted. In a `tight` letter what was not counted
-    takes its words from the lines of kinds: the line that counts the rest goes first and then the last kinds, since the first kinds are what a person needs and a caveat on the figure is
-    more than the third one."""
-    unread = brief.unread
-    if unread is None:
-        return
-    doc.paragraph(_data(unread.sentence, 240))
-    caveat = _data(unread.caveat, 160)
-    lines = [f"{_data(line.kind, 60)}, {line.gb} ({line.percent})" for line in unread.lines[:MAX_KINDS]]
-    spare = 2  # the words of the line that counts the rest
-    if tight and caveat:
-        lines, spare = _within(lines, KIND_WORDS - len(caveat.split()))
-    left = len(unread.lines) - len(lines) + unread.more
-    if lines:
-        doc.items(*lines, *([f"{left} more"] if left > 0 and spare >= 2 else []))
-    if caveat:
-        doc.paragraph(caveat)
-    if brief.options:
-        doc.paragraph(_data(brief_mod.OPTIONS_SHORT + (f" {brief_mod.OPTIONS_END}" if closing else ""), 240))
-
-
-def _gateways_block(doc: "_Doc", brief: Brief) -> None:
-    """What a finding about point-to-site gateways adds to a letter, in the room that a letter has: what was found in one or two sentences, what was not counted when something was, and the
-    choices in one line. The page has what these gateways are, the whole of each choice and the whole sentence about what was not counted."""
-    found = brief.gateways
-    if found is None:
-        return
-    doc.paragraph(_data(found.sentence, 300))
-    if found.caveat:
-        doc.paragraph(_data(found.caveat, 120))
-    if brief.options:
-        doc.paragraph(_data(brief_mod.GATEWAYS_SHORT, 200))
-
-
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each. A change that needs two people says so in the
     same line, in words that stay true whatever has happened since the letter was written."""
@@ -344,8 +291,6 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
-    about_data = brief.unread is not None and brief.kind == "advice"  # a finding about the data that a workspace takes in and nothing reads: the letter says what it rests on in its own lines
-    about_gateways = brief.gateways is not None and brief.kind == "advice"  # a finding about point-to-site gateways: the letter says what was found in a sentence
     about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its rows say how many, what they cost together and which, and the letter keeps to them
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(title_text(brief), 200))
@@ -354,17 +299,11 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
-    doc.figure(stake_of(brief), basis_shown=not (about_data or about_gateways))
+    doc.figure(stake_of(brief))
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
-    if about_data:
-        _unread_block(doc, brief, tight=True)
-        doc.facts(*_decision_rows(brief)[:2])  # whose it is, and that the answer changes nothing in Azure: the choices say what each puts at risk, and there is nothing to undo
-    elif about_gateways:
-        _gateways_block(doc, brief)
-        doc.facts(*_decision_rows(brief)[:2])  # the same two rows: the sentence has the evidence, and the choices say what each puts at risk
-    elif about_group:
+    if about_group:
         rows = _fact_rows(brief)
         doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well
         said = _decision_rows(brief)
@@ -432,9 +371,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     """The decisions that wait for a person, counted and ranked as the Decisions page does it (the page's own code groups them, so that findings of one kind about several resources are one
     line here as they are one row there, "4 storage accounts in 3 resource groups", and the number in the subject is the number that the page shows; `later` holds the plans that the person
     put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure a year with its level ("$1,682 a year, Expected") and no total: a total is
-    the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then. Advice has no letter of
-    its own, so when the one decision that waits is about the data that a workspace takes in and nothing reads, the letter is its decision letter: it adds what the finding rests on (the
-    method, the first kinds of data and the choices), as far as a letter of this size has room for."""
+    the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then."""
     base = _base(base_url)
     rows = decisions_of([(brief_mod.build_brief(case, plan, None, (), now=now), case, plan.plan_id in later) for plan, case in waiting if _waits(plan, now)])
     if not rows:
@@ -445,8 +382,6 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
     only = rows[0].brief if count == 1 else None
-    if only is not None and only.unread is not None and only.kind == "advice":
-        _unread_block(doc, only, closing=True)
     if only is not None:
         doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:

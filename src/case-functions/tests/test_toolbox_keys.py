@@ -64,7 +64,7 @@ def everything(box):
         ("profile", {"handles": ["r1", "r2"]}), ("neighbors", {"handle": "r1"}), ("neighbors", {"handle": "r2"}), ("changes", {"handles": ["r1", "r2"]}), ("cost_lines", {}),
         ("cost_lines", {"type": GADGET}), ("cost_meters", {"handle": "r1"}), ("metric_names", {"type": GADGET}), ("advisor_items", {}), ("data_writers", {"handle": "r1"}),
         ("cost_history", {"handle": "r1"}), ("children", {"handle": "r1"}))]
-    texts += [json.dumps(box.evidence), json.dumps(box.log), json.dumps(box.notes), json.dumps(box.table_names("r1"))]
+    texts += [json.dumps(box.evidence), json.dumps(box.log), json.dumps(box.notes)]
     return texts
 
 
