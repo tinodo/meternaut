@@ -3,7 +3,7 @@
 A request waits as long as it is open. Its ladder is a row of steps, each made once (`Store.escalation_claim`): step 1 a reminder to the people that it was made for, step 2 the next person (the
 manager that the directory names, an escalation tag, the escalation contacts, or the owners: cases/directory.py), step 3 the next level, step 4 the escalation contacts, and then, every week for
 as long as it waits, the contacts and the people of the chain together. The days are the setting ESCALATION_DAYS (3, 7, 14, 21 by default) and ESCALATION_REPEAT_DAYS (7). A step is due when the
-request is old enough, counted from the first time it was made (a request that was made again keeps its start), and when the step before it is a day old, so that a request that has waited long is
+request is old enough, counted from the moment it was made, and when the step before it is a day old, so that a request that has waited long is
 caught up one step at a time. Nothing here asks a model, and nothing here changes Azure.
 
 Each step is one record: who it goes to, by which source, what could not be looked up on the way, and what became of the message. A message that is held (a pulled switch, a pause, quiet hours, the

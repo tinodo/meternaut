@@ -1547,7 +1547,7 @@ def waiting_cost(monthly: float | None, level: str, days: int) -> str:
 
 
 def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datetime) -> Waiting:
-    """How long the request has waited since `plan.created_at` (a request that was made again keeps the first start), from the records of its ladder (cases/escalation.py): with whom it is now, who was
+    """How long the request has waited since `plan.created_at`, from the records of its ladder (cases/escalation.py): with whom it is now, who was
     told and when, how often it was put off."""
     days, _ = ago_text(now, plan.created_at)
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)

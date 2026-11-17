@@ -403,7 +403,7 @@ ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not w
 
 
 def waited_days(plan: PlanRecord, now: dt.datetime) -> int:
-    """How many whole days the request has waited since it was first made (a request that was made again keeps the first start)."""
+    """How many whole days the request has waited since it was made."""
     since = brief_mod.parse_time(plan.created_at)
     moment = now.replace(tzinfo=dt.timezone.utc) if now.tzinfo is None else now.astimezone(dt.timezone.utc)
     return 0 if since is None else max(0, (moment - since).days)

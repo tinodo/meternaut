@@ -1,0 +1,61 @@
+# Escalation: a request to a person never times out and never becomes invisible — a decision record
+
+**Status: decided on 2026-11-17 (the owner's rule, [AGENTS.md rule 38](../../AGENTS.md)); built and tested on this machine against fakes and a fake clock; not deployed and not run in the Hub. What is not proved is at the end.**
+
+## Why
+
+Before this, a request to a person (a plan of any family: advice, or a change) lived 72 hours (`PLAN_TTL_HOURS`). When nobody answered, it was closed as `expired`, its case went to `expired`, the Savings page filed it under "Declined or expired", and nothing reminded anybody. A finding that nobody answered faded. The owner's words, 2026-11-17: "Requests should not time out, rather they need to be escalated and should NEVER timeout and become invisible. ... To escalate to the manager: check Entra ID if you can find a manager or something. NEVER SILENTLY IGNORE!!!!!" What Advisor and Cost Management show today is ignored, and the money is wasted: Meternaut exists to be answered.
+
+## What was decided
+
+1. **No clock closes a request.** The time to live is gone (`ApprovalSettings.ttl_hours`, `Approvals.expire`, the setting `PLAN_TTL_HOURS` and the template parameter `planTtlHours`). A new plan has no end time. The stored word `expired` now means only "taken back by Meternaut, with a reason" (`brief.TAKEN_BACK`), and every page, letter and card says "Taken back" and the reason. No page says "open until". A request ends by a person's answer, by a change that was made or refused, or by Meternaut taking it back in words. A change plan of any age is still read again at the click: the runner re-reads the resource and its locks after the sign-in and refuses a change that no longer holds, which opens the request again with the reason.
+2. **The requests that the old clock closed come back.** At each Watch, for each resource, the newest request that the clock closed (`expired`, no reason, and an end that is the start plus a whole number of hours from 1 to 336) and that nobody answered is opened again, and its case goes back to what it was before. The History says `plan.revived`. A resource that has an open request, a request that a person answered, a case that moved on, or a request that Meternaut took back with a reason is left alone, and a second run changes nothing. The plan's digest still holds, because revival changes only its state.
+3. **The ladder** ([`cases/escalation.py`](../../src/case-functions/cases/escalation.py)), counted from the first time the request was made, one step at a time and at least a day apart, so that a request that has waited long is caught up one step a day, never in a burst:
+
+   | Step | Age | Who |
+   |---|---|---|
+   | 1 | 3 days | A reminder to the people that it was made for |
+   | 2 | 7 days | The next person (below) |
+   | 3 | 14 days | The next level: the manager of that manager when there is one, else the escalation contacts again |
+   | 4 | 21 days | The escalation contacts |
+   | 5 and on | every 7 days | The contacts and the people of the chain together, for as long as it waits |
+
+   Each step is one record (table `mnescalations`, claimed once, so a second run or a second instance makes none again): who, by which source, what could not be looked up on the way, and what became of the message. A person who puts the request off ("later") delays the next step by 7 days, the first three times only: a put-off never silences. "Not mine" on a request of advice keeps it open and makes the next step due at once.
+4. **Who is next** ([`cases/directory.py`](../../src/case-functions/cases/directory.py)), in this order, each reported by a closed word: the manager that Microsoft Entra names (when `ESCALATE_TO` is `managers`; then the manager's manager); an address in the tag `escalation` on the resource, its group or its subscription; the people with the role `escalation` in `CONSOLE_PEOPLE`; and, when none of these is found, all the owners, with the plain note "No escalation contact is set": a request is never dropped and never sent nowhere. A lookup that fails is not an error but a sentence in the message ("I could not look up the manager (no permission yet)", "No manager is set for the person in the directory", and so on), and the next source is tried. A person from the directory is a target only when they are a Member of the tenant, their account is enabled, they have a mail address, and the address is not on `ESCALATION_DENY`; their name is cleaned, cut and shown escaped, and nothing else of the profile is kept.
+5. **Delivery is by letter only.** Teams cards are not used for escalation. A person gets at most one escalation letter a day, a list when several requests have come to them, and a person who never heard from Meternaut is told who writes and why. A switch that is pulled, a pause, quiet hours and the one-letter-a-day rule hold a step, and a held step is kept, shown ("held: the reason") and sent when the hold ends; a failed send is tried again every 15 minutes, 12 times, and then once a day. Held means delayed and visible, never lost. The weekly budget of advice messages does not count escalation letters.
+6. **The weekly letter never stops.** Every week the escalation contacts get one letter of every request that has waited more than 7 days, and when something stops the ladder (a Graph permission that is missing, a message that cannot be delivered) the owners get it too, with that problem named once.
+7. **Waiting is shown with its cost.** A request's page has a block "Waiting" (since when, with whom it is now, who was told and when, how often it was put off, and what waiting has cost: the figure of a month over 30 days for the days waited, "about" for a scenario, nothing without a measured saving). The start page has "Waiting the longest". The Savings page has the rows "Declined" and "Taken back" instead of "Declined or expired", and says how long the longest request has waited.
+8. **The settings.** `ESCALATE_TO`: `contacts` (the default) or `managers`; `off` is refused with a plain message, because a request that nobody answers is always passed on. The template sets only this one. The others are read with their defaults: `ESCALATION_DAYS` (four increasing whole numbers, `3,7,14,21`), `ESCALATION_REPEAT_DAYS` (7), `ESCALATION_TAG` (`escalation`), `ESCALATION_DENY` (addresses or `@domains` that are never written to), `ESCALATION_SNOOZES` (3) and `ESCALATION_SNOOZE_DAYS` (7). The ladder runs only when `MAIL_SENDER` is set, because it sends letters.
+9. **Who may answer.** A person with the role `escalation` may answer any request of advice, like an approver of it. A change still needs an approver.
+
+## The one exception to the closed list of letters
+
+A letter goes only to a person on the list ([rule 26 (c)](../../AGENTS.md)). The next person on a ladder is often not on it, so there is one exception, and only one: `Mailer.send_escalation` for the two kinds `escalation` and `escalation-weekly`. It takes a target that the directory module made (a person of the list, or a vetted profile), checks the kind, the shape of the address and of the object id, and the deny list again, records "Step N, source: …" with the letter, and refuses everything else. The Graph reads that find the person are the two calls of `http.directory_calls()` and nothing else: `GET /v1.0/users/{id or address}` and `GET /v1.0/users/{id}/manager`, host `graph.microsoft.com`, no list, no group, no write; the drift check probes that list like the others (eleven probes).
+
+## What Entra showed (a read-only probe, 2026-11-17, counts only)
+
+The owner signed in as a guest of the estate tenant. His own manager was not found (404). The first page of 100 users held only Members, and more pages exist. Of 20 Members, none had a manager set (404 each). In this tenant the manager is usually not filled in, so the contacts are the path that works, and the manager is a bonus when a tenant fills it in: which is why `ESCALATE_TO` starts at `contacts`. No name, address or id was printed or stored.
+
+## The Graph permission, and how a person gives it
+
+Reading a profile or a manager from the app needs the Microsoft Graph application permission **`User.Read.All`** (Read all users' full profiles; admin consent required; app role id `df021288-bdef-4463-88db-98f22de89214`, read on 2026-11-17 in the [permissions reference](https://learn.microsoft.com/graph/permissions-reference)). The app has none today, and nothing here grants it (rule 29: a change in Azure or Entra is made by a person with their own rights). It is requirement T4 in [`environment/access-requirements.json`](../../environment/access-requirements.json), and the table in [access and onboarding](03-access-and-onboarding.md) shows it. The steps, for a person who holds the Microsoft Entra role Privileged Role Administrator or Global Administrator:
+
+1. Take the principal id that the template prints as `casesSystemPrincipalId` (the system-assigned identity of the cases app).
+2. Find the service principal of Microsoft Graph (application id `00000003-0000-0000-c000-000000000000`) and its app role `User.Read.All`.
+3. Make one app role assignment from the Graph service principal to that principal, for that app role. [Learn](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/assign-app-role-managed-identity-powershell) has the PowerShell steps (and [the same for the Azure CLI](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/assign-app-role-managed-identity-azure-cli)); it needs the consent of an administrator.
+4. Set `escalateTo` to `managers` in the deployment, or leave `contacts`. The first lookup that works shows in the next weekly letter, which no longer lists a missing permission.
+
+Only two things need the permission: `ESCALATE_TO=managers`, and an address in an escalation tag of a person who is not on the list of people. Without it each says "no permission yet" in plain words and the request goes on to the escalation contacts.
+
+## What is not proved
+
+- **No manager was found in the estate tenant** (0 of 20 Members), so nothing proves that a real manager is found, vetted and written to. The code is tested with a fake directory.
+- **The Graph permission is not granted**, and Learn is not consistent about it: the page "List manager" lists `User.Read.All` as the least privileged delegated permission and shows no application permission, while the page for the same route for agent users lists the application permission `User.Read.All`, and the permission is widely used that way. Only the first read after the grant settles it. If it is refused, the lookup says "no permission yet" and the contacts are asked.
+- **No real escalation was sent**, to anybody. Every test used invented people, a fake clock, and a fake directory and mail sender.
+- **A person who is not on the list of people can read an escalation letter but cannot open the page**: the web app knows only the people of the list, and its denied page says nothing on purpose. A manager from the directory is in that position until the owner adds them to the list with the role `escalation`; the letter itself carries the facts of the request.
+- **Teams cards do not carry escalation**, and a request that Meternaut makes again (for instance the request of a group that replaces the requests of its resources) starts its wait again.
+- Nothing was run in Azure; the real size of the stored records, the run time of a round with many waiting requests, and the delivery of a letter to an address outside the list are untried.
+
+## The tests
+
+`test_escalation.py` (the ladder, the order of the sources, the hold reasons, the retry, the weekly letter, the revival and its idempotence), `test_directory.py` (every soft failure, the vetting, a hostile name), and the updated tests of the plans, the decision brief, the pages, the cards, the letters and the Savings page; in `tools/tests`, the access file, the template and the package size.
