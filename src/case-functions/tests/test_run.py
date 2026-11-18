@@ -705,6 +705,22 @@ class WhenTheInvestigationRan(unittest.TestCase):
         self.assertTrue(any(n.startswith("the investigation made 2 tool calls") for n in record.notes))
         self.assertEqual(sorted(c.detector for c in extras.store.cases_recent()), ["investigation", "investigation", "orphan-managed-disk"])
 
+    def test_a_note_that_a_run_repeats_is_kept_once_with_its_count_and_a_note_of_300_characters_keeps_its_count_too(self):
+        short, long = "the Activity Log of some resources was not read", "a note of 300 characters " + "n" * 275
+        self.assertEqual(len(long), 300)
+        clock = Moving()
+        extras = loop_for(clock)
+
+        def repeating(s, contexts, notes):
+            notes.extend([short] * 2 + [long] * 3)
+            return investigate.Investigation(ran=True)
+
+        with mock.patch.object(investigate, "investigate", repeating):
+            investigating(estate_with(planted_disk=True, endpoints=1), clock=clock, extras=extras)
+        (record,) = extras.store.runs_recent()
+        self.assertIn(f"{short} x 2", record.notes)
+        self.assertIn(f"{long} x 3", record.notes, "the cut is made before the count is added: the count is not cut off")
+
     def test_the_end_of_the_investigation_is_in_the_history_between_the_leads_and_the_end_of_the_run(self):
         _, events, _, _, _ = investigating(estate_with_leads())
         kinds = [e["type"] for e in events]

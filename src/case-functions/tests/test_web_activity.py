@@ -166,6 +166,13 @@ class HowTheRunEnded(unittest.TestCase):
     def tile(self, **more) -> tuple[str, str]:
         return tiles_of(page_of(record(**more)))["Stopped because"]
 
+    def test_the_small_label_of_what_left_a_finding_is_on_the_page_for_a_kept_finding_and_for_a_dropped_one(self):
+        small = "in a finding that together costs too little to open a case"
+        reply = page_of(record(findings=(finding(1, left={"small": 3}), finding(2, kept=False, resources=2, left={"small": 2}))))
+        kept, dropped = reply.table("findings").rows
+        self.assertEqual(kept["What became of it"], f"Left out: 3 resources {small}")
+        self.assertEqual(dropped["What became of it"], f"Dropped: no resource of it was left (2 resources {small})")
+
     def test_each_word_of_the_list_says_what_it_stands_for_with_the_calls_and_the_seconds_that_were_used_of_the_allowed(self):
         said = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
                 "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),

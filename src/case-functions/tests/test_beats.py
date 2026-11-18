@@ -613,6 +613,13 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([r.end for r in result.beats][0], "tokens")
         self.assertEqual(h.of("investigation.beat")[0]["end"], "tokens")
 
+    def test_a_beat_that_gave_its_answer_when_it_was_asked_once_more_for_no_cause_that_the_run_names_says_its_limit(self):
+        h = rig([script(one("r1"), salvaged="rounds"), script(), script()])
+        result = h.go()
+        self.assertEqual([r.end for r in result.beats][0], "answered", "no flag of time or tokens and no refused call: the run names no cause")
+        self.assertEqual(h.of("investigation.beat")[0].get("salvaged"), True)
+        self.assertIn("beat 1: the investigator was cut off by its limit and gave its answer when it was asked once more", h.notes)
+
     def test_without_a_cost_to_rank_by_the_whole_estate_is_one_open_beat_exactly_as_one_session_always_was(self):
         h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=3), with_store=True)
         result = h.go()

@@ -45,7 +45,7 @@ FOUNDRY_MODEL_SKEPTIC = "FOUNDRY_MODEL_SKEPTIC"
 INVESTIGATE = "INVESTIGATE"
 INVESTIGATE_MAX_CALLS = "INVESTIGATE_MAX_CALLS"
 INVESTIGATE_MAX_SECONDS = "INVESTIGATE_MAX_SECONDS"
-# How many days the daily timer waits after an investigation before it investigates again. A Watch of six beats uses at most about 800,000 tokens of the Investigator, which is about 1 to 3 US dollars through
+# How many days the daily timer waits after an investigation before it investigates again. A Watch of eight beats uses at most about 800,000 tokens of the Investigator, which is about 1 to 3 US dollars through
 # the AI Gateway (docs/proposals/25-beats.md has the arithmetic). The standing limit of the gateway is 5 a day and 25 a month for each caller (rule 15 (g)), shared with the Study, the evaluations, the red
 # team and every run that a person starts: weekly is about 13 of the 25, daily would be about 90 and does not fit. A run that a person starts always investigates; the fixed detectors' leads are
 # judged by the Detective and the Skeptic every day anyway (cents).
@@ -85,7 +85,7 @@ DEFAULT_MODEL_INVESTIGATOR = "gpt-5.5"
 DEFAULT_MODEL_SKEPTIC = "gpt-6.1-sol"
 DEFAULT_INVESTIGATE_CALLS = 40
 LIMIT_INVESTIGATE_CALLS = 40
-# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,440 is six beats of 220 seconds and 120 for the checks and the Skeptic. A beat has the reads that code makes for it (250 seconds in all on the real estate) and then at most
+# The seconds of the whole investigation: its beats, the checks of code and the Skeptic. 1,440 holds eight beats of about 140 seconds each and 120 for the checks and the Skeptic (1,240 in all), with room for a slower Watch. A beat has the reads that code makes for it (250 seconds in all on the real estate) and then at most
 # half of its 220 seconds for tool calls and 60 more to write its answer; the Watch that holds it (reading the subscriptions took 345 seconds for ten of them) ends inside the 38 minutes that the Hub waits for (its container group has 45) at the usual reading time
 # and not at the slowest: see proposal 25. The ceiling is the longest that the Hub's wait and the function's time (host.json) allow.
 DEFAULT_INVESTIGATE_SECONDS = 1440
