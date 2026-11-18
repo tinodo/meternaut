@@ -420,6 +420,14 @@ ESCALATION_WHY = {
     "contact": "You are told because you are an escalation contact: when nobody answers a request, it comes to you.",
     "owners": "You are told because no manager and no escalation contact could be found, so a request that nobody answers comes to the owners of Meternaut.",
 }
+# The same reasons in a few words, for a line of a letter that lists several requests.
+ESCALATION_WHY_SHORT = {
+    "same": "It is a reminder: you are named as an approver.",
+    "manager": "You are told because you are the manager of the person who was asked.",
+    "tag": "You are told because your address is in the escalation tag.",
+    "contact": "You are told because you are an escalation contact.",
+    "owners": "You are told because no manager or escalation contact could be found.",
+}
 ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
                     "I change nothing myself: a person decides on a web page.")
 ESCALATION_ADDED = "You were added to the people who answer this request after it was made."
@@ -495,7 +503,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
         lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
-                                                 f"Why you are told: {_data(source, 20)}.", _heads_up(brief)) if part))
+                                                 ESCALATION_WHY_SHORT.get(source, ESCALATION_WHY_SHORT["owners"]), _heads_up(brief)) if part))
     doc.items(*lines)
     if count > MAX_LISTED:
         doc.paragraph(f"and {count - MAX_LISTED} more.")
@@ -503,8 +511,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
         doc.button("Open the decisions", f"{base}/")
-    doc.footer((), "You got this because requests have waited without an answer and I tell the next person. Why you are told: same is a reminder, manager is the manager of the person asked, "
-                   "tag is an escalation tag, contact is an escalation contact and owners is the owners of Meternaut.", contacts, person)
+    doc.footer((), "You got this because requests have waited without an answer and I tell the next person.", contacts, person)
     return doc.build()
 
 
