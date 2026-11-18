@@ -205,7 +205,7 @@ def _names(targets: tuple[Target, ...]) -> tuple[str, ...]:
     return tuple(t.name for t in targets)
 
 
-def audience(ladder: Ladder, plan: PlanRecord, number: int, steps: list[EscalationRecord]) -> Next:
+def _audience(ladder: Ladder, plan: PlanRecord, number: int, steps: list[EscalationRecord]) -> Next:
     """Who step `number` goes to. Step 1: the people that the request was made for, who did not say that it is not theirs. Steps 2 and 3: the next person after those who said it is not theirs or, when
     nobody did, after the people that it was made for, and after the people of the step before. Step 4: the escalation contacts. After that: the contacts and every person that the chain told."""
     directory, store = ladder.directory, ladder.store
@@ -231,9 +231,29 @@ def audience(ladder: Ladder, plan: PlanRecord, number: int, steps: list[Escalati
     return Next(tuple(chain.values()), found.source, tuple(dict.fromkeys(notes)))
 
 
-def make_step(ladder: Ladder, plan: PlanRecord, number: int, steps: list[EscalationRecord]) -> bool:
+def _who(records: Iterable[EscalationRecord], *kinds: str, below: int = 10**9) -> set[str]:
+    return {oid.lower() for r in records if r.kind in kinds and r.number < below for oid in r.who}
+
+
+def audience(ladder: Ladder, plan: PlanRecord, number: int, steps: list[EscalationRecord], records: Sequence[EscalationRecord] = ()) -> Next:
+    """Who step `number` goes to (`_audience`) and the people who were added to the approvers of the request after it was made and that no step has told yet (Approvals.keep_approvers): the next step
+    tells them too, whatever its source."""
+    found = _audience(ladder, plan, number, steps)
+    wanted = _who(records, "added") - _who(steps, "step")
+    if wanted:
+        wanted -= {d.approver_oid.lower() for d in ladder.store.decisions_of_plan(plan.plan_id) if d.decision == "not_mine"}
+    news = tuple(of_person(p) for p in (ladder.people.by_oid(o) for o in plan.approvers) if p is not None and p.mail and p.oid.lower() in wanted)
+    return Next(tuple({t.oid: t for t in (*found.targets, *news)}.values()), found.source, found.notes) if news else found
+
+
+def _was_added(records: Sequence[EscalationRecord], record: EscalationRecord, oid: str) -> bool:
+    """Whether this step is the first to tell the person, who was added to the approvers of the request after it was made: the letter says so."""
+    return oid.lower() in _who(records, "added") - _who(records, "step", below=record.number)
+
+
+def make_step(ladder: Ladder, plan: PlanRecord, number: int, steps: list[EscalationRecord], records: Sequence[EscalationRecord] = ()) -> bool:
     """Makes step `number` of the plan once: who it goes to is worked out, and the record is claimed; False when another round made it first."""
-    found = audience(ladder, plan, number, steps)
+    found = audience(ladder, plan, number, steps, records)
     record = EscalationRecord(plan.plan_id, "step", number, stamp(ladder.clock()), found.source, tuple(t.oid for t in found.targets), _names(found.targets), (), "email",
                               "due" if found.targets else "failed", found.notes, "" if found.targets else "Nobody on the list has a mail address.")
     if not ladder.store.escalation_claim(record):
@@ -303,17 +323,18 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
                       notes=tuple(dict.fromkeys(record.notes + ((note,) if note else ()))))
             continue
         person, first = ladder.people.by_oid(oid) or Person(oid, target.name, (), target.mail), _first_contact(ladder, oid)
-        rows = [(plan, store.case_get(plan.case_id), record) for plan, record in items]
+        rows = [(plan, store.case_get(plan.case_id), record, _was_added(records[plan.plan_id], record, oid)) for plan, record in items]
         if len(rows) == 1:
-            plan, case, record = rows[0]
+            plan, case, record, added = rows[0]
             steps = store.escalations_of(plan.plan_id)
             told, pending = brief_mod.told_lines(steps, record.number)
-            letter = letters.escalation_letter(plan, case, person, ladder.base, now, ladder.contacts, source=record.source, asked=_asked(ladder, plan, steps),
+            letter = letters.escalation_letter(plan, case, person, ladder.base, now, ladder.contacts, source="same" if added else record.source, asked=_asked(ladder, plan, steps),
                                                notes=tuple(NOTES.get(n, "") for n in record.notes), told=told, pending=pending, first=first,
-                                               put_off=sum(1 for r in steps if r.kind == "snooze"))
+                                               put_off=sum(1 for r in steps if r.kind == "snooze"), added=added)
             result = ladder.mailer.send_escalation(target, letter, "escalation", plan.plan_id, record.number, record.source)
         else:
-            letter = letters.escalation_digest_letter(person, ladder.base, now, [(plan, case, record.source) for plan, case, record in rows], ladder.contacts, first=first)
+            letter = letters.escalation_digest_letter(person, ladder.base, now, [(plan, case, "same" if added else record.source) for plan, case, record, added in rows], ladder.contacts, first=first,
+                                                      added=any(added for *_, added in rows))
             result = ladder.mailer.send_escalation(target, letter, "escalation", rows[0][0].plan_id, rows[0][2].number, f"{rows[0][2].source}, with {len(rows) - 1} more")
         for _, record in items:
             if result.status == "sent":
@@ -373,7 +394,7 @@ def tick(ladder: Ladder) -> int:
             steps, snoozes = [r for r in mine if r.kind == "step"], [r for r in mine if r.kind == "snooze"]
             last = steps[-1].at if steps else ""
             number = due_number(plan, steps, snoozes, any(r.kind == "pass" and r.at > last for r in mine), ladder.settings, now)
-            if number is not None and make_step(ladder, plan, number, steps):
+            if number is not None and make_step(ladder, plan, number, steps, mine):
                 made += 1
                 records[plan.plan_id] = ladder.store.escalations_of(plan.plan_id)  # the new step goes out in this round
         deliver(ladder, {plan.plan_id: plan for plan in looked}, records)

@@ -8,11 +8,12 @@ from collections import Counter
 from types import SimpleNamespace
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import brief as brief_mod, escalation, http, loop_config, mail, run as run_mod
+from cases import brief as brief_mod, escalation, events, http, loop_config, mail, people as people_mod, run as run_mod, wiring
 from cases.approvals import ApprovalSettings, Approvals
 from cases.escalation import Ladder
+from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, parse, stamp
-from cases.models import DecisionRecord, EscalationRecord, SettingsRecord
+from cases.models import DecisionRecord, EscalationRecord, Principal, SettingsRecord
 from cases.people import Person
 from cases.store import TableStore, table_calls
 
@@ -729,6 +730,220 @@ class TheWorkOfARound(unittest.TestCase):
         original = store.case_get
         store.case_get = lambda case_id: (asked.append(case_id), original(case_id))[1]
         self.assertEqual((escalation.revive(store, START + 2 * DAY), asked), ([], []))
+
+
+NINA = "99999999-1111-4222-8333-444444444444"
+
+
+def crowd(*who):
+    """The list of people: each is (object id, name, roles) and has a mail address."""
+    return people_mod.load({"CONSOLE_PEOPLE": json.dumps([{"oid": oid, "name": name, "roles": list(roles), "mail": f"{name.lower()}@example.com"} for oid, name, roles in who])})
+
+
+ADA_, NINA_, OLGA_, CORA_ = (A, "Ada", ("approver",)), (NINA, "Nina", ("approver",)), (OWNER, "Olga", ("owner",)), (CONTACT, "Cora", ("escalation",))
+WITH_NINA, ONLY_OWNERS, NOBODY = crowd(ADA_, NINA_, OLGA_, CORA_), crowd(OLGA_, CORA_), crowd(CORA_)
+
+
+class Writes(MemoryStore):
+    """A store that keeps the id of every request that is written to it."""
+
+    def __init__(self, clock):
+        super().__init__(clock)
+        self.puts = []
+
+    def plan_put(self, plan):
+        self.puts.append(plan.plan_id)
+        super().plan_put(plan)
+
+
+class Lines:
+    def __init__(self):
+        self.found = []
+
+    def info(self, line):
+        self.found.append(json.loads(line[len(events.EVENT_PREFIX):]))
+
+
+class Watch:
+    """The step of a Watch that keeps the open requests up to date (run._keep_requests_up_to_date), with the list of people that the Watch reads at its start."""
+
+    def __init__(self, people=PEOPLE, store=None, clock=None):
+        self.clock = clock or Clock()
+        self.store, self.lines = store or Writes(self.clock), Lines()
+        extras = wiring.Extras(loop_config.load(FULL), self.store, people, Approvals(self.store, ApprovalSettings(change_scopes=()), self.clock))
+        self.services = SimpleNamespace(history=events.History("run1", None, self.clock, str, logger=self.lines), redact=str, extras=extras)
+
+    def run(self, people=None):
+        if people is not None:
+            self.services.extras.people = people
+        self.store.puts.clear()
+        notes = []
+        run_mod._keep_requests_up_to_date(self.services, [], notes.append)
+        return notes
+
+    def people_lines(self):
+        return [line for line in self.lines.found if line["type"] == "plan.approvers"]
+
+
+def sealed(plan_id, kind="advise", **changes):
+    """A request as the loop makes it: sealed, so that its digest holds what it says, the people included."""
+    if kind == "advise":
+        return plan_digest.sealed(advice(plan_id, f"c{plan_id}", **changes))
+    return plan_digest.sealed(make_plan(plan_id=plan_id, case_id=f"c{plan_id}", family="delete-disk", approvers=changes.pop("approvers", (A,)), created_at=stamp(START), expires_at="", **changes))
+
+
+class TheApproversOfARequest(unittest.TestCase):
+    """The people who may answer an open request are the people that the list names now: the old clock made the request again every 72 hours, with the people of that day, and nothing does now."""
+
+    def test_a_person_who_is_added_later_can_answer_a_request_of_advice_and_approve_a_change_that_were_made_before(self):
+        watch = Watch()
+        watch.store.plan_put(sealed("p1"))
+        watch.store.plan_put(sealed("p2", "change"))
+        before, nina = watch.store.plan_get("p2"), Principal(NINA, "Nina", ("approver",))
+        approvals = watch.services.extras.approvals
+        self.assertEqual(approvals.check_approve(nina, "p2", before.code)[1].kind, "refused_role")
+        watch.run(WITH_NINA)
+        for plan_id in ("p1", "p2"):
+            plan = watch.store.plan_get(plan_id)
+            self.assertEqual((plan.approvers, plan_digest.problem(plan, plan.digest)), ((A, NINA), ""), "the people are in the digest: the request is sealed again")
+        after = watch.store.plan_get("p2")
+        self.assertNotEqual(after.code, before.code)
+        self.assertEqual(approvals.check_approve(nina, "p2", after.code), (after, None), "the digest holds, so the approval can go on to the sign-in")
+        asked = approvals.decide(nina, "p1", "ask", watch.store.plan_get("p1").code, watch.store.nonce_new(NINA, "p1"))
+        self.assertEqual((asked.ok, asked.kind), (True, "asked"))
+
+    def test_a_person_who_is_not_on_the_list_any_more_cannot_answer_and_the_others_still_can(self):
+        watch = Watch(WITH_NINA)
+        watch.store.plan_put(sealed("p1", approvers=(A, NINA)))
+        watch.store.plan_put(sealed("p2", "change", approvers=(A, NINA)))
+        watch.run(crowd(NINA_, OLGA_, CORA_))
+        approvals, ada = watch.services.extras.approvals, Principal(A, "Ada", ("approver",))
+        self.assertEqual([watch.store.plan_get(p).approvers for p in ("p1", "p2")], [(NINA,), (NINA,)])
+        self.assertEqual(approvals.check_approve(ada, "p2", watch.store.plan_get("p2").code)[1].kind, "refused_role")
+        self.assertEqual(approvals.check_approve(Principal(NINA, "Nina", ("approver",)), "p2", watch.store.plan_get("p2").code)[1], None)
+
+    def test_a_person_who_lost_the_role_is_dropped_like_one_who_left_the_list(self):
+        watch = Watch(WITH_NINA)
+        watch.store.plan_put(sealed("p1", approvers=(A, NINA)))
+        watch.run(crowd(ADA_, (NINA, "Nina", ("ops",)), OLGA_, CORA_))
+        self.assertEqual(watch.store.plan_get("p1").approvers, (A,))
+
+    def test_with_no_approver_on_the_list_the_owners_are_the_floor_and_a_request_is_never_left_with_nobody(self):
+        for label, people, wanted in (("owners", ONLY_OWNERS, (OWNER,)), ("nobody at all", NOBODY, (A,))):
+            with self.subTest(label):
+                watch = Watch()
+                watch.store.plan_put(sealed("p1"))
+                watch.run(people)
+                plan = watch.store.plan_get("p1")
+                self.assertEqual((plan.approvers, plan_digest.problem(plan, plan.digest)), (wanted, ""))
+        again = Watch()
+        again.store.plan_put(sealed("p1"))
+        again.run(ONLY_OWNERS)
+        again.run(WITH_NINA)
+        self.assertEqual(again.store.plan_get("p1").approvers, (A, NINA), "the owners are the floor only while nobody has the role: an approver takes their place")
+
+    def test_a_list_that_names_the_same_people_writes_nothing_and_says_nothing_and_a_second_watch_after_a_change_writes_nothing_either(self):
+        watch = Watch()
+        watch.store.plan_put(sealed("p1"))
+        watch.store.plan_put(sealed("p2", "change"))
+        watch.run()
+        self.assertEqual((watch.store.puts, watch.people_lines(), watch.store.escalations), ([], [], {}))
+        watch.run(WITH_NINA)
+        self.assertEqual(sorted(watch.store.puts), ["p1", "p2"])
+        kept = {plan_id: watch.store.plan_get(plan_id) for plan_id in ("p1", "p2")}
+        watch.run()
+        self.assertEqual((watch.store.puts, len(watch.people_lines())), ([], 1))
+        self.assertEqual({plan_id: watch.store.plan_get(plan_id) for plan_id in kept}, kept)
+        self.assertEqual(len(watch.store.escalations_of("p1")), 1, "the person who was added is kept once")
+        reordered = crowd(NINA_, ADA_, OLGA_, CORA_)
+        watch.run(reordered)
+        self.assertEqual(watch.store.puts, [], "the same people in another order are the same people")
+
+    def test_only_a_request_that_is_open_is_touched_not_a_held_one_and_not_one_that_was_answered_or_is_being_changed(self):
+        watch = Watch()
+        for state in ("held", "approved", "declined", "consumed", "withdrawn", "failed", "expired"):
+            watch.store.plan_put(sealed(f"p-{state}", state=state))
+        before = {p: watch.store.plan_get(p) for p in watch.store.plans}
+        watch.run(WITH_NINA)
+        self.assertEqual({p: watch.store.plan_get(p) for p in before}, before)
+        self.assertEqual((watch.store.puts, watch.people_lines()), ([], []))
+
+    def test_a_request_that_a_person_answered_meanwhile_is_not_overwritten(self):
+        watch = Watch()
+        watch.store.plan_put(sealed("p1"))
+        listed = watch.store.plans_open
+        watch.store.plans_open = lambda: (lambda found: (watch.store.plan_put(dataclasses.replace(watch.store.plan_get("p1"), state="declined")), found)[1])(listed())
+        watch.run(WITH_NINA)
+        self.assertEqual(watch.store.plan_get("p1").state, "declined")
+        self.assertEqual(watch.store.plan_get("p1").approvers, (A,))
+
+    def test_one_line_of_the_history_for_a_watch_says_how_many_and_names_nobody(self):
+        watch = Watch()
+        for n in range(3):
+            watch.store.plan_put(sealed(f"p{n}"))
+        watch.run(crowd(NINA_, OLGA_, CORA_))
+        (line,) = watch.people_lines()
+        self.assertEqual({key: value for key, value in line.items() if key not in ("v", "ts", "runId", "requestId")}, {"type": "plan.approvers", "plans": 3, "added": 3, "dropped": 3})
+        self.assertNotIn(NINA, json.dumps(line))
+        self.assertNotIn("Nina", json.dumps(line))
+        self.assertEqual(sum(1 for line in watch.lines.found), 1)
+
+    def test_a_store_that_fails_stops_the_step_and_never_the_watch(self):
+        watch = Watch()
+        watch.store.plan_put(sealed("p1"))
+        watch.store.plan_put = lambda plan: (_ for _ in ()).throw(RuntimeError("no store"))
+        notes = watch.run(WITH_NINA)
+        self.assertEqual([n.split(" (")[0] for n in notes], ["the open requests could not be brought up to date"])
+        self.assertEqual(watch.store.plan_get("p1").approvers, (A,), "nothing was half written")
+
+
+class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
+    def world(self):
+        world = World(people=WITH_NINA, store=Writes)
+        return world, Watch(WITH_NINA, store=world.store, clock=world.clock)
+
+    def test_a_person_who_was_added_hears_in_the_first_step_that_they_were_added_and_the_others_do_not(self):
+        world, watch = self.world()
+        watch.run()
+        world.clock.advance(days=3)
+        world.tick(2)
+        self.assertEqual(world.steps()[0].who, (A, NINA))
+        (to_nina,), (to_ada,) = world.mail.sent_to("nina@example.com"), world.mail.sent_to("ada@example.com")
+        self.assertIn("You were added", to_nina[2])
+        self.assertNotIn("You were added", to_ada[2])
+
+    def test_when_the_first_step_was_made_already_the_next_step_goes_to_the_added_person_too_and_only_once(self):
+        world, watch = self.world()
+        world.clock.advance(days=3)
+        world.tick()
+        self.assertEqual(world.steps()[0].who, (A,))
+        watch.run()
+        world.clock.advance(days=4)
+        world.tick(3)
+        second = world.steps()[1]
+        self.assertEqual((second.source, second.who), ("manager", (MANAGER, NINA)))
+        self.assertEqual([len(world.mail.sent_to(address)) for address in ("nina@example.com", "mae@example.com")], [1, 1])
+        self.assertIn("You were added", world.mail.sent_to("nina@example.com")[0][2])
+        self.assertNotIn("You were added", world.mail.sent_to("mae@example.com")[0][2])
+        world.clock.advance(days=8)
+        world.tick(2)
+        self.assertNotIn(NINA, world.steps()[2].who, "told once: the third step goes to the next level, not again to a person who knows")
+
+    def test_a_person_who_was_dropped_before_the_step_is_not_told(self):
+        world, watch = self.world()
+        watch.run()
+        watch.run(PEOPLE)
+        world.clock.advance(days=3)
+        world.tick(2)
+        self.assertEqual((world.steps()[0].who, world.mail.sent_to("nina@example.com")), ((A,), []))
+
+    def test_several_requests_that_come_to_the_added_person_the_same_day_are_one_letter_with_the_line_once(self):
+        world = World(people=WITH_NINA, plans=2, store=Writes)
+        Watch(WITH_NINA, store=world.store, clock=world.clock).run()
+        world.clock.advance(days=3)
+        world.tick(2)
+        (letter,) = world.mail.sent_to("nina@example.com")
+        self.assertEqual(letter[2].count("You were added"), 1)
 
 
 class TheMessagesAreOnlyForTheEscalation(unittest.TestCase):

@@ -81,7 +81,7 @@ def type_key(resource_type: str) -> str:
 
 
 def _escalation_key(record: EscalationRecord) -> str:
-    return f"{ {'step': 's', 'snooze': 'z', 'pass': 'p'}[record.kind] }{record.number:04d}"
+    return f"{ {'step': 's', 'snooze': 'z', 'pass': 'p', 'added': 'a'}[record.kind] }{record.number:04d}"
 
 
 class TableStore:

@@ -414,6 +414,8 @@ ESCALATION_WHY = {
 }
 ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
                     "I change nothing myself: a person decides on a web page.")
+ESCALATION_ADDED = "You were added to the people who answer this request after it was made, so this is the first time that I write to you about it."
+ESCALATION_ADDED_SOME = "You were added to the people who answer some of these requests after they were made, so some of them are new to you."
 ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not worth it, you have a question, it is not yours (then I pass it on), or you decide later (at most three times)."
 ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 
@@ -430,7 +432,7 @@ def _days(days: int) -> str:
 
 
 def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), *, source: str, asked: str = "",
-                      notes: Sequence[str] = (), told: Sequence[str] = (), pending: Sequence[str] = (), first: bool = False, put_off: int = 0) -> Letter:
+                      notes: Sequence[str] = (), told: Sequence[str] = (), pending: Sequence[str] = (), first: bool = False, put_off: int = 0, added: bool = False) -> Letter:
     """One request that has waited without an answer, to the person that the ladder has come to: why this person is told (and, to a person who never heard of Meternaut, who writes), the
     request as its page has it (title, place, figure with its level), how long it has waited, what waiting has cost so far, who was told before and when, and what the person can do. Names
     come from a directory and are cut and escaped. A saving that nobody measured says so, and no cost of waiting is worked out for it."""
@@ -443,6 +445,8 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     if first:
         doc.paragraph(ESCALATION_INTRO)
     doc.paragraph(ESCALATION_WHY.get(source, ESCALATION_WHY["owners"]).format(who=_data(asked, 120) or "the person who was asked first"))
+    if added:
+        doc.paragraph(ESCALATION_ADDED)
     for note in notes:
         doc.paragraph(_data(note, 200), muted=True)
     _place(doc, brief)
@@ -465,7 +469,8 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     return doc.build()
 
 
-def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, rows: Sequence[tuple[PlanRecord, CaseRecord | None, str]], contacts: Sequence[str] = (), *, first: bool = False) -> Letter:
+def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, rows: Sequence[tuple[PlanRecord, CaseRecord | None, str]], contacts: Sequence[str] = (), *, first: bool = False,
+                             added: bool = False) -> Letter:
     """One letter for the several requests that the ladder has come to for the same person on the same day: nobody gets more than one a day. Each line has the title, the figure with its level,
     how long it has waited and why the person is told; one link to the page that lists them."""
     base = _base(base_url)
@@ -473,6 +478,8 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     doc = _Doc(f"{count} decisions have waited without an answer")
     if first:
         doc.paragraph(ESCALATION_INTRO)
+    if added:
+        doc.paragraph(ESCALATION_ADDED_SOME)
     lines = []
     for plan, case, source in rows[:MAX_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)

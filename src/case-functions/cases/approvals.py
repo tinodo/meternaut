@@ -464,6 +464,34 @@ class Approvals:
         except StoreError:
             return []
 
+    def keep_approvers(self, approvers: tuple[str, ...], floor: tuple[str, ...]) -> tuple[int, int, int]:
+        """Gives each open request the people that the list names now, by the rule that chose them when the request was made (`approvers`: the role approver; `floor`, the owners, when nobody has the
+        role): who was added can answer it, who is gone cannot, and a request is never left with nobody (when nobody is named at all it keeps its people). Its approvers are in its digest, so a request
+        that changes is sealed again (one that was never sealed stays unsealed), and the people who were added are kept (`EscalationRecord` kind `added`) so that the next step of its ladder tells them. Only
+        a request that is open is touched, read again first: not a held one, not one that was answered or is being changed. Changes no right: a change is still made with the approver's own token.
+        Returns the requests that changed, the people added and the people dropped, summed over the requests."""
+        wanted = tuple(dict.fromkeys(oid.lower() for oid in (approvers or floor)))
+        plans = added = dropped = 0
+        if not wanted:
+            return plans, added, dropped
+        try:
+            for plan in self.store.plans_open():
+                if plan.state != "open" or {a.lower() for a in plan.approvers} == set(wanted):
+                    continue
+                fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
+                if fresh is None or fresh.state != "open":
+                    continue
+                kept = {a.lower() for a in fresh.approvers}
+                new = tuple(oid for oid in wanted if oid not in kept)
+                if new:
+                    self.store.escalation_claim(EscalationRecord(fresh.plan_id, "added", 1 + sum(1 for r in self.store.escalations_of(fresh.plan_id) if r.kind == "added"), stamp(self.clock()), who=new))
+                changed = replace(fresh, approvers=wanted)
+                self.store.plan_put(plan_digest.sealed(changed) if fresh.digest else changed)
+                plans, added, dropped = plans + 1, added + len(new), dropped + len(kept - set(wanted))
+        except StoreError:
+            pass
+        return plans, added, dropped
+
     def _carry(self, old: PlanRecord, new: PlanRecord) -> None:
         """The request that stands for another keeps the oldest start, and the steps of the ladder that were made for the other count as made for it (cases/escalation.py): a request that is made again
         does not start its wait again. What the other cost while it waited (at its own figure, for its own days, up to the day that this one was made) is carried too, so the cost of waiting of a group

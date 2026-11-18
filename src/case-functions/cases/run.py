@@ -495,10 +495,11 @@ def read_use_series(s: Services, say: Callable[[str], None]) -> None:
 
 
 def _keep_requests_up_to_date(s: Services, ranked: Sequence[Lead], say: Callable[[str], None]) -> None:
-    """Gives the open requests what this Watch learned since they were made: the name of the subscription, Advisor's words and the cost (cases/upkeep.py refresh). It writes the records of the
-    app only, and it never fails the run."""
+    """Gives the open requests what this Watch learned since they were made: the name of the subscription, Advisor's words and the cost (cases/upkeep.py refresh), and the people that the list names
+    now (keep_approvers: no clock makes a request again, so nothing else would). It writes the records of the app only, and it never fails the run."""
     try:
         upkeep.refresh(s.extras.store, ranked)
+        upkeep.keep_approvers(s.extras, s.history)
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"the open requests could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
