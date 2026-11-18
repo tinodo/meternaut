@@ -363,6 +363,85 @@ class TheFirstDay(unittest.TestCase):
         self.assertEqual(sum(line.count("Heads-up:") for line in listed(graph.sent[0][1]["body"]["content"])), 5)
 
 
+class TheCapAndTheOrderOfTheRequests(Base):
+    """Nothing expires, so a place is freed only by an answer: the cap is 30 and a finding that is worth more than the least of the open requests is never held behind it. What waits is ranked by its
+    figure, the largest first, then by who has waited longest, in every list."""
+
+    def case(self, number: int, saving, **more):
+        return make_advice_case(case_id=f"k-cap-{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/c{number}", resource_name=f"c{number}", resource_type=f"microsoft.foo/kind{number}",
+                                plan_id=None, status="needs_human", saving_usd_month=saving, cost_usd_30d=(saving or 45.0) * 2, objections=("It may be in use.",), **more)
+
+    def fill(self) -> None:
+        for number in range(ADVICE_OPEN_MAX):
+            case = self.case(number, 10.0 + number)
+            self.store.case_put(case)
+            self.assertIsNotNone(self.approvals.advise(case, (TINO,)))
+
+    def test_the_places_are_thirty_and_the_waiting_words_say_how_many_are_open(self):
+        self.assertEqual(ADVICE_OPEN_MAX, 30)
+        self.assertEqual(brief.HOLD_WORDS["waiting"][1], "Nothing holds it back any more, but 30 requests are open already, each worth at least as much as this one, so Meternaut has not asked about it yet.")
+
+    def test_a_finding_worth_more_than_the_least_open_request_is_asked_and_one_worth_no_more_waits_and_is_shown(self):
+        self.fill()
+        dearer = self.case(100, 500.0)
+        self.store.case_put(dearer)
+        self.assertIsNotNone(self.approvals.advise(dearer, (TINO,)), "worth more than the least of them: it is not held behind it")
+        self.assertEqual(len(self.store.plans_open()), ADVICE_OPEN_MAX + 1)
+        for number, saving in ((200, 10.0), (201, 5.0), (202, None)):
+            late = self.case(number, saving)
+            self.store.case_put(late)
+            self.assertIsNone(self.approvals.advise(late, (TINO,)), f"worth {saving}: as much as the least, less, or nothing priced")
+        self.settle()
+        waiting = {p.case_id: p for p in self.store.plans_held()}
+        self.assertEqual(sorted(waiting), ["k-cap-200", "k-cap-201", "k-cap-202"], "each is shown as a held request")
+        self.assertEqual({brief.held_of(p) for p in waiting.values()}, {"waiting"})
+        self.assertEqual(brief.build_brief(self.store.case_get("k-cap-201"), waiting["k-cap-201"], now=self.now).hold.why, brief.HOLD_WORDS["waiting"][1])
+
+    def test_a_waiting_request_is_made_an_ordinary_one_when_a_place_is_free_the_dearest_first(self):
+        self.fill()
+        for number, saving in ((200, 9.0), (201, 5.0)):
+            self.store.case_put(self.case(number, saving))
+        self.settle()
+        self.assertEqual(len(self.store.plans_held()), 2)
+        least = min(self.store.plans_open(), key=lambda p: p.saving_usd_month)
+        self.assertTrue(self.answer(least, "decline", reason="handled").ok)
+        self.settle()
+        self.assertEqual([p.case_id for p, _ in self.approvals.promoted], ["k-cap-200"], "29 are open, so one place is free: the one that is worth most takes it")
+        self.assertEqual([p.case_id for p in self.store.plans_held()], ["k-cap-201"], "and the other is worth no more than the least that is open now")
+
+    def test_the_migration_promotes_in_the_order_of_the_pages_the_largest_figure_first_then_who_waited_longest(self):
+        for number, (saving, age) in enumerate(((40.0, 3), (300.0, 1), (40.0, 9), (None, 20), (90.0, 5), (40.0, 6)), 1):
+            case = automation(case_id=f"k-o{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/o{number}", resource_name=f"o{number}", resource_type=f"microsoft.foo/kind{number}",
+                              saving_usd_month=saving, cost_usd_30d=(saving or 60.0) * 2, status="proposed")
+            self.store.case_put(case)
+            self.store.plan_put(build_advice(case, (TINO,), self.now - dt.timedelta(days=age), self.approvals.settings, new_id=lambda number=number: f"p-o{number}", held="automation"))
+            self.store.case_put(replace(case, plan_id=f"p-o{number}"))
+        self.settle()
+        self.assertEqual([plan.plan_id for plan, _ in self.approvals.promoted], ["p-o2", "p-o4", "p-o5", "p-o3", "p-o6"],
+                         "the figure that the pages show (a saving, else the cost): 300, 120, 90, and then the three of 40 by who has waited longest (9, 6 and 3 days); five a Watch")
+        self.assertEqual([p.plan_id for p in self.store.plans_held()], ["p-o1"])
+
+
+class EveryListRanksByTheFigureThenByWhoWaitedLongest(unittest.TestCase):
+    def test_the_page_and_the_weekly_desk_list_the_largest_figure_first_what_has_no_figure_last_and_ties_by_who_waited_longest(self):
+        from cases.web import home
+
+        console = Console()
+        rows = (("small", 40.0, 2), ("tied-old", 90.0, 9), ("large", 300.0, 1), ("tied-young", 90.0, 3), ("none", None, 30))
+        for number, (name, saving, waited) in enumerate(rows, 1):
+            case = make_advice_case(case_id=f"k-r{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/{name}", resource_name=name, resource_type=f"microsoft.foo/kind{number}", plan_id=f"p-r{number}",
+                                    status="needs_human", saving_usd_month=saving, cost_usd_30d=None, first_seen_at=days_ago(waited))
+            console.store.case_put(case)
+            console.store.plan_put(make_advice(plan_id=f"p-r{number}", case_id=case.case_id, resource_id=case.resource_id, resource_name=name, saving_usd_month=saving, created_at=days_ago(waited),
+                                               title=f"Look at {name}"))
+        wanted = ["large", "tied-old", "tied-young", "small", "none"]
+        ctx_rows = [home.Row(brief.build_brief(console.store.case_get(f"k-r{n}"), console.store.plan_get(f"p-r{n}"), now=NOW, may_answer=True), console.store.case_get(f"k-r{n}"), False)
+                    for n in range(1, len(rows) + 1)]
+        self.assertEqual([unit.first.case.resource_name for unit in home.units_of(ctx_rows)], wanted, "the Decisions page, which is the start page, ranks with this code")
+        letter_lines = listed(desk(console).sent[0][1]["body"]["content"])
+        self.assertEqual([next(name for name in wanted if name in line) for line in letter_lines], wanted, "the weekly desk lists the rows of the page in the same order")
+
+
 class TheOldWordsStillRenderForOldRequests(unittest.TestCase):
     def test_a_held_request_of_the_old_reason_and_a_request_taken_back_for_it_say_what_they_said(self):
         case = automation()

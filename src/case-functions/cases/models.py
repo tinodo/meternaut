@@ -89,6 +89,9 @@ MAX_SIGNIN_PATH = 2000
 ADVISE = "advise"
 # A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
 ADVICE_QUIET_DAYS = 30
+# And no more than this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed
+# only by an answer, and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. A finding worth more than the least of them is not held by it.
+ADVICE_OPEN_MAX = 30
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15

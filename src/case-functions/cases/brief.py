@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, AUTOMATED, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
+from .models import ADVICE_OPEN_MAX, ADVISE, AUTOMATED, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -91,7 +91,7 @@ HOLD_WORDS = {
               "Meternaut's rules changed, and it had asked about this on less evidence than it asks for now.",
               "Nothing is asked of you. Meternaut looks at it again at its next search."),
     "waiting": ("Waiting for a free place",
-                "Nothing holds it back any more, but all the places for requests are taken, so Meternaut has not asked about it yet.",
+                f"Nothing holds it back any more, but {ADVICE_OPEN_MAX} requests are open already, each worth at least as much as this one, so Meternaut has not asked about it yet.",
                 "Nothing is asked of you. Meternaut asks about it when a place is free."),
 }
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
