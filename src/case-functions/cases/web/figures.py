@@ -15,8 +15,8 @@ from typing import Callable, Sequence
 
 from .. import costs as cost_words
 from .. import estimate as estimates
-from ..brief import Brief, Saving, things
-from ..models import GROUP_FACT, CaseRecord
+from ..brief import NOT_WORKED_OUT, Brief, Saving, group_things, number_text, things
+from ..models import GROUP_FACT, HELD, CaseRecord
 from ..usage import DAYS as USE_DAYS
 from ..usage import MIN_DAYS as USE_MIN_DAYS
 from ..usage import Use, axis_text, entry_of, scale_of, value_text
@@ -27,16 +27,19 @@ RISKS = {"low": ("Low risk", "low", "circle", 0), "medium": ("Medium risk", "mid
 SERIES_MIN = 2
 SERIES_MAX = 60
 NO_LINES = "Cost Management reports a cost 8 to 72 hours after it happens."
-READ_LATER = "The next search reads them."
-WHEN_JUDGED = "They are read when the AIs judge this finding again."
-READ_AGAIN = f"{cost_words.FAILED_WORDS} The next search reads it again."
-NONE_REASON = f"{cost_words.NO_LINE_WORDS} The chart is drawn when it has one."
-NONE_REASON_MANY = f"{cost_words.state_words(cost_words.NONE, True)} The chart is drawn when they have one."
-STAYS = (cost_words.CURRENCY_WORDS, NONE_REASON, NONE_REASON_MANY)  # the reasons after which a chart does not say that it fills in then: they say what it waits for themselves
+READ_LATER = "Meternaut reads the daily costs at its next search."
+WHEN_JUDGED = "Meternaut reads the daily costs when the AIs judge this finding again."
+READ_AGAIN = "Meternaut reads the cost again at its next search."
+NONE_REASON = "The chart is drawn when Azure shows a cost."
+NONE_REASON_MANY = "The chart is drawn when Azure shows a cost for them."
+NO_CHART_CURRENCY = "Meternaut draws no chart of a cost that is not in US dollars."
+STAYS = (NO_CHART_CURRENCY, NONE_REASON, NONE_REASON_MANY)  # the reasons after which a chart does not say that it fills in then: they say what it waits for themselves
 WHOLE_KINDS = {"subscription": "subscription", "group": "resource group"}
-USE_LATER = (f"Azure Monitor shows use a few hours after it happens. The next search reads it. A chart is drawn once {USE_MIN_DAYS} of the last {USE_DAYS} days have a value: "
-             "a new resource, a stopped machine and a resource that does not offer this metric have fewer.")
+USE_LATER = (f"Azure Monitor shows use a few hours after it happens, and Meternaut reads it at its next search. A chart needs a value on {USE_MIN_DAYS} of the last {USE_DAYS} days. "
+             "A new resource, a stopped machine and a resource that does not offer this metric have fewer.")
 USE_MANY = "Use is not drawn for a finding about many resources."
+ADDED = "It adds up the figure of each request."  # the basis of a row that stands for several requests
+ADDED_FINDINGS = "It adds up the figure of each finding."  # the basis of a cell of the page of savings found, which stands for several findings
 SHAPES = {"circle": '<circle cx="6" cy="6" r="4"/>', "triangle": '<path d="M6 1.5 11 10.5H1z"/>', "diamond": '<path d="M6 1 11 6 6 11 1 6z"/>',
           "square": '<rect x="2" y="2" width="8" height="8" rx="1.5"/>'}  # a chip says what it is in words and in a shape, never by colour alone
 NICE = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10)
@@ -94,26 +97,27 @@ class Figure:
 
 
 def _whole_note(scopes: Sequence[str]) -> str:
-    """The note of the cost of a whole subscription or resource group: what it is the sum of, and that no saving was worked out."""
+    """The note of the cost of a whole subscription or resource group: what it adds up, and that nobody has worked out a saving."""
     many = len(scopes) > 1
     kinds = " and ".join(WHOLE_KINDS[kind] + ("s" if many else "") for kind in sorted({scope for scope in scopes if scope in WHOLE_KINDS}))
-    return f"All the cost lines of {'these ' if many else 'the '}{kinds} in the last 30 days. What a change would save was not worked out."
+    return f"It adds up everything that Cost Management shows for {'these ' if many else 'the '}{kinds} in the last 30 days. {NOT_WORKED_OUT}"
 
 
 def figure_of(savings: Sequence[Saving], costs: Sequence[float | None], basis: str = "", *, reads: Sequence[str] = (), scopes: Sequence[str] = (), made_of: str = "",
               estimate: estimates.Estimate | None = None) -> Figure:
-    """The figure of one request, or of the requests that a row stands for: their savings when every one has a figure (the weakest level of them, and `basis` when they have many), else
+    """The figure of one request, or of the requests that a row stands for: their savings when every one has a figure (the weakest level of them, and `basis`, a sentence, when they have many), else
     what they cost in 30 days, else nothing and the reason. `reads` says how the cost of each request was read (the states of cases/costs.py; without them a cost that is a number was read and a
-    cost that is None was not), `scopes` what each is about (a subscription, a resource group or a resource) and `made_of` and `estimate` are what the brief of a single request says besides."""
+    cost that is None was not), `scopes` what each is about (a subscription, a resource group or a resource) and `made_of` and `estimate` are what the brief of a single request says besides.
+    The label is a short noun phrase for a list ("Could save", "Costs"); the whole sentences of a page are those of `says`."""
     if savings and all(s.monthly is not None for s in savings):
         levels = {s.level for s in savings}
         level = savings[0].level if len(levels) == 1 else next((w for w in WEAKEST_FIRST if w in levels), "Scenario")
-        return Figure("save", f"Saves, {level}", sum(s.monthly for s in savings), level, f"Based on {basis or savings[0].basis}.")  # type: ignore[misc]
+        return Figure("save", "Saves" if level == "Verified" else "Could save", sum(s.monthly for s in savings), level, basis or savings[0].basis)  # type: ignore[misc]
     known = [c for c in costs if c is not None]
     if known and sum(known) > 0:
         whole = bool(scopes) and all(scope in WHOLE_KINDS for scope in scopes)
-        note = _whole_note(scopes) if whole else "The most that a change could save: what it would save was not worked out."
-        return Figure("cost", "Costs, saving not measured", sum(known), "", note, cost_words.LINES, whole, made_of if whole else "")
+        note = _whole_note(scopes) if whole else NOT_WORKED_OUT
+        return Figure("cost", "Costs", sum(known), "", note, cost_words.LINES, whole, made_of if whole else "")
     states = list(reads) if reads else [cost_words.NONE if c is not None else "" for c in costs]
     state = cost_words.worst_state(states)
     return Figure("none", "Cost not visible", None, "", cost_words.state_words(state, len(costs) > 1), state, False, "", estimate if state == cost_words.NONE else None)
@@ -125,6 +129,48 @@ def figure_for(briefs: Sequence[Brief], costs: Sequence[float | None], basis: st
     one = len(briefs) == 1
     return figure_of([b.saving for b in briefs], costs, basis, reads=[b.cost_state for b in briefs], scopes=[b.scope for b in briefs], made_of=briefs[0].made_of if one else "",
                      estimate=briefs[0].estimate if one else estimates.summed([b.estimate for b in briefs]))
+
+
+def says(brief: Brief, figure: Figure) -> tuple[str, str]:
+    """The money of one request in whole sentences, the one that opens the block and the ones under it. A saving: "Meternaut worked out that this could save about $1,682 a year ($140 a month).",
+    or, when the bill after the change confirms it, "The change saves about ...", and under it what the figure rests on. A cost: "It costs $848 a month, about $10,180 a year.", and under it that
+    nobody has worked out the saving, or the finding's own reason why none was worked out. When there is no figure to show, the reason alone. What waiting costs is for the page (`waiting_words`)."""
+    reason = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
+    if figure.monthly is None:
+        return reason, ""
+    month = dollars(figure.monthly)
+    if figure.state == "save":
+        lead = (f"The change saves {a_year_text(figure.monthly)} ({month} a month)." if figure.level == "Verified"
+                else f"Meternaut worked out that this could save {a_year_text(figure.monthly)} ({month} a month).")
+        return lead, reason
+    subject = f"The {number_text(brief.group.count)} {group_things(brief.group)} together cost" if brief.group is not None else "It costs"
+    return f"{subject} {month} a month, {a_year_text(figure.monthly)}.", reason
+
+
+def waiting_words(brief: Brief, figure: Figure) -> str:
+    """What waiting costs a day, in one sentence, for the page of a request that waits and has a saving. The letters and the cards leave it out: it does not help a person decide, and it pushes."""
+    per_day = brief.saving.waiting_per_day if figure.state == "save" and brief.state in ("open", HELD) else None  # waiting costs something only while the request waits
+    return f"Waiting costs about {dollars(per_day)} a day." if per_day else ""
+
+
+def says_many(figure: Figure) -> tuple[str, str]:
+    """The money of a row that stands for several requests, in whole sentences: "Meternaut worked out that these could save about $1,682 a year ($140 a month).", or "Together they cost $848 a
+    month, about $10,180 a year.", and under it what the figure rests on. A figure that is none says why."""
+    if figure.monthly is None:
+        return figure.note, ""
+    month = dollars(figure.monthly)
+    if figure.state == "save":
+        return (f"The change saves {a_year_text(figure.monthly)} ({month} a month)." if figure.level == "Verified" else f"Meternaut worked out that these could save {a_year_text(figure.monthly)} ({month} a month)."), figure.note
+    return f"Together they cost {month} a month, {a_year_text(figure.monthly)}.", figure.note
+
+
+def short_of(state: str, level: str, monthly: float | None, reason: str = "") -> str:
+    """A figure in one sentence, for a list of requests: "It could save about $1,682 a year.", "It costs $4,297 a year; nobody has worked out the saving." or, with no figure, the reason why."""
+    if monthly is None:
+        return reason
+    if state == "save":
+        return f"It {'saves' if level == 'Verified' else 'could save'} {a_year_text(monthly)}."
+    return f"It costs {a_year_text(monthly).replace('about ', '')}; nobody has worked out the saving."
 
 
 def under(figure: Figure) -> Safe:
@@ -162,7 +208,7 @@ def reason_of(states: Sequence[str], costly: bool, ids: bool) -> str:
     if state == cost_words.FAILED:
         return READ_AGAIN
     if state == cost_words.CURRENCY:
-        return cost_words.CURRENCY_WORDS
+        return NO_CHART_CURRENCY
     if state == cost_words.NONE:
         return NONE_REASON_MANY if len(states) > 1 else NONE_REASON
     return NO_LINES
@@ -174,17 +220,16 @@ def series_reason(brief: Brief, case: CaseRecord | None) -> str:
 
 
 def short_title(headline: str, group: str = "") -> str:
-    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place), with "Review" for "Look at"."""
+    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place)."""
     place = f" in group {group}" if group else ""
-    text = headline.replace(place, "", 1) if place and place in headline else headline
-    return "Review " + text[8:] if text.startswith("Look at ") else text
+    return headline.replace(place, "", 1) if place and place in headline else headline
 
 
 def title_of(brief: Brief) -> tuple[Safe, str]:
-    """The title of one request as markup and as plain text: how many of what and where when it stands for many resources, else the headline without its place (the line under it says the
-    place), with "Review" for "Look at" and the name of the resource in code type."""
+    """The title of one request as markup and as plain text: its verb and how many of what and where when it stands for many resources ("Look at 50 private endpoints in 8 resource groups"), else
+    the headline without its place (the line under it says the place), with the name of the resource in code type."""
     if brief.group is not None:
-        text = things(brief.group.count, brief.group.kind, brief.group.groups)
+        text = f"{brief.verb} {things(brief.group.count, brief.group.kind, brief.group.groups)}"
         return esc(text), text
     text = short_title(brief.headline, brief.where.group)
     name = brief.where.name
@@ -192,14 +237,21 @@ def title_of(brief: Brief) -> tuple[Safe, str]:
     return (fmt("{before}<code>{name}</code>{after}", before=before, name=name, after=after) if found else esc(text)), text
 
 
-def dollars(value: float, cents: bool = True) -> str:
-    return f"${value:,.2f}" if cents else f"${round(value):,}"
+def dollars(value: float) -> str:
+    """Money as every page writes it (cases/costs.py money): whole dollars from 100 up, cents below."""
+    return cost_words.money(value)
 
 
 def a_year(monthly: float) -> str:
     """A monthly figure in a year, in whole dollars: twelve times the month."""
     year = round(monthly * 12)
     return "under $1" if year == 0 and monthly > 0 else f"${year:,}"
+
+
+def a_year_text(monthly: float) -> str:
+    """A year of a monthly figure as words: "about $1,682 a year", and "under $1 a year" for what is less."""
+    year = a_year(monthly)
+    return f"{year} a year" if year.startswith("under") else f"about {year} a year"
 
 
 def describe(series: Sequence[float]) -> str:

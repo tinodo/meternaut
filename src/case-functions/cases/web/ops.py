@@ -224,10 +224,9 @@ def runs_page(ctx: Ctx) -> Response:
     if selected:
         cases = [case for case in cases if case.run_id == selected]
     parts: list[object] = [
-        head("Runs and findings", "Every run of the search and every finding that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report."),
+        head("Runs and findings", "This page lists every run of the search and every finding that the runs looked at, newest first. It shows what was found and what happened to it. It is not a cost report."),
         paragraph("A finding is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
                   "Nothing is changed until a person approves the request."),
-        paragraph("Money is in US dollars, and a year is twelve times the month."),
         Safe("<h2>Runs</h2>"),
     ]
     if not runs_ok:

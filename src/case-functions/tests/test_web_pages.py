@@ -135,9 +135,9 @@ class TheDecisionsPage(unittest.TestCase):
         reply = seeded().get("/")
         focus = reply.main.find("article", class_="focus")
         self.assertEqual(focus.find("h3").text(), "Delete the unattached disk planted-disk-1")
-        self.assertEqual(focus.find("p", class_="fig save").text(), "$86 a year")
-        self.assertEqual(focus.find("p", class_="figsub").text(), "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days.")
-        self.assertEqual([dt.text() for dt in focus.find_all("dt")], ["What changes", "Why", "Checked", "Undo"])
+        self.assertEqual(focus.find("p", class_="say save").text(), "Meternaut worked out that this could save about $86 a year ($7.17 a month).")
+        self.assertEqual(focus.find("p", class_="figsub").text(), "It is based on your bill for the last 30 days.")
+        self.assertEqual([dt.text() for dt in focus.find_all("dt")], ["What changes", "What the AI says", "Checked", "Undo"])
         self.assertEqual(chips(focus), ["Medium risk", "High confidence"])
         button = focus.find("a")
         self.assertEqual((button.attrs["class"], button.attrs["href"], button.text()), ("btn primary", "/ok/plan0001", "Review and decide: Delete the unattached disk planted-disk-1"))
@@ -151,12 +151,12 @@ class TheDecisionsPage(unittest.TestCase):
         first, last = rows(reply, "ready")
         self.assertEqual((first.find("span", class_="rank").text(), last.find("span", class_="rank").text()), ("2", "3"))
         self.assertEqual(first.find("span", class_="t").text(), "Delete the unattached disk disk-0")
-        self.assertEqual(spans(first.find("span", class_="impact save")), ["Saves, Expected", "$360 a year", "$30.00 a month"])
-        self.assertEqual(spans(last.find("span", class_="impact save")), ["Saves, Expected", "$86 a year", "$7.17 a month"])
+        self.assertEqual(spans(first.find("span", class_="impact save")), ["Could save", "$360 a year", "$30.00 a month"])
+        self.assertEqual(spans(last.find("span", class_="impact save")), ["Could save", "$86 a year", "$7.17 a month"])
         self.assertEqual(chips(first), ["Medium risk", "High confidence"])
         self.assertEqual([(a.attrs["class"], a.attrs["href"], a.text()) for a in first.find_all("a")], [("btn sm primary", "/ok/plan1000", "Review: Delete the unattached disk disk-0")])
         self.assertIn("Managed disk · resource group meternaut-test-rg · found 3 days ago", first.text())
-        self.assertIn("Based on the cost lines of the last 30 days.", first.text())
+        self.assertIn("It is based on your bill for the last 30 days.", first.text())
 
     def test_the_decisions_are_ranked_by_what_is_at_stake_then_by_how_long_they_waited_and_the_order_can_be_asked_for(self):
         console = seeded()
@@ -208,9 +208,9 @@ class TheDecisionsPage(unittest.TestCase):
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         (row,) = rows(console.get("/"), "look")
-        self.assertEqual(spans(row.find("span", class_="impact save")), ["Saves, Scenario", "$1,440 a year", "$120.00 a month"])
-        self.assertIn("Based on Azure Advisor's own estimate: no cost line of this resource backs it.", row.text())
-        self.assertEqual(row.find("span", class_="t").text(), "Consider changing the virtual machine oversized-vm-1")
+        self.assertEqual(spans(row.find("span", class_="impact save")), ["Could save", "$1,440 a year", "$120 a month"])
+        self.assertIn("It is Azure Advisor's own estimate, and the bill of this resource does not back it.", row.text())
+        self.assertEqual(row.find("span", class_="t").text(), "Look at the virtual machine oversized-vm-1: it may be larger than its use needs")
 
     def test_what_a_finding_costs_is_shown_when_nothing_says_what_a_change_would_save_and_nothing_is_ever_no_figure(self):
         console = Console()
@@ -221,18 +221,18 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.plan_put(make_advice(plan_id=f"plan8{n:03d}", case_id=f"case8{n:03d}", resource_id=rid, resource_name=f"d{n}", resource_group=f"rg-{n}", saving_usd_month=None))
         reply = console.get("/")
         found = {row.find("span", class_="t").text(): spans(row.find("span", class_="impact cost") or row.find("span", class_="impact none")) for row in rows(reply, "look")}
-        self.assertEqual(found, {"Review the disk d0": ["Costs, saving not measured", "$36 a year", "$3.00 a month"],
-                                 "Review the disk d1": ["Cost not visible", "—", "Azure has no cost line for this yet."],
-                                 "Review the disk d2": ["Cost not visible", "—", "No cost line was read yet."]})
+        self.assertEqual(found, {"Look at the disk d0: it may be larger than its use needs": ["Costs", "$36 a year", "$3.00 a month"],
+                                 "Look at the disk d1: it may be larger than its use needs": ["Cost not visible", "—", "Azure shows no cost for this yet."],
+                                 "Look at the disk d2: it may be larger than its use needs": ["Cost not visible", "—", "Meternaut could not read what this costs."]})
         self.assertNotIn("No figure", reply.content)
 
-    def test_money_is_in_dollars_a_year_is_twelve_months_and_nothing_is_called_saved_before_cost_management_measured_it(self):
+    def test_no_page_says_what_money_is_in_and_nothing_is_called_saved_before_cost_management_measured_it(self):
         console = seeded()
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         content = console.get("/").content
-        self.assertIn("Money is in US dollars, and a year is twelve times the month.", content)
-        self.assertNotRegex(content, r"\bsaved\b|\bUSD\b|€|£|No figure|Talk to a person")
+        self.assertNotIn("Money is in US dollars", content)
+        self.assertNotRegex(content, r"(?<!could be )\bsaved\b|\bUSD\b|€|£|No figure|Talk to a person")
 
     def test_a_person_who_is_not_named_sees_nothing_to_answer_and_a_plan_that_is_not_open_or_has_expired_is_not_listed(self):
         console = seeded()
@@ -263,11 +263,11 @@ class TheDecisionsPage(unittest.TestCase):
         more_plans(console, 13)
         reply = console.get("/")
         self.assertEqual(len(decisions(reply, "ready")), 12, "the decision in focus and eleven rows")
-        self.assertIn("2 more wait. Show all.", reply.content)
+        self.assertIn("2 more decisions wait. Show all.", reply.content)
         self.assertIn("/?sort=impact&all=1", reply.links())
         everything = console.get("/", query={"all": "1"})
         self.assertEqual(len(decisions(everything, "ready")), 14)
-        self.assertNotIn("more wait", everything.content)
+        self.assertNotIn("more decision", everything.content)
 
     def test_findings_of_one_kind_about_one_resource_each_are_one_row_that_opens_with_a_request_for_each(self):
         console = Console()
@@ -278,7 +278,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertEqual(group.classes(), ["grp"])
         summary = group.find("summary")
         self.assertEqual(summary.find("span", class_="t").text(), "3 storage accounts in 3 resource groups")
-        self.assertEqual(spans(summary.find("span", class_="impact cost")), ["Costs, saving not measured", "$144 a year", "$12.00 a month"])
+        self.assertEqual(spans(summary.find("span", class_="impact cost")), ["Costs", "$144 a year", "$12.00 a month"])
         self.assertEqual(reply.table("members-plan5002").rows, [{"Resource": "st2", "Resource group": "rg-2", "A month": "$5.00", "Request": "Review: st2"},
                                                                {"Resource": "st1", "Resource group": "rg-1", "A month": "$4.00", "Request": "Review: st1"},
                                                                {"Resource": "st0", "Resource group": "rg-0", "A month": "$3.00", "Request": "Review: st0"}])
@@ -289,9 +289,9 @@ class TheDecisionsPage(unittest.TestCase):
         console = Console()
         storage(console, 2, saving=lambda n: 10.0 + n)
         (row,) = rows(console.get("/"), "look")
-        self.assertEqual(spans(row.find("span", class_="impact save")), ["Saves, Scenario", "$252 a year", "$21.00 a month"])
-        self.assertIn("Based on the figures of each, added up.", row.text())
-        self.assertEqual(chips(row), ["Medium risk if you act on it"])
+        self.assertEqual(spans(row.find("span", class_="impact save")), ["Could save", "$252 a year", "$21.00 a month"])
+        self.assertIn(figures.ADDED, row.text())
+        self.assertEqual(chips(row), ["Medium risk if you act"])
 
     def test_findings_of_another_kind_a_single_finding_and_a_change_are_not_consolidated(self):
         console = seeded()
@@ -309,8 +309,8 @@ class TheDecisionsPage(unittest.TestCase):
         endpoints(console)
         reply = console.get("/")
         (row,) = rows(reply, "look")
-        self.assertEqual(row.find("span", class_="t").text(), "50 private endpoints in 8 resource groups")
-        self.assertEqual(spans(row.find("span", class_="impact cost")), ["Costs, saving not measured", "$4,297 a year", "$358.11 a month"])
+        self.assertEqual(row.find("span", class_="t").text(), "Look at 50 private endpoints in 8 resource groups")
+        self.assertEqual(spans(row.find("span", class_="impact cost")), ["Costs", "$4,297 a year", "$358 a month"])
         self.assertEqual([(a.text(), a.attrs["href"]) for a in row.find_all("a")], [("Review all 50", "/ok/plan6000")])
         self.assertEqual([r["Resource"] for r in reply.table("members-plan6000").rows], ["pe-1", "pe-2", "pe-3", "pe-4", "pe-5"])
         self.assertIn("45 more. All 50 are in 8 resource groups.", row.text())
@@ -328,14 +328,14 @@ class TheDecisionsPage(unittest.TestCase):
         reply = console.get("/")
         tiles = {tile.find("p", class_="k").text(): (tile.find("p", class_="v").text(), tile.find("p", class_="n").text(), "good" in tile.classes())
                  for tile in reply.main.find("ul", class_="kpis").find_all("li")}
-        self.assertEqual(tiles, {"Ready to save": ("$1,526 a year", "2 decisions · Scenario, Expected. The basis is in each row.", True),
-                                 "Cost under review": ("$144 a year", "1 decision · saving not measured. Cost Management, 30 days.", False),
-                                 "Saving measured": ("—", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change.", False)})
-        self.assertIn("3 decisions. $1,526 a year is ready to save, and $144 a year more is under review.", reply.content)
+        self.assertEqual(tiles, {"Ready to save": ("$1,526 a year", "It is the saving of 2 decisions. Each row says what its figure rests on.", True),
+                                 "Cost under review": ("$144 a year", "It is the cost of 1 decision, as Cost Management shows it. Nobody has worked out how much of it could be saved.", False),
+                                 "Saving measured": ("—", "Nothing is measured yet. Cost Management shows the effect of a change 8 to 72 hours later.", False)})
+        self.assertIn("3 decisions wait for you.", reply.content)
         console.store.plan_put(make_plan(plan_id="plan0009", case_id="case0009", state="consumed"))
         console.store.action_put(make_action(plan_id="plan0009", case_id="case0009", state="verified", verified_at=at(hours=-1), verification={"gone": True, "costBeforeUsd30d": 30.0, "costAfterUsd": 0.0}))
         measured = console.get("/").main.find("ul", class_="kpis").find_all("li")[2]
-        self.assertEqual((measured.find("p", class_="v").text(), measured.find("p", class_="n").text()), ("$360 a year", "$30.00 a month, confirmed by Cost Management after 1 change."))
+        self.assertEqual((measured.find("p", class_="v").text(), measured.find("p", class_="n").text()), ("$360 a year", "Cost Management confirmed $30.00 a month after 1 change."))
 
     def test_a_decision_in_focus_has_a_chart_of_its_cost_and_a_row_a_small_one_from_the_series_that_the_watch_stored(self):
         console = seeded()
@@ -358,7 +358,7 @@ class TheDecisionsPage(unittest.TestCase):
                 console.store.case_put(replace(console.store.case_get("case0001"), cost_series=series))
                 content = console.get("/").content
                 self.assertIn("no daily costs yet", content)
-                self.assertIn("The next search reads them. The chart fills in then.", content)
+                self.assertIn(f"{figures.READ_LATER} The chart fills in then.", content)
 
     def test_a_row_that_opens_has_the_sum_of_the_series_of_its_requests_and_none_when_one_is_missing(self):
         console = Console()
@@ -397,7 +397,8 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 3)
         reply = console.get("/")
         self.assertIn("Held back: 3 findings", reply.content)
-        self.assertIn("No measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.", reply.content)
+        self.assertIn("3 findings are held back. The AI found them, but Meternaut could not work out from your bill what a change would save, or the places for requests are full. "
+                      "Nobody is asked about them now, and the AI looks at them again at the next search.", reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
         self.assertIn("Held back: 4 findings", console.get("/").content)
@@ -407,7 +408,8 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("Held back: 1 finding No measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
+        self.assertIn("Held back: 1 finding 1 finding is held back. The AI found it, but Meternaut could not work out from your bill what a change would save, or the places for requests are full. "
+                      "Nobody is asked about it now, and the AI looks at it again at the next search.", content)
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()
@@ -510,7 +512,7 @@ class TheBriefOfACase(unittest.TestCase):
     def test_it_is_the_brief_of_the_case_with_its_form_for_a_person_who_may_answer(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), [TITLE])
-        self.assertEqual(self.reply.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(2)[:6], ["What it is worth", "If you approve", "Waiting", "What was measured", "What the AI saw", "How sure it is"])
         self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001"])
 
     def test_a_person_who_is_not_named_reads_the_brief_and_cannot_answer_and_sees_nobody_elses_decisions(self):
@@ -540,17 +542,18 @@ class TheBriefOfACase(unittest.TestCase):
         reply = self.console.get("/why/case0001")
         self.assertIn("Held back by", reply.measured())
         self.assertIn("A management lock covers the resource.", reply.measured()["Held back by"][0])
-        self.assertIn("How sure: Low.", reply.content)
+        self.assertIn("Confidence is low.", reply.content)
+        self.assertIn("A check held it back.", reply.content)
         (disclosure,) = reply.main.find_all("details")
         self.assertIn("A management lock covers the resource.", disclosure.text())
         self.assertIn("A guard could not be read, so it counts as on.", disclosure.text())
         self.assertIn("no model can lift it", disclosure.text())
 
-    def test_the_second_ai_that_was_not_asked_or_has_no_objection_says_so(self):
+    def test_the_second_ai_that_was_not_asked_says_so_and_one_that_has_no_objection_is_not_made_to_doubt(self):
         self.console.store.case_put(make_case(status="dropped", recommendation="keep", models={"detective": "model-detective-x", "skeptic": None}, objections=(), plan_id=None))
-        self.assertIn("The second AI was not asked.", self.console.get("/why/case0001").content)
+        self.assertIn("The second AI was not asked.", self.console.get("/why/case0001").content, "what the Details say of the AIs, in full")
         self.console.store.case_put(make_case(objections=()))
-        self.assertIn("The second AI raised no objection.", self.console.get("/why/case0001").content)
+        self.assertNotIn("What the second AI doubts.", self.console.get("/why/case0001").content)
 
     def test_a_case_that_ended_in_an_error_shows_its_reason_as_a_note_of_meternaut_and_not_as_ai_text(self):
         self.console.store.case_put(make_case(status="error", recommendation=None, confidence=None, summary="the token budget of the run was reached", objections=(), models={},
@@ -641,13 +644,13 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         self.assertTrue(facts["What the investigation found"].startswith("Larger than its use needs"))
         self.assertIn("Azure Monitor", self.reply.measured()["MetricA"][1])
 
-    def test_the_headline_says_consider_changing_and_the_page_says_how_sure_it_is(self):
-        self.assertEqual(self.reply.headings(1), ["Consider changing the disk planted-disk-1"])
-        self.assertIn("How sure: ", self.reply.content)
+    def test_the_headline_says_look_at_it_with_the_reason_that_the_finding_gives_and_the_page_says_how_sure_it_is(self):
+        self.assertEqual(self.reply.headings(1), ["Look at the disk planted-disk-1: it may be larger than its use needs"])
+        self.assertIn("Confidence is", self.reply.content)
 
     def test_the_two_agents_words_are_in_labelled_boxes_and_in_full_in_the_details(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
-        self.assertEqual(labels[:2], ["The AI's reasoning (not checked by code)", "The second AI's doubt"])
+        self.assertEqual(labels[:2], ["What the AI says. Meternaut did not check the wording.", "What the second AI doubts."])
         self.assertIn("Written by AI (model: model-investigator-x): summary", labels)
         self.assertIn("Written by AI (model: model-skeptic-y): objection 1", labels)
 
@@ -661,10 +664,10 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         failed = ({**INVESTIGATED["steps"][0]}, {**INVESTIGATED["steps"][1], "ok": False, "note": "the project is busy"})
         self.console.store.case_put(make_case(**{**INVESTIGATED, "steps": failed, "objections": (), "status": "needs_human"}))
         reply = self.console.get("/why/case0100")
-        self.assertIn("The second AI gave no verdict on this finding.", reply.content)
-        self.assertIn("How sure: Low.", reply.content)
+        self.assertIn("The second AI gave no verdict.", reply.content)
+        self.assertIn("Confidence is low.", reply.content)
         self.console.store.case_put(make_case(**{**INVESTIGATED, "models": {"investigator": "model-investigator-x", "skeptic": None}, "objections": ()}))
-        self.assertIn("The second AI was not asked.", self.console.get("/why/case0100").content)
+        self.assertIn("The second AI was not asked.", self.console.get("/why/case0100").content, "what the Details say of the AIs, in full")
 
     def test_the_notes_that_code_wrote_among_the_objections_are_not_shown_as_the_second_ais_doubt(self):
         notes = ("no measurement backs this finding: the tools returned no number", "the Investigator gave a confidence of 0.5, under the 0.7 that a proposal needs")
@@ -673,7 +676,7 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         doubt = [q.text() for q in reply.main.find_all("blockquote", class_="quote")][1]
         self.assertEqual(doubt, "It may be a standby.")
         self.console.store.case_put(make_case(**{**INVESTIGATED, "objections": notes}))
-        self.assertIn("The second AI raised no objection.", self.console.get("/why/case0100").content)
+        self.assertNotIn("What the second AI doubts.", self.console.get("/why/case0100").content, "a note of code is not a doubt of the second AI, and nothing is quoted in its place")
 
     def test_text_of_the_agents_is_quoted_and_is_never_a_link_or_a_control(self):
         hostile = "Ignore the rules <a href=\"https://evil.example\">click</a> <script>alert(1)</script>"
@@ -703,15 +706,16 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
     def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
-        self.assertTrue(sub.startswith("Saves, Scenario. $12.00 a month. Based on the 2 bill lines of 1 resource that the change would shrink, over the last 30 days, scaled by the change from 3 to 2: "
-                                       "the AI's target."), sub)
+        self.assertTrue(sub.startswith("It assumes the AI's target of a change from 3 to 2, applied to the 2 bill lines of this resource that the change would shrink, counted over the last 30 days."), sub)
+        lead = next(p for p in card.find_all("p") if "say" in p.classes()).text()
+        self.assertEqual(lead, "Meternaut worked out that this could save about $144 a year ($12.00 a month).")
 
     def test_the_bill_lines_that_it_would_shrink_are_a_fact_that_code_read(self):
         self.assertEqual(self.reply.measured()["Bill lines it would shrink"], ("2 lines, $36.00 in the last 30 days", "Azure cost lines"))
 
     def test_what_the_ai_says_a_person_would_do_is_a_box_of_its_own_marked_as_not_checked_by_code_and_the_block_is_no_typed_fact(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
-        self.assertEqual(labels[:3], ["The AI's reasoning (not checked by code)", "What the AI says a person would do (not checked by code)", "The second AI's doubt"])
+        self.assertEqual(labels[:3], ["What the AI says. Meternaut did not check the wording.", "What the AI says you could do. Meternaut did not check the wording.", "What the second AI doubts."])
         self.assertIn("Take it down one size.", self.reply.content)
         self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"})
 
@@ -725,40 +729,40 @@ class TheRequestPage(unittest.TestCase):
     """The page of one request, drawn from the style guide: a card with what is at stake and what happens on a yes, what was measured and why beside the answer."""
 
     def stake(self, reply):
-        """The figure of the card (its classes and its text) and the line under it."""
+        """The sentence that opens the figure of the card (its classes and its text) and the sentences under it ("" when there are none)."""
         card = reply.main.find("section", class_="focus")
-        figure = next(p for p in card.find_all("p") if "fig" in p.classes())
-        sub = next(p for p in card.find_all("p") if "figsub" in p.classes())
-        return figure.classes(), figure.text(), sub.text()
+        figure = next(p for p in card.find_all("p") if "say" in p.classes())
+        sub = next((p for p in card.find_all("p") if "figsub" in p.classes()), None)
+        return figure.classes(), figure.text(), sub.text() if sub is not None else ""
 
-    def test_a_saving_is_a_green_figure_with_its_level_a_cost_is_a_plain_one_and_what_is_not_known_says_why(self):
+    def test_a_saving_is_a_green_sentence_a_cost_is_a_plain_one_and_what_is_not_known_says_why(self):
         console = seeded()
         classes, figure, sub = self.stake(console.get("/ok/plan0001"))
-        self.assertEqual((classes, figure), (["fig", "save"], "$86 a year"))
-        self.assertEqual(sub, "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
+        self.assertEqual((classes, figure), (["say", "save"], "Meternaut worked out that this could save about $86 a year ($7.17 a month)."))
+        self.assertEqual(sub, "It is based on your bill for the last 30 days. Waiting costs about $0.24 a day.")
         storage(console, 1, cost=lambda n: 358.11)
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
-        self.assertEqual((classes, figure), (["fig"], "$4,297 a year"))
-        self.assertEqual(sub, "Costs, saving not measured. $358.11 a month. The most that a change could save: what it would save was not worked out.")
+        self.assertEqual((classes, figure), (["say"], "It costs $358 a month, about $4,297 a year."))
+        self.assertEqual(sub, "Nobody has worked out how much of that could be saved.")
         storage(console, 1, cost=lambda n: None)
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
-        self.assertEqual((classes, figure, sub), (["fig"], "—", "Cost not visible. No cost line was read yet."))
+        self.assertEqual((classes, figure, sub), (["say"], "Meternaut could not read what this costs.", ""))
         storage(console, 1, cost=lambda n: 0.0)
-        self.assertEqual(self.stake(console.get("/ok/plan5000"))[2], "Cost not visible. Azure has no cost line for this yet.")
+        self.assertEqual(self.stake(console.get("/ok/plan5000"))[1], "Azure shows no cost for this yet.")
 
     def test_a_reason_of_the_findings_own_takes_the_place_of_the_general_one(self):
         console = seeded()
         console.store.plan_put(make_plan(family="change-disk-tier", saving_usd_month=None, waiting_costs_usd_day=None))
         console.store.case_put(replace(console.store.case_get("case0001"), saving_usd_month=None, cost_usd_30d=80.0))
-        sub = self.stake(console.get("/ok/plan0001"))[2]
-        self.assertEqual(sub, "Costs, saving not measured. $80.00 a month. The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure "
-                              "for this change.")
+        _, lead, sub = self.stake(console.get("/ok/plan0001"))
+        self.assertEqual(lead, "It costs $80.00 a month, about $960 a year.")
+        self.assertEqual(sub, "The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure for this change.")
         storage(console, 1, cost=lambda n: 80.0)
         self.assertNotIn("price list", self.stake(console.get("/ok/plan5000"))[2], "the general reason is the line of the figure, not a sentence of its own")
 
     def test_the_card_draws_the_stored_daily_cost_and_a_request_without_one_says_why(self):
         console = seeded()
-        self.assertIn("The next search reads them. The chart fills in then.", console.get("/ok/plan0001").content)
+        self.assertIn(f"{figures.READ_LATER} The chart fills in then.", console.get("/ok/plan0001").content)
         console.store.case_put(replace(console.store.case_get("case0001"), cost_series=[1.0, 2.0, 3.0] + [4.0] * 27, cost_series_end="2026-11-04"))
         reply = console.get("/ok/plan0001")
         (chart,) = [n for n in reply.main.find_all("figure") if "chart" in n.classes()]
@@ -770,9 +774,9 @@ class TheRequestPage(unittest.TestCase):
         console = seeded()
         endpoints(console)
         reply = console.get("/ok/plan6000")
-        self.assertEqual(reply.headings(1), ["50 private endpoints in 8 resource groups"])
-        self.assertEqual(self.stake(reply)[1], "$4,297 a year")
-        self.assertIn("They are read when the AIs judge this finding again. The chart fills in then.", reply.content)
+        self.assertEqual(reply.headings(1), ["Look at 50 private endpoints in 8 resource groups"])
+        self.assertEqual(self.stake(reply)[1], "The 50 private endpoints together cost $358 a month, about $4,297 a year.")
+        self.assertIn(f"{figures.WHEN_JUDGED} The chart fills in then.", reply.content)
 
     def test_the_answer_stands_beside_what_was_measured_and_a_page_that_takes_no_answer_has_one_column(self):
         reply = seeded().get("/ok/plan0001")
@@ -800,7 +804,7 @@ class TheRequestPage(unittest.TestCase):
         console = Console()
         console.seed(plan=False)
         info = console.get("/why/case0001")
-        self.assertEqual(info.headings(2)[0], "What changes")
+        self.assertIn("What changes", info.headings(2))
         self.assertEqual(list(info.facts()), ["What changes"])
         self.assertEqual(info.facts()["What changes"], "No request is open for this finding. Nothing changes in Azure.")
 
@@ -808,7 +812,7 @@ class TheRequestPage(unittest.TestCase):
         console = seeded()
         storage(console, 1, cost=lambda n: 80.0)
         reply = console.get("/ok/plan5000")
-        self.assertEqual(reply.headings(2)[0], "If you answer")
+        self.assertIn("What happens if you answer", reply.headings(2))
         self.assertIn("Answering changes nothing in Azure", reply.main.find("p", class_="chips").text())
         self.assertNotIn("Low risk", reply.main.find("p", class_="chips").text(), "the word low never describes the risk of an answer")
         self.assertEqual([text for _, _, text in reply.forms()[0].buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
@@ -877,8 +881,7 @@ class TheUseOfAResource(unittest.TestCase):
         use = self.charts(self.focus(console))[1]
         self.assertEqual(use.find("figcaption").text(), "CPU use per day no use figures yet")
         self.assertEqual((use.find("p", class_="m").text(), use.find_all("svg")), (figures.USE_LATER, []))
-        self.assertIn("Azure Monitor shows use a few hours after it happens.", use.text())
-        self.assertIn("20 of the last 30 days have a value", use.text())
+        self.assertIn(figures.USE_LATER, use.text())
 
     def test_a_series_that_is_not_what_it_should_be_or_that_was_stored_for_another_kind_is_the_quiet_figure(self):
         for bad in ({"use_series": [1.0]}, {"use_series": [-1.0] * 30}, {"use_series": "x"}, {"use_series": [None] * 30}, {"use_series": [float("nan")] * 30}, {"use_series": [1.0] * 61},

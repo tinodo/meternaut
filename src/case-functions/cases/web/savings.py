@@ -7,23 +7,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..brief import HOLD_WORDS
+from ..brief import HOLD_WORDS, waited_text
 from ..models import HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
-from .figures import NO_LINES, WEAKEST_FIRST, a_year, cost_of, figure_for, title_of
+from .figures import ADDED_FINDINGS, NO_LINES, WEAKEST_FIRST, Figure, a_year, cost_of, figure_for, title_of
 from .layout import head, kpi, kpis, link, notice, page, paragraph, table
 
 PER = 1000  # the most that one read of the store gives
-LEAD = ("Every saving that Meternaut found, each finding counted once, by what became of it. Money is in US dollars, and a year is twelve times the month. "
-        "A saving is an estimate until Cost Management confirms it.")
+LEAD = ("This page counts every saving that Meternaut found, each finding once, by what became of it. A saving is an estimate until Cost Management confirms it.")
+COST_ONLY = "Nobody has worked out how much of the cost could be saved."  # why a finding that has a cost and no saving is in the column of the findings with no saving figure
 NOTE = (f'It reads up to {PER:,} findings of each status, and a status that holds that many says "at least". '
         "No saving is added up for a finding that was declined, taken back, dropped or not finished. "
         '"Saving measured" counts every change that Cost Management confirmed, so it can be larger than the row "Confirmed by Cost Management".')
 # Row, statuses, what became of them, and whether their savings are added up
 GROUPS = (
-    ("Waiting for a person", ("needs_human", "proposed", "awaiting_ok"), "A person has to answer or look at it before anything changes. Nothing closes it by time: if nobody answers, it goes on to the next person. "
+    ("Waiting for a person", ("needs_human", "proposed", "awaiting_ok"), "A person has to answer or look at it before anything changes. Nothing closes it by time. If nobody answers, it goes on to the next person. "
      "Findings that are held back, with no request yet, are here too.", True),
     ("Being made", ("approved", "running"), "A person approved. The change is being made now.", True),
     ("Made, not yet confirmed", ("done",), f"The change was made. {NO_LINES}", True),
@@ -38,7 +38,7 @@ HELD_NAME = "Found, and held back from a request"
 HELD_MEANING = "Meternaut found these and made no request for a change, for the reason under each heading. Nothing changes in Azure."
 HELD_LEAD = ("Meternaut found these and asked nobody to approve a change, for the reason under each heading. Nothing changes in Azure. Each finding has a page with its evidence, "
              "and a person who is named for it can ask, say that it is not theirs, decide later or say that it is not worth it.")
-HELD_HEADERS = ["Finding", "Saving a year", "How sure", "Why no request was made", "Who may know"]
+HELD_HEADERS = ["Finding", "Saving or cost", "How sure", "Why no request was made", "Who may know"]
 
 
 @dataclass
@@ -96,7 +96,7 @@ def _add(ctx: Ctx, group: Group, confirmed: dict, newest: dict) -> None:
             line[1].add(figure.note)
             line[2] += 1
         else:
-            why = brief.saving.why_none if brief.saving.specific else figure.note
+            why = brief.saving.why_none if brief.saving.specific else (COST_ONLY if figure.state == "cost" and not figure.whole else figure.note)
             group.none[why] = group.none.get(why, 0) + 1
 
 
@@ -108,21 +108,29 @@ def _tile(label: str, groups: list, value: str, unit: str, note: str, good: bool
     return kpi(label, value + ("+" if lower and value != "—" else ""), unit, note + (MORE if lower else ""), good)
 
 
-def _money(label: str, groups: list, tail: str) -> Safe:
+def _held_of(n: int, held: int) -> str:
+    """The sentence that says how many of the n findings in a sum are held back."""
+    if not held:
+        return ""
+    if n == 1:
+        return " It is held back."
+    return " All of them are held back." if held == n else f" Of the {n:,}, {held} {'is' if held == 1 else 'are'} held back."
+
+
+def _money(label: str, groups: list, tail: str, held: int = 0) -> Safe:
     lines = [line for group in groups for line in group.levels.values()]
     if not lines:
         return _tile(label, groups, "—", "", "No saving is known yet.")
     n, found = sum(line[2] for line in lines), sum(len(group.cases) for group in groups)
-    levels = ", ".join(level for level in WEAKEST_FIRST if any(level in group.levels for group in groups))
-    rest = counted(n, "finding") if n == found else f"{n:,} of {found:,} findings have a saving figure"
-    return _tile(label, groups, a_year(sum(line[0] for line in lines)), "a year", f"{rest} · {levels}. {tail}", True)
+    rest = f"It is the saving of {counted(n, 'finding')}." if n == found else f"It is the saving of {n:,} of {found:,} findings. The others have no saving figure."
+    return _tile(label, groups, a_year(sum(line[0] for line in lines)), "a year", f"{rest}{_held_of(n, held)} {tail}", True)
 
 
 def _tiles(groups: list, measured: list, failed: bool, cut: bool, held: int = 0) -> Safe:
     """Saving measured adds up every confirmed change, as the Decisions page does for the changes of one person. The tile of everything that was found says how many of those findings are held back."""
     saved = kpi("Saving measured", "—", "", "Cannot be read now.") if failed else measured_tile(sum(measured), len(measured), cut)
-    found = f"Of which held back: {held}. The basis is in the table." if held else "The basis is in the table."
-    return kpis(_money("Found in all", [group for group in groups if group.added], found), _money("Waiting for a person", groups[:1], "A person has to answer or look at it."), saved)
+    return kpis(_money("Found in all", [group for group in groups if group.added], "The table says what each figure rests on.", held),
+                _money("Waiting for a person", groups[:1], "They wait for a person to answer or look at them."), saved)
 
 
 def _row(group: Group) -> list:
@@ -133,9 +141,9 @@ def _row(group: Group) -> list:
     found = fmt("{lead}{n}{part}", lead=lead, n=number(len(group.cases)), part=Safe("<br>Part of it cannot be read now.") if group.failed else "")
     if not group.added:
         return [name, found, "No saving is claimed.", "Not added up."]
-    saving = [figure_cell(f"Saves, {level}", line[0], next(iter(line[1])) if len(line[1]) == 1 else "Based on the figures of each, added up.", lead)
+    saving = [figure_cell(Figure("save", "Saves" if level == "Verified" else "Could save", line[0], level, ""), next(iter(line[1])) if len(line[1]) == 1 else ADDED_FINDINGS, group.lower)
               for level in WEAKEST_FIRST if (line := group.levels.get(level))]
-    none = [f"{lead}{counted(n, 'finding')} · {why}" for why, n in sorted(group.none.items(), key=lambda item: (-item[1], item[0]))]
+    none = [f"{lead}{counted(n, 'finding')}. {why}" for why, n in sorted(group.none.items(), key=lambda item: (-item[1], item[0]))]
     return [name, found, join(saving, "<br>") if saving else "Nothing to add up.", join(none, "<br>") if none else "None."]
 
 
@@ -150,7 +158,7 @@ def _longest_wait(ctx: Ctx) -> Safe:
     waited = brief_of(ctx, plan, case).waiting
     if waited is None:
         return Safe("")
-    return join([paragraph(f"The request that has waited longest has waited {waited.days} day{'s' if waited.days != 1 else ''}, and it is with {waited.with_whom}. {waited.cost}".rstrip()), off_notice(ctx)])
+    return join([paragraph(f"The request that has waited longest has waited {waited_text(waited.days)}, and it is with {waited.with_whom}. {waited.cost}".rstrip()), off_notice(ctx)])
 
 
 def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:
@@ -180,7 +188,7 @@ def _held_section(ctx: Ctx, group: Group, held: dict[str, PlanRecord]) -> Safe:
             kind = fmt('<span class="muted">{kind}{place}</span>', kind=brief.where.kind, place=f", resource group {brief.where.group}" if brief.where.group else "")
             stake = figure_for([brief], [cost_of(brief, case)]).monthly or 0.0
             rows.append((-stake, title, [fmt('{title}<br>{kind}', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title), kind=kind), saving_cell(ctx, case),
-                                         f"{brief.confidence.level} confidence. {brief.confidence.because}", brief.hold.why if brief.hold else "", brief.owner.text]))
+                                         brief.confidence.because, brief.hold.why if brief.hold else "", brief.owner.text]))
         if rows:
             ordered = [row for _, _, row in sorted(rows, key=lambda item: item[:2])]  # what is at stake first
             parts += [fmt("<h3>{heading}</h3>", heading=heading), paragraph(needs), table(f"held-{reason}", heading, HELD_HEADERS, ordered, row_header=True, quiet_caption=True)]

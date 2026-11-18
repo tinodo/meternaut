@@ -9,11 +9,11 @@ from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_peopl
 from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
-from .figures import a_year, chip, cost_of, dollars, figure_for
+from .figures import Figure, a_year, a_year_text, chip, cost_of, dollars, figure_for
 from .layout import code, kpi, nowrap, notice, paragraph, summary
 
 T = TypeVar("T")
-MORE = " Not complete: there may be more."  # ends a tile's note when its figure was read in part
+MORE = " Meternaut could not read all of it, so there may be more."  # ends a tile's note when its figure was read in part
 
 
 def read(fn: Callable[[], T], default: T) -> tuple[T, bool]:
@@ -74,8 +74,8 @@ def counted(n: int, noun: str) -> str:
 def measured_tile(total: float, count: int, lower: bool = False) -> Safe:
     """The tile "Saving measured": what Cost Management confirmed after changes; `lower` when what was read may be only a part of them."""
     if total <= 0:
-        return kpi("Saving measured", "—", "", "Nothing measured yet. Cost lines arrive 8 to 72 hours after a change." + (MORE if lower else ""))
-    note = f"{dollars(total)} a month, confirmed by Cost Management after {counted(count, 'change')}."
+        return kpi("Saving measured", "—", "", "Nothing is measured yet. Cost Management shows the effect of a change 8 to 72 hours later." + (MORE if lower else ""))
+    note = f"Cost Management confirmed {dollars(total)} a month after {counted(count, 'change')}."
     return kpi("Saving measured", a_year(total) + ("+" if lower else ""), "a year", note + (MORE if lower else ""), True)
 
 
@@ -221,20 +221,26 @@ def confidence(value: object) -> str:
     return f"{value:.2f}" if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else "none"
 
 
-def figure_cell(label: str, monthly: float, note: str, lead: str = "") -> Safe:
-    """A figure in a cell: the year, then its level, the month and its basis (rule 13)."""
-    return fmt('{lead}{year} a year<br><span class="muted">{label}. {month} a month. {note}</span>', lead=lead, year=a_year(monthly), label=label, month=dollars(monthly), note=note)
+def figure_cell(figure: Figure, note: str, lower: bool = False) -> Safe:
+    """A figure in a cell: what it comes to as a short phrase ("Could save about $1,682 a year ($140 a month)", "Costs $848 a month, about $10,180 a year"), then the sentences that say what it rests
+    on (rule 13). `lower` says "at least" for a sum that may be more than what was read."""
+    month = dollars(figure.monthly)  # type: ignore[arg-type]
+    if figure.state == "cost":
+        amount = f"{month} a month, {a_year_text(figure.monthly)}"  # type: ignore[arg-type]
+    else:
+        amount = f"{'at least ' + a_year(figure.monthly) + ' a year' if lower else a_year_text(figure.monthly)} ({month} a month)"  # type: ignore[arg-type]
+    return fmt('{label} {amount}<br><span class="muted">{note}</span>', label=figure.label, amount=amount, note=note)
 
 
 def saving_cell(ctx: Ctx, case: CaseRecord) -> Safe:
-    """What a finding would save, said as the pages of the guide say it and from the same code: the figure a year, then its level, the month and its basis; or what it costs; or why no
-    figure can be shown."""
+    """What a finding would save, said as the pages of the guide say it and from the same code: what it could save or costs in a year and a month, and what that rests on; or why no figure can be
+    shown."""
     brief = brief_of(ctx, None, case)
     figure = figure_for([brief], [cost_of(brief, case)])
     note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
     if figure.monthly is None:
         return fmt('{label}<br><span class="muted">{note}</span>', label=figure.label, note=note)
-    return figure_cell(figure.label, figure.monthly, note)
+    return figure_cell(figure, note)
 
 
 CASE_HEADERS = ["Resource", "Found by", "Status", "Recommendation", "Confidence (0 to 1)", "What it would save", "Last updated", "Page"]
