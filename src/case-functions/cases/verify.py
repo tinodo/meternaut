@@ -142,6 +142,7 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Cal
                 keep[plan.plan_id] = (*figures, subject(case))  # type: ignore[arg-type,assignment]
             elif word in WHY:
                 why[word] += 1
+        ex.approvals.keep_cost(keep)  # before the amortized cost is read: what that does never stops a cost from being kept
         series = amortized(s, {plan_id: case for plan_id, (_, case) in shown.items()}, last) if shown else {}
         for plan_id, (plan, case) in shown.items():
             if plan_id not in series:
@@ -151,7 +152,6 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Cal
                 seen[plan_id] = max(seen[plan_id], figures[0])
             else:
                 del seen[plan_id]
-        ex.approvals.keep_cost(keep)
         for plan in ex.approvals.take_back_verified(seen):
             case = shown[plan.plan_id][1]
             s.history.emit("case.verified", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120), reason=SAID)

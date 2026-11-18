@@ -619,6 +619,16 @@ class WhenACommitmentCoversTheResource(unittest.TestCase):
         self.world.read(FELL)
         self.assertEqual((self.world.watch(), [plan.state for plan in (self.world.plan("p1"), self.world.plan("p2"))]), ([], ["expired"] * 2))
 
+    def test_an_amortized_read_that_breaks_is_said_and_does_not_stop_the_cost_of_another_request_from_being_kept(self):
+        self.world.ask("p2")
+
+        def broken(services, cases, last):
+            raise RuntimeError("Cost Management is down")
+        self.world.amortized = broken
+        self.world.read(FELL)
+        self.assertEqual(self.world.watch(), ["whether the cost of the open requests has gone down could not be checked (RuntimeError: Cost Management is down)"])
+        self.assertEqual((self.world.plan("p1").state, self.world.plan("p2").state, COST_AT_ASK in self.world.plan("p2").preconditions), ("open", "open", True))
+
     def test_an_amortized_cost_that_has_no_line_for_a_request_confirms_nothing(self):
         self.world.amortized = lambda services, cases, last: {key: None for key in cases}
         self.world.read(FELL)
