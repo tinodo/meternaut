@@ -258,7 +258,7 @@ def claim_lines(findings: list[dict]) -> list[str]:
     split = (("diffNone", "not a number"), ("diffNear", "within 5 percent of a total"), ("diffStat", "the maximum, the average or the days with data"), ("diffZero", "a zero"), ("diffFar", "another number"))
     split = [f"{sum(whole(e.get(key)) or 0 for e in findings)} {what}" for key, what in split if any(key in e for e in findings)]
     return [*([f"  Claims of the findings, over all of them: " + "; ".join(shown) + "."] if shown else []),
-            *([f"  Cited totals that none of the tools' totals equals, by what the number is: " + "; ".join(split) + "."] if split else [])]
+            *(["  Cited totals that none of the tools' totals equals, by what the number is: " + "; ".join(split) + "."] if split else [])]
 
 
 def beat_lines(events: list[dict]) -> list[str]:
