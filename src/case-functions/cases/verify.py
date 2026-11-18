@@ -5,9 +5,12 @@ requests is read (cases/run.py read_cost_series: nothing is read twice, no model
 finding costs has gone down by at least half of the saving that the request stated, and has stayed down for two weeks, the request is taken back with the reason `verified` (cases/approvals.py
 take_back_verified). Meternaut changed nothing and does not know why the cost went down: a cost can also fall for another reason, and a request that nobody answered is then closed as if somebody had acted.
 
-The 30 closed days are cut into the four whole weeks that end LAG days before the newest day (the bill is one to two days late), each scaled to a month. The first time that the step sees an open request with
-a whole daily cost it keeps what the cheapest of those weeks that cost anything came to (`COST_AT_ASK`): not the cost of the 30 days, which a spike of a few days or a cost that fell before the request
-would make wrong. The request is judged from the next Watch on: it is verified when each of the two newest weeks costs at most that, less half of the saving (the saving is never more than the cost).
+The 30 closed days are cut into the four weeks that end LAG days before the newest day (the bill is one to two days late), each scaled to a month. A week with a day of nothing among days that cost something
+is not whole: a day that is late or missing cannot be told from a fall, so that week says nothing. The first time that the step sees an open request with a whole daily cost it keeps what the cheapest of the
+whole weeks that cost anything came to (`COST_AT_ASK`) and how far apart those weeks were (`COST_SPREAD`; it takes two weeks): not the cost of the 30 days, which a spike of a few days or a cost that fell
+before the request would make wrong. The request is judged from the next Watch on: it is verified when each of the two newest whole weeks costs at most that, less what it stated that it would save (half of
+it for a resource, all of it for a group, whose request stands for each of its resources; never more than the cost) and less the spread, for a cost that moves by itself by more than the saving would
+fall by chance (`fall`, the one place that says).
 
 It judges only what it can hold the bill against, and says why when it could not (a typed word, once for each Watch):
 
@@ -33,7 +36,7 @@ from . import brief
 from . import costs as cost_words
 from .detectors import ADVISOR
 from .meters import MONTH, WEEK
-from .models import ADVISE, COST_AT_ASK, COST_OF, GROUP_FACT, CaseRecord, PlanRecord
+from .models import ADVISE, COST_AT_ASK, COST_OF, COST_SPREAD, GROUP_FACT, CaseRecord, PlanRecord
 from .roles import clean_text
 
 LAG = 2  # the newest closed days that are left out: the bill is one to two days behind
@@ -45,14 +48,21 @@ def _dollars(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
 
 
-def weeks(series: Sequence[float]) -> list[float]:
-    """What a month costs by each whole week of the closed days, the oldest first, without the newest LAG days: a week of 7 days scaled to the 30 of a month."""
-    return [MONTH / WEEK * sum(series[n:n + WEEK]) for n in range(0, len(series) - LAG, WEEK)]
+def weeks(series: Sequence[float]) -> list[float | None]:
+    """What a month costs by each whole week of the closed days, the oldest first, without the newest LAG days: a week of 7 days scaled to the 30 of a month. A week with a day of nothing among days that cost
+    something is None: Cost Management has no line for a day that is late or missing, and that cannot be told from a fall. A week of nothing at all is 0: nothing was billed, as for what was stopped."""
+    found: list[float | None] = []
+    for n in range(0, len(series) - LAG, WEEK):
+        days = series[n:n + WEEK]
+        found.append(MONTH / WEEK * sum(days) if all(days) or not any(days) else None)
+    return found
 
 
-def cheapest(series: Sequence[float]) -> float:
-    """What a month costs by the cheapest of those weeks that cost anything, 0 when none did: the lowest that the cost had been, so a spike does not raise it and a cost that already fell does not hide."""
-    return min((week for week in weeks(series) if week > 0), default=0.0)
+def baseline(series: Sequence[float]) -> tuple[float, float] | None:
+    """What the cost had been: what a month costs by the cheapest of the whole weeks that cost anything, and how far apart those weeks were (the dearest less the cheapest), or None when fewer than two
+    weeks can say. The cheapest, so that a spike does not raise it and a cost that already fell does not hide; the spread, so that a cost that moves by itself by more than the saving is no fall."""
+    found = [week for week in weeks(series) if week]
+    return (min(found), max(found) - min(found)) if len(found) > 1 else None
 
 
 def subject(case: CaseRecord) -> str:
@@ -63,38 +73,47 @@ def subject(case: CaseRecord) -> str:
     return hashlib.sha256("\n".join(sorted(str(i).lower() for i in ids)).encode("utf-8")).hexdigest()[:12]
 
 
-def fall(series: Sequence[float], before: float, saving: float) -> float | None:
-    """What a month costs now by the bill, when each of the two newest weeks costs at most `before` less half of `saving`, else None. The saving counts for no more than `before` (nothing saves more than
-    it costs). Both weeks have to be down, so a cost that fell by less, or for a few days, or only lately, is no fall. Returns the dearer of the two weeks: what the verdict rests on."""
+def fall(series: Sequence[float], plan: PlanRecord, case: CaseRecord) -> float | None:
+    """What a month costs now by the bill (the dearer of the two newest weeks) when it is lower than the cost that was kept by more than that cost moved of itself (the spread) and by what the request
+    stated that it would save: half of it for a resource, all of it for a group, whose request is one for each of its resources. A saving counts for no more than the cost (nothing saves more than it
+    costs). Both weeks have to be whole and down, so a cost that fell for a few days, or only lately, or by less than it moves, is no fall. This is the one place that says."""
+    kept = plan.preconditions or {}
+    before, spread = _dollars(kept.get(COST_AT_ASK)) or 0.0, _dollars(kept.get(COST_SPREAD)) or 0.0
+    saving = min(max(_dollars(plan.saving_usd_month) or 0.0, _dollars(case.saving_usd_month) or 0.0), before)
     older, newer = weeks(series)[-2:]
-    return max(older, newer) if max(older, newer) <= before - min(saving, before) / 2 else None
+    if older is None or newer is None:
+        return None
+    after = max(older, newer)
+    needed = saving if GROUP_FACT in (case.facts if isinstance(case.facts, dict) else {}) else saving / 2
+    return after if before - after >= needed and before - after > spread else None
 
 
-def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str, amortized: Sequence[float] | None = None) -> tuple[str, float]:
-    """What the bill says about an open request of advice: (`verified`, what a month costs now), (`baseline`, the cost to keep as the cost at the request: it has none yet), or a word that says why it
-    cannot be said: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `changed` (the resources of the finding are
-    not the ones that the kept cost is of), `unchecked` (whether the resource is still there was not checked: `there` is the word of cases/escalation.py existence), or `still` (the cost has not gone
-    down, or not for long enough). The second number is 0 for those. `last` is yesterday. `amortized` is the amortized daily cost of the same days, which a request that the actual cost
-    shows to be down is held against again: a commitment makes the actual cost of what it covers fall to nothing, and that is no reason to close a request."""
+def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str, amortized: Sequence[float] | None = None) -> tuple[str, tuple[float, ...]]:
+    """What the bill says about an open request of advice: (`verified`, (what a month costs now,)), (`baseline`, (the cost, and its spread) to keep as the cost at the request: it has none yet), or a
+    word that says why it cannot be said, with no figures: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `short` (fewer
+    than two whole weeks of cost to keep), `changed` (the resources of the finding are not the ones that the kept cost is of), `unchecked` (whether the resource is still there was not checked: `there`
+    is the word of cases/escalation.py existence) or `still` (the cost has not gone down, or not for long enough).
+    `last` is yesterday. `amortized` is the amortized daily cost of the same days, which a request that the actual cost shows to be down is held against again: a commitment makes the actual cost of what
+    it covers fall to nothing, and that is no reason to close a request."""
     if case is None or brief.advisor_estimate(case) or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):
-        return "unpriced", 0.0
+        return "unpriced", ()
     if case.cost_state == cost_words.CURRENCY:
-        return "currency", 0.0
+        return "currency", ()
     series = case.cost_series if amortized is None else amortized
     if not isinstance(series, list) or len(series) != MONTH or any(_dollars(day) is None for day in series):
-        return "unread", 0.0
+        return "unread", ()
     if case.cost_series_end != last.isoformat():
-        return "stale", 0.0
-    before = _dollars((plan.preconditions or {}).get(COST_AT_ASK))
-    if before is None:
-        usual = cheapest(series)
-        return ("baseline", usual) if usual > 0 else ("unpriced", 0.0)
-    if (plan.preconditions or {}).get(COST_OF) != subject(case):
-        return "changed", 0.0
+        return "stale", ()
+    kept = plan.preconditions or {}
+    if _dollars(kept.get(COST_AT_ASK)) is None or _dollars(kept.get(COST_SPREAD)) is None:
+        usual = baseline(series)
+        return ("baseline", usual) if usual else ("short", ())
+    if kept.get(COST_OF) != subject(case):
+        return "changed", ()
     if there != "there":
-        return "unchecked", 0.0
-    after = fall(series, before, max(_dollars(plan.saving_usd_month) or 0.0, _dollars(case.saving_usd_month) or 0.0))
-    return ("still", 0.0) if after is None else ("verified", after)
+        return "unchecked", ()
+    after = fall(series, plan, case)
+    return ("still", ()) if after is None else ("verified", (after,))
 
 
 def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Callable[[object, Mapping[str, CaseRecord], dt.date], Mapping[str, Sequence[float] | None]]) -> None:
@@ -108,7 +127,7 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Cal
         return
     try:
         last = s.clock().astimezone(dt.timezone.utc).date() - dt.timedelta(days=1)
-        keep: dict[str, tuple[float, str]] = {}
+        keep: dict[str, tuple[float, float, str]] = {}
         seen: dict[str, float] = {}
         shown: dict[str, tuple[PlanRecord, CaseRecord]] = {}
         why: Counter[str] = Counter()
@@ -116,20 +135,20 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Cal
             if plan.state != "open" or plan.family != ADVISE or (plan.preconditions or {}).get("source") == ADVISOR:
                 continue  # an Advisor recommendation has no cost to be held against: its case is not even read
             case = ex.store.case_get(plan.case_id)
-            word, figure = judge(plan, case, last, there.get(plan.plan_id, ""))
+            word, figures = judge(plan, case, last, there.get(plan.plan_id, ""))
             if word == "verified":
-                seen[plan.plan_id], shown[plan.plan_id] = figure, (plan, case)  # type: ignore[assignment]
+                seen[plan.plan_id], shown[plan.plan_id] = figures[0], (plan, case)  # type: ignore[assignment]
             elif word == "baseline":
-                keep[plan.plan_id] = (figure, subject(case))  # type: ignore[arg-type]
+                keep[plan.plan_id] = (*figures, subject(case))  # type: ignore[arg-type,assignment]
             elif word in WHY:
                 why[word] += 1
         series = amortized(s, {plan_id: case for plan_id, (_, case) in shown.items()}, last) if shown else {}
         for plan_id, (plan, case) in shown.items():
             if plan_id not in series:
                 why["amortized"] += 1
-            word, figure = judge(plan, case, last, there.get(plan_id, ""), series[plan_id]) if series.get(plan_id) else ("still", 0.0)
+            word, figures = judge(plan, case, last, there.get(plan_id, ""), series[plan_id]) if series.get(plan_id) else ("still", ())
             if word == "verified":
-                seen[plan_id] = max(seen[plan_id], figure)
+                seen[plan_id] = max(seen[plan_id], figures[0])
             else:
                 del seen[plan_id]
         ex.approvals.keep_cost(keep)

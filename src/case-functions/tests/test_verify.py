@@ -18,7 +18,7 @@ from cases import brief, escalation, events, learning, notify, offers, verify
 from cases.approvals import ApprovalSettings, Approvals
 from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, stamp
-from cases.models import COST_AT_ASK, COST_OF, COST_SEEN, GROUP_FACT, DecisionRecord
+from cases.models import COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, GROUP_FACT, DecisionRecord
 from test_escalation import World as LadderWorld
 from test_run_loop import OID, Moving, loop_for
 from test_web_savings import tiles_of
@@ -45,6 +45,14 @@ def vm(name: str) -> str:
 def priced(saving: float, cost: float) -> dict:
     """The change that a finding states, priced by code from the bill lines that it names (cases/pricing.py): what makes a saving the finding's own and not Azure Advisor's estimate."""
     return {"change": {"price": {"lowUsd": saving, "highUsd": saving, "billUsd": max(saving, cost), "form": "none", "lines": 1}}}
+
+
+def fall(series, saving=120.0, before=300.0, spread=0.0, group=False):
+    """What cases/verify.py fall says of a request that states `saving` for a cost that was kept as `before` and `spread`, about one resource or about a group of two."""
+    plan = make_advice(saving_usd_month=saving)
+    plan = replace(plan, preconditions={**plan.preconditions, COST_AT_ASK: before, COST_SPREAD: spread})
+    case = make_advice_case(saving_usd_month=saving, **({"facts": {GROUP_FACT: {"count": 2, "resourceIds": [vm("a"), vm("b")]}}} if group else {}))
+    return verify.fall(series, plan, case)
 
 
 class Lines:
@@ -134,17 +142,49 @@ class TheWeeks(unittest.TestCase):
         self.assertEqual(verify.weeks(bill(FLAT, newest=(9999.0, 9999.0))), verify.weeks(bill(FLAT)))
         self.assertEqual(verify.weeks(bill(FLAT, newest=(0.0, 0.0))), verify.weeks(bill(FLAT)))
 
-    def test_the_cheapest_week_that_cost_anything_is_the_level_and_a_spike_or_a_week_of_nothing_is_not(self):
-        self.assertEqual(verify.cheapest(bill((300.0, 900.0, 300.0, 300.0))), 300.0)
-        self.assertAlmostEqual(verify.cheapest(bill((0.0, 310.0, 290.0, 300.0))), 290.0, places=2, msg="a week that cost nothing is no level")
-        self.assertEqual(verify.cheapest(bill((0.0, 0.0, 0.0, 0.0))), 0.0)
+    def test_the_baseline_is_the_cheapest_whole_week_that_cost_anything_with_how_far_apart_the_weeks_were_and_a_spike_or_a_week_of_nothing_is_no_level(self):
+        self.assertEqual(verify.baseline(bill((300.0, 900.0, 300.0, 300.0))), (300.0, 600.0))
+        cheapest, spread = verify.baseline(bill((0.0, 310.0, 290.0, 300.0)))
+        self.assertAlmostEqual(cheapest, 290.0, places=2, msg="a week that cost nothing is no level")
+        self.assertAlmostEqual(spread, 20.0, places=2)
+        self.assertIsNone(verify.baseline(bill((0.0, 0.0, 0.0, 0.0))))
+        self.assertIsNone(verify.baseline(bill((0.0, 0.0, 0.0, 300.0))), "one week cannot say how far apart weeks are")
+
+    def test_a_week_with_a_day_of_nothing_among_days_that_cost_something_is_not_whole_and_a_week_of_nothing_at_all_is_a_week_that_cost_nothing(self):
+        days = bill(FLAT)
+        days[24] = 0.0  # a day that is late or missing
+        self.assertEqual([week is None for week in verify.weeks(days)], [False, False, False, True])
+        days[3] = 0.0
+        self.assertEqual([week is None for week in verify.weeks(days)], [True, False, False, True])
+        self.assertEqual(verify.weeks(bill((300.0, 0.0, 300.0, 300.0)))[1], 0.0)
 
     def test_both_of_the_two_newest_weeks_have_to_be_down_and_a_saving_counts_for_no_more_than_the_cost(self):
-        self.assertAlmostEqual(verify.fall(bill((300.0, 300.0, 200.0, 190.0)), 300.0, 120.0), 200.0, places=2, msg="the dearer of the two")
-        self.assertIsNone(verify.fall(bill((300.0, 300.0, 241.0, 100.0)), 300.0, 120.0), "the older week is not down enough")
-        self.assertIsNone(verify.fall(bill((300.0, 300.0, 100.0, 241.0)), 300.0, 120.0), "the newer week is not down enough")
-        self.assertIsNotNone(verify.fall(bill((300.0, 300.0, 149.0, 149.0)), 300.0, 5000.0), "a saving of more than the cost asks for half of the cost")
-        self.assertIsNone(verify.fall(bill((300.0, 300.0, 151.0, 151.0)), 300.0, 5000.0))
+        self.assertAlmostEqual(fall(bill((300.0, 300.0, 200.0, 190.0))), 200.0, places=2, msg="the dearer of the two")
+        self.assertIsNone(fall(bill((300.0, 300.0, 241.0, 100.0))), "the older week is not down enough")
+        self.assertIsNone(fall(bill((300.0, 300.0, 100.0, 241.0))), "the newer week is not down enough")
+        self.assertIsNotNone(fall(bill((300.0, 300.0, 149.0, 149.0)), saving=5000.0), "a saving of more than the cost asks for half of the cost")
+        self.assertIsNone(fall(bill((300.0, 300.0, 151.0, 151.0)), saving=5000.0))
+
+    def test_a_fall_has_to_be_bigger_than_how_far_apart_the_weeks_of_the_baseline_were(self):
+        for after, verdict in ((230.0, None), (220.5, None), (219.5, 219.5), (100.0, 100.0)):  # a spread of 80 and half of the saving is 60
+            with self.subTest(after=after):
+                found = fall(bill((300.0, 300.0, after, after)), spread=80.0)
+                if verdict is None:
+                    self.assertIsNone(found)
+                else:
+                    self.assertAlmostEqual(found, verdict, places=2)
+
+    def test_a_week_that_is_not_whole_is_no_verdict_and_a_week_of_nothing_is_a_fall(self):
+        self.assertEqual(fall(bill((300.0, 300.0, 0.0, 0.0))), 0.0, "stopped: nothing was billed in either week")
+        for day in (17, 24):
+            days = bill((300.0, 300.0, 200.0, 200.0))
+            days[day] = 0.0
+            self.assertIsNone(fall(days), f"a day of nothing in the week of day {day}")
+
+    def test_a_group_needs_the_whole_saving_that_it_states_and_a_resource_half_of_it(self):
+        for group, after, verdict in ((True, 499.0, True), (True, 501.0, False), (False, 699.0, True), (False, 701.0, False)):  # a cost of 900 and a saving of 400
+            with self.subTest(group=group, after=after):
+                self.assertEqual(fall(bill((900.0, 900.0, after, after)), saving=400.0, before=900.0, group=group) is not None, verdict)
 
 
 class WhatTheStepCloses(unittest.TestCase):
@@ -185,20 +225,15 @@ class WhatTheStepCloses(unittest.TestCase):
                 world = self.judged(weeks, World())
                 self.assertEqual((world.plan().state, world.lines.of("case.verified")), ("open", []))
 
-    def test_a_dip_of_one_day_is_no_fall(self):
+    def test_a_day_of_nothing_in_each_of_the_two_newest_weeks_is_a_late_or_missing_bill_and_no_fall(self):
         world = World()
-        world.ask(saving=20.0)  # asks for a fall to 290 a month: a day of nothing is a fall to 257 in the week that has it
+        world.ask(saving=20.0)  # half of it is 10 a month: a day of nothing in a week is a fall of 43 in that week
         world.watch()
         days = bill(FLAT)
-        days[24] = 0.0
+        days[24] = days[17] = 0.0
         world.now += DAY
         world.store.case_put(replace(world.store.case_get("c-p1"), cost_series=days, cost_series_end=world.yesterday()))
-        world.watch()
-        self.assertEqual(world.plan().state, "open", "the older week did not fall")
-        days[17] = 0.0
-        world.store.case_put(replace(world.store.case_get("c-p1"), cost_series=days))
-        world.watch()
-        self.assertEqual(world.plan().state, "expired", "a day of nothing in each of the two weeks is a fall in both")
+        self.assertEqual((world.watch(), world.plan().state, world.lines.found), ([], "open", []))
 
     def test_the_two_newest_days_are_left_out_because_the_bill_is_late(self):
         self.assertEqual(self.judged(FELL, World(), ).plan().state, "expired")
@@ -232,6 +267,38 @@ class WhatTheStepCloses(unittest.TestCase):
         self.world.read(FELL)
         self.world.watch()
         self.assertEqual(self.world.plan().state, "expired")
+
+    def test_a_cost_that_moves_by_itself_by_more_than_the_fall_is_no_fall_and_the_request_keeps_how_far_apart_the_weeks_were(self):
+        world = World()
+        world.ask(weeks=(300.0, 380.0, 300.0, 340.0), saving=20.0)  # half of the saving is 10, and the weeks before moved by 80
+        world.watch()
+        self.assertEqual((world.plan().preconditions[COST_AT_ASK], world.plan().preconditions[COST_SPREAD]), (300.0, 80.0))
+        world.read((300.0, 380.0, 250.0, 250.0))
+        world.watch()
+        self.assertEqual(world.plan().state, "open", "a fall of 50 is less than the cost moved of itself")
+        world.read((300.0, 380.0, 215.0, 215.0))
+        world.watch()
+        self.assertEqual(world.plan().state, "expired")
+
+    def test_the_cost_to_hold_the_bill_against_needs_two_whole_weeks_and_is_kept_when_there_are_two(self):
+        world = World()
+        world.ask()
+        days = bill(FLAT)
+        for day in (3, 10, 17):
+            days[day] = 0.0  # three of the four weeks have a day that is late or missing
+        world.store.case_put(replace(world.store.case_get("c-p1"), cost_series=days))
+        self.assertEqual((world.watch(), COST_AT_ASK in world.plan().preconditions), ([], False))
+        world.read(FLAT)
+        world.watch()
+        self.assertEqual((world.plan().preconditions[COST_AT_ASK], world.plan().preconditions[COST_SPREAD]), (300.0, 0.0))
+
+    def test_a_stopped_resource_whose_two_newest_weeks_bill_nothing_is_a_fall(self):
+        world = World()
+        world.ask()
+        world.watch()
+        world.read((300.0, 300.0, 0.0, 0.0))
+        world.watch()
+        self.assertEqual((world.plan().state, world.plan().preconditions[COST_SEEN]), ("expired", 0.0))
 
     def test_a_request_is_kept_the_cost_and_judged_in_two_different_watches_whatever_the_first_reading_shows(self):
         for weeks in (FLAT, FELL):
@@ -291,8 +358,8 @@ class WhatTheStepCloses(unittest.TestCase):
         self.world.watch()
         self.assertEqual((self.world.plan(), len(self.world.lines.of("case.verified"))), (plan, 1))
 
-    def test_a_request_of_a_group_is_judged_by_the_sum_of_what_its_resources_cost(self):
-        for weeks, state in (((900.0, 900.0, 650.0, 650.0), "expired"), ((900.0, 900.0, 750.0, 750.0), "open")):
+    def test_a_request_of_a_group_is_judged_by_the_sum_of_what_its_resources_cost_and_needs_the_whole_saving_that_it_states(self):
+        for weeks, state in (((900.0, 900.0, 499.0, 499.0), "expired"), ((900.0, 900.0, 501.0, 501.0), "open"), ((900.0, 900.0, 650.0, 650.0), "open")):  # a cost of 900 and a saving of 400
             with self.subTest(weeks=weeks):
                 world = World()
                 world.ask("g1", weeks=(900.0, 900.0, 900.0, 900.0), saving=400.0, facts={GROUP_FACT: {"count": 3, "resourceIds": [vm("a"), vm("b"), vm("c")]}})
@@ -454,9 +521,10 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
         world.ask()
         other = world.ask("p2")
         world.store.plan_put(replace(other, state="declined"))
-        world.approvals.keep_cost({"p1": (300.0, "x"), "p2": (300.0, "x"), "nobody": (1.0, "x")})
-        world.approvals.keep_cost({"p1": (50.0, "y")})  # a Watch that was late with its own reading
-        self.assertEqual((world.plan("p1").preconditions[COST_AT_ASK], world.plan("p1").preconditions[COST_OF], COST_AT_ASK in world.plan("p2").preconditions), (300.0, "x", False))
+        world.approvals.keep_cost({"p1": (300.0, 20.0, "x"), "p2": (300.0, 20.0, "x"), "nobody": (1.0, 0.0, "x")})
+        world.approvals.keep_cost({"p1": (50.0, 0.0, "y")})  # a Watch that was late with its own reading
+        kept = world.plan("p1").preconditions
+        self.assertEqual((kept[COST_AT_ASK], kept[COST_SPREAD], kept[COST_OF], COST_AT_ASK in world.plan("p2").preconditions), (300.0, 20.0, "x", False))
 
     def test_the_step_never_stops_the_run_and_says_what_it_could_not_do(self):
         world = World()
