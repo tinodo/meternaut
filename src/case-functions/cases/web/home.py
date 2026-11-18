@@ -207,9 +207,9 @@ def _members(ctx: Ctx, unit: Unit, name: str) -> Safe:
 def _row(ctx: Ctx, unit: Unit, rank: int, top: float, primary: bool) -> Safe:
     markup, name = _title(unit)
     basis = fmt('<span class="m">{note}</span>', note=unit.figure.note) if unit.figure.state in ("save", "cost") else Safe("")
-    parts = fmt('<span class="rank">{rank}</span><span class="main"><span class="t">{title}</span><span class="m">{meta}</span>{basis}<span class="chips">{chips}</span></span>'
-                '{impact}<span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis, chips=_chips(unit), impact=_impact(unit, top),
-                spark=spark(unit.series, unit.reason))
+    parts = fmt('<span class="rank">{rank}</span><span class="main"><span class="t">{title}</span><span class="m">{meta}</span></span>{impact}'
+                '<span class="below">{basis}<span class="chips">{chips}</span></span><span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis,
+                chips=_chips(unit), impact=_impact(unit, top), spark=spark(unit.series, unit.reason))
     if len(unit.members) == 1 and unit.first.brief.group is None:
         button = fmt('<span class="act"><a class="btn sm{primary}" href="{href}">Review<span class="visually-hidden">: {name}</span></a></span>',
                      primary=" primary" if primary else "", href=ctx.url(f"/ok/{link_part(unit.first.brief.plan_id)}"), name=name)

@@ -1786,6 +1786,12 @@ def _seen_line(plan: PlanRecord) -> tuple[str, ...]:
             "The newest two days are left out, because the bill is late." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
 
 
+def because_text(reason: object) -> str:
+    """Why a person declined, as the end of a sentence: " because it is still needed", " for another reason", or nothing when no reason was given."""
+    word = REASON_WORDS.get(reason, "") if isinstance(reason, str) else ""
+    return "" if not word else " for another reason" if reason == "other" else f" because {word}"
+
+
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state in ("open", HELD):
@@ -1803,8 +1809,7 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "declined":
         found = _decisive(decisions, "decline")
         who = text_of(found.approver_name, 80) if found else "A person"
-        reason = REASON_WORDS.get(found.reason, "") if found else ""
-        because = "" if not reason else " for another reason" if found.reason == "other" else f" because {reason}"  # type: ignore[union-attr]
+        because = because_text(found.reason if found else "")
         said = f"{who} said it is not worth acting on{because}." if advice else f"Declined by {who}{because}."
         return Outcome("declined", "Not worth it" if advice else "Declined", (said, "Nothing changed."), "Not worth it" if advice else "Declined", who, found.at if found else "")
     if state == "withdrawn":

@@ -58,7 +58,7 @@ class Rendered:
 INLINE = {"a", "span", "strong", "em", "b", "i", "small", "code", "time", "abbr", "mark", "q", "sup", "sub"}
 TEXT_TAGS = {"p": "paragraph", "li": "item", "dt": "term", "dd": "value", "th": "cell", "td": "cell", "h1": "heading", "h2": "heading", "h3": "heading", "h4": "heading",
              "figcaption": "label", "summary": "label", "caption": "label", "label": "label", "button": "button", "legend": "label", "blockquote": "quote", "option": "label"}
-LABEL_CLASSES = {"chips", "notice-title", "eyebrow", "brand", "who", "skip", "k", "v", "mn-label", "meta"}  # a label is a short noun phrase: it needs no full stop
+LABEL_CLASSES = {"chips", "notice-title", "eyebrow", "brand", "who", "skip", "k", "v", "mn-label", "meta", "event"}  # a label is a short noun phrase: it needs no full stop; a line of the History is a chip and a title, and its one sentence is the quiet part under it
 SPAN_BLOCKS = {"t": "label", "m": "paragraph", "quiet": "paragraph", "lab": "label", "y": "label", "mo": "label", "chips": "label"}  # the parts of a row of a list, which are lines of their own
 BUTTON_CLASSES = {"btn", "mn-button"}
 SKIPPED = {"style", "script", "title"}
@@ -459,7 +459,7 @@ DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
 LABEL_COLON = re.compile(r"^([^:.?!]{3,60}): (?=[A-Z][a-z])")  # "Impact not analysed: Meternaut did not look ...": a sentence after a colon starts with a capital letter
 RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart
 MOST_WORDS = 40
-NOT_YET = {"History page", "Teams card, a change that was made and checked", "done letter"}  # the cases that phase 2 has not rewritten yet; each step takes its cases out
+NOT_YET = {"Teams card, a change that was made and checked", "done letter"}  # the cases that phase 2 has not rewritten yet; each step takes its cases out
 STOPS = ".?!"
 SENTENCES_ONLY = ("paragraph", "item")  # these end with a full stop, a question mark or an exclamation mark; a heading, a label, a term, a cell and a button need none
 SHORT_VALUE = 5  # a value of a list of facts that is shorter than this many words is a name or a number, not a sentence

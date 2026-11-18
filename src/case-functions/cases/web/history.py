@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from ..brief import REASON_WORDS, TAKEN_BACK, plan_headline, taken_back
+from ..brief import TAKEN_BACK, because_text, plan_headline, taken_back
 from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
 from .common import answerable, closed_by_the_bill, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
@@ -63,15 +63,17 @@ def _decision_event(ctx: Ctx, plan: PlanRecord, decision: DecisionRecord) -> Eve
     advice = plan.family == "advise"
     who = decision.approver_name or "A person"
     if decision.decision == "decline":
-        reason = REASON_WORDS.get(decision.reason, "")
-        return Event(decision.at, "not-worth" if advice else "declined", _headline(ctx, plan), fmt("{who}{reason}", who=who, reason=f" · reason: {reason}" if reason else ""))
+        because = because_text(decision.reason)
+        return Event(decision.at, "not-worth" if advice else "declined", _headline(ctx, plan), fmt("{who} said it is not worth acting on{because}.", who=who, because=because) if advice
+                     else fmt("Declined by {who}{because}.", who=who, because=because))
     if decision.decision == "not_mine":
-        return Event(decision.at, "not-mine", _headline(ctx, plan), who)
+        return Event(decision.at, "not-mine", _headline(ctx, plan), fmt("{who} said that this is not theirs.", who=who))
     if decision.decision == "approve":
         second = not advice and plan.approval_class == TWO_PEOPLE_CLASS
-        return Event(decision.at, "worth" if advice else "approved", _headline(ctx, plan), fmt("{who} · the second of two people", who=who) if second else who)
+        return Event(decision.at, "worth" if advice else "approved", _headline(ctx, plan), fmt("{who} said this is worth acting on.", who=who) if advice
+                     else fmt("Approved by {who}, as the second of two people.", who=who) if second else fmt("Approved by {who}.", who=who))
     if decision.decision == "confirm":
-        return Event(decision.at, "confirmed", _headline(ctx, plan), fmt("{who} · the first of two people", who=who))
+        return Event(decision.at, "confirmed", _headline(ctx, plan), fmt("Confirmed by {who}, as the first of two people.", who=who))
     return None
 
 
@@ -135,7 +137,8 @@ def _events(ctx: Ctx, since: str) -> Feed:
             why = taken_back(plan)
             events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else "A timer closed it before requests were kept open."))
     for found in quiet.values():
-        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Taken back by Meternaut: each says why."))
+        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding",
+                            "Meternaut took it back, and it says why." if len(found) == 1 else "Meternaut took them back, and each says why."))
     cases, ok = read(lambda: ctx.store.cases_recent(CASES_ASKED), [])
     if not ok:
         failed.add("cases")
@@ -153,15 +156,15 @@ def _events(ctx: Ctx, since: str) -> Feed:
 def _line(event: Event) -> Safe:
     label, kind, shape = KINDS[event.kind]
     note = fmt('<span class="quiet">{note}</span>', note=event.note) if event.note else Safe("")
-    return fmt("<li>{chip}<span>{what}</span>{note}</li>", chip=chip(label, kind, shape), what=event.what, note=note)
+    return fmt('<li class="event">{chip}<span>{what}</span>{note}</li>', chip=chip(label, kind, shape), what=event.what, note=note)
 
 
 def _tile(feed: Feed, label: str, count: int, note: str, rests_on: set[str]) -> Safe:
     """One tile: the count, or a dash when a source that it rests on could not be read, or the count with a plus when a source that it rests on holds more than the page reads."""
     if feed.failed & rests_on:
-        return kpi(label, "—", "", "Cannot be read now.")
+        return kpi(label, "—", "", "Meternaut cannot read this now.")
     if feed.cut & rests_on:
-        return kpi(label, f"{count}+", "", "At least this many: the page reads only the latest records.")
+        return kpi(label, f"{count}+", "", "There are at least this many, because the page reads only the latest records.")
     return kpi(label, str(count), "", note)
 
 
@@ -170,19 +173,19 @@ def _tiles(feed: Feed) -> Safe:
     decided = sum(1 for e in events if e.kind in DECISIONS)
     made = sum(1 for e in events if e.kind == "made")
     found = sum(e.count for e in events)
-    return kpis(_tile(feed, "Decisions", decided, f"Answers on the requests that you may answer, in the last {DAYS} days.", {"plans", "decisions"}),
-                _tile(feed, "Changes made", made, "Made in Azure on those requests, with the approver's own rights.", {"plans", "actions"}),
-                _tile(feed, "New findings", found, f"Found by the search in the last {DAYS} days.", {"cases"}), label=f"The last {DAYS} days")
+    return kpis(_tile(feed, "Decisions", decided, f"It counts the answers to the requests that you may answer, in the last {DAYS} days.", {"plans", "decisions"}),
+                _tile(feed, "Changes made", made, "It counts the changes that Meternaut made in Azure on those requests, with the approver's own rights.", {"plans", "actions"}),
+                _tile(feed, "New findings", found, f"It counts the findings that the search found for the first time in the last {DAYS} days.", {"cases"}), label=f"The last {DAYS} days")
 
 
 def history(ctx: Ctx) -> Response:
     since = stamp(ctx.now - dt.timedelta(days=DAYS))
     feed = _events(ctx, since)
-    parts: list[object] = [head("What happened", f"The last {DAYS} days: what was decided, what was changed and checked, and how many new findings there were each day.")]
+    parts: list[object] = [head("What happened", f"Here is what happened in the last {DAYS} days. It shows what people decided, what was changed and checked, and how many new findings there were each day.")]
     if "plans" in feed.failed:
-        parts.append(notice("error", "The history cannot be read", "I cannot read the requests now. Nothing has changed."))
+        parts.append(notice("error", "The history cannot be read", "Meternaut cannot read the requests now. Nothing has changed."))
     elif feed.failed:
-        parts.append(notice("error", "Part of the history cannot be read", "I cannot read all of it now, so some lines and counts are missing. Nothing has changed."))
+        parts.append(notice("error", "Part of the history cannot be read", "Meternaut cannot read all of it now, so some lines and counts are missing. Nothing has changed."))
     if not feed.events and not feed.failed:
         parts.append(paragraph(f"Nothing has happened in the last {DAYS} days."))
     else:
@@ -193,5 +196,5 @@ def history(ctx: Ctx) -> Response:
     for key in sorted(days, reverse=True):
         anchor = f"day-{link_part(key)}"
         parts.append(fmt('<section aria-labelledby="{anchor}"><div class="sec"><h2 id="{anchor}">{day}</h2></div><ul class="recent">{rows}</ul></section>', anchor=anchor,
-                         day=ctx.day(days[key][0].at), rows=join(_line(event) for event in days[key])))
+                         day=ctx.day(days[key][0].at, weekday=True), rows=join(_line(event) for event in days[key])))
     return page(ctx, "What happened", join(parts), current="/history", ai=True, why="you are signed in and listed as a person who may use this page")
