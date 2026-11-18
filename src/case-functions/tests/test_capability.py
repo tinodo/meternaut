@@ -22,7 +22,7 @@ from cases.redact import Redactor
 from cases.toolbox import Toolbox
 
 from deep_estate import SUB as DEEP_SUB, deep
-from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer, finding, key_of, metrics, resource
+from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer, finding, key_of, made_before, metrics, resource
 from test_toolbox import ask, toolbox as toolbox_over
 
 NOT_VISIBLE = "not visible with this access"
@@ -434,10 +434,12 @@ class TheInvestigationKeepsTheProfile(unittest.TestCase):
         commitment, other = h.store.case_get(key_of(resource(1))), h.store.case_get(key_of(resource(2)))
         self.assertEqual(commitment.learned["access"], "commitments-not-visible")
         self.assertNotIn("access", other.learned)
-        (plan,) = [p for p in h.store.plans_open() if p.case_id == commitment.case_id]
+        self.assertEqual([p.case_id for p in h.store.plans_open()], [other.case_id], "nobody is asked about the commitment: no saving was priced for it (the other finding was priced from its cost lines)")
+        plan = made_before(h, commitment)
+        other_plan = h.store.plans_open()[0]
         shown = brief.build_brief(commitment, plan, None, (), now=h.clock(), may_answer=True)
         self.assertEqual(shown.access, brief.ACCESS_WORDS["commitments-not-visible"])
-        self.assertEqual(brief.build_brief(other, [p for p in h.store.plans_open() if p.case_id == other.case_id][0], None, (), now=h.clock(), may_answer=True).access, "")
+        self.assertEqual(brief.build_brief(other, other_plan, None, (), now=h.clock(), may_answer=True).access, "")
 
     def test_a_finding_about_a_commitment_under_an_agreement_without_savings_plans_says_so_and_a_visible_profile_says_nothing(self):
         raw = answer(finding(handles=["r1"], basis="commitment-misfit", proposal="investigate", confidence=0.8))

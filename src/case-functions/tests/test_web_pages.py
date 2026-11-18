@@ -409,6 +409,17 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
         self.assertIn("Held back: 1 finding No measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
 
+    def test_a_finding_of_the_investigation_that_no_saving_backs_is_not_asked_about_and_is_counted_here_whatever_the_resource_costs(self):
+        from cases.approvals import ApprovalSettings, Approvals
+
+        console = seeded()
+        costly = make_advice_case(case_id="case3500", resource_id=f"{VM_ID}-dear", resource_name="endpoint-dear", plan_id=None, saving_usd_month=None, cost_usd_30d=848.0, objections=())
+        console.store.case_put(costly)
+        self.assertIsNone(Approvals(console.store, ApprovalSettings(change_scopes=())).advise(costly, (TINO,)), "no saving was priced from the bill, so nobody is asked")
+        reply = console.get("/")
+        self.assertIn("Held back: 1 finding", reply.content)
+        self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
+
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()
         self.held(console, 1, case_id="case3001", status="expired")

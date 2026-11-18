@@ -17,7 +17,7 @@ from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
 from cases import approvals, brief, cards, investigate, learning, letters
-from cases.approvals import ADVICE_MIN_USD, why_not_ask
+from cases.approvals import ADVICE_MIN_USD, UNPRICED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.memory_store import stamp
 from cases.models import ADVISE, GROUP_FACT, CaseRecord, NoteRecord, Principal, StoreError
@@ -55,14 +55,22 @@ def quiet_raw(handles, **changes) -> dict:
     return finding(handles=list(handles), basis="no-usage", proposal="delete", confidence=0.9, evidence=[entry(handle, "Traffic", 0) for handle in handles], **changes)
 
 
-def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None, meters=None) -> Harness:
-    """One Watch over a fake estate. The clock and the loop (the store) are the ones to pass again for a second Watch."""
+def asks_as_before(case) -> str | None:
+    """What approvals.why_not_ask said before a finding of the investigation needed a saving that code priced: the rule of every other detector. Most of this module is about what a group is
+    and what a person sees of the request that stands for it, and a finding that these tests state without a change has no saving, so they are run with the older rule (`watch`). The tests
+    of the rule itself ask `watch` for it (`rule=True`) and are in WhenTheRuleOfTheSavingMeetsAGroup."""
+    return why_not_ask(dataclasses.replace(case, detector="a-detector-of-rules"))
+
+
+def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None, meters=None, rule=False) -> Harness:
+    """One Watch over a fake estate. The clock and the loop (the store) are the ones to pass again for a second Watch. `rule` asks for the rule of today: a finding that no saving backs is not asked about."""
     clock = clock or Moving()
     toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: absent() for r in resources}, meters=meters)
     h = Harness(FakeFoundry(answer(*(raw if isinstance(raw, list) else [raw])), skeptic), toolbox, clock=clock, extras=extras if extras is not None else loop_for(clock))
     if contexts is not None:
         h.contexts = contexts
-    h.go()
+    with mock.patch.object(approvals, "why_not_ask", why_not_ask if rule else asks_as_before):
+        h.go()
     return h
 
 
@@ -91,7 +99,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
                          (key_of(endpoints(60)[-1]), "pe-60", "needs_human", "investigate", None, 1830.0), "the case of the dearest, with what all of them cost")
         self.assertEqual((plan.family, plan.case_id, case.plan_id, plan.saving_usd_month), (ADVISE, case.case_id, plan.plan_id, None))
         self.assertGreaterEqual(case.cost_usd_30d, ADVICE_MIN_USD)
-        self.assertIsNone(why_not_ask(case))
+        self.assertIsNone(asks_as_before(case))
         self.assertEqual(plan.title, HEADLINE)
 
     def test_the_same_finding_that_cost_little_is_held_back_as_before_and_stays_an_open_question(self):
@@ -100,7 +108,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
                 h = watch(raw_of(10, confidence=0.8), endpoints(10, cost=lambda n: cost))
                 case = only_case(h)
                 self.assertEqual(case.cost_usd_30d, round(10 * cost, 2))
-                self.assertEqual((why_not_ask(case) is not None, h.store.plans_open() == [], case.plan_id is None), (held, held, held))
+                self.assertEqual((asks_as_before(case) is not None, h.store.plans_open() == [], case.plan_id is None), (held, held, held))
                 self.assertEqual(learning.OpenQuestions(h.store, h.clock()).is_open(case), held, "a case with no request is an open question that the Investigator gets again")
 
     def test_the_case_keeps_what_the_group_is_as_typed_facts(self):
@@ -285,6 +293,34 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
         self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
         self.assertIn("3 of 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
+
+
+class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
+    """A request is made for a finding of the investigation only when code priced a saving for it, and a group is judged by the saving of the group, as its page shows it: these run with the rule."""
+
+    def priced(self, named: int = 7):
+        resources = endpoints(7, cost=lambda n: 100.0)
+        meters = {f"m{n}": meter_line(f"r{n}", 50.0) for n in range(1, named + 1)}
+        change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, named + 1)], "how": "Remove them."}
+        return watch(raw_of(7, change=change), resources, meters=meters, rule=True)
+
+    def test_a_group_with_a_priced_total_is_asked_about_as_one_request_that_states_the_total_even_when_only_some_of_its_resources_are_priced(self):
+        for named, total in ((7, 350.0), (3, 150.0)):
+            with self.subTest(priced=named):
+                h = self.priced(named)
+                case = only_case(h)
+                (plan,) = h.store.plans_open()
+                self.assertEqual((case.facts[GROUP_FACT]["count"], case.saving_usd_month, plan.saving_usd_month, case.plan_id, plan.case_id), (7, total, total, plan.plan_id, case.case_id))
+                self.assertIsNone(why_not_ask(case))
+                self.assertFalse([note for note in h.notes if "no saving was priced" in note])
+
+    def test_a_group_that_nothing_priced_is_no_request_however_much_it_costs_and_the_end_note_counts_it(self):
+        h = watch(raw_of(60), endpoints(60), rule=True)
+        case = only_case(h)
+        self.assertEqual((case.cost_usd_30d, case.saving_usd_month, case.status, case.facts[GROUP_FACT]["count"]), (1830.0, None, "needs_human", 60))
+        self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNPRICED, [], None))
+        self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
+        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them, for no saving was priced from the bill"), h.notes[-1])
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):

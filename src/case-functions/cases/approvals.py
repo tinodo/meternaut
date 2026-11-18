@@ -21,8 +21,8 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord,
-                     EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, INVESTIGATION, ActionRecord, CaseRecord, DecideResult,
+                     DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -32,6 +32,9 @@ ADVICE_STATUSES = ("proposed", "needs_human")
 # A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
 # concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py).
 ADVICE_MIN_USD = 50.0
+# And a finding of the investigation is asked about only when code priced a saving for it from the bill (`case.saving_usd_month`, cases/pricing.py), whatever the resource costs: a figure of what
+# a resource costs is not what a change saves, and a person is not handed the AI's unfinished work. The one reason, for every path to a request (why_not_ask).
+UNPRICED = "no saving was priced from the bill"
 # What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
 NOTHING_TO_SAY = "held back: nothing to say"
 # What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): it was held back
@@ -109,8 +112,11 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
 
 
 def why_not_ask(case: CaseRecord) -> str | None:
-    """None when a finding gives a person something to decide with; otherwise the plain reason why not. Only a finding that no measurement backs (decide.NO_MEASUREMENT), that names no
-    saving and whose resource cost under ADVICE_MIN_USD in 30 days is held back: the AIs could not measure anything and nothing is at stake that a person can weigh."""
+    """None when a finding gives a person something to decide with; otherwise the plain reason why not. A finding of the investigation with no saving that code priced is held back, whatever
+    its resource costs (UNPRICED). Any other finding is held back only when no measurement backs it (decide.NO_MEASUREMENT), it names no saving and its resource cost under ADVICE_MIN_USD in
+    30 days: the AIs could not measure anything and nothing is at stake that a person can weigh."""
+    if case.detector == INVESTIGATION and not _saving(case):
+        return UNPRICED
     if NO_MEASUREMENT not in case.objections:
         return None
     if (case.saving_usd_month or 0) > 0 or brief.advisor_saving(case) is not None or (case.cost_usd_30d or 0) >= ADVICE_MIN_USD:
@@ -527,8 +533,9 @@ class Approvals:
         return "" if self._own_group(case) else brief.held_reason(case, self.clock())
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
-        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why) or that were made when a deletion
-        could be asked on less than they ask for now (brief.made_under_old_rules), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
+        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why), that were made when a deletion
+        could be asked on less than they ask for now (brief.made_under_old_rules) or that are a finding of the investigation with no saving that code priced (UNPRICED), when nobody has answered
+        them: no request is made for such a finding, and one that was made before is closed, as
         expired and ending now, like the requests that supersede() takes back, and the plan keeps why (`preconditions["takenBack"]`, written with its end: the page, the letter and the card say so in
         words, and a case that is judged again cannot lose it). The case is not touched: it keeps its status (a finding that no person has seen). A request that a person put off or asked about is
         theirs and stays, and so is a change that is running or done. Returns the plans that it closed, each with its case."""
@@ -536,7 +543,7 @@ class Approvals:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
-                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and brief.made_under_old_rules(case, plan) else "")
+                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or why_not_ask(case) == UNPRICED) else "")
                 if case is None or not (why or brief.says_nothing(case)):
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read

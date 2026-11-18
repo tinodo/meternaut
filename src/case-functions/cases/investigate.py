@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Callable, Mapping
 from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
-from .approvals import is_fixture
+from .approvals import UNPRICED, is_fixture, why_not_ask
 from .arm import scopes_of
 from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, IMPACT_VERDICTS, about_use, says_nothing, shared
 from .detectors import Context, Lead
@@ -185,6 +185,7 @@ class Investigation:
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
     held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (unchecked, impact), by reason: counted with the findings that were held back
+    unpriced: int = 0  # the cases that no request was made for because no saving was priced from the bill (approvals.py UNPRICED): the end note of the investigation counts them
     # What the record of the run is made from (cases/activity.py).
     toolbox: object = None
     answer: object = None
@@ -1279,7 +1280,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
              f"finding, so a person has to judge {'it' if out.unmeasured == 1 else 'them'}")
     finished(True, examined=out.examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
     note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {raw_total} finding"
-         f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
+         f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}"
+         + (f"; no request was made for {out.unpriced} of them, for no saving was priced from the bill" if out.unpriced else ""))
     return out
 
 
@@ -1497,6 +1499,8 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
                         out.held_back[why] = out.held_back.get(why, 0) + 1
                     else:
                         out.said_nothing += 1
+                elif why_not_ask(record) == UNPRICED:
+                    out.unpriced += 1
         finding.fates[fate] = finding.fates.get(fate, 0) + len(group or [item])
     except (StoreError, ValueError) as error:
         h.emit("run.note", note=clean_text(s.redact(f"the case could not be kept in the store: {error}"), 300))

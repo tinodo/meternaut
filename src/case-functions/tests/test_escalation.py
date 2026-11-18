@@ -395,6 +395,27 @@ class TheRevival(unittest.TestCase):
         self.assertFalse(escalation.clock_closed(advice(state="expired", expires_at=stamp(START + dt.timedelta(hours=72, minutes=1)))))
 
 
+class ARequestThatNoSavingBacksIsNotChased(unittest.TestCase):
+    """A finding of the investigation with no saving that code priced is no request (approvals.UNPRICED): the Watch takes back an old open one (Approvals.hold_back_empty), and the ladder, which reads
+    the open requests, makes no step for it. Nothing is silent: the request says that it was taken back."""
+
+    def world(self, **changes):
+        world = World()
+        world.store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1", detector="investigation", **{"saving_usd_month": None, "cost_usd_30d": 848.0, **changes}))
+        return world
+
+    def test_no_step_is_made_after_the_take_back_and_one_is_made_for_a_request_that_a_saving_backs(self):
+        for label, changes, steps in (("no saving", {}, 0), ("a saving", dict(saving_usd_month=120.0), 1)):
+            with self.subTest(label):
+                world = self.world(**changes)
+                taken = Approvals(world.store, ApprovalSettings(change_scopes=()), world.clock).hold_back_empty()
+                self.assertEqual([plan.plan_id for plan, _ in taken], [] if steps else ["p1"])
+                self.assertEqual((world.store.plan_get("p1").state, brief_mod.taken_back(world.store.plan_get("p1"))), ("open", "") if steps else ("expired", "rules"))
+                world.clock.advance(days=100)
+                world.tick(3)
+                self.assertEqual((len(world.steps()), bool(world.mail.calls), [kind for kind, _ in world.events]), (steps, bool(steps), ["escalation.step"] * steps))
+
+
 class TheWeeklyLetter(unittest.TestCase):
     def test_the_contacts_get_a_letter_every_week_for_as_long_as_a_request_waits_and_never_twice_in_a_week(self):
         world = World(managers=False)
