@@ -18,7 +18,7 @@ from cases import brief, escalation, events, learning, notify, offers, verify
 from cases.approvals import ApprovalSettings, Approvals
 from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, stamp
-from cases.models import COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, GROUP_FACT, DecisionRecord
+from cases.models import AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, GROUP_FACT, DecisionRecord
 from test_escalation import World as LadderWorld
 from test_run_loop import OID, Moving, loop_for
 from test_web_savings import tiles_of
@@ -420,6 +420,21 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
         world.store.case_get = lambda case_id: read.append(case_id) or original(case_id)
         world.watch()
         self.assertEqual(read, ["c-own"])
+
+    def test_a_request_about_a_resource_that_something_that_is_no_person_changed_lately_is_never_verified_and_its_case_is_not_read(self):
+        world = World()
+        plan = world.ask("auto")
+        world.store.plan_put(replace(plan, preconditions={**plan.preconditions, AUTOMATED: stamp(world.now - 3 * DAY)}))
+        world.ask("own")
+        read = []
+        original = world.store.case_get
+        world.store.case_get = lambda case_id: read.append(case_id) or original(case_id)
+        world.watch()
+        world.read(FELL)
+        read.clear()
+        world.watch()
+        self.assertEqual(set(read), {"c-own"})
+        self.assertEqual((world.plan("auto").state, COST_AT_ASK in world.plan("auto").preconditions, world.plan("own").state), ("open", False, "expired"))
 
     def test_a_request_to_change_something_in_azure_is_never_verified(self):
         world = World()

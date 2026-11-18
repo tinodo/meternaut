@@ -20,7 +20,9 @@ It judges only what it can hold the bill against, and says why when it could not
 * the amortized cost of a request that the actual cost shows to be down: a commitment (a reservation, a savings plan) that covers a resource makes its actual cost fall to nothing while the finding
   is still true, so the fall has to be there in the amortized cost too (which spreads a purchase over its term), and a request whose amortized cost was not read is left for the next Watch;
 * the resources that the kept cost is the cost of: a request of a group whose resources are not the ones that it had when the cost was kept is not judged (`subject`);
-* a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone.
+* a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone;
+* a request that carries the warning that something which is no person changed the resource lately (`automated`, from the Activity Log): the bill cannot tell what that did from what a person did, and
+  such a request is never verified.
 
 A cost that fell in a single week, or for a few days, is no fall, and a request that a person answered in any way is theirs and stays.
 """
@@ -36,7 +38,7 @@ from . import brief
 from . import costs as cost_words
 from .detectors import ADVISOR
 from .meters import MONTH, WEEK
-from .models import ADVISE, COST_AT_ASK, COST_OF, COST_SPREAD, GROUP_FACT, CaseRecord, PlanRecord
+from .models import ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SPREAD, GROUP_FACT, CaseRecord, PlanRecord
 from .roles import clean_text
 
 LAG = 2  # the newest closed days that are left out: the bill is one to two days behind
@@ -132,8 +134,9 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Cal
         shown: dict[str, tuple[PlanRecord, CaseRecord]] = {}
         why: Counter[str] = Counter()
         for plan in ex.store.plans_open():
-            if plan.state != "open" or plan.family != ADVISE or (plan.preconditions or {}).get("source") == ADVISOR:
-                continue  # an Advisor recommendation has no cost to be held against: its case is not even read
+            kept = plan.preconditions or {}
+            if plan.state != "open" or plan.family != ADVISE or kept.get("source") == ADVISOR or kept.get(AUTOMATED):
+                continue  # Advisor's recommendation has no cost to be held against, and the bill cannot tell what an automation did from what a person did: their cases are not even read
             case = ex.store.case_get(plan.case_id)
             word, figures = judge(plan, case, last, there.get(plan.plan_id, ""))
             if word == "verified":
