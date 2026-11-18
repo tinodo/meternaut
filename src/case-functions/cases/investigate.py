@@ -1473,8 +1473,10 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if found is not None:
             lead = replace(lead, facts={**lead.facts, impact.KEY: found})
         saving = _figure(outcome.monthly_saving_usd)
-        if not saving and outcome.status != "dropped":
-            saving = ex.approvals.asked_saving(old) or saving  # judged again with no price while a request that was asked with one is open: the case keeps the figure of that request
+        if not saving and outcome.status != "dropped" and (asked := ex.approvals.asked_saving(old)):
+            saving = asked  # judged again with no price while a request that was asked with one is open: the case keeps what the person was shown, the figure and the price (its level and basis)
+            if pricing.saved(old.facts) is not None:
+                lead = replace(lead, facts={**lead.facts, pricing.KEY: old.facts[pricing.KEY]})
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,

@@ -748,8 +748,8 @@ class Approvals:
             return None
 
     def asked_saving(self, case: CaseRecord | None) -> float | None:
-        """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the page of the
-        request does not say that nothing was measured for a request that was asked with a figure, and hold_back_empty does not take it back for it."""
+        """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the figure and the
+        price that it rests on, with its level and basis, so that the page of the request does not say that nothing was measured or that Azure Advisor gave it, and hold_back_empty does not take it back."""
         try:
             return next((s for p in self.store.plans_open() if case and p.case_id == case.case_id and p.family == ADVISE and (s := p.saving_usd_month or 0) > 0), None)
         except StoreError:

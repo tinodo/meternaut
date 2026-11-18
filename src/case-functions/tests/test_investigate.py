@@ -2201,33 +2201,62 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
 
 class WhenAFindingThatWasPricedIsJudgedAgainWithNoPrice(unittest.TestCase):
     """The request of a finding that code priced stays what it was asked as: a later judgment that names no price (no change stated, or a change that code cannot price from the bill that it reads)
-    neither takes the request back as one that the rules changed, nor takes the figure of the request from its case and its page."""
+    neither takes the request back as one that the rules changed, nor takes from its page the figure, the level and the basis that the person was shown."""
 
-    def judged_twice(self, again: dict):
+    @staticmethod
+    def assumed(usd=40.0):
+        """A change that cuts the one bill line by a share that the AI assumes: code prices it as a Scenario, never as Expected."""
+        return {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.4, "high": 0.7}}], "how": "Cut it."}, {"m1": meter_line("r1", usd)}
+
+    @staticmethod
+    def shown(extras, clock, plan_id):
+        """What the page of the request says it is worth: the figure, its level and its basis."""
+        return brief.build_brief(extras.store.case_get(key_of(resource(1))), extras.store.plan_get(plan_id), None, (), now=clock(), may_answer=True).saving
+
+    def judged_twice(self, first, proposal, again, between=lambda extras, plan: None):
+        """A Watch that asks about r1 with `first` (a change and the meters that price it), and one eight days later that judges it again as `proposal` with `again` and no meter to price it by."""
         clock = Moving()
         extras = loop_for(clock)
-        change, meters = priced("r1", usd=40.0)
+        change, meters = first
         evidence = {"r1": metrics(MetricA=40)}
-        first = finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)], change=change)
-        Harness(FakeFoundry(answer(first)), FakeToolbox([resource(1, cost_usd_30d=40.0)], evidence, meters=meters), clock=clock, extras=extras).go()
+        asked = finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)], change=change)
+        Harness(FakeFoundry(answer(asked)), FakeToolbox([resource(1, cost_usd_30d=40.0)], evidence, meters=meters), clock=clock, extras=extras).go()
         (plan,) = extras.store.plans_open()
-        self.assertEqual(plan.saving_usd_month, 40.0, "it was asked with a saving that code priced")
-        clock.advance(days=8)  # the days of the recheck have passed: the finding is judged again, and this judgment has no meter to price a change by
-        second = finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)], **again)
+        self.assertGreater(plan.saving_usd_month, 0, "it was asked with a saving that code priced")
+        before = self.shown(extras, clock, plan.plan_id)
+        between(extras, plan)
+        clock.advance(days=8)  # the days of the recheck have passed: the finding is judged again
+        second = finding(handles=["r1"], basis="low-usage", proposal=proposal, evidence=[entry("r1", "MetricA", 40)], **again)
         h = Harness(FakeFoundry(answer(second)), FakeToolbox([resource(1, cost_usd_30d=40.0)], evidence), clock=clock, extras=extras)
         h.go()
-        return h, extras, plan, clock
+        self.assertEqual(h.result.cases, 1, "it was judged again")
+        return extras, plan, clock, before
 
-    def test_the_request_is_not_taken_back_and_its_page_keeps_the_figure(self):
-        for label, again in (("no change stated", {}), ("a change that code cannot price", {"change": priced("r1", usd=40.0)[0]})):
+    def test_the_request_is_not_taken_back_and_its_page_keeps_the_figure_the_level_and_the_basis_that_the_person_was_shown(self):
+        removal, unpriceable = priced("r1", usd=40.0), {"change": priced("r1", usd=40.0)[0]}
+        for label, first, proposal, again, level, basis in (("a priced removal, judged again as a change that nothing states", removal, "change", {}, "Expected", "that the change would remove"),
+                                                            ("a priced removal, judged again with a change that code cannot price", removal, "change", unpriceable, "Expected", "that the change would remove"),
+                                                            ("an assumed share, judged again as a question that states no change", self.assumed(), "investigate", {}, "Scenario", "the AI's own assumption")):
             with self.subTest(label):
-                h, extras, plan, clock = self.judged_twice(again)
-                self.assertEqual(h.result.cases, 1, "it was judged again")
-                case = extras.store.case_get(key_of(resource(1)))
+                extras, plan, clock, before = self.judged_twice(first, proposal, again)
                 self.assertEqual(extras.approvals.hold_back_empty(), [], "nothing is taken back: the request was asked with a saving")
                 (still,) = extras.store.plans_open()
                 self.assertEqual((still.plan_id, still.state, brief.taken_back(still)), (plan.plan_id, "open", ""))
-                self.assertEqual(brief.build_brief(case, still, None, (), now=clock(), may_answer=True).saving.monthly, 40.0, "the page does not say that nothing was measured for a request that was asked with a figure")
+                after = self.shown(extras, clock, plan.plan_id)
+                self.assertEqual(before.level, level, "the figure was shown with this level")
+                self.assertEqual((after.monthly, after.level, after.basis), (before.monthly, before.level, before.basis), "its page says what the person was shown, not a source that it never had")
+                self.assertIn(basis, after.basis)
+                self.assertNotIn("Azure Advisor", after.basis)
+
+    def test_nothing_of_the_price_is_kept_for_a_case_that_no_open_request_waits_for(self):
+        for label, between in (("a request that a person declined", lambda extras, plan: extras.store.plan_put(replace(plan, state="declined"))),
+                               ("a request that is held back", lambda extras, plan: extras.store.plan_put(replace(plan, state="held"))),
+                               ("no request", lambda extras, plan: extras.store.plans.pop(plan.plan_id))):
+            with self.subTest(label):
+                extras, plan, clock, before = self.judged_twice(priced("r1", usd=40.0), "change", {}, between)
+                case = extras.store.case_get(key_of(resource(1)))
+                self.assertEqual((case.saving_usd_month, pricing.saved(case.facts), pricing.stated(case.facts)), (None, None, False), "it is judged as it is judged now: with no price")
+                self.assertEqual([p.plan_id for p in extras.store.plans_open()], [], "and no request is made for it")
 
     def test_a_case_that_no_request_waits_for_keeps_no_figure_that_it_was_not_priced_with(self):
         clock = Moving()
