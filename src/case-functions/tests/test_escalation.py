@@ -178,6 +178,20 @@ class TheLadder(unittest.TestCase):
         world.tick()
         self.assertEqual(len(world.mail.sent_to("ada@example.com")), 2, "it goes the day after")
 
+    def test_two_steps_of_one_request_that_wait_for_one_person_are_one_decision_in_one_letter_and_both_are_marked_told(self):
+        world = World()
+        world.store.settings_put(SettingsRecord(oid=CONTACT, quiet_from="00:00", quiet_to="23:59"))
+        for _ in range(29 * 24):
+            world.tick()
+            world.clock.advance(hours=1)
+        waiting = [r.number for r in world.steps() if CONTACT in r.who and CONTACT not in r.delivered]
+        self.assertGreaterEqual(len(waiting), 2, "steps 3, 4 and 5 all came to the contact, and all were held")
+        world.store.settings_put(SettingsRecord(oid=CONTACT))
+        world.tick()
+        (letter,) = world.mail.sent_to("cora@example.com")
+        self.assertTrue(letter[1].startswith("[Meternaut] A decision has waited"), letter[1])
+        self.assertEqual([r.number for r in world.steps() if CONTACT in r.who and CONTACT not in r.delivered], [])
+
     def test_a_lookup_that_fails_goes_on_to_the_contacts_and_the_message_says_so_in_plain_words(self):
         world = World(graph=Graph(managers={A: 403}))
         world.clock.advance(days=7)

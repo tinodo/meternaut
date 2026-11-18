@@ -337,7 +337,8 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
                                         "notes": tuple(dict.fromkeys(r.notes + ((note,) if note else ())))})
             continue
         person, first = ladder.people.by_oid(oid) or Person(oid, target.name, (), target.mail), _first_contact(ladder, oid)
-        rows = [(plan, store.case_get(plan.case_id), record, _was_added(records[plan.plan_id], record, oid)) for plan, record in items]
+        newest = {plan.plan_id: (plan, record) for plan, record in items}  # one request is one decision however many of its steps wait for this person: the letter is about its newest step, and every step is marked
+        rows = [(plan, store.case_get(plan.case_id), record, _was_added(records[plan.plan_id], record, oid)) for plan, record in newest.values()]
         if len(rows) == 1:
             plan, case, record, added = rows[0]
             steps = store.escalations_of(plan.plan_id)
