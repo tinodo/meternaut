@@ -14,7 +14,7 @@ import support  # noqa: F401  (it puts the app on the path)
 from support import NOW, RG, SUBSCRIPTION, LogCapture
 from test_decisions import SAFE_GUARDS, lead as detector_lead
 from test_held_back import finding as held_case, request_for, watch as run_watch
-from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer, finding, metrics, resource
+from test_investigate import FakeArm, FakeFoundry, FakeToolbox, Harness, answer, finding, made_before, metrics, resource
 from test_letters import BASE, CONTACTS, PERSON
 from test_missing_data import ABSENT, DISK, ENDPOINTS, PE, endpoint_case, endpoint_plan
 from test_run_loop import Moving, loop_for
@@ -565,7 +565,7 @@ class TheInvestigationChecksWhatItProposesToRemove(unittest.TestCase):
         self.assertEqual((case.facts["impact"]["verdict"], case.facts["impact"]["complete"]), ("safe", True))
         self.assertEqual(azure.log_reads, 1, "the owner line and the check share one read of the Activity Log")
         self.assertEqual([what for what in azure.read if what == "endpoint"], ["endpoint"])
-        (plan,) = h.store.plans_open()
+        plan = made_before(h, case)
         b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
         self.assertEqual((b.impact.verdict, b.check_first, b.risk.level), ("safe", (), "medium"))
 
@@ -604,7 +604,7 @@ class TheInvestigationChecksWhatItProposesToRemove(unittest.TestCase):
         h.go()
         (case,) = h.store.cases_recent()
         self.assertEqual((azure.read, "impact" in case.facts), ([], False))
-        (plan,) = h.store.plans_open()
+        plan = made_before(h, case)
         self.assertEqual(brief.build_brief(case, plan, now=WEB_NOW, may_answer=True).impact.line, UNANALYSED)
 
     def test_a_run_checks_no_more_than_the_most_and_reads_through_one_reader_whose_notes_go_to_the_run(self):

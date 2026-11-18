@@ -12,7 +12,7 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief
-from cases.approvals import ADVICE_MIN_USD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, Approvals, ApprovalSettings, why_not_ask
+from cases.approvals import ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, UNPRICED, Approvals, ApprovalSettings, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.delegated import Delegation, SigninSettings
 from cases.detectors import Lead
@@ -33,6 +33,7 @@ from test_store import ACCOUNT, FakeTables, plan as stored_plan
 from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Console, FailingStore, make_advice_case, make_run)
 
 CHANGE_GROUP = "meternaut-sc-rg"
+OTHER = "orphan-private-endpoint"  # a rule-based detector: the rule for the findings of the investigation does not apply to its cases
 SCOPES = (ChangeScope(SUB, CHANGE_GROUP),)
 SETTINGS = ApprovalSettings(change_scopes=SCOPES)
 SIGNIN = SigninSettings("cccccccc-1111-4222-8333-444444444444", "dddddddd-1111-4222-8333-444444444444", "eeeeeeee-1111-4222-8333-444444444444", "app.example.test")
@@ -163,7 +164,7 @@ class MakingTheAdvice(Base):
         for saving in (None, 0, -5.0):
             with self.subTest(saving=saving):
                 store = MemoryStore(clock=self.clock)
-                case = replace(self.case, saving_usd_month=saving)
+                case = replace(self.case, saving_usd_month=saving, detector=OTHER)  # a finding of the investigation with no saving is asked about no more (UNPRICED)
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
                 self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), (None, None))
 
@@ -174,7 +175,7 @@ class MakingTheAdvice(Base):
                                      (None, "text", (None, None))):
             with self.subTest(saving=own, digest=found):
                 store = MemoryStore(clock=self.clock)
-                case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"advisor": found})
+                case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"advisor": found}, detector="advisor-cost")
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
                 self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), expected)
 
@@ -256,40 +257,57 @@ class TheWorthOfARequest(unittest.TestCase):
         base.update(changes)
         return make_advice_case(**base)
 
+    def priced(self, n=0, **changes) -> CaseRecord:
+        """The same finding with the saving that code worked out from the bill lines: the only kind of finding of the investigation that a person is asked about."""
+        return self.finding(n, **{"saving_usd_month": 10.0, **changes})
+
     def settled_not(self, count: int, **changes) -> None:
         for n in range(count):
-            self.assertIsNotNone(self.approvals.advise(self.finding(n, cost_usd_30d=80.0, objections=("It may be in use.",), **changes), NAMED))
+            self.assertIsNotNone(self.approvals.advise(self.priced(n, cost_usd_30d=80.0, objections=("It may be in use.",), **changes), NAMED))
 
     def open_advice(self):
         return [p for p in self.store.plans.values() if p.family == ADVISE and p.state == "open"]
 
     def test_the_limits_are_the_ones_that_the_start_page_and_the_owner_know(self):
-        self.assertEqual((ADVICE_MIN_USD, ADVICE_OPEN_MAX), (50.0, 30))
+        self.assertEqual(ADVICE_OPEN_MAX, 30)
 
-    def test_a_finding_that_nothing_backs_with_no_saving_and_a_cheap_resource_gets_no_request_and_stays_an_open_question(self):
-        case = self.finding()
-        self.assertIn("no measurement backs the finding", why_not_ask(case))
-        self.store.case_put(case)
-        self.assertIsNone(self.approvals.advise(case, NAMED))
-        self.assertEqual(self.store.plans, {})
-        kept = self.store.case_get(case.case_id)
-        self.assertEqual((kept.status, kept.plan_id), ("needs_human", None))
-        self.assertTrue(OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again by recall_open_questions")
-
-    def test_a_saving_or_a_costly_resource_or_a_measurement_makes_it_a_request(self):
-        for name, changes in (("a saving", dict(saving_usd_month=5.0)), ("a resource that cost enough", dict(cost_usd_30d=ADVICE_MIN_USD)),
-                              ("a measurement behind it", dict(objections=("It may be in use.",))), ("a finding that both AIs agree on", dict(status="proposed", objections=()))):
+    def test_a_finding_of_the_investigation_with_no_saving_that_code_priced_is_no_request_whatever_it_costs_and_whatever_backs_it(self):
+        for name, changes in (("a dear resource with a measurement", dict(cost_usd_30d=848.0, objections=("It may be in use.",))),
+                              ("both AIs agree, no objection, and a dear resource", dict(status="proposed", cost_usd_30d=848.0, objections=(), confidence=0.9)),
+                              ("a saving of nothing", dict(cost_usd_30d=848.0, objections=(), saving_usd_month=0.0)), ("a negative saving", dict(cost_usd_30d=848.0, objections=(), saving_usd_month=-3.0))):
             with self.subTest(name):
                 self.setUp()
                 case = self.finding(**changes)
+                self.assertEqual((case.detector, why_not_ask(case)), ("investigation", UNPRICED))
+                self.store.case_put(case)
+                self.assertIsNone(self.approvals.advise(case, NAMED))
+                self.assertIsNone(self.approvals.plan_for(case, lead_of(case), NAMED))
+                self.assertEqual(self.store.plans, {})
+                kept = self.store.case_get(case.case_id)
+                self.assertEqual((kept.status, kept.plan_id), (case.status, None), "the finding stays what it was")
+                self.assertTrue(OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again by recall_open_questions")
+
+    def test_the_same_finding_with_a_saving_that_code_priced_is_asked_about_however_little_the_resource_costs(self):
+        for name, changes in (("a saving", dict()), ("a cheap resource", dict(cost_usd_30d=3.0)), ("a measurement and both AIs agree", dict(status="proposed", objections=(), confidence=0.9))):
+            with self.subTest(name):
+                self.setUp()
+                case = self.priced(**changes)
                 self.assertIsNone(why_not_ask(case))
                 self.assertIsNotNone(self.approvals.advise(case, NAMED))
+                (plan,) = self.open_advice()
+                self.assertEqual(plan.saving_usd_month, 10.0, "the request states the saving that code priced")
 
-    def test_the_edges_of_the_worth_are_exact(self):
-        for name, changes in (("just under the cost", dict(cost_usd_30d=ADVICE_MIN_USD - 0.01)), ("no cost known", dict(cost_usd_30d=None)), ("a saving of nothing", dict(saving_usd_month=0)),
-                              ("a negative saving", dict(saving_usd_month=-3.0))):
+    def test_a_case_of_azure_advisor_or_of_a_rule_based_detector_with_no_saving_is_asked_about_whatever_it_costs_and_whatever_backs_it(self):
+        advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
+        for name, changes in (("Azure Advisor's own claim", dict(detector="advisor-cost", advice=advice, objections=(), cost_usd_30d=0.0)),
+                              ("a rule-based detector and a dear resource", dict(detector=OTHER, objections=(), cost_usd_30d=80.0)),
+                              ("a rule-based detector, a cheap resource and nothing that measured it", dict(detector=OTHER, cost_usd_30d=3.0))):
             with self.subTest(name):
-                self.assertIsNotNone(why_not_ask(self.finding(**changes)))
+                self.setUp()
+                case = self.finding(**changes)
+                self.assertEqual(case.saving_usd_month, None)
+                self.assertIsNone(why_not_ask(case))
+                self.assertIsNotNone(self.approvals.advise(case, NAMED))
 
     def test_a_figure_that_code_computed_from_the_bill_lines_or_that_azure_advisor_gave_is_something_to_decide_with_even_for_a_cheap_resource(self):
         self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0)), "the figure that code computed from the bill lines is the case's own saving")
@@ -298,7 +316,7 @@ class TheWorthOfARequest(unittest.TestCase):
         self.assertIsNotNone(self.approvals.advise(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0), NAMED))
         for name, found in (("no digest", {}), ("a figure of nothing", {"advisor": {**advisor, "usd": 0}}), ("a change that was not priced", {"change": {"action": "remove", "missing": "lines"}})):
             with self.subTest(name):
-                self.assertIsNotNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts=found)))
+                self.assertEqual(why_not_ask(self.finding(cost_usd_30d=20.0, facts=found)), UNPRICED)
 
     def test_plan_for_holds_the_same_finding_back(self):
         case = self.finding()
@@ -307,7 +325,7 @@ class TheWorthOfARequest(unittest.TestCase):
 
     def test_no_more_requests_wait_for_findings_that_the_ais_did_not_settle_than_the_places(self):
         self.settled_not(ADVICE_OPEN_MAX)
-        late = self.finding(99, cost_usd_30d=80.0, objections=("It may be in use.",))
+        late = self.priced(99, cost_usd_30d=80.0, objections=("It may be in use.",))
         self.assertIsNone(self.approvals.advise(late, NAMED))
         self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX)
         self.assertTrue(OpenQuestions(self.store, NOW).is_open(late), "it waits as an open question for a free place")
@@ -316,7 +334,7 @@ class TheWorthOfARequest(unittest.TestCase):
         self.settled_not(ADVICE_OPEN_MAX)
         for n, state in enumerate(("declined", "expired")):
             with self.subTest(state):
-                late = self.finding(90 + n, cost_usd_30d=80.0, objections=("It may be in use.",))
+                late = self.priced(90 + n, cost_usd_30d=80.0, objections=("It may be in use.",))
                 self.assertIsNone(self.approvals.advise(late, NAMED), "no place is free")
                 self.store.plan_put(replace(self.open_advice()[0], state=state))
                 self.assertIsNotNone(self.approvals.advise(late, NAMED))
@@ -324,17 +342,17 @@ class TheWorthOfARequest(unittest.TestCase):
 
     def test_a_finding_that_both_ais_agree_on_is_not_held_by_the_places(self):
         self.settled_not(ADVICE_OPEN_MAX)
-        agreed = self.finding(98, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9)
+        agreed = self.priced(98, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9)
         self.assertIsNotNone(self.approvals.advise(agreed, NAMED))
         self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX + 1)
 
     def test_the_requests_for_findings_that_both_ais_agree_on_take_no_place_from_the_ones_that_nobody_settled(self):
         for n in range(ADVICE_OPEN_MAX + 2):
-            self.assertIsNotNone(self.approvals.advise(self.finding(n, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9), NAMED))
+            self.assertIsNotNone(self.approvals.advise(self.priced(n, status="proposed", cost_usd_30d=80.0, objections=(), confidence=0.9), NAMED))
         self.assertEqual(len(self.open_advice()), ADVICE_OPEN_MAX + 2)
         for n in range(100, 100 + ADVICE_OPEN_MAX):
-            self.assertIsNotNone(self.approvals.advise(self.finding(n, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "a place is free for the unsettled ones")
-        self.assertIsNone(self.approvals.advise(self.finding(199, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "now the places of the unsettled ones are full")
+            self.assertIsNotNone(self.approvals.advise(self.priced(n, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "a place is free for the unsettled ones")
+        self.assertIsNone(self.approvals.advise(self.priced(199, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED), "now the places of the unsettled ones are full")
 
     def test_the_plans_of_a_change_do_not_take_a_place(self):
         item = planted_disk()
@@ -342,7 +360,7 @@ class TheWorthOfARequest(unittest.TestCase):
         self.store.case_put(case)
         self.assertIsNotNone(self.approvals.create(case, item, NAMED))
         self.settled_not(ADVICE_OPEN_MAX - 1)
-        self.assertIsNotNone(self.approvals.advise(self.finding(97, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED))
+        self.assertIsNotNone(self.approvals.advise(self.priced(97, cost_usd_30d=80.0, objections=("It may be in use.",)), NAMED))
 
     def test_a_store_that_cannot_be_read_still_means_no_plan_and_no_error(self):
         broken = FailingStore(fail=("plans_open",), clock=self.clock)

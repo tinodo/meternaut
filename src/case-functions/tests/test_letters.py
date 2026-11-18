@@ -31,8 +31,9 @@ LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$
 # title and the risk, the confidence and the undo as words are 44 words where the old line of the saving was 11; the title lost the place (4 words) and nothing else was cut. The decision letter
 # went from 163 to 169 words when the risk of advice became the risk of acting on it and answering said so in its own words ("Medium risk if you act on it, Low confidence, Answering changes
 # nothing in Azure" against "Low risk, Low confidence, Changes nothing in Azure"). The limits are the measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to
-# 56) keep the limits that they had.
-MOST_WORDS = {"first contact": 110, "approval": 180, "digest": 150, "done": 105}  # the approval letter of advice says in one sentence what an answer does and who acts, in words that a person reads once
+# 56) keep the limits that they had. The approval letter of advice then said in three plain sentences what an answer does and who acts ("Meternaut changes nothing in Azure. Your answer is recorded
+# with your name. If you decide to act, you do it yourself in Azure with your own rights."), and the longest one, that of a group that code priced and that the limit of a run cut, is 186 words.
+MOST_WORDS = {"first contact": 110, "approval": 190, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, in words that a person reads once
 
 
 def make_plan(**changes) -> PlanRecord:

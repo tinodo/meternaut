@@ -313,6 +313,19 @@ class TheHeldRequestsOfTheOldReasonBecomeRequests(Base):
         self.assertEqual(sorted(plan.preconditions["takenBack"] for plan, _ in closed), ["released", "released"])
         self.assertEqual((self.store.plans_open(), self.store.plans_held()), ([], []))
 
+    def test_a_held_request_of_a_finding_that_no_saving_backs_is_closed_and_not_promoted_however_much_the_resource_costs(self):
+        _, unpriced = self.legacy(1, 0.0)
+        self.store.case_put(replace(self.store.case_get("k-old-1"), saving_usd_month=None, cost_usd_30d=848.0, objections=()))
+        _, waiting = self.legacy(2, 0.0)
+        self.store.case_put(replace(self.store.case_get("k-old-2"), saving_usd_month=0.0, cost_usd_30d=848.0, objections=()))
+        self.store.plan_put(replace(self.store.plan_get(waiting.plan_id), preconditions={**self.store.plan_get(waiting.plan_id).preconditions, HELD: "waiting"}))
+        _, priced = self.legacy(3, 120.0)
+        closed = self.settle()
+        self.assertEqual(sorted((plan.plan_id, plan.preconditions["takenBack"]) for plan, _ in closed), sorted([(unpriced.plan_id, "released"), (waiting.plan_id, "released")]))
+        self.assertEqual([p.plan_id for p in self.store.plans_open()], [priced.plan_id], "only the finding that code priced is made a request")
+        self.assertEqual(([p.plan_id for p, _ in self.approvals.promoted], self.store.plans_held()), ([priced.plan_id], []))
+        self.assertEqual((self.settle(), self.approvals.promoted), ([], []), "a second Watch changes nothing")
+
     def test_nothing_is_promoted_when_nobody_can_answer_and_a_reason_that_changed_is_kept(self):
         _, held = self.legacy(1, 120.0)
         self.settle(())
@@ -462,13 +475,16 @@ class TheCapAndTheOrderOfTheRequests(Base):
         self.store.case_put(dearer)
         self.assertIsNotNone(self.approvals.advise(dearer, (TINO,)), "worth more than the least of them: it is not held behind it")
         self.assertEqual(len(self.store.plans_open()), ADVICE_OPEN_MAX + 1)
-        for number, saving in ((200, 10.0), (201, 5.0), (202, None)):
+        for number, saving in ((200, 10.0), (201, 5.0)):
             late = self.case(number, saving)
             self.store.case_put(late)
-            self.assertIsNone(self.approvals.advise(late, (TINO,)), f"worth {saving}: as much as the least, less, or nothing priced")
+            self.assertIsNone(self.approvals.advise(late, (TINO,)), f"worth {saving}: as much as the least, or less")
+        unpriced = self.case(202, None)
+        self.store.case_put(unpriced)
+        self.assertIsNone(self.approvals.advise(unpriced, (TINO,)), "no saving was priced: it is no request at all, and no place is waited for")
         self.settle()
         waiting = {p.case_id: p for p in self.store.plans_held()}
-        self.assertEqual(sorted(waiting), ["k-cap-200", "k-cap-201", "k-cap-202"], "each is shown as a held request")
+        self.assertEqual(sorted(waiting), ["k-cap-200", "k-cap-201"], "each that waits for a place is shown as a held request, and the finding that no saving backs is not")
         self.assertEqual({brief.held_of(p) for p in waiting.values()}, {"waiting"})
         self.assertEqual(brief.build_brief(self.store.case_get("k-cap-201"), waiting["k-cap-201"], now=self.now).hold.why, brief.HOLD_WORDS["waiting"][1])
 
@@ -487,7 +503,8 @@ class TheCapAndTheOrderOfTheRequests(Base):
     def test_the_migration_promotes_in_the_order_of_the_pages_the_largest_figure_first_then_who_waited_longest(self):
         for number, (saving, age) in enumerate(((40.0, 3), (300.0, 1), (40.0, 9), (None, 20), (90.0, 5), (40.0, 6)), 1):
             case = automation(case_id=f"k-o{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/o{number}", resource_name=f"o{number}", resource_type=f"microsoft.foo/kind{number}",
-                              saving_usd_month=saving, cost_usd_30d=(saving or 60.0) * 2, status="proposed", first_seen_at=days_ago(age))
+                              saving_usd_month=saving, cost_usd_30d=(saving or 60.0) * 2, status="proposed", first_seen_at=days_ago(age),
+                              **({"detector": "orphan-private-endpoint"} if saving is None else {}))  # a finding of the investigation with no saving is not asked about: this one is of a rule-based detector, and is ranked by its cost
             self.store.case_put(case)
             self.store.plan_put(build_advice(case, (TINO,), self.now - dt.timedelta(days=age), self.approvals.settings, new_id=lambda number=number: f"p-o{number}", held="automation"))
             self.store.case_put(replace(case, plan_id=f"p-o{number}"))

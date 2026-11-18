@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..brief import HOLD_WORDS, waited_text
-from ..models import HELD, PlanRecord, started
+from ..brief import HOLD_WORDS, taken_back, waited_text
+from ..models import ADVISOR, HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
@@ -39,6 +39,9 @@ HELD_MEANING = "Meternaut found these and made no request for a change, for the 
 HELD_LEAD = ("Meternaut found these and asked nobody to approve a change, for the reason under each heading. Nothing changes in Azure. Each finding has a page with its evidence, "
              "and a person who is named for it can ask, say that it is not theirs, decide later or say that it is not worth it.")
 HELD_HEADERS = ["Finding", "Saving or cost", "How sure", "Why no request was made", "Who may know"]
+SEEN_NAME = "Cost went down (seen on the bill)"
+SEEN_MEANING = ("The cost of these went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing, and a cost can also go down for another reason.")
+SEEN_CLAIM = "The figures are on the page of each finding. None is added up here."
 
 
 @dataclass
@@ -54,6 +57,7 @@ class Group:
     dead: bool = False  # no status could be read
     levels: dict = field(default_factory=dict)
     none: dict = field(default_factory=dict)  # why a finding has no saving figure -> how many
+    claim: str = "No saving is claimed."  # what the column of the saving says for a row that is not added up
 
     @property
     def lower(self) -> bool:
@@ -71,15 +75,16 @@ def _read(ctx: Ctx, name: str, statuses: tuple, meaning: str, added: bool) -> Gr
     return group
 
 
-def _changes(ctx: Ctx) -> tuple[list, dict, bool, bool]:
-    """What Cost Management confirmed (the id of the finding, the brief of the change), the newest action of each finding with its plan, and whether a read failed or is full."""
+def _changes(ctx: Ctx) -> tuple[list, dict, bool, bool, set]:
+    """What Cost Management confirmed (the id of the finding, the brief of the change), the newest action of each finding with its plan, whether a read failed or is full, and the findings whose request
+    Meternaut closed because the bill showed the cost going down (cases/verify.py)."""
     plans, ok = read(lambda: ctx.store.plans_recent(PER), [])
     actions, ok_actions = read(lambda: ctx.store.actions_recent(PER), [])
     by_id, newest = {plan.plan_id: plan for plan in plans}, {}
     for action in actions:  # newest first
         newest.setdefault(action.case_id, (action, by_id.get(action.plan_id)))
     confirmed = [(action.case_id, brief) for action in actions if action.state == "verified" and (brief := verified_brief(ctx, by_id.get(action.plan_id), action)) is not None]
-    return confirmed, newest, not (ok and ok_actions), max(len(plans), len(actions)) >= PER
+    return confirmed, newest, not (ok and ok_actions), max(len(plans), len(actions)) >= PER, {plan.case_id for plan in plans if taken_back(plan) == "verified"}
 
 
 def _add(ctx: Ctx, group: Group, confirmed: dict, newest: dict) -> None:
@@ -140,7 +145,7 @@ def _row(group: Group) -> list:
     lead = "At least " if group.lower else ""
     found = fmt("{lead}{n}{part}", lead=lead, n=number(len(group.cases)), part=Safe("<br>Part of it cannot be read now.") if group.failed else "")
     if not group.added:
-        return [name, found, "No saving is claimed.", "Not added up."]
+        return [name, found, group.claim, "Not added up."]
     saving = [figure_cell(Figure("save", "Saves" if level == "Verified" else "Could save", line[0], level, ""), next(iter(line[1])) if len(line[1]) == 1 else ADDED_FINDINGS, group.lower)
               for level in WEAKEST_FIRST if (line := group.levels.get(level))]
     none = [f"{lead}{counted(n, 'finding')}. {why}" for why, n in sorted(group.none.items(), key=lambda item: (-item[1], item[0]))]
@@ -159,6 +164,21 @@ def _longest_wait(ctx: Ctx) -> Safe:
     if waited is None:
         return Safe("")
     return join([paragraph(f"The request that has waited longest has waited {waited_text(waited.days)}, and it is with {waited.with_whom}. {waited.cost}".rstrip()), off_notice(ctx)])
+
+
+def _seen_out(groups: list[Group], seen: set) -> Group | None:
+    """Takes the findings whose request Meternaut closed because the bill showed the cost going down out of the row of what was taken back, and makes their own row of them, so that no finding is in two
+    rows. A resource counts once, and what Azure Advisor says of the same resource is not counted again in a row that is added up. The row is never added up, and holds no figure: each finding's own are on
+    its page. None when no finding was closed so."""
+    taken = next((group for group in groups if group.name == "Taken back"), None)
+    mine = {case.resource_id.lower(): case for case in taken.cases if case.case_id in seen} if taken is not None else {}
+    if taken is None or not mine:
+        return None
+    taken.cases = [case for case in taken.cases if case.case_id not in seen]
+    for group in groups:
+        if group.added:
+            group.cases = [case for case in group.cases if not (case.detector == ADVISOR and case.resource_id.lower() in mine)]
+    return Group(SEEN_NAME, SEEN_MEANING, False, list(mine.values()), taken.failed, taken.cut, taken.dead, claim=SEEN_CLAIM)
 
 
 def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:
@@ -200,7 +220,10 @@ def savings_page(ctx: Ctx) -> Response:
     held_group, held = _held_out(ctx, groups[0])
     if held_group is not None:
         groups.insert(1, held_group)
-    changes, newest, failed, cut = _changes(ctx)
+    changes, newest, failed, cut, seen = _changes(ctx)
+    saved = _seen_out(groups, seen)
+    if saved is not None:
+        groups.insert(next(n for n, group in enumerate(groups) if group.name == "Confirmed by Cost Management") + 1, saved)
     confirmed = dict(reversed(changes))  # the newest change of a finding wins
     for group in groups:
         if group.added:

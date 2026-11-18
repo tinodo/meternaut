@@ -13,9 +13,9 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things, waited_text
+from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import answerable, brief_of, cases_by_id, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
+from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, spark, summed, title_of, under,
                       use_block)
@@ -34,7 +34,7 @@ HELD_LISTED = 10  # the findings that a guard holds back which the start page li
 SORTS = (("impact", "Impact", "The one with the most at stake is first."), ("age", "Age", "The one that has waited longest is first."), ("risk", "Risk", "The one with the lowest risk is first."))
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
-            "withdrawn": ("Withdrawn", "", "square"), "expired": ("Taken back", "", "square")}
+            "withdrawn": ("Withdrawn", "", "square"), "expired": ("Taken back", "", "square"), "cost-down": ("Cost went down", "low", "circle")}
 
 
 @dataclass(frozen=True)
@@ -286,7 +286,7 @@ def held_by_rules(ctx: Ctx) -> int:
 
 
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
+    """The findings that no request waits for: no saving was priced for them, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
     resource or what depends on it was not checked. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
     nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is
     listed also when it is not a finding of the investigation (the weekly letter links to this page)."""
@@ -300,9 +300,9 @@ def _held(ctx: Ctx) -> Safe:
     rest = held - ruled
     if rest:
         many = rest != 1
-        them = "them" if many else "it"
-        lines.append(paragraph(f"{_count(rest, 'finding')} {'are' if many else 'is'} held back{' for another reason' if ruled else ''}. The AI found {them}, but Meternaut could not work out from your bill "
-                               f"what a change would save, or the places for requests are full. Nobody is asked about {them} now, and the AI looks at {them} again at the next search."))
+        lead = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. " if ruled else ""
+        lines.append(paragraph(f"{lead}Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
+                               f"the places for requests are full, or nobody is named as an approver. The AI looks at {'them' if many else 'it'} again at its next search."))
     if listed:
         lines.append(fmt('<p>These findings are held back, so nothing is asked of you.</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count
@@ -381,15 +381,18 @@ def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, Actio
 def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[str, ActionRecord]) -> Safe:
     """The last five requests that were decided (or that nobody answered, for a change), for the person who is named in them: what, who, when and the result."""
     heading = Safe('<div class="sec"><h2 id="recent">Recently decided</h2></div>')
-    mine = [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired")][:DECIDED_CONSIDERED] if ok else []
-    if not ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
+    decided = [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired" and taken_back(p) != "verified")][:DECIDED_CONSIDERED] if ok else []
+    closed, closed_ok = closed_by_the_bill(ctx)  # the requests that the bill closed are in the list whenever they were made: the ones that were made lately are not where it closes them
+    have = {p.plan_id for p in decided}
+    mine = [*decided, *[p for p in closed if p.plan_id not in have and answerable(ctx, p)][:DECIDED_SHOWN]]
+    if not ok or not closed_ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
         return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
     for plan in mine:
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]).outcome
         if not outcome.state:
             continue
-        label, kind, shape = OUTCOMES.get(outcome.state, (outcome.state.capitalize(), "", "square"))
+        label, kind, shape = OUTCOMES.get("cost-down" if taken_back(plan) == "verified" else outcome.state, (outcome.state.capitalize(), "", "square"))  # a request that the bill closed is good news, not a take-back
         who = fmt("{by}, {day}", by=outcome.by, day=ctx.day(outcome.at or plan.created_at)) if outcome.by else ctx.day(outcome.at or plan.created_at)
         rows.append((outcome.at or plan.created_at, fmt('<li>{chip}<span>{headline}: {result}</span><span class="quiet">{who}</span></li>', chip=chip(label, kind, shape),
                                                         headline=plan_headline(plan), result=outcome.result, who=who)))

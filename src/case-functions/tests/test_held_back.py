@@ -4,15 +4,16 @@ A request that an earlier version made for such a finding, and that nobody has a
 (tests/support.py) answers; everything in it is invented.
 """
 import unittest
+from dataclasses import replace
 
 from support import SUBSCRIPTION, NOW
 from test_names_and_cost import DEV, PROBLEM, a_subscription_with_a_bill, advisor_item, the_case
-from test_run_loop import OID, Moving, loop_for, watch
-from test_web_support import make_advice, make_advice_case, make_decision
+from test_run_loop import GROUP, OID, Moving, loop_for, watch
+from test_web_support import make_advice, make_advice_case, make_decision, page_of
 
 from cases import brief, learning
 from cases.advisor import ADVICE_NONE
-from cases.approvals import NOTHING_TO_SAY
+from cases.approvals import NOTHING_TO_SAY, RULES_CHANGED
 
 SUBSCRIPTION_ID = f"/subscriptions/{SUBSCRIPTION}"
 GROUP_ID = f"{SUBSCRIPTION_ID}/resourceGroups/rg-demo"
@@ -248,6 +249,114 @@ class AnOpenRequestThatSaysNothingIsTakenBack(unittest.TestCase):
         self.clock.advance(hours=3)
         summary, events, _ = self.watch()
         self.assertEqual((summary.held, [e for e in events if e["type"] == "case.held"]), (0, []))
+
+
+def unpriced(**changes):
+    """A finding of the investigation about an AI services account that costs a great deal, with no saving that code priced: what an earlier Watch asked a person about on one number."""
+    base = dict(case_id="kunpriced1", detector="investigation", status="needs_human", recommendation="investigate", confidence=0.4, saving_usd_month=None, cost_usd_30d=848.0, objections=(),
+                resource_id=f"{GROUP_ID}/providers/Microsoft.CognitiveServices/accounts/contoso-ai", resource_name="contoso-ai", resource_type="microsoft.cognitiveservices/accounts",
+                resource_group="rg-demo", subscription_id=SUBSCRIPTION, plan_id="punpriced1", owner={"lookedUp": True, "automatedAt": ""}, advice={},
+                facts={"basis": "other", "proposal": "investigate", "metrics": {"Requests": 2929}})
+    base.update(changes)
+    return make_advice_case(**base)
+
+
+class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
+    """A finding of the investigation is asked about only when code priced a saving for it (approvals.UNPRICED). A request that an earlier Watch made for one that has none is taken back at the next
+    Watch with the reason `rules`: once, in words, in the History, and never when a person answered it."""
+
+    def setUp(self):
+        self.clock = Moving()
+        self.extras = loop_for(self.clock)
+        self.store = self.extras.store
+        self.case = unpriced()
+        self.plan = request_for(self.case, title="Check whether the account contoso-ai in group rg-demo is still used", resource_name="contoso-ai", resource_group="rg-demo",
+                                created_at="2026-11-01T09:00:00Z", expires_at="")
+        self.store.case_put(self.case)
+        self.store.plan_put(self.plan)
+
+    def watch(self):
+        from support import FakeEstate
+        return watch(FakeEstate(), self.extras, self.clock)
+
+    def test_the_request_that_nobody_answered_is_taken_back_with_the_reason_rules_said_in_the_history_and_counted_once(self):
+        summary, events, _ = self.watch()
+        plan = self.store.plan_get(self.plan.plan_id)
+        self.assertEqual((plan.state, plan.preconditions["takenBack"], plan.expires_at, self.store.plans_open()), ("expired", "rules", "2026-11-04T12:00:00Z", []))
+        (held,) = [e for e in events if e["type"] == "case.held"]
+        self.assertEqual((held["caseId"], held["detector"], held["resourceType"], held["reason"]), (self.case.case_id, "investigation", "microsoft.cognitiveservices/accounts", RULES_CHANGED))
+        self.assertEqual((summary.held, self.store.runs_recent()[0].held), (1, 1))
+        self.assertIn(f"1 finding {RULES_CHANGED}", [e["note"] for e in events if e["type"] == "run.note"])
+        self.assertEqual(self.store.case_get(self.case.case_id).status, "needs_human", "the finding stays what it was: an open question that the Investigator gets again")
+        self.clock.advance(hours=3)
+        again, events, _ = self.watch()
+        self.assertEqual((again.held, [e for e in events if e["type"] == "case.held"], self.store.plan_get(self.plan.plan_id)), (0, [], plan), "a second Watch takes back nothing more")
+
+    def test_the_page_says_taken_back_and_why_and_nothing_was_changed_in_azure(self):
+        self.watch()
+        after, kept = self.store.plan_get(self.plan.plan_id), self.store.case_get(self.case.case_id)
+        shown = brief.build_brief(kept, after, now=NOW)
+        self.assertEqual((shown.outcome.state, shown.outcome.title), ("expired", "Taken back"))
+        self.assertEqual(shown.outcome.lines, (brief.TAKEN_BACK["rules"], "Nothing was changed in Azure."))
+        self.assertEqual(brief.taken_back(after), "rules")
+        _, text = page_of(kept, after)
+        self.assertIn("Taken back", text)
+        self.assertIn("Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.", text)
+        self.assertIn("Nothing was changed in Azure.", text)
+
+    def test_a_finding_that_no_saving_backs_gets_no_held_request_either_and_is_not_asked_about_again(self):
+        self.watch()
+        self.assertEqual((self.store.plans_open(), self.store.plans_held()), ([], []))
+        self.clock.advance(days=8)
+        self.watch()
+        self.assertEqual((self.store.plans_open(), self.store.plans_held()), ([], []))
+
+    def test_a_request_that_a_person_answered_in_any_way_is_never_taken_back(self):
+        for decision, state in (("approve", "consumed"), ("decline", "declined"), ("ask", "open"), ("later", "open"), ("not_mine", "open")):
+            with self.subTest(decision):
+                self.setUp()
+                self.store.decision_put(make_decision(plan_id=self.plan.plan_id, approver_oid=OID, decision=decision))
+                if state != "open":
+                    self.store.plan_put(replace(self.plan, state=state))
+                summary, events, _ = self.watch()
+                self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), (state, 0, []))
+
+    def test_what_is_not_an_open_request_for_this_kind_of_finding_is_never_taken_back(self):
+        advisor = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
+        rule_based = unpriced(case_id="krule1", detector="orphan-private-endpoint", plan_id="prule1", objections=(), cost_usd_30d=80.0)
+        for label, case, plan in (("a change that is open", self.case, request_for(self.case, family="delete-disk", preconditions={"family": "delete-disk"}, plan_id=self.plan.plan_id)),
+                                  ("a recommendation of Advisor", advisor, request_for(advisor, title="Buy a reservation: subscription")),
+                                  ("a finding of a rule-based detector", rule_based, request_for(rule_based, title="Check whether the resource contoso-ai is still used")),
+                                  ("a held request", self.case, request_for(self.case, plan_id=self.plan.plan_id, state="held", preconditions={"family": "advise", "held": "nothing"}))):
+            with self.subTest(label):
+                self.setUp()
+                self.store.case_put(case)
+                self.store.plan_put(plan)
+                summary, events, _ = self.watch()
+                self.assertEqual((self.store.plan_get(plan.plan_id).state, [e for e in events if e["type"] == "case.held" and e["caseId"] == case.case_id]), (plan.state, []))
+
+    def test_a_request_for_a_finding_that_code_priced_stays_open(self):
+        self.store.case_put(replace(self.case, saving_usd_month=120.0))
+        summary, events, _ = self.watch()
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
+
+    def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
+        mine = unpriced(case_id="kmine1", plan_id="pmine1", resource_group=GROUP, resource_name="contoso-mine")
+        self.store.case_put(mine)
+        self.store.plan_put(request_for(mine, title=f"Check whether the account contoso-mine in group {GROUP} is still used", created_at="2026-11-01T09:00:00Z", expires_at=""))
+        summary, events, _ = self.watch()
+        self.assertEqual((self.store.plan_get("pmine1").state, [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]), ("open", []))
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held), ("expired", 1))
+
+    def test_a_request_that_the_old_clock_closed_and_that_comes_back_is_taken_back_in_the_same_watch_and_never_chased(self):
+        closed = request_for(self.case, state="expired", created_at="2026-10-26T12:00:00Z", expires_at="2026-10-29T12:00:00Z")
+        self.store.plan_put(closed)
+        self.store.case_put(replace(self.case, status="expired"))
+        summary, events, _ = self.watch()
+        plan = self.store.plan_get(self.plan.plan_id)
+        self.assertEqual(len([e for e in events if e["type"] == "plan.revived"]), 1, "it came back: nobody had answered it, and no clock closes a request")
+        self.assertEqual((plan.state, plan.preconditions["takenBack"], self.store.plans_open(), summary.held), ("expired", "rules", [], 1))
+        self.assertEqual(self.store.case_get(self.case.case_id).status, "needs_human")
 
 
 if __name__ == "__main__":
