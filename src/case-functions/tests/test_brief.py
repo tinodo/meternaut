@@ -57,8 +57,8 @@ class TheHeadline(unittest.TestCase):
         self.assertEqual(headline_of("delete-disk", "d-1", "rg-a", "microsoft.compute/disks", "delete"), "Delete the unattached disk d-1 in group rg-a")
         self.assertEqual(headline_of("delete-public-ip", "ip-1", "rg-a", "microsoft.network/publicipaddresses", None), "Delete the unassigned public IP address ip-1 in group rg-a")
 
-    def test_a_finding_that_cannot_be_changed_is_a_consideration_in_the_words_of_its_recommendation(self):
-        for recommendation, verb in (("delete", "Consider deleting"), ("change", "Consider changing"), ("keep", "Keep"), (None, "Look at"), ("something new", "Look at")):
+    def test_a_finding_that_cannot_be_changed_is_a_look_in_the_words_of_its_recommendation(self):
+        for recommendation, verb in (("delete", "Consider deleting"), ("change", "Look at"), ("keep", "Keep"), (None, "Look at"), ("something new", "Look at")):
             with self.subTest(recommendation=recommendation):
                 self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", recommendation), f"{verb} the virtual machine vm-1 in group rg-a")
 
@@ -70,12 +70,12 @@ class TheHeadline(unittest.TestCase):
     def test_a_family_without_words_of_its_own_keeps_the_title_of_its_plan(self):
         self.assertEqual(headline_of("resize-disk", "d", "g", "microsoft.compute/disks", None, "Resize an unattached disk"), "Resize an unattached disk")
 
-    def test_every_type_that_has_words_is_named_in_the_headline_of_a_consideration_and_a_workspace_is_one_of_them(self):
-        self.assertEqual(headline_of(ADVISE, "ws-demo", "rg-demo", "Microsoft.OperationalInsights/workspaces", "change"), "Consider changing the Log Analytics workspace ws-demo in group rg-demo")
+    def test_every_type_that_has_words_is_named_in_the_headline_of_a_look_and_a_workspace_is_one_of_them(self):
+        self.assertEqual(headline_of(ADVISE, "ws-demo", "rg-demo", "Microsoft.OperationalInsights/workspaces", "change"), "Look at the Log Analytics workspace ws-demo in group rg-demo")
         for rtype, (_, noun) in brief.TYPE_WORDS.items():
             with self.subTest(type=rtype):
                 found = headline_of(ADVISE, "x-1", "rg-demo", rtype, "change")
-                self.assertEqual(found, f"Consider changing the {noun} x-1 in group rg-demo")
+                self.assertEqual(found, f"Look at the {noun} x-1 in group rg-demo")
                 self.assertNotRegex(found, r"the resource\b(?! group)")  # the word of a kind of resource, never the general one ("the resource group" is the word of a resource group)
 
     def test_a_name_is_cut_and_is_one_line(self):
@@ -100,9 +100,9 @@ class TheBriefOfADeleteDisk(unittest.TestCase):
         self.assertEqual((b.kind, b.family, b.state, b.plan_id, b.case_id, b.plan_code), ("change", "delete-disk", "open", "plan0001", "case0001", "7F3K92QD"))
         self.assertEqual(b.headline, "Delete the unattached disk planted-disk-1 in group meternaut-test-rg")  # 1 what am I asked to decide
         self.assertEqual((b.saving.monthly, b.saving.level, b.saving.waiting_per_day), (7.17, "Expected", 0.24))  # 2 what do I get
-        self.assertEqual((b.confidence.level, b.confidence.because), ("High", "Both AI reviewers agree; code read the facts itself."))  # 3 how sure
+        self.assertEqual((b.confidence.level, b.confidence.because), ("High", "Confidence is high. Both AIs agree. Meternaut read the facts from Azure itself."))  # 3 how sure
         self.assertEqual([f.label for f in b.facts], ["Cost, last 30 days", "State", "Locks and keep tags"])
-        self.assertEqual(b.change, "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")  # 4 what happens
+        self.assertEqual(b.change, "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")  # 4 what happens
         self.assertEqual(b.who_acts, brief.WHO_ACTS)
         self.assertIn("Meternaut holds no right of its own to change anything.", b.who_acts)
         self.assertIn("still unattached, still tagged as planted by Meternaut, still in this resource group and not locked", b.rechecked)
@@ -135,9 +135,9 @@ class TheBriefOfADeleteDisk(unittest.TestCase):
 
     def test_an_open_request_says_how_long_it_has_waited_with_whom_it_is_and_what_waiting_has_cost(self):
         waited = brief_of(make_case(), make_plan(created_at=at(days=-9)), may_answer=True).waiting
-        self.assertEqual((waited.days, waited.with_whom, waited.told, waited.put_off), (9, "the people it was made for", (), 0))
-        self.assertTrue(waited.cost.startswith("9 days at $"), waited.cost)
-        self.assertNotIn("about", waited.cost, "a figure that is not a Scenario has no `about`")
+        self.assertEqual((waited.days, waited.with_whom, waited.told, waited.put_off), (9, "the people who were asked first", (), 0))
+        self.assertTrue(waited.cost.startswith("Waiting 9 days at $"), waited.cost)
+        self.assertIn("has cost about $", waited.cost, "what waiting has cost is the month shared out over the days, so it says about")
         self.assertIsNone(brief_of(make_case(), make_plan(state="declined")).waiting, "only an open request waits")
 
     def test_the_brief_is_the_same_for_the_same_records_and_a_naive_time_is_utc(self):
@@ -159,7 +159,7 @@ class TheBriefOfADeletePublicIp(unittest.TestCase):
         b = self.brief
         self.assertEqual((b.kind, b.family), ("change", "delete-public-ip"))
         self.assertEqual(b.headline, "Delete the unassigned public IP address planted-ip-1 in group meternaut-test-rg")
-        self.assertEqual(b.change, "Deletes the public IP address planted-ip-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertEqual(b.change, "Azure deletes the public IP address planted-ip-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertEqual(b.undo.how, "A deleted public IP address cannot be restored. The address is released, and a new one can be made.")
         self.assertFalse(b.undo.reversible)
         self.assertEqual(b.risk.text, "If something still points at the address, that traffic stops, and the same address may not be given again.")
@@ -181,18 +181,18 @@ class TheBriefOfAdvice(unittest.TestCase):
     def test_nothing_changes_in_azure_and_the_answers_are_the_five(self):
         b = self.brief
         self.assertEqual((b.kind, b.family, b.state), ("advice", "advise", "open"))
-        self.assertEqual(b.headline, "Consider changing the virtual machine oversized-vm-1 in group team-apps-rg")
+        self.assertEqual(b.headline, "Look at the virtual machine oversized-vm-1 in group team-apps-rg: it may be larger than its use needs")
         self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_CHANGE, brief.ADVICE_WHO, ""))
-        self.assertEqual((b.undo.reversible, b.undo.how), (True, brief.ADVICE_UNDO))
+        self.assertEqual((b.undo.reversible, b.undo.how), (True, ""), "an answer to advice changes nothing, so there is nothing to say about an undo")
         self.assertEqual(b.risk, brief.acting_risk(self.case), "the risk is that of doing what the title suggests, and answering changes nothing in Azure")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act on it: What depends on it can slow down or stop."))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act: What depends on it can slow down or stop."))
         self.assertEqual(b.answers, ("approve", "decline", "not_mine", "ask", "later"))
         self.assertEqual(b.where.kind, "Virtual machine")
         self.assertEqual(b.where.portal_url, f"https://portal.azure.com/#resource{VM}")
 
     def test_its_saving_is_a_scenario_because_azure_advisor_or_a_change_to_a_smaller_size_has_no_cost_line_of_its_own(self):
         self.assertEqual((self.brief.saving.level, self.brief.saving.monthly), ("Scenario", 120.0))
-        self.assertIn("no cost line of this resource backs it", self.brief.saving.basis)
+        self.assertIn("the bill of this resource does not back it", self.brief.saving.basis)
 
     def test_how_sure_it_is_comes_from_what_the_origin_status_of_the_case_was(self):
         self.assertEqual(confidence_of(make_advice_case(status="needs_human"), make_advice()).level, "Low")
@@ -204,7 +204,7 @@ class TheBriefOfAdvice(unittest.TestCase):
         found = {state: brief_of(self.case, make_advice(state=state), decisions=[make_decision(plan_id="plan0002", decision=decision, approver_name="Maya", reason=reason)]).outcome
                  for state, decision, reason in (("consumed", "approve", ""), ("declined", "decline", "figure-wrong"), ("withdrawn", "not_mine", ""))}
         self.assertEqual((found["consumed"].title, found["consumed"].lines), ("Worth acting on", ("Maya said this is worth acting on.", "Nothing was changed in Azure.")))
-        self.assertEqual((found["declined"].title, found["declined"].lines), ("Not worth it", ("Maya said it is not worth acting on. Reason: the figure is wrong.", "Nothing changed.")))
+        self.assertEqual((found["declined"].title, found["declined"].lines), ("Not worth it", ("Maya said it is not worth acting on because the figure is wrong.", "Nothing changed.")))
         self.assertEqual((found["withdrawn"].title, found["withdrawn"].result), ("Not theirs", "Not theirs"))
         self.assertEqual(found["consumed"].result, "Worth acting on")
 
@@ -256,7 +256,7 @@ class TheConfidence(unittest.TestCase):
 
     def test_both_agree_nothing_fired_and_the_first_was_sure_is_high(self):
         found = confidence_of(make_case(confidence=0.91), make_plan())
-        self.assertEqual((found.level, found.because), ("High", "Both AI reviewers agree; code read the facts itself."))
+        self.assertEqual((found.level, found.because), ("High", "Confidence is high. Both AIs agree. Meternaut read the facts from Azure itself."))
         self.assertEqual(confidence_of(make_case(confidence=None), make_plan()).level, "High")
 
     def test_a_first_ai_that_was_only_fairly_sure_makes_it_medium_and_one_that_was_not_sure_makes_it_low(self):
@@ -264,32 +264,34 @@ class TheConfidence(unittest.TestCase):
         self.assertEqual(confidence_of(make_case(confidence=0.85), make_plan()).level, "High")
         low = confidence_of(make_case(confidence=0.6), make_plan())
         self.assertEqual(low.level, "Low")
-        self.assertIn("the first AI was not sure enough", low.because)
+        self.assertTrue(low.because.startswith("The AI is not sure (low confidence)."), low.because)
 
     def test_a_check_that_held_it_back_makes_it_low_and_is_named(self):
         found = confidence_of(make_case(guards=("locked", "keep-tag", "too-new")), make_plan())
         self.assertEqual(found.level, "Low")
-        self.assertEqual(found.because, "Both AI reviewers agree; a check by code held it back (a management lock covers the resource; a tag asks to keep the resource); "
-                                        "code read the facts itself.")
+        self.assertEqual(found.because, " ".join(["Confidence is low. Both AIs agree. A check held it back.", brief.GUARD_WORDS["locked"], brief.GUARD_WORDS["keep-tag"],
+                                                  "Meternaut read the facts from Azure itself."]))
 
     def test_a_finding_of_the_investigation_is_high_only_when_code_re_checked_every_number_that_the_ai_cited(self):
         investigated = dict(detector="investigation", status="proposed", confidence=0.9, facts={"metrics": {"A": 1, "B": 0}})
         self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 2}})).level, "High")
         some = confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 3}}))
-        self.assertEqual((some.level, some.because), ("Medium", "Both AI reviewers agree; code checked 2 of 3 numbers again."))
+        self.assertEqual((some.level, some.because), ("Medium", "Confidence is medium. Both AIs agree. Meternaut checked the 3 numbers that the AI quoted against Azure, and 2 are right."))
         none = confidence_of(make_case(**{**investigated, "facts": {}}))
-        self.assertEqual((none.level, none.because), ("Low", "Both AI reviewers agree; no number backs it."))
-        self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}}})).because, "Both AI reviewers agree; code checked 1 number again.")
+        self.assertEqual((none.level, none.because), ("Low", "Confidence is low. Both AIs agree. The AI quoted no number that Meternaut could check."))
+        self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}}})).because,
+                         "Confidence is high. Both AIs agree. Meternaut checked the one number that the AI quoted against Azure, and it is right.")
 
     def test_a_second_ai_that_did_not_agree_is_low_and_the_words_say_why(self):
         base = dict(status="needs_human", detector="investigation", facts={"metrics": {"A": 1}}, confidence=0.9)
         asked = ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": True})
         models = {"investigator": "m1", "skeptic": "m2"}
+        checked = "Meternaut checked the one number that the AI quoted against Azure, and it is right."
         cases = (
-            ({"steps": asked, "objections": ("It may be needed.",), "models": models}, "The second AI raised an objection; code checked 1 number again."),
-            ({"steps": asked, "objections": (), "models": models}, "The AI reviewers did not settle it; code checked 1 number again."),
-            ({"steps": ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": False}), "objections": (), "models": models}, "The second AI gave no verdict; code checked 1 number again."),
-            ({"steps": ({"step": "investigator", "ok": True},), "objections": (), "models": {"investigator": "m1", "skeptic": None}}, "Only one AI reviewed it; code checked 1 number again."),
+            ({"steps": asked, "objections": ("It may be needed.",), "models": models}, f"Confidence is low. A second AI doubted it. {checked}"),
+            ({"steps": asked, "objections": (), "models": models}, f"Confidence is low. The two AIs did not settle it. {checked}"),
+            ({"steps": ({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": False}), "objections": (), "models": models}, f"Confidence is low. The second AI gave no verdict. {checked}"),
+            ({"steps": ({"step": "investigator", "ok": True},), "objections": (), "models": {"investigator": "m1", "skeptic": None}}, f"Confidence is low. Only one AI looked at it. {checked}"),
         )
         for changes, because in cases:
             with self.subTest(because=because):
@@ -298,7 +300,7 @@ class TheConfidence(unittest.TestCase):
 
     def test_a_status_that_has_moved_on_no_longer_says_what_the_second_ai_thought(self):
         found = confidence_of(make_case(status="declined"))
-        self.assertEqual(found.because, "The second AI's verdict is no longer recorded; code read the facts itself.")
+        self.assertEqual(found.because, "Confidence is medium. Meternaut no longer has the verdict of the second AI. Meternaut read the facts from Azure itself.")
         self.assertEqual(found.level, "Medium")
 
     def test_no_case_means_no_record_of_the_review(self):
@@ -311,9 +313,9 @@ class TheConfidence(unittest.TestCase):
             self.assertTrue(held.startswith(brief.CODE_NOTES[3:]), "what code notes when it turns a deletion into a look is not a doubt of the second AI")
         notes = ("no measurement backs this finding: the tools returned no number", "the Investigator gave a confidence of 0.5, under the 0.7 that a proposal needs")
         found = confidence_of(make_case(status="needs_human", objections=notes, steps=({"step": "skeptic", "ok": True},), models={"skeptic": "m"}))
-        self.assertEqual(found.because, "The AI reviewers did not settle it; code read the facts itself.")
+        self.assertEqual(found.because, "Confidence is low. The two AIs did not settle it. Meternaut read the facts from Azure itself.")
         self.assertEqual(doubt_of(make_case(objections=notes + ("A real doubt.",))), "A real doubt.")
-        self.assertEqual(doubt_of(make_case(objections=notes, steps=({"step": "skeptic", "ok": True},))), "The second AI raised no objection.")
+        self.assertEqual(doubt_of(make_case(objections=notes, steps=({"step": "skeptic", "ok": True},))), "", "a note of code is not the doubt of the second AI, and code says nothing in its place")
 
     def test_the_code_notes_are_the_ones_that_the_deciding_code_writes(self):
         from cases import decide
@@ -321,12 +323,11 @@ class TheConfidence(unittest.TestCase):
 
 
 class TheDoubtAndTheReasoning(unittest.TestCase):
-    def test_the_doubt_is_the_first_objection_of_the_second_ai_or_what_it_did_instead(self):
+    def test_the_doubt_is_the_first_objection_of_the_second_ai_and_nothing_when_it_raised_none(self):
         self.assertEqual(doubt_of(make_case(objections=("First.", "Second."))), "First.")
-        self.assertEqual(doubt_of(make_case(objections=(), models={"detective": "m", "skeptic": None}, steps=())), "The second AI was not asked.")
-        self.assertEqual(doubt_of(make_case(objections=())), "The second AI gave no verdict on this finding.", "the skeptic step of the fixture is not ok")
-        self.assertEqual(doubt_of(make_case(objections=(), steps=({"step": "skeptic", "ok": True},))), "The second AI raised no objection.")
-        self.assertEqual(doubt_of(make_case(objections=(), status="needs_human", steps=({"step": "skeptic", "ok": True},))), "The second AI raised no objection in words.")
+        for case in (make_case(objections=(), models={"detective": "m", "skeptic": None}, steps=()), make_case(objections=()), make_case(objections=(), steps=({"step": "skeptic", "ok": True},)),
+                     make_case(objections=(), status="needs_human", steps=({"step": "skeptic", "ok": True},))):
+            self.assertEqual(doubt_of(case), "", "what the second AI did instead is in the words of how sure it is, not in a quote of it")
         self.assertEqual((doubt_of(None), doubt_of(make_case(status="error"))), ("", ""))
 
     def test_the_reasoning_and_the_doubt_are_cut_to_240_characters_and_are_one_line(self):
@@ -384,14 +385,14 @@ class TheFacts(unittest.TestCase):
 
     def test_the_last_change_comes_from_the_owner_record_and_the_checks_that_found_nothing_say_so(self):
         rows = facts_of(make_case(owner={"changedBy": "bob@example.com", "changedAt": "2026-10-01T08:00:00Z", "lookedUp": True}))
-        self.assertIn(("Last change", "2026-10-01 by bob@example.com", "Azure Activity Log"), [(r.label, r.value, r.source) for r in rows])
+        self.assertIn(("Last change", "1 October 2026, by bob@example.com", "Azure Activity Log"), [(r.label, r.value, r.source) for r in rows])
         self.assertEqual([r.value for r in facts_of(make_case()) if r.label == "Locks and keep tags"], ["None found"])
         self.assertEqual([r for r in facts_of(make_case(guards=("locked",))) if r.label == "Locks and keep tags"], [])
         self.assertEqual(facts_of(None), ())
 
     def test_a_case_without_a_cost_figure_has_no_cost_row(self):
         self.assertNotIn("Cost, last 30 days", [r.label for r in facts_of(make_case(cost_usd_30d=None))])
-        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["Azure has no cost line for this yet"],
+        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["Azure shows no cost for this yet"],
                          "a cost line that Azure does not have is never shown as $0.00")
         self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0, cost_state="lines")) if r.label == "Cost, last 30 days"], ["$0.00"], "cost lines that cost nothing are a cost of nothing")
 
@@ -401,7 +402,7 @@ class TheSaving(unittest.TestCase):
 
     def test_expected_when_cost_lines_back_it_with_the_cost_of_waiting(self):
         saving = brief_of(make_case(), make_plan(saving_usd_month=41.2, waiting_costs_usd_day=1.37)).saving
-        self.assertEqual((saving.monthly, saving.level, saving.basis, saving.waiting_per_day), (41.2, "Expected", "the cost lines of the last 30 days", 1.37))
+        self.assertEqual((saving.monthly, saving.level, saving.basis, saving.waiting_per_day), (41.2, "Expected", brief.BILL_BASIS, 1.37))
         self.assertEqual(brief_of(make_case(), make_plan(saving_usd_month=30.0, waiting_costs_usd_day=None)).saving.waiting_per_day, 1.0, "a month of 30 days")
 
     def test_scenario_when_azure_advisor_or_a_proposed_change_is_the_only_basis(self):
@@ -423,21 +424,21 @@ class TheSaving(unittest.TestCase):
 
     def test_no_figure_says_why_in_one_phrase(self):
         none = brief_of(make_case(saving_usd_month=None, cost_usd_30d=None), make_plan(saving_usd_month=None)).saving
-        self.assertEqual((none.monthly, none.level, none.why_none), (None, "", "No cost line of the last 30 days was read for this resource."))
+        self.assertEqual((none.monthly, none.level, none.why_none), (None, "", "Meternaut could not read what this costs."))
         free = brief_of(make_case(cost_usd_30d=0.0), make_plan(saving_usd_month=0)).saving
-        self.assertEqual(free.why_none, "Azure has no cost line for this yet.")
+        self.assertEqual(free.why_none, "Azure shows no cost for this yet.")
         nothing = brief_of(make_case(cost_usd_30d=0.0, cost_state="lines"), make_plan(saving_usd_month=0)).saving
         self.assertEqual(nothing.why_none, "Cost Management shows no cost for this in the last 30 days.")
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
-        self.assertEqual((costly.monthly, costly.why_none), (None, "The resource cost $848.75 in the last 30 days. What a change would save was not worked out."))
-        self.assertNotIn("No cost line", costly.why_none, "a cost that is known is never said to be missing")
+        self.assertEqual((costly.monthly, costly.why_none), (None, "Nobody has worked out how much of that could be saved."))
+        self.assertNotIn("could not read", costly.why_none, "a cost that is known is never said to be missing")
         self.assertEqual([none.specific, free.specific, costly.specific], [False, False, False], "that no saving was worked out from the cost that was read is not a reason of the finding's own")
         for bad in (-5.0, math.nan, math.inf, True, "7"):
             with self.subTest(figure=bad):
                 self.assertIsNone(brief_of(make_case(), make_plan(saving_usd_month=bad)).saving.monthly)
 
-    def test_money_is_written_with_a_dollar_sign_thousands_and_two_decimals(self):
-        for value, expected in ((41.2, "$41.20"), (1234.5, "$1,234.50"), (0, "$0.00"), (0.005, "$0.01"), (-3, "-$3.00")):
+    def test_money_is_written_with_a_dollar_sign_thousands_and_whole_dollars_from_a_hundred_up(self):
+        for value, expected in ((41.2, "$41.20"), (1234.5, "$1,235"), (848.3, "$848"), (99.5, "$99.50"), (100, "$100"), (0, "$0.00"), (0.005, "$0.01"), (-3, "-$3.00")):
             with self.subTest(value=value):
                 self.assertEqual(usd_text(value), expected)
         for bad in (None, "5", True, math.nan, math.inf):
@@ -503,7 +504,8 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None), "r1")}
         b = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
         self.assertEqual((b.saving.monthly, b.saving.level), (22.5, "Scenario"), "600 hours at 0.0625 are 37.50 at list prices, and 30 at the rate of the bill: 22.50 to 30 saved, and the low end counts")
-        self.assertIn("repriced at the alternative's list price scaled by your bill's rate, ratio 0.8, or at list prices: the alternative has not been checked for features", b.saving.basis)
+        self.assertIn("It assumes a switch of the 1 bill line of this resource to the alternative's list price, scaled by your bill's rate, which is 0.8 of list, or taken at list prices", b.saving.basis)
+        self.assertIn("Meternaut did not check the alternative for features.", b.saving.basis)
         self.assertEqual(b.how, "Take the basic tier.")
 
     def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):
@@ -531,7 +533,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertEqual(both.monthly, 60.0)
         self.assertIn("Azure Advisor's $12.50 is not added", both.basis)
         only = brief_of(make_case(detector="investigation", recommendation="change"), make_plan()).saving
-        self.assertEqual((only.level, only.basis), ("Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
+        self.assertEqual((only.level, only.basis), ("Scenario", "It is Azure Advisor's own estimate, and the bill of this resource does not back it."))
 
     def test_the_lines_that_the_figure_rests_on_are_a_row_of_the_evidence_and_the_measurements_are_still_shown(self):
         facts = priced_case().facts
@@ -539,7 +541,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertIn("Bill lines it would shrink", labels)
         self.assertIn("Used Units", labels)
         row = next(fact for fact in facts_of(priced_case()) if fact.label == "Bill lines it would shrink")
-        self.assertEqual((row.value, row.source), ("2 lines, $100.00 a month", "Azure cost lines"))
+        self.assertEqual((row.value, row.source), ("2 lines, $100 a month", "Azure cost lines"))
 
     def test_the_ai_s_words_for_a_person_are_shown_as_text_of_an_ai_and_cut_to_one_line(self):
         hostile = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "<script>alert(1)</script> " + "x" * 400}
@@ -560,7 +562,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
 
     def test_a_finding_that_is_worth_what_azure_advisor_says_still_takes_it_and_a_plain_case_keeps_the_figure_of_its_plan(self):
         advisor = brief_of(make_case(detector="investigation", recommendation="change"), make_plan(saving_usd_month=30.0)).saving
-        self.assertEqual((advisor.level, advisor.basis), ("Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it"))
+        self.assertEqual((advisor.level, advisor.basis), ("Scenario", "It is Azure Advisor's own estimate, and the bill of this resource does not back it."))
         self.assertEqual(brief_of(make_case(), make_plan(saving_usd_month=30.0)).saving.monthly, 30.0)
 
     def test_a_figure_that_code_worked_out_never_switches_off_a_check_of_use_and_a_finding_with_one_still_says_something(self):
@@ -589,38 +591,41 @@ class TheOwner(unittest.TestCase):
     def test_who_the_resource_probably_belongs_to_is_said_as_plain_facts(self):
         owner = owner_of(make_case(owner={"tagOwner": "alice@example.com", "tagName": "owner", "createdBy": "bob@example.com", "createdAt": "2026-03-01T08:00:00Z",
                                          "changedBy": "carol@example.com", "changedAt": "2026-10-01", "lookedUp": True}))
-        self.assertEqual((owner.known, owner.text), (True, "Tag owner: alice@example.com. Created by bob@example.com on 2026-03-01. "
-                                                          "Last changed by carol@example.com on 2026-10-01."))
+        self.assertEqual((owner.known, owner.text), (True, "The tag names alice@example.com as the owner. It was created by bob@example.com on 1 March 2026. "
+                                                          "It was last changed by carol@example.com on 1 October 2026."))
 
     def test_the_tag_is_named_once_and_by_its_own_name(self):
-        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": True})).text, "Tag team: platform.")
-        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "lookedUp": True})).text, "Tag owner: platform.")
+        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": True})).text, "The tag names platform as the team.")
+        self.assertEqual(owner_of(make_case(owner={"tagOwner": "platform", "lookedUp": True})).text, "The tag names platform as the owner.")
 
-    def test_an_identity_that_is_only_an_id_is_said_to_be_an_identity_and_not_taken_for_a_name(self):
+    def test_an_identity_that_is_only_an_id_is_said_to_be_an_application_and_not_taken_for_a_name(self):
         guid = "3F2A9C1E-5B7D-4E8A-9C3B-1D2E3F4A5B6C"
-        said = f"an application or service identity (id {guid.lower()})"
+        said = "an application"
         self.assertEqual(brief.who_text(guid), said)
         self.assertEqual(brief.who_text("bob@example.com"), "bob@example.com")
         self.assertEqual(brief.who_text("3f2a9c1e-5b7d-4e8a-9c3b-1d2e3f4a5b6c0"), "3f2a9c1e-5b7d-4e8a-9c3b-1d2e3f4a5b6c0", "more than an id is not an id")
         self.assertEqual(brief.who_text(None), "")
         text = owner_of(make_case(owner={"createdBy": guid, "changedBy": guid, "changedAt": "2026-10-01", "lookedUp": True})).text
-        self.assertEqual(text, f"Created by {said}. Last changed by {said} on 2026-10-01.")
+        self.assertEqual(text, "Nobody is named as the owner in its tags. An application created it. An application changed it on 1 October 2026.")
+        self.assertNotIn(guid.lower(), text.lower(), "the id of an application is in the Details of a page and nowhere else")
         row = [r for r in facts_of(make_case(owner={"changedBy": guid, "changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})) if r.label == "Last change"]
-        self.assertEqual([r.value for r in row], [f"2026-10-01 by {said}"])
+        self.assertEqual([r.value for r in row], ["1 October 2026, by an application"])
 
-    def test_a_missing_owner_is_said_and_so_is_a_lookup_that_was_not_made(self):
+    def test_a_year_is_left_out_of_a_day_of_this_year_and_a_missing_owner_is_said_and_so_is_a_lookup_that_was_not_made(self):
+        self.assertEqual((brief.day_text("2026-11-11", NOW), brief.day_text("2025-11-11T08:00:00Z", NOW), brief.day_text("2026-11-11"), brief.day_text("later", NOW)),
+                         ("11 November", "11 November 2025", "11 November 2026", ""))
         self.assertEqual(owner_of(make_case()), brief.OwnerLine(False, "Meternaut has not looked up who owns this resource yet."))
         self.assertEqual(owner_of(None), brief.OwnerLine(False, "Meternaut has not looked up who owns this resource yet."))
-        self.assertEqual(owner_of(make_case(owner={"lookedUp": True})), brief.OwnerLine(False, "No owner is recorded on the resource."))
+        self.assertEqual(owner_of(make_case(owner={"lookedUp": True})), brief.OwnerLine(False, "Nobody is named as the owner in its tags."))
         self.assertEqual(owner_of(make_case(owner={"lookedUp": True, "tagOwner": "   "})).known, False)
 
     def test_a_part_of_the_record_is_enough_and_a_key_that_is_not_known_is_left_out(self):
-        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x", "lookedUp": True})).text, "Created by bob@example.com.")
-        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})).text, "Last changed on 2026-10-01.")
+        self.assertEqual(owner_of(make_case(owner={"createdBy": "bob@example.com", "somethingNew": "x", "lookedUp": True})).text, "Nobody is named as the owner in its tags. It was created by bob@example.com.")
+        self.assertEqual(owner_of(make_case(owner={"changedAt": "2026-10-01T08:00:00Z", "lookedUp": True})).text, "Nobody is named as the owner in its tags. It was last changed on 1 October 2026.")
 
     def test_a_tag_is_not_all_that_the_line_says_when_the_activity_log_was_not_read(self):
         text = owner_of(make_case(owner={"tagOwner": "platform", "tagName": "team", "lookedUp": False})).text
-        self.assertEqual(text, "Tag team: platform. Not checked: who changed it.", "an owner tag must not read as if nobody had changed the resource")
+        self.assertEqual(text, "The tag names platform as the team. Meternaut did not look up who changed it.", "an owner tag must not read as if nobody had changed the resource")
 
     def test_text_from_the_estate_is_data_and_is_made_safe_by_plain(self):
         owner = owner_of(make_case(owner={"tagOwner": "[mail me](javascript:alert(1)) https://evil.example\u202e", "createdBy": "x" * 500, "lookedUp": True}))
@@ -651,7 +656,7 @@ class TheOutcome(unittest.TestCase):
 
     def test_declined_names_who_and_the_reason(self):
         found = self.outcome("declined", decisions=[make_decision(decision="decline", reason="handled", approver_name="Maya")])
-        self.assertEqual((found.title, found.lines, found.by), ("Declined", ("Declined by Maya. Reason: it is already handled.", "Nothing changed."), "Maya"))
+        self.assertEqual((found.title, found.lines, found.by), ("Declined", ("Declined by Maya because it is already handled.", "Nothing changed."), "Maya"))
         self.assertEqual(self.outcome("declined").lines[0], "Declined by A person.")
 
     def test_approved_says_that_the_change_is_being_made_or_waits_for_the_extra_sign_in_check(self):
@@ -730,11 +735,11 @@ class TheSmallWords(unittest.TestCase):
         self.assertEqual(models_of(make_case(models={"a": "x\u202e[y](javascript:z)"})), ("x(y)(javascript:z)",))
 
     def test_the_footer_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_for_meternaut(self):
-        self.assertEqual(written_by(("m1", "m2")), "Written by an AI (models: m1, m2); a person approves every change.")
-        self.assertEqual(written_by(()), "Written by an AI; a person approves every change.")
+        self.assertEqual(written_by(("m1", "m2")), "Written by an AI (models: m1, m2). A person approves every change.")
+        self.assertEqual(written_by(()), "Written by an AI. A person approves every change.")
         self.assertEqual(footer_line(("m1",), "You got this because you are on my list of people.", ("Olga (olga@example.com)",)),
-                         "Written by an AI (models: m1); a person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
-        self.assertEqual(footer_line((), "Why."), "Written by an AI; a person approves every change. Why.", "nobody to name: the line leaves the sentence out, as the page does")
+                         "Written by an AI (models: m1). A person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
+        self.assertEqual(footer_line((), "Why."), "Written by an AI. A person approves every change. Why.", "nobody to name: the line leaves the sentence out, as the page does")
         self.assertNotIn("Talk to a person", footer_line(("m1",), "Why.", ("Olga (olga@example.com)",)))
 
     def test_a_person_who_is_responsible_for_meternaut_is_plain_text_with_the_address(self):
@@ -747,9 +752,9 @@ class TheSmallWords(unittest.TestCase):
 
     def test_what_the_check_after_a_change_found_without_saying_the_same_twice(self):
         check = {"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 7.17, "currency": "USD", "note": "Confirmed."}
-        self.assertEqual(check_lines(check), ["Azure no longer lists the resource.", "Cost lines since the change: $0.00.", "The 30 days before the change cost $7.17.",
+        self.assertEqual(check_lines(check), ["Azure no longer lists the resource.", "The bill since the change shows $0.00.", "The 30 days before the change cost $7.17.",
                                               "Confirmed."])
-        self.assertEqual(check_lines(check, "Deleted. Azure no longer lists the resource.")[0], "Cost lines since the change: $0.00.")
+        self.assertEqual(check_lines(check, "Deleted. Azure no longer lists the resource.")[0], "The bill since the change shows $0.00.")
         self.assertEqual(check_lines({"gone": False}), ["Azure still lists the resource."])
         self.assertEqual(check_lines({"costAfterUsd": 3.0, "currency": "EUR"}), [], "a figure in another currency is not shown as dollars")
         self.assertEqual(check_lines({}), [])
@@ -875,6 +880,8 @@ class WhatTheModuleIs(unittest.TestCase):
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.Import):
                     self.assertLessEqual({a.name.split(".")[0] for a in node.names}, {"datetime", "math", "re"}, name)
+                elif isinstance(node, ast.ImportFrom) and node.level == 1:
+                    self.assertEqual((name, node.module), ("estimate", "costs"), "the estimate writes its money as the cost does, and the cost holds no way to reach Azure either")
                 elif isinstance(node, ast.ImportFrom):
                     self.assertEqual(node.level, 0, name)
                     self.assertIn((node.module or "").split(".")[0], {"__future__", "typing", "urllib"}, name)

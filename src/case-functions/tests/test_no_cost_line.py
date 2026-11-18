@@ -21,7 +21,7 @@ from cases.people import Person
 from cases.web import figures
 
 BASE = "https://meternaut.example"
-ESTIMATE = "Estimate at list price, not Azure's bill: about $1.54 a month for a disk of this type and size (tier S4). East US list prices of 12 November 2026."
+ESTIMATE = "This is an estimate at list price, not Azure's bill. A disk of this type and size (tier S4) costs about $1.54 a month at East US list prices of 12 November 2026."
 ZERO = re.compile(r"\$\s?0(?:\.0+)?(?![\d.,])")  # "$0", "$0.00" and "$ 0": a zero as money
 VM = f"{RG}/rg-app/providers/microsoft.compute/virtualmachines/some-vm"
 
@@ -86,7 +86,7 @@ class TheDiskThatAzureHasNoLineFor(unittest.TestCase):
         self.assertEqual((brief.cost_state, brief.saving.monthly, brief.saving.why_none), ("none", None, NO_LINE_WORDS))
         self.assertEqual(brief.estimate, estimate.Estimate(1.54, "S4", "2026-11-12"))
         cost = next(fact for fact in brief.facts if fact.label == "Cost, last 30 days")
-        self.assertEqual(cost.value, "Azure has no cost line for this yet")
+        self.assertEqual(cost.value, "Azure shows no cost for this yet")
         self.assertNotEqual(brief.cost, 1.54)
         self.assertEqual(figures.figure_for([brief], [figures.cost_of(brief, self.case)]).monthly, None)
 
@@ -107,7 +107,7 @@ class TheDiskThatAzureHasNoLineFor(unittest.TestCase):
         text = card.text()
         self.assertIn(NO_LINE_WORDS, text)
         self.assertIn(ESTIMATE, text)
-        self.assertEqual(text.count("Estimate at list price, not Azure's bill"), 1, "said once")
+        self.assertEqual(text.count("an estimate at list price, not Azure's bill"), 1, "said once")
         (chart,) = [n for n in card.find_all("figure") if "chart" in n.classes()]
         self.assertEqual(chart.find_all("path"), [], "no line is drawn: a line along the floor would read as a cost of nothing")
         self.assertIn(figures.NONE_REASON, chart.text())
@@ -175,7 +175,7 @@ class WhenAFindingHasLinesTheEstimateIsNotThere(unittest.TestCase):
         console.store.case_put(case)
         console.store.plan_put(plan)
         text = console.get(f"/ok/{plan.plan_id}").main.text()
-        self.assertNotIn("Estimate at list price", text)
+        self.assertNotIn("estimate at list price", text)
         self.assertIn("$1.25", text)
 
 
@@ -216,8 +216,8 @@ class WhenCostManagementKeepsSayingTooManyRequests(unittest.TestCase):
         reply = console.get(f"/ok/{self.plan.plan_id}")
         card = reply.main.find("section", class_="focus")
         self.assertIn(FAILED_WORDS, card.text())
-        self.assertIn("The next search reads it again.", card.text())
-        self.assertNotIn("Estimate at list price", reply.main.text(), "an estimate is for a read that worked and found no line")
+        self.assertIn(figures.READ_AGAIN, card.text())
+        self.assertNotIn("estimate at list price", reply.main.text(), "an estimate is for a read that worked and found no line")
         (chart,) = [n for n in card.find_all("figure") if "chart" in n.classes()]
         self.assertEqual(chart.find_all("path"), [])
         self.assertNotRegex(reply.main.text(), ZERO)

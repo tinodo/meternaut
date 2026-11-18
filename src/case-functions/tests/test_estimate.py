@@ -69,15 +69,15 @@ class WhatARecordHolds(unittest.TestCase):
 class TheSentence(unittest.TestCase):
     def test_it_says_that_it_is_an_estimate_at_list_price_what_it_is_the_price_of_and_the_date_of_the_table(self):
         text = estimate.words(estimate.estimate_of(estimate.disk_estimate("Standard_LRS", 4)))
-        self.assertEqual(text, "Estimate at list price, not Azure's bill: about $1.54 a month for a disk of this type and size (tier S4). East US list prices of 12 November 2026.")
+        self.assertEqual(text, "This is an estimate at list price, not Azure's bill. A disk of this type and size (tier S4) costs about $1.54 a month at East US list prices of 12 November 2026.")
 
     def test_the_sentence_of_a_sum_says_how_many_disks_and_which_tiers(self):
         both = estimate.summed([estimate.estimate_of(estimate.disk_estimate("Standard_LRS", size)) for size in (4, 64, 4)])
-        self.assertEqual(estimate.words(both), "Estimate at list price, not Azure's bill: about $6.09 a month for these 3 disks (tiers S4, S6). East US list prices of 12 November 2026.")
+        self.assertEqual(estimate.words(both), "This is an estimate at list price, not Azure's bill. These 3 disks (tiers S4, S6) cost about $6.09 a month at East US list prices of 12 November 2026.")
 
-    def test_a_large_price_has_its_thousands_and_its_cents(self):
+    def test_a_large_price_has_its_thousands_and_no_cents_from_a_hundred_up(self):
         text = estimate.words(estimate.estimate_of(estimate.disk_estimate("Premium_ZRS", 4096)))
-        self.assertIn("about $743.35 a month", text)
+        self.assertIn("costs about $743 a month", text)
 
 
 if __name__ == "__main__":
