@@ -13,7 +13,6 @@ from dataclasses import dataclass, replace
 from typing import Callable, Collection, Mapping, Sequence
 
 from . import brief, switches, twopeople
-from .decide import NO_MEASUREMENT
 from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
 from .families import registry
@@ -21,17 +20,18 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord,
-                     DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, DECLINE_REASONS, GROUP_FACT, HELD, INVESTIGATION,
+                     ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
 # people on a change that needs two (cases/twopeople.py): it changes nothing and is taken on the page only.
 ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 ADVICE_STATUSES = ("proposed", "needs_human")
-# A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding that no measurement backs, that names no saving and that
-# concerns a resource of under ADVICE_MIN_USD in 30 days is no request: it stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py).
-ADVICE_MIN_USD = 50.0
+# A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding of the investigation is asked about only when code priced a saving
+# for it from the bill (`case.saving_usd_month`, cases/pricing.py), whatever the resource costs: a figure of what a resource costs is not what a change saves, and a person is not handed the AI's
+# unfinished work. It stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py). The one reason, for every path to a request (why_not_ask).
+UNPRICED = "no saving was priced from the bill"
 # What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
 NOTHING_TO_SAY = "held back: nothing to say"
 # What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): it was held back
@@ -109,13 +109,9 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
 
 
 def why_not_ask(case: CaseRecord) -> str | None:
-    """None when a finding gives a person something to decide with; otherwise the plain reason why not. Only a finding that no measurement backs (decide.NO_MEASUREMENT), that names no
-    saving and whose resource cost under ADVICE_MIN_USD in 30 days is held back: the AIs could not measure anything and nothing is at stake that a person can weigh."""
-    if NO_MEASUREMENT not in case.objections:
-        return None
-    if (case.saving_usd_month or 0) > 0 or brief.advisor_saving(case) is not None or (case.cost_usd_30d or 0) >= ADVICE_MIN_USD:
-        return None
-    return "no measurement backs the finding, it names no saving, and the resource cost little"
+    """None when a finding gives a person something to decide with; otherwise the plain reason why not (UNPRICED): a finding of the investigation with no saving that code priced, whatever its
+    resource costs. No other finding is held back here: the older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
+    return UNPRICED if case.detector == INVESTIGATION and not _saving(case) else None
 
 
 def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings,
@@ -527,8 +523,9 @@ class Approvals:
         return "" if self._own_group(case) else brief.held_reason(case, self.clock())
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
-        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why) or that were made when a deletion
-        could be asked on less than they ask for now (brief.made_under_old_rules), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
+        """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why), that were made when a deletion
+        could be asked on less than they ask for now (brief.made_under_old_rules) or that are a finding of the investigation with no saving that code priced (UNPRICED) and whose request states
+        none (a request that was asked with a saving stays, whatever a later judgment names), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
         expired and ending now, like the requests that supersede() takes back, and the plan keeps why (`preconditions["takenBack"]`, written with its end: the page, the letter and the card say so in
         words, and a case that is judged again cannot lose it). The case is not touched: it keeps its status (a finding that no person has seen). A request that a person put off or asked about is
         theirs and stays, and so is a change that is running or done. Returns the plans that it closed, each with its case."""
@@ -536,7 +533,7 @@ class Approvals:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
-                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and brief.made_under_old_rules(case, plan) else "")
+                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or (why_not_ask(case) == UNPRICED and not (plan.saving_usd_month or 0) > 0)) else "")
                 if case is None or not (why or brief.says_nothing(case)):
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
@@ -607,12 +604,12 @@ class Approvals:
     def settle(self, approvers: tuple[str, ...]) -> list[tuple[PlanRecord, CaseRecord | None]]:
         """Keeps the request of each finding that a guard holds back (state HELD, brief.held_of): a person sees the finding with its figure, why no request was made, what the guard needs and who may
         know, and may ask, say that it is not theirs, put it off or say that it is not worth it. It asks for no approval and changes nothing in Azure. A held request is made for a finding that waits
-        with no request (status needs_human or proposed, and no request open for it, nobody has answered it lately, nobody marked it do-not-touch, and what is at stake is worth a person's time,
+        with no request (status needs_human or proposed, and no request open for it, nobody has answered it lately, nobody marked it do-not-touch, and a saving was priced for it,
         approvals.why_not_ask): when a guard holds it back (brief.held_reason, nothing to say), or when its request was taken back because the rules changed. At most HELD_NEW are made at a time, and none
         when nobody can answer.
 
         A held request is closed when its finding is not one that waits any more (a person answered it, it was dropped, or a request or a change was made), when a request is open for the resource, when a
-        person marked the resource do-not-touch (`left-alone`), or when the finding was judged again, no guard holds it back now and nobody is to be asked (little is at stake, or a person answered it
+        person marked the resource do-not-touch (`left-alone`), or when the finding was judged again, no guard holds it back now and nobody is to be asked (no saving was priced for it, or a person answered it
         lately). When the finding was judged again and no guard holds it back, but no request exists for it (the places for requests are full), the request stays, with the reason `waiting`, until a real
         request exists: the finding is then asked about as any other, by the normal path, and the held one ends. A guard that ends by itself (an automation that stopped changing the resource) does not
         close it: only a judgment does, with the facts of that day. A reason that changed is kept, and so is the figure of the case. Returns the requests that it closed, each with its case; it makes no
@@ -624,7 +621,7 @@ class Approvals:
         most PROMOTE_NEW in one Watch: the others stay exactly as they were, with their reason and their words, and the next Watch goes on. None becomes an open request while the places for requests are
         full (places_full): it then waits for a place, held with the reason `waiting`, and the dearest of what waits takes a place when an answer, or a request that Meternaut took back, frees one. A finding
         that places_full holds back is shown as such a held request. Every held request that is kept stays linked to its case, whatever a judgment wrote. `promoted` lists them. A finding that nobody is to
-        be asked about (little is at stake, or a person answered it lately) is closed as released."""
+        be asked about (no saving was priced for it, or a person answered it lately) is closed as released."""
         self.promoted = []
         try:
             now = self.clock()
@@ -651,14 +648,14 @@ class Approvals:
                     why = self._guard(case)
                     if not why and _was_managed(plan):
                         if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered):
-                            how = "released"  # nobody is to be asked: little is at stake, or a person answered it lately
+                            how = "released"  # nobody is to be asked: no saving was priced for it, or a person answered it lately
                         else:
                             self._link(case, plan.plan_id)  # a judgment writes the case again with no link to a request: it keeps this one, whether it is made an open request now or later
                             managed.append((plan, case))
                             continue
                     elif not why and case.updated_at > plan.created_at:
                         # Judged again, and nothing holds it back now: the normal path asks about it, and the request ends when there is a real one. Until then it stays shown (the places for requests may be full),
-                        # unless nobody is to be asked: little is at stake, or a person answered it lately.
+                        # unless nobody is to be asked: no saving was priced for it, or a person answered it lately.
                         why = "" if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered) else "waiting"
                         how = "" if why else "released"
                     if not how:
@@ -782,6 +779,14 @@ class Approvals:
             located = family.locate(lead.resource_id, self.settings.gates)
             return family.facts(Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock), lead, located)
         except (Stop, Unreadable):
+            return None
+
+    def asked_saving(self, case: CaseRecord | None) -> float | None:
+        """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the figure and the
+        price that it rests on, with its level and basis, so that the page of the request does not say that nothing was measured or that Azure Advisor gave it, and hold_back_empty does not take it back."""
+        try:
+            return next((s for p in self.store.plans_open() if case and p.case_id == case.case_id and p.family == ADVISE and (s := p.saving_usd_month or 0) > 0), None)
+        except StoreError:
             return None
 
     def advise(self, case: CaseRecord, approvers: tuple[str, ...]) -> PlanRecord | None:

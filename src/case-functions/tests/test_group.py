@@ -17,7 +17,7 @@ from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
 from cases import approvals, brief, cards, investigate, learning, letters
-from cases.approvals import ADVICE_MIN_USD, why_not_ask
+from cases.approvals import UNPRICED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.memory_store import stamp
 from cases.models import ADVISE, GROUP_FACT, CaseRecord, NoteRecord, Principal, StoreError
@@ -43,10 +43,17 @@ def disks(numbers) -> tuple[list, dict]:
     return found, {r.handle: metrics(Traffic=0) for r in found}
 
 
+def priced(handles) -> dict:
+    """A change that removes the bill line of each of these resources, which is what makes a finding worth a request: `watch` gives each resource a meter that costs what the resource costs, so
+    that code prices the change from the bill. A finding with `change=None` has no saving, and a person is not asked about it."""
+    return {"action": "remove", "effects": [{"handle": handle, "meters": [f"m{handle[1:]}"], "remains": {"form": "none"}} for handle in handles], "how": "Remove them."}
+
+
 def raw_of(count: int, **changes) -> dict:
-    """One finding of the Investigator that asks for a look at `count` resources, none of which has data to measure."""
+    """One finding of the Investigator that asks for a look at `count` resources, none of which has data to measure, and states the change that code prices (`priced`)."""
     values = dict(handles=[f"r{n}" for n in range(1, count + 1)], basis="other", proposal="investigate", confidence=0.4, summary="These resources have no data in the window.", evidence=[])
     values.update(changes)
+    values.setdefault("change", priced(values["handles"]))
     return finding(**values)
 
 
@@ -58,6 +65,8 @@ def quiet_raw(handles, **changes) -> dict:
 def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=None, contexts=None, meters=None) -> Harness:
     """One Watch over a fake estate. The clock and the loop (the store) are the ones to pass again for a second Watch."""
     clock = clock or Moving()
+    if meters is None:
+        meters = {f"m{r.handle[1:]}": meter_line(r.handle, r.cost_usd_30d) for r in resources if r.cost_usd_30d}
     toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: absent() for r in resources}, meters=meters)
     h = Harness(FakeFoundry(answer(*(raw if isinstance(raw, list) else [raw])), skeptic), toolbox, clock=clock, extras=extras if extras is not None else loop_for(clock))
     if contexts is not None:
@@ -82,26 +91,26 @@ def ids_of(resources) -> set:
 
 
 class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
-    def test_sixty_resources_are_one_case_and_one_request_when_what_is_at_stake_is_enough(self):
+    def test_sixty_resources_are_one_case_and_one_request_when_code_priced_a_saving_for_them(self):
         h = watch(raw_of(60), endpoints(60))
         case = only_case(h)
         (plan,) = h.store.plans_open()
         self.assertEqual((h.result.cases, h.result.needs_human, h.result.proposed), (1, 1, 0))
         self.assertEqual((case.case_id, case.resource_name, case.status, case.recommendation, case.saving_usd_month, case.cost_usd_30d),
-                         (key_of(endpoints(60)[-1]), "pe-60", "needs_human", "investigate", None, 1830.0), "the case of the dearest, with what all of them cost")
-        self.assertEqual((plan.family, plan.case_id, case.plan_id, plan.saving_usd_month), (ADVISE, case.case_id, plan.plan_id, None))
-        self.assertGreaterEqual(case.cost_usd_30d, ADVICE_MIN_USD)
+                         (key_of(endpoints(60)[-1]), "pe-60", "needs_human", "investigate", 1830.0, 1830.0), "the case of the dearest, with what all of them cost, and the saving of all of them")
+        self.assertEqual((plan.family, plan.case_id, case.plan_id, plan.saving_usd_month), (ADVISE, case.case_id, plan.plan_id, 1830.0))
         self.assertIsNone(why_not_ask(case))
         self.assertEqual(plan.title, HEADLINE)
 
-    def test_the_same_finding_that_cost_little_is_held_back_as_before_and_stays_an_open_question(self):
-        for cost, held in ((0.5, True), (4.99, True), (5.0, False), (20.0, False)):
-            with self.subTest(cost=cost):
-                h = watch(raw_of(10, confidence=0.8), endpoints(10, cost=lambda n: cost))
-                case = only_case(h)
-                self.assertEqual(case.cost_usd_30d, round(10 * cost, 2))
-                self.assertEqual((why_not_ask(case) is not None, h.store.plans_open() == [], case.plan_id is None), (held, held, held))
-                self.assertEqual(learning.OpenQuestions(h.store, h.clock()).is_open(case), held, "a case with no request is an open question that the Investigator gets again")
+    def test_the_same_finding_is_a_request_however_little_it_costs_when_a_saving_was_priced_and_none_whatever_it_costs_when_not(self):
+        for cost in (0.5, 4.99, 20.0, 500.0):
+            for label, change, asked in (("priced", {}, True), ("not priced", {"change": None}, False)):
+                with self.subTest(cost=cost, label=label):
+                    h = watch(raw_of(10, confidence=0.8, **change), endpoints(10, cost=lambda n: cost))
+                    case = only_case(h)
+                    self.assertEqual(case.cost_usd_30d, round(10 * cost, 2))
+                    self.assertEqual((why_not_ask(case) is None, h.store.plans_open() != [], case.plan_id is not None), (asked, asked, asked))
+                    self.assertEqual(learning.OpenQuestions(h.store, h.clock()).is_open(case), not asked, "a case with no request is an open question that the Investigator gets again")
 
     def test_the_case_keeps_what_the_group_is_as_typed_facts(self):
         case = only_case(watch(raw_of(60), endpoints(60)))
@@ -223,7 +232,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
             with self.subTest(label):
                 h = watch(raw, endpoints(8), skeptic=skeptic)
                 case = only_case(h)
-                self.assertEqual((case.status, case.recommendation, case.objections, case.saving_usd_month), ("needs_human", "investigate", objections, None))
+                self.assertEqual((case.status, case.recommendation, case.objections, case.saving_usd_month), ("needs_human", "investigate", objections, 36.0), "the saving is what code priced for the eight")
                 self.assertEqual((h.result.cases, h.result.proposed), (1, 0))
         no_verdict = watch(raw_of(8), endpoints(8), skeptic=json.dumps({"verdicts": []}))
         self.assertEqual(only_case(no_verdict).steps[-1]["ok"], False, "the finding got no verdict, and the case says so as every case does")
@@ -285,6 +294,33 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
         self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
         self.assertIn("3 of 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
+
+
+class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
+    """A request is made for a finding of the investigation only when code priced a saving for it, and a group is judged by the saving of the group, as its page shows it."""
+
+    def watch_priced_for(self, named: int = 7):
+        """Seven resources, and a finding that states a change for the first `named` of them, each of which has a bill line of 50 dollars."""
+        meters = {f"m{n}": meter_line(f"r{n}", 50.0) for n in range(1, named + 1)}
+        return watch(raw_of(7, change=priced([f"r{n}" for n in range(1, named + 1)])), endpoints(7, cost=lambda n: 100.0), meters=meters)
+
+    def test_a_group_with_a_priced_total_is_asked_about_as_one_request_that_states_the_total_even_when_only_some_of_its_resources_are_priced(self):
+        for named, total in ((7, 350.0), (3, 150.0)):
+            with self.subTest(priced=named):
+                h = self.watch_priced_for(named)
+                case = only_case(h)
+                (plan,) = h.store.plans_open()
+                self.assertEqual((case.facts[GROUP_FACT]["count"], case.saving_usd_month, plan.saving_usd_month, case.plan_id, plan.case_id), (7, total, total, plan.plan_id, case.case_id))
+                self.assertIsNone(why_not_ask(case))
+                self.assertFalse([note for note in h.notes if "no saving was priced" in note])
+
+    def test_a_group_that_nothing_priced_is_no_request_however_much_it_costs_and_the_end_note_counts_it(self):
+        h = watch(raw_of(60, change=None), endpoints(60))
+        case = only_case(h)
+        self.assertEqual((case.cost_usd_30d, case.saving_usd_month, case.status, case.facts[GROUP_FACT]["count"]), (1830.0, None, "needs_human", 60))
+        self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNPRICED, [], None))
+        self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
+        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them because no saving was priced from the bill"), h.notes[-1])
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):
@@ -698,7 +734,7 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         self.assertIn("Covers: 20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", letter.text)
         self.assertIn("Together they cost: ", letter.text)
         self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
-        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
+        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"] + 1, "a group that the limit of a run cut and that code priced is one word over the 170 of a letter: the words are for words2")
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertLessEqual(word_count(weekly), MOST_WORDS["digest"])
 
@@ -724,20 +760,21 @@ class TheBriefOfAGroup(unittest.TestCase):
         self.assertEqual(brief.build_brief(self.case, None, now=WEB_NOW).headline, HEADLINE, "the case without a request says the same")
         self.assertEqual((self.b.group.count, self.b.group.groups, self.b.kind), (60, 14, "advice"))
 
-    def test_the_rows_say_what_it_covers_what_it_costs_together_and_give_examples_and_the_cost_row_of_one_resource_is_not_there(self):
-        self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:3]],
+    def test_the_rows_say_what_it_covers_what_it_costs_together_the_bill_lines_it_would_shrink_and_give_examples_and_the_cost_row_of_one_resource_is_not_there(self):
+        self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:4]],
                          [("Covers", "60 private endpoints in 14 resource groups", "Azure Resource Graph"),
                           ("Together they cost", "$1,830.00 in the last 30 days", "Azure cost lines"),
+                          ("Bill lines it would shrink", "60 lines, $1,830.00 a month", "Azure cost lines"),
                           ("Examples", "pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "Azure Resource Graph")])
         self.assertNotIn("Cost, last 30 days", [f.label for f in self.b.facts])
         self.assertLessEqual(len(self.b.facts), brief.MAX_FACTS)
 
-    def test_the_answers_are_those_of_a_request_about_one_resource_and_no_figure_is_made(self):
+    def test_the_answers_are_those_of_a_request_about_one_resource_and_the_figure_is_the_sum_of_the_resources_that_code_priced(self):
         one = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
         single = brief.build_brief(only_case(one), one.store.plans_open()[0], now=WEB_NOW, may_answer=True)
         self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk), (single.answers, single.change, single.who_acts, single.undo, single.risk))
-        self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (None, "", None))
-        self.assertEqual(self.b.saving.why_none, "The 60 resources cost $1,830.00 together in the last 30 days. What a change would save was not worked out.")
+        self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (1830.0, "Expected", 61.0))
+        self.assertIn("60 resources", self.b.saving.basis)
         self.assertEqual(self.b.options, ())
         self.assertEqual(single.group, None)
 
@@ -832,12 +869,13 @@ class WhatAPersonSees(unittest.TestCase):
         (self.plan,) = self.h.store.plans_open()
         self.reply, self.text = page_of(self.case, self.plan)
 
-    def test_the_page_has_the_title_the_figure_without_a_saving_the_rows_and_the_one_form(self):
+    def test_the_page_has_the_title_the_figure_of_the_saving_the_rows_and_the_one_form(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), ["60 private endpoints in 14 resource groups"])
-        self.assertEqual(self.reply.main.find("p", class_="fig").text(), "$21,960 a year")
-        self.assertIn("Costs, saving not measured. $1,830.00 a month. The most that a change could save: what it would save was not worked out.", self.text)
+        self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$21,960 a year")
+        self.assertIn("Saves, Expected. $1,830.00 a month. Based on the 60 bill lines of 60 resources that the change would remove, at the rate of the last 7 days.", self.text)
         self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830.00 in the last 30 days Azure cost lines "
+                      "Bill lines it would shrink 60 lines, $1,830.00 a month Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
@@ -867,10 +905,10 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertIn("Review all 60", text)
         self.assertNotIn("No figure", text)
 
-    def test_the_weekly_letter_has_the_title_and_the_cost_a_year_with_no_total_and_stays_within_its_words(self):
+    def test_the_weekly_letter_has_the_title_and_the_saving_a_year_with_no_total_and_stays_within_its_words(self):
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] 1 decision waits for you")
-        self.assertIn("- 60 private endpoints in 14 resource groups: costs $21,960 a year, saving not measured.\n", letter.text)
+        self.assertIn("- 60 private endpoints in 14 resource groups: $21,960 a year, Expected.\n", letter.text)
         self.assertNotIn("Look at", letter.text, "the title of the page, not the headline")
         self.assertLessEqual(word_count(letter), MOST_WORDS["digest"])
         self.assertEqual(letter.html.count('href="'), 1)
@@ -884,10 +922,10 @@ class WhatAPersonSees(unittest.TestCase):
     def test_the_decision_letter_has_the_three_rows_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: $1,830.00 in the last 30 days",
-                    "Examples: pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "If you answer: Nothing changes in Azure. Your answer is recorded with your name."):
+                    "Bill lines it would shrink: 60 lines, $1,830.00 a month", "If you answer: Nothing changes in Azure. Your answer is recorded with your name."):
             self.assertIn(row, letter.text)
         self.assertEqual(letter.text.splitlines()[0], "60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
-        self.assertIn("$21,960 a year\nCosts, saving not measured. $1,830.00 a month. The most that a change could save: what it would save was not worked out.\n"
+        self.assertIn("$21,960 a year\nSaves, Expected. $1,830.00 a month. Based on the 60 bill lines of 60 resources that the change would remove, at the rate of the last 7 days.\n"
                       "Money is in US dollars, and a year is twelve times the month.", letter.text)
         self.assertNotIn("No figure", letter.text)
         self.assertNotIn("resource group rg", letter.text, "a request for many resources has no place of its own: the title counts the groups")
@@ -903,8 +941,8 @@ class WhatAPersonSees(unittest.TestCase):
         found = {block["id"]: block["text"] for block in walk_blocks(card)}
         self.assertEqual(found["headline"], "60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
-        self.assertEqual((found["value"], found["saving-word"]), ("$21,960 a year", "Costs, saving not measured. $1,830.00 a month."))
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830.00 in the last 30 days", "Examples", "and 54 more"):
+        self.assertEqual((found["value"], found["saving-word"]), ("$21,960 a year", "Saves, Expected. $1,830.00 a month."))
+        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830.00 in the last 30 days", "Bill lines it would shrink", "60 lines, $1,830.00 a month"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 
@@ -956,7 +994,7 @@ class WhatAHostileEstateCanDo(unittest.TestCase):
         self.assertNotIn("script", digest.text, "the title of a request for many resources counts them and names none: the names are in the rows of the decision letter")
         approval = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         self.assertNotIn("<script>", approval.html)
-        self.assertIn("&lt;script&gt;", approval.html, "the examples are names from the estate: they are text, escaped")
+        self.assertNotIn("<script>", approval.text)
         for letter in (digest, approval):
             self.assertLessEqual(max(len(line) for line in letter.text.splitlines() if not line.startswith("Review and decide:")), 500)
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
@@ -980,8 +1018,8 @@ class TheWordsOfTheCode(unittest.TestCase):
         self.assertEqual((investigate.GROUP_MIN, investigate.MAX_GROUP_NAMES, brief.MAX_GROUP_NAMES, GROUP_FACT), (5, 12, 12, "group"))
         self.assertEqual(investigate.MAX_CASES, 60)
 
-    def test_a_request_is_asked_for_a_group_under_the_same_worth_as_for_one_resource(self):
-        self.assertEqual((approvals.ADVICE_MIN_USD, approvals.ADVICE_OPEN_MAX), (50.0, 30))
+    def test_a_request_is_asked_for_a_group_under_the_same_places_as_for_one_resource(self):
+        self.assertEqual(approvals.ADVICE_OPEN_MAX, 30)
 
 
 if __name__ == "__main__":

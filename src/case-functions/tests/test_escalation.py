@@ -395,6 +395,30 @@ class TheRevival(unittest.TestCase):
         self.assertFalse(escalation.clock_closed(advice(state="expired", expires_at=stamp(START + dt.timedelta(hours=72, minutes=1)))))
 
 
+class ARequestThatNoSavingBacksIsNotChased(unittest.TestCase):
+    """A request for a finding of the investigation with no saving that code priced, that states no saving itself, is taken back by the Watch (Approvals.hold_back_empty), and the ladder, which reads
+    the open requests, makes no step for it. A request that was asked with a saving stays, whatever a later judgment of its finding names. Nothing is silent: the request says that it was taken back."""
+
+    def world(self, asked=None, **changes):
+        """The request `p1` states `asked` (a saving, or none), and its case, a finding of the investigation, has the saving of `changes` (none by default)."""
+        world = World()
+        world.store.plan_put(advice("p1", "c1", saving_usd_month=asked))
+        world.store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1", detector="investigation", **{"saving_usd_month": None, "cost_usd_30d": 848.0, **changes}))
+        return world
+
+    def test_no_step_is_made_after_the_take_back_and_one_is_made_for_a_request_that_a_saving_backs(self):
+        for label, asked, changes, steps in (("no saving anywhere", None, {}, 0), ("a saving of the case", None, dict(saving_usd_month=120.0), 1),
+                                             ("a saving that the request was asked with, and a case that names none now", 41.2, {}, 1)):
+            with self.subTest(label):
+                world = self.world(asked, **changes)
+                taken = Approvals(world.store, ApprovalSettings(change_scopes=()), world.clock).hold_back_empty()
+                self.assertEqual([plan.plan_id for plan, _ in taken], [] if steps else ["p1"])
+                self.assertEqual((world.store.plan_get("p1").state, brief_mod.taken_back(world.store.plan_get("p1"))), ("open", "") if steps else ("expired", "rules"))
+                world.clock.advance(days=100)
+                world.tick(3)
+                self.assertEqual((len(world.steps()), bool(world.mail.calls), [kind for kind, _ in world.events]), (steps, bool(steps), ["escalation.step"] * steps))
+
+
 class TheWeeklyLetter(unittest.TestCase):
     def test_the_contacts_get_a_letter_every_week_for_as_long_as_a_request_waits_and_never_twice_in_a_week(self):
         world = World(managers=False)

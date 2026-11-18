@@ -397,7 +397,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 3)
         reply = console.get("/")
         self.assertIn("Held back: 3 findings", reply.content)
-        self.assertIn("No measurement backs them yet, or the places for requests are full. The AIs look at them again at the next investigation.", reply.content)
+        self.assertIn("Nobody is asked about these yet. For each, Meternaut could not work out from the bill what a change would save, or the places for requests are full. The AI looks at them again at its next search.", reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
         self.assertIn("Held back: 4 findings", console.get("/").content)
@@ -407,7 +407,18 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("Held back: 1 finding No measurement backs it yet, or the places for requests are full. The AIs look at it again at the next investigation.", content)
+        self.assertIn("Held back: 1 finding Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, or the places for requests are full. The AI looks at it again at its next search.", content)
+
+    def test_a_finding_of_the_investigation_that_no_saving_backs_is_not_asked_about_and_is_counted_here_whatever_the_resource_costs(self):
+        from cases.approvals import ApprovalSettings, Approvals
+
+        console = seeded()
+        costly = make_advice_case(case_id="case3500", resource_id=f"{VM_ID}-dear", resource_name="endpoint-dear", plan_id=None, saving_usd_month=None, cost_usd_30d=848.0, objections=())
+        console.store.case_put(costly)
+        self.assertIsNone(Approvals(console.store, ApprovalSettings(change_scopes=())).advise(costly, (TINO,)), "no saving was priced from the bill, so nobody is asked")
+        reply = console.get("/")
+        self.assertIn("Held back: 1 finding", reply.content)
+        self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()

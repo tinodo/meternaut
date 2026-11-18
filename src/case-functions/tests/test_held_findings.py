@@ -169,7 +169,7 @@ class EachReasonMakesTheFindingVisible(Base):
         approvals.settle((TINO,))
         self.assertEqual(self.store.plans_held(), [])
 
-    def test_a_finding_with_little_at_stake_and_nothing_measured_is_not_made_a_request(self):
+    def test_a_finding_with_no_saving_priced_is_not_made_a_request_even_when_nothing_measured_it(self):
         quiet = unchecked(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0)
         self.assertIsNotNone(why_not_ask(quiet))
         self.store.case_put(quiet)
@@ -412,7 +412,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
         self.assertEqual((said["reason"], said["was"]), (RELEASED, HELD_WORDS["waiting"]))
 
     def test_when_the_guard_ends_and_nobody_is_to_be_asked_the_note_is_closed_and_does_not_wait(self):
-        for label, change, answered in (("little at stake", dict(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0), False),
+        for label, change, answered in (("no saving was priced", dict(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0), False),
                                          ("a person answered lately", {}, True)):
             with self.subTest(case=label):
                 self.setUp()

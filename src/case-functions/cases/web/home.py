@@ -299,7 +299,7 @@ def held_by_rules(ctx: Ctx) -> int:
 
 
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
+    """The findings that no request waits for: no saving was priced for them, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
     resource or what depends on it was not checked. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
     nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is
     listed also when it is not a finding of the investigation (the weekly letter links to this page)."""
@@ -313,7 +313,8 @@ def _held(ctx: Ctx) -> Safe:
     rest = held - ruled
     if rest:
         many = rest != 1
-        lines.append(paragraph(f"No measurement backs {'them' if many else 'it'} yet, or the places for requests are full. The AIs look at {'them' if many else 'it'} again at the next investigation."))
+        lines.append(paragraph(f"Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
+                               f"or the places for requests are full. The AI looks at {'them' if many else 'it'} again at its next search."))
     if listed:
         lines.append(fmt('<p>These are held back, and nothing is asked of you to approve:</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count

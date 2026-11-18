@@ -733,8 +733,8 @@ def execute(s: Services, trigger: str) -> Summary:
     there: dict[str, str] = {}  # whether the resource of each open request is still in Azure (_take_back_gone), which verify.step reads after the daily cost
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
+        _revive(s, say)  # before the take-back: a request that comes back and that the rules hold back is taken back in the same Watch, and the ladder never chases it
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
-        _revive(s, say)
         there = _take_back_gone(s, estate, say)  # after the revival: a request that comes back for a resource that is gone is taken back at once
         if not s.extras.escalating:
             h.emit("escalation.off", reason="no mail sender")  # a request that nobody answers is not passed on without one: the History says so at each Watch

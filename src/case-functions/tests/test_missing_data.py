@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import support  # noqa: F401  (it puts the app on the path)
 from support import NOW, REPO_ROOT, SUBSCRIPTION
 from test_held_back import finding as held_case, request_for, watch as run_watch
-from test_investigate import GROUP, RG, FakeFoundry, FakeToolbox, Harness, ScriptedAgent, WithTheRealToolbox, answer, disks_estate, entry, finding, metrics, resource
+from test_investigate import GROUP, RG, FakeFoundry, FakeToolbox, Harness, ScriptedAgent, WithTheRealToolbox, answer, disks_estate, entry, finding, made_before, metrics, resource
 from test_letters import BASE, CONTACTS, PERSON
 from test_run_loop import GROUP as LOOP_GROUP, Moving, loop_for
 from test_web_support import page_of, walk_blocks
@@ -57,7 +57,7 @@ class MissingDataIsNotZero(unittest.TestCase):
                 self.assertEqual((case.status, case.recommendation, case.saving_usd_month, case.facts["proposal"], case.facts["asked"]), ("needs_human", "investigate", None, "investigate", "delete"))
                 self.assertEqual(case.objections[0], HELD_UNPROVEN)
                 self.assertIn(f"finding 1: {HELD_UNPROVEN}", h.notes)
-                (plan,) = h.store.plans_open()
+                plan = made_before(h, case)
                 self.assertTrue(plan.title.startswith("Check whether the resource thing-1"), plan.title)
                 self.assertTrue(plan.could_go_wrong.startswith("If you act on it: Unproven: nothing shows that nothing uses it."), plan.could_go_wrong)
 
@@ -85,7 +85,7 @@ class MissingDataIsNotZero(unittest.TestCase):
         case = cases_of(h)["thing-1"]
         self.assertEqual((case.recommendation, case.facts["asked"], case.saving_usd_month, case.objections[0]), ("investigate", "delete", None, HELD_UNPROVEN))
         self.assertFalse(brief.measured_zero(case.facts), "a deletion needs that none of its cited totals is above nil")
-        (plan,) = h.store.plans_open()
+        plan = made_before(h, case)
         self.assertTrue(plan.title.startswith("Check whether the resource thing-1"), plan.title)
 
     def test_the_list_of_what_others_share(self):
@@ -269,8 +269,8 @@ class AnAutomationsResourceIsAskedAboutWithAWarning(unittest.TestCase):
                                                                                                                               tags={"owner": "platform-team"})], {"r1": ABSENT}), with_store=True)
         h.arm.log_fails = True
         h.go()
-        (plan,) = h.store.plans_open()
         (case,) = h.store.cases_recent()
+        plan = made_before(h, case)
         self.assertIn(NOT_LOOKED_UP, brief.build_brief(case, plan, now=WEB_NOW, may_answer=True).owner.text)
 
 
@@ -300,7 +300,7 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         return self.store.plan_get(plan.plan_id), self.store.case_get(case.case_id)
 
     def test_the_request_of_a_finding_that_an_automation_manages_is_kept_open_and_is_no_hold(self):
-        case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used",
+        case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used", saving_usd_month=40.0,
                                        owner={"lookedUp": True, "automatedAt": stamp(self.clock() - dt.timedelta(days=2))})
         summary, events, _ = self.watch()
         after, kept = self.taken(case, plan)
@@ -391,9 +391,17 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         self.assertEqual(kept, {})
 
     def test_a_finding_that_no_rule_holds_back_keeps_its_request(self):
-        case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used")
+        case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used", saving_usd_month=40.0)
         summary, _, _ = self.watch()
         self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held), ("open", 0))
+
+    def test_a_request_for_a_finding_of_the_investigation_that_no_saving_backs_is_taken_back_with_the_reason_that_the_rules_changed(self):
+        case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used", saving_usd_month=None, cost_usd_30d=848.0)
+        summary, events, _ = self.watch()
+        after, kept = self.taken(case, plan)
+        self.assertEqual((after.state, after.preconditions["takenBack"], summary.held, self.store.plans_open()), ("expired", "rules", 1, []))
+        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], [RULES_CHANGED])
+        self.assertEqual(brief.build_brief(kept, after, now=WEB_NOW).outcome.title, "Taken back")
 
 
 class TheOlderDetectorsAreHeldByTheSameRules(unittest.TestCase):
@@ -434,12 +442,12 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
         self.assertIn("1 finding is held back because nobody has looked up who changed the resource, or because what depends on it was not checked.", content)
-        self.assertNotIn("No measurement backs", content, "this one is held for another reason, and the page does not say that nothing measured backs it")
+        self.assertNotIn("Nobody is asked about", content, "this one is held for another reason, and the page does not say that no saving could be worked out for it")
         console.store.case_put(make_advice_case(case_id="case4001", resource_id=f"{PE}-b", resource_name="endpoint-b", plan_id=None, recommendation="investigate", owner={"lookedUp": True}))
         content = console.get("/").content
         self.assertIn("Held back: 2 findings", content)
         self.assertIn("1 finding is held back because nobody has looked up who changed the resource", content)
-        self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+        self.assertIn("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, or the places for requests are full.", content)
 
     def test_a_finding_that_an_automation_manages_is_held_by_no_rule(self):
         from test_web_support import Console
@@ -451,7 +459,7 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
         self.assertNotIn("because an automation manages the resource", content)
-        self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+        self.assertIn("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, or the places for requests are full.", content)
 
     def test_the_count_of_what_a_rule_holds_is_made_from_the_findings_that_are_held_and_never_exceeds_them(self):
         from cases.web import home

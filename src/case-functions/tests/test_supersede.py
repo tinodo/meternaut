@@ -26,7 +26,7 @@ def short(n: int) -> str:
 def single(n: int, **changes):
     """The case of one private endpoint, as the first version made one for each resource of a finding."""
     base = dict(case_id=f"k{short(n)}", resource_id=f"/subscriptions/{SUB}/resourceGroups/rg-{n % 3}/providers/microsoft.network/privateendpoints/pe-{n}", resource_name=f"pe-{n}",
-                resource_type="microsoft.network/privateendpoints", resource_group=f"rg-{n % 3}", subscription_id=SUB, recommendation="investigate", saving_usd_month=None,
+                resource_type="microsoft.network/privateendpoints", resource_group=f"rg-{n % 3}", subscription_id=SUB, recommendation="investigate", saving_usd_month=10.0,
                 cost_usd_30d=100.0, plan_id=None, updated_at=stamp(NOW), first_seen_at=stamp(NOW), facts={"basis": "other"})
     base.update(changes)
     return make_advice_case(**base)
