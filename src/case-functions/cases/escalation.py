@@ -308,19 +308,24 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
             if oid not in record.delivered:
                 by_person.setdefault(oid, []).append((plans[record.plan_id], record))
     sent = 0
+    latest: dict[tuple[str, int], EscalationRecord] = {}  # a step that goes to several people is marked once for each person: each mark starts from the newest version of the record
+
+    def mark(record: EscalationRecord, build: Callable[[EscalationRecord], dict]) -> None:
+        key = (record.plan_id, record.number)
+        latest[key] = _mark(ladder, latest.get(key, record), **build(latest.get(key, record)))
     for oid, items in by_person.items():
         items.sort(key=lambda item: (item[1].at, item[1].number))
         reason = ladder.mailer.hold_reason(oid, "escalation")
         today = [m for m in store.mails_since(oid, stamp(now - dt.timedelta(days=1))) if m.kind in ESCALATION_KINDS and m.status == "sent"]
         if reason or today:
             for plan, record in items:
-                _mark(ladder, record, outcome="held", detail=reason or "One message a day: this goes tomorrow.")
+                mark(record, lambda r: {"outcome": "held", "detail": reason or "One message a day: this goes tomorrow."})
             continue
         target, note = ladder.directory.by_oid(oid)
         if target is None:
             for plan, record in items:
-                _mark(ladder, record, outcome="failed", tries=record.tries + 1, last_try=stamp(now), detail=NOTES.get(note, "The person could not be looked up."),
-                      notes=tuple(dict.fromkeys(record.notes + ((note,) if note else ()))))
+                mark(record, lambda r: {"outcome": "failed", "tries": r.tries + 1, "last_try": stamp(now), "detail": NOTES.get(note, "The person could not be looked up."),
+                                        "notes": tuple(dict.fromkeys(r.notes + ((note,) if note else ())))})
             continue
         person, first = ladder.people.by_oid(oid) or Person(oid, target.name, (), target.mail), _first_contact(ladder, oid)
         rows = [(plan, store.case_get(plan.case_id), record, _was_added(records[plan.plan_id], record, oid)) for plan, record in items]
@@ -338,10 +343,9 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
             result = ladder.mailer.send_escalation(target, letter, "escalation", rows[0][0].plan_id, rows[0][2].number, f"{rows[0][2].source}, with {len(rows) - 1} more")
         for _, record in items:
             if result.status == "sent":
-                done = record.delivered + (oid,)
-                _mark(ladder, record, delivered=done, outcome="sent" if set(record.who) <= set(done) else record.outcome, detail="", last_try=stamp(now))
+                mark(record, lambda r: {"delivered": r.delivered + (oid,), "outcome": "sent" if set(r.who) <= set(r.delivered + (oid,)) else r.outcome, "detail": "", "last_try": stamp(now)})
             else:
-                _mark(ladder, record, outcome="held" if result.status == "held" else "failed", tries=record.tries + (result.status != "held"), last_try=stamp(now), detail=result.detail[:240])
+                mark(record, lambda r: {"outcome": "held" if result.status == "held" else "failed", "tries": r.tries + (result.status != "held"), "last_try": stamp(now), "detail": result.detail[:240]})
         sent += result.status == "sent"
     return sent
 

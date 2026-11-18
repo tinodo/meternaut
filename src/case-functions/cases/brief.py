@@ -121,6 +121,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
 WITH_WHOM = {"same": "the people it was made for", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
              "contact": "the escalation contact", "owners": "the owners of Meternaut"}
 SAID_HOW = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
+ADDED_HOW = "added to the people of the request"
 ESCALATION_OFF = "Escalation is not running: no mail sender is set up, so a request that nobody answers is not passed on."
 CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
                "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
@@ -1614,16 +1615,22 @@ def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0
 
 
 def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Who the steps before step `before` told, and who they did not tell yet, as plain lines: only a message that was sent tells somebody. A held one says why, a failed one says so."""
+    """Who the steps before step `before` told, and who they did not tell yet, as plain lines: only a message that was sent tells somebody. A held one says why, a failed one says so. A person who was
+    added to the approvers of the request (a record of the kind `added` among `steps`) is told by the first step that has them, as one of the people of the request, not as that step's source."""
     told, pending = [], []
+    added = {o.lower() for s in steps if s.kind == "added" for o in s.who}
+    first: dict[str, int] = {}
+    for step in sorted((s for s in steps if s.kind == "step"), key=lambda s: s.number):
+        for oid in step.who:
+            first.setdefault(oid.lower(), step.number)
     for step in sorted((s for s in steps if s.kind == "step" and s.number < before), key=lambda s: s.number):
-        how = SAID_HOW.get(step.source, "")
-        done = [plain(n, 80) for o, n in zip(step.who, step.names) if o in step.delivered]
-        left = [plain(n, 80) for o, n in zip(step.who, step.names) if o not in step.delivered]
-        if done:
-            told.append(f"{', '.join(done)} ({how}), {(step.last_try or step.at)[:10]}")
-        if left:
-            pending.append(f"{', '.join(left)} ({how}): " + (f"held: {plain(step.detail, 120)}" if step.outcome == "held" else "could not be delivered" if step.outcome == "failed" else "not sent yet"))
+        for how, mine in ((SAID_HOW.get(step.source, ""), lambda o: not (o.lower() in added and first[o.lower()] == step.number)), (ADDED_HOW, lambda o: o.lower() in added and first[o.lower()] == step.number)):
+            done = [plain(n, 80) for o, n in zip(step.who, step.names) if o in step.delivered and mine(o)]
+            left = [plain(n, 80) for o, n in zip(step.who, step.names) if o not in step.delivered and mine(o)]
+            if done:
+                told.append(f"{', '.join(done)} ({how}), {(step.last_try or step.at)[:10]}")
+            if left:
+                pending.append(f"{', '.join(left)} ({how}): " + (f"held: {plain(step.detail, 120)}" if step.outcome == "held" else "could not be delivered" if step.outcome == "failed" else "not sent yet"))
     return tuple(told), tuple(pending)
 
 
@@ -1633,7 +1640,7 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
     days, _ = ago_text(now, started(plan))
     own, _ = ago_text(now, plan.created_at)
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
-    told, pending = told_lines(steps)
+    told, pending = told_lines(ladder)
     return Waiting(days or 0, plain(started(plan)[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
                    sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0, plan.waited_usd, own or 0), pending[-4:])
 

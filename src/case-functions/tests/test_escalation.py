@@ -776,7 +776,7 @@ class Watch:
     def run(self, people=None):
         if people is not None:
             self.services.extras.people = people
-        self.store.puts.clear()
+        self.store.puts.clear() if hasattr(self.store, "puts") else None
         notes = []
         run_mod._keep_requests_up_to_date(self.services, [], notes.append)
         return notes
@@ -888,6 +888,13 @@ class TheApproversOfARequest(unittest.TestCase):
         self.assertNotIn("Nina", json.dumps(line))
         self.assertEqual(sum(1 for line in watch.lines.found), 1)
 
+    def test_a_request_that_was_never_sealed_gets_its_people_and_stays_unsealed_so_it_cannot_be_approved_by_this_step(self):
+        watch = Watch()
+        watch.store.plan_put(advice("p1", "c1"))
+        watch.run(WITH_NINA)
+        plan = watch.store.plan_get("p1")
+        self.assertEqual((plan.approvers, plan.digest), ((A, NINA), ""))
+
     def test_a_store_that_fails_stops_the_step_and_never_the_watch(self):
         watch = Watch()
         watch.store.plan_put(sealed("p1"))
@@ -922,12 +929,23 @@ class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
         world.tick(3)
         second = world.steps()[1]
         self.assertEqual((second.source, second.who), ("manager", (MANAGER, NINA)))
+        self.assertEqual((set(world.steps()[1].delivered), world.steps()[1].outcome), ({MANAGER, NINA}, "sent"), "a step that goes to two people in one round keeps both marks")
         self.assertEqual([len(world.mail.sent_to(address)) for address in ("nina@example.com", "mae@example.com")], [1, 1])
         self.assertIn("You were added", world.mail.sent_to("nina@example.com")[0][2])
         self.assertNotIn("You were added", world.mail.sent_to("mae@example.com")[0][2])
         world.clock.advance(days=8)
         world.tick(2)
         self.assertNotIn(NINA, world.steps()[2].who, "told once: the third step goes to the next level, not again to a person who knows")
+
+    def test_the_pages_say_that_the_added_person_was_told_as_one_of_the_people_of_the_request_and_not_as_the_manager(self):
+        world, watch = self.world()
+        world.clock.advance(days=3)
+        world.tick()
+        watch.run()
+        world.clock.advance(days=4)
+        world.tick(2)
+        told, pending = brief_mod.told_lines(world.store.escalations_of("p1"))
+        self.assertEqual(([line.rsplit(", ", 1)[0] for line in told], pending), (["Ada (asked first)", "Mae (the manager)", "Nina (added to the people of the request)"], ()))
 
     def test_a_person_who_was_dropped_before_the_step_is_not_told(self):
         world, watch = self.world()
@@ -936,6 +954,16 @@ class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
         world.clock.advance(days=3)
         world.tick(2)
         self.assertEqual((world.steps()[0].who, world.mail.sent_to("nina@example.com")), ((A,), []))
+
+    def test_the_table_store_keeps_who_was_added_and_the_next_step_tells_them(self):
+        service = FakeTables()
+        client = http.Client(table_calls(ACCOUNT), str, transport=service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        world = World(people=WITH_NINA, store=lambda clock: TableStore(client, lambda resource: "token", ACCOUNT, clock=clock))
+        Watch(WITH_NINA, store=world.store, clock=world.clock).run()
+        self.assertEqual([r.who for r in world.store.escalations_of("p1") if r.kind == "added"], [(NINA,)])
+        world.clock.advance(days=3)
+        world.tick()
+        self.assertIn("You were added", world.mail.sent_to("nina@example.com")[0][2])
 
     def test_several_requests_that_come_to_the_added_person_the_same_day_are_one_letter_with_the_line_once(self):
         world = World(people=WITH_NINA, plans=2, store=Writes)
