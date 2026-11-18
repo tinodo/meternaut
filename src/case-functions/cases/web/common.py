@@ -6,7 +6,7 @@ import math
 from typing import Callable, Iterable, TypeVar
 
 from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
-from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to
+from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
@@ -119,18 +119,9 @@ def pulled(ctx: Ctx, *names: str) -> bool:
     return False
 
 
-def may_answer(principal: Principal, plan: PlanRecord, escalated: bool = False) -> bool:
-    """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too, and so may an
-    escalation contact that the ladder has come to with this request (`escalated`): the last link, who is told when nobody answers (cases/escalation.py). A person whose role is only `escalation`
-    has every answer of advice (worth acting on, not worth it, not mine, ask or tell, decide later: none changes anything in Azure) and none on a change, which an approver makes."""
-    named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and principal.has("escalation") and escalated)
-
-
 def answerable(ctx: Ctx, plan: PlanRecord) -> bool:
-    """`may_answer` for the person of this page. The ladder of the request is read only when nothing else lets the person answer it, they have the role `escalation`, and it is advice."""
-    principal = ctx.principal
-    return may_answer(principal, plan) or (plan.family == ADVISE and principal.has("escalation") and may_answer(principal, plan, escalated_to(ctx.ladder(plan.plan_id), principal.oid)))  # type: ignore[union-attr, arg-type]
+    """`models.may_answer` for the person of this page: the one rule of who may answer a request. The ladder of the request is read only when nothing else lets the person answer it, and it is advice."""
+    return may_answer(ctx.principal, plan, lambda: ctx.ladder(plan.plan_id))  # type: ignore[arg-type]
 
 
 # -- what happened to the change ---------------------------------------------------------------------------------------------------------------------

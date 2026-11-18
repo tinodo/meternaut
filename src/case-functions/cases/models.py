@@ -388,8 +388,17 @@ class EscalationRecord(Record):
 
 
 def escalated_to(records: typing.Iterable[EscalationRecord], oid: str) -> bool:
-    """Whether a step of the ladder of a request has come to this person (cases/escalation.py). A person whose role is only `escalation` answers the requests that the ladder came to them with, and no other."""
-    return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.who} for r in records)
+    """Whether a step of the ladder of a request was delivered to this person (cases/escalation.py): a message that was sent, not one that was only meant for them."""
+    return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.delivered} for r in records)
+
+
+def may_answer(principal: "Principal", plan: PlanRecord, ladder: typing.Callable[[], typing.Iterable[EscalationRecord]] = lambda: ()) -> bool:
+    """The one rule of who may answer a request, for the decider and the pages. A person who is named on it may, with the role approver, or the role owner when it is advice, which changes nothing in
+    Azure. Advice may also be answered by a person that a step of its ladder was delivered to (`ladder` is read only when nothing else lets the person answer), whatever their role on the list: the
+    contacts, the owners, the people that the ladder came to last. Every answer of advice is theirs (worth acting on, not worth it, not mine, a question, decide later) and none of a change, which
+    only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
+    named = principal.oid.lower() in {a.lower() for a in plan.approvers}
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and escalated_to(ladder(), principal.oid))
 
 
 @dataclass(frozen=True)

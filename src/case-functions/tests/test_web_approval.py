@@ -1370,9 +1370,11 @@ class AgainstTheLoop(unittest.TestCase):
         self.assertEqual(self.console.store.plan_get("plan0001").state, "withdrawn")
 
 
-class WhenTheLadderComesToAContact(unittest.TestCase):
-    """A person whose role is only `escalation` answers the advice that the ladder has come to with them: every answer of advice, none of which changes Azure, and never a change
-    (cases/escalation.py, docs/proposals/30-escalation.md). A request that the ladder has not come to them with is not theirs."""
+class WhenTheLadderComesToAPerson(unittest.TestCase):
+    """A person to whom a step of the ladder of a request of advice was delivered answers it, whatever their role on the list (the contacts, the owners, an approver who is not named on it): every answer
+    of advice, none of which changes Azure, and never a change (cases/escalation.py, docs/proposals/30-escalation.md). A request that no step was delivered to them with is not theirs."""
+
+    WHO = (("the role escalation", CORA), ("the role owner", OWNER), ("the role approver, not named on it", MAYA), ("the role ops", OPS))
 
     def setUp(self):
         store = MemoryStore(lambda: NOW)
@@ -1382,54 +1384,77 @@ class WhenTheLadderComesToAContact(unittest.TestCase):
         self.console.store.case_put(make_advice_case())
         self.console.store.plan_put(make_advice(approvers=(TINO,)))
 
-    def come_to(self, plan_id="plan0002"):
-        self.console.store.escalation_claim(EscalationRecord(plan_id, "step", 2, stamp(NOW), "contacts", (CORA,), ("Cora",), (), "email", "due"))
+    def come_to(self, oid, plan_id="plan0002", delivered=True):
+        self.console.store.escalation_claim(EscalationRecord(plan_id, "step", 2, stamp(NOW), "contact", (oid,), ("Cora",), (oid,) if delivered else (), "email", "sent" if delivered else "held"))
 
-    def test_a_contact_that_the_ladder_has_not_come_to_is_refused_and_nothing_is_shown_or_recorded(self):
-        before = snapshot(self.console.store)
-        for plan_id in ("plan0001", "plan0002"):
-            reply = self.console.get(f"/ok/{plan_id}", oid=CORA)
-            self.assertEqual((plan_id, reply.status, reply.root.find_all("button")), (plan_id, 403, []))
-            self.assertNotIn("oversized-vm-1", reply.content)
-            self.assertEqual(self.console.post(f"/ok/{plan_id}", {"decision": "decline", "code": "B4N8X2KM", "nonce": "x"}, oid=CORA).status, 403)
-        self.assertEqual(snapshot(self.console.store), before)
+    def test_a_person_that_the_ladder_has_not_come_to_is_refused_and_nothing_is_shown_or_recorded(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                before = snapshot(self.console.store)
+                for plan_id in ("plan0001", "plan0002"):
+                    reply = self.console.get(f"/ok/{plan_id}", oid=oid)
+                    self.assertEqual((plan_id, reply.status, reply.root.find_all("button")), (plan_id, 403, []))
+                    self.assertNotIn("oversized-vm-1", reply.content)
+                    self.assertEqual(self.console.post(f"/ok/{plan_id}", {"decision": "decline", "code": "B4N8X2KM", "nonce": "x"}, oid=oid).status, 403)
+                self.assertEqual(snapshot(self.console.store), before)
 
-    def test_a_contact_that_the_ladder_came_to_opens_the_advice_with_every_answer_of_advice_and_is_told_why_they_see_it(self):
-        self.come_to()
-        reply = self.console.get("/ok/plan0002", oid=CORA)
-        self.assertEqual(reply.status, 200)
-        self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
-        self.assertIn("the ladder of this request came to you, and you have the role escalation", reply.content)
-        self.assertNotIn("you have the role approver", reply.content)
-
-    def test_a_contact_never_answers_a_change_even_when_the_ladder_came_to_them_with_it(self):
-        self.come_to("plan0001")
-        before = snapshot(self.console.store)
-        self.assertEqual(self.console.get("/ok/plan0001", oid=CORA).status, 403)
-        for decision in ("approve", "decline", "not_mine", "later", "ask"):
-            self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "7F3K92QD", "nonce": "x"}, oid=CORA).status, 403, decision)
-        self.assertEqual((snapshot(self.console.store), self.console.delegate.begins), (before, []))
-
-    def test_the_loop_itself_refuses_a_contact_that_the_ladder_has_not_come_to_even_when_the_page_is_skipped(self):
-        principal = self.console.services.people.principal(CORA, "Cora")
-        self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
-        self.come_to()
-        self.assertNotEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role", "with the ladder come to them the loop goes on to its next check")
-
-    def test_each_answer_of_a_contact_is_recorded_with_their_name_and_changes_nothing_in_azure(self):
-        for button, title, state, case_status, note in (("Worth acting on", "Recorded: worth acting on", "consumed", "acknowledged", ""), ("Not worth it", "Recorded: not worth it", "declined", "declined", "no"),
-                                                        ("This is not mine", "Recorded: not yours", "open", "needs_human", ""), ("Ask or tell", "Recorded: your words", "open", "needs_human", "Who owns it?"),
-                                                        ("Decide later", "Noted", "open", "needs_human", "")):
-            with self.subTest(button):
+    def test_a_step_that_came_to_a_person_but_was_not_delivered_does_not_let_them_answer(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid, delivered=False)
+                self.assertEqual(self.console.get("/ok/plan0002", oid=oid).status, 403)
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
                 self.setUp()
-                self.come_to()
-                (form,) = self.console.get("/ok/plan0002", oid=CORA).forms()
-                reply = self.console.submit(form, button, oid=CORA, **({"note": note} if note else {}))
-                self.assertEqual((reply.status, reply.headings(1)), (200, [title]))
-                (record,) = self.console.store.decisions_of_plan("plan0002")
-                self.assertEqual((record.approver_oid, record.approver_name), (CORA, "Cora"))
-                self.assertEqual((self.console.store.plan_get("plan0002").state, self.console.store.case_get("case0002").status), (state, case_status))
-                self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
+
+    def test_a_person_that_a_step_was_delivered_to_opens_the_advice_with_every_answer_of_advice_and_is_told_why_they_see_it(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid)
+                reply = self.console.get("/ok/plan0002", oid=oid)
+                self.assertEqual(reply.status, 200)
+                self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
+                self.assertIn("the ladder of this request came to you", reply.content)
+                self.assertNotIn("you have the role approver", reply.content)
+                self.setUp()
+
+    def test_a_person_never_answers_a_change_even_when_a_step_was_delivered_to_them_with_it(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid, "plan0001")
+                before = snapshot(self.console.store)
+                self.assertEqual(self.console.get("/ok/plan0001", oid=oid).status, 403)
+                for decision in ("approve", "decline", "not_mine", "later", "ask", "confirm"):
+                    self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "7F3K92QD", "nonce": "x"}, oid=oid).status, 403, decision)
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.check_approve(principal, "plan0001", "7F3K92QD")[1].kind, "refused_role")
+                self.assertEqual((snapshot(self.console.store), self.console.delegate.begins), (before, []))
+                self.setUp()
+
+    def test_the_loop_itself_refuses_a_person_that_no_step_was_delivered_to_even_when_the_page_is_skipped(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
+                self.come_to(oid)
+                self.assertNotEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role", "with a step delivered to them the loop goes on to its next check")
+                self.setUp()
+
+    def test_each_answer_of_such_a_person_is_recorded_with_their_name_and_changes_nothing_in_azure(self):
+        for label, oid in self.WHO:
+            for button, title, state, case_status, note in (("Worth acting on", "Recorded: worth acting on", "consumed", "acknowledged", ""), ("Not worth it", "Recorded: not worth it", "declined", "declined", "no"),
+                                                            ("This is not mine", "Recorded: not yours", "open", "needs_human", ""), ("Ask or tell", "Recorded: your words", "open", "needs_human", "Who owns it?"),
+                                                            ("Decide later", "Noted", "open", "needs_human", "")):
+                with self.subTest(label, answer=button):
+                    self.setUp()
+                    self.come_to(oid)
+                    (form,) = self.console.get("/ok/plan0002", oid=oid).forms()
+                    reply = self.console.submit(form, button, oid=oid, **({"note": note} if note else {}))
+                    self.assertEqual((reply.status, reply.headings(1)), (200, [title]))
+                    (record,) = self.console.store.decisions_of_plan("plan0002")
+                    self.assertEqual(record.approver_oid, oid)
+                    self.assertEqual((self.console.store.plan_get("plan0002").state, self.console.store.case_get("case0002").status), (state, case_status))
+                    self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
 
 
 class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):
