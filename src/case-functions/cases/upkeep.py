@@ -101,10 +101,13 @@ def ask(ex, history: History, record: CaseRecord, lead: Lead, holds: list[str] |
 def take_back(ex, history: History) -> Counter:
     """Takes back the open requests of the findings that cannot say what to look at, that the rules hold back or that were made under rules that have changed, when nobody has answered them
     (Approvals.hold_back_empty), says each in the History and returns how many there were of each reason, in the words that the History says. Then it keeps the held requests (Approvals.settle: a
-    finding that a guard holds back is shown, and one that nothing holds back any more is closed and said in the History with `case.released`, which no count of what was held back includes)."""
+    finding that a guard holds back is shown, and one that nothing holds back any more is closed and said in the History with `case.released`, which no count of what was held back includes). A held
+    request of a finding that an automation manages becomes an ordinary request, in place (`plan.created` with `was` held, as for any request that is made)."""
     taken = Counter(held(history, case, brief.taken_back(plan)) for plan, case in ex.approvals.hold_back_empty())
     for plan, case in ex.approvals.settle(ex.approvers()):
         released(history, plan, case)
+    for plan, case in ex.approvals.promoted:
+        history.emit("plan.created", planId=plan.plan_id, caseKey=case.case_id, family=plan.family, approvers=len(plan.approvers), was="held")
     return taken
 
 

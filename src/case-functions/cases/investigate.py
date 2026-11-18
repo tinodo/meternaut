@@ -43,7 +43,7 @@ from .guards import Guards
 from .harness import HarnessRefused
 from .http import HttpError
 from .memory_store import parse, stamp
-from .models import ADVISE, GROUP_FACT, CaseRecord, StoreError
+from .models import ADVISE, AUTOMATED, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
 from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
@@ -178,7 +178,7 @@ class Investigation:
     # case from the investigation, and the planted waste, the approvals and the messages go on (cases/harness.py).
     held: bool = False
     said_nothing: int = 0  # the cases whose request was not made because the finding cannot say what to look at (cases/upkeep.py): the Watch counts them with the findings that it held back
-    held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (automation, unchecked), by reason: counted with the findings that were held back
+    held_back: dict[str, int] = field(default_factory=dict)  # the cases whose request was not made by the rules of cases/brief.py held_reason (unchecked, impact), by reason: counted with the findings that were held back
     # What the record of the run is made from (cases/activity.py).
     toolbox: object = None
     answer: object = None
@@ -1281,7 +1281,7 @@ def _own_ids(s: "Services") -> set[str]:
 def _owner_of(s: "Services", out: Investigation, lead: Lead) -> dict:
     """What the brief says about whose a resource is: a tag that conventionally names an owner, and who made and last changed it (ownership.py), and when an application or service identity last
     wrote to it (`automatedAt`, from every write of the Activity Log and not only the newest: a person's edit yesterday does not hide an automation's write three days ago; cases/brief.py
-    held_reason holds a finding back on it). It is shown to people and never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is
+    automation_note warns on it). It is shown to people and never goes to a model. A word that says why a read gave nothing (not visible, not in the window) is not a person: it is
     left out, so that the page says only what it knows."""
     reader = out.owners
     writes = None
@@ -1460,12 +1460,12 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             fate = "person"
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
-                fate = "request"
+                fate = "automation" if (plan.preconditions or {}).get(AUTOMATED) else "request"  # a request, with the warning when an automation manages the resource
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
             else:
-                why = ex.approvals.held_why(record)  # an automation manages the resource, or nobody looked up who changed it: no request is made (cases/brief.py held_reason)
+                why = ex.approvals.held_why(record)  # nobody looked up who changed the resource, or what depends on it was not checked: no request is made (cases/brief.py held_reason)
                 if why or says_nothing(record):
                     upkeep.held(h, record, why)
                     fate = why or "nothing"

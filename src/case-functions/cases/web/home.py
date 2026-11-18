@@ -294,14 +294,13 @@ def held_count(ctx: Ctx) -> int:
 
 
 def held_by_rules(ctx: Ctx) -> int:
-    """How many of the held findings (held_cases) are held back by a rule of cases/brief.py held_reason: an automation manages the resource, nobody looked up who changed it, or what depends on it
-    was not checked."""
+    """How many of the held findings (held_cases) are held back by a rule of cases/brief.py held_reason: nobody looked up who changed the resource, or what depends on it was not checked."""
     return sum(1 for case in held_cases(ctx) if held_reason(case, ctx.now))
 
 
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because an automation manages the
-    resource or nobody looked up who changed it. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
+    """The findings that no request waits for: nothing measured backs them yet, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
+    resource or what depends on it was not checked. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
     nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is
     listed also when it is not a finding of the investigation (the weekly letter links to this page)."""
     cases, _ = read(lambda: held_cases(ctx), [])
@@ -309,7 +308,7 @@ def _held(ctx: Ctx) -> Safe:
     if not cases and not listed:
         return Safe("")
     held, ruled = len(cases), sum(1 for case in cases if held_reason(case, ctx.now))
-    lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because an automation manages the resource, because nobody has looked up who changed it, or because "
+    lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because nobody has looked up who changed the resource, or because "
                        "what depends on it was not checked. Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
     rest = held - ruled
     if rest:

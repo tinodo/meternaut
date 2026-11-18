@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -119,14 +119,15 @@ def _analysis(brief: Brief) -> Safe:
 
 def _stake(brief: Brief, figure: Figure) -> Safe:
     """What is at stake: the figure a year, then the figure a month with its level and its basis (or what it costs, and why no saving is shown when the finding has a reason of its own),
-    what the cost is made of and the estimate when there are any, what waiting costs, the money that the page is in, once, and the link to Cost analysis."""
+    what the cost is made of and the estimate when there are any, the heads-up about a resource that something that runs by itself changes (when there is one), what waiting costs, the money that the page is in, once, and the link to Cost analysis."""
     note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
+    heads = fmt('<p class="m"><strong>{label}:</strong> {text}</p>', label=HEADS_UP, text=brief.heads_up) if brief.heads_up else Safe("")
     if figure.monthly is None:
-        return fmt('<p class="fig">—</p><p class="figsub">{label}. {note}</p>{under}{money}{link}', label=figure.label, note=note, under=under(figure), money=MONEY, link=_analysis(brief))
+        return fmt('<p class="fig">—</p><p class="figsub">{label}. {note}</p>{under}{heads}{money}{link}', label=figure.label, note=note, under=under(figure), heads=heads, money=MONEY, link=_analysis(brief))
     waiting = f" Waiting costs about {dollars(brief.saving.waiting_per_day)} a day." if figure.state == "save" and brief.saving.waiting_per_day else ""
-    return fmt('<p class="fig{save}">{year}<small> a year</small></p><p class="figsub">{label}. {month} a month. {note}{waiting}</p>{under}{money}{link}',
+    return fmt('<p class="fig{save}">{year}<small> a year</small></p><p class="figsub">{label}. {month} a month. {note}{waiting}</p>{under}{heads}{money}{link}',
                save=" save" if figure.state == "save" else "", year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note, waiting=waiting,
-               under=under(figure), money=MONEY, link=_analysis(brief))
+               under=under(figure), heads=heads, money=MONEY, link=_analysis(brief))
 
 
 def consequences(brief: Brief) -> list[tuple[str, object]]:

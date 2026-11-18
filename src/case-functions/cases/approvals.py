@@ -21,8 +21,8 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError,
-                     TwoPeopleRule, escalated_to, started)
+from .models import (ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store,
+                     StoreError, TwoPeopleRule, escalated_to, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -34,8 +34,8 @@ ADVICE_STATUSES = ("proposed", "needs_human")
 ADVICE_MIN_USD = 50.0
 # What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
 NOTHING_TO_SAY = "held back: nothing to say"
-# What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): somebody else
-# manages it, so no request is made, and the run counts it like the findings that say nothing (investigate.py AUTOMATION_DAYS).
+# What the History says about a finding of the investigation about a resource that an automation changed lately (an application or service identity that is not Meternaut's own): it was held back
+# once, and its words stay for the History lines and the held requests of that time. An automation holds nothing back now: the request carries a warning (cases/brief.py automation_note).
 MANAGED_BY_AUTOMATION = "held back: managed by an automation"
 # And of one that asks to delete a resource when nobody looked up who changed it, or the look could not be made (the Watch that never looks one up is the older detectors'): an unread Activity Log
 # shows nothing, and a deletion is not asked on nothing.
@@ -56,6 +56,7 @@ HELD_STATUSES = ("needs_human", "proposed")  # the statuses of the cases that wa
 HELD_CASES = 300  # the latest cases of each of those statuses that settle reads (the start page and cases/learning.py read the same number)
 HELD_ANSWERS = 200  # the latest plans that settle looks at for the answers that people gave lately (the number that advise reads)
 HELD_NEW = 50  # the most held requests that one Watch makes: a Watch that finds more makes the rest at the next one
+PROMOTE_NEW = 5  # the most held requests of findings that an automation manages that one Watch turns into ordinary requests (Approvals.settle): the rest wait, and no person gets a burst of them
 HELD_NO_APPROVAL = "This finding is held back, so there is no request to approve. Nothing is approved."
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
@@ -142,12 +143,19 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
         preconditions=planned.preconditions, target=planned.target))
 
 
+def own_group(case: CaseRecord, settings: ApprovalSettings) -> bool:
+    """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and the rules about asking leave it alone."""
+    return settings.gates.why_outside(case.subscription_id, case.resource_group) is None
+
+
 def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex, held: str = "") -> PlanRecord:
     """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own (what code computed from the bill lines that the
     finding names, decide.py). A finding that has no figure of its own but whose facts hold what Azure Advisor says takes Advisor's. `held` (a key of brief.HOLD_WORDS) makes it the request of a finding
-    that a guard holds back: the state HELD, and the reason kept in the preconditions."""
-    saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
+    that a guard holds back: the state HELD, and the reason kept in the preconditions. A request about a resource that something that runs by itself changed lately keeps the time of that change
+    (`automated`), so that every page, card and letter says the same warning (brief.automation_note); what Meternaut planted is exempt."""
+    saving = _saving(case)
     by_advisor = case.detector == ADVISOR  # Azure Advisor's own recommendation, made by code: no AI looked at it
+    automated = "" if held or own_group(case, settings) else brief.automation_since(case, now)
     judged = ("Judged: no AI looked at it. It is Azure Advisor's own recommendation, and Meternaut has not checked it." if by_advisor else
               "Judged: a check by code holds it back from a request, so nobody was asked to approve anything." if held else
               "Judged: two AI reviewers agree that this looks wasted, and code checked again the numbers that the first one cited." if case.status == "proposed" else
@@ -159,7 +167,8 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
         what_changes=brief.ADVICE_CHANGE,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.acting_risk(case).text, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at="",
-        state=HELD if held else "open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status, **({"source": ADVISOR} if by_advisor else {}), **({HELD: held} if held else {})}))
+        state=HELD if held else "open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status, **({"source": ADVISOR} if by_advisor else {}), **({HELD: held} if held else {}),
+                                                                           **({AUTOMATED: automated} if automated else {})}))
 
 
 def about_the_same(plan: PlanRecord, case: CaseRecord) -> bool:
@@ -176,6 +185,7 @@ class Approvals:
         # `reader` reads a resource to write the plan of a family that needs facts from Azure (a machine's size, a disk's tier): the Watch's own reader, with a list of calls that holds
         # reads only and only the resource groups of the change scopes. Without it, only a family that needs no read makes a plan, and every other finding gets the advise plan.
         self.store, self.settings, self.clock, self.reader = store, settings, clock, reader
+        self.promoted: list[tuple[PlanRecord, CaseRecord]] = []  # the held requests that the last `settle` turned into ordinary ones (cases/upkeep.py says each in the History)
 
     def _set_case(self, case_id: str, status: str) -> None:
         case = self.store.case_get(case_id)
@@ -508,8 +518,7 @@ class Approvals:
             self.store.escalation_claim(replace(record, plan_id=new.plan_id))
 
     def _own_group(self, case: CaseRecord) -> bool:
-        """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and the rules about asking to delete leave it alone."""
-        return self.settings.gates.why_outside(case.subscription_id, case.resource_group) is None
+        return own_group(case, self.settings)
 
     def held_why(self, case: CaseRecord) -> str:
         """Why no request is made for a case (cases/brief.py held_reason), whichever detector or AI made it, or "" when none is held. The one place that every path to an advise plan passes."""
@@ -571,7 +580,13 @@ class Approvals:
         lately). When the finding was judged again and no guard holds it back, but no request exists for it (the places for requests are full), the request stays, with the reason `waiting`, until a real
         request exists: the finding is then asked about as any other, by the normal path, and the held one ends. A guard that ends by itself (an automation that stopped changing the resource) does not
         close it: only a judgment does, with the facts of that day. A reason that changed is kept, and so is the figure of the case. Returns the requests that it closed, each with its case; it makes no
-        History line (cases/upkeep.py does, and counts none of them as held back)."""
+        History line (cases/upkeep.py does, and counts none of them as held back).
+
+        An automation that manages the resource is no guard (brief.automation_note is a warning on a request of advice). The held requests that were made for it before (the reason `automation`) become
+        ordinary open requests, in place: the same request and case, the held mark gone, the warning kept (`automated`) and the start of the wait the time that it was made (`waiting_since`), so that the
+        ladder of cases/escalation.py counts from there. The dearest come first, at most PROMOTE_NEW in one Watch, and none while the places for requests are full (places_full: the rest are held, with
+        the reason `waiting`, and the next Watch goes on). `promoted` lists them. A finding that nobody is to be asked about (little is at stake, or a person answered it lately) is closed as released."""
+        self.promoted = []
         try:
             now = self.clock()
             open_plans = self.store.plans_open()
@@ -585,6 +600,7 @@ class Approvals:
                 else:
                     held[plan.case_id] = plan
             released: list[tuple[PlanRecord, CaseRecord | None]] = []
+            managed: list[tuple[PlanRecord, CaseRecord]] = []
             for case_id, plan in held.items():
                 case = self.store.case_get(case_id)
                 how = ""  # why the request ends, when it does
@@ -594,7 +610,13 @@ class Approvals:
                     how = "left-alone"
                 else:
                     why = self._guard(case)
-                    if not why and case.updated_at > plan.created_at:
+                    if not why and _was_managed(plan):
+                        if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered):
+                            how = "released"  # nobody is to be asked: little is at stake, or a person answered it lately
+                        else:
+                            managed.append((plan, case))
+                            continue
+                    elif not why and case.updated_at > plan.created_at:
                         # Judged again, and nothing holds it back now: the normal path asks about it, and the request ends when there is a real one. Until then it stays shown (the places for requests may be full),
                         # unless nobody is to be asked: little is at stake, or a person answered it lately.
                         why = "" if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered) else "waiting"
@@ -607,6 +629,13 @@ class Approvals:
                     fresh = self._release(plan, now, how)
                     if fresh is not None:
                         released.append((fresh, case))
+            for plan, case in sorted(managed, key=lambda item: (-_figure(item[1]), item[0].plan_id)) if approvers else ():
+                opened = None if len(self.promoted) >= PROMOTE_NEW or places_full(case, open_plans) else self._promote(plan, case, approvers, now)
+                if opened is None:
+                    self._refresh(plan.plan_id, case, "waiting", {AUTOMATED: brief.automation_since(case, now)} if AUTOMATED not in (plan.preconditions or {}) else None)
+                else:
+                    open_plans = [*open_plans, opened]
+                    self.promoted.append((opened, case))
             if not approvers:
                 return released
             made = 0
@@ -642,16 +671,31 @@ class Approvals:
         self.store.plan_put(fresh)
         return fresh
 
-    def _refresh(self, plan_id: str, case: CaseRecord, why: str) -> None:
-        """Gives a held request that is still held what the case says now: the reason when it changed, and the figure (the page and the letter read the figure of the request, which the Watch
-        judged earlier). It is read again first, and written only while it is still held: an answer that came in since is not undone."""
+    def _promote(self, plan: PlanRecord, case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime) -> PlanRecord | None:
+        """Turns the held request of a finding that an automation manages into an ordinary open request of advice, in place: the plan of a request that is made now for the case (the figure, the words and
+        the warning of today, the people of the list), with the id of the held one, its time and the start of its wait. It is read again first: an answer that came in since is never undone. Returns the
+        open request, or None when the request is not held any more."""
+        fresh = self.store.plan_get(plan.plan_id)
+        if fresh is None or fresh.state != HELD:
+            return None
+        made = build_advice(case, approvers, now, self.settings, new_id=lambda: fresh.plan_id)
+        opened = plan_digest.sealed(replace(made, created_at=fresh.created_at, waiting_since=fresh.waiting_since or fresh.created_at, waited_usd=fresh.waited_usd))
+        self.store.plan_put(opened)
+        if case.plan_id != opened.plan_id:
+            self.store.case_update(case.case_id, lambda kept: _with(kept, plan_id=opened.plan_id))
+        return opened
+
+    def _refresh(self, plan_id: str, case: CaseRecord, why: str, mark: dict | None = None) -> None:
+        """Gives a held request that is still held what the case says now: the reason when it changed (and `mark`, kept with it), and the figure (the page and the letter read the figure of the request,
+        which the Watch judged earlier). It is read again first, and written only while it is still held: an answer that came in since is not undone."""
         fresh = self.store.plan_get(plan_id)
         if fresh is None or fresh.state != HELD:
             return
-        saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
+        saving = _saving(case)
         changes: dict = {name: value for name, value in (("saving_usd_month", saving), ("waiting_costs_usd_day", round(saving / 30, 2) if saving else None)) if getattr(fresh, name) != value}
-        if why and why != (fresh.preconditions or {}).get(HELD):
-            changes["preconditions"] = {**(fresh.preconditions or {}), HELD: why}
+        kept = {**(fresh.preconditions or {}), **({HELD: why} if why else {}), **(mark or {})}
+        if kept != (fresh.preconditions or {}):
+            changes["preconditions"] = kept
         if changes:
             self.store.plan_put(_plan_with(fresh, **changes))
 
@@ -742,6 +786,22 @@ def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:
     return case.status == "needs_human" and case.detector != ADVISOR and sum(
         1 for plan in open_plans if plan.family == ADVISE and plan.state == "open" and (plan.preconditions or {}).get("caseStatus") == "needs_human"
         and (plan.preconditions or {}).get("source") != ADVISOR) >= ADVICE_OPEN_MAX
+
+
+def _saving(case: CaseRecord) -> float | None:
+    """The saving of a finding as its request states it: the case's own figure, else Azure Advisor's."""
+    return case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
+
+
+def _figure(case: CaseRecord) -> float:
+    """What is at stake in a finding, for the order of a list: its saving, else what it costs in 30 days."""
+    return _saving(case) or case.cost_usd_30d or 0.0
+
+
+def _was_managed(plan: PlanRecord) -> bool:
+    """Whether a held request is of a finding that an automation held back, which is a warning now: its reason is `automation`, or it waits for a place after that (`automated` marks it)."""
+    reason = brief.held_of(plan)
+    return reason == "automation" or (reason == "waiting" and AUTOMATED in (plan.preconditions or {}))
 
 
 def _answered(plan: PlanRecord, now: dt.datetime) -> dict:

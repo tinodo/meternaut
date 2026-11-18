@@ -32,9 +32,9 @@ BEATS = ("The AI looked at the estate in parts, one after the other. Code chose 
          "Each part is a short session of its own, with its own tool calls, seconds and tokens, and the lines of the bill that no resource owns can be a part too.")
 STOPS = {"tokens": "its token limit was used up", "switch": "a switch that holds the agents is pulled", "refusals": "too many of its tool calls were refused"}
 VERDICTS = {"agree": "Agrees", "disagree": "Disagrees", "unsure": "Is not sure"}
-# What became of the resources of a finding (the words of cases/approvals.py for a request that was held back).
+# What became of the resources of a finding (the words of cases/approvals.py for a request that was held back). `automation` is a request that was made, with the warning that an automation manages the resource.
 FATES = {"request": "a request was made", "person": "left for a person, no request yet", "dropped": "dropped, no change is suggested", "nothing": "held back, nothing to say",
-         "automation": "held back, managed by an automation", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked"}
+         "automation": "a request was made; an automation manages the resource", "unchecked": "held back, not checked who changed it", "impact": "held back, impact not checked"}
 LEFT = {"unknown": "that no tool showed", "unproven": "with no measurement that proves it", "repeated": "that an earlier finding has", "guarded": "held back by a guard",
         "recent": "judged lately", "capped": "beyond the cap of one run", "small": "in a finding that together costs too little to open a case"}
 

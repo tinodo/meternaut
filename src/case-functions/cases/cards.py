@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
+from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -127,6 +127,11 @@ def _chips(brief: Brief) -> dict:
 def _learned(brief: Brief) -> list[dict]:
     """The one line about how past requests like this were answered, and, when it changes what can be said, the one sentence about what the access cannot see."""
     return [_block(name, md(text, 240)) for name, text in (("past", brief.past), ("access", brief.access)) if text]
+
+
+def _heads_up(brief: Brief) -> list[dict]:
+    """The warning about a resource that something that runs by itself changes: one line, in the words of the page (brief.heads_up)."""
+    return [_block("heads-up", f"**{HEADS_UP}:** {md(brief.heads_up, 320)}")] if brief.heads_up else []
 
 
 def _facts(brief: Brief) -> list[dict]:
@@ -267,7 +272,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     _check_context(ctx, brief)
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
-    body = [*_place(brief), _chips(brief), _stake(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
+    body = [*_place(brief), _chips(brief), _stake(brief), *_heads_up(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
             *_facts(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 

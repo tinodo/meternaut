@@ -42,6 +42,8 @@ PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn
 # The state of the request of a finding that a guard holds back (cases/approvals.py Approvals.settle): it is no open request, so nothing that lists the open ones (the Decisions page, the
 # letters of a request, the cards, the cap of ADVICE_OPEN_MAX) sees it, and it takes the answers that ask for nothing: a question, "not mine", "later" and "not worth it".
 HELD = "held"
+# The key, in the preconditions of an advice request, of the time (a stamp) when something that is no person last changed the resource (cases/brief.py automation_note): the warning of the request.
+AUTOMATED = "automated"
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
