@@ -575,6 +575,8 @@ class TableStoreOnItsOwn(unittest.TestCase):
             self.store.plans_open()
             self.store.plans_recent(200)
         self.assertEqual(len([call for call in self.service.calls if "mnplans()" in call[1]]), 11 * 4, "outside a block every read asks")
+
+    def test_the_cursor_of_the_ladder_is_one_row_that_a_later_put_replaces(self):
         self.assertEqual(self.store.cursor_get(), "")
         self.store.cursor_put("2026-11-05T08:00:00Z/p1")
         self.store.cursor_put("2026-11-05T09:00:00Z/p2")
