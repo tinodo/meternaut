@@ -1533,7 +1533,7 @@ def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[F
         covered = _group_facts(group, case)
         head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the bill lines that it would shrink come before the examples
     elif state == cost_words.NONE:
-        head.append(Fact("Cost, last 30 days", "Azure shows no cost for this yet", "Azure cost lines"))
+        head.append(Fact("Cost, last 30 days", "Azure has not reported a cost for this yet", "Azure cost lines"))
     elif cost is not None and state == cost_words.LINES:
         head.append(Fact("Cost, last 30 days", usd_text(cost), "Azure cost lines"))
     elif state in (cost_words.FAILED, cost_words.CURRENCY):

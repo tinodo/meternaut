@@ -13,7 +13,7 @@ from ..models import CHECK_GAP_MINUTES, SWITCH_NAMES, CheckRecord, SwitchRecord,
 from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
 from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, parse_time, stamp, utc
-from .figures import chip, dollars
+from .figures import chip
 from .layout import (TEXT, block, button, checks, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, respond, table)
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
@@ -322,7 +322,7 @@ def rule_text(rule: TwoPeopleRule) -> str:
         return "Off. Every change needs one approver."
     summaries = change_kinds()
     kinds = [summaries[name] for name in rule.families if name in summaries]
-    parts = ([f"it saves at least {dollars(rule.min_usd_month)} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
+    parts = ([f"it saves at least ${rule.min_usd_month:,.2f} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
     return f"On. A change needs two people when {' or '.join(parts)}. One confirms the request, and another approves it."
 
 

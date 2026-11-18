@@ -396,8 +396,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
         doc.items(*(f"{_data(row.title, 200)}. {row.stake.short}" + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "")
                     + (f" {_heads_up(row.brief)}" if row.brief is not None and row.brief.heads_up else "") for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
-        more = count - MAX_LISTED
-        doc.paragraph(f"{more} more {'waits' if more == 1 else 'wait'} on the page.")
+        doc.paragraph(_more(count - MAX_LISTED))
     if kept:
         found = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in kept), key=lambda b: (-(stake_of(b).monthly or 0.0), title_text(b), b.plan_id))  # what is at stake first
         doc.paragraph("These findings are held back from a request, so nothing is asked of you. Nothing changes in Azure.", strong=True)
@@ -449,6 +448,17 @@ def waited_days(plan: PlanRecord, now: dt.datetime, own: bool = False) -> int:
 
 def _days(days: int) -> str:
     return brief_mod.waited_text(days)
+
+
+def _how_long(days: int, waited: str) -> str:
+    """How long a request has waited, said once: the sentence of what waiting has cost says the days itself, and a request with no such sentence says how long it has waited."""
+    if waited and days >= 1:
+        return waited
+    return " ".join(part for part in (f"It has waited {_days(days)}.", waited) if part)
+
+
+def _more(count: int, where: str = "on the page") -> str:
+    return f"{count} more {'waits' if count == 1 else 'wait'} {where}."
 
 
 def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), *, source: str, asked: str = "",
@@ -505,11 +515,11 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case, source in rows[:MAX_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", f"It has waited {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  ESCALATION_WHY_SHORT.get(source, ESCALATION_WHY_SHORT["owners"]), _heads_up(brief)) if part))
     doc.items(*lines)
     if count > MAX_LISTED:
-        doc.paragraph(f"and {count - MAX_LISTED} more.")
+        doc.paragraph(_more(count - MAX_LISTED))
     listed = bool(person.roles)
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
@@ -531,12 +541,12 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case in rows[:WEEKLY_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", f"It has waited {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  _heads_up(brief)) if part))
     if lines:
         doc.items(*lines)
     if count > WEEKLY_LISTED:
-        doc.paragraph(f"and {count - WEEKLY_LISTED} more.")
+        doc.paragraph(_more(count - WEEKLY_LISTED))
     for problem in problems:
         doc.paragraph(_data(problem, 300))
     doc.button("Open the decisions", f"{base}/")

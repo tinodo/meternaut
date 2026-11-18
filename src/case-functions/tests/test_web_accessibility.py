@@ -421,17 +421,17 @@ class TheWords(unittest.TestCase):
                 self.assertNotRegex(content, r"[$€£]|\bEUR\b|\bUSD\b", name)
                 self.assertNotRegex(content.replace("US dollars", ""), r"\bdollars?\b", name)
 
-    def test_a_request_page_says_once_that_money_is_in_us_dollars_and_calls_a_saving_one_only_with_its_level(self):
+    def test_a_request_page_has_no_note_about_the_currency_and_says_a_saving_only_as_an_estimate(self):
         names = ["GET /ok/plan0001", "GET /ok/plan0005", "GET /why/case0001", "GET /why/case0005", "paused plan", "paused advice", "approved plan", "expired plan", "consumed plan",
                  "failed plan", "answered advice"]
         for name in names:
             with self.subTest(page=name):
                 content = self.pages[name].content
-                self.assertEqual(content.count("Money is in US dollars, and a year is twelve times the month."), 1, name)
+                self.assertNotIn("Money is in US dollars", content, name)
                 self.assertNotRegex(content, r"[€£]|\bEUR\b|\bUSD\b", name)
-                self.assertNotRegex(content, r"\b(?:saved|savings|save)\b", name)
-                for found in re.findall(r"\bSaves\b[^.]*", content):
-                    self.assertRegex(found, r"^Saves, (?:Expected|Scenario|Verified)$", name)
+                self.assertNotRegex(content, r"(?<!could be )\bsaved\b|\bsaves\b|\bsavings\b", name)
+                for found in re.findall(r"\bcould save\b[^.]*", content):
+                    self.assertRegex(found, r"^could save about \$", name)
 
     def test_no_figure_of_speech_and_no_fake_politeness(self):
         for name, reply in self.pages.items():
@@ -493,7 +493,7 @@ class TheWords(unittest.TestCase):
 
     def test_a_request_of_advice_says_that_nothing_changes_in_azure_and_never_talks_of_signing_in(self):
         page = self.pages["GET /ok/plan0005"]
-        self.assertIn("Nothing changes in Azure.", page.content)
+        self.assertIn("Meternaut changes nothing in Azure.", page.content)
         for gone in ("sign in to Azure", "Approve and sign in"):
             self.assertNotIn(gone, page.main.text())
         self.assertEqual([b[2] for f in page.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])

@@ -287,7 +287,7 @@ class TheFigureOnTheCard(unittest.TestCase):
         self.assertEqual(tile, {"value": "It costs $358 a month, about $4,297 a year.", "price-basis": "Nobody has worked out how much of that could be saved."})
 
     def test_nothing_that_can_be_shown_has_no_year_and_says_why(self):
-        for cost, why in ((0.0, "Azure shows no cost for this yet."), (None, "Meternaut could not read what this costs.")):
+        for cost, why in ((0.0, "Azure has not reported a cost for this yet."), (None, "Meternaut could not read what this costs.")):
             with self.subTest(cost=cost):
                 card, tile = self.tile(saving=None, cost=cost)
                 self.assertEqual(tile, {"value": why})

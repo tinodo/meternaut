@@ -176,8 +176,8 @@ class WhenARequestIsMadeAgain(unittest.TestCase):
         self.assertEqual(stands.digest, plans[3].digest, "what was carried is no part of what a person approves")
         self.clock.advance(days=3)
         text = waiting_cost(120.0, "Expected", 13, stands.waited_usd, 3)
-        self.assertIn("$32 so far, of which $20 is what the requests that this one replaced cost for the days that each of them waited", text)
-        self.assertEqual(waiting_cost(120.0, "Expected", 13), "13 days at $120.00 a month is $52", "a request that replaced none reads as it always did")
+        self.assertIn("Waiting has cost about $32 so far. $20 of that is what the requests that this one replaced cost for the days that each of them waited.", text)
+        self.assertEqual(waiting_cost(120.0, "Expected", 13), "Waiting 13 days at $120 a month has cost about $52.", "a request that replaced none says what waiting has cost, as it always did")
 
     def test_a_request_that_stands_for_one_with_the_same_members_carries_what_it_cost_so_far(self):
         older = single(6)

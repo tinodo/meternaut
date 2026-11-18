@@ -196,7 +196,7 @@ class ScenarioA(unittest.TestCase):
                 saving = shown(world, plan).saving
                 self.assertEqual((saving.level, saving.monthly), ("Verified", 31.1))
                 if SHOWN[name].cost_ends:
-                    self.assertEqual(saving.basis, "the cost lines after the change, which show no cost for this resource")
+                    self.assertEqual(saving.basis, "The bill since the change shows no cost for this resource.")
                 else:
                     self.assertNotIn("no cost", saving.basis, "a resource that still bills never shows no cost")
 
@@ -228,7 +228,7 @@ class ScenarioA(unittest.TestCase):
         self.assertEqual(action.verification["costAfterUsd"], 0.0)
         b = shown(world, plan)
         self.assertEqual((b.saving.monthly, b.saving.level), (60.0, "Verified"))
-        self.assertEqual(b.saving.basis, "the cost lines after the change, which show no cost for this resource")
+        self.assertEqual(b.saving.basis, "The bill since the change shows no cost for this resource.")
 
     def test_the_days_of_waiting_are_used_up_and_the_record_says_that_no_figure_came(self):
         world, plan, resource = self.resized()
@@ -371,16 +371,16 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         world, plan, resource, action = self.nothing_to_do("stop-vm")
         b = shown(world, plan)
         self.assertEqual((b.outcome.state, b.outcome.title, b.outcome.result), ("unchanged", "Nothing was changed", "Nothing was changed"))
-        self.assertEqual(b.outcome.lines, ("Approved by Tino.", "Nothing was changed: the machine was already stopped and released when Meternaut looked."))
+        self.assertEqual(b.outcome.lines, ("Approved by Tino.", "Nothing was changed. The machine was already stopped and released when Meternaut looked."))
         for line in b.outcome.lines:
             self.assertNotIn("their own Azure rights", line)
             self.assertNotIn("Nothing to change", line)
         self.assertEqual(b.outcome.by, "Tino")
 
     def test_the_line_of_each_family_and_of_the_old_deletes(self):
-        said = {"stop-vm": "Nothing was changed: the machine was already stopped and released when Meternaut looked.",
-                "resize-vm": "Nothing was changed: the machine was already of size Standard_D2s_v5 when Meternaut looked.",
-                "change-disk-tier": "Nothing was changed: the disk was already a Standard SSD (StandardSSD_LRS) when Meternaut looked."}
+        said = {"stop-vm": "Nothing was changed. The machine was already stopped and released when Meternaut looked.",
+                "resize-vm": "Nothing was changed. The machine was already of size Standard_D2s_v5 when Meternaut looked.",
+                "change-disk-tier": "Nothing was changed. The disk was already a Standard SSD (StandardSSD_LRS) when Meternaut looked."}
         for name, line in said.items():
             with self.subTest(name):
                 world, plan, resource, action = self.nothing_to_do(name)
@@ -390,11 +390,11 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         plan, _ = world.approved(resource, "disk", "delete", 20.0, detector="orphan-managed-disk")
         del world.arm.resources[resource["id"].lower()]
         world.run(plan)
-        self.assertEqual(shown(world, plan).outcome.lines, ("Approved by Tino.", "Nothing was changed: the resource did not exist any more when Meternaut looked."))
+        self.assertEqual(shown(world, plan).outcome.lines, ("Approved by Tino.", "Nothing was changed. The resource did not exist any more when Meternaut looked."))
 
     def test_the_sentence_is_cut_the_same_way_for_any_result(self):
-        for result, expected in (("The machine was already stopped. Nothing to change.", "Nothing was changed: the machine was already stopped."),
-                                 ("VM is off. Nothing to delete.", "Nothing was changed: VM is off."),
+        for result, expected in (("The machine was already stopped. Nothing to change.", "Nothing was changed. The machine was already stopped."),
+                                 ("VM is off. Nothing to delete.", "Nothing was changed. VM is off."),
                                  ("", "Nothing was changed."), ("Nothing to change.", "Nothing was changed.")):
             self.assertEqual(brief._nothing_changed(result), expected)
 
@@ -407,7 +407,7 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         self.assertEqual(title.text(), "Nothing was changed")
         notice = title.parent.text()
         self.assertIn("Approved by Tino.", notice)
-        self.assertIn("Nothing was changed: the machine was already stopped and released when Meternaut looked.", notice)
+        self.assertIn("The machine was already stopped and released when Meternaut looked.", notice)
         self.assertNotIn("own Azure rights", notice)
         found = {}
         for dl in reply.main.find_all("dl", class_="summary"):
@@ -424,7 +424,7 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         case = world.store.case_get(plan.case_id)
         letter = letters.done_letter(world.store.plan_get(plan.plan_id), action, case, PERSON, BASE, fs.NOW, CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] Nothing had to change in Azure")
-        for wanted in ("You approved:", "Nothing was changed: the machine was already stopped and released when Meternaut looked.", "No saving is claimed for this approval."):
+        for wanted in ("You approved:", "Nothing was changed. The machine was already stopped and released when Meternaut looked.", "No saving is claimed for this approval."):
             self.assertIn(wanted, letter.text)
         for unwanted in ("Done:", "has run", "Start the machine again", "cannot be undone", "own Azure rights", "confirm it after a few days", "a month"):
             self.assertNotIn(unwanted, letter.text)
@@ -437,7 +437,7 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(found["outcome"], "Nothing was changed")
         self.assertEqual(found["outcome-line-1"], "Approved by Tino.")
-        self.assertTrue(found["outcome-line-2"].startswith("Nothing was changed: the machine was already stopped"))
+        self.assertTrue(found["outcome-line-2"].startswith("Nothing was changed. The machine was already stopped"))
         for absent in ("undo", "saving-word", "value"):
             self.assertNotIn(absent, found)
 

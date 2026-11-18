@@ -168,7 +168,7 @@ class TheLadder(unittest.TestCase):
         world.tick()
         (letter,) = world.mail.sent_to("ada@example.com")
         self.assertEqual(letter[1], "[Meternaut] 2 decisions have waited without an answer")
-        self.assertEqual(letter[2].count("It is a reminder: you are named as an approver."), 2, "each line says in a few plain words why the person is told")
+        self.assertEqual(letter[2].count("You are told because you are named as an approver."), 2, "each line says in a few plain words why the person is told")
         self.assertNotIn("Why you are told", letter[2], "no raw word of the code, and no legend that explains them")
         self.assertEqual([(r.outcome, r.delivered) for p in ("p1", "p2") for r in world.steps(p)], [("sent", (A,))] * 2)
         world.add("p3", "c3", created=world.clock() - 3 * DAY)
@@ -248,7 +248,7 @@ class TheLadder(unittest.TestCase):
         (to_manager,) = world.mail.sent_to("mae@example.com")
         self.assertIn("I am Meternaut, an AI that looks for Azure resources", to_manager[2])
         self.assertIn("you are the manager of Ada", to_manager[2])
-        self.assertIn("Told before", to_manager[2])
+        self.assertIn("Ada, asked first, was told on", to_manager[2])
         again = world.store.mails_since(MANAGER, "2000-01-01T00:00:00Z")
         self.assertEqual([m.kind for m in again], ["escalation"])
 
@@ -318,10 +318,11 @@ class TheDays(unittest.TestCase):
 
 
 class TheCostOfWaiting(unittest.TestCase):
-    def test_a_scenario_says_about_and_the_other_levels_do_not_and_no_saving_has_no_cost(self):
-        self.assertEqual(brief_mod.waiting_cost(120.0, "Scenario", 9), "9 days at $120.00 a month is about $36")
-        self.assertEqual(brief_mod.waiting_cost(120.0, "Expected", 9), "9 days at $120.00 a month is $36")
-        self.assertEqual(brief_mod.waiting_cost(120.0, "Expected", 1), "1 day at $120.00 a month is $4")
+    def test_waiting_has_cost_about_a_thirtieth_of_the_month_for_each_day_and_no_saving_has_no_cost(self):
+        self.assertEqual(brief_mod.waiting_cost(120.0, "Scenario", 9), "Waiting 9 days at $120 a month has cost about $36.")
+        self.assertEqual(brief_mod.waiting_cost(120.0, "Expected", 9), "Waiting 9 days at $120 a month has cost about $36.")
+        self.assertEqual(brief_mod.waiting_cost(120.0, "Expected", 1), "Waiting 1 day at $120 a month has cost about $4.")
+        self.assertEqual(brief_mod.waiting_cost(120.0, "Expected", 0), "Waiting has cost less than $4.00 so far.")
         for monthly, level in ((None, "Expected"), (0.0, "Expected"), (120.0, "")):
             self.assertEqual(brief_mod.waiting_cost(monthly, level, 9), "")
 
@@ -333,9 +334,9 @@ class TheCostOfWaiting(unittest.TestCase):
         world.tick()
         (letter,) = world.mail.sent_to("mae@example.com")
         self.assertIn("Waiting", letter[2])
-        self.assertIn("7 days, since 2026-11-02", letter[2])
-        self.assertIn("Ada (asked first), 2026-11-05", letter[2])
-        self.assertIn("What waiting has cost", letter[2])
+        self.assertIn("It has waited 7 days, since 2 November.", letter[2])
+        self.assertIn("Ada, asked first, was told on 5 November.", letter[2])
+        self.assertIn("Waiting 7 days at $41.20 a month has cost about $10.", letter[2])
         self.assertEqual(letter[1], "[Meternaut] A decision has waited 7 days")
         self.assertNotIn("disk-p1", letter[1])
 
@@ -413,8 +414,8 @@ class TheWeeklyLetter(unittest.TestCase):
         world.tick()
         (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
         self.assertIn("12 decisions wait for an answer", letter[2])
-        self.assertIn("and 2 more.", letter[2])
-        self.assertEqual(letter[2].count("Waiting 8 days."), 10)
+        self.assertIn("2 more wait on the page.", letter[2])
+        self.assertEqual(letter[2].count("Waiting 8 days at $41.20 a month has cost about $11."), 10)
 
     def test_a_request_that_has_waited_longer_than_a_week_brings_the_letter_and_the_younger_ones_are_in_it_and_no_letter_comes_before(self):
         world = World(managers=False, plans=1)
@@ -428,7 +429,7 @@ class TheWeeklyLetter(unittest.TestCase):
         world.tick()
         (letter,) = [call for call in world.mail.sent_to("cora@example.com") if "for an answer" in call[2]]
         self.assertIn("2 decisions wait for an answer", letter[2])
-        self.assertIn("Waiting 3 days.", letter[2])
+        self.assertIn("Waiting 3 days at $41.20 a month has cost about $4.", letter[2])
 
     def test_a_missing_permission_is_named_to_the_owners_in_the_weekly_letter(self):
         world = World(graph=Graph(managers={A: 403}))
@@ -551,7 +552,7 @@ class TheTold(unittest.TestCase):
         world.tick(2)
         shown = self.shown(world)
         self.assertEqual(shown.told, ())
-        self.assertTrue(shown.pending[0].startswith("Ada (asked first): held: Quiet hours"), shown.pending)
+        self.assertTrue(shown.pending[0].startswith("Ada, asked first, has not been told yet. The message is held. Quiet hours"), shown.pending)
         world.store.settings_put(SettingsRecord(oid=A))
         world.tick()
         shown = self.shown(world)
@@ -560,7 +561,7 @@ class TheTold(unittest.TestCase):
         failing.clock.advance(days=3)
         failing.mail.status = 500
         failing.tick()
-        self.assertEqual(self.shown(failing).pending, ("Ada (asked first): could not be delivered",))
+        self.assertEqual(self.shown(failing).pending, ("Ada, asked first, has not been told yet. The message could not be delivered.",))
 
     def test_the_letter_to_the_next_person_says_that_the_first_message_was_held(self):
         world = World()
@@ -570,9 +571,9 @@ class TheTold(unittest.TestCase):
         world.clock.advance(days=5)
         world.tick(2)
         (letter,) = world.mail.sent_to("mae@example.com")
-        self.assertIn("Ada (asked first): held: Quiet hours", letter[2])
-        self.assertIn("Not told yet", letter[2], "a message that was held is not a message that told somebody, and has a label of its own")
-        self.assertIn("Nobody else yet.", letter[2], "so the line 'Told before' has nobody under it")
+        self.assertIn("Ada, asked first, has not been told yet. The message is held. Quiet hours", letter[2])
+        self.assertNotIn("Ada, asked first, was told", letter[2], "a message that was held is not a message that told somebody")
+        self.assertIn("Nobody else has been told yet.", letter[2], "so the line about who was told has nobody in it")
 
 
 OTHER = "11111111-2222-4333-8444-666666666666"
@@ -1219,7 +1220,8 @@ class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
         world.clock.advance(days=4)
         world.tick(2)
         told, pending = brief_mod.told_lines(world.store.escalations_of("p1"))
-        self.assertEqual(([line.rsplit(", ", 1)[0] for line in told], pending), (["Ada (asked first)", "Mae (the manager)", "Nina (added to the people of the request)"], ()))
+        self.assertEqual((told, pending), (("Ada, asked first, was told on 5 November 2026.", "Mae, the manager, was told on 9 November 2026.",
+                                            "Nina, added to the people of the request, was told on 9 November 2026."), ()))
 
     def test_a_person_who_was_dropped_before_the_step_is_not_told(self):
         world, watch = self.world()

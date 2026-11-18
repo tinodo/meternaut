@@ -421,7 +421,7 @@ class Approval(unittest.TestCase):
         saves = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=80.0, detector="orphan-managed-disk")).text
         self.assertIn("It costs $80.00 a month, about $960 a year.\nNobody has worked out how much of that could be saved.", saves)
         none = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=0.0)).text
-        self.assertIn("Azure shows no cost for this yet.", none)
+        self.assertIn("Azure has not reported a cost for this yet.", none)
         unread = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=None)).text
         self.assertIn("Meternaut could not read what this costs.", unread)
         for text in (none, unread):

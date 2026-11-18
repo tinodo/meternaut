@@ -24,7 +24,7 @@ STATES = (LINES, NONE, FAILED, CURRENCY)
 
 # The words of each state, as the figure of a request says them under "Cost not visible". Said once here, for the page, the letter and the card.
 UNREAD_WORDS = "Meternaut could not read what this costs."
-NO_LINE_WORDS = "Azure shows no cost for this yet."
+NO_LINE_WORDS = "Azure has not reported a cost for this yet."
 ZERO_WORDS = "Cost Management shows no cost for this in the last 30 days."
 FAILED_WORDS = "Meternaut could not read what this costs just now."
 CURRENCY_WORDS = "The cost is not in US dollars, so Meternaut shows no amount."

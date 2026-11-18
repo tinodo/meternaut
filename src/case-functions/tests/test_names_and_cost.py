@@ -97,9 +97,9 @@ class TheFindingAboutASubscription(unittest.TestCase):
 
     def test_the_figure_is_the_whole_bill_and_says_so_and_says_what_it_is_made_of_and_no_total_counts_it(self):
         figure = figures.figure_for([self.brief], [figures.cost_of(self.brief, self.case)])
-        self.assertEqual((figure.state, figure.label, figure.monthly, figure.whole), ("cost", "Costs, saving not measured", 148.95, True))
-        self.assertEqual(figure.note, "All the cost lines of the subscription in the last 30 days. What a change would save was not worked out.")
-        self.assertEqual(figure.made_of, "Made of: Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
+        self.assertEqual((figure.state, figure.label, figure.monthly, figure.whole), ("cost", "Costs", 148.95, True))
+        self.assertEqual(figure.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(figure.made_of, "It is made of Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
         self.assertFalse(figure.counts)
 
     def test_the_page_shows_the_name_the_bill_by_service_a_real_chart_and_the_link_to_cost_analysis(self):
@@ -110,16 +110,17 @@ class TheFindingAboutASubscription(unittest.TestCase):
         self.assertEqual(reply.status, 200)
         card = reply.main.find("section", class_="focus")
         lines = [p.text() for p in card.find_all("p") if "figsub" in p.classes()]
-        self.assertEqual(lines[0], "Costs, saving not measured. $148.95 a month. All the cost lines of the subscription in the last 30 days. What a change would save was not worked out.")
-        self.assertEqual(lines[1], "Made of: Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
+        self.assertEqual(card.find("p", class_="say").text(), "It costs $149 a month, about $1,787 a year.")
+        self.assertEqual(lines[0], "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(lines[1], "It is made of Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
         link = next(a for a in card.find_all("a") if a.text() == "Open in Cost analysis")
         self.assertEqual((link.attrs["href"], link.attrs["rel"]), (analysis_url(SUBSCRIPTION), "noopener"))
-        self.assertIn(f"for subscription {DEV}", card.text())
+        self.assertNotIn("for subscription", link.text())
         (chart,) = [n for n in card.find_all("figure") if "chart" in n.classes()]
         self.assertEqual(len(chart.find_all("path")), 2, "a line and its tint: the daily cost of every line of the subscription")
         self.assertNotIn("Review the resource", reply.content)
         self.assertEqual(reply.headings(1), [f"{PROBLEM}: subscription {DEV}"])
-        self.assertIn(f"Subscription {DEV}.", reply.main.text())
+        self.assertIn(f"subscription {DEV}", reply.main.text())
         outside = reply.main.text().replace(reply.main.find("details").text(), "")
         self.assertNotIn(SUBSCRIPTION, outside, "the id of the subscription is in the details and nowhere else")
 
@@ -132,7 +133,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
         self.assertIn("Nothing is under review.", text, "the bill is not what a change could save, so it is no cost under review")
         self.assertIn("No saving is known yet.", text)
         (row,) = [li for ol in reply.main.find_all("ol", class_="items") for li in ol.children if hasattr(li, "tag")]
-        self.assertIn("$148.95 a month", row.text())
+        self.assertIn("$149 a month", row.text())
         self.assertIsNone(row.find("svg", class_="bar"), "no bar compares it with what a change could save")
         self.assertNotIn("under review.", reply.main.find("div", class_="head").text())
 
@@ -143,7 +144,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
         card_text = " ".join(node["text"] for node in _walk(card) if isinstance(node.get("text"), str))
         for text in (letter.text, card_text):
             self.assertIn(f"subscription {DEV}", text)
-            self.assertIn("Made of: Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.", text)
+            self.assertIn("It is made of Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.", text)
             self.assertNotIn(SUBSCRIPTION, text)
             self.assertNotIn("Review the resource", text)
             self.assertNotIn("cost-analysis", text.lower())

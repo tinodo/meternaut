@@ -293,8 +293,8 @@ class WhenCostManagementSaysTooManyRequests(unittest.TestCase):
         case = make_case(cost_usd_30d=ranked.cost_usd_30d, cost_state=ranked.cost_state, saving_usd_month=None, resource_id=lead.resource_id)
         made = brief_mod.build_brief(case, None, now=dt.datetime(2026, 11, 13, tzinfo=dt.timezone.utc))
         figure = figures.figure_for([made], [figures.cost_of(made, case)])
-        self.assertEqual((figure.state, figure.monthly, figure.note), ("none", None, "Cost could not be read just now."))
-        self.assertEqual(figures.series_reason(made, case), "Cost could not be read just now. The next search reads it again.")
+        self.assertEqual((figure.state, figure.monthly, figure.note), ("none", None, "Meternaut could not read what this costs just now."))
+        self.assertEqual(figures.series_reason(made, case), "Meternaut reads the cost again at its next search.")
 
 
 class SimpleEstate:

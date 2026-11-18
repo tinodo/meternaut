@@ -125,6 +125,7 @@ footer details p{margin-top:var(--spacingXS);max-width:46rem}
 .head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--spacingS) var(--spacingXL);margin:0 0 var(--spacingXL)}
 .head h1{margin:0}
 .head p{margin:var(--spacingXS) 0 0;color:var(--colorNeutralForeground2)}
+.meta{color:var(--colorNeutralForeground2)}
 .seg{display:inline-flex;align-items:center;border:var(--strokeWidthThin) solid var(--colorNeutralStrokeAccessible);border-radius:var(--borderRadiusMedium);overflow:hidden}
 .seg>span{padding:0 var(--spacingM);color:var(--colorNeutralForeground2)}
 .seg a{display:inline-flex;align-items:center;min-height:2rem;padding:0 var(--spacingM);border-left:var(--strokeWidthThin) solid var(--colorNeutralStroke1);color:var(--colorNeutralForeground1);font-weight:var(--fontWeightSemibold);text-decoration:none}

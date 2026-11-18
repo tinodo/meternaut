@@ -16,7 +16,7 @@ from cases.precheck import Precheck
 APPROVE = "Approve"
 NOT_NOW = "Meternaut will not change this disk now"
 TAG_REASON = "It no longer carries the test tag meternaut-planted, so it cannot be told apart from a real disk. Nothing was changed."
-NEXT = ("What happens next: Meternaut looks again every time this page opens, and offers Approve again when the change can be made. "
+NEXT = ("Meternaut looks again every time this page opens, and offers Approve again when the change can be made. "
         "Until then you can decline this request, decide later, or ask or tell.")
 COULD_NOT_LOOK = "Meternaut could not look at the disk just now, so it cannot say whether the change can be made."
 LOOKS_AGAIN = "It looks again right before it acts, and it changes nothing if a check fails."

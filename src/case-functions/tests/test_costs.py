@@ -102,17 +102,17 @@ class WhatACostIsMadeOf(unittest.TestCase):
 
 class TheWordsOfEachState(unittest.TestCase):
     def test_each_state_says_what_it_is_in_plain_words(self):
-        self.assertEqual(costs.state_words(costs.NONE), "Azure has no cost line for this yet.")
-        self.assertEqual(costs.state_words(costs.FAILED), "Cost could not be read just now.")
-        self.assertEqual(costs.state_words(costs.CURRENCY), "The cost lines are not in US dollars.")
-        self.assertEqual(costs.state_words(""), "No cost line was read yet.")
+        self.assertEqual(costs.state_words(costs.NONE), "Azure has not reported a cost for this yet.")
+        self.assertEqual(costs.state_words(costs.FAILED), "Meternaut could not read what this costs just now.")
+        self.assertEqual(costs.state_words(costs.CURRENCY), "The cost is not in US dollars, so Meternaut shows no amount.")
+        self.assertEqual(costs.state_words(""), "Meternaut could not read what this costs.")
         self.assertEqual(costs.state_words(costs.LINES), "Cost Management shows no cost for this in the last 30 days.")
-        self.assertEqual(costs.state_words("unheard of"), "No cost line was read yet.")
+        self.assertEqual(costs.state_words("unheard of"), "Meternaut could not read what this costs.")
 
     def test_a_row_that_stands_for_several_says_these(self):
-        self.assertEqual(costs.state_words(costs.NONE, many=True), "Azure has no cost line for these yet.")
+        self.assertEqual(costs.state_words(costs.NONE, many=True), "Azure has not reported a cost for these yet.")
         self.assertEqual(costs.state_words(costs.LINES, many=True), "Cost Management shows no cost for these in the last 30 days.")
-        self.assertEqual(costs.state_words(costs.FAILED, many=True), "Cost could not be read just now.")
+        self.assertEqual(costs.state_words(costs.FAILED, many=True), "Meternaut could not read what these cost just now.")
 
     def test_a_read_that_failed_is_told_before_a_cost_of_nothing(self):
         self.assertEqual(costs.worst_state([costs.NONE, costs.FAILED]), costs.FAILED)

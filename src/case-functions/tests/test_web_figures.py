@@ -114,7 +114,7 @@ class TheFigure(unittest.TestCase):
         self.assertEqual((cost.state, cost.label, cost.monthly, cost.level), ("cost", "Costs", 15.0, ""))
         self.assertEqual(cost.note, "Nobody has worked out how much of that could be saved.")
         free = figures.figure_of([self.saving(None)], [0.0])
-        self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "Azure shows no cost for this yet."))
+        self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "Azure has not reported a cost for this yet."))
         unread = figures.figure_of([self.saving(None)], [None])
         self.assertEqual((unread.state, unread.note), ("none", "Meternaut could not read what this costs."))
         self.assertEqual(figures.figure_of([], []).state, "none")
@@ -142,7 +142,7 @@ class TheStatesOfACostThatShowsNone(unittest.TestCase):
     def test_each_state_has_its_own_words_and_the_figure_is_none_in_all_of_them(self):
         said = {state: self.none(state, costs=[0.0 if state in ("none", "lines") else None]) for state in ("none", "lines", "failed", "currency", "")}
         self.assertEqual({state: (found.state, found.monthly, found.read, found.note) for state, found in said.items()}, {
-            "none": ("none", None, "none", "Azure shows no cost for this yet."),
+            "none": ("none", None, "none", "Azure has not reported a cost for this yet."),
             "lines": ("none", None, "lines", "Cost Management shows no cost for this in the last 30 days."),
             "failed": ("none", None, "failed", "Meternaut could not read what this costs just now."),
             "currency": ("none", None, "currency", "The cost is not in US dollars, so Meternaut shows no amount."),
@@ -152,7 +152,7 @@ class TheStatesOfACostThatShowsNone(unittest.TestCase):
         self.assertEqual(self.none("none", "failed").read, "failed")
         self.assertEqual(self.none("none", "").read, "", "a cost that was not read is told before one that Azure has no line for")
         self.assertEqual(self.none("lines", "none", costs=[0.0, 0.0]).read, "none")
-        self.assertEqual(self.none("none", "none", costs=[0.0, 0.0]).note, "Azure shows no cost for these yet.")
+        self.assertEqual(self.none("none", "none", costs=[0.0, 0.0]).note, "Azure has not reported a cost for these yet.")
 
     def test_a_cost_that_has_lines_is_a_cost_and_the_estimate_is_never_part_of_it(self):
         found = figures.figure_of([self.NOTHING], [12.5], reads=["lines"], estimate=self.ESTIMATE)

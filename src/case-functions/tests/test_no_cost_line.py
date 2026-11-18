@@ -86,7 +86,7 @@ class TheDiskThatAzureHasNoLineFor(unittest.TestCase):
         self.assertEqual((brief.cost_state, brief.saving.monthly, brief.saving.why_none), ("none", None, NO_LINE_WORDS))
         self.assertEqual(brief.estimate, estimate.Estimate(1.54, "S4", "2026-11-12"))
         cost = next(fact for fact in brief.facts if fact.label == "Cost, last 30 days")
-        self.assertEqual(cost.value, "Azure shows no cost for this yet")
+        self.assertEqual(cost.value, "Azure has not reported a cost for this yet")
         self.assertNotEqual(brief.cost, 1.54)
         self.assertEqual(figures.figure_for([brief], [figures.cost_of(brief, self.case)]).monthly, None)
 

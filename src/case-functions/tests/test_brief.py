@@ -392,7 +392,7 @@ class TheFacts(unittest.TestCase):
 
     def test_a_case_without_a_cost_figure_has_no_cost_row(self):
         self.assertNotIn("Cost, last 30 days", [r.label for r in facts_of(make_case(cost_usd_30d=None))])
-        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["Azure shows no cost for this yet"],
+        self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0)) if r.label == "Cost, last 30 days"], ["Azure has not reported a cost for this yet"],
                          "a cost line that Azure does not have is never shown as $0.00")
         self.assertEqual([r.value for r in facts_of(make_case(cost_usd_30d=0.0, cost_state="lines")) if r.label == "Cost, last 30 days"], ["$0.00"], "cost lines that cost nothing are a cost of nothing")
 
@@ -426,7 +426,7 @@ class TheSaving(unittest.TestCase):
         none = brief_of(make_case(saving_usd_month=None, cost_usd_30d=None), make_plan(saving_usd_month=None)).saving
         self.assertEqual((none.monthly, none.level, none.why_none), (None, "", "Meternaut could not read what this costs."))
         free = brief_of(make_case(cost_usd_30d=0.0), make_plan(saving_usd_month=0)).saving
-        self.assertEqual(free.why_none, "Azure shows no cost for this yet.")
+        self.assertEqual(free.why_none, "Azure has not reported a cost for this yet.")
         nothing = brief_of(make_case(cost_usd_30d=0.0, cost_state="lines"), make_plan(saving_usd_month=0)).saving
         self.assertEqual(nothing.why_none, "Cost Management shows no cost for this in the last 30 days.")
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving

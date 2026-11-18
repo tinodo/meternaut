@@ -253,7 +253,7 @@ class TheFigureInWords(unittest.TestCase):
         self.assertEqual(found.short, "It costs $4,297 a year; nobody has worked out the saving.")
 
     def test_nothing_that_can_be_shown_says_why_and_shows_no_year_and_no_month(self):
-        for cost, why in ((0.0, "Azure shows no cost for this yet."), (None, "Meternaut could not read what this costs.")):
+        for cost, why in ((0.0, "Azure has not reported a cost for this yet."), (None, "Meternaut could not read what this costs.")):
             with self.subTest(cost=cost):
                 found = self.of(saving=None, cost=cost)
                 self.assertEqual((found.state, found.monthly, found.lead, found.note, found.short), ("none", None, why, "", why))

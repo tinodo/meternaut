@@ -222,7 +222,7 @@ class TheDecisionsPage(unittest.TestCase):
         reply = console.get("/")
         found = {row.find("span", class_="t").text(): spans(row.find("span", class_="impact cost") or row.find("span", class_="impact none")) for row in rows(reply, "look")}
         self.assertEqual(found, {"Look at the disk d0: it may be larger than its use needs": ["Costs", "$36 a year", "$3.00 a month"],
-                                 "Look at the disk d1: it may be larger than its use needs": ["Cost not visible", "—", "Azure shows no cost for this yet."],
+                                 "Look at the disk d1: it may be larger than its use needs": ["Cost not visible", "—", "Azure has not reported a cost for this yet."],
                                  "Look at the disk d2: it may be larger than its use needs": ["Cost not visible", "—", "Meternaut could not read what this costs."]})
         self.assertNotIn("No figure", reply.content)
 
@@ -748,7 +748,7 @@ class TheRequestPage(unittest.TestCase):
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
         self.assertEqual((classes, figure, sub), (["say"], "Meternaut could not read what this costs.", ""))
         storage(console, 1, cost=lambda n: 0.0)
-        self.assertEqual(self.stake(console.get("/ok/plan5000"))[1], "Azure shows no cost for this yet.")
+        self.assertEqual(self.stake(console.get("/ok/plan5000"))[1], "Azure has not reported a cost for this yet.")
 
     def test_a_reason_of_the_findings_own_takes_the_place_of_the_general_one(self):
         console = seeded()

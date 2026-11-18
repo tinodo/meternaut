@@ -190,7 +190,8 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertIn("An application or service identity changed it on 1 Nov 2026 UTC: an automation may manage it and make it again.", found["reasons"])
         rows = {row[0]: row[1] for row in found["rows"]}
         self.assertEqual(rows["Things that mention its addresses"], "routetables (1), networksecuritygroups (2)")
-        self.assertTrue(rows["Last change"].startswith("1 Nov 2026 UTC, by an application or service identity (id "), rows["Last change"])
+        self.assertTrue(rows["Last change"].startswith("1 Nov 2026 UTC, by an application; "), rows["Last change"])
+        self.assertNotRegex(rows["Last change"], r"[0-9a-f]{8}-[0-9a-f]{4}-", "the id of the application is in the Details and not in this table")
         self.assertTrue(rows["Last change"].endswith("; 1 change in the 90 days before Meternaut read it"), rows["Last change"])
 
     def test_a_read_that_failed_is_never_none_so_the_verdict_is_never_safe_and_the_line_says_what_was_not_checked(self):
@@ -454,8 +455,8 @@ class WhatAPersonReads(unittest.TestCase):
         rows = {row.find("th").text(): [cell.text() for cell in row.find_all("td")] for row in table.find_all("tr")[1:]}
         self.assertEqual(rows["Traffic in the 30 days before it was read"][1], "Azure Monitor")
         self.assertEqual(len(rows), 8)
-        self.assertEqual(reply.main.find("p", class_="chips").text(), "Medium risk if you act on it Low confidence Answering changes nothing in Azure")
-        self.assertEqual(reply.facts()["What could go wrong"], f"If you act on it: {brief.SAFE_RISK} Risk: medium.")
+        self.assertEqual(reply.main.find("p", class_="chips").text(), "Medium risk if you act Low confidence Answering changes nothing in Azure")
+        self.assertIn(f"{brief.ACTING}{brief.SAFE_RISK}", reply.main.text())
         self.assertEqual(reply.headings(1), ["Check whether the private endpoint pe-apim-demo is still used"], "a shared kind of resource is never asked to be deleted, whatever the verdict")
 
     def test_the_risk_of_acting_follows_the_verdict_and_never_the_risk_of_answering(self):
@@ -463,12 +464,12 @@ class WhatAPersonReads(unittest.TestCase):
             with self.subTest(verdict=verdict):
                 case = case_with(digest_of(verdict))
                 b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-                self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, f"If you act on it: {words}", verdict))
-                self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk if you act on it")
+                self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, f"{brief.ACTING}{words}", verdict))
+                self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk{brief.IF_ACTED}")
                 self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", "If you act on it: " + brief.UNPROVEN + " " + brief.SHARED_RISK))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", brief.ACTING + brief.UNPROVEN + " " + brief.SHARED_RISK))
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, label in (("safe", "Safe to remove"), ("keep", "Do not remove"), ("check", "Check first")):
@@ -703,7 +704,7 @@ class AnOpenRequestToDeleteAResourceWhoseImpactNobodyCheckedIsTakenBack(unittest
         (held,) = [e for e in events if e["type"] == "case.held"]
         self.assertEqual((held["caseId"], held["reason"]), (old_case.case_id, IMPACT_NOT_CHECKED))
         shown = brief.build_brief(kept, after, now=WEB_NOW)
-        self.assertEqual(shown.outcome.lines, ("Meternaut took this request back: nobody checked what depends on the resource.", "Nothing was changed in Azure."))
+        self.assertEqual(shown.outcome.lines, (brief.TAKEN_BACK["impact"], "Nothing was changed in Azure."))
         new_case, new_plan = made["ip-checked"]
         self.assertEqual(extras.store.plan_get(new_plan.plan_id).state, "open", "a request whose impact was checked to the end stays")
 
