@@ -779,6 +779,17 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertIn("/ok/p1", " ".join(history.links()))
         self.assertEqual(history.content.count("1 request to look at a finding"), 0)
 
+    def test_requests_that_the_bill_closed_before_the_window_of_the_feed_do_not_take_the_places_of_the_decisions_that_are_in_it(self):
+        self.decided(5)
+        for n in range(41):
+            plan = self.world.ask(f"v{n}")
+            self.world.store.plan_put(replace(plan, state="expired", created_at=stamp(self.world.now - 70 * DAY), expires_at=stamp(self.world.now - 40 * DAY),
+                                              preconditions={**plan.preconditions, "takenBack": "verified"}))
+        links = " ".join(self.console.get("/history").links())
+        self.assertEqual([f"/ok/d{n}" in links for n in range(5)], [True] * 5, "the five answers of the last days are all there")
+        self.assertIn("/ok/p1", links, "so is the request that the bill closed today")
+        self.assertEqual([n for n in range(41) if f"/ok/v{n}" in links], [], "and none of those that were closed before the window")
+
     def test_the_list_by_the_day_of_closing_says_when_the_requests_that_the_bill_closed_cannot_be_read(self):
         def refuse():
             raise RuntimeError("the store is down")

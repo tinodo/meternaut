@@ -101,8 +101,8 @@ def _events(ctx: Ctx, since: str) -> Feed:
     quiet: dict[str, list[str]] = {}  # the advice that Meternaut took back, for each day: one line, not one for each, and none of them takes a place of the plans that are read
     mine = []
     bill = {plan.plan_id for plan in closed}
-    for plan in [*closed, *(plan for plan in plans if plan.plan_id not in bill)]:  # a request that the bill closed is listed on the day that it was closed, however old it is
-        if answerable(ctx, plan) and (plan.created_at >= old or plan.plan_id in bill):
+    for plan in [*closed, *(plan for plan in plans if plan.plan_id not in bill)]:  # a request that the bill closed is listed on the day that it was closed, however old it is, and only in the window of the feed
+        if answerable(ctx, plan) and (plan.expires_at >= since if plan.plan_id in bill else plan.created_at >= old):
             if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
                 continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
             if plan.family == "advise" and plan.state == "expired" and taken_back(plan) != "verified":
