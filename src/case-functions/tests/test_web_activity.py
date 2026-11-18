@@ -103,7 +103,7 @@ class TheLatestInvestigation(unittest.TestCase):
         first, dropped, third = table.rows
         self.assertEqual(first["What it says"], "Nothing used these in the window. No recorded usage. Proposal: delete.")
         self.assertEqual((first["How sure (0 to 1)"], first["Resources"], first["The second AI"]), ("0.85", "4", "Agrees"))
-        self.assertEqual(first["What became of it"], "3 resources: a request was made 1 resource: held back, managed by an automation Left out: 1 resource held back by a guard")
+        self.assertEqual(first["What became of it"], "3 resources: a request was made 1 resource: a request was made; an automation manages the resource Left out: 1 resource held back by a guard")
         self.assertEqual((dropped["What it says"], dropped["Resources"], dropped["The second AI"]),
                          ("Looks unusual. Another reason. Proposal: investigate.", "6 listed", "Not asked: the finding was dropped before it"))
         self.assertEqual(dropped["What became of it"], "Dropped: no resource of it was left (6 resources that no tool showed)")

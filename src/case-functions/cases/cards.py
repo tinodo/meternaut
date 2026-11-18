@@ -130,8 +130,8 @@ def _learned(brief: Brief) -> list[dict]:
 
 
 def _heads_up(brief: Brief) -> list[dict]:
-    """The warning about a resource that something that runs by itself changes: one line, in the words of the page (brief.heads_up)."""
-    return [_block("heads-up", f"**{HEADS_UP}:** {md(brief.heads_up, 320)}")] if brief.heads_up else []
+    """The warning about a resource that something that runs by itself changes: one line, in the words of the page (brief.heads_up), which code wrote."""
+    return [_block("heads-up", f"**{HEADS_UP}:** {gentle(brief.heads_up, 320)}")] if brief.heads_up else []
 
 
 def _facts(brief: Brief) -> list[dict]:

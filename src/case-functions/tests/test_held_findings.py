@@ -38,8 +38,8 @@ def days_ago(days: float) -> str:
 
 
 def automation(**more):
-    """An application or service changed the resource two days ago: the resource is managed by an automation."""
-    base = dict(case_id="k-unchecked", status="needs_human", recommendation="investigate", plan_id=None,
+    """An application or service changed the resource two days ago: the resource is managed by an automation (it is asked about, with a warning: it is held back for no reason)."""
+    base = dict(case_id="k-automation", status="needs_human", recommendation="investigate", plan_id=None,
                 owner={"lookedUp": True, "automatedAt": days_ago(2), "tagOwner": "platform-team", "tagName": "owner", "changedBy": "alice@example.com", "changedAt": days_ago(1)})
     return make_advice_case(**{**base, **more})
 

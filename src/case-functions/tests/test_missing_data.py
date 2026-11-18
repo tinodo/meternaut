@@ -1,4 +1,4 @@
-"""Missing data is not zero, a resource that others share is never to be deleted, a resource that an automation manages is held back, and advice says the risk of acting apart from the answer.
+"""Missing data is not zero, a resource that others share is never to be deleted, a resource that an automation manages is asked about with a warning, and advice says the risk of acting apart from the answer.
 
 AGENTS.md rules 26 and 30: a model's claim is checked by code, and what a person reads says no more than the tools showed. Everything here is invented; a fake of Azure answers.
 """
@@ -17,7 +17,7 @@ from test_web_support import page_of, walk_blocks
 from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case
 
 from cases import brief, cards, investigate, learning, letters, stake
-from cases.approvals import MANAGED_BY_AUTOMATION, NOT_CHECKED, RULES_CHANGED
+from cases.approvals import NOT_CHECKED, RULES_CHANGED
 from cases.brief import CHECK_FIRST, CHECK_FIRST_SHORT, HELD_SHARED, HELD_UNPROVEN, NOT_LOOKED_UP, NOT_MEASURED
 from cases.memory_store import stamp
 
@@ -203,7 +203,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         self.assertEqual((info.risk.level, info.headline.startswith("Check whether")), ("high", True))
 
 
-class AnAutomationsResourceIsHeldBack(unittest.TestCase):
+class AnAutomationsResourceIsAskedAboutWithAWarning(unittest.TestCase):
     GUID = "aaaaaaaa-1111-4222-8333-444444444444"
 
     @staticmethod
@@ -217,36 +217,40 @@ class AnAutomationsResourceIsHeldBack(unittest.TestCase):
         h.go()
         return h
 
-    def test_a_change_within_14_days_by_an_application_or_service_identity_holds_the_finding_back_and_counts_it(self):
+    def test_a_change_within_14_days_by_an_application_or_service_identity_makes_an_ordinary_request_that_carries_the_warning(self):
         h = self.watch([self.written(2, self.GUID)])
-        self.assertEqual((h.result.held_back, h.result.said_nothing, h.result.cases), ({"automation": 1}, 0, 1))
-        self.assertEqual(h.store.plans_open(), [], "no request is made")
+        self.assertEqual((h.result.held_back, h.result.said_nothing, h.result.cases), ({}, 0, 1), "nothing is held back")
+        (plan,) = h.store.plans_open()
         (case,) = h.store.cases_recent()
-        self.assertEqual((case.status, brief.held_reason(case, NOW), case.owner["lookedUp"]), ("proposed", "automation", True))
+        self.assertEqual((plan.state, plan.family, brief.held_reason(case, NOW), case.owner["lookedUp"]), ("open", "advise", "", True))
         self.assertTrue(case.owner["automatedAt"].startswith((NOW - dt.timedelta(days=2)).strftime("%Y-%m-%d")))
-        (held,) = h.of("case.held")
-        self.assertEqual((held["caseId"], held["reason"], held["resourceName"]), (case.case_id, "held back: managed by an automation", "thing-1"))
-        self.assertEqual(held["reason"], MANAGED_BY_AUTOMATION)
+        self.assertEqual(plan.preconditions["automated"], case.owner["automatedAt"], "the request keeps when it was changed, so that every channel says the same words")
+        self.assertEqual(h.of("case.held"), [], "no line says that it was held back")
+        self.assertEqual(brief.build_brief(case, plan, now=NOW).heads_up, brief.automation_note(case, NOW))
 
-    def test_a_change_by_a_person_by_meternaut_itself_or_longer_ago_than_14_days_holds_nothing_back(self):
+    def test_a_change_by_a_person_by_meternaut_itself_or_longer_ago_than_14_days_has_no_warning(self):
         own = "99999999-8888-7777-6666-555555555555"  # AZURE_CLIENT_ID of the app in the tests
         for label, events in (("a person", [self.written(1, "alice@example.com")]), ("Meternaut itself", [self.written(1, own)]), ("15 days ago", [self.written(15, self.GUID)]),
                               ("no change in the log", [])):
             with self.subTest(case=label):
                 h = self.watch(events)
-                self.assertEqual((h.result.held_back, len(h.store.plans_open()), h.of("case.held")), ({}, 1, []))
+                (plan,) = h.store.plans_open()
+                self.assertEqual((h.result.held_back, "automated" in plan.preconditions, h.of("case.held")), ({}, False, []))
 
     def test_a_person_s_edit_yesterday_does_not_hide_the_write_of_an_automation_three_days_ago(self):
         h = self.watch([self.written(1, "alice@example.com"), self.written(3, self.GUID)])
-        self.assertEqual((h.result.held_back, h.store.plans_open()), ({"automation": 1}, []))
+        (plan,) = h.store.plans_open()
         (case,) = h.store.cases_recent()
         self.assertEqual((case.owner["changedBy"], case.owner["automatedAt"][:10]), ("alice@example.com", (NOW - dt.timedelta(days=3)).strftime("%Y-%m-%d")))
+        self.assertEqual(plan.preconditions["automated"], case.owner["automatedAt"])
+        self.assertIn("changed it 3 days ago", brief.build_brief(case, plan, now=NOW).heads_up)
 
-    def test_waste_that_meternaut_planted_is_never_held_back_for_the_change_that_its_own_deploy_made(self):
+    def test_waste_that_meternaut_planted_gets_no_warning_for_the_change_that_its_own_deploy_made(self):
         planted = resource(1, resource_id=f"{RG}/{GROUP}/providers/Microsoft.Compute/disks/planted-disk-1", resource_type="microsoft.compute/disks", name="planted-disk-1", resource_group=GROUP,
                            tags={"meternaut-planted": "demo"}, cost_usd_30d=70.0)
         h = self.watch([self.written(1, self.GUID)], [planted])
-        self.assertEqual((h.result.held_back, len(h.store.plans_open())), ({}, 1))
+        (plan,) = h.store.plans_open()
+        self.assertEqual((h.result.held_back, "automated" in plan.preconditions), ({}, False))
 
     def test_a_lookup_that_could_not_be_made_holds_a_deletion_back_and_says_that_nobody_checked(self):
         for label, arrange in (("the Activity Log refuses", lambda h: setattr(h.arm, "log_fails", True)), ("the call breaks", lambda h: setattr(h.arm, "activity_events", None))):
@@ -295,19 +299,15 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
     def taken(self, case, plan):
         return self.store.plan_get(plan.plan_id), self.store.case_get(case.case_id)
 
-    def test_the_request_of_a_finding_that_an_automation_manages_is_closed_and_said_and_counted_with_its_own_reason(self):
+    def test_the_request_of_a_finding_that_an_automation_manages_is_kept_open_and_is_no_hold(self):
         case, plan = self.open_request("Check whether the private endpoint pe-apim-demo is still used",
                                        owner={"lookedUp": True, "automatedAt": stamp(self.clock() - dt.timedelta(days=2))})
         summary, events, _ = self.watch()
         after, kept = self.taken(case, plan)
-        self.assertEqual((after.state, self.store.plans_open()), ("expired", []))
-        (held,) = [e for e in events if e["type"] == "case.held"]
-        self.assertEqual((held["caseId"], held["reason"]), (case.case_id, "held back: managed by an automation"))
-        self.assertEqual((summary.held, self.store.runs_recent()[0].held), (1, 1))
-        notes = [e["note"] for e in events if e["type"] == "run.note"]
-        self.assertIn("1 finding held back: managed by an automation", notes)
-        self.assertFalse([note for note in notes if note.endswith("held back: nothing to say")], "it is not a finding that says nothing")
-        self.assertEqual((after.preconditions["takenBack"], "taken" in kept.learned), ("automation", False), "the plan keeps why, and the case is not touched")
+        self.assertEqual((after.state, self.store.plans_open()), ("open", [after]), "it stays: an automation is a warning, and nothing is taken back for it")
+        self.assertEqual(([e for e in events if e["type"] == "case.held"], summary.held, self.store.runs_recent()[0].held), ([], 0, 0))
+        self.assertNotIn("takenBack", after.preconditions)
+        self.assertEqual(brief.taken_back(after, kept), "")
 
     def test_a_request_that_asks_to_delete_on_less_than_the_rules_ask_for_now_is_taken_back_and_the_person_is_told_why(self):
         case, plan = self.open_request("Consider deleting the private endpoint pe-apim-demo in group rg-platform", dict(saving_usd_month=7.2), recommendation="delete", saving_usd_month=7.2,
@@ -430,17 +430,27 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         from test_web_support import Console
 
         console = Console()
-        recent = stamp(WEB_NOW - dt.timedelta(days=1))
-        console.store.case_put(make_advice_case(case_id="case4000", resource_id=f"{PE}-a", resource_name="endpoint-a", plan_id=None, recommendation="investigate",
-                                                owner={"lookedUp": True, "automatedAt": recent}))
+        console.store.case_put(make_advice_case(case_id="case4000", resource_id=f"{PE}-a", resource_name="endpoint-a", plan_id=None, recommendation="delete", owner={}))
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
-        self.assertIn("1 finding is held back because an automation manages the resource, because nobody has looked up who changed it, or because what depends on it was not checked.", content)
+        self.assertIn("1 finding is held back because nobody has looked up who changed the resource, or because what depends on it was not checked.", content)
         self.assertNotIn("No measurement backs", content, "this one is held for another reason, and the page does not say that nothing measured backs it")
         console.store.case_put(make_advice_case(case_id="case4001", resource_id=f"{PE}-b", resource_name="endpoint-b", plan_id=None, recommendation="investigate", owner={"lookedUp": True}))
         content = console.get("/").content
         self.assertIn("Held back: 2 findings", content)
-        self.assertIn("1 finding is held back because an automation manages the resource", content)
+        self.assertIn("1 finding is held back because nobody has looked up who changed the resource", content)
+        self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+
+    def test_a_finding_that_an_automation_manages_is_held_by_no_rule(self):
+        from test_web_support import Console
+
+        console = Console()
+        recent = stamp(WEB_NOW - dt.timedelta(days=1))
+        console.store.case_put(make_advice_case(case_id="case4002", resource_id=f"{PE}-c", resource_name="endpoint-c", plan_id=None, recommendation="investigate",
+                                                owner={"lookedUp": True, "automatedAt": recent}))
+        content = console.get("/").content
+        self.assertIn("Held back: 1 finding", content)
+        self.assertNotIn("because an automation manages the resource", content)
         self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
 
     def test_the_count_of_what_a_rule_holds_is_made_from_the_findings_that_are_held_and_never_exceeds_them(self):
@@ -448,14 +458,13 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         from test_web_support import Console, make_advice
 
         console = Console()
-        recent = stamp(WEB_NOW - dt.timedelta(days=1))
         for letter in ("a", "b"):
-            console.store.case_put(make_advice_case(case_id=f"case40{letter}", resource_id=f"{PE}-{letter}", resource_name=f"endpoint-{letter}", plan_id=f"plan40{letter}", recommendation="investigate",
-                                                    owner={"lookedUp": True, "automatedAt": recent}))
+            console.store.case_put(make_advice_case(case_id=f"case40{letter}", resource_id=f"{PE}-{letter}", resource_name=f"endpoint-{letter}", plan_id=f"plan40{letter}", recommendation="delete",
+                                                    owner={}))
         console.store.plan_put(make_advice(plan_id="plan40b", case_id="case40b", resource_id=f"{PE}-b", state="declined", created_at=stamp(WEB_NOW - dt.timedelta(days=2))))
         ctx = SimpleNamespace(store=console.store, now=WEB_NOW)
         self.assertEqual((home.held_count(ctx), home.held_by_rules(ctx)), (1, 1), "the finding that somebody answered lately is neither held nor held by a rule")
-        self.assertIn("1 finding is held back because an automation manages the resource", console.get("/").content)
+        self.assertIn("1 finding is held back because nobody has looked up who changed the resource", console.get("/").content)
 
 
 class TheWordsAboutWhatWasNotMeasured(unittest.TestCase):
