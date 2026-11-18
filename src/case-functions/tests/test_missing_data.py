@@ -442,12 +442,12 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
         self.assertIn("1 finding is held back because nobody has looked up who changed the resource, or because what depends on it was not checked.", content)
-        self.assertNotIn("No measurement backs", content, "this one is held for another reason, and the page does not say that nothing measured backs it")
+        self.assertNotIn("Nobody is asked about", content, "this one is held for another reason, and the page does not say that no saving could be worked out for it")
         console.store.case_put(make_advice_case(case_id="case4001", resource_id=f"{PE}-b", resource_name="endpoint-b", plan_id=None, recommendation="investigate", owner={"lookedUp": True}))
         content = console.get("/").content
         self.assertIn("Held back: 2 findings", content)
         self.assertIn("1 finding is held back because nobody has looked up who changed the resource", content)
-        self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+        self.assertIn("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, or the places for requests are full.", content)
 
     def test_a_finding_that_an_automation_manages_is_held_by_no_rule(self):
         from test_web_support import Console
@@ -459,7 +459,7 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
         self.assertNotIn("because an automation manages the resource", content)
-        self.assertIn("No measurement backs it yet, or the places for requests are full.", content)
+        self.assertIn("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, or the places for requests are full.", content)
 
     def test_the_count_of_what_a_rule_holds_is_made_from_the_findings_that_are_held_and_never_exceeds_them(self):
         from cases.web import home
