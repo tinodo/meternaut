@@ -19,7 +19,7 @@ from .detectors import Context
 from .toolbox import ERRORS, TOOLS, type_word
 
 FLOOR_PERCENT = 95  # the dearest kinds that together make this share of the cost of the last 30 days have a beat of their own; the cheaper ones are left to the last beat
-BEAT_KINDS = 3  # the most kinds of one beat, of one service when they belong together
+BEAT_KINDS = 2  # the most kinds of one beat: the dearest one that no beat has, and at most one more of the same service (it was three: the dearest things then had a third of a session)
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day

@@ -37,11 +37,12 @@ class TheFocusThatCodeChooses(unittest.TestCase):
         self.assertEqual([(beat.number, beat.of) for beat in plan], [(n, 6) for n in range(1, 7)])
         self.assertEqual([beat.rest for beat in plan], [0] * 6)
 
-    def test_a_kind_that_belongs_to_the_same_service_as_a_dearer_one_goes_with_it_and_a_beat_holds_three_kinds_at_most(self):
+    def test_a_kind_that_belongs_to_the_same_service_as_a_dearer_one_goes_with_it_and_a_beat_holds_two_kinds_at_most(self):
         costs = {f"contoso.compute/k{n}": 100.0 - n for n in range(5)} | {"fabrikam.store/s": 50.0}
-        plan = beats.plan(costs, 0.0, 6)
-        self.assertEqual(kinds_of(plan), [["contoso.compute/k0", "contoso.compute/k1", "contoso.compute/k2"], ["contoso.compute/k3", "contoso.compute/k4"], ["fabrikam.store/s"]])
-        self.assertEqual([beat.number for beat in plan], [1, 2, 3])
+        plan = beats.plan(costs, 0.0, 8)
+        self.assertEqual(kinds_of(plan), [["contoso.compute/k0", "contoso.compute/k1"], ["contoso.compute/k2", "contoso.compute/k3"], ["contoso.compute/k4"], ["fabrikam.store/s"]])
+        self.assertEqual([beat.number for beat in plan], [1, 2, 3, 4])
+        self.assertEqual(beats.BEAT_KINDS, 2, "the dearest kind and at most one more of its service: the dearest things get more of a session")
 
     def test_the_kinds_below_the_floor_are_left_to_the_last_beat_when_the_plan_has_room_for_one(self):
         plan = beats.plan(ESTATE, UNOWNED, 8)
@@ -566,6 +567,17 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual(salvage(), beats.SALVAGE_SECONDS)
         ticker.now = 1000 + 960 - 20
         self.assertEqual(salvage(), 0.0, "less than 40 seconds are left in the time of the beats: no last request")
+
+    def test_a_last_request_that_failed_is_a_note_with_its_word_and_the_note_of_a_cut_off_beat_says_by_what_it_was_cut(self):
+        failure = FoundryError("Foundry run stopped: the time allowed (170 seconds) was used up after 3 tool calls")
+        failure.partial = AgentRun(text="", salvage_failed="BadRequest")
+        foundry = BeatFoundry([script(one("r1"), error=failure), script(one("r3"), salvaged="time"), script(one("r5"), salvaged="calls", refused=(("tool_one", {}),))])
+        h = rig(None, foundry=foundry)
+        h.go()
+        self.assertIn("beat 1: the last request for the answer of beat 1 failed: BadRequest", h.notes)
+        self.assertEqual([n for n in h.notes if "gave its answer when it was asked once more" in n],
+                         ["beat 2: the investigator was cut off by its time and gave its answer when it was asked once more",
+                          "beat 3: the investigator was cut off by its calls and gave its answer when it was asked once more"])
 
     def test_the_way_back_is_the_old_behaviour_one_open_session_has_480_seconds_for_tool_calls_whatever_the_seconds_of_the_investigation_are(self):
         for seconds in (1080, 600):

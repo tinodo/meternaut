@@ -1635,7 +1635,7 @@ jobs:
       - name: Start one Watch and read its History
         id: watch
         if: inputs.action == 'cases-run'
-        # The check waits up to 38 minutes for the end of the Watch (a Watch of beats takes about 29 minutes at its slowest settings), and the container group is given 45 (2700 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
+        # The check waits up to 38 minutes for the end of the Watch (a Watch of eight beats takes about 32 minutes typically and 36 at the most, and about 39 with the slowest reading and all of the 1,440 seconds of the investigation: proposal 25), and the container group is given 45 (2700 seconds); the tool deletes the group at the end of every run, and the limit of the step is a second line behind that.
         timeout-minutes: 50
         env:
           STORAGE_ACCOUNT: ${{ steps.params.outputs.storage_account_name }}

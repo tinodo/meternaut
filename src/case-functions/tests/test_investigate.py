@@ -36,7 +36,7 @@ ENDPOINT = "https://example.services.ai.azure.com/api/projects/meternaut"
 def make_settings(**changes) -> cfg.Settings:
     """The settings of the app as cases.config loads them, with the investigation on, and as one session for the whole estate (one beat): the tests of the beats ask for more (tests/test_beats.py)."""
     values = dict(investigate=True, foundry_endpoint=ENDPOINT, foundry_model_investigator="model-investigator", foundry_model_skeptic="model-skeptic",
-                  investigate_max_calls=30, investigate_max_seconds=600, investigate_beats=1)
+                  investigate_max_calls=30, investigate_max_seconds=600, investigate_beats=1, case_min_usd=0)  # no floor of cost: the tests of the floor ask for it (WhatIsTooSmall)
     values.update(changes)
     return replace(cfg.load(dict(ENV)), **values)
 
@@ -406,10 +406,12 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
+        # 11,000 since the price of an alternative was added to the 10,277 of main (the beats and their tuning): 601 characters, to 10,878. 356 say that a change to another tier or size can be priced and
+        # that the alternative must still be shown to do what is needed (item 4), and 245 say how to state a switch of one meter to a price that the tool for alternatives showed (the form alternative); nothing
+        # names a kind of resource or a price. Before that: 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
         # lines of the bill that no resource owns, and about 550 that say how code works a saving out as a monthly rate and when a ratio on a property is right; every step of an investigation reads them
         # again (it was 9,500 since the change that a finding states, 7,000 since the whole that a resource belongs to, 6,500 since the meters, 5,600 since the data that is stored, 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 10500)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 11000)
 
     def test_the_investigator_is_told_in_general_words_what_to_do_with_a_beat_and_that_no_beat_means_the_whole_estate(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
@@ -441,7 +443,8 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertIn(f"An action is one of: {', '.join(pricing.ACTIONS)}.", text)
         for sentence in ("effects names the meters that the change would shrink (the meter handles that the tool for what a resource is billed for showed for that resource itself, read over the longest "
                          "window that it offers, never those of a whole type)",
-                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"assumed"',
+                         '{"form":"none"} when they go away entirely (the action remove)', '"form":"quantity"', '"form":"ratio"', '"form":"share_of_days"', '"form":"alternative"', '"form":"assumed"',
+                         "when one meter is moved to another tier, size or SKU of the same service, in the same unit, with one meter in the effect (the action switch)",
                          "it is shown as your own assumption", "Code takes the cost of the meters from the bill", "it leaves out what it cannot check",
                          "When you cannot name the meters, give the action none.",
                          "A recommendation names the change and the bill lines that it would shrink, and says what remains of them",
@@ -460,6 +463,9 @@ class TheAgentDefinitions(unittest.TestCase):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("A finding may also hold change, the model of its saving", "the arithmetic is not yours to check: judge the model", "Does every line scale with the change that is proposed?",
                          "or is a part of the cost fixed whatever is done?", "Would a smaller size still carry the highest value that the rows show?", "Is an assumed share one that the evidence supports?",
+                         "or alternative with alternatives, one for each meter that is switched, with the words of the alternative, its list price (list), the rate that the bill pays against list (ratio) "
+                         "and the smallest and the largest share that remains (remains)",
+                         "And an alternative, whose price shows neither its features nor its limits?",
                          "say disagree or unsure and say which part in your objections: the finding then needs a person", "a resource that has unpriced instead has no figure, and the word says why",
                          "ratio or quantity with from and to and, for a quantity, unit and moved",
                          "at the lowest of three rates: week, the rate of their last week, since, the mean since the first day that had a cost, null when the read cannot say it, "
@@ -782,10 +788,40 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
 
     def test_an_entry_for_a_measurement_that_no_tool_showed_is_dropped(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0)})
-        for bad in (entry("r1", "MetricZ", 0), entry("r1", "metrica", 0), entry("r1", "MetricA ", 0), entry("r1", 5, 0), entry("r1", None, 0), entry("r2", "MetricA", 0),
+        for bad in (entry("r1", "MetricZ", 0), entry("r1", "Metric A", 0), entry("r1", 5, 0), entry("r1", None, 0), entry("r2", "MetricA", 0),
                     entry("r9", "MetricA", 0), {"handle": "r1", "metric": "MetricA"}, {"metric": "MetricA", "total": 0}, "MetricA", None, 5):
             parsed = verified(finding(handles=["r1", "r2"], basis="low-usage", evidence=[bad]), toolbox)
             self.assertEqual(parsed.cited["r1"], {}, repr(bad))
+
+    def test_a_metric_in_another_case_or_with_spaces_round_it_is_the_same_metric_and_is_cited_under_the_name_of_the_tools_but_never_when_two_could_be_meant(self):
+        toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0), "r2": metrics(MetricB=3, METRICB=3)})
+        for said in ("metrica", "METRICA", "MetricA ", " MetricA"):
+            parsed = verified(finding(handles=["r1"], evidence=[entry("r1", said, 0)]), toolbox)
+            self.assertEqual((parsed.handles, parsed.cited, parsed.metric_unknown), (["r1"], {"r1": {"MetricA": 0}}, 0), repr(said))
+        ambiguous = verified(finding(handles=["r2"], basis="low-usage", evidence=[entry("r2", "metricb", 3)]), toolbox)
+        self.assertEqual((ambiguous.cited, ambiguous.metric_unknown), ({"r2": {}}, 1), "two metrics of the resource have that name in lower case: no guess")
+        exact = verified(finding(handles=["r2"], basis="low-usage", evidence=[entry("r2", "METRICB", 3)]), toolbox)
+        self.assertEqual(exact.cited, {"r2": {"METRICB": 3}})
+
+    def test_the_claims_that_were_not_confirmed_are_counted_by_why_for_the_diagnosis_of_a_run(self):
+        toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=5), "r2": {}, "r3": metrics(MetricA=0)})
+        raw = finding(handles=["r1", "r2", "r3", "r4"], basis="low-usage", evidence=[
+            entry("r1", "MetricA", 0),  # measured, and the total is another one: totalDiffers
+            entry("r1", "MetricZ", 1),  # the resource was measured and no tool returned this metric for it: metricUnknown
+            entry("r2", "MetricA", 0),  # no tool measured the resource at all: notMeasured
+            entry("r3", "MetricA", "0"), entry("r3", "MetricA", float("nan"))])  # a total that is not a number does not equal any total: totalDiffers
+        parsed = verified(raw, toolbox)
+        self.assertEqual((parsed.no_entry, parsed.total_differs, parsed.metric_unknown, parsed.not_measured), (1, 3, 1, 1), "r4 is unknown to the tools, so it is not a resource without an entry")
+        quiet = verified(finding(handles=["r1", "r3"], evidence=[entry("r3", "MetricA", 0)]), toolbox)
+        self.assertEqual((quiet.no_entry, quiet.total_differs, quiet.metric_unknown, quiet.not_measured, quiet.handles), (1, 0, 0, 0, ["r3"]), "r1 was listed and gave no measurement")
+
+    def test_a_claim_of_no_usage_that_is_dropped_as_unproven_says_why_the_measurement_shows_use_or_it_is_too_brief(self):
+        brief = {"metrics": {"MetricA": {"total": 0, "totals": [0], "days": 30, "days_with_data": 19}}}
+        toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0]), "r2": metrics(MetricA=0), "r3": brief, "r4": recorded(MetricA=[0])})
+        parsed = verified(finding(handles=["r1", "r2", "r3", "r4"], evidence=[entry(handle, "MetricA", 0) for handle in ("r1", "r2", "r3", "r4")]), toolbox)
+        self.assertEqual((parsed.handles, parsed.unproven, parsed.shows_use, parsed.too_brief), (["r2", "r4"], 2, 1, 1))
+        low = verified(finding(handles=["r1", "r3"], basis="low-usage", evidence=[entry("r1", "MetricA", 0), entry("r3", "MetricA", 0)]), toolbox)
+        self.assertEqual((low.shows_use, low.too_brief, low.handles), (0, 0, ["r1", "r3"]), "only a claim of no usage is held to a measurement of nil")
 
     def test_an_entry_for_a_handle_that_the_finding_does_not_list_is_dropped(self):
         toolbox = FakeToolbox(evidence={"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
@@ -1023,7 +1059,8 @@ class AGoodInvestigation(unittest.TestCase):
         (line,) = self.h.of("investigation.finding")
         self.assertEqual({k: v for k, v in line.items() if k not in ("v", "ts", "runId", "requestId", "type")},
                          {"finding": 1, "basis": "no-usage", "proposal": "delete", "confidence": 0.9, "claimed": 2, "handles": 2, "unknown": 0, "unproven": 0, "repeated": 0,
-                          "judgedLately": 0, "guarded": 0, "capped": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "change": None, "pricedHandles": 0, "savingUsdMonth": None,
+                          "noEntry": 0, "totalDiffers": 0, "metricUnknown": 0, "notMeasured": 0, "showsUse": 0, "tooBrief": 0,
+                          "judgedLately": 0, "guarded": 0, "capped": 0, "tooSmall": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "change": None, "pricedHandles": 0, "savingUsdMonth": None,
                           "verdict": "agree", "kept": True,
                           "reason": None, "note": None, "summary": "Nothing used these in the window."})
 
@@ -1936,7 +1973,7 @@ class WhatIsKept(unittest.TestCase):
         h.go()
         self.assertEqual((h.result.ran, h.result.cases, h.result.proposed), (True, 2, 2))
         notes = [e["note"] for e in h.of("run.note") if "could not be kept" in e["note"]]
-        self.assertEqual(notes, ["the case could not be kept in the store: the table service is down"] * 2)
+        self.assertEqual(notes, ["the case could not be kept in the store: the table service is down"], "the same note for the second case is not written again: a run says it once, and its count when it ends")
         self.assertEqual(len(h.of("case.result")), 2)
 
     def test_a_store_that_cannot_be_read_holds_nothing_back(self):
@@ -2074,6 +2111,63 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
 
 
 # -- the caps ----------------------------------------------------------------------------------------------------------------------------------------
+
+class WhatIsTooSmall(unittest.TestCase):
+    """A finding whose resources together cost under the floor (CASE_MIN_USD) opens no case: its resources are counted, and the Skeptic is not shown it. A finding at the floor or over it keeps every
+    resource, however small each is alone, and a cost that is not known makes the finding not small."""
+
+    @staticmethod
+    def toolbox(*costs):
+        return FakeToolbox([resource(n, cost_usd_30d=cost) for n, cost in enumerate(costs, 1)], {f"r{n}": metrics(MetricA=0) for n in range(1, len(costs) + 1)})
+
+    def go(self, costs, floor=5, skeptic=None):
+        h = Harness(FakeFoundry(answer(finding(handles=[f"r{n}" for n in range(1, len(costs) + 1)])), skeptic=skeptic), self.toolbox(*costs), make_settings(case_min_usd=floor), with_store=True)
+        h.go()
+        return h
+
+    def test_twenty_idle_things_of_3_dollars_65_are_73_dollars_together_and_each_one_keeps_its_case(self):
+        h = self.go([3.65] * 20)
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["handles"], line["tooSmall"], line["kept"], h.result.cases, len(h.of("case.result"))), (20, 0, True, 20, 20))
+        self.assertEqual(line["coveredCostUsd30d"], 73.0)
+
+    def test_three_things_of_40_cents_are_1_dollar_20_together_so_the_finding_opens_no_case_and_they_are_counted(self):
+        h = self.go([0.4, 0.4, 0.4])
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["kept"], line["reason"], line["tooSmall"], line["handles"]), (False, "no resource of it is left: 3 too small to open a case", 3, 0))
+        self.assertEqual((h.result.cases, h.result.proposed, len(h.of("case.result"))), (0, 0, 0))
+        self.assertTrue([n for n in h.notes if n.startswith("1 finding whose resources together cost less than the floor of the setting CASE_MIN_USD opens no case (3 resources in all)")], h.notes)
+        self.assertEqual(len(h.foundry.inputs()), 1, "no finding is left for the Skeptic")
+
+    def test_a_big_resource_and_a_small_one_in_a_finding_keep_both_and_the_floor_is_the_sum_and_at_the_floor_it_stays(self):
+        h = self.go([300.0, 0.3])
+        (line,) = h.of("investigation.finding")
+        self.assertEqual((line["handles"], line["tooSmall"], h.result.cases), (2, 0, 2))
+        self.assertEqual([(self.go([1.0] * n)).result.cases for n in (4, 5, 6)], [0, 5, 6], "4 dollars together are under 5, and 5 dollars together are not")
+
+    def test_a_floor_of_nil_keeps_everything_and_a_cost_that_is_not_known_or_not_in_cost_lines_makes_the_finding_not_small(self):
+        h = self.go([0.4, 0.4, 0.4], floor=0)
+        self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 3))
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), self.toolbox(None, None), make_settings(case_min_usd=5), with_store=True)
+        h.go()
+        self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 2), "the cost lines were read and hold none for them: that is not a cost of nothing")
+        h = Harness(FakeFoundry(answer(finding(handles=["r1", "r2"]))), self.toolbox(0.4, None), make_settings(case_min_usd=5), with_store=True)
+        h.go()
+        self.assertEqual((h.of("investigation.finding")[0]["tooSmall"], h.result.cases), (0, 2), "one resource of which the cost is not known: the finding is not small")
+
+    def test_a_skeptic_that_would_disagree_with_a_finding_under_the_floor_opens_nothing_because_it_is_never_asked(self):
+        h = self.go([0.4, 0.4, 0.4], skeptic=verdicts(("disagree", ("it is in use",), "No.")))
+        self.assertEqual((h.result.cases, h.result.needs_human, len(h.of("case.result")), len(h.foundry.inputs())), (0, 0, 0, 1))
+        over = self.go([4.0, 4.0], skeptic=verdicts(("disagree", ("it is in use",), "No.")))
+        self.assertEqual((over.result.cases, over.result.needs_human), (2, 2), "8 dollars together are over the floor: the finding goes to the Skeptic and to a person as ever")
+
+    def test_the_floor_is_a_setting_of_5_dollars_that_a_person_can_lower_to_nil_and_raise_to_100_and_no_further(self):
+        self.assertEqual((cfg.DEFAULT_CASE_MIN_USD, cfg.LIMIT_CASE_MIN_USD, cfg.load(dict(ENV)).case_min_usd), (5, 100, 5))
+        self.assertEqual([cfg.load({**ENV, "CASE_MIN_USD": value}).case_min_usd for value in ("0", "100", "7")], [0, 100, 7])
+        for bad in ("101", "-1", "x"):
+            with self.assertRaises(cfg.ConfigError, msg=bad):
+                cfg.load({**ENV, "CASE_MIN_USD": bad})
+
 
 class TheCaps(unittest.TestCase):
     def test_a_run_opens_at_most_sixty_cases_dearest_first_and_says_how_many_resources_are_not_listed(self):

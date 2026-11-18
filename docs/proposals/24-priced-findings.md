@@ -1,6 +1,6 @@
 # Priced findings: a saving that code works out from the bill lines that a finding names — a decision record
 
-**Status: decided on 2026-11-17, built and tested against fakes, not deployed.** Until the function app that carries it is published, nothing here runs. Nothing was changed in Azure, and no model saw a real estate for this change. The base of the figure (a month at the rate of the last 7 days, not the sum of the last 30) and a fifth form, `quantity`, were decided the same day: [the last section](#priced-at-what-it-costs-now-and-a-change-stated-in-the-quantity-of-a-meter) says how, and where it differs from what is written above it, it is the later word.
+**Status: decided on 2026-11-17, built and tested against fakes, not deployed.** Until the function app that carries it is published, nothing here runs. Nothing was changed in Azure, and no model saw a real estate for this change. The base of the figure (a month at the rate of the last 7 days, not the sum of the last 30) and a fifth form, `quantity`, were decided the same day: [the last section](#priced-at-what-it-costs-now-and-a-change-stated-in-the-quantity-of-a-meter) says how, and where it differs from what is written above it, it is the later word. The form `alternative`, which was a seam here, is built and described in [proposal 28](28-alternative-prices.md#the-form-alternative-a-switch-priced-by-code).
 
 ## What was asked
 
@@ -10,7 +10,7 @@ A finding that proposes a change must carry a saving that code computes from the
 - a count or a size is reduced, so a part of the bill goes away and the rest stays;
 - a resource is needed on some days only;
 - the figure rests on the AI's own assumption, which must be said and never widened;
-- a switch to something else that a public price list prices (not built: a seam is left);
+- a switch to something else that a public price list prices ([built in step two of proposal 28](28-alternative-prices.md#the-form-alternative-a-switch-priced-by-code));
 - a group of resources is priced as the sum of its resources, each by its own meters, counted once;
 - some bill lines belong to no resource, and some resources have no bill line that the tool could find: the finding says so and keeps the figure out.
 
@@ -32,7 +32,7 @@ Each finding may hold one block, `change`. It is typed, and code reads it strict
 | `ratio` | The name of a property or a measurement, the number that a tool returned for it (`from`), and the number after the change (`to`) | `from` is a number that a tool returned for that resource in this run (a property, or the total, the highest value, the average or a recorded total of a measurement); `to` is below `from` and not negative. The share that goes away is `1 - to / from` | Scenario |
 | `share_of_days` | `days` of every `of` (whole numbers, at most 31), for a resource that is needed on some days only | Whole numbers and `days < of`. The share that goes away is `1 - days / of` | Scenario |
 | `assumed` | `low` and `high`, the smallest and the largest share that stays billed | `0 <= low <= high <= 1`. Never widened: one value is a range of one | Scenario |
-| `alternative` | A switch to something that a public price list prices | Refused with the plain reason "a switch to an alternative is not available yet". A later change adds the price list behind this form and nothing else here changes | none |
+| `alternative` | `price`, a price handle that the tool for alternatives showed for that meter (the action `switch`, one meter) | The price was shown in this run for that meter, of its service and unit, with one price for the whole quantity, and the list price of the meter's own line is known (else it is not priced). The share that remains is the alternative's list price times the rate that the bill pays against list, over what the bill paid for a unit (that is, over the list price of the meter's own line), and at list prices alone for the other end of a range: the same share at every rate ([proposal 28](28-alternative-prices.md#the-form-alternative-a-switch-priced-by-code)) | Scenario |
 
 An action goes with some forms only (`remove` with `none`, `reduce` with `quantity`, `ratio` or `assumed`, `schedule` with `share_of_days`, `quantity` or `assumed`, `switch` with `alternative` or `assumed`, `commit` with `assumed`), and a pair that does not fit is refused.
 
@@ -46,7 +46,7 @@ An action goes with some forms only (`remove` with `none`, `reduce` with `quanti
 4. **The point is the low end.** The number that a case counts and the Savings page adds is the low end of the range, so a figure that rests on an assumption is not taken for more than the assumption's cautious end. The range is said in words beside it.
 5. **A group is the sum of its resources.** A finding about many resources is one case; its figure is the sum of the figures of the resources that have one, each by its own meters, and the basis says how many of how many are priced.
 6. **Azure Advisor's figure stays beside it.** When a tool showed an Advisor item for the resource, the digest keeps Advisor's own estimate next to the figure and the basis says that the two are not added. A case that holds what Advisor says and nothing from this path keeps Advisor's figure, as before ([proposal 22](22-advisor-first-class.md)).
-7. **A change that cannot be priced says why, and keeps the figure out.** The words are fixed sentences that start "No saving was worked out:" (the AI did not name the bill lines, they were not found for this resource or have under 3 days of cost, what remains was not stated in a form that code can check, the cost is not in dollars, the lines cost nothing in the last 7 days, a switch is not available yet). A finding that asks to delete a resource and states a change that cannot be priced has no figure at all: the cost of the resource is not offered as its saving. A finding that states no change, or states the action `none`, is priced as it always was (a delete is worth the cost lines of the resource; a look has no figure).
+7. **A change that cannot be priced says why, and keeps the figure out.** The words are fixed sentences that start "No saving was worked out:" (the AI did not name the bill lines, they were not found for this resource or have under 3 days of cost, what remains was not stated in a form that code can check, the cost is not in dollars, the lines cost nothing in the last 7 days, the alternative is not a price that the tool showed for the bill line or its price changes with the quantity, the units differ, the list price of the current meter is not known, the alternative costs as much or more, the bill line has no cost per unit). A finding that asks to delete a resource and states a change that cannot be priced has no figure at all: the cost of the resource is not offered as its saving. A finding that states no change, or states the action `none`, is priced as it always was (a delete is worth the cost lines of the resource; a look has no figure).
 
 A bill line that no resource owns has no meter handle, so it cannot be named; the finding then has no figure, and the sentence says why ("a bill line that no resource owns has no handle to name").
 
@@ -87,7 +87,7 @@ The decision brief, the card, the letter and the Savings page show the figure th
 - **Azure Advisor and the model are counted once.** A resource that Advisor lists and the investigation priced is one case that holds both digests, and Advisor's own case for it is closed (tests with invented data: `test_advisor_parity.py`).
 - **The meters are read over 7 to 30 closed days.** What this means for a cost that moved inside the window is in the last section.
 - **A meter that belongs to a type and not to a resource** cannot be priced for a resource, by design: the bill lines of a type are the sum of its resources.
-- **The `alternative` form is a seam.** Nothing prices a switch yet.
+- **The `alternative` form was a seam and is built (2026-11-17, [proposal 28](28-alternative-prices.md#the-form-alternative-a-switch-priced-by-code)).** It is not proved that the rate of the bill carries over to another size.
 - **What the tests pin.** The rules above were mutation-checked one at a time: the ownership of a meter, the 30-day window, counting a line once, the cap at the cost, the table of actions and forms, the check of the cited number, each bound of a ratio, a share of days and an assumption, the low-end point, the level of each form, the refusal of a delete whose change failed, Advisor's figure beside and never added, what the Skeptic is shown and not shown, the sum of a group and how many are priced.
 
 ## What it costs

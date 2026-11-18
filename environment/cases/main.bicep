@@ -192,6 +192,11 @@ param investigateMaxCalls int = 40
 @maxValue(1500)
 param investigateMaxSeconds int = 1440
 
+@description('The smallest cost of the last 30 days, in US dollars, that the resources of a finding of the investigation have together for the finding to open a case: a finding that together costs less is counted and opens no case, and a finding at this cost or over it keeps every resource, however small each is alone. 0 turns it off. The code accepts no more than 100 (LIMIT_CASE_MIN_USD in src/case-functions/cases/config.py).')
+@minValue(0)
+@maxValue(100)
+param caseMinUsd int = 5
+
 @description('Whether the Study runs: the Scholar, a third agent in the Foundry project, reads Microsoft\'s public documentation about the kinds of resource that the estate has and files claims that code checks (docs/proposals/15-learning.md). The app gets it as the setting STUDY, on or off, and the timer study-weekly and the Hub action study-run do nothing while it is off. The parameter builder passes the variable STUDY of the environment hub (off when it is not set) and refuses on while the Foundry project is not in Azure; the limits STUDY_MAX_* stay the defaults of the code.')
 param study bool = false
 @description('Resource id of the user-assigned identity id-meternaut-teams, which the Hub action teams makes (environment/teams/main.bicep) and the workflow reads from Azure. Empty: the identity is not attached to the app. The identity holds no role (docs/proposals/20-teams-cards-through-a-bot.md).')
@@ -599,6 +604,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'INVESTIGATE', value: empty(foundryProjectEndpoint) ? 'off' : 'on' }
         { name: 'INVESTIGATE_MAX_CALLS', value: string(investigateMaxCalls) }
         { name: 'INVESTIGATE_MAX_SECONDS', value: string(investigateMaxSeconds) }
+        { name: 'CASE_MIN_USD', value: string(caseMinUsd) }
         // The Study (cases/study.py): off unless the variable STUDY of the environment hub is on. The limits STUDY_MAX_* are not set: the code starts from its own defaults.
         { name: 'STUDY', value: study ? 'on' : 'off' }
         // The client id of the identity whose token is the client assertion: the platform's sign-in reads it, and so does the function app when it redeems the code of the
