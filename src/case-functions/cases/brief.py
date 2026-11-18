@@ -111,7 +111,7 @@ KEEP_RISK = "It is in use, and removing it breaks what uses it."
 # The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card.
 ACTING = "If you act: "
 IF_ACTED = " if you act"  # what the chip of such a risk adds to its word: "High risk if you act"
-UNPROVEN = "Nothing proves that it is unused, so removing it could break something that still uses it."
+UNPROVEN = "Nothing proves that it is unused, so acting on it could break something that still uses it."
 SHARED_RISK = "It could break traffic that you cannot see from here."
 RARE_USE = "Something that uses it less often than Meternaut measured may still need it."
 CHANGE_RISK = "What depends on it can slow down or stop."
@@ -1176,9 +1176,10 @@ TERM = re.compile(r"^P([0-9]{1,2})([YM])$")
 # What a figure rests on, as the sentence that goes under it on every page, letter and card (Saving.basis). A saving of an Expected level follows from the bill alone; a Scenario says what it assumes.
 BILL_BASIS = "It is based on your bill for the last 30 days."
 NOT_WORKED_OUT = "Nobody has worked out how much of that could be saved."
-ADVISOR_BASIS = "It is Azure Advisor's own estimate, and the bill of this resource does not back it."
-ADVISOR_BASIS_MANY = "It is Azure Advisor's own estimate of the smallest of its variants. They are alternatives, and only one is bought."
-ADVISOR_BASIS_OVERLAP = "It is Azure Advisor's own estimate of the largest of its recommendations about one resource. They overlap, so only one counts."
+ADVISOR_OWN = "It is Azure Advisor's own estimate"  # how every sentence of what an Advisor figure rests on begins: it is also how a figure is known for Advisor's (from_advisor)
+ADVISOR_BASIS = f"{ADVISOR_OWN}, and the bill of this resource does not back it."
+ADVISOR_BASIS_MANY = f"{ADVISOR_OWN} of the smallest of its variants. They are alternatives, and only one is bought."
+ADVISOR_BASIS_OVERLAP = f"{ADVISOR_OWN} of the largest of its recommendations about one resource. They overlap, so only one counts."
 ADVISOR_ALT = ("Advisor lists another purchase for this subscription that saves more ({alt}). You buy one or the other, so only the larger is counted, and nothing is added for this request.")
 ADVISOR_SURE = "This is Azure Advisor's own estimate. No AI looked at it, and Meternaut did not check that what it covers will keep running."
 ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
@@ -1234,6 +1235,11 @@ def _commitment(case: CaseRecord | None) -> bool:
     """Whether a case is about a commitment (a reservation or a savings plan): one of its rows has a term."""
     found = advisor_digest(case)
     return found is not None and any(isinstance(row, list) and len(row) == 8 and row[3] for row in found["rows"])
+
+
+def from_advisor(basis: str) -> bool:
+    """Whether what a figure rests on is Azure Advisor's own estimate (the sentences above): the figure is Advisor's and not Meternaut's, and the sentence that opens its money says so."""
+    return basis.startswith(ADVISOR_OWN)
 
 
 def _advisor_basis(case: CaseRecord | None) -> str:
@@ -1684,7 +1690,7 @@ def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0
         if days < 1:
             return f"Waiting has cost less than {usd_text(monthly / 30)} so far."
         return f"Waiting {waited_text(days)} at {usd_text(monthly)} a month has cost about ${round(monthly / 30 * days):,}."
-    return (f"Waiting has cost about ${round(before + monthly / 30 * (days if own is None else own)):,} so far. ${round(before):,} of that is what the requests that this one "
+    return (f"Waiting {waited_text(days)} has cost about ${round(before + monthly / 30 * (days if own is None else own)):,}. ${round(before):,} of that is what the requests that this one "
             "replaced cost for the days that each of them waited.")
 
 

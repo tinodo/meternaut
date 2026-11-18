@@ -559,7 +559,7 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertIn("6 variants of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and look-back", text)
         self.assertIn(f"they are alternatives, and Meternaut counts the smallest: {self.year} a year", text)
         self.assertIn("The largest is $960 a year with a term of 3 years", text)
-        self.assertIn(f"Meternaut worked out that this could save about {self.year} a year", text)
+        self.assertIn(f"Azure Advisor estimates that this could save about {self.year} a year", text)
         self.assertIn(brief_mod.ADVISOR_BASIS_MANY, text)
         self.assertNotIn("add up to", text)
 

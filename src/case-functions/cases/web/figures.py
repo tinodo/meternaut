@@ -15,7 +15,7 @@ from typing import Callable, Sequence
 
 from .. import costs as cost_words
 from .. import estimate as estimates
-from ..brief import NOT_WORKED_OUT, Brief, Saving, group_things, number_text, things
+from ..brief import NOT_WORKED_OUT, Brief, Saving, from_advisor, group_things, number_text, things
 from ..models import GROUP_FACT, HELD, CaseRecord
 from ..usage import DAYS as USE_DAYS
 from ..usage import MIN_DAYS as USE_MIN_DAYS
@@ -89,6 +89,7 @@ class Figure:
     whole: bool = False
     made_of: str = ""
     estimate: estimates.Estimate | None = None
+    advisor: bool = False  # a saving that is Azure Advisor's own estimate: the sentence that opens its money says Advisor estimates it, and not that Meternaut worked it out
 
     @property
     def counts(self) -> bool:
@@ -112,7 +113,7 @@ def figure_of(savings: Sequence[Saving], costs: Sequence[float | None], basis: s
     if savings and all(s.monthly is not None for s in savings):
         levels = {s.level for s in savings}
         level = savings[0].level if len(levels) == 1 else next((w for w in WEAKEST_FIRST if w in levels), "Scenario")
-        return Figure("save", "Saves" if level == "Verified" else "Could save", sum(s.monthly for s in savings), level, basis or savings[0].basis)  # type: ignore[misc]
+        return Figure("save", "Saves" if level == "Verified" else "Could save", sum(s.monthly for s in savings), level, basis or savings[0].basis, advisor=all(from_advisor(s.basis) for s in savings))  # type: ignore[misc]
     known = [c for c in costs if c is not None]
     if known and sum(known) > 0:
         whole = bool(scopes) and all(scope in WHOLE_KINDS for scope in scopes)
@@ -131,17 +132,23 @@ def figure_for(briefs: Sequence[Brief], costs: Sequence[float | None], basis: st
                      estimate=briefs[0].estimate if one else estimates.summed([b.estimate for b in briefs]))
 
 
+def _who_worked_it_out(figure: Figure) -> str:
+    """Who the sentence that opens a saving says made the figure: Azure Advisor for its own estimate, Meternaut for what code worked out."""
+    return "Azure Advisor estimates that" if figure.advisor else "Meternaut worked out that"
+
+
 def says(brief: Brief, figure: Figure) -> tuple[str, str]:
     """The money of one request in whole sentences, the one that opens the block and the ones under it. A saving: "Meternaut worked out that this could save about $1,682 a year ($140 a month).",
-    or, when the bill after the change confirms it, "The change saves about ...", and under it what the figure rests on. A cost: "It costs $848 a month, about $10,180 a year.", and under it that
-    nobody has worked out the saving, or the finding's own reason why none was worked out. When there is no figure to show, the reason alone. What waiting costs is for the page (`waiting_words`)."""
+    "Azure Advisor estimates that this could save ..." for Advisor's own figure, or, when the bill after the change confirms it, "The change saves about ...", and under it what the figure rests
+    on. A cost: "It costs $848 a month, about $10,180 a year.", and under it that nobody has worked out the saving, or the finding's own reason why none was worked out. When there is no figure
+    to show, the reason alone. What waiting costs is for the page (`waiting_words`)."""
     reason = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
     if figure.monthly is None:
         return reason, ""
     month = dollars(figure.monthly)
     if figure.state == "save":
         lead = (f"The change saves {a_year_text(figure.monthly)} ({month} a month)." if figure.level == "Verified"
-                else f"Meternaut worked out that this could save {a_year_text(figure.monthly)} ({month} a month).")
+                else f"{_who_worked_it_out(figure)} this could save {a_year_text(figure.monthly)} ({month} a month).")
         return lead, reason
     subject = f"The {number_text(brief.group.count)} {group_things(brief.group)} together cost" if brief.group is not None else "It costs"
     return f"{subject} {month} a month, {a_year_text(figure.monthly)}.", reason
@@ -160,7 +167,8 @@ def says_many(figure: Figure) -> tuple[str, str]:
         return figure.note, ""
     month = dollars(figure.monthly)
     if figure.state == "save":
-        return (f"The change saves {a_year_text(figure.monthly)} ({month} a month)." if figure.level == "Verified" else f"Meternaut worked out that these could save {a_year_text(figure.monthly)} ({month} a month)."), figure.note
+        return (f"The change saves {a_year_text(figure.monthly)} ({month} a month)." if figure.level == "Verified"
+                else f"{_who_worked_it_out(figure)} these could save {a_year_text(figure.monthly)} ({month} a month)."), figure.note
     return f"Together they cost {month} a month, {a_year_text(figure.monthly)}.", figure.note
 
 

@@ -451,8 +451,9 @@ def _days(days: int) -> str:
 
 
 def _how_long(days: int, waited: str) -> str:
-    """How long a request has waited, said once: the sentence of what waiting has cost says the days itself, and a request with no such sentence says how long it has waited."""
-    if waited and days >= 1:
+    """How long a request has waited, said once: the sentence of what waiting has cost says the days itself ("Waiting 12 days has cost ..."), and one that does not (the request has waited less than a
+    day, or has no saving) is put after "It has waited ..."."""
+    if waited.startswith(f"Waiting {_days(days)}"):
         return waited
     return " ".join(part for part in (f"It has waited {_days(days)}.", waited) if part)
 

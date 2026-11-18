@@ -239,10 +239,10 @@ class TheFigureInWords(unittest.TestCase):
         case, plan = storage_account("plan5000", changes.pop("saving", 30.0), changes.pop("cost", 41.2), **changes)
         return stake.stake_of(brief_mod.build_brief(case, plan, now=WEB_NOW))
 
-    def test_a_saving_says_that_meternaut_worked_it_out_the_year_the_month_and_what_it_rests_on(self):
+    def test_a_saving_says_who_made_it_the_year_the_month_and_what_it_rests_on(self):
         found = self.of()
         self.assertEqual((found.state, found.level, found.monthly), ("save", "Scenario", 30.0))
-        self.assertEqual(found.lead, "Meternaut worked out that this could save about $360 a year ($30.00 a month).")
+        self.assertEqual(found.lead, "Azure Advisor estimates that this could save about $360 a year ($30.00 a month).")
         self.assertTrue(found.note.startswith("It is Azure Advisor's own estimate, and the bill of this resource does not back it."), found.note)
         self.assertEqual(found.short, "It could save about $360 a year.")
 

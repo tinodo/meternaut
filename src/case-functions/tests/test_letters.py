@@ -409,7 +409,7 @@ class Approval(unittest.TestCase):
         self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is based on your bill for the last 30 days.", text)
         self.assertNotIn("US dollars", text)
         advisor = self.letter(case=make_case(detector="advisor-cost")).text
-        self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is Azure Advisor's own estimate, and the bill of this resource does not back it.", advisor)
+        self.assertIn("Azure Advisor estimates that this could save about $494 a year ($41.20 a month).\nIt is Azure Advisor's own estimate, and the bill of this resource does not back it.", advisor)
 
     def test_a_year_is_twelve_times_the_month_in_whole_dollars_and_a_month_has_its_cents(self):
         for monthly, year in ((41.2, "$494"), (7.17, "$86"), (140.16, "$1,682"), (358.11, "$4,297"), (0.03, "under $1")):
@@ -711,6 +711,19 @@ class WhatTheModuleIs(unittest.TestCase):
         for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\btime\.(time|sleep|monotonic)\(", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen",
                         r"\bsocket", r"\blogging"):
             self.assertIsNone(re.search(pattern, self.source), pattern)
+
+
+class TheLinesOfARequestThatReplacedOthers(unittest.TestCase):
+    def test_the_digest_and_the_weekly_lines_say_how_long_it_waited_in_the_sentence_of_what_waiting_cost(self):
+        since = (NOW - dt.timedelta(days=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        plan = make_plan(saving_usd_month=120.0, waited_usd=20.0, waiting_since=since)
+        case = make_case(saving_usd_month=120.0)
+        many = letters.escalation_digest_letter(PERSON, BASE, NOW, [(plan, case, "same")], CONTACTS)
+        weekly = letters.escalation_weekly_letter(PERSON, BASE, NOW, [(plan, case)], CONTACTS)
+        for letter in (many, weekly):
+            with self.subTest(letter.subject):
+                self.assertIn("Waiting 12 days has cost about $", letter.text)
+                self.assertNotIn("It has waited 12 days.", letter.text, "the days are said once")
 
 
 if __name__ == "__main__":
