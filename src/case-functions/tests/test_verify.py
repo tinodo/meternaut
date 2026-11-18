@@ -21,7 +21,7 @@ from cases.models import COST_AT_ASK, COST_OF, COST_SEEN, GROUP_FACT, DecisionRe
 from test_escalation import World as LadderWorld
 from test_run_loop import OID, Moving, loop_for
 from test_web_savings import tiles_of
-from test_web_support import PEOPLE, SUB, TINO, Console, make_advice, make_advice_case, make_case
+from test_web_support import MAYA, PEOPLE, SUB, TINO, Console, make_advice, make_advice_case, make_case
 
 DAY = dt.timedelta(days=1)
 TODAY = dt.datetime(2026, 11, 20, 9, 0, 0, tzinfo=dt.timezone.utc)
@@ -429,6 +429,17 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
         world.watch()
         self.assertEqual(world.plan(), after, "kept once: a second Watch writes nothing")
 
+    def test_a_request_whose_people_changed_keeps_its_cost_its_code_and_a_digest_that_holds_and_is_still_judged(self):
+        world = World()
+        before = world.ask(sealed=True)
+        world.watch()
+        world.approvals.keep_approvers((MAYA,), ())
+        after = world.plan()
+        self.assertEqual((after.approvers, after.preconditions[COST_AT_ASK], after.code, plan_digest.problem(after, after.digest)), ((MAYA,), 300.0, before.code, ""))
+        world.read(FELL)
+        world.watch()
+        self.assertEqual(world.plan().state, "expired")
+
     def test_a_cost_that_was_kept_is_never_kept_again_and_only_a_request_that_is_open_takes_one(self):
         world = World()
         world.ask()
@@ -565,7 +576,9 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertNotIn("Taken back", text, "the details do not call it a take-back with nothing changed")
         self.assertNotIn("A timer closed", text)
         self.assertEqual(reply.forms(), [], "there is nothing to answer")
-        self.assertEqual(self.console.get("/why/c-p1").status, 200)
+        why = self.console.get("/why/c-p1")
+        self.assertEqual(why.status, 200)
+        self.assertIn(SAID, why.main.text(), "the page of the finding says it too")
 
     def test_what_a_person_wrote_is_escaped_on_the_page_and_in_the_lists(self):
         evil = "<script>alert(1)</script>"
