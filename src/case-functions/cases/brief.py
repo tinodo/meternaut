@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVICE_OPEN_MAX, ADVISE, AUTOMATED, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
+from .models import ADVICE_OPEN_MAX, ADVISE, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -119,6 +119,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "group": "Meternaut took this request back: it was one of several requests about single resources, and one request for the whole group of them waits now.",
               "nothing": "Meternaut took this request back: the finding does not say what to look at.",
               "gone": "Meternaut took this request back: the resource is not in Azure any more, so there is nothing left to decide.",
+              "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
@@ -1675,6 +1676,16 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
                    sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0, plan.waited_usd, own or 0), pending[-4:])
 
 
+def _seen_line(plan: PlanRecord) -> tuple[str, ...]:
+    """What the bill showed when a request was closed because the cost went down, from the numbers that the plan kept (cases/verify.py): what the finding cost in the 30 days before the request, what the
+    last weeks cost a month, and the saving that the request stated. It is a figure of the case, on the page of the request only, and nothing is added up. Nothing when a number is missing."""
+    kept = plan.preconditions if isinstance(plan.preconditions, dict) else {}
+    before, after, stated = _figure(kept.get(COST_AT_ASK)), _figure(kept.get(COST_SEEN)), _figure(plan.saving_usd_month)
+    if before is None or after is None:
+        return ()
+    return (f"The finding cost {usd_text(before)} in the 30 days before the request. The last weeks cost {usd_text(after)} a month." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
+
+
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state in ("open", HELD):
@@ -1683,8 +1694,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone"}.get(why, "Taken back")
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone", "gone") else "Taken back by Meternaut", "", plan.expires_at)
+            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed: the cost has gone down"}.get(why, "Taken back")
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure.", *(_seen_line(plan) if why == "verified" else ())),
+                           title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
     if state == "declined":

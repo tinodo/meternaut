@@ -44,6 +44,9 @@ PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn
 HELD = "held"
 # The key, in the preconditions of an advice request, of the time (a stamp) when something that is no person last changed the resource (cases/brief.py automation_note): the warning of the request.
 AUTOMATED = "automated"
+# The keys, in the preconditions of an advice request, of what its finding cost in the 30 days before the Watch first looked at the request (COST_AT_ASK), which the bill is held against later, and of
+# what the last weeks cost a month when the bill showed the fall that the request suggested (COST_SEEN): US dollars to a cent, written by cases/approvals.py (cases/verify.py says when).
+COST_AT_ASK, COST_SEEN = "costAtAsk", "costSeen"
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
