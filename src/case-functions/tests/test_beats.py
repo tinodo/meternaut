@@ -362,21 +362,23 @@ class WhatABeatIsToldOfTheBeatsBeforeIt(unittest.TestCase):
         self.assertNotIn("alternatives", plain)
         self.assertEqual(plain, beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures, alternatives=[]), earlier), "a seed with no alternatives gives the input that it always gave")
 
-    def test_the_input_stays_inside_its_size_with_every_part_at_its_cap_and_the_alternatives_are_the_first_to_go_when_it_would_not(self):
-        beat = beats.Beat(2, ("contoso.compute/rigs",), False, 0, 3)
-        earlier = [{"beat": 1, "pad": "x" * (beats.CARRY_CHARS - 30)}]
+    def test_the_input_stays_inside_its_size_with_every_part_at_its_cap_and_the_frame_and_the_source_text_of_the_alternatives_and_the_alternatives_are_the_first_to_go_when_it_would_not(self):
+        kinds = tuple(f"contoso.catchall/{n}{'k' * 41}" for n in range(beats.CATCH_ALL_KINDS))
+        beat = beats.Beat(8, kinds, True, 40, 8)
+        counts = {kind: 120 for kind in kinds[:beats.SEED_RESOURCES]}
+        self.assertLessEqual(len(beats.beat_input(beat, 8, beats.Seed(counts), [])), 1000, "the beat and its counts, with the longest names that a catch-all beat has, take what the cap leaves for the rest")
 
-        def sized(size):
-            return {"pad": "x" * size}
+        def exactly(size):
+            return [{"pad": "x" * (size - 12)}]  # a list whose JSON has exactly `size` characters
 
-        at_cap = beats.Seed({}, ["r1"], [sized(tb.result_cap("profile") - 20)], alternatives=[sized(tb.MAX_RESULT_CHARS - 20)])
-        text = beats.beat_input(beat, 8, at_cap, earlier)
-        self.assertLessEqual(len(text), beats.INPUT_CHARS, "the pictures at their cap, what the beats before it concluded at theirs and one answer of the tool at its cap fit")
-        self.assertEqual(json.loads(text)["alternatives"]["answers"], at_cap.alternatives)
-        over = beats.Seed({}, ["r1"], [sized(tb.result_cap("profile") + 4000)], alternatives=[sized(tb.MAX_RESULT_CHARS - 20)])
-        body = json.loads(beats.beat_input(beat, 8, over, earlier))
+        at_cap = beats.Seed(counts, ["r1"], exactly(tb.result_cap("profile")), alternatives=exactly(tb.MAX_RESULT_CHARS))
+        text = beats.beat_input(beat, 8, at_cap, exactly(beats.CARRY_CHARS))
+        self.assertLessEqual(len(text), beats.INPUT_CHARS, "the pictures, what the beats before it concluded and the answer of the tool each at its cap, with the frame and the source text of the alternatives, fit")
+        self.assertEqual(json.loads(text)["alternatives"]["answers"], at_cap.alternatives, "none of them is left out at the caps")
+        over = beats.Seed(counts, ["r1"], exactly(tb.result_cap("profile") + 4000), alternatives=exactly(tb.MAX_RESULT_CHARS))
+        body = json.loads(beats.beat_input(beat, 8, over, exactly(beats.CARRY_CHARS)))
         self.assertNotIn("alternatives", body)
-        self.assertEqual((body["pictures"], body["earlier"]), (over.pictures, earlier), "what is left out to keep the input in its size is the alternatives, and nothing else")
+        self.assertEqual((body["pictures"], body["earlier"]), (over.pictures, exactly(beats.CARRY_CHARS)), "what is left out to keep the input in its size is the alternatives, and nothing else")
 
     def test_a_beat_that_gave_no_answer_is_carried_as_one_that_did_not_conclude_so_that_the_next_one_knows_its_kinds_were_not_judged(self):
         done = beats.Result(beats.Beat(1, ("contoso.compute/rigs",)), end="answered", examined=["a phrase"], lines=[{"basis": "no-usage", "proposal": "delete", "handles": ["r1"]}])
@@ -453,9 +455,9 @@ def list_prices(meter, within="product", rows=3):
 
 TOO_LONG = {"lines": 4985, "complete": False, "next_offset": 3}  # what a service with thousands of lines says: it read five pages of them, and the answer holds the cheapest three
 NO_PRICE = {"rows": [], "lines": 0, "returned": 0}  # what a product that has no line in the unit of the meter says
-
-
 ONE_LINE = {"rows": [["p2", "Tier 2", "Sku 2", "Unit Hours", 0.5, None]], "lines": 1, "returned": 1}  # what a product that has only the line of the meter itself says
+
+
 class PricedToolbox(SeedToolbox):
     """A SeedToolbox whose pictures show the meters of each resource as the real ones do (rN has m(2N-1), the dearest, and m(2N)) and that answers the tool for alternatives with `list_prices`. A text
     in `answers` still replaces an answer. `prices` replaces the answer for a way of asking (`service` or `product`): a text, or the fields of `list_prices` that it changes."""
