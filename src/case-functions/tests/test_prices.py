@@ -609,6 +609,28 @@ class TheReadsThatCodeMakes(unittest.TestCase):
         self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found", "the host that code could not reach answers the Investigator, which has its own try")
         self.assertEqual(len(estate.price_calls), 3)
 
+    def test_a_read_that_got_an_answer_ends_the_count_of_failed_trials_whether_the_investigator_made_it_or_a_trial_that_does_not_keep_its_list(self):
+        estate, box, clock = self.clocked(also=(meter(category="Example Storage", name="Fixed Hours"),))
+        estate.lines += [line("Basic", "Fixed Hours", 0.5, service="Example Storage")]
+        estate.hook = swallowing(clock)
+        self.tried(box, meter="m1")
+        self.tried(box, meter="m1", within="service")
+        estate.hook = None
+        self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found")
+        asked = len(estate.price_calls)
+        self.assertNotIn("error", self.tried(box, meter="m2"), "the host answered the Investigator: code asks again")
+        self.assertEqual(len(estate.price_calls), asked + 1)
+        estate, box, clock = self.clocked()
+        estate.hook = swallowing(clock)
+        self.tried(box, meter="m1")
+        estate.hook, estate.lines = None, [line("Basic", "Fixed Hours", 0.5)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(tb.TRIAL_LINES)]
+        self.assertEqual(self.tried(box, meter="m1")["lines"], tb.TRIAL_LINES + 1, "an answer that is too large to keep is an answer")
+        estate.hook = swallowing(clock)
+        self.tried(box, meter="m1")
+        asked = len(estate.price_calls)
+        self.tried(box, meter="m1", within="service")
+        self.assertEqual(len(estate.price_calls), asked + 1, "one failure since the host answered is not two in a row")
+
     def test_a_host_that_the_call_of_the_investigator_found_down_is_not_asked_by_a_trial(self):
         estate, box, clock = self.clocked()
         estate.hook = swallowing(clock)

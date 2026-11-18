@@ -2784,6 +2784,8 @@ class Toolbox:
                 self.notes.append(f"price_alternatives: the run holds {prices.MAX_HELD} prices of the list already, and the app keeps no more")
                 return {"error": "unavailable"}
             book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, min(prices.SECONDS, self.read_seconds)))
+            if isinstance(book, prices.Book):
+                self._trials.clear()  # the host answered, to the Investigator or to code: the failures of the trials before it say nothing of the next one
             if not self.trial:
                 self._books[key] = book
                 if isinstance(book, Failed) and getattr(book.error, "status", None) == 0:
@@ -2792,7 +2794,6 @@ class Toolbox:
                     self.notes.append(f"price_alternatives: the price list was read in part only ({str(book.error)[:200]})")
             elif isinstance(book, prices.Book) and book.complete and len(book.lines) <= TRIAL_LINES:
                 self._books[key] = book  # a whole list of the size of a product: the Investigator's own call for it is answered from it
-                self._trials.clear()
             elif isinstance(book, Failed):
                 self._trials.append(book)
         if isinstance(book, Failed):
