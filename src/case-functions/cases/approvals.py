@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass, replace
-from typing import Callable, Collection, Sequence
+from typing import Callable, Collection, Mapping, Sequence
 
 from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
@@ -21,8 +21,8 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord,
-                     EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord,
+                     DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -559,6 +559,40 @@ class Approvals:
                 if fresh is None or fresh.state != "open":
                     continue
                 fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": "gone"})
+                self.store.plan_put(fresh)
+                self._set_case(fresh.case_id, "expired")
+                closed.append(fresh)
+        except StoreError:
+            pass
+        return closed
+
+    def keep_cost(self, costs: Mapping[str, tuple[float, float, str]]) -> None:
+        """Keeps in each open request of advice that is named here, and has none yet, what a month cost by the cheapest of the whole weeks before the Watch first looked at it (`COST_AT_ASK`), how far apart
+        those weeks were (`COST_SPREAD`) and a digest of the resources that this is the cost of (`COST_OF`): the cost that the bill is held against when it may show that the request was acted on
+        (cases/verify.py). The cost that a case records moves with every Watch that still finds it, so it is kept apart, once. It is read again first, and written only while the request is open. A request
+        that is sealed is sealed again, as when its people change (keep_approvers), and advice keeps its code: it changes nothing in Azure, and a card or a letter that was sent before keeps working."""
+        try:
+            for plan_id, (usd, spread, subject) in costs.items():
+                fresh = self.store.plan_get(plan_id)
+                if fresh is None or fresh.state != "open" or COST_SPREAD in (fresh.preconditions or {}):
+                    continue
+                changed = _plan_with(fresh, preconditions={**(fresh.preconditions or {}), COST_AT_ASK: round(usd, 2), COST_SPREAD: round(spread, 2), COST_OF: subject})
+                self.store.plan_put(replace(plan_digest.sealed(changed), code=fresh.code) if fresh.digest else changed)
+        except StoreError:
+            pass
+
+    def take_back_verified(self, seen: Mapping[str, float]) -> list[PlanRecord]:
+        """Takes back, as expired and ending now with the reason `verified`, the open requests of advice whose cost has gone down as they suggested (cases/verify.py says which, with what a month cost by
+        the dearer of the two newest weeks, which the plan keeps as `COST_SEEN` for the page of the request): nothing is left to ask, and nothing else ends such a request now that no clock does. The
+        case goes to `expired`, as for any request that Meternaut took back: its status `verified` is for a change that was made and confirmed, and a finding with that status is added up as one. It is
+        read again first, and a request that a person answered since, in any way, stays theirs. Meternaut changed nothing: the cost is lower, and why is not known. Returns the plans that it took back."""
+        closed = []
+        try:
+            for plan_id, after in seen.items():
+                fresh = self.store.plan_get(plan_id)
+                if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(plan_id):
+                    continue
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": "verified", COST_SEEN: round(after, 2)})
                 self.store.plan_put(fresh)
                 self._set_case(fresh.case_id, "expired")
                 closed.append(fresh)

@@ -195,7 +195,9 @@ def measured_of(plan: PlanRecord, action: ActionRecord | None, days: int | None 
 
 
 def _result(plan: PlanRecord, action: ActionRecord | None) -> str:
-    if plan.family == ADVISE or action is None:
+    if plan.family == ADVISE:
+        return "verified" if taken_back(plan) == "verified" else ""  # nobody changed anything through Meternaut: the bill showed that the request was acted on
+    if action is None:
         return ""
     return "verified" if action.state == "verified" else "failed" if action.state == "failed" or plan.state == "failed" else "ran" if action.state in ("done", "unknown") else ""
 
@@ -204,8 +206,8 @@ def lesson_of(plan: PlanRecord, case: CaseRecord | None, decisions: Sequence, ac
     """The lesson of a plan that has ended, or None while it has not. `previous` is the lesson that was written before: what only a later look can add (a boomerang) is kept."""
     if plan.state not in CLOSED:
         return None
-    if plan.family == ADVISE and plan.state == "expired" and (says_nothing(case) or taken_back(plan, case)):
-        return None  # a request that was taken back (it cannot say what to look at, or Meternaut's rules held it back or changed) was never one for a person to answer: it teaches nothing, and does not count as unanswered
+    if plan.family == ADVISE and plan.state == "expired" and (says_nothing(case) or taken_back(plan, case) not in ("", "verified")):
+        return None  # a request that was taken back (it cannot say what to look at, or Meternaut's rules held it back or changed) was never one for a person to answer: it teaches nothing, and does not count as unanswered. One that the bill showed to be acted on teaches that it was: result `verified`, no answer, and no measured figure (only the requests that happened to verify would have one)
     if (plan.preconditions or {}).get(HELD):
         return None  # the request of a finding that a guard held back could not be approved, only asked about, declined or called not theirs: it would skew what past requests like this say
     answer, reason, decided = _answer(plan, decisions)
