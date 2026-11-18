@@ -33,6 +33,8 @@ PLAN_STATE = {
     "withdrawn": "Withdrawn. Nothing changed.",
     "failed": "Failed. The change could not be finished.",
 }
+# What the details of a request that the bill closed say in place of the words of a request that Meternaut took back for no reason of its own: the cost went down, and Meternaut changed nothing.
+CLOSED_BY_THE_BILL = ("Closed: the cost has gone down", "The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.")
 
 WITHDRAWN_ACTION = "Not made: a check refused the change before anything was written. Nothing changed."
 # What the page of an approved plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.

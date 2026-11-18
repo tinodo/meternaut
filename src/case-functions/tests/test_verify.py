@@ -17,7 +17,7 @@ from cases import brief, escalation, events, learning, notify, offers, verify
 from cases.approvals import ApprovalSettings, Approvals
 from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, stamp
-from cases.models import COST_AT_ASK, COST_SEEN, GROUP_FACT, DecisionRecord
+from cases.models import COST_AT_ASK, COST_OF, COST_SEEN, GROUP_FACT, DecisionRecord
 from test_escalation import World as LadderWorld
 from test_run_loop import OID, Moving, loop_for
 from test_web_savings import tiles_of
@@ -289,6 +289,28 @@ class WhatTheStepCloses(unittest.TestCase):
                 world.ask("g1", weeks=(900.0, 900.0, 900.0, 900.0), saving=400.0, facts={GROUP_FACT: {"count": 3, "resourceIds": [vm("a"), vm("b"), vm("c")]}})
                 self.assertEqual(self.judged(weeks, world).plan("g1").state, state)
 
+    def test_a_group_whose_resources_changed_since_the_cost_was_kept_is_not_judged_until_they_are_the_same_again(self):
+        members = [vm("a"), vm("b"), vm("c")]
+        world = World()
+        world.ask("g1", weeks=(900.0, 900.0, 900.0, 900.0), saving=400.0, facts={GROUP_FACT: {"count": 3, "resourceIds": members}})
+        world.watch()
+        self.assertEqual(world.plan("g1").preconditions[COST_OF], verify.subject(world.store.case_get("c-g1")))
+        world.read((900.0, 900.0, 300.0, 300.0))  # the finding is found again with two of its resources: they cost a third
+        case = world.store.case_get("c-g1")
+        world.store.case_put(replace(case, facts={**case.facts, GROUP_FACT: {"count": 2, "resourceIds": members[:2]}}))
+        self.assertEqual((world.watch(), world.plan("g1").state), ([], "open"))
+        world.store.case_put(replace(case, facts={**case.facts, GROUP_FACT: {"count": 3, "resourceIds": list(reversed(members))}}))
+        world.watch()
+        self.assertEqual(world.plan("g1").state, "expired", "the same resources, in whatever order: a fall of the whole group")
+
+    def test_what_the_cost_is_the_cost_of_is_the_resource_of_a_case_and_the_ids_of_a_group_in_any_case_and_order(self):
+        single = make_advice_case(resource_id=vm("a"))
+        self.assertEqual(verify.subject(single), verify.subject(replace(single, resource_id=vm("a").upper())))
+        self.assertNotEqual(verify.subject(single), verify.subject(replace(single, resource_id=vm("b"))))
+        group = replace(single, facts={GROUP_FACT: {"count": 2, "resourceIds": [vm("a"), vm("b")]}})
+        self.assertEqual(verify.subject(group), verify.subject(replace(group, facts={GROUP_FACT: {"count": 2, "resourceIds": [vm("B"), vm("A")]}})))
+        self.assertNotEqual(verify.subject(group), verify.subject(single), "a group is the sum of its resources")
+
     def test_a_group_whose_daily_cost_was_never_read_is_never_verified_and_keeps_no_cost(self):
         world = World()
         world.ask("g1", facts={GROUP_FACT: {"count": 900, "resourceIds": [vm("a")]}}, cost_series=None, cost_series_end=None)
@@ -412,9 +434,9 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
         world.ask()
         other = world.ask("p2")
         world.store.plan_put(replace(other, state="declined"))
-        world.approvals.keep_cost({"p1": 300.0, "p2": 300.0, "nobody": 1.0})
-        world.approvals.keep_cost({"p1": 50.0})  # a Watch that was late with its own reading
-        self.assertEqual((world.plan("p1").preconditions[COST_AT_ASK], COST_AT_ASK in world.plan("p2").preconditions), (300.0, False))
+        world.approvals.keep_cost({"p1": (300.0, "x"), "p2": (300.0, "x"), "nobody": (1.0, "x")})
+        world.approvals.keep_cost({"p1": (50.0, "y")})  # a Watch that was late with its own reading
+        self.assertEqual((world.plan("p1").preconditions[COST_AT_ASK], world.plan("p1").preconditions[COST_OF], COST_AT_ASK in world.plan("p2").preconditions), (300.0, "x", False))
 
     def test_the_step_never_stops_the_run_and_says_what_it_could_not_do(self):
         world = World()
@@ -538,6 +560,9 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertIn("Before the request, its cheapest week cost $300.00 a month. In each of the last two weeks of the bill it cost at most $100.00 a month", text)
         self.assertIn("(the newest two days are left out, because the bill is late). The request stated a saving of $120.00 a month.", text)
         self.assertNotIn("Nothing was changed in Azure.", text, "somebody changed it: Meternaut did not")
+        self.assertIn("State of the request The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.", text)
+        self.assertIn("Status of the finding Closed: the cost has gone down. The cost went down after the request was made", text)
+        self.assertNotIn("Taken back", text, "the details do not call it a take-back with nothing changed")
         self.assertNotIn("A timer closed", text)
         self.assertEqual(reply.forms(), [], "there is nothing to answer")
         self.assertEqual(self.console.get("/why/c-p1").status, 200)

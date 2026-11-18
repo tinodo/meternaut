@@ -21,7 +21,7 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_SEEN, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult,
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult,
                      DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
 from .roles import clean_text
 
@@ -566,17 +566,17 @@ class Approvals:
             pass
         return closed
 
-    def keep_cost(self, costs: Mapping[str, float]) -> None:
-        """Keeps in each open request of advice that is named here, and has none yet, what a month cost by the cheapest of the four whole weeks before the Watch first looked at it (`COST_AT_ASK`): the
-        cost that the bill is held against when it may show that the request was acted on (cases/verify.py). The cost that a case records moves with every Watch that still finds it, so it is kept apart,
-        once. It is read again first, and written only while the request is open. A request that is sealed is sealed again, as when its people change (keep_approvers), and advice keeps its code: it
-        changes nothing in Azure, and a card or a letter that was sent before keeps working."""
+    def keep_cost(self, costs: Mapping[str, tuple[float, str]]) -> None:
+        """Keeps in each open request of advice that is named here, and has none yet, what a month cost by the cheapest of the four whole weeks before the Watch first looked at it (`COST_AT_ASK`) and a
+        digest of the resources that this is the cost of (`COST_OF`): the cost that the bill is held against when it may show that the request was acted on (cases/verify.py). The cost that a case
+        records moves with every Watch that still finds it, so it is kept apart, once. It is read again first, and written only while the request is open. A request that is sealed is sealed again, as
+        when its people change (keep_approvers), and advice keeps its code: it changes nothing in Azure, and a card or a letter that was sent before keeps working."""
         try:
-            for plan_id, usd in costs.items():
+            for plan_id, (usd, subject) in costs.items():
                 fresh = self.store.plan_get(plan_id)
                 if fresh is None or fresh.state != "open" or COST_AT_ASK in (fresh.preconditions or {}):
                     continue
-                changed = _plan_with(fresh, preconditions={**(fresh.preconditions or {}), COST_AT_ASK: round(usd, 2)})
+                changed = _plan_with(fresh, preconditions={**(fresh.preconditions or {}), COST_AT_ASK: round(usd, 2), COST_OF: subject})
                 self.store.plan_put(replace(plan_digest.sealed(changed), code=fresh.code) if fresh.digest else changed)
         except StoreError:
             pass

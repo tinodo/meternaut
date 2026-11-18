@@ -14,6 +14,7 @@ It judges only what it can hold the bill against, and says why when it could not
 * a finding with a saving of its own, a figure that code worked out from the bill (an estimate of Azure Advisor's, which no cost line backs, has nothing to be held against: brief.advisor_estimate,
   and a whole subscription or resource group moves for too many reasons);
 * a daily cost that was read whole up to yesterday and in US dollars: a read that failed, was partial or was not in dollars leaves the series as it was, which ends earlier and is never used (`stale`);
+* the resources that the kept cost is the cost of: a request of a group whose resources are not the ones that it had when the cost was kept is not judged (`subject`);
 * a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone.
 
 A cost that fell in a single week, or for a few days, is no fall, and a request that a person answered in any way is theirs and stays.
@@ -21,6 +22,7 @@ A cost that fell in a single week, or for a few days, is no fall, and a request 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import math
 from collections import Counter
 from typing import Callable, Mapping, Sequence
@@ -29,7 +31,7 @@ from . import brief
 from . import costs as cost_words
 from .detectors import ADVISOR
 from .meters import MONTH, WEEK
-from .models import ADVISE, COST_AT_ASK, CaseRecord, PlanRecord
+from .models import ADVISE, COST_AT_ASK, COST_OF, GROUP_FACT, CaseRecord, PlanRecord
 from .roles import clean_text
 
 LAG = 2  # the newest closed days that are left out: the bill is one to two days behind
@@ -51,6 +53,14 @@ def cheapest(series: Sequence[float]) -> float:
     return min((week for week in weeks(series) if week > 0), default=0.0)
 
 
+def subject(case: CaseRecord) -> str:
+    """A short digest of the resources that the daily cost of a case is the cost of: the ids that a group names (the cost is their sum), else its own resource. A finding that is found again with other
+    resources has another cost to be held against, and the baseline of the first is no baseline for it."""
+    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+    ids = group["resourceIds"] if isinstance(group, dict) and isinstance(group.get("resourceIds"), list) else [case.resource_id]
+    return hashlib.sha256("\n".join(sorted(str(i).lower() for i in ids)).encode("utf-8")).hexdigest()[:12]
+
+
 def fall(series: Sequence[float], before: float, saving: float) -> float | None:
     """What a month costs now by the bill, when each of the two newest weeks costs at most `before` less half of `saving`, else None. The saving counts for no more than `before` (nothing saves more than
     it costs). Both weeks have to be down, so a cost that fell by less, or for a few days, or only lately, is no fall. Returns the dearer of the two weeks: what the verdict rests on."""
@@ -60,8 +70,9 @@ def fall(series: Sequence[float], before: float, saving: float) -> float | None:
 
 def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) -> tuple[str, float]:
     """What the bill says about an open request of advice: (`verified`, what a month costs now), (`baseline`, the cost to keep as the cost at the request: it has none yet), or a word that says why it
-    cannot be said: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `unchecked` (whether the resource is still
-    there was not checked: `there` is the word of cases/escalation.py existence), or `still` (the cost has not gone down, or not for long enough). The second number is 0 for those. `last` is yesterday."""
+    cannot be said: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `changed` (the resources of the finding are
+    not the ones that the kept cost is of), `unchecked` (whether the resource is still there was not checked: `there` is the word of cases/escalation.py existence), or `still` (the cost has not gone
+    down, or not for long enough). The second number is 0 for those. `last` is yesterday."""
     if case is None or brief.advisor_estimate(case) or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):
         return "unpriced", 0.0
     if case.cost_state == cost_words.CURRENCY:
@@ -75,6 +86,8 @@ def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) 
     if before is None:
         usual = cheapest(series)
         return ("baseline", usual) if usual > 0 else ("unpriced", 0.0)
+    if (plan.preconditions or {}).get(COST_OF) != subject(case):
+        return "changed", 0.0
     if there != "there":
         return "unchecked", 0.0
     after = fall(series, before, max(_dollars(plan.saving_usd_month) or 0.0, _dollars(case.saving_usd_month) or 0.0))
@@ -90,7 +103,7 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
         return
     try:
         last = s.clock().astimezone(dt.timezone.utc).date() - dt.timedelta(days=1)
-        keep: dict[str, float] = {}
+        keep: dict[str, tuple[float, str]] = {}
         seen: dict[str, float] = {}
         cases: dict[str, CaseRecord] = {}
         why: Counter[str] = Counter()
@@ -102,7 +115,7 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
             if word == "verified":
                 seen[plan.plan_id], cases[plan.plan_id] = figure, case  # type: ignore[assignment]
             elif word == "baseline":
-                keep[plan.plan_id] = figure
+                keep[plan.plan_id] = (figure, subject(case))  # type: ignore[arg-type]
             elif word in WHY:
                 why[word] += 1
         ex.approvals.keep_cost(keep)
