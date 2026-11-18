@@ -1,6 +1,6 @@
 # Held findings: a guard holds back the request, not the finding — a decision record
 
-**Status: decided on 2026-11-17, built and tested against fakes, not deployed.** Nothing here changes Azure ([rule 29](../../AGENTS.md)), and nothing runs until the function app that carries it is published.
+**Status: decided on 2026-11-17, built and tested against fakes, not deployed. Changed on 2026-11-18: an automation is no longer a guard (the last section).** Nothing here changes Azure ([rule 29](../../AGENTS.md)), and nothing runs until the function app that carries it is published.
 
 ## What was wrong
 
@@ -12,7 +12,7 @@ A held finding was a case (status `needs_human` or `proposed`) with no request. 
 
 ## What is decided
 
-**The guards stay.** `brief.held_reason` (an automation changed the resource within 14 days; who changed it was not looked up; what depends on it was not checked), a finding that cannot say what to look at, and a request that was taken back because the rules changed keep deciding what Meternaut may ask a person to approve.
+**The guards stay** (all but one: since 2026-11-18 an automation is a warning on a request and no guard; see the last section). `brief.held_reason` (who changed it was not looked up; what depends on it was not checked), a finding that cannot say what to look at, and a request that was taken back because the rules changed keep deciding what Meternaut may ask a person to approve.
 
 **A held finding is shown as a request of its own.** `Approvals.settle`, which the Watch calls at its end, gives each such finding a request in the new state `held`. It is the existing request that asks a person whether a finding is worth acting on, so the answers that exist work and no second answer system was made: a question, "This is not mine", "Decide later" and "Not worth it" with its reason ("it is still needed", "the figure is wrong", "it is already handled", "another reason"). It has **no Approve**: there is nothing to approve, a sign-in to Azure is never begun for it, and nothing changes in Azure.
 
@@ -22,7 +22,7 @@ A held finding was a case (status `needs_human` or `proposed`) with no request. 
 
 | Reason | Heading | The guard's sentence | What it still needs |
 |---|---|---|---|
-| automation | Something that runs by itself changes it | Something that runs by itself changed it N days ago and would change it back, so a change by hand would not last. | Whoever looks after what runs by itself can change it there. Meternaut asks about it as usual when nothing has changed it for 14 days. |
+| automation (until 2026-11-18; its words stay for the requests made before) | Something that runs by itself changes it | Something that runs by itself changed it N days ago and would change it back, so a change by hand would not last. | Whoever looks after what runs by itself can change it there. Meternaut asks about it as usual when nothing has changed it for 14 days. |
 | unchecked | Nobody has looked up who changed it | Nobody has looked up who changed it, so Meternaut does not ask anyone to delete it. | Meternaut looks it up at its next search. Nothing is asked of you. |
 | impact | What depends on it was not checked to the end | What depends on it was not checked to the end, so Meternaut does not ask anyone to remove it. | Meternaut checks again at its next search. You can look at what uses it in the meantime. |
 | nothing | Meternaut has nothing to say about it yet | Meternaut has no figure, no name of a thing and no words of Azure Advisor for it, so it cannot say what to look at. | Nothing is asked of you. Meternaut asks again when it can say what to look at. |
@@ -62,3 +62,35 @@ At most 50 held requests are made in one Watch (the rest at the next one); none 
 - The people who may know are not always on the list of people (the owner of an automation is often somebody else): the page shows what the tags and the log say, and Meternaut writes to nobody who is not on the list ([rule 15 (g)](../../AGENTS.md)).
 - A weekly mention of a finding that asks nothing of a person may be unwelcome; the only mutes are the settings that exist (the weekly budget, "Pause messages").
 - Whether the tile should count a held figure at all is a judgment: the page says what it counts.
+
+## 2026-11-18: an automation no longer holds a finding back; it warns
+
+**Decided on 2026-11-18** by the orchestrator, under the owner's rule 38 and his words "the app should find waste, ask the people, and chase them until they act". Built and tested against fakes, not deployed. It changes nothing in Azure ([rule 29](../../AGENTS.md)).
+
+**Why.** In the real runs 3 and 4 every finding that the Investigator kept ended "held back: managed by an automation": the dearest was a Bastion at about 200 US dollars a month, then an SRE agent at about 317, a search service at about 73 and storage accounts. In an estate that pipelines deploy, almost every resource was written by something that is no person within 14 days. A held finding asks nobody anything (no card, no letter as a request, no escalation), so the best findings of the owner were the same passive list that Azure Advisor gives and that people ignore. The guard was right about one thing only: a change by hand on a resource that something rewrites would be undone, so Meternaut must never offer a click that changes it. A request of advice changes nothing in Azure, and the right advice for a resource that something rewrites is to change it where it is defined.
+
+**What changed.**
+
+- `brief.held_reason` no longer says `automation`. The other reasons (`unchecked`, `impact`, `nothing`, `rules`, `waiting`) are about what Meternaut has not read or decided itself, and stay holds. `AUTOMATION_DAYS` (14) and `_automated_at` stay.
+- `brief.automation_note(case, now)` is the warning: the sentence of the old guard with how long ago ("N days ago") and where to act: "Something that runs by itself changed it 2 days ago and would change it back, so a change by hand would not last. Change it where it is defined (the template or pipeline that deploys it)." It is code's text, with no name and no id, and it is empty when nothing that is no person wrote to the resource within 14 days. What Meternaut planted in a group of its own is exempt, as before.
+- An ordinary request of advice (`Approvals.advise`, `build_advice`) keeps the time of that change (`preconditions["automated"]`), so every channel says the same words from `brief`: the page of the request (`/why`, `/ok`), the Teams card, the letter of the ladder, the approval letter and the weekly desk show it as one line, "Heads-up", under the figure. It keeps all its answers (a question, "This is not mine", "Decide later", "Not worth it", "Worth acting on"), changes nothing in Azure, and has no Approve of a change.
+- **No change plan is made for such a resource, by any path.** A plan of a change needs a group of Meternaut's own, the tag and the planted list ([the gates](../../src/case-functions/cases/families/gates.py)), and nothing else makes one (`build_plan` has one caller). A test runs every detector (the investigation, Advisor, three older ones) and every recommendation against three settings (no group where a change may be made, another group, the group itself without the planted resource) and gets advice each time.
+- **The migration.** The first Watch after the deploy finds held requests with the reason `automation` (the real store has about ten). `Approvals.settle` turns each into an ordinary open request of advice **in place**: the same request and case, state `open`, the held mark gone, the warning kept, its time of making kept as the start of its wait (`waiting_since`, which the ladder, the cost of waiting and the pages count from), sealed again. The dearest come first (by the figure of the case), at most `PROMOTE_NEW` (5) in one Watch, and none while the places for requests are full (`places_full`: ten requests for findings that the AIs did not settle; a finding that both AIs agree on is not held by it, as for any request). The rest are held with the reason `waiting` ("Waiting for a free place") and marked, and the next Watch goes on, five more. A finding that nobody is to be asked about (little is at stake, or a person answered it in the last 30 days) is closed as released, and a held request with another reason is never promoted. A second Watch changes nothing.
+- The pages and counts: the History no longer writes `case.held` with `held back: managed by an automation` and its vocabulary stays valid for the old lines; each promotion is one `plan.created` line with `was: held`. The start page, Savings found and the weekly letter list these findings as waiting requests, not as held, and "Held back: N" no longer counts them. The page of what the AI looked at says "a request was made; an automation manages the resource". `HOLD_WORDS["automation"]` and `TAKEN_BACK["automation"]` stay: old held and taken-back requests are shown as they were.
+
+**What a person receives on the first day.** Measured against fakes with five held requests of one person that were made five days before (`tests/test_managed_resources.py`, class `TheFirstDay`); the timer sends cards, then letters, then the ladder, each minute, and the desk goes at the end of the Watch.
+
+| The person | Cards | Letters | In this order |
+|---|---|---|---|
+| Chose e-mail (the default) | none | the reminder of the ladder: **one** letter for all five ("5 decisions have waited without an answer", one line each, each with its Heads-up), because each has waited three days; never more than one a day. On the desk day (Tuesday by default, once a week) the weekly desk too: one letter, one line for each row of the Decisions page | the Watch ends (the desk letter, on the desk day), then the next minute of the timer sends the reminder |
+| Chose Teams | the card that says who writes (if the person was never written to), then **three** advice cards (the weekly budget; the other two wait for Monday), each with its Heads-up | the same reminder letter (escalation goes by letter only) and the same desk letter | the Watch ends (the desk letter), then in the next minute the cards, then the reminder |
+
+The second Watch promotes five more, so a person with ten requests is written to the next day by one letter again, and a request that was held less than three days before gets its reminder on its third day. **Nothing here is a burst**: five requests at most from the Watch, one letter a day from the ladder, three cards a week, one desk letter a week.
+
+**What is not proved.**
+
+- Nobody has read the words. A person may find the warning obvious (the team that owns the pipeline knows that it rewrites the resource), or may read it as "not mine". The only answers are the ones that exist.
+- The warning keeps the time when the request was made, and its "N days ago" grows with the request: it says what was true then. It is not made again when the automation stops, and a request for several resources of one kind shows no warning on its line of a letter (the page of each request has it).
+- The cards of the weekly budget go in the order that the store lists the requests (the newest start first), not by figure, so the three cards are not always the three dearest. The order of the promotion is by figure; the order of the cards is not.
+- A finding that an automation manages and that the AIs did not settle waits for a place when ten such requests are open: before, it was shown as held; now, outside the migration, it has no request until a place is free (the rule of the cap, unchanged). It is an open question for the Investigator, as any capped finding is.
+- It has not run against the real store or the function app. The real held requests were not replayed; whether five of them are promoted, one letter and three cards go out and the people answer is not tried. "N days ago" is as old as the last judgment's reading of the Activity Log. The person who looks after an automation is often not on the list of people ([rule 15 (g)](../../AGENTS.md)).

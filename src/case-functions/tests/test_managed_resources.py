@@ -309,6 +309,60 @@ class TheLadderTreatsAPromotedRequestLikeAnyOpenOne(unittest.TestCase):
         self.assertEqual([r.number for r in world.steps("p1")], [1, 2], "and the next step on the seventh day, as for any request")
 
 
+class TheFirstDay(unittest.TestCase):
+    """What one person is sent on the day of the first Watch after the change, for five held requests that were made five days ago: the numbers of the table in proposal 29."""
+
+    def promoted(self, store, clock, approver, how_many=5):
+        settings = ApprovalSettings(change_scopes=())
+        for number in range(1, how_many + 1):
+            case = letter_case(case_id=f"c{number}", resource_id=f"/subscriptions/s/resourceGroups/rg/providers/Microsoft.Foo/bars/b{number}", resource_name=f"b{number}", status="proposed",
+                               plan_id=f"p{number}", saving_usd_month=10.0 * number, cost_usd_30d=20.0 * number, owner={"lookedUp": True, "automatedAt": stamp(clock() - dt.timedelta(days=2))})
+            store.case_put(case)
+            store.plan_put(build_advice(case, (approver,), clock() - dt.timedelta(days=5), settings, new_id=lambda number=number: f"p{number}", held="automation"))
+        Approvals(store, settings, clock).settle((approver,))
+        return store.plans_open()
+
+    def test_a_person_who_chose_e_mail_gets_no_card_and_one_reminder_that_lists_the_requests_that_have_waited_three_days(self):
+        world = LadderWorld(plans=0)
+        self.assertEqual(len(self.promoted(world.store, world.clock, A)), 5)
+        world.tick(3)
+        (sent,) = world.mail.sent_to("ada@example.com")
+        self.assertEqual(sent[1], "[Meternaut] 5 decisions have waited without an answer")
+        self.assertEqual(len(listed(sent[2])), 5)
+        self.assertEqual(sent[2].count("Heads-up: Something that runs by itself changed it 2 days ago"), 5)
+        world.clock.advance(hours=23)
+        world.tick()
+        self.assertEqual(len(world.mail.sent_to("ada@example.com")), 1, "never more than one a day")
+
+    def test_a_person_who_chose_teams_gets_the_cards_that_the_weekly_budget_allows_and_the_reminder_goes_by_letter(self):
+        from cardsupport import MAYA as CARD_MAYA, World as CardWorld
+
+        world = CardWorld()
+        world.introduce(CARD_MAYA)
+        world.channel(CARD_MAYA)
+        self.assertEqual(len(self.promoted(world.store, world.clock, CARD_MAYA)), 5)
+        world.run()
+        sent = [m for m in world.tries(CARD_MAYA, "advice-card") if m.status == "sent"]
+        held = [m for m in world.tries(CARD_MAYA, "advice-card") if m.status == "held"]
+        self.assertEqual((len(sent), len(held), len(world.queue_fake.cards())), (3, 2, 3), "three cards at most in a week: the other two wait for Monday")
+        self.assertIn("weekly budget of 3 messages", held[0].detail)
+        for text in (block for card in world.queue_fake.cards() for block in [b for b in walk_blocks(card) if b["id"] == "heads-up"]):
+            self.assertTrue(text["text"].startswith("**Heads-up:** Something that runs by itself changed it 2 days ago"))
+
+    def test_the_weekly_desk_lists_five_lines_with_the_warning_once_on_the_desk_day(self):
+        console = Console()
+        approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
+        for number in range(1, 6):
+            case = automation(case_id=f"k-d{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/d{number}", resource_name=f"d{number}", resource_type=f"microsoft.foo/kind{number}",
+                              saving_usd_month=10.0 * number, cost_usd_30d=20.0 * number, plan_id=None)
+            console.store.case_put(case)
+            self.assertIsNotNone(approvals.advise(case, (TINO,)))
+        graph = desk(console)
+        (subject,) = graph.subjects()
+        self.assertEqual(subject, "[Meternaut] 5 decisions wait for you")
+        self.assertEqual(sum(line.count("Heads-up:") for line in listed(graph.sent[0][1]["body"]["content"])), 5)
+
+
 class TheOldWordsStillRenderForOldRequests(unittest.TestCase):
     def test_a_held_request_of_the_old_reason_and_a_request_taken_back_for_it_say_what_they_said(self):
         case = automation()
