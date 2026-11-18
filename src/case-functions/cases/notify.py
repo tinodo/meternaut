@@ -50,7 +50,7 @@ def build_mailer(settings: LoopSettings, store: Store, people: People, token: Ca
 
 
 def contacts_of(people: People) -> tuple[str, ...]:
-    """The people who are responsible for Meternaut, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
+    """The people who answer for Meternaut, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
     address, in plain text. A letter names the first of them who is not the person who reads it."""
     chosen = [p for p in people.persons if "ops" in p.roles or "owner" in p.roles] or list(people.persons)
     return tuple(contact_text(p.name, p.mail) for p in chosen[:3])

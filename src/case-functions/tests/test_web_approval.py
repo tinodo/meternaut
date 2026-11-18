@@ -168,14 +168,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(case_page.headings(2)[:8], ["What it is worth", "If you approve", "Waiting", "What was measured", "What the AI saw", "How sure it is", "Whose is it", "Your answer"])
         self.assertEqual(case_page.facts(), self.reply.facts())
 
-    def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
+    def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_answers_for_meternaut(self):
         footer = self.reply.root.find("footer")
         self.assertEqual([p.text() for p in footer.find_all("p")], [
-            "Recommendations written by AI. A person approves every change.",
-            "Models: model-detective-x, model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
-            "Responsible for Meternaut: Olga (olga@example.com)."])
+            "An AI wrote the recommendations on this page, and a person approves every change.",
+            "The models are model-detective-x and model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
+            "Olga (olga@example.com) answers for Meternaut."])
         self.assertEqual(footer.find("summary").text(), "About this page")
-        self.assertEqual(footer.find_all("a"), [], "the person who is responsible is plain text with the address, not a link")
+        self.assertEqual(footer.find_all("a"), [], "the person who answers for Meternaut is plain text with the address, not a link")
         for gone in ("Request code", "Why you are seeing this", "This page is served from", "This request expires on"):
             self.assertNotIn(gone, footer.text())
 
@@ -471,7 +471,7 @@ class WhoMayAnswer(unittest.TestCase):
                 for secret in (HEADLINE, TITLE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Saves, Expected", "$86", "7.17"):
                     self.assertNotIn(secret, reply.content, f"no plan detail: {secret}")
                 self.assertEqual(reply.root.find_all("button"), [])
-                self.assertIn("Responsible for Meternaut: ", reply.content)
+                self.assertIn(" answers for Meternaut.", reply.content)
 
     def test_a_request_that_does_not_exist_is_a_404_for_an_approver_and_the_refusal_for_anybody_else(self):
         self.assertEqual(self.console.get("/ok/nothing", oid=TINO).status, 404)
@@ -606,9 +606,9 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertEqual(reply.status, status)
                     self.assertEqual(reply.headings(1), [title])
                     self.assertIn(sentence, reply.content)
-                    self.assertIn("Responsible for Meternaut: ", reply.content, "the same help on every page")
-                    self.assertIn("Recommendations written by AI. A person approves every change.", reply.content)
-                    self.assertIn("Models: model-detective-x", reply.content)
+                    self.assertIn(" answers for Meternaut.", reply.content, "the same help on every page")
+                    self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", reply.content)
+                    self.assertIn("The models are model-detective-x", reply.content)
                     self.assertEqual(reply.problems, [])
                     self.assertEqual(reply.root.find_all("button"), [])
                     self.assertEqual(reply.forms(), [])
@@ -960,7 +960,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         self.console.submit(self.form, APPROVE, confirm=False)
         self.assertEqual(snapshot(self.console.store), before)
         self.assertEqual({name: self.reply.headers.get(name) for name in layout.SECURITY_HEADERS}, layout.SECURITY_HEADERS)
-        self.assertIn("Recommendations written by AI. A person approves every change.", self.reply.content)
+        self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", self.reply.content)
 
 
 class TheSignInRedirect(unittest.TestCase):

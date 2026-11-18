@@ -679,8 +679,8 @@ class TheTestCard(unittest.TestCase):
         self.assertEqual(self.teams.steps(), ["token", "create", "send", "update"])
         self.assertEqual(json.loads(self.teams.calls[1]["data"])["members"], [{"id": self.OWNER}])
         sent, closing = (json.loads(call["data"])["attachments"][0]["content"] for call in self.teams.calls[2:])
-        self.assertIn("Test card from Meternaut: nothing to do.", cs.texts(sent))
-        self.assertIn("Test card from Meternaut: closed, nothing to do.", cs.texts(closing))
+        self.assertIn("This is a test card from Meternaut. There is nothing to do.", cs.texts(sent))
+        self.assertIn("This test card from Meternaut is closed. There is nothing to do.", cs.texts(closing))
         self.assertEqual([(e["type"], e.get("step"), e["ok"], e.get("status")) for e in events],
                          [("teams.test.step", "token", True, 200), ("teams.test.step", "create", True, 201), ("teams.test.step", "send", True, 201), ("teams.test.step", "update", True, 200),
                           ("teams.test.finished", None, True, None)])

@@ -168,35 +168,36 @@ class WhatEveryLetterHas(unittest.TestCase):
             with self.subTest(letter=kind):
                 self.assertEqual(hostile[kind].subject, subject)
 
-    def test_every_letter_ends_in_one_footer_line_that_says_who_wrote_it_why_the_person_got_it_and_who_is_responsible_for_meternaut(self):
+    def test_every_letter_ends_in_one_footer_line_that_says_who_wrote_it_why_the_person_got_it_and_who_answers_for_meternaut(self):
         for kind, letter in everything(contacts=CONTACTS).items():
             with self.subTest(letter=kind):
-                footers = [line for line in letter.text.splitlines() if line.startswith("Written by an AI")]
+                footers = [line for line in letter.text.splitlines() if line.startswith("An AI wrote this")]
                 self.assertEqual(len(footers), 1)
                 self.assertEqual(letter.text.rstrip().splitlines()[-1], footers[0], "the footer is the last line")
-                for words in ("A person approves every change.", "You got this because", "Responsible for Meternaut: Ops (ops@example.com)."):
+                for words in ("a person approves every change.", " You are ", " Ops (ops@example.com) answers for Meternaut."):
                     self.assertIn(words, footers[0])
-                self.assertTrue(footers[0].endswith("Responsible for Meternaut: Ops (ops@example.com)."))
+                self.assertTrue(footers[0].endswith("Ops (ops@example.com) answers for Meternaut."))
+                self.assertLessEqual(len(footers[0].split()), 26, "a footer of about twenty words, not thirty-three")
                 self.assertNotIn("Talk to a person", letter.text, "the page's words under About this page: nobody is told to talk to a person")
-                self.assertEqual(sum(1 for p in Parsed(letter.html).paragraphs() if p.startswith("Written by an AI")), 1)
+                self.assertEqual(sum(1 for p in Parsed(letter.html).paragraphs() if p.startswith("An AI wrote this")), 1)
                 self.assertIn(footers[0], " ".join(Parsed(letter.html).visible().split()))
-                self.assertNotIn("mailto:", letter.html.lower(), "the person who is responsible is plain text")
+                self.assertNotIn("mailto:", letter.html.lower(), "the person who answers for Meternaut is plain text")
 
-    def test_the_person_who_is_responsible_is_one_person_other_than_the_reader_when_there_is_one(self):
+    def test_the_person_who_answers_for_meternaut_is_one_person_other_than_the_reader_when_there_is_one(self):
         for person, expected in ((PERSON, "Ops (ops@example.com)"), (OUTSIDER, "Maya (maya@example.com)")):
             with self.subTest(person=person.name):
-                self.assertIn(f"Responsible for Meternaut: {expected}.", letters.first_contact_letter(person, BASE, NOW, CONTACTS).text)
+                self.assertIn(f"{expected} answers for Meternaut.", letters.first_contact_letter(person, BASE, NOW, CONTACTS).text)
         alone = letters.first_contact_letter(PERSON, BASE, NOW, ("Maya (maya@example.com)",))
-        self.assertIn("Responsible for Meternaut: Maya (maya@example.com).", alone.text)
+        self.assertIn("Maya (maya@example.com) answers for Meternaut.", alone.text)
         nobody = letters.first_contact_letter(PERSON, BASE, NOW)
-        self.assertNotIn("Responsible", nobody.text, "with nobody to name, the footer leaves the sentence out, as the page does")
+        self.assertNotIn("answers for Meternaut", nobody.text, "with nobody to name, the footer leaves the sentence out, as the page does")
         self.assertNotIn("Talk to a person", nobody.text)
-        self.assertTrue(nobody.text.rstrip().endswith("with the roles: approver, owner."))
+        self.assertTrue(nobody.text.rstrip().endswith("You are on my list of people, as approver and owner."))
 
-    def test_a_letter_names_the_models_that_took_part_in_the_case_when_the_case_says_which(self):
+    def test_a_letter_leaves_the_names_of_the_models_to_the_page(self):
         for kind in ("approval", "done"):
-            self.assertIn("Written by an AI (models: model-d, model-s). A person approves every change.", everything()[kind].text)
-        self.assertIn("Written by an AI. A person approves every change.", everything(case=make_case(models={}))["approval"].text)
+            self.assertNotIn("model-d", everything()[kind].text)
+            self.assertIn("An AI wrote this, and a person approves every change.", everything()[kind].text)
 
     def test_the_ceremony_of_the_old_letters_is_gone(self):
         for kind, letter in everything().items():
@@ -324,17 +325,18 @@ class FirstContact(unittest.TestCase):
     def setUp(self):
         self.letter = letters.first_contact_letter(PERSON, BASE, NOW, CONTACTS, "p1a2b3c4d5")
 
-    def test_it_is_three_sentences_before_the_button(self):
-        body = [p for p in Parsed(self.letter.html).paragraphs() if not p.startswith("Written by an AI") and "mn-button" not in p]
-        sentences = [s for p in body for s in re.split(r"(?<=[.])\s+", p) if s]
-        self.assertEqual(len(sentences), 3, sentences)
+    def test_it_is_three_short_paragraphs_before_the_button(self):
+        body = [p for p in Parsed(self.letter.html).paragraphs() if not p.startswith("An AI wrote this") and "mn-button" not in p]
+        self.assertEqual(len(body), 3, body)
+        for paragraph in body:
+            self.assertLessEqual(len(paragraph.split()), 30, paragraph)
 
     def test_it_says_who_writes_what_for_what_it_does_not_do_and_where_to_pause_or_stop_the_letters(self):
         text = self.letter.text
-        self.assertIn("I am Meternaut, an AI that looks for Azure resources that cost money and are not used", text)
-        self.assertIn("I change nothing myself: you decide on a web page, and a change runs with your own Azure rights.", text)
+        self.assertIn("I am Meternaut, an AI that looks for Azure resources that cost money and are not used.", text)
+        self.assertIn("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.", text)
         self.assertIn("You can pause or stop my letters under Settings on that page.", text)
-        self.assertIn("with the roles: approver, owner", text)
+        self.assertIn("You are on my list of people, as approver and owner.", text)
 
     def test_its_one_link_is_the_first_request_or_the_start_page(self):
         self.assertEqual(hrefs(self.letter), [f"{BASE}/ok/p1a2b3c4d5"])
@@ -344,8 +346,8 @@ class FirstContact(unittest.TestCase):
         self.assertIn("Open the web page", bare.html)
 
     def test_the_greeting_uses_the_name_of_the_person(self):
-        self.assertIn("Hello Maya, ", self.letter.text)
-        self.assertIn("Hello Noor, ", letters.first_contact_letter(OUTSIDER, BASE, NOW).text)
+        self.assertIn("Hello Maya. ", self.letter.text)
+        self.assertIn("Hello Noor. ", letters.first_contact_letter(OUTSIDER, BASE, NOW).text)
 
     def test_the_plan_id_in_the_link_must_be_an_opaque_id(self):
         for bad in ("../x", "a b", "x" * 65, "p?x=1", "p/../q", "p\n1"):
@@ -389,7 +391,7 @@ class Approval(unittest.TestCase):
     def test_the_order_is_the_title_the_place_the_chips_the_figure_the_facts_the_button_and_the_footer(self):
         text = self.letter().text
         order = ["Delete the unattached disk disk-zq7-name\n", "Managed disk, resource group", "Medium risk, High confidence", "Meternaut worked out that this could save", "It is based on your bill",
-                 "Cost, last 30 days", "Whose is it:", "If you approve:", "Undo:", "What could go wrong:", "Review and decide: https", "Written by an AI"]
+                 "Cost, last 30 days", "Whose is it:", "If you approve:", "Undo:", "What could go wrong:", "Review and decide: https", "An AI wrote this"]
         places = [text.index(part) for part in order]
         self.assertEqual(places, sorted(places))
 
@@ -445,14 +447,14 @@ class Approval(unittest.TestCase):
         for left_out in ("7F3K92QD", "2026-11-08", "expires", "Expires"):
             self.assertNotIn(left_out, letter.text)
 
-    def test_the_models_that_took_part_are_named_in_the_footer(self):
-        self.assertIn("Written by an AI (models: model-d, model-s). A person approves every change.", self.letter().text)
+    def test_the_footer_does_not_name_the_models_and_the_page_does(self):
+        self.assertIn("An AI wrote this, and a person approves every change.", self.letter().text)
         investigated = self.letter(case=make_case(detector="investigation", models={"investigator": "model-i", "skeptic": "model-s"}))
-        self.assertIn("models: model-i, model-s", investigated.text)
+        self.assertNotIn("model-i", investigated.text)
 
     def test_it_says_why_the_person_got_it(self):
-        self.assertIn("You got this because you are named as an approver of this request.", self.letter().text)
-        self.assertIn("You got this because you are on my list of people who receive letters.", self.letter(person=OUTSIDER).text)
+        self.assertIn("You are named as an approver of this request.", self.letter().text)
+        self.assertIn("You are on Meternaut's list of people who get letters.", self.letter(person=OUTSIDER).text)
 
     def test_a_plan_that_is_no_longer_open_is_not_presented_as_waiting(self):
         for state in ("declined", "approved", "consumed", "withdrawn", "failed", "expired"):
@@ -571,7 +573,7 @@ class Digest(unittest.TestCase):
         self.assertIn("disk-1", letter.text)
 
     def test_it_says_why_the_person_got_it_with_the_roles(self):
-        self.assertIn("You got this because you are on my list of people, with the roles: approver, owner.", self.digest().text)
+        self.assertIn("You are on Meternaut's list of people, as approver and owner.", self.digest().text)
 
 
 class Done(unittest.TestCase):

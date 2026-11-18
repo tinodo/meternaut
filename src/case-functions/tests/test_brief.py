@@ -12,8 +12,8 @@ from test_web_support import GROUP, NOW, SUB, VM, at, make_action, make_advice, 
 
 import support  # noqa: F401  (puts the app on the path)
 from cases import brief, pricing
-from cases.brief import (Brief, build_brief, check_lines, confidence_of, contact_text, days_text, doubt_of, facts_of, footer_line, headline_of, kind_words, models_of, number_text,
-                         order_key, owner_of, plain, plan_headline, portal_url, quantity, reasoning_of, usd_text, visible, written_by)
+from cases.brief import (AI_WROTE, WHY_APPROVER, Brief, build_brief, check_lines, confidence_of, contact_text, days_text, doubt_of, facts_of, footer_line, headline_of, kind_words, models_of,
+                         number_text, order_key, owner_of, plain, plan_headline, portal_url, quantity, reasoning_of, usd_text, visible)
 from cases.families import registry
 from cases.families.words import SHOWN
 from cases.meters import Meter
@@ -806,13 +806,13 @@ class TheSmallWords(unittest.TestCase):
         self.assertEqual((models_of(None), models_of(make_case(models={}))), ((), ()))
         self.assertEqual(models_of(make_case(models={"a": "x\u202e[y](javascript:z)"})), ("x(y)(javascript:z)",))
 
-    def test_the_footer_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_for_meternaut(self):
-        self.assertEqual(written_by(("m1", "m2")), "Written by an AI (models: m1, m2). A person approves every change.")
-        self.assertEqual(written_by(()), "Written by an AI. A person approves every change.")
-        self.assertEqual(footer_line(("m1",), "You got this because you are on my list of people.", ("Olga (olga@example.com)",)),
-                         "Written by an AI (models: m1). A person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
-        self.assertEqual(footer_line((), "Why."), "Written by an AI. A person approves every change. Why.", "nobody to name: the line leaves the sentence out, as the page does")
-        self.assertNotIn("Talk to a person", footer_line(("m1",), "Why.", ("Olga (olga@example.com)",)))
+    def test_the_footer_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_answers_for_meternaut(self):
+        self.assertEqual(AI_WROTE, "An AI wrote this, and a person approves every change.")
+        self.assertEqual(footer_line("You are on my list of people.", ("Olga (olga@example.com)",)),
+                         "An AI wrote this, and a person approves every change. You are on my list of people. Olga (olga@example.com) answers for Meternaut.")
+        self.assertEqual(footer_line("Why."), "An AI wrote this, and a person approves every change. Why.", "nobody to name: the line leaves the sentence out, as the page does")
+        self.assertNotIn("Talk to a person", footer_line("Why.", ("Olga (olga@example.com)",)))
+        self.assertLessEqual(len(footer_line(WHY_APPROVER, ("Olga (olga@example.com)",)).split()), 25, "a footer of about twenty words, not thirty-three")
 
     def test_a_person_who_is_responsible_for_meternaut_is_plain_text_with_the_address(self):
         self.assertEqual(contact_text("Olga", "olga@example.com"), "Olga (olga@example.com)")

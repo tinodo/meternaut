@@ -641,10 +641,9 @@ def models_of(case: CaseRecord | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(text_of(v, 60) for v in values if isinstance(v, str) and v.strip()))
 
 
-def written_by(models: Sequence[str]) -> str:
-    """The first sentences of the footer line: that an AI wrote what is on the page or in the letter, and which models, and that a person approves every change."""
-    names = ", ".join(models)
-    return f"Written by an AI (models: {names}). A person approves every change." if names else "Written by an AI. A person approves every change."
+AI_WROTE = "An AI wrote this, and a person approves every change."
+WHY_APPROVER = "You are named as an approver of this request."
+WHY_LISTED = "You are on Meternaut's list of people who get letters."
 
 
 def contact_text(name: object, address: object = "") -> str:
@@ -653,11 +652,11 @@ def contact_text(name: object, address: object = "") -> str:
     return f"{who} ({mail})" if who and mail else (who or mail)
 
 
-def footer_line(models: Sequence[str], why: str, people: Sequence[str] = ()) -> str:
-    """The one line at the foot of a letter and of a card: that an AI wrote it (and which models), why this person got it, and who is responsible for Meternaut, as plain text with the address and
-    no link: the words of "About this page" on a page. Without a person to name the line leaves the last sentence out."""
-    responsible = f" Responsible for Meternaut: {', '.join(people)}." if people else ""
-    return f"{written_by(models)} {why}{responsible}"
+def footer_line(why: str, people: Sequence[str] = ()) -> str:
+    """The one line at the foot of a letter and of a card: that an AI wrote it and a person approves every change, why this person got it, and who answers for Meternaut, as plain text with the
+    address and no link (the words of "About this page" on a page, which also names the models). Without a person to name the line leaves the last sentence out."""
+    answers = f" {', '.join(people)} answers for Meternaut." if people else ""
+    return f"{AI_WROTE} {why}{answers}"
 
 
 # -- the parts ------------------------------------------------------------------------------------------------------------------------------
@@ -1730,7 +1729,7 @@ def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0
             "replaced cost for the days that each of them waited.")
 
 
-def _and(names: Sequence[str]) -> str:
+def and_list(names: Sequence[str]) -> str:
     """Names as a person lists them: "Olga", "Olga and Maya", "Olga, Maya and Tino"."""
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
@@ -1751,10 +1750,10 @@ def told_lines(steps: Sequence, before: int = 1000, now: dt.datetime | None = No
             who = f", {how}," if how else ""
             day = day_text(step.last_try or step.at, now)
             if done:
-                told.append(f"{_and(done)}{who} {'was' if len(done) == 1 else 'were'} told{f' on {day}' if day else ''}.")
+                told.append(f"{and_list(done)}{who} {'was' if len(done) == 1 else 'were'} told{f' on {day}' if day else ''}.")
             if left:
                 why = f"The message is held. {_stop(plain(step.detail, 120))}".rstrip() if step.outcome == "held" else "The message could not be delivered." if step.outcome == "failed" else "No message was sent yet."
-                pending.append(f"{_and(left)}{who} {'has' if len(left) == 1 else 'have'} not been told yet. {why}")
+                pending.append(f"{and_list(left)}{who} {'has' if len(left) == 1 else 'have'} not been told yet. {why}")
     return tuple(told), tuple(pending)
 
 

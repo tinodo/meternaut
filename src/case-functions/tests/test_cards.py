@@ -170,17 +170,16 @@ class TheDecisionCardOfAChange(unittest.TestCase):
         self.assertEqual(page["title"], "Review and decide")
         self.assertLessEqual(len(page["title"]), 24, "a button title is short")
 
-    def test_it_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_is_responsible_in_one_footer_line(self):
+    def test_it_says_that_an_ai_wrote_it_why_the_person_got_it_and_who_answers_for_meternaut_in_one_footer_line(self):
         self.assertEqual(self.ids["ai-label"]["text"], "Meternaut (AI)")
         footer = self.ids["ai-footer"]["text"]
-        self.assertTrue(footer.startswith("Written by an AI (models: model-d, model-s). A person approves every change."), footer)
-        self.assertIn("You got this because you are named as an approver of this request.", footer)
-        self.assertTrue(footer.endswith("Responsible for Meternaut: Maya (maya@example.com)."), "one person, as on the page: the first of the contacts")
+        self.assertEqual(footer, "An AI wrote this, and a person approves every change. You are named as an approver of this request. Maya (maya@example.com) answers for Meternaut.",
+                         "one person, as on the page: the first of the contacts")
         self.assertNotIn("Ops (ops@example.com)", footer)
         self.assertNotIn("Talk to a person", footer)
         self.assertNotIn("\n", footer)
         self.assertEqual(self.card["body"][-1]["id"], "ai-footer")
-        self.assertIn("Written by an AI.", self.card["fallbackText"])
+        self.assertIn("An AI wrote this.", self.card["fallbackText"])
         self.assertIn(URL, self.card["fallbackText"])
         self.assertIn("Meternaut (AI)", self.card["fallbackText"])
 
@@ -389,7 +388,7 @@ class TheShortCard(unittest.TestCase):
         (page,) = actions_of(card)
         self.assertEqual((page["title"], page["url"]), ("Review and decide", URL))
         self.assertEqual(ids["ai-label"]["text"], "Meternaut (AI)")
-        self.assertIn("Written by an AI", ids["ai-footer"]["text"])
+        self.assertIn("An AI wrote this", ids["ai-footer"]["text"])
         self.assertLess(cardcheck.size_of(card), 2000)
 
     def test_advice_and_a_request_that_is_over_are_told_in_the_same_way(self):
@@ -428,18 +427,18 @@ class TheShortCard(unittest.TestCase):
 
 
 class TheFirstContactCard(unittest.TestCase):
-    def test_three_sentences_one_link_and_the_footer(self):
+    def test_four_sentences_one_link_and_the_footer(self):
         card = cards.first_contact_card("Maya", BASE, CONTACTS)
         ids = by_id(card)
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual({a["url"] for a in actions_of(card)}, {f"{BASE}/"})
         self.assertEqual([a["type"] for a in actions_of(card)], ["Action.OpenUrl"])
-        self.assertTrue(ids["hello"]["text"].startswith("Hello Maya, I am Meternaut"))
-        self.assertEqual(ids["rules"]["text"], "I change nothing myself. You answer a request with the buttons on its card: an answer button opens a page of mine that sends your answer, "
+        self.assertEqual(ids["hello"]["text"], "Hello Maya. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
+        self.assertEqual(ids["rules"]["text"], "I change nothing myself. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
                                                "and a change to Azure runs with your own Azure rights.")
         self.assertNotIn("cannot answer", json.dumps(card), "a card can be answered now")
         self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", json.dumps(card)), [])
-        self.assertTrue(ids["ai-footer"]["text"].startswith("Written by an AI. A person approves every change."))
+        self.assertEqual(ids["ai-footer"]["text"], "An AI wrote this, and a person approves every change. You are on my list of people. Maya (maya@example.com) answers for Meternaut.")
         self.assertEqual(card["body"][-1]["id"], "ai-footer")
         self.assertNotIn("planCode", json.dumps(card))
         self.assertEqual(card["version"], "1.4")

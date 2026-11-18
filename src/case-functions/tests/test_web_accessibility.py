@@ -464,12 +464,12 @@ class TheWords(unittest.TestCase):
                 self.assertEqual(about.find("summary").text(), "About this page")
                 text = about.find("p").text()
                 self.assertIn("You see this because ", text)
-                self.assertRegex(text, r"Responsible for Meternaut: [A-Z][a-z]+ \([a-z]+@example\.com\)\.$")
+                self.assertRegex(text, r" [A-Z][a-z]+ \([a-z]+@example\.com\) answers for Meternaut\.$")
                 self.assertEqual(footer.find_all("a"), [], "no link in the footer")
                 self.assertNotIn("Talk to a person", footer.text())
 
     def test_the_pages_that_show_ai_text_say_so_in_one_quiet_line_and_name_the_models_and_the_others_do_not(self):
-        line = "Recommendations written by AI. A person approves every change."
+        line = "An AI wrote the recommendations on this page, and a person approves every change."
         for name, reply in self.pages.items():
             with self.subTest(page=name):
                 footer = reply.root.find("footer")
@@ -477,11 +477,11 @@ class TheWords(unittest.TestCase):
                 about = paragraphs[-1]
                 if name in NOT_AI:
                     self.assertEqual(len(paragraphs), 1, paragraphs)
-                    self.assertNotIn("written by AI", footer.text())
+                    self.assertNotIn("An AI wrote", footer.text())
                     self.assertTrue(about.startswith("You see this because "), about)
                 else:
                     self.assertEqual(paragraphs[0], line)
-                    self.assertTrue(about.startswith("Models: model-detective-x, model-skeptic-y. You see this because "), about)
+                    self.assertTrue(about.startswith("The models are model-detective-x and model-skeptic-y. You see this because "), about)
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
         refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed", "step_up_failed")

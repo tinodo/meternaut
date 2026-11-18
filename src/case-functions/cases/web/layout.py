@@ -9,7 +9,7 @@ import base64
 import hashlib
 from typing import Iterable, Mapping, Sequence
 
-from ..brief import contact_text
+from ..brief import and_list, contact_text
 from .core import Ctx, Response, Safe, esc, fmt, join
 from .style import STYLE
 
@@ -249,16 +249,16 @@ def talk_to_a_person(ctx: Ctx) -> str:
     return ", ".join(contact_text(p.name, p.mail) for p in ([p for p in chosen if p.oid.lower() != me] or chosen)[:1])
 
 
-AI_LINE = "Recommendations written by AI. A person approves every change."
+AI_LINE = "An AI wrote the recommendations on this page, and a person approves every change."
 
 
 def footer_line(ctx: Ctx, ai: bool, why: str, models: Sequence[str] | None = None) -> Safe:
     """The foot of every page. A page that shows text that an AI wrote has one quiet line that says so and that a person approves every change. Every page has "About this page", which holds
     the models (for a page with AI text), why this person sees the page and who answers for Meternaut: rule 13 (b) to (d) of AGENTS.md, in plain text and with no link."""
-    names = ", ".join(ctx.services.models if models is None else models)
-    written = fmt("Models: {names}. ", names=names) if ai and names else Safe("")
+    names = list(ctx.services.models if models is None else models)
+    written = fmt("The models are {names}. ", names=and_list(names)) if ai and names else Safe("")
     person = talk_to_a_person(ctx)
-    owner = fmt(" Responsible for Meternaut: {person}.", person=person) if person else Safe("")
+    owner = fmt(" {person} answers for Meternaut.", person=person) if person else Safe("")
     about = fmt("<details><summary>About this page</summary><p>{written}You see this because {why}.{owner}</p></details>", written=written,
                 why=why or "you are listed as a person who may use this page", owner=owner)
     return join([paragraph(AI_LINE) if ai else Safe(""), about])

@@ -5,7 +5,7 @@ clock, a store or the network: the caller passes the records, the address of the
 
 Every letter is a render of the decision brief (brief.py), cut to what a person needs and no more: a title and the place under it, the risk, how sure and what a change leaves behind as
 words, what it is worth (the figure a year and a month with its level and its basis, in the words of the pages: cases/stake.py), a few facts, what changes, whether it can be undone,
-what could go wrong, ONE button-link to the page where the person answers, and ONE footer line (that an AI wrote it, why the person got it, who is responsible for Meternaut). Nothing
+what could go wrong, ONE button-link to the page where the person answers, and ONE footer line (that an AI wrote it, why the person got it, who answers for Meternaut). Nothing
 else: no banner, no explanation of how Meternaut works, no repeated link.
 
 What every letter keeps (AGENTS.md rule 13 (d), 26 (c) and 36):
@@ -77,12 +77,14 @@ def _plan_url(base: str, plan_id: str) -> str:
     return f"{base}/ok/{plan_id}"
 
 
-def _roles(person: Person) -> str:
-    return ", ".join(sorted(_data(role, 20) for role in person.roles)) or "none"
+def _as(person: Person) -> str:
+    """The roles of a person as the end of a sentence: ", as approver and owner" (nothing for a person who has no role)."""
+    roles = sorted(_data(role, 20) for role in person.roles)
+    return f", as {brief_mod.and_list(roles)}" if roles else ""
 
 
 def _names(contacts: Sequence[str], person: Person | None = None) -> tuple[str, ...]:
-    """The one person who is responsible for Meternaut, as plain text: the first of the contacts who is not the person who reads the letter (the first of all when nobody else is listed)."""
+    """The one person who answers for Meternaut, as plain text: the first of the contacts who is not the person who reads the letter (the first of all when nobody else is listed)."""
     cleaned = [c for c in (_data(c, 150) for c in contacts) if c]
     own = contact_text(person.name, person.mail) if person is not None else ""
     return tuple(([c for c in cleaned if c != own] or cleaned)[:1])
@@ -158,8 +160,8 @@ class _Doc:
     def button(self, text: str, url: str) -> None:
         self.blocks.append(_Button(text, url))
 
-    def footer(self, models: Sequence[str], why: str, contacts: Sequence[str], person: Person | None = None) -> None:
-        self.paragraph(brief_mod.footer_line(models, why, _names(contacts, person)), muted=True)
+    def footer(self, why: str, contacts: Sequence[str], person: Person | None = None) -> None:
+        self.paragraph(brief_mod.footer_line(why, _names(contacts, person)), muted=True)
 
     def build(self) -> Letter:
         return Letter(self.subject, _page(self.subject, self.blocks), _plain(self.blocks))
@@ -267,16 +269,15 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
-    """The first letter to a person, in three sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
+    """The first letter to a person, in four sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
     of the first request that waits for the person (the start page when it is not sent for one)."""
     base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
-    doc.paragraph(f"Hello {_data(person.name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a "
-                  "decision waits for you.")
-    doc.paragraph("I change nothing myself: you decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph(f"Hello {_data(person.name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
+    doc.paragraph("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.")
     doc.paragraph("You can pause or stop my letters under Settings on that page.")
     doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
-    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer(f"You are on my list of people{_as(person)}.", contacts, person)
     return doc.build()
 
 
@@ -329,8 +330,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(_data(brief.impact.line, 340))
     doc.button("Review and decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
-               else "You got this because you are on my list of people who receive letters.", contacts, person)
+    doc.footer(brief_mod.WHY_APPROVER if approver else brief_mod.WHY_LISTED, contacts, person)
     return doc.build()
 
 
@@ -365,8 +365,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
         doc.paragraph("Look at the resource in Azure before anything else is done with it.")
     doc.button("See what happened", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
-               else "You got this because you are on my list of people who receive letters.", contacts, person)
+    doc.footer(brief_mod.WHY_APPROVER if approver else brief_mod.WHY_LISTED, contacts, person)
     return doc.build()
 
 
@@ -409,7 +408,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
         doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:
         doc.button("Open the decisions" if rows else "See the held findings", f"{base}/")
-    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer(f"You are on Meternaut's list of people{_as(person)}.", contacts, person)
     return doc.build()
 
 
@@ -497,7 +496,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
         doc.button("Review and decide", _plan_url(base, plan.plan_id))
-    doc.footer(brief.models, "You got this because a request has waited without an answer and I tell the next person.", contacts, person)
+    doc.footer("A request has waited without an answer, and I tell the next person.", contacts, person)
     return doc.build()
 
 
@@ -525,7 +524,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
         doc.button("Open the decisions", f"{base}/")
-    doc.footer((), "You got this because requests have waited without an answer and I tell the next person.", contacts, person)
+    doc.footer("Requests have waited without an answer, and I tell the next person.", contacts, person)
     return doc.build()
 
 
@@ -551,5 +550,5 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
     for problem in problems:
         doc.paragraph(_data(problem, 300))
     doc.button("Open the decisions", f"{base}/")
-    doc.footer((), f"You got this because you are an escalation contact or an owner of Meternaut, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer("You are an escalation contact or an owner of Meternaut.", contacts, person)
     return doc.build()
