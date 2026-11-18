@@ -215,7 +215,7 @@ class TheSavingsPage(unittest.TestCase):
         reply = self.console.get(PATH)
         row = rows_of(reply)["Waiting for a person"]
         self.assertEqual(row["Findings"], "5")
-        self.assertEqual(row["Findings with no saving figure"], "1 finding. Meternaut could not read what this costs. 1 finding. Nobody has worked out how much of the cost could be saved.")
+        self.assertEqual(row["Findings with no saving figure"], "1 finding. Meternaut could not read what this costs. 1 finding. Nobody has worked out what a change would save.")
         self.assertEqual(row["Saving a year"], rows_of(self.reply)["Waiting for a person"]["Saving a year"], "what has no saving figure adds nothing")
         self.assertEqual(rows_of(self.reply)["Waiting for a person"]["Findings with no saving figure"], "None.")
         self.assertNotRegex(reply.content, r"(?i)no figure")

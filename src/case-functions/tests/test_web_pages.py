@@ -329,7 +329,7 @@ class TheDecisionsPage(unittest.TestCase):
         tiles = {tile.find("p", class_="k").text(): (tile.find("p", class_="v").text(), tile.find("p", class_="n").text(), "good" in tile.classes())
                  for tile in reply.main.find("ul", class_="kpis").find_all("li")}
         self.assertEqual(tiles, {"Ready to save": ("$1,526 a year", "It is the saving of 2 decisions. Each row says what its figure rests on.", True),
-                                 "Cost under review": ("$144 a year", "It is the cost of 1 decision, as Cost Management shows it. Nobody has worked out how much of it could be saved.", False),
+                                 "Cost under review": ("$144 a year", "It is the cost of 1 decision, as Cost Management shows it. Nobody has worked out what a change would save.", False),
                                  "Saving measured": ("—", "Nothing is measured yet. Cost Management shows the effect of a change 8 to 72 hours later.", False)})
         self.assertIn("3 decisions wait for you.", reply.content)
         console.store.plan_put(make_plan(plan_id="plan0009", case_id="case0009", state="consumed"))

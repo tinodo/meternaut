@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
+from ..brief import IF_ACTED, NOT_WORKED_OUT, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
@@ -251,7 +251,7 @@ def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
     ready = (kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"It is the saving of {_count(len(saves), 'decision')}. Each row says what its figure rests on.", True)  # type: ignore[misc]
              if saves else kpi("Ready to save", "—", "", "No saving is known yet."))
     under = (kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year",
-                 f"It is the cost of {_count(len(costs), 'decision')}, as Cost Management shows it. Nobody has worked out how much of it could be saved.")  # type: ignore[misc]
+                 f"It is the cost of {_count(len(costs), 'decision')}, as Cost Management shows it. {NOT_WORKED_OUT}")  # type: ignore[misc]
              if costs else kpi("Cost under review", "—", "", "Nothing is under review."))
     return kpis(ready, under, measured_tile(*measured))
 
@@ -433,7 +433,7 @@ def home(ctx: Ctx) -> Response:
         more = paragraph(fmt('{n} more {waits}. <a href="{href}">Show all</a>.', n=rest, waits="decision waits" if rest == 1 else "decisions wait", href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
         top = join([_head(ctx, units, sort), walk_start(ctx, walk_ids(ctx, rows)), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
                     _lane(ctx, "ready", "Ready to decide", f"Each of these is a change that Meternaut would make in Azure after you approve it. {order}", ready, largest, show, True),
-                    _lane(ctx, "look", "Worth a closer look", "Meternaut proposes no change for these yet. A saving here is an estimate. Where a row shows only a cost, nobody has worked out "
-                          f"how much of it could be saved. {order}", look, largest, show, False),
+                    _lane(ctx, "look", "Worth a closer look", "Meternaut proposes no change for these yet. A saving here is an estimate. Where a row shows only a cost, "
+                          f"nobody has worked out what a change would save. {order}", look, largest, show, False),
                     more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), cut_notice(ctx), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

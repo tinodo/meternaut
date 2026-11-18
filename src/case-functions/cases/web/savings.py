@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..brief import BILL_BASIS, HOLD_WORDS, from_advisor, taken_back, waited_text
+from ..brief import BILL_BASIS, HOLD_WORDS, NOT_WORKED_OUT, from_advisor, taken_back, waited_text
 from ..models import ADVISOR, HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
@@ -17,7 +17,7 @@ from .layout import head, kpi, kpis, link, notice, page, paragraph, table
 
 PER = 1000  # the most that one read of the store gives
 LEAD = ("This page counts every saving that Meternaut found, each finding once, by what became of it. A saving is an estimate until Cost Management confirms it.")
-COST_ONLY = "Nobody has worked out how much of the cost could be saved."  # why a finding that has a cost and no saving is in the column of the findings with no saving figure
+COST_ONLY = NOT_WORKED_OUT  # why a finding that has a cost and no saving is in the column of the findings with no saving figure
 NOTE = (f'It reads up to {PER:,} findings of each status, and a status that holds that many says "at least". '
         "No saving is added up for a finding that was declined, taken back, dropped or not finished. "
         '"Saving measured" counts every change that Cost Management confirmed, so it can be larger than the row "Confirmed by Cost Management".')

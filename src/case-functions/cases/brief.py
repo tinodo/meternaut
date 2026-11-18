@@ -1074,13 +1074,14 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
     return Confidence(level, " ".join(pieces))
 
 
-def why_a_person(case: CaseRecord, plan: PlanRecord | None = None) -> str:
+def why_a_person(case: CaseRecord) -> str:
     """What is true of a finding that needs a person, as sentences, for the Details: Azure Advisor's own recommendation that no AI looked at, or each of these that applies to this one: a check held it
     back, the second AI did not agree, the first AI was not sure enough, past requests like this were rarely approved. Empty when the record says none of them."""
     if _by_advisor(case):
         return "Azure Advisor recommends it, and no AI looked at it."
     first = _figure(case.confidence)
-    reasons = (("A check held it back.", any(isinstance(g, str) for g in case.guards)), ("The second AI did not agree.", _agreed(case, plan) is False),
+    doubted = any(isinstance(o, str) and o.strip() and not _code_note(o) for o in case.objections)
+    reasons = (("A check held it back.", any(isinstance(g, str) for g in case.guards)), ("The second AI did not agree.", doubted),
                ("The first AI was not sure enough.", first is not None and first < SURE_ENOUGH), ("Past requests like this were rarely approved.", _held_by_history(case)))
     return " ".join(text for text, applies in reasons if applies)
 

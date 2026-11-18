@@ -332,7 +332,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if case is not None:
         status_word, meaning = words.CLOSED_BY_THE_BILL if case.status == "expired" and taken_back(plan) == "verified" else words.CASE_STATUS.get(case.status, (case.status, ""))
         if case.status == "needs_human":
-            meaning = f"A person has to look at it. {why_a_person(case, plan)}".strip()  # only the reasons that are true of this finding, not the glossary of every one
+            meaning = why_a_person(case) or "A person has to look at it."  # only the reasons that are true of this finding, not the glossary of every one
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
         rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
                  ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),

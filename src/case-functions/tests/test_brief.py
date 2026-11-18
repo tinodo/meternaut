@@ -62,6 +62,20 @@ class TheHeadline(unittest.TestCase):
             with self.subTest(recommendation=recommendation):
                 self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", recommendation), f"{verb} the virtual machine vm-1 in group rg-a")
 
+    def test_a_change_that_the_finding_names_is_named_by_its_action_and_a_look_says_why_in_one_clause_without_a_colon(self):
+        for action, verb in (("remove", "Consider removing"), ("reduce", "Consider reducing"), ("switch", "Consider switching"), ("schedule", "Consider scheduling"),
+                             ("commit", "Consider a commitment for")):
+            with self.subTest(action=action):
+                case = make_case(detector="investigation", recommendation="change", facts={pricing.KEY: {"action": action}})
+                self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "change", case=case), f"{verb} the virtual machine vm-1 in group rg-a")
+        measured = {"metrics": {"M": 0}, "metricDaysWithData": {"M": 28}, "proposal": "investigate"}
+        for basis, why in (("no-usage", "it may be paying for something that nothing uses"), ("low-usage", "it may be paying for more than it uses"), ("oversized", "it may be larger than its use needs"),
+                           ("duplicate", "it may duplicate another resource"), ("unused-feature", "it may be paying for a feature that nothing uses"),
+                           ("commitment-misfit", "its commitment may not fit what it uses")):
+            with self.subTest(basis=basis):
+                case = make_case(detector="investigation", recommendation="investigate", facts={**measured, "basis": basis})
+                self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "investigate", case=case), f"Look at the virtual machine vm-1 in group rg-a, because {why}")
+
     def test_a_type_without_words_is_a_resource_and_a_missing_group_is_left_out(self):
         self.assertEqual(headline_of(ADVISE, "x", "", "microsoft.thing/things", "delete"), "Consider deleting the resource x")
         self.assertEqual(headline_of("", "x", "g", "", None), "Look at the resource x in group g")
@@ -587,6 +601,16 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
             self.assertEqual((brief.still_used(case), risk.level, bool(brief.check_first(case))), (True, "high", True))
             self.assertIn("Nothing proves that it is unused, so acting on it could break something that still uses it.", risk.text)
             self.assertIn("Traffic that you cannot see from here may depend on it.", risk.text)
+
+
+class TheReasonsThatAFindingNeedsAPerson(unittest.TestCase):
+    def test_the_details_say_only_the_reasons_that_are_true_of_the_finding(self):
+        base = dict(status="needs_human", detector="investigation", confidence=0.9, objections=(), guards=())
+        for changes, said in (({"guards": ("locked",)}, "A check held it back."), ({"objections": ("A monthly job may need it.",)}, "The second AI did not agree."),
+                              ({"confidence": 0.5}, "The first AI was not sure enough."), ({"guards": ("locked",), "confidence": 0.5}, "A check held it back. The first AI was not sure enough."),
+                              ({}, "")):
+            with self.subTest(changes=changes):
+                self.assertEqual(brief.why_a_person(make_case(**{**base, **changes})), said)
 
 
 class TheOwner(unittest.TestCase):
