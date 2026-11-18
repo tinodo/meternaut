@@ -414,8 +414,8 @@ ESCALATION_WHY = {
 }
 ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
                     "I change nothing myself: a person decides on a web page.")
-ESCALATION_ADDED = "You were added to the people who answer this request after it was made, so this is the first time that I write to you about it."
-ESCALATION_ADDED_SOME = "You were added to the people who answer some of these requests after they were made, so some of them are new to you."
+ESCALATION_ADDED = "You were added to the people who answer this request after it was made."
+ESCALATION_ADDED_SOME = "You were added to the people who answer some of these requests after they were made."
 ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not worth it, you have a question, it is not yours (then I pass it on), or you decide later (at most three times)."
 ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 

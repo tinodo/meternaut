@@ -484,7 +484,11 @@ class Approvals:
                 if new:
                     self.store.escalation_claim(EscalationRecord(fresh.plan_id, "added", 1 + sum(1 for r in self.store.escalations_of(fresh.plan_id) if r.kind == "added"), stamp(self.clock()), who=new))
                 changed = replace(fresh, approvers=wanted)
-                self.store.plan_put(plan_digest.sealed(changed) if fresh.digest else changed)
+                if fresh.digest:
+                    changed = plan_digest.sealed(changed)
+                    if fresh.family == ADVISE:
+                        changed = replace(changed, code=fresh.code)  # advice changes nothing in Azure, so its code stays: a card or a letter that was sent before keeps working
+                self.store.plan_put(changed)
                 plans, added, dropped = plans + 1, added + len(new), dropped + len(kept - set(wanted))
         except StoreError:
             pass

@@ -866,6 +866,7 @@ class TheApproversOfARequest(unittest.TestCase):
         watch.store.plan_put(sealed("p1"))
         watch.store.plan_put(sealed("p2", "change"))
         before, nina = watch.store.plan_get("p2"), Principal(NINA, "Nina", ("approver",))
+        advice_code = watch.store.plan_get("p1").code
         approvals = watch.services.extras.approvals
         self.assertEqual(approvals.check_approve(nina, "p2", before.code)[1].kind, "refused_role")
         watch.run(WITH_NINA)
@@ -873,9 +874,10 @@ class TheApproversOfARequest(unittest.TestCase):
             plan = watch.store.plan_get(plan_id)
             self.assertEqual((plan.approvers, plan_digest.problem(plan, plan.digest)), ((A, NINA), ""), "the people are in the digest: the request is sealed again")
         after = watch.store.plan_get("p2")
-        self.assertNotEqual(after.code, before.code)
+        self.assertNotEqual(after.code, before.code, "a change is bound to its digest, so its code is the new one")
+        self.assertEqual(watch.store.plan_get("p1").code, advice_code, "advice changes nothing in Azure: its code stays, so a card or a letter sent before keeps working")
         self.assertEqual(approvals.check_approve(nina, "p2", after.code), (after, None), "the digest holds, so the approval can go on to the sign-in")
-        asked = approvals.decide(nina, "p1", "ask", watch.store.plan_get("p1").code, watch.store.nonce_new(NINA, "p1"))
+        asked = approvals.decide(nina, "p1", "ask", advice_code, watch.store.nonce_new(NINA, "p1"))  # the code of the old card
         self.assertEqual((asked.ok, asked.kind), (True, "asked"))
 
     def test_a_person_who_is_not_on_the_list_any_more_cannot_answer_and_the_others_still_can(self):
