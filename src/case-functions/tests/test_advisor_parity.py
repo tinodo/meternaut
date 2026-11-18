@@ -216,7 +216,7 @@ class TheCasesOfTheWatch(unittest.TestCase):
         plan = next(p for p in self.store_plans() if p.case_id == case.case_id)
         said = brief_mod.build_brief(case, plan, now=NOW)
         self.assertEqual((said.saving.level, round(said.saving.monthly, 2)), ("Scenario", month(case)))
-        self.assertIn("smallest of its variants", said.saving.basis)
+        self.assertIn("smallest of its options", said.saving.basis)
         self.assertIn("alternatives", said.saving.basis)
 
     def test_the_history_says_each_case_with_its_figure_and_that_nothing_was_judged_by_a_model(self):
@@ -371,7 +371,7 @@ class WhatIsOneDecisionAndWhatIsNot(unittest.TestCase):
         (case,) = Watched(estate({SUBSCRIPTION: [], SUB_B: rows})).run().cases()
         said = case.facts["advisor"]
         self.assertEqual((said["n"], said["usd"], {row[1] for row in said["rows"]}), (6, 200.0, {2, 3}))
-        self.assertIn("differ by quantity, term and look-back", brief_mod.advisor_of(case).sentence)
+        self.assertIn("differ by quantity, term and how far back Advisor looked", brief_mod.advisor_of(case).sentence)
 
     def test_the_same_product_in_another_scope_is_an_alternative_and_only_the_larger_is_counted(self):
         single = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), scope="Single")
@@ -556,8 +556,8 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertEqual([(row["For how long"], row["Saves a year"], row["Looked back"]) for row in (table.rows[0], table.rows[-1])],
                          [("1 year", "$321", "7 days"), ("3 years", "$960", "60 days")], "the smallest first")
         text = reply.content.replace("&#x27;", "'")
-        self.assertIn("6 variants of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and look-back", text)
-        self.assertIn(f"they are alternatives, and Meternaut counts the smallest: {self.year} a year", text)
+        self.assertIn("6 options of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and how far back Advisor looked", text)
+        self.assertIn(f"You buy only one of them, so they are alternatives. Meternaut counts the smallest, which is {self.year} a year", text)
         self.assertIn("The largest is $960 a year with a term of 3 years", text)
         self.assertIn(f"Azure Advisor estimates that this could save about {self.year} a year", text)
         self.assertIn(brief_mod.ADVISOR_BASIS_MANY, text)
@@ -567,8 +567,8 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         case = self.watched.case(SAVINGS_PLAN)
         plan = next(p for p in self.watched.store.plans_open() if p.case_id == case.case_id)
         text = Console(store=self.watched.store).get(f"/ok/{plan.plan_id}").content.replace("&#x27;", "'")
-        self.assertIn("Advisor lists another purchase for this subscription that saves more (reservations)", text)
-        self.assertIn("nothing is added for this request", text)
+        self.assertIn("Azure Advisor lists another purchase for this subscription that would save more (reservations)", text)
+        self.assertIn("it adds nothing for this request", text)
         self.assertNotIn("Meternaut worked out that this could save", text)
         self.assertEqual(brief_mod.build_brief(case, plan, now=NOW).saving.monthly, None)
 
@@ -619,5 +619,5 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertIn(f"${round(self.case.facts['advisor']['usd']):,}", letter.text)
         built = brief_mod.build_brief(self.case, self.plan, now=NOW, may_answer=True)
         card = json.dumps(cards.decision_card(built, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", contacts=())))
-        self.assertIn("Order of work", card)
+        self.assertIn("Remove what is idle and resize what is too big first, and then commit.", card)
         self.assertIn("Advisor's list", card)

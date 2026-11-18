@@ -105,7 +105,9 @@ HOLD_WORDS = {
 IMPACT = "impact"
 CHANGE = pricing.KEY  # the key of the change that a finding states, kept in the facts of the case (cases/pricing.py makes its digest)
 IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
+IMPACT_SAYS = {"safe": "It looks safe to remove.", "check": "Check what depends on it before you remove it.", "keep": "Do not remove it."}  # the verdict as the first sentence of the line of a card or a letter
 NOT_ANALYSED = "Meternaut did not look at what depends on it."
+NEVER_SEEN = ("whether a policy or a template makes it again", "name servers and firewall rules that Azure Resource Graph does not list", "anything in a subscription that Meternaut cannot read")  # what no impact check can see
 SAFE_RISK = "Meternaut found nothing that depends on it, but it could not read everything, so acting on it still has some risk."
 KEEP_RISK = "It is in use, so removing it would break what uses it."
 # The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card. Each sentence says what acting does, so that it stands alone
@@ -779,17 +781,18 @@ def hold_of(plan: PlanRecord | None, case: CaseRecord | None, now: dt.datetime) 
 
 
 def _advisor_headline(problem: str, scope: str, name: str, group: str, subscription_name: str, subscription: str) -> str:
-    """The title of an Advisor recommendation: Advisor's own sentence, and then what it is about: the subscription by its name (the start of its id when the name was not read), the resource
-    group, or the resource and its group."""
+    """The title of an Advisor recommendation: Advisor's own sentence, and then what it is about in brackets: the subscription by its name (the start of its id when the name was not read), the
+    resource group, or the resource and its group."""
+    problem = problem.rstrip(".")
     if scope == "subscription":
         label = text_of(subscription_name, 80) or text_of(subscription, 40)[:8]
-        return f"{problem}: subscription {label}" if label else problem
+        return f"{problem} (subscription {label})" if label else problem
     if scope == "group":
         label = text_of(group or name, 90)
-        return f"{problem}: resource group {label}" if label else problem
+        return f"{problem} (resource group {label})" if label else problem
     label = text_of(name, MAX_NAME)
     place = f" in group {text_of(group, 90)}" if group else ""
-    return f"{problem}: {label}{place}" if label and not _id_like(label) else f"{problem}{place}"
+    return f"{problem} ({label}{place})" if label and not _id_like(label) else f"{problem}{place}"
 
 
 def shared(rtype: object) -> bool:
@@ -828,7 +831,7 @@ def advisor_estimate(case: CaseRecord | None) -> bool:
     return case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change" and _priced(case) is None))
 
 
-def impact_of(case: CaseRecord | None) -> Impact | None:
+def impact_of(case: CaseRecord | None, now: dt.datetime | None = None) -> Impact | None:
     """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
     model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding. A figure that code worked out from the bill lines does not switch
     it off: what a change would save is not whether anything depends on the resource."""
@@ -845,11 +848,13 @@ def impact_of(case: CaseRecord | None) -> Impact | None:
     rows = found.get("rows")
     rows = tuple((text_of(row[0], 60), text_of(row[1], 240), text_of(row[2], 90)) for row in rows if isinstance(row, list) and len(row) == 3) if isinstance(rows, list) else ()
     reasons, missing = lines("reasons", 240), lines("unchecked", 160)
-    first = reasons[0].partition(". ")[0].rstrip(".") + "." if reasons else ""  # a card and a letter have room for the first sentence of the first reason: the page has them all
+    first = text_of(reasons[0].partition(". ")[0].rstrip("."), 190) + "." if reasons else ""  # a card and a letter have room for the first sentence of the first reason: the page has them all
     when = parse_time(found.get("readAt"))
-    read = f"Read on {day_text(when.date().isoformat())}." if when else "The date that it was read is not known."  # the day of the read, in UTC, with its year: nothing here says "today" or "yesterday"
-    return Impact(found["verdict"], reasons, rows, lines("removal", 400), text_of(found.get("undo"), 300), f"Not checked: {'; '.join(missing)}." if missing else "",
-                  f"Impact: {IMPACT_VERDICTS[found['verdict']]}. {read} {first}".strip() + ("" if found.get("complete") is True else " Part of it could not be read."), read)
+    read = f"Meternaut checked this on {day_text(when.date().isoformat(), now)}." if when else "The day of this check is not known."  # the day of the read, in UTC: nothing here says "today" or "yesterday"
+    failed, unseen = [item for item in missing if item not in NEVER_SEEN], [item for item in missing if item in NEVER_SEEN]
+    unchecked = " ".join(part for part in (f"Meternaut could not check {and_list(failed)}." if failed else "", f"Meternaut cannot see {and_list(unseen, 'or')}." if unseen else "") if part)
+    return Impact(found["verdict"], reasons, rows, lines("removal", 400), text_of(found.get("undo"), 300), unchecked,
+                  " ".join(part for part in (IMPACT_SAYS[found["verdict"]], first, read, "" if found.get("complete") is True else "Meternaut could not read all of it.") if part), read)
 
 
 def measured_zero(facts: object) -> bool:
@@ -1212,18 +1217,19 @@ BILL_BASIS = "It is based on your bill for the last 30 days."
 NOT_WORKED_OUT = "Nobody has worked out what a change would save."
 ADVISOR_OWN = "It is Azure Advisor's own estimate"  # how every sentence of what an Advisor figure rests on begins: it is also how a figure is known for Advisor's (from_advisor)
 ADVISOR_BASIS = f"{ADVISOR_OWN}, and the bill of this resource does not back it."
-ADVISOR_BASIS_MANY = f"{ADVISOR_OWN} of the smallest of its variants. They are alternatives, and only one is bought."
-ADVISOR_BASIS_OVERLAP = f"{ADVISOR_OWN} of the largest of its recommendations about one resource. They overlap, so only one counts."
-ADVISOR_ALT = ("Advisor lists another purchase for this subscription that saves more ({alt}). You buy one or the other, so only the larger is counted, and nothing is added for this request.")
+ADVISOR_BASIS_MANY = f"{ADVISOR_OWN} for the smallest of its options. They are alternatives, and only one is bought."
+ADVISOR_BASIS_OVERLAP = f"{ADVISOR_OWN} for the largest of its recommendations about one resource. They overlap, so only the largest counts."
+ADVISOR_ALT = ("Azure Advisor lists another purchase for this subscription that would save more ({alt}). You buy one or the other, so Meternaut counts only the larger saving, "
+               "and it adds nothing for this request.")
 ADVISOR_SURE = "This is Azure Advisor's own estimate. No AI looked at it, and Meternaut did not check that what it covers will keep running."
-ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
-                 "and a discount lowers the rate and does not remove waste.")
+ADVISOR_FIRST = ("Clean up first. Delete what is idle and resize what is too big, and only then commit. A commitment locks in what runs today, "
+                 "and a discount lowers the rate but does not remove waste.")
 ADVISOR_FIRST_RISK = "Meternaut has not checked that what these cover is the right size or will keep running."
-ADVISOR_BUY = ("Then buy the one that fits, in the Azure portal under Reservations or Savings plans. Meternaut does not buy it: "
-               "the steps are in its proposal on reservations (docs/proposals/17-reservations-instructions-only.md).")
-ADVISOR_BUY_RISK = "A commitment is a one-way door: a refund counts against a yearly cap, and an exchange is limited."
+ADVISOR_BUY = ("Then buy the one that fits, in the Azure portal under Reservations or Savings plans. Meternaut does not buy it, "
+               "and the steps are in its proposal on reservations (docs/proposals/17-reservations-instructions-only.md).")
+ADVISOR_BUY_RISK = "A commitment is hard to undo. A refund counts against a yearly cap, and an exchange is limited."
 ADVISOR_RISK = "A commitment of one or three years locks in what runs today, and a refund or an exchange is limited."
-ADVISOR_SHORT = "Order of work: remove what is idle and resize what is too big first, then commit. Meternaut has not checked that what these cover is the right size."
+ADVISOR_SHORT = "Remove what is idle and resize what is too big first, and then commit. Meternaut has not checked that what these cover is the right size."
 
 
 @dataclass(frozen=True)
@@ -1320,9 +1326,9 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     count, usd, low, high = found["n"], _figure(found["usd"]) or 0.0, _figure(found.get("low")) or 0.0, _figure(found.get("high")) or 0.0
     alt, left, commit = text_of(found.get("alt"), 40), _whole(found.get("more")), _commitment(case)
     top = _term_text(found["rows"][-1][3]) if not left and isinstance(found["rows"][-1], list) and len(found["rows"][-1]) == 8 else ""
-    many = f"{number_text(count)} {'variant' if commit else 'recommendation'}{'' if count == 1 else 's'}"
+    many = f"{number_text(count)} {'option' if commit else 'recommendation'}{'' if count == 1 else 's'}"
     rates = ", based on your own rates and usage" if commit else ""  # Learn: reservations and savings plans are priced on actual rates and usage; it says nothing of rates for the others that Advisor lists
-    differ = [word for n, word in ((0, "quantity"), (2, "term"), (4, "look-back")) if n in shown] or ["term", "look-back"]
+    differ = [word for n, word in ((0, "quantity"), (2, "term"), (4, "how far back Advisor looked")) if n in shown] or ["term", "how far back Advisor looked"]
     what = (f"{many} of one purchase{f' ({same})' if same else ''} that differ by {', '.join(differ[:-1])}{' and ' if len(differ) > 1 else ''}{differ[-1]}"
             if commit and count > 1 else many)
     if alt:
@@ -1332,17 +1338,17 @@ def advisor_of(case: CaseRecord | None) -> Advisor | None:
     elif count == 1:
         money = f"Its figure is {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
     elif commit:
-        money = (f"You buy one of them, so they are alternatives, and Meternaut counts the smallest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}. "
+        money = (f"You buy only one of them, so they are alternatives. Meternaut counts the smallest, which is {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}. "
                  f"The largest is {usd_text(high)} a year{f' with a term of {top}' if top else ''}.")
     else:
-        money = f"They overlap, so Meternaut counts the largest: {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
+        money = f"They overlap, so Meternaut counts the largest, which is {usd_text(usd)} a year ({usd_text(usd / 12)} a month){rates}."
     skipped = _whole(found.get("skipped"))
     kinds = [text_of(item, 3) for item in found.get("currencies", []) if isinstance(item, str)] if isinstance(found.get("currencies"), list) else []
-    note = (f"{number_text(skipped)} of the {number_text(count)} {'was' if skipped == 1 else 'were'} counted and not added up: Advisor gave no figure in dollars"
-            f"{' (' + ', '.join(kinds) + ')' if kinds else ''}, and Meternaut does not change it into dollars.") if skipped else ""
-    line = (f"{many}, none counted: an alternative" if alt else many if usd <= 0 else f"{many}, {usd_text(usd)} a year" + (f" counted (the {'smallest' if commit else 'largest'})" if count > 1 else ""))
+    note = (f"Advisor gave no figure in dollars for {number_text(skipped)} of the {number_text(count)}{' (' + ', '.join(kinds) + ')' if kinds else ''}. "
+            f"Meternaut does not change other money into dollars, so {'that one is' if skipped == 1 else 'those are'} not added up.") if skipped else ""
+    line = (f"{many}, none counted, because another purchase saves more" if alt else many if usd <= 0 else f"{many}, {usd_text(usd)} a year" + (f", counting the {'smallest' if commit else 'largest'}" if count > 1 else ""))
     who = "Azure Advisor lists" if case.detector == "advisor-cost" else "Azure Advisor also says so, with"
-    return Advisor(f"{who} {what}. {money}", line, columns, rows, f"and {number_text(left)} more variants" if left else "", note)
+    return Advisor(f"{who} {what}. {money}", line, columns, rows, f"and {number_text(left)} more options" if left else "", note)
 
 
 def advisor_options(case: CaseRecord | None) -> tuple[Option, ...]:
@@ -1729,9 +1735,10 @@ def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0
             "replaced cost for the days that each of them waited.")
 
 
-def and_list(names: Sequence[str]) -> str:
-    """Names as a person lists them: "Olga", "Olga and Maya", "Olga, Maya and Tino"."""
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+def and_list(names: Sequence[str], word: str = "and") -> str:
+    """Names as a person lists them: "Olga", "Olga and Maya", "Olga, Maya and Tino". With `word` "or" a list of three or more has a comma before the last: "a, b, or c" is clearer when a
+    name is itself a phrase that holds a comma or an "and"."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])}{',' if word == 'or' and len(names) > 2 else ''} {word} {names[-1]}"
 
 
 def told_lines(steps: Sequence, before: int = 1000, now: dt.datetime | None = None) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -1885,7 +1892,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost=together.cost if together is not None and together.cost is not None else (_figure(case.cost_usd_30d) if case is not None else None),
         held=bool(changes_paused and may_answer and state == "open" and kind in ("change", "advice")), second=second, ready=looked, refused_before=last_try,
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
-        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
+        check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation))
 

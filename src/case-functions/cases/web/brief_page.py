@@ -357,7 +357,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     parts: list[object] = [summary(rows)]
     if case is not None:
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
-        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
+        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, which Meternaut's code made into a request.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
         typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],

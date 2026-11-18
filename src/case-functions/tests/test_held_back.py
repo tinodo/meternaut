@@ -126,7 +126,7 @@ class AnAdvisorRecommendationWithNoWordsButWithAFigureIsNotHeldBack(unittest.Tes
 
     def test_it_is_titled_by_what_it_is_about_in_words_of_code_and_never_by_the_words_review_the_resource(self):
         (plan,) = self.extras.store.plans_open()
-        self.assertEqual(plan.title, f"{ADVICE_NONE['problem']}: subscription {DEV}")
+        self.assertEqual(plan.title, f"{ADVICE_NONE['problem']} (subscription {DEV})")
         self.assertNotIn("Review the resource", plan.title)
         self.assertNotIn(SUBSCRIPTION, plan.title)
 

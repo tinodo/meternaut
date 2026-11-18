@@ -20,7 +20,7 @@ from typing import Callable, Collection, Sequence, TypeVar
 
 from .arm import DNS_ZONE_ID, SCOPE_ID, Arm
 from .brief import IMPACT as KEY
-from .brief import MEASURED_DAYS, day_text, plain, quantity, who_text
+from .brief import MEASURED_DAYS, NEVER_SEEN, day_text, plain, quantity, who_text
 from .http import HttpError, Refused
 from .identity import IdentityError
 from .ownership import NOT_VISIBLE, UNAVAILABLE, OwnerReader
@@ -36,7 +36,6 @@ STAMP = "%Y-%m-%dT%H:%M:%SZ"  # the time of a write and of the read, in UTC
 STATES = ("approved", "pending", "rejected", "disconnected")  # what a connection of a private endpoint can be, the best first
 ENDPOINTS = "microsoft.network/privateendpoints"
 USE_METRICS = ("PEBytesIn", "PEBytesOut")
-NEVER_SEEN = ("whether a policy or a template makes it again", "name servers and firewall rules that Azure Resource Graph does not list", "anything in a subscription that Meternaut cannot read")
 LABELS = {"endpoint": "the endpoint itself", "service": "the service that it points at", "others": "the other endpoints to the service", "mentions": "what mentions its addresses",
           "addresses": "the addresses of the endpoint", "dns": "the DNS zone groups of the endpoint", "zone": "the records of its DNS zone", "traffic": "its traffic",
           "log": "its changes in the Activity Log"}
@@ -45,12 +44,12 @@ WORDS = {NOT_VISIBLE: "not visible with this access", UNAVAILABLE: "the read fai
 # may have carried traffic. Learn does not settle whether the owner can approve a rejected connection again (its pages say both), so no sentence here says either.
 STATE_SAYS = {
     "approved": "It is approved, so it can carry traffic.",
-    "pending": "It waits for the owner of the service to approve it: somebody asked for it, and removing it drops that request.",
-    "rejected": "The owner of the service rejected it, so it cannot carry traffic now: only an approved endpoint can.",
-    "disconnected": "The owner of the service removed the connection, so the endpoint cannot carry traffic. Microsoft says that such an endpoint becomes informative and should be deleted for cleanup.",
+    "pending": "It waits for the owner of the service to approve it. Somebody asked for it, and removing it drops that request.",
+    "rejected": "The owner of the service rejected it, so it cannot carry traffic now. Only an approved endpoint can.",
+    "disconnected": "The owner of the service removed the connection, so the endpoint cannot carry traffic. Microsoft says that it can be deleted now, to clean up.",
     "unknown": "Its connection state could not be read.",
 }
-UNDO = ("Make the endpoint again in the same subnet, for the same service, and ask the owner of the service to approve it. Then add its DNS zone group, so that the records come back. "
+UNDO = ("Create the endpoint again in the same subnet, for the same service, and ask the owner of the service to approve it. Then add its DNS zone group, so that the records come back. "
         "Its addresses may be different.")
 NIC = "microsoft.network/networkinterfaces"
 # Queries start with the line that marks them as this app's own (the logs and the tests tell them by it).
@@ -180,7 +179,7 @@ def _traffic(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str
         return "some", f"{said}, on {max(days)} of {WINDOW} days"
     if all(total == 0 for total in totals) and min(days) >= MEASURED_DAYS:
         return "zero", f"{said}, with a value on {min(days)} of {WINDOW} days"
-    return "unmeasured", "Not measured: the read failed" if "traffic" in failed else f"Not measured: Azure Monitor gave a value on {max(days)} of {WINDOW} days, and {MEASURED_DAYS} are needed"
+    return "unmeasured", "Not measured, because the read failed" if "traffic" in failed else f"Not measured, because Azure Monitor gave a value on {max(days)} of {WINDOW} days and {MEASURED_DAYS} are needed"
 
 
 def _day(value: dt.datetime | str) -> str:
@@ -196,7 +195,7 @@ def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str,
     writes = reader.owners.writes(endpoint)
     if writes is None:
         failed["log"] = UNAVAILABLE
-        return "none", "", "Not read: the Activity Log could not be read"
+        return "none", "", "Not read, because the Activity Log could not be read"
     whole = reader.owners.complete(endpoint)
     if not whole:
         failed["log"] = "only part of the 90 days was read"
@@ -225,28 +224,29 @@ def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     good: list[str] = [STATE_SAYS[state]] if state in ("rejected", "disconnected") else []
     if state == "approved":
         if use == "some":
-            keep.append("It carries traffic: Azure Monitor counted some in the 30 days before Meternaut read it.")
+            keep.append("It carries traffic. Azure Monitor counted some in the 30 days before Meternaut read it.")
         if not f["othersApproved"] and f["publicAccess"] == "disabled":
             keep.append("It is the only approved private way to the service, and the service does not accept public traffic.")
         if not keep:
-            check.append(STATE_SAYS[state] + (" No traffic was measured, but something may use it now and then." if use == "zero" else " Nothing measured shows that nothing uses it."))
+            check.append(STATE_SAYS[state] + (" No traffic was measured, but something may use it now and then." if use == "zero" else " Nothing that was measured shows whether anything uses it."))
     elif state in ("pending", "unknown"):
         check.append(STATE_SAYS[state])
     elif use == "some":
-        check.append(f"Azure Monitor counted traffic in the 30 days before Meternaut read it, and the endpoint is {state} now: the connection may have changed inside those 30 days, so something may have used it until then.")
+        check.append(f"Azure Monitor counted traffic in the 30 days before Meternaut read it, and the endpoint is {state} now. The connection may have changed inside those 30 days, "
+                     "so something may have used it until then.")
     if state in ("rejected", "disconnected"):
         if f["serviceSays"] in ("approved", "pending"):
-            check.append(f"The service lists it as {f['serviceSays']}, not as {state}: the two disagree.")
+            check.append(f"The service lists it as {f['serviceSays']}, not as {state}. The two disagree.")
         if f["othersApproved"] and f["service"] == "seen":
             good.append("Another endpoint to the same service is approved.")
     if things:
-        check.append(f"Something else mentions its addresses ({things}): check that it does not rely on this endpoint.")
+        check.append(f"Something else mentions its addresses ({things}). Check that it does not rely on this endpoint.")
     elif state in ("rejected", "disconnected") and f["searched"]:
         good.append("Nothing that Azure Resource Graph lists mentions its addresses.")
     if f["changedBy"] == "automation":
         check.append(f"An automation changed it on {_day(f['changedAt'])}. That automation may manage the endpoint and change it again.")
     if not f["complete"]:
-        check.append("Not everything could be read (see Not checked), so this cannot be called safe.")
+        check.append("Not everything could be read, so this cannot be called safe.")
     if keep:
         return "keep", keep
     return ("check", check) if check else ("safe", good + {"zero": ["Azure Monitor shows no traffic."], "unmeasured": ["Its traffic was not measured, and its state says that it carries none."]}.get(use, []))
@@ -255,12 +255,12 @@ def _judge(f: dict, things: str) -> tuple[str, list[str]]:
 def _removal(f: dict, names: Sequence[str], zones: Sequence[str]) -> list[str]:
     """What happens to traffic and to DNS if the endpoint is removed."""
     if f["state"] == "approved":
-        traffic = ("Clients that use it must use another approved endpoint: their DNS decides which one they reach." if f["othersApproved"] else
+        traffic = ("Clients that use it must use another approved endpoint. Their DNS decides which one they reach." if f["othersApproved"] else
                    "Clients lose their private way to the service, and use its public address if it accepts public traffic." if f["publicAccess"] == "enabled" else
                    "Clients lose their private way to the service, and cannot reach it." if f["publicAccess"] == "disabled" else
                    "Clients lose their private way to the service. Whether they can still reach it depends on its public access, which Meternaut could not read.")
     else:
-        traffic = "Nothing carries traffic through it yet, and the request to connect is withdrawn." if f["state"] == "pending" else "No traffic changes: it cannot carry any."
+        traffic = "Nothing carries traffic through it yet, and the request to connect is withdrawn." if f["state"] == "pending" else "No traffic changes, because it cannot carry any."
     dns = (f"Azure removes its DNS records ({', '.join(sorted(names)[:MAX_NAMES])}{' and more' if len(names) > MAX_NAMES else ''}) from {', '.join(zones[:MAX_ZONES]) or 'the zone'}"
            f"{', and a record that also holds the addresses of others keeps theirs' if f['dnsShared'] else ''}. "
            "Computers that use that zone get no answer for those names unless another record answers them." if names else "It has no DNS records that Meternaut could read.")
