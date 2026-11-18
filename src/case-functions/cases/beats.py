@@ -144,13 +144,12 @@ def _dearest_meter(found: Seed, handle: str) -> str | None:
 
 def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
     """The answer of the tool for alternatives for a meter that shows every product of its service, or, when the service has more lines than one answer holds or its list was not read to its end (the
-    table would show its cheapest lines and not the siblings of the meter), the answer that shows the lines of the product of the meter, when that shows all of them. {} when there is none: a refusal
-    of the service is a refusal of the product too, and the product is not asked."""
-    for within in ("service", "product"):
-        prices = _said(call("price_alternatives", {"meter": meter, "within": within, "offset": None}))
-        if prices.get("next_offset") is None and prices.get("complete") is not False:
-            return prices
-    return {}
+    table would show its cheapest lines and not the siblings of the meter), the answer that shows the lines of the product of the meter. {} when there is none: a refusal of the service is a refusal of
+    the product too, and the product is not asked."""
+    prices = _said(call("price_alternatives", {"meter": meter, "within": "service", "offset": None}))
+    if prices.get("next_offset") is not None or prices.get("complete") is False:
+        prices = _said(call("price_alternatives", {"meter": meter, "within": "product", "offset": None}))
+    return prices
 
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:

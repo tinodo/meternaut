@@ -223,15 +223,23 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
                                  [{"meter": "m1", "within": "service", "offset": None}, {"meter": "m1", "within": "product", "offset": None}], "the cheapest lines of a long list are not the siblings of the meter")
                 self.assertEqual((found.alternatives, found.failed), ([list_prices("m1", "product")], 0))
 
-    def test_nothing_is_kept_when_the_list_of_the_product_does_not_show_every_line_either_or_is_refused_and_no_product_is_asked_after_a_refusal_of_the_service(self):
+    def test_nothing_is_kept_when_the_list_of_the_product_is_refused_or_shows_no_price_and_no_product_is_asked_after_a_refusal_of_the_service(self):
         kind = "contoso.compute/rigs"
-        for what, prices, asked in (("the product is cut too", {"service": TOO_LONG, "product": {"complete": False}}, ["service", "product"]),
-                                    ("the product is refused", {"service": TOO_LONG, "product": '{"error":"not-offered"}'}, ["service", "product"]),
+        for what, prices, asked in (("the product is refused", {"service": TOO_LONG, "product": '{"error":"not-offered"}'}, ["service", "product"]),
+                                    ("the product shows no price", {"service": TOO_LONG, "product": {"rows": [], "lines": 0, "returned": 0}}, ["service", "product"]),
                                     ("the service is refused", {"service": '{"error":"unavailable"}'}, ["service"]), ("the service is not offered", {"service": '{"error":"not-offered"}'}, ["service"])):
             with self.subTest(what=what):
                 box = PricedToolbox({kind: [resource_of(1, kind)]}, prices=prices)
                 found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
                 self.assertEqual(([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], found.alternatives, found.failed), (asked, [], 0))
+
+    def test_the_list_of_the_product_is_kept_even_when_it_is_cut_too_because_it_is_the_siblings_of_the_meter_and_says_so(self):
+        kind = "contoso.compute/rigs"
+        cut = {"lines": 90, "complete": False, "next_offset": 3}
+        box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"service": TOO_LONG, "product": cut})
+        found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
+        self.assertEqual([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], ["service", "product"], "no third read")
+        self.assertEqual(found.alternatives, [{**list_prices("m1", "product"), **cut}])
 
     def test_no_list_prices_are_asked_for_when_the_picture_of_the_dearest_resource_shows_no_meter_that_can_be_asked_about(self):
         kind = "contoso.compute/rigs"
