@@ -809,6 +809,44 @@ class WhatCodeChecksAgainstTheTools(unittest.TestCase):
         quiet = verified(finding(handles=["r1", "r3"], evidence=[entry("r3", "MetricA", 0)]), toolbox)
         self.assertEqual((quiet.no_entry, quiet.total_differs, quiet.metric_unknown, quiet.not_measured, quiet.handles), (1, 0, 0, 0, ["r3"]), "r1 was listed and gave no measurement")
 
+    SHOWN = {"metrics": {"MetricA": {"total": 100, "totals": [100, 40], "max": 250, "average": 12.5, "days": 30, "days_with_data": 21}}}
+
+    def differs(self, said, evidence=None):
+        """The cited total `said`, which equals none of the totals of the tools, is thrown away as it always was; returns the counts by what it is, and their sum."""
+        parsed = verified(finding(handles=["r1"], basis="low-usage", evidence=[entry("r1", "MetricA", said)]), FakeToolbox(evidence={"r1": evidence or self.SHOWN}))
+        self.assertEqual(parsed.cited, {"r1": {}}, "an entry whose number differs is thrown away, whatever it is")
+        return {name: count for name, count in parsed.differs.items() if count}, parsed.total_differs
+
+    def test_a_cited_total_that_is_not_a_number_is_counted_as_none(self):
+        for said in (None, "100", True, float("nan"), [100]):
+            self.assertEqual(self.differs(said), ({"none": 1}, 1), repr(said))
+
+    def test_a_cited_total_within_five_percent_of_a_total_of_the_tools_is_counted_as_near_and_one_just_outside_is_far(self):
+        for said in (104.9, 95.1, 41.9, 38.1):
+            self.assertEqual(self.differs(said), ({"near": 1}, 1), said)
+        for said in (105.1, 94.9, 42.1, 37.9):
+            self.assertEqual(self.differs(said), ({"far": 1}, 1), said)
+
+    def test_a_cited_total_that_is_the_maximum_the_average_or_the_days_with_data_is_counted_as_stat_even_when_it_is_also_near(self):
+        for said in (250, 12.5, 21):
+            self.assertEqual(self.differs(said), ({"stat": 1}, 1), said)
+        close = {"metrics": {"MetricA": {"total": 245, "totals": [245], "max": 250, "average": 12.5, "days": 30, "days_with_data": 21}}}
+        self.assertEqual(self.differs(250, close), ({"stat": 1}, 1), "2 percent from the total, and the maximum to the digit")
+
+    def test_a_cited_zero_where_none_of_the_totals_is_zero_is_counted_as_zero_whatever_else_it_equals(self):
+        self.assertEqual(self.differs(0), ({"zero": 1}, 1))
+        no_total = {"metrics": {"MetricA": {"total": None, "totals": [None], "max": 0, "average": 0, "days": 30, "days_with_data": 0}}}
+        self.assertEqual(self.differs(0, no_total), ({"zero": 1}, 1), "the tools returned no total, and the maximum is 0")
+
+    def test_a_cited_total_that_is_none_of_these_is_counted_as_far(self):
+        for said in (7, 400, -100, 1e9):
+            self.assertEqual(self.differs(said), ({"far": 1}, 1), said)
+
+    def test_a_total_that_matches_is_in_no_count_and_the_counts_of_the_entries_of_a_finding_add_up(self):
+        raw = finding(handles=["r1"], basis="low-usage", evidence=[entry("r1", "MetricA", said) for said in (None, 104, 250, 0, 400, 7, 100)])
+        parsed = verified(raw, FakeToolbox(evidence={"r1": self.SHOWN}))
+        self.assertEqual(({name: parsed.differs[name] for name in ("none", "near", "stat", "zero", "far")}, parsed.total_differs, parsed.cited), ({"none": 1, "near": 1, "stat": 1, "zero": 1, "far": 2}, 6, {"r1": {"MetricA": 100}}))
+
     def test_a_claim_of_no_usage_that_is_dropped_as_unproven_says_why_the_measurement_shows_use_or_it_is_too_brief(self):
         brief = {"metrics": {"MetricA": {"total": 0, "totals": [0], "days": 30, "days_with_data": 19}}}
         toolbox = FakeToolbox(evidence={"r1": recorded(MetricA=[2900, 0]), "r2": metrics(MetricA=0), "r3": brief, "r4": recorded(MetricA=[0])})
@@ -1053,10 +1091,19 @@ class AGoodInvestigation(unittest.TestCase):
         (line,) = self.h.of("investigation.finding")
         self.assertEqual({k: v for k, v in line.items() if k not in ("v", "ts", "runId", "requestId", "type")},
                          {"finding": 1, "basis": "no-usage", "proposal": "delete", "confidence": 0.9, "claimed": 2, "handles": 2, "unknown": 0, "unproven": 0, "repeated": 0,
-                          "noEntry": 0, "totalDiffers": 0, "metricUnknown": 0, "notMeasured": 0, "showsUse": 0, "tooBrief": 0,
+                          "noEntry": 0, "totalDiffers": 0, "diffNone": 0, "diffNear": 0, "diffStat": 0, "diffZero": 0, "diffFar": 0, "metricUnknown": 0, "notMeasured": 0, "showsUse": 0, "tooBrief": 0,
                           "judgedLately": 0, "guarded": 0, "capped": 0, "tooSmall": 0, "unmeasured": 0, "shown": 2, "coveredCostUsd30d": 30.0, "change": None, "pricedHandles": 0, "savingUsdMonth": None,
                           "verdict": "agree", "kept": True,
                           "reason": None, "note": None, "summary": "Nothing used these in the window."})
+
+    def test_the_line_of_a_finding_counts_the_totals_that_differ_by_what_the_cited_number_is_and_totalDiffers_is_their_sum(self):
+        shown = {"metrics": {"MetricA": {"total": 100, "totals": [100, 40], "max": 250, "average": 12.5, "days": 30, "days_with_data": 21}}}
+        entries = [entry("r1", "MetricA", said) for said in (None, 104, 250, 0, 400, 7, 100)]
+        h = Harness(FakeFoundry(answer(finding(handles=["r1"], basis="low-usage", evidence=entries))), FakeToolbox([resource(1)], {"r1": shown}))
+        h.go()
+        (line,) = h.of("investigation.finding")
+        self.assertEqual({key: line[key] for key in ("totalDiffers", "diffNone", "diffNear", "diffStat", "diffZero", "diffFar")},
+                         {"totalDiffers": 6, "diffNone": 1, "diffNear": 1, "diffStat": 1, "diffZero": 1, "diffFar": 2})
 
     def test_the_end_says_what_was_examined_how_many_calls_tokens_and_seconds_and_what_was_kept_and_dropped(self):
         (end,) = self.h.of("investigation.finished")
