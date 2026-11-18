@@ -1885,7 +1885,8 @@ class TheMetricSummary(unittest.TestCase):
             offset = listed(box, VM, limit=40, offset=offset).get("next_offset")
         handles = sorted(box.handles)
         self.assertEqual((len(handles), handles[0], handles[-1]), (60, "r1000", "r1059"))
-        raw = box.call("metric_summary", {"handles": handles, "metric": VM1_METRIC})
+        with mock.patch.object(tb, "MEASURE_RESULT_CHARS", MAX_RESULT_CHARS):  # the 60 rows are 6,227 characters: over the usual cap and under the cap of metric_summary
+            raw = box.call("metric_summary", {"handles": handles, "metric": VM1_METRIC})
         answer = json.loads(raw)
         self.assertLessEqual(len(raw), MAX_RESULT_CHARS)
         shown = [r["handle"] for r in answer["results"]]
@@ -2087,8 +2088,8 @@ class TheMeasure(unittest.TestCase):
             estate.rows.append(row(VM, f"v{n:02d}"))
             estate.cost_rows.append((SUB, 123456.78 - n, estate.rows[-1]["id"].lower(), "Virtual Machines"))
             estate.series[(estate.rows[-1]["id"].lower(), VM1_METRIC)] = [point(1, 123456789012345.0 - n, -1.234567e-5, 98765432101234.5)]
-        for cap in (MAX_RESULT_CHARS, 3000):
-            with mock.patch.object(tb, "MAX_RESULT_CHARS", cap):
+        for cap in (tb.MEASURE_RESULT_CHARS, 3000):
+            with mock.patch.object(tb, "MEASURE_RESULT_CHARS", cap):
                 box = toolbox(estate)
                 box._next_handle = 1000
                 raw = box.call("measure", {"type": VM, "metric": VM1_METRIC, "limit": 80})
@@ -2364,7 +2365,7 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
             estate.cost_rows.append((SUB, 123456.78 - n, estate.rows[-1]["id"].lower(), "Virtual Machines"))
             estate.series[(estate.rows[-1]["id"].lower(), VM1_METRIC)] = [point(1, 123456789012345.0 - n, -1.234567e-5, 98765432101234.5)] if n % 2 else []
         box = toolbox(estate)
-        with mock.patch.object(tb, "MAX_RESULT_CHARS", 3000):
+        with mock.patch.object(tb, "MEASURE_RESULT_CHARS", 3000):
             first = ask(box, "measure", type=VM, metric=VM1_METRIC, limit=80)
         shown = [r[0] for r in first["rows"]]
         self.assertTrue(0 < len(shown) < 80)
@@ -2390,7 +2391,7 @@ class TheSummaryOfAMeasurement(unittest.TestCase):
         estate.series[(estate.rows[0]["id"].lower(), VM1_METRIC)] = []
         box = toolbox(estate)
         listed(box, VM)
-        with mock.patch.object(tb, "MAX_RESULT_CHARS", 1200):
+        with mock.patch.object(tb, "MEASURE_RESULT_CHARS", 1200):
             answer = ask(box, "metric_summary", handles=[f"r{n}" for n in range(1, 31)], metric=VM1_METRIC)
         self.assertEqual((answer["partial"], len(answer["results"]) < 30), (True, True))
         self.assertEqual(answer["summary"], self.said(len(answer["results"]), len(answer["results"]) - 1, 1, 0, len(answer["results"]) - 1))
@@ -3314,7 +3315,7 @@ class TheTotalsOfAMetric(unittest.TestCase):
             estate.cost_rows.append((SUB, 123456.78 - n, estate.rows[-1]["id"].lower(), "Virtual Machines"))
             estate.series[(estate.rows[-1]["id"].lower(), VM1_METRIC)] = [point(1, 123456789012345.0 - n, -1.234567e-5, 98765432101234.5)]
         box = toolbox(estate)
-        with mock.patch.object(tb, "MAX_RESULT_CHARS", 3000):
+        with mock.patch.object(tb, "MEASURE_RESULT_CHARS", 3000):
             first = ask(box, "measure", type=VM, metric=VM1_METRIC, limit=80)
         shown = {r[0] for r in first["rows"]}
         self.assertTrue(0 < len(shown) < 80)

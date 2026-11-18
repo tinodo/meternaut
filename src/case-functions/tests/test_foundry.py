@@ -653,6 +653,17 @@ class Run(unittest.TestCase):
                 self.assertEqual(result.calls[0]["chars"], len(sent))
                 self.assertEqual(len(sent), MAX_RESULT_CHARS if cut else length)
 
+    def test_a_result_is_cut_at_the_cap_of_the_tool_that_answered(self):
+        from cases.toolbox import result_cap
+        for name, cap in (("measure", 12000), ("metric_summary", 12000), ("profile", 16000), ("describe", 6000)):
+            for length, cut in ((cap, False), (cap + 1, True)):
+                with self.subTest(tool=name, length=length):
+                    self.assertEqual(result_cap(name), cap)
+                    rig = Rig()
+                    result = rig.run(reply([call(name, {}, "c1")]), reply([message("fine")]), handler=Handler("x" * length))
+                    (sent,) = [item["output"] for item in rig.service.responses[1]["input"]]
+                    self.assertEqual((len(sent), sent.endswith(fo.CUT_NOTE), result.calls[0].get("cut")), (cap if cut else length, cut, True if cut else None))
+
     def test_the_agent_may_make_as_many_calls_as_are_allowed_and_must_then_give_its_text(self):
         rig = Rig()
         handler = Handler()

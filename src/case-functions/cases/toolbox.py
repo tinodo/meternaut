@@ -1,6 +1,6 @@
 """The tools of the investigator: read-only reads of the estate whose answers hold typed values only, and opaque handles instead of names.
 
-A tool answer is a JSON string of at most MAX_RESULT_CHARS characters. A resource is named by a handle (r1, r2, ...) that means something only in this run: the id,
+A tool answer is a JSON string of at most MAX_RESULT_CHARS characters (result_cap(name): MEASURE_RESULT_CHARS for measure and metric_summary, which answer for a whole type, and a cap of its own for profile). A resource is named by a handle (r1, r2, ...) that means something only in this run: the id,
 the name, the tags and every other text that somebody wrote about a resource stay in the Resource below and never go into an answer. What does go into an answer is a
 number, a flag, a GUID, or a short word in the form that the platform itself uses. The checks bound the alphabet, the length and the number of parts of a word, and
 that does not say what a word means, so a text goes into an answer only where the platform, and not the owner of the estate, chooses it:
@@ -91,6 +91,7 @@ from .models import CapabilityRecord, StoreError
 from .roles import MAX_CITED_NAME
 
 MAX_RESULT_CHARS = 6000
+MEASURE_RESULT_CHARS = 12000  # for measure and metric_summary, which answer for a whole type: 54 resources with 3 metrics are about 8,500 characters, and 80 with 4 are cut, the last ones named as unread
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
 MAX_LISTED = 40  # resources or cost lines in one answer
 MAX_MEASURE_ROWS = 80  # resources in one measure answer
@@ -869,8 +870,11 @@ PLACEHOLDER_METER = f"m{HANDLE_LIMIT}"
 
 
 def result_cap(name: object) -> int:
-    """The most characters that the answer of a tool may have: MAX_RESULT_CHARS, and for `profile`, which answers for up to dossier.MAX_HANDLES resources, what a profile of that many may take."""
-    return dossier.MAX_HANDLES * dossier.PER_HANDLE if name == "profile" else MAX_RESULT_CHARS
+    """The most characters that the answer of a tool may have: MAX_RESULT_CHARS; MEASURE_RESULT_CHARS for `measure` and `metric_summary`, which answer for a whole type; and for `profile`, which
+    answers for up to dossier.MAX_HANDLES resources, what a profile of that many may take."""
+    if name == "profile":
+        return dossier.MAX_HANDLES * dossier.PER_HANDLE
+    return MEASURE_RESULT_CHARS if name in ("measure", "metric_summary") else MAX_RESULT_CHARS
 
 
 def _page(answer: dict, rows: list, offset: int, total: int) -> None:
@@ -1862,7 +1866,7 @@ class Toolbox:
                 answer["unread"] = [handle for handle in handles if handle in skipped]
 
         refresh()
-        while len(_dump(answer)) > MAX_RESULT_CHARS and rows:
+        while len(_dump(answer)) > result_cap("metric_summary") and rows:
             last = rows[-1]["handle"]
             skipped.add(last)
             rows[:] = [row for row in rows if row["handle"] != last]
@@ -1938,7 +1942,7 @@ class Toolbox:
                     "rows": [row for handle in kept for row in rows_of(handle)]}
 
         built = answer()
-        while len(_dump(built)) > MAX_RESULT_CHARS and any(handle in summaries and handle not in skipped for handle in handles):
+        while len(_dump(built)) > result_cap("measure") and any(handle in summaries and handle not in skipped for handle in handles):
             skipped.add(next(handle for handle in reversed(handles) if handle in summaries and handle not in skipped))
             built = answer()
         for handle, entry in zip(handles, page):
