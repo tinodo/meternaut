@@ -412,7 +412,7 @@ class TheCapAndTheOrderOfTheRequests(Base):
     def test_the_migration_promotes_in_the_order_of_the_pages_the_largest_figure_first_then_who_waited_longest(self):
         for number, (saving, age) in enumerate(((40.0, 3), (300.0, 1), (40.0, 9), (None, 20), (90.0, 5), (40.0, 6)), 1):
             case = automation(case_id=f"k-o{number}", resource_id=f"{BASE}/Microsoft.Foo/kind{number}/o{number}", resource_name=f"o{number}", resource_type=f"microsoft.foo/kind{number}",
-                              saving_usd_month=saving, cost_usd_30d=(saving or 60.0) * 2, status="proposed")
+                              saving_usd_month=saving, cost_usd_30d=(saving or 60.0) * 2, status="proposed", first_seen_at=days_ago(age))
             self.store.case_put(case)
             self.store.plan_put(build_advice(case, (TINO,), self.now - dt.timedelta(days=age), self.approvals.settings, new_id=lambda number=number: f"p-o{number}", held="automation"))
             self.store.case_put(replace(case, plan_id=f"p-o{number}"))
@@ -440,6 +440,32 @@ class EveryListRanksByTheFigureThenByWhoWaitedLongest(unittest.TestCase):
         self.assertEqual([unit.first.case.resource_name for unit in home.units_of(ctx_rows)], wanted, "the Decisions page, which is the start page, ranks with this code")
         letter_lines = listed(desk(console).sent[0][1]["body"]["content"])
         self.assertEqual([next(name for name in wanted if name in line) for line in letter_lines], wanted, "the weekly desk lists the rows of the page in the same order")
+
+
+class TheRevivalAndTheMigrationAgree(Base):
+    """The requests that the old clock closed come back at the Watch (cases/escalation.py revive), and the held ones become requests: neither may undo the other."""
+
+    def test_a_revived_request_is_never_made_held_and_a_held_request_for_its_resource_closes_when_it_is_open_again(self):
+        from cases import escalation
+
+        case = make_advice_case(case_id="k-rev", status="expired", plan_id="p-rev", recommendation="investigate", owner={"lookedUp": True, "automatedAt": days_ago(2)})
+        self.store.case_put(case)
+        old = make_advice(plan_id="p-rev", case_id="k-rev", resource_id=case.resource_id, state="expired", created_at=days_ago(5), expires_at=days_ago(2),
+                          preconditions={"family": ADVISE, "caseStatus": "needs_human"})
+        self.store.plan_put(old)
+        self.assertEqual(self.settle(), [])
+        self.assertEqual(self.store.plans_held(), [], "a request that the clock closed is no finding that waits: nothing is held for it")
+        (revived,) = escalation.revive(self.store, self.now)
+        self.assertEqual((revived.plan_id, self.store.plan_get("p-rev").state, self.store.case_get("k-rev").status), ("p-rev", "open", "needs_human"))
+        self.assertEqual(self.settle(), [])
+        self.assertEqual((self.store.plans_held(), self.store.plan_get("p-rev").state, started(self.store.plan_get("p-rev"))), ([], "open", days_ago(5)), "it stays open, with its own start")
+        again = replace(case, status="needs_human", case_id="k-rev-2", resource_id=case.resource_id)
+        self.store.case_put(again)
+        held = build_advice(again, (TINO,), self.now - dt.timedelta(days=1), self.approvals.settings, new_id=lambda: "p-held", held="automation")
+        self.store.plan_put(held)
+        (closed,) = self.settle()
+        self.assertEqual((closed[0].plan_id, closed[0].preconditions["takenBack"], self.store.plan_get("p-rev").state), ("p-held", "released", "open"), "an open request for the resource wins: the held one ends")
+        self.assertEqual(self.approvals.promoted, [])
 
 
 class TheOldWordsStillRenderForOldRequests(unittest.TestCase):

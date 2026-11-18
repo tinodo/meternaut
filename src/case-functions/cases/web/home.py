@@ -84,8 +84,7 @@ class Unit:
 
     @property
     def age(self) -> int:
-        """How long the most patient member has waited (since its wait began: a request that stands for others keeps their start), else how long ago its finding was first seen."""
-        return max((m.brief.waiting.days if m.brief.waiting is not None else m.brief.age_days) or 0 for m in self.members)
+        return max(m.brief.age_days or 0 for m in self.members)
 
     @property
     def risk(self) -> int:

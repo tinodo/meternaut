@@ -632,7 +632,7 @@ class Approvals:
                     fresh = self._release(plan, now, how)
                     if fresh is not None:
                         released.append((fresh, case))
-            for plan, case in sorted(managed, key=lambda item: (-_figure(item[1]), started(item[0]), item[0].plan_id)) if approvers else ():  # the order of the pages: the largest figure first, then who waits longest
+            for plan, case in sorted(managed, key=lambda item: (-_figure(item[1]), item[1].first_seen_at or item[0].created_at, item[0].plan_id)) if approvers else ():  # the order of the pages: the largest figure first, then the finding that has waited longest
                 opened = None if len(self.promoted) >= PROMOTE_NEW or places_full(case, open_plans) else self._promote(plan, case, approvers, now)
                 if opened is None:
                     self._refresh(plan.plan_id, case, "waiting")
