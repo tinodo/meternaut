@@ -478,8 +478,8 @@ class TheWordsAboutWhatWasNotMeasured(unittest.TestCase):
 class TheStyleGuideAndTheRecordHoldTheWords(unittest.TestCase):
     def test_the_words_of_the_two_risks_and_of_the_title_are_in_the_style_guide_and_in_the_record_of_the_brief(self):
         for path, needed in ((REPO_ROOT / "docs" / "ui" / "style-guide.html", ("High risk" + brief.IF_ACTED, "Answering changes nothing in Azure", brief.UNPROVEN, brief.SHARED_RISK,
-                                                                               "Check whether the private endpoint", "Costs, saving not measured", "Check first")),
-                             (REPO_ROOT / "docs" / "proposals" / "09-the-decision-brief.md", ("Check whether the private endpoint x is still used", "If you act on it", brief.UNPROVEN,
+                                                                               "Check whether the private endpoint", brief.NOT_WORKED_OUT, "Check first")),
+                             (REPO_ROOT / "docs" / "proposals" / "09-the-decision-brief.md", ("Check whether the private endpoint x is still used", brief.ACTING.strip(), brief.UNPROVEN,
                                                                                                brief.SHARED_RISK, "held back: managed by an automation", "Missing data is not zero"))):
             text = path.read_text(encoding="utf-8")
             for words in needed:

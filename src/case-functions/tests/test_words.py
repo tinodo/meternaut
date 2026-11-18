@@ -1,7 +1,7 @@
 """The words that a person reads: the pages of a request, a letter, a card, read as the text that a person sees and held to the style of the words.
 
 Every case below is built from the test fakes (invented names, no network). Each is rendered by the real code and cut into the blocks that a person reads (`Reader`): a paragraph, a list item, a
-cell, a heading, a button. The lint (TheWordsReadAsSentences) holds every block to the rules of docs/experience/06-web-pages.md "The words": whole sentences, full stops, no stray space or
+cell, a heading, a button. The lint (TheWordsReadAsSentences) holds every block to the rules of docs/ui/style-guide.html, section 7 "Writing": whole sentences, full stops, no stray space or
 punctuation, no sentence over 40 words, none of the phrases that the owner threw out, no id outside the Details. The module is also read by a script that prints the same cases before and after a
 change (the gallery of the words), so it imports nothing that a change of the words could remove.
 """
@@ -404,10 +404,10 @@ SHORT_VALUE = 5  # a value of a list of facts that is shorter than this many wor
 
 
 def problems(shown: Rendered) -> list[str]:
-    """What is wrong with the words of one rendered case, one line for each fault, empty when it reads as sentences: no banned phrase, no id outside the Details, no stray space or punctuation, no sentence
-    that starts in lower case or runs over forty words, no sentence with two colons, and a paragraph, a list item and a value of five words or more that start with a capital letter and end with a
-    full rules and the others for what is left. The Details are the record for a person who wants all of it, names, dates and ids, so they are read for the phrases that were thrown out, for ids (which
-    belong there) and for stray punctuation, and not for whole sentences. What an AI or the estate wrote (a quote) is not Meternaut's wording and is not read."""
+    """What is wrong with the words of one rendered case, one line for each fault, empty when it reads as sentences: no banned phrase, no id outside the Details, no stray space or punctuation, no
+    sentence that starts in lower case or runs over forty words, no sentence with two colons, and a paragraph, a list item and a value of five words or more that start with a capital letter and end
+    with a full stop, a question mark or an exclamation mark. The Details are the record for a person who wants all of it, names, dates and ids, so they are read for the phrases that were thrown
+    out, for ids (which belong there) and for stray punctuation, and not for whole sentences. What an AI or the estate wrote (a quote) is not Meternaut's wording and is not read."""
     found: list[str] = []
     for block in shown.blocks:
         if block.kind == "quote":
@@ -525,7 +525,6 @@ class TheWordsReadAsSentences(unittest.TestCase):
         self.assertTrue(any("an id outside the Details" in line for line in problems(shown)))
         details = [block for block in _page("page", _ai_account(), _ai_plan()).blocks if GUID_OF_AN_APP in block.text]
         self.assertTrue(details and all(block.details for block in details), "the id of the application is in the Details only")
-
 
 
 if __name__ == "__main__":
