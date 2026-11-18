@@ -168,6 +168,8 @@ class TheLadder(unittest.TestCase):
         world.tick()
         (letter,) = world.mail.sent_to("ada@example.com")
         self.assertEqual(letter[1], "[Meternaut] 2 decisions have waited without an answer")
+        self.assertEqual(letter[2].count("It is a reminder: you are named as an approver."), 2, "each line says in a few plain words why the person is told")
+        self.assertNotIn("Why you are told", letter[2], "no raw word of the code, and no legend that explains them")
         self.assertEqual([(r.outcome, r.delivered) for p in ("p1", "p2") for r in world.steps(p)], [("sent", (A,))] * 2)
         world.add("p3", "c3", created=world.clock() - 3 * DAY)
         world.tick()
