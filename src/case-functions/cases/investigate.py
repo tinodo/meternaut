@@ -1004,6 +1004,13 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
         if focused:
             seeds.append(s.monotonic() - at)
+        if beats.empty(beat, seeded):
+            # What code listed holds no resource of the kinds of this beat: there is nothing to look at, so no session is run and no token is spent. The next beats are told that its kinds were not judged.
+            result.end, result.note = beats.EMPTY, "no resource of its kinds was listed, so the Investigator was not asked"
+            last_note = last_note or result.note
+            note(f"beat {beat.number}: {result.note}")
+            close(result, True, at, log_before)
+            continue
         # The model and its tool calls have the seconds of the setting, whatever the reads of the beat took, inside what is left of the time of the investigation: its tool calls are refused after half of them
         # and it has a minute more to write its answer (beats.times).
         allowed = max(1.0, min(st.investigate_beat_seconds, beats_deadline - s.monotonic())) if focused else 0.0

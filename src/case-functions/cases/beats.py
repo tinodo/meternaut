@@ -37,6 +37,7 @@ MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model co
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
+EMPTY = "empty"  # the end of a beat that code did not give to the Investigator, because no resource of its kinds was listed
 PRELOAD = "preload"  # the name that the line of the History gives to the read ahead that code makes of the resources of a beat's kinds (Toolbox.preload); it is no tool of the agent
 REFUSED_LINES = 8  # the tool calls that a beat asked for after its budget was used up, and that get a line each in the History; the line of the beat counts the others
 BUDGET_USED_UP = "budget-used-up"  # what the client answers a call that it does not run (cases/foundry.py)
@@ -156,6 +157,13 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
     return found
 
 
+def empty(beat: Beat, seeded: Seed | None) -> bool:
+    """Whether a beat has nothing for the Investigator to look at: it names kinds and no lines of the bill that no resource owns, code listed every one of them (a seed lists SEED_RESOURCES at most, and a
+    beat may hold kinds that it does not name) and no listing gave a handle or a count above 0. A listing that gave no answer shows no resource either."""
+    return (seeded is not None and bool(beat.kinds) and not beat.billing and not beat.rest and len(beat.kinds) <= SEED_RESOURCES and not seeded.handles
+            and not any(seeded.counts.values()))
+
+
 @dataclass
 class Result:
     """What one beat came to: its numbers and how it ended (a word of models.INVESTIGATION_ENDS), the pictures that code read for it, how many of its kinds its tools touched, what the
@@ -193,7 +201,7 @@ def carry(results: Sequence[Result]) -> list[dict]:
     """What a beat is told of the beats before it, as typed lines that fit in CARRY_CHARS: for each, its kinds and, when it gave an answer, the basis, the proposal and the handles of its findings and what
     it said that it examined; when it gave none, only that it did not conclude. The oldest phrases go first when it is too long."""
     lines = [{"beat": r.beat.number, "kinds": list(r.beat.kinds), **({"billingOnly": True} if r.beat.billing else {}),
-              **({"findings": r.lines[:CARRY_ITEMS], "examined": r.examined[:CARRY_ITEMS]} if r.end != "failed" else {"concluded": False})} for r in results]
+              **({"findings": r.lines[:CARRY_ITEMS], "examined": r.examined[:CARRY_ITEMS]} if r.end not in ("failed", EMPTY) else {"concluded": False})} for r in results]
     while len(json.dumps(lines, separators=(",", ":"))) > CARRY_CHARS:
         for key in ("examined", "findings"):
             line = next((line for line in lines if line.get(key)), None)

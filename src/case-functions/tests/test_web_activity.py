@@ -170,7 +170,8 @@ class HowTheRunEnded(unittest.TestCase):
         said = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
                 "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),
                 "tokens": ("Its tokens ran out", "The tokens that it was allowed ran out, so it was told to answer with what it had."),
-                "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."), "failed": ("It failed", "It gave no answer that could be read.")}
+                "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
+                "empty": ("It had nothing to look at", "No resource of its kinds was listed, so it was not asked."), "failed": ("It failed", "It gave no answer that could be read.")}
         self.assertEqual(set(said), set(INVESTIGATION_ENDS), "every word that the record can hold has its words on the page")
         for end, (word, meaning) in said.items():
             with self.subTest(end=end):
