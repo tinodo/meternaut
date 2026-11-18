@@ -53,8 +53,8 @@ CHECKED = "Azure, checked by Meternaut"
 LOOK = "Look at"
 VERBS = {"delete": "Consider deleting", "keep": "Keep"}
 CHANGE_VERBS = {"remove": "Consider removing", "reduce": "Consider reducing", "switch": "Consider switching", "schedule": "Consider scheduling", "commit": "Consider a commitment for"}
-BASIS_TITLES = {"no-usage": "it may be paying for something that nothing uses", "low-usage": "it may be paying for more than it uses", "oversized": "it may be larger than its use needs",
-                "duplicate": "it may duplicate another resource", "unused-feature": "it may be paying for a feature that nothing uses", "commitment-misfit": "its commitment may not fit what it uses"}
+BASIS_TITLES = {"no-usage": "nothing may be using it", "low-usage": "it may be used very little", "oversized": "it may be larger than its use needs",
+                "duplicate": "it may duplicate another resource", "unused-feature": "one of its features may be unused", "commitment-misfit": "its commitment may not fit what it uses"}  # each fits any resource, whether or not Azure reports a cost for it
 # Missing data is not zero: a measurement shows that nothing used a resource only when at least this many days of its window had a value (the chart of use asks the same, usage.MIN_DAYS).
 MEASURED_DAYS = 20
 USE_BASES = ("no-usage", "low-usage", "unused-feature")  # what a finding of the investigation has for a basis when it says that something is not used
@@ -115,6 +115,7 @@ UNPROVEN = "Nothing proves that it is unused, so acting on it could break someth
 SHARED_RISK = "Traffic that you cannot see from here may depend on it."
 RARE_USE = "Acting on it could break something that uses it less often than Meternaut measured."
 CHANGE_RISK = "If you act, what depends on it can slow down or stop."
+COMMIT_RISK = "It commits you to pay for a term."  # the risk of a commitment that a finding names (a purchase, which no resource is changed or removed for)
 NOT_MEASURED = "The AI cited no measurement, so nothing shows whether anything uses it."
 NOT_LOOKED_UP = "Meternaut did not look up who changed it."
 TAKEN_BACK = {"rules": "Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.",
@@ -901,14 +902,18 @@ def acting_risk(case: CaseRecord | None) -> Risk:
         return Risk("medium", CHANGE_RISK, True)
     if _commitment(case):
         return Risk("high", ADVISOR_RISK, True)  # a commitment is a one-way door, whatever else is known
+    verb = verb_of(case)  # the sentence follows the verb of the title: it says what that verb does, and not what the basis of the finding would suggest
+    if verb == CHANGE_VERBS["commit"]:
+        return Risk("high", COMMIT_RISK, True)
     verdict = (_impact_digest(case.facts) or {}).get("verdict")  # what the check of what depends on it found outranks the guess from the kind of resource
     if verdict in ("safe", "keep"):
         return Risk("medium" if verdict == "safe" else "high", SAFE_RISK if verdict == "safe" else KEEP_RISK, True)  # a change is never a low risk: the reads cannot see everything
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
-    parts = ([UNPROVEN] if _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
-    return Risk("high" if others and not proven else "medium", " ".join(parts or [RARE_USE if proven else CHANGE_RISK]), True)
+    removes = verb in (VERBS["delete"], CHANGE_VERBS["remove"], LOOK)  # a title that deletes, removes or asks whether the resource is used: the use of the resource is what is at stake
+    parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
+    return Risk("high" if others and not proven else "medium", " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
@@ -930,8 +935,8 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
                 case: CaseRecord | None = None) -> str:
     """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model. `together` is the group that a case stands for (group_of), when it
     stands for many resources: the line then says how many, of what kind and in how many groups, and names the first. A case that is an Advisor recommendation (`case`) says it in Advisor's
-    own words (advice_of), then what it is about. A finding that only asks for a look says why when its typed basis can say it in a fixed phrase (BASIS_TITLES): "Look at the account x, because it
-    may be paying for something that nothing uses"."""
+    own words (advice_of), then what it is about. A finding that only asks for a look says why when its typed basis can say it in a fixed phrase that fits any resource (BASIS_TITLES): "Look at the
+    disk x, because nothing may be using it"."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
@@ -960,12 +965,25 @@ def plan_headline(plan: PlanRecord) -> str:
     return headline_of(plan.family, plan.resource_name, plan.resource_group, type_of(plan.family, plan.preconditions), None, plan.title, plan)
 
 
+def _verdict(case: CaseRecord | None) -> str:
+    """What the second AI said, as the case kept it (CaseRecord.learned["skeptic"]: agree, disagree, unsure, or none when it was not asked); empty for a case that kept nothing."""
+    learned = case.learned if case is not None and isinstance(case.learned, dict) else {}
+    found = learned.get("skeptic")
+    return found if isinstance(found, str) and found in ("agree", "disagree", "unsure", "none") else ""
+
+
 def _agreed(case: CaseRecord | None, plan: PlanRecord | None) -> bool | None:
-    """Whether the second AI agreed, as far as the records show: True, False, or None when the status moved on and no longer says."""
+    """Whether the second AI agreed, as far as the records show: True, False, or None when the status moved on and no longer says. What it said (`_verdict`) outranks the status: a case that a check
+    holds back for a person has the verdict of the second AI as well."""
     if plan is not None and shown(plan.family) is not None:
         return True
     if case is None:
         return None
+    verdict = _verdict(case)
+    if verdict == "agree":
+        return True
+    if verdict in ("disagree", "unsure"):
+        return False
     then = (plan.preconditions.get("caseStatus") if plan is not None and isinstance(plan.preconditions, dict) else None) or case.status
     if then in AGREED:
         return True
@@ -1055,7 +1073,7 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
     level = "Low" if low else "High" if agreed is True and all_checked and (first is None or first >= CONFIDENT) else "Medium"
     pieces = ["The AI is not sure (low confidence)." if unsure else f"Confidence is {level.lower()}."]
     if agreed is True:
-        pieces.append("Both AIs agree.")
+        pieces.append("The second AI agreed, with a caution." if own and _verdict(case) == "agree" else "Both AIs agree.")
     elif agreed is None:
         pieces.append("Meternaut no longer has the verdict of the second AI.")
     elif step is not None and step.get("ok") is False:
@@ -1076,12 +1094,16 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
 
 def why_a_person(case: CaseRecord) -> str:
     """What is true of a finding that needs a person, as sentences, for the Details: Azure Advisor's own recommendation that no AI looked at, or each of these that applies to this one: a check held it
-    back, the second AI did not agree, the first AI was not sure enough, past requests like this were rarely approved. Empty when the record says none of them."""
+    back, what the second AI said (it agreed with a caution, it did not agree, it was not sure, it was not asked), the first AI was not sure enough, past requests like this were rarely approved.
+    The second AI's objections are kept whatever it said (cases/decide.py), so its verdict decides, and a case that kept none says only that it raised an objection. Empty when the record says none."""
     if _by_advisor(case):
         return "Azure Advisor recommends it, and no AI looked at it."
     first = _figure(case.confidence)
     doubted = any(isinstance(o, str) and o.strip() and not _code_note(o) for o in case.objections)
-    reasons = (("A check held it back.", any(isinstance(g, str) for g in case.guards)), ("The second AI did not agree.", doubted),
+    verdict = _verdict(case)
+    second = ("The second AI agreed, with a caution." if verdict == "agree" and doubted else "The second AI did not agree." if verdict == "disagree" else
+              "The second AI was not sure." if verdict == "unsure" else "Only one AI looked at it." if verdict == "none" else "The second AI raised an objection." if doubted and not verdict else "")
+    reasons = (("A check held it back.", any(isinstance(g, str) for g in case.guards)), (second, bool(second)),
                ("The first AI was not sure enough.", first is not None and first < SURE_ENOUGH), ("Past requests like this were rarely approved.", _held_by_history(case)))
     return " ".join(text for text, applies in reasons if applies)
 

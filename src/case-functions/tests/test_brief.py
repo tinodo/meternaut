@@ -69,12 +69,14 @@ class TheHeadline(unittest.TestCase):
                 case = make_case(detector="investigation", recommendation="change", facts={pricing.KEY: {"action": action}})
                 self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "change", case=case), f"{verb} the virtual machine vm-1 in group rg-a")
         measured = {"metrics": {"M": 0}, "metricDaysWithData": {"M": 28}, "proposal": "investigate"}
-        for basis, why in (("no-usage", "it may be paying for something that nothing uses"), ("low-usage", "it may be paying for more than it uses"), ("oversized", "it may be larger than its use needs"),
-                           ("duplicate", "it may duplicate another resource"), ("unused-feature", "it may be paying for a feature that nothing uses"),
+        for basis, why in (("no-usage", "nothing may be using it"), ("low-usage", "it may be used very little"), ("oversized", "it may be larger than its use needs"),
+                           ("duplicate", "it may duplicate another resource"), ("unused-feature", "one of its features may be unused"),
                            ("commitment-misfit", "its commitment may not fit what it uses")):
-            with self.subTest(basis=basis):
-                case = make_case(detector="investigation", recommendation="investigate", facts={**measured, "basis": basis})
-                self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "investigate", case=case), f"Look at the virtual machine vm-1 in group rg-a, because {why}")
+            for rtype in ("microsoft.compute/virtualmachines", "microsoft.compute/disks", "microsoft.network/publicipaddresses"):  # the reason fits a resource that is not paid for as such, too
+                with self.subTest(basis=basis, type=rtype):
+                    case = make_case(detector="investigation", recommendation="investigate", resource_type=rtype, facts={**measured, "basis": basis})
+                    noun = brief.kind_words(rtype)[1]
+                    self.assertEqual(headline_of(ADVISE, "x-1", "rg-a", rtype, "investigate", case=case), f"Look at the {noun} x-1 in group rg-a, because {why}")
 
     def test_a_type_without_words_is_a_resource_and_a_missing_group_is_left_out(self):
         self.assertEqual(headline_of(ADVISE, "x", "", "microsoft.thing/things", "delete"), "Consider deleting the resource x")
@@ -604,13 +606,56 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
 
 
 class TheReasonsThatAFindingNeedsAPerson(unittest.TestCase):
-    def test_the_details_say_only_the_reasons_that_are_true_of_the_finding(self):
-        base = dict(status="needs_human", detector="investigation", confidence=0.9, objections=(), guards=())
-        for changes, said in (({"guards": ("locked",)}, "A check held it back."), ({"objections": ("A monthly job may need it.",)}, "The second AI did not agree."),
+    def test_the_details_say_only_the_reasons_that_are_true_of_the_finding_and_what_the_second_ai_really_said(self):
+        # The objections of the second AI are kept whatever its verdict (cases/decide.py), so a caution of an AI that agreed is not a disagreement.
+        base = dict(status="needs_human", detector="investigation", confidence=0.9, objections=(), guards=(), learned={"skeptic": "agree"})
+        caution = ("A monthly job may need it.",)
+        for changes, said in (({"guards": ("locked",)}, "A check held it back."),
+                              ({"guards": ("locked",), "objections": caution}, "A check held it back. The second AI agreed, with a caution."),
+                              ({"learned": {"skeptic": "disagree"}, "objections": caution}, "The second AI did not agree."),
+                              ({"learned": {"skeptic": "unsure"}}, "The second AI was not sure."),
+                              ({"learned": {"skeptic": "none"}}, "Only one AI looked at it."),
+                              ({"learned": {}, "objections": caution}, "The second AI raised an objection."),
                               ({"confidence": 0.5}, "The first AI was not sure enough."), ({"guards": ("locked",), "confidence": 0.5}, "A check held it back. The first AI was not sure enough."),
                               ({}, "")):
             with self.subTest(changes=changes):
                 self.assertEqual(brief.why_a_person(make_case(**{**base, **changes})), said)
+
+    def test_the_words_about_how_sure_it_is_do_not_blame_a_second_ai_that_agreed_with_a_caution(self):
+        agreed = make_case(status="needs_human", guards=("locked",), objections=("A monthly job may need it.",), learned={"skeptic": "agree"})
+        self.assertEqual(confidence_of(agreed).because.split(" A check held it back.")[0], "Confidence is low. The second AI agreed, with a caution.")
+        doubted = make_case(status="needs_human", guards=("locked",), objections=("A monthly job may need it.",), learned={"skeptic": "disagree"}, models={"investigator": "m1", "skeptic": "m2"},
+                            steps=({"step": "investigator", "ok": True}, {"step": "skeptic", "ok": True}))
+        self.assertEqual(confidence_of(doubted).because.split(" A check held it back.")[0], "Confidence is low. A second AI doubted it.")
+
+
+class TheRiskFollowsTheVerbOfTheTitle(unittest.TestCase):
+    """The sentence of the risk of acting says what the verb of the title does, and not what the basis of the finding would suggest."""
+
+    @staticmethod
+    def case(action, rtype="microsoft.compute/virtualmachines", basis="low-usage"):
+        return make_case(detector="investigation", recommendation="change", resource_type=rtype, facts={pricing.KEY: {"action": action}, "basis": basis})
+
+    def test_a_change_that_keeps_the_resource_says_that_what_depends_on_it_can_slow_down_or_stop_whatever_the_basis(self):
+        for action, verb in (("reduce", "Consider reducing"), ("switch", "Consider switching"), ("schedule", "Consider scheduling")):
+            with self.subTest(action=action):
+                case = self.case(action)
+                self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", case.resource_type, "change", case=case).startswith(f"{verb} the virtual machine"))
+                self.assertEqual(brief.acting_risk(case), brief.Risk("medium", "If you act, what depends on it can slow down or stop.", True))
+
+    def test_a_removal_says_that_nothing_proves_that_it_is_unused_and_a_commitment_says_what_it_binds(self):
+        removing = self.case("remove")
+        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", removing.resource_type, "change", case=removing).startswith("Consider removing the virtual machine"))
+        self.assertEqual(brief.acting_risk(removing), brief.Risk("medium", "Nothing proves that it is unused, so acting on it could break something that still uses it.", True))
+        buying = self.case("commit")
+        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", buying.resource_type, "change", case=buying).startswith("Consider a commitment for the virtual machine"))
+        self.assertEqual(brief.acting_risk(buying), brief.Risk("high", "It commits you to pay for a term.", True))
+
+    def test_a_removal_of_a_resource_that_others_share_is_a_high_risk_in_the_words_of_what_they_may_carry(self):
+        # What was seen: the guard of cases/investigate.py (_hold_delete) holds only a proposal to delete, so a typed removal of a private endpoint is still titled "Consider removing ...".
+        case = self.case("remove", "microsoft.network/privateendpoints", "oversized")
+        self.assertTrue(headline_of(ADVISE, "pe-1", "rg-a", case.resource_type, "change", case=case).startswith("Consider removing the private endpoint"))
+        self.assertEqual(brief.acting_risk(case), brief.Risk("high", "Traffic that you cannot see from here may depend on it.", True))
 
 
 class TheOwner(unittest.TestCase):
