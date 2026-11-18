@@ -86,7 +86,8 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         return teams_status(settings, store, people, clock())
 
     return web.Services(store=store, decider=approvals, delegate=delegate, people=people, now=clock, host=settings.console_host, acts_on=acts_on,
-                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker, teams=teams)
+                        models=tuple(dict.fromkeys(written_by)), drift=drift_now, lessons=lambda: learning.replay_text(store), checker=checker, teams=teams,
+                        escalating=bool(settings.mail_sender))
 
 
 def services(env: Mapping[str, str], **options) -> "web.Services":

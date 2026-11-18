@@ -366,7 +366,8 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         for label, shown, learned in (("no reason", {}, {}), ("a reason that is none", {"takenBack": "x"}, {}), ("a reason that is no word", {"takenBack": ["rules"]}, {"taken": {"a": 1}})):
             with self.subTest(case=label):
                 b = brief.build_brief(replace(case, learned=learned), replace(ended, preconditions=shown), now=WEB_NOW)
-                self.assertEqual((b.outcome.title, b.outcome.lines), ("Expired", ("Nobody answered in time.", "Nothing changed.")))
+                self.assertEqual((b.outcome.title, b.outcome.lines[1]), ("Taken back", "Nothing changed."))
+                self.assertNotIn("Nobody answered", " ".join(b.outcome.lines))
         old = brief.build_brief(replace(case, learned={"taken": "automation"}), ended, now=WEB_NOW)
         self.assertEqual(old.outcome.title, "Taken back", "a request that was taken back before the plan kept the reason has it in its case")
 

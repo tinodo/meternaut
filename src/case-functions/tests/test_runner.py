@@ -594,7 +594,7 @@ class WhenAzureAsksForAnExtraSignInCheck(Base):
         self.clock.advance(minutes=5)
         calls = len(self.azure.calls)
         result = tick(self.t)
-        self.assertEqual((result.finished, result.expired, result.verified), ([], [], []))
+        self.assertEqual((result.finished, result.verified), ([], []))
         self.assertEqual(len(self.azure.calls), calls, "the timer asks Azure nothing about a change that waits")
         self.assertEqual(self.store.action_get(plan.plan_id), step_up.action)
         self.assertEqual(self.store.plan_get(plan.plan_id).state, "approved")
@@ -716,15 +716,25 @@ class TheTick(Base):
         self.assertTrue(all(h["Authorization"] == "Bearer reader-token" for h in self.azure.headers))
         self.assertEqual({m for m, _ in self.azure.calls}, {"GET"})
 
-    def test_expired_plans_are_closed(self):
+    def test_the_timer_closes_no_plan_by_time_however_old_it_is(self):
         item = lead_for(DISK, "orphan-managed-disk", "planted-disk-1")
         case = CaseRecord(case_id="k1", resource_id=DISK, resource_name="n", resource_type="t", resource_group=GROUP, subscription_id=SUB, detector="orphan-managed-disk",
                           run_id="r", status="proposed", recommendation="delete", updated_at=stamp(NOW), first_seen_at=stamp(NOW))
         self.store.case_put(case)
         plan = self.approvals.create(case, item, (OID,))
-        self.clock.advance(hours=73)
-        self.assertEqual([p.plan_id for p in tick(self.t).expired], [plan.plan_id])
-        self.assertEqual(self.store.case_get("k1").status, "expired")
+        self.clock.advance(hours=24 * 100)
+        result = tick(self.t)
+        self.assertEqual((result.finished, result.verified, self.store.plan_get(plan.plan_id).state, self.store.case_get("k1").status), ([], [], "open", "awaiting_ok"))
+
+    def test_a_change_plan_that_waited_a_hundred_days_is_looked_at_again_when_it_is_approved_and_refused_when_the_picture_changed(self):
+        plan, action = self.approved()
+        del self.azure.resources[DISK.lower()]  # the picture changed while the request waited
+        self.clock.advance(hours=24 * 100)
+        before = len(self.azure.calls)
+        done = execute(self.t, action, approved_digest=plan.digest)
+        self.assertIn(done.kind, ("unchanged", "stopped"), "the resource is looked at again at the click, whatever the age of the request")
+        self.assertGreater(len(self.azure.calls), before, "it was read again")
+        self.assertEqual([m for m, _ in self.azure.calls[before:] if m != "GET"], [], "nothing was written")
 
     def test_a_change_that_was_stuck_running_is_looked_at_again(self):
         plan, action = self.approved()

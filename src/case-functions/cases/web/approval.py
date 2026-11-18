@@ -18,7 +18,7 @@ from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
 from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import brief_of, checked_brief, decisions_for, effective_state, may_answer, read
+from .common import answerable, brief_of, checked_brief, decisions_for, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
@@ -66,15 +66,13 @@ def _not_found(ctx: Ctx) -> Response:
 
 
 def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
-    """Who may see and answer a plan: a person named in it, with the role approver (for advice, the owner too). Nobody else sees its details, and a person who may not approve
-    a change learns nothing about which ids exist."""
+    """Who may see and answer a plan: the people that `answerable` says (a person named in it, with the role approver, or the owner for advice, or a person that a step of the ladder of this advice
+    was delivered to). Nobody else sees its details, and a person who may not approve a change learns nothing about which ids exist."""
     principal = ctx.principal
-    if not (principal.has("approver") or principal.has("owner")):  # type: ignore[union-attr]
-        return None, _refused_role(ctx)
     plan = ctx.store.plan_get(plan_id)
     if plan is None:
         return None, (_not_found(ctx) if principal.has("approver") else _refused_role(ctx))  # type: ignore[union-attr]
-    if not may_answer(principal, plan):  # type: ignore[arg-type]
+    if not answerable(ctx, plan):
         return None, _refused_role(ctx)
     return plan, None
 
@@ -91,8 +89,10 @@ def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = N
     action, _ = read(lambda: ctx.store.action_get(plan.plan_id), None)
     brief = checked_brief(ctx, plan, case, action=action, decisions=decisions, answerable=True, ready=ready)
     answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
+    named = ctx.principal.oid.lower() in {a.lower() for a in plan.approvers}  # type: ignore[union-attr]
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
-                             why="you are named as an approver of this request, and you have the role approver", banner=_walking(ctx, plan))
+                             why="you are named as an approver of this request, and you have the role approver" if named else "the ladder of this request came to you",
+                             banner=_walking(ctx, plan))
 
 
 def _walking(ctx: Ctx, plan: PlanRecord) -> Safe | None:
@@ -132,7 +132,7 @@ def card_answer(ctx: Ctx, plan_id: str, answer: str) -> Response:
     plan, refused = _gate(ctx, plan_id)
     if refused is not None:
         return refused
-    state = effective_state(ctx, plan)  # type: ignore[arg-type]
+    state = plan.state  # type: ignore[union-attr]
     if state != "open":
         return outcome(ctx, DecideResult(False, "expired" if state == "expired" else "refused_state", "", plan), plan_id)  # type: ignore[arg-type]
     if ctx.request.query.get("code", "").strip().upper() != plan.code:  # type: ignore[union-attr]
@@ -261,22 +261,25 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions.", history)
     if kind == "asked":
         plan = _plan_of(ctx, result, plan_id)
-        until = (paragraph(HELD_WHERE) if plan is not None and plan.state == HELD
-                 else paragraph(fmt("The request stays open until {when}.", when=ctx.when(plan.expires_at))) if plan is not None else Safe(""))
+        until = paragraph(HELD_WHERE) if plan is not None and plan.state == HELD else paragraph("The request stays open.")
         return show("Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet.", until)
     if kind == "later":
         plan = _plan_of(ctx, result, plan_id)
-        where = HELD_WHERE if plan is not None and plan.state == HELD else "The request stays in your list."
+        where = HELD_WHERE if plan is not None and plan.state == HELD else "The request stays in your list. If nobody answers it, it goes on to the next person."
         return show("Noted", f"Noted. Nothing is approved and nothing has changed. {where}", back_to=("/", "Back to the decisions"))
     if kind == "not_mine":
         plan = _plan_of(ctx, result, plan_id)
-        after = ("The finding is not brought up again for a month." if plan is not None and (plan.preconditions or {}).get(HELD)
-                 else "The request goes back to finding the right owner.")
+        if plan is not None and (plan.preconditions or {}).get(HELD):
+            after = "The finding is not brought up again for a month."
+        elif plan is not None and plan.family == "advise":
+            after = "The request goes on to the next person."
+        else:
+            after = "The request goes back to finding the right owner."
         return show("Recorded: not yours", f"Recorded. Nothing is approved. {after}", back_to=("/", "Back to the decisions"))
     if kind == "refused_code":
         return show("This request changed", CHANGED)
     if kind == "refused_state":
-        return show("This request cannot take an answer", text or "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.")
+        return show("This request cannot take an answer", text or "This request is not open for an answer now. It may be answered or taken back. Nothing has changed.")
     if kind == "refused_role":
         return _refused_role(ctx)
     if kind == "refused_paused":
@@ -285,9 +288,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
             return show("Meternaut is paused", PAUSED_ADVICE)
         return show("Changes are paused", PAUSED)
     if kind == "expired":
-        plan = _plan_of(ctx, result, plan_id)
-        when = ctx.when(plan.expires_at, "its expiry time") if plan is not None else "its expiry time"
-        return show("This request expired", paragraph(fmt("This request expired on {when}. Nothing has changed.", when=when)))
+        return show("This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed.")
     if kind == "duplicate":
         return show("Already answered", "You answered this request already. Your first answer stands, and nothing has changed.")
     return show("I could not take your answer", text or "The approval service did not answer.", "Open the request again to see where it stands.")

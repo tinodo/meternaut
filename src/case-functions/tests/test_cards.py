@@ -355,11 +355,10 @@ class TheCardOfWhatBecameOfARequest(unittest.TestCase):
         self.assertEqual(ids["outcome"]["text"], "Worth acting on")
         self.assertIn("Nothing was changed in Azure.", ids["outcome-line-2"]["text"])
 
-    def test_an_expired_request_says_so(self):
-        brief = brief_of(plan=make_plan(expires_at="2026-11-04T09:30:00Z"))
-        self.assertEqual(brief.state, "expired")
+    def test_a_request_that_a_timer_closed_says_taken_back_and_never_expired(self):
+        brief = brief_of(plan=make_plan(state="expired"))
         ids = by_id(cards.result_card(brief, ctx_for(brief)))
-        self.assertEqual(ids["outcome"]["text"], "Expired")
+        self.assertEqual(ids["outcome"]["text"], "Taken back")
 
     def test_a_change_that_ran_has_a_result_card_with_what_it_saves_in_the_words_of_the_pages_and_the_undo_line(self):
         plan = make_plan(state="consumed")
@@ -558,7 +557,7 @@ class WhatACardNeeds(unittest.TestCase):
             CardContext(page_url=URL, nonce="N0nce-0123456789abcdefghijklmnop")
 
     def test_only_a_request_that_is_open_and_that_the_person_may_answer_has_a_decision_card(self):
-        for brief in (brief_of(may_answer=False), brief_of(plan=make_plan(state="declined")), brief_of(plan=make_plan(expires_at="2026-11-04T09:30:00Z")),
+        for brief in (brief_of(may_answer=False), brief_of(plan=make_plan(state="declined")), brief_of(plan=make_plan(state="expired")),
                       build_brief(make_case(), None, None, (), now=NOW)):
             with self.subTest(state=brief.state, answers=brief.answers):
                 with self.assertRaises(CardError):

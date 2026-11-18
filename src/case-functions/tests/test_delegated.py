@@ -452,8 +452,11 @@ class BeginningAnApproval(Flow):
         self.store.switch_put(SwitchRecord(name="changes", paused=True))
         self.assertEqual(self.begin().refusal.kind, "refused_paused")
 
-    def test_a_plan_that_expired_or_was_closed_is_refused(self):
-        self.clock.advance(hours=73)
+    def test_a_plan_that_was_taken_back_or_closed_is_refused_and_one_that_waited_a_hundred_days_is_not(self):
+        self.clock.advance(hours=24 * 100)
+        self.assertIsNone(self.begin().refusal, "no clock closes a request")
+        self.setUp()
+        self.store.plan_put(replace(self.plan, state="expired"))
         self.assertEqual(self.begin().refusal.kind, "expired")
         self.setUp()
         self.store.plan_put(replace(self.plan, state="declined"))
@@ -672,8 +675,7 @@ class ReturningFromTheSignIn(Flow):
     def test_a_plan_that_changed_while_the_person_signed_in_is_refused_before_the_code_is_redeemed(self):
         for label, change, kind in (("declined", lambda: self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), state="declined")), "refused_state"),
                                     ("a new code", lambda: self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), code="ABCD1234")), "refused_code"),
-                                    ("expired", lambda: (self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), expires_at=stamp(NOW + dt.timedelta(minutes=1)))),
-                                                         self.clock.advance(minutes=5)), "expired"),
+                                    ("taken back", lambda: self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), state="expired")), "expired"),
                                     ("paused", lambda: self.store.switch_put(SwitchRecord(name="all", paused=True)), "refused_paused")):
             with self.subTest(label):
                 self.setUp()

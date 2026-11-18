@@ -353,19 +353,19 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
         self.assertEqual((third.result.cases, only_case(third).runs_seen), (1, 2), "after the days of the recheck the group is judged again")
         self.assertEqual(extras.store.plans_open(), [], "a finding that a person answered is not put to them again for thirty days")
 
-    def test_a_request_that_nobody_answered_is_made_again_for_the_same_case_once_the_days_of_the_recheck_have_passed(self):
+    def test_a_request_that_nobody_answered_stays_the_one_request_for_the_case_when_the_case_is_judged_again(self):
         clock = Moving()
         first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
         extras = first.extras
         (plan,) = extras.store.plans_open()
         clock.advance(hours=73)
-        self.assertEqual(len(extras.approvals.expire()), 1)
         self.assertEqual(watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock, extras=extras).result.cases, 0)
+        self.assertEqual(extras.store.plans_open(), [plan], "no clock closed it")
         clock.advance(days=8)
         third = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock, extras=extras)
         case = only_case(third)
         (again,) = extras.store.plans_open()
-        self.assertEqual((third.result.cases, again.case_id, again.plan_id == plan.plan_id), (1, case.case_id, False))
+        self.assertEqual((third.result.cases, again.case_id, again.plan_id == plan.plan_id), (1, case.case_id, True), "the request that waits is the request: it is not made again")
 
     def test_a_finding_that_names_the_group_without_the_resource_that_its_case_belongs_to_is_covered_by_the_case_all_the_same(self):
         clock = Moving()
@@ -406,8 +406,6 @@ class WhenTheSameFindingComesAgain(unittest.TestCase):
                 clock = Moving()
                 first = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock)
                 extras = first.extras
-                clock.advance(hours=73)
-                self.assertEqual(len(extras.approvals.expire()), 1)
                 clock.advance(days=6, hours=22, minutes=minutes)
                 third = watch(raw_of(60, confidence=0.8), endpoints(60), clock=clock, extras=extras)
                 self.assertEqual(third.result.cases, again)
@@ -639,15 +637,16 @@ class WhenAPersonMarkedAResourceDoNotTouch(unittest.TestCase):
         self.clock.advance(days=1)
         self.assertEqual(self.watch(raw_of(10, confidence=0.8), resources).result.cases, 0, "the group was judged lately and a request waits: nothing is asked again")
         self.clock.advance(hours=73)
-        self.assertEqual(len(self.extras.approvals.expire()), 1)
-        self.assertEqual(self.watch(raw_of(10, confidence=0.8), resources).result.cases, 0, "the case that ran out is left alone for the days of the recheck, as any case is")
+        self.assertEqual(self.watch(raw_of(10, confidence=0.8), resources).result.cases, 0, "the case is left alone for the days of the recheck, as any case is")
         self.clock.advance(days=8)
         third = self.watch(raw_of(10, confidence=0.8), resources)
         self.assertEqual(third.result.cases, 1)
         new = next(case for case in self.extras.store.cases_recent() if case.case_id != old.case_id)
         self.assertEqual((new.resource_name, new.facts[GROUP_FACT]["count"], new.facts[GROUP_FACT]["silenced"]), ("pe-09", 9, 1))
+        self.assertEqual(len(self.extras.approvals.supersede()), 1, "the Watch takes the old group's request back: the fresher request of the same finding stands for it")
         (plan,) = self.extras.store.plans_open()
-        self.assertEqual(plan.case_id, new.case_id)
+        self.assertEqual(plan.case_id, new.case_id, "the request of the old group was taken back: one request for the finding waits")
+        self.assertEqual(self.extras.store.case_get(old.case_id).status, "expired")
 
     def test_marks_that_cannot_be_read_stop_the_investigation_before_the_agents_run_and_nothing_is_spent_or_opened(self):
         with mock.patch.object(self.extras.store, "do_not_touch", side_effect=StoreError("down")):

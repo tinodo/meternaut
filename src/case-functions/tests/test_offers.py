@@ -140,12 +140,11 @@ class TheCardOfARequest(unittest.TestCase):
         self.assertEqual(self.world.run(), 0)
         self.assertEqual((self.fake.calls, self.world.tries()), ([], []))
 
-    def test_a_request_that_is_over_or_that_a_person_answered_is_not_offered(self):
+    def test_a_request_that_a_person_answered_is_not_offered_and_one_that_waits_is_offered_however_old(self):
         self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get(cs.PLAN_ID), state="declined"))
         self.assertEqual(self.world.run(), 0)
         self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get(cs.PLAN_ID), state="open", expires_at="2026-11-05T10:00:00Z"))
-        self.assertEqual(self.world.run(), 0)
-        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self.world.run(), 1, "no clock closes a request: its old end time is not read")
 
     def test_a_letter_that_went_already_stops_the_card_of_an_approval(self):
         self.world.open_plan(cs.change_plan("p3change", case_id="c3", expires_at="2026-12-01T00:00:00Z"))
@@ -231,22 +230,22 @@ class TheLinkTokensOfACard(unittest.TestCase):
         self.assertIsNone(peek(link["token"], cs.MAYA, cs.PLAN_ID), "another request")
         self.assertIsNone(peek(link["token"], cs.MAYA.upper() + "x", "p3change"))
 
-    def test_a_token_lives_as_long_as_the_request_is_open_and_is_used_up_once(self):
+    def test_a_token_lives_for_the_days_of_a_link_and_is_used_up_once(self):
         self.world.run()
         link = self.answers(self.cards_by_person()["maya@example.com"])["decline"]
-        self.world.clock.advance(days=24)
-        self.assertIsNotNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "the request is open until 2026-12-01")
+        self.world.clock.advance(days=offers.LINK_DAYS - 1)
+        self.assertIsNotNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "the buttons of a card last a good while: the request itself never expires")
         self.world.clock.advance(days=2)
-        self.assertIsNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "the request has expired")
+        self.assertIsNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"), "after that the letter and the page go on")
         self.world.clock.advance(days=-2)
         self.assertTrue(self.world.store.nonce_use(link["token"], cs.MAYA, "p3change"))
         self.assertIsNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"))
 
-    def test_a_request_that_is_about_to_expire_still_gets_a_quarter_of_an_hour(self):
+    def test_a_request_with_an_old_end_time_still_gets_buttons_for_the_days_of_a_link(self):
         self.world.store.plan_put(dataclasses.replace(self.world.store.plan_get("p3change"), expires_at="2026-11-05T10:20:00Z"))
         self.world.run()
         link = self.answers(self.cards_by_person()["maya@example.com"])["decline"]
-        self.world.clock.advance(minutes=14)
+        self.world.clock.advance(days=10)
         self.assertIsNotNone(self.world.store.nonce_peek(link["token"], cs.MAYA, "p3change"))
 
     def test_a_card_that_cannot_get_its_tokens_goes_with_the_link_to_the_page_of_the_request(self):

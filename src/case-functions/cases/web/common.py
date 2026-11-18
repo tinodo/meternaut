@@ -5,12 +5,12 @@ from __future__ import annotations
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..brief import Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
-from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord
+from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
+from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
-from .layout import code, kpi, nowrap, paragraph, summary
+from .layout import code, kpi, nowrap, notice, paragraph, summary
 
 T = TypeVar("T")
 MORE = " Not complete: there may be more."  # ends a tile's note when its figure was read in part
@@ -36,12 +36,27 @@ def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:
 
 
 def brief_of(ctx: Ctx, plan: PlanRecord | None, case: CaseRecord | None, *, action: ActionRecord | None = None, decisions: Iterable[DecisionRecord] = (), answerable: bool = False,
-             ready: Readiness | None = None) -> Brief:
+             ready: Readiness | None = None, ladder: bool = True) -> Brief:
     """The brief of one request, as the signed-in person sees it. A switch that holds this kind of answer (a change is held by `all` and `changes`, advice by `all`) takes the
     answer that it holds out of the brief. For a change that needs two people the brief says where it stands for this person, from `decisions`. `ready` is a look at the resource
-    (look_at): when it says that the change would be refused, the brief has no answer that approves."""
+    (look_at): when it says that the change would be refused, the brief has no answer that approves. `ladder` False leaves out the steps of the request (one read of the table for each request):
+    its days of waiting are still there."""
     paused = answerable and plan is not None and plan.state == "open" and pulled(ctx, *(("all",) if plan.family == ADVISE else ("all", "changes")))
-    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready)
+    return build_brief(case, plan, action, list(decisions), now=ctx.now, may_answer=answerable, changes_paused=paused, viewer=ctx.principal.oid if ctx.principal else "", ready=ready,
+                       ladder=ctx.ladder(plan.plan_id) if ladder and plan is not None and plan.state == "open" else ())
+
+
+def off_notice(ctx: Ctx) -> Safe:
+    """What a page that says a request is passed on says when it is not: the ladder runs only where a mail sender is set up."""
+    return Safe("") if ctx.services.escalating else notice("warning", "", ESCALATION_OFF)
+
+
+CUT_OPEN = "More requests are open than Meternaut can read at once, so some of them are not listed here. Ask the person named under About this page."
+
+
+def cut_notice(ctx: Ctx) -> Safe:
+    """The one sentence that the start page says when the store cut the list of open requests at its cap (store.TableStore.truncated): nothing is lost silently."""
+    return notice("warning", "", CUT_OPEN) if getattr(ctx.store, "truncated", {}).get("open") else Safe("")
 
 
 def verified_brief(ctx: Ctx, plan: PlanRecord | None, action: ActionRecord | None) -> Brief | None:
@@ -112,20 +127,9 @@ def pulled(ctx: Ctx, *names: str) -> bool:
     return False
 
 
-def may_answer(principal: Principal, plan: PlanRecord) -> bool:
-    """Only a person named in the plan may answer it, checked by directory object id, and with the role approver. Advice changes nothing in Azure, so the owner may answer it too."""
-    named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))
-
-
-def is_expired(ctx: Ctx, plan: PlanRecord) -> bool:
-    """A plan whose time is over, also when the record still says open. A time that cannot be read counts as over."""
-    end = parse_time(plan.expires_at)
-    return end is None or ctx.now >= end
-
-
-def effective_state(ctx: Ctx, plan: PlanRecord) -> str:
-    return "expired" if plan.state == "open" and is_expired(ctx, plan) else plan.state
+def answerable(ctx: Ctx, plan: PlanRecord) -> bool:
+    """`models.may_answer` for the person of this page: the one rule of who may answer a request. The ladder of the request is read only when nothing else lets the person answer it, and it is advice."""
+    return may_answer(ctx.principal, plan, lambda: ctx.ladder(plan.plan_id))  # type: ignore[arg-type]
 
 
 # -- what happened to the change ---------------------------------------------------------------------------------------------------------------------

@@ -70,7 +70,8 @@ class Services:
     whose name it is given, with the time that was claimed for the check, and `lessons` gives the past answers as the rows of the learning check (cases/learning.py) in JSON lines: both are
     None where the function app cannot do that, and the page then says so. `checker` is the look that a page takes at the resource of a change before it offers Approve (cases/precheck.py): the
     page makes no call itself, and without a checker it offers Approve as it did before. `teams` gives the two sentences of the block "Teams cards" of the Operations page (which way the cards go and what
-    the last try came to: cases/offers.teams_status); without it the page has no such block.
+    the last try came to: cases/offers.teams_status); without it the page has no such block. `escalating` says that the ladder of the requests that wait runs (it needs a mail sender): when it does not, the
+    pages that promise that a request is passed on say that it is not.
     """
 
     store: Store
@@ -86,6 +87,7 @@ class Services:
     lessons: "Callable[[], str] | None" = None
     checker: Checker | None = None
     teams: "Callable[[], tuple[str, str]] | None" = None
+    escalating: bool = True
 
 
 class Safe(str):
@@ -247,10 +249,22 @@ class Ctx:
     now: dt.datetime
     _zone: object = field(default=None, init=False, repr=False)
     _zone_read: bool = field(default=False, init=False, repr=False)
+    _ladders: "dict[str, list] | None" = field(default=None, init=False, repr=False)
 
     @property
     def store(self) -> Store:
         return self.services.store
+
+    def ladder(self, plan_id: str) -> list:
+        """The records of the ladder of a request (cases/escalation.py), read for the request itself. Empty when the store cannot say: a page is shown without them."""
+        if self._ladders is None:
+            self._ladders = {}
+        if plan_id not in self._ladders:
+            try:
+                self._ladders[plan_id] = self.store.escalations_of(plan_id)
+            except Exception:  # noqa: BLE001 (the ladder is an addition to a page, never a reason to refuse it)
+                self._ladders[plan_id] = []
+        return self._ladders[plan_id]
 
     def url(self, path: str) -> str:
         return f"{self.services.base.rstrip('/')}{path}"

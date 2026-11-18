@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from dataclasses import dataclass, replace
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
 
 from . import brief, switches, twopeople
 from .decide import NO_MEASUREMENT
@@ -21,8 +21,8 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, PlanRecord, Principal, Store, StoreError,
-                     TwoPeopleRule)
+from .models import (ADVICE_QUIET_DAYS, ADVISE, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError,
+                     TwoPeopleRule, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -56,7 +56,6 @@ HELD_STATUSES = ("needs_human", "proposed")  # the statuses of the cases that wa
 HELD_CASES = 300  # the latest cases of each of those statuses that settle reads (the start page and cases/learning.py read the same number)
 HELD_ANSWERS = 200  # the latest plans that settle looks at for the answers that people gave lately (the number that advise reads)
 HELD_NEW = 50  # the most held requests that one Watch makes: a Watch that finds more makes the rest at the next one
-HELD_DAYS = 30  # the time that a held request is stamped with: it is closed by settle when nothing holds the finding back, never by the clock
 HELD_NO_APPROVAL = "This finding is held back, so there is no request to approve. Nothing is approved."
 # And no more than ADVICE_OPEN_MAX requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by it):
 # the first page of the start page. The rest wait as open questions, and a request is made for them when a place is free.
@@ -72,7 +71,6 @@ PAUSED_ADVICE = brief.PAUSED_ADVICE
 class ApprovalSettings:
     change_scopes: tuple[ChangeScope, ...]  # the resource groups of Meternaut's own in which a plan is made and a change may be made: each in one subscription
     planted_tag: str = "meternaut-planted"
-    ttl_hours: int = 72
 
     @property
     def gates(self) -> Gates:
@@ -135,12 +133,11 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
     if isinstance(planned, str):
         raise ValueError(planned)
     saving = planned.saving_usd_month
-    expires = stamp(now + dt.timedelta(hours=settings.ttl_hours))
     return plan_digest.sealed(PlanRecord(
         plan_id=new_id(), case_id=case.case_id, family=family.name, resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120),
         resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, code="", title=planned.title, what_changes=planned.what_changes,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=planned.could_go_wrong, undo=planned.undo,
-        evidence_level=planned.evidence, approvers=approvers, created_at=stamp(now), expires_at=expires, state="open",
+        evidence_level=planned.evidence, approvers=approvers, created_at=stamp(now), expires_at="", state="open",
         approval_class=twopeople.CLASS if rule is not None and twopeople.applies(rule, family.name, saving) else "R2",
         preconditions=planned.preconditions, target=planned.target))
 
@@ -148,8 +145,7 @@ def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt
 def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex, held: str = "") -> PlanRecord:
     """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own (what code computed from the bill lines that the
     finding names, decide.py). A finding that has no figure of its own but whose facts hold what Azure Advisor says takes Advisor's. `held` (a key of brief.HOLD_WORDS) makes it the request of a finding
-    that a guard holds back: the state HELD, no time to run out, and the reason kept in the preconditions."""
-    expires = stamp(now + (dt.timedelta(days=HELD_DAYS) if held else dt.timedelta(hours=settings.ttl_hours)))
+    that a guard holds back: the state HELD, and the reason kept in the preconditions."""
     saving = case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
     by_advisor = case.detector == ADVISOR  # Azure Advisor's own recommendation, made by code: no AI looked at it
     judged = ("Judged: no AI looked at it. It is Azure Advisor's own recommendation, and Meternaut has not checked it." if by_advisor else
@@ -162,7 +158,7 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
         title=brief.headline_of(ADVISE, case.resource_name, case.resource_group, case.resource_type, case.recommendation, together=brief.group_of(case), case=case),
         what_changes=brief.ADVICE_CHANGE,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.acting_risk(case).text, undo=brief.ADVICE_UNDO,
-        evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at=expires,
+        evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at="",
         state=HELD if held else "open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status, **({"source": ADVISOR} if by_advisor else {}), **({HELD: held} if held else {})}))
 
 
@@ -186,13 +182,6 @@ class Approvals:
         if case is not None and case.status != status:
             self.store.case_put(_with(case, status=status, updated_at=stamp(self.clock())))
 
-    def _expire_if_due(self, plan: PlanRecord, now: dt.datetime) -> PlanRecord:
-        if plan.state == "open" and now >= parse(plan.expires_at):
-            plan = _plan_with(plan, state="expired")
-            self.store.plan_put(plan)
-            self._set_case(plan.case_id, "expired")
-        return plan
-
     def _gate(self, principal: Principal, plan_id: str, decision: str, code: str, now: dt.datetime) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks that every answer shares, in this order. Returns the plan, or the refusal. It records nothing and uses no one-time token."""
         if decision not in ANSWERS:
@@ -201,12 +190,11 @@ class Approvals:
         if plan is None:
             return None, DecideResult(False, "refused_state", "This request does not exist. Nothing is approved.")
         advice = plan.family == ADVISE
-        # A change is approved by an approver. An advise plan only records an opinion, so the owner may answer it too; either way the person has to be named on the plan.
-        if not (principal.has("approver") or (advice and principal.has("owner"))) or principal.oid.lower() not in {a.lower() for a in plan.approvers}:
+        # A change is approved by a named approver. An advise plan only records an opinion, so the owner may answer it too, and so may a person that a step of its ladder was delivered to (models.may_answer).
+        if not may_answer(principal, plan, lambda: self.store.escalations_of(plan.plan_id)):
             return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
-        plan = self._expire_if_due(plan, now)
-        if plan.state == "expired":
-            return None, DecideResult(False, "expired", f"This request expired on {plan.expires_at} UTC. Nothing has changed.", plan)
+        if plan.state == "expired":  # the stored word for a request that Meternaut took back: no clock ends a request (AGENTS.md rule 38)
+            return None, DecideResult(False, "expired", "Meternaut took this request back, so it cannot be answered. Nothing has changed.", plan)
         if plan.state not in ("open", HELD):
             return None, DecideResult(False, "refused_state", f"This request is {_words(plan.state)}. Nothing more can be recorded.", plan)
         if plan.state == HELD and decision in ("approve", "confirm"):
@@ -245,7 +233,10 @@ class Approvals:
         if decision == "ask":
             return DecideResult(True, "asked", "Recorded with your name. It approves nothing. The request stays open.", plan)
         if decision == "later":
-            return DecideResult(True, "later", "Noted. Nothing is approved. The request stays open, in your list.", plan)
+            if plan.state == HELD:  # a held finding has no request that can be put off, and nobody to pass it on to
+                return DecideResult(True, "later", "Noted. Nothing is approved. The finding stays held back, in your list.", plan)
+            self._ladder(plan, "snooze", principal, now)
+            return DecideResult(True, "later", "Noted. Nothing is approved. The request stays open, in your list. If nobody answers it, it goes on to the next person.", plan)
         if decision == "decline":
             plan = _plan_with(plan, state="declined", **_answered(plan, now))
             self.store.plan_put(plan)
@@ -256,10 +247,18 @@ class Approvals:
             self.store.plan_put(plan)
             self._set_case(plan.case_id, "acknowledged")
             return DecideResult(True, "acknowledged", "Recorded: worth acting on. Nothing was changed in Azure.", plan)
+        if plan.family == ADVISE and plan.state != HELD:  # nobody's answer ends a request that is passed on: it goes to the next person at once, and stays open (cases/escalation.py)
+            self._ladder(plan, "pass", principal, now)
+            return DecideResult(True, "not_mine", "Recorded: this is not yours. Meternaut passes the request on to the next person. Nothing is approved.", plan)
         plan = _plan_with(plan, state="withdrawn", **_answered(plan, now))
         self.store.plan_put(plan)
         self._set_case(plan.case_id, "needs_human")
         return DecideResult(True, "not_mine", "Recorded: this resource is not yours. Nothing is approved.", plan)
+
+    def _ladder(self, plan: PlanRecord, kind: str, principal: Principal, now: dt.datetime) -> None:
+        """Keeps a put-off ("later") or a pass-on ("not mine") of a person for the ladder of the request (cases/escalation.py): the ladder reads it, and the page shows it."""
+        count = sum(1 for r in self.store.escalations_of(plan.plan_id) if r.kind == kind)
+        self.store.escalation_claim(EscalationRecord(plan.plan_id, kind, count + 1, stamp(now), who=(principal.oid,), names=(clean_text(principal.name, 80),)))
 
     def _confirm(self, principal: Principal, plan: PlanRecord, nonce: str, note: str, now: dt.datetime) -> DecideResult:
         """The first of two people on a change that needs two (cases/twopeople.py): records that this person confirms this exact plan, bound to its code and its digest. It changes nothing
@@ -426,44 +425,89 @@ class Approvals:
                     pass
             return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. Try again in a few minutes.", plan), None
 
-    def expire(self) -> list[PlanRecord]:
-        """Closes the open plans whose time is over. Returns them."""
-        now = self.clock()
-        closed = []
-        for plan in self.store.plans_open():
-            after = self._expire_if_due(plan, now)
-            if after.state == "expired":
-                closed.append(after)
-        return closed
-
     def supersede(self) -> list[PlanRecord]:
-        """Closes, as expired, the open advice requests of the resources that an open group request stands for, other than the group's own: the first version asked about each resource on its own,
-        and the group asks once. A plan of a change, an answered plan and the plan of a group are never touched. Returns the plans that it closed."""
+        """Takes back, with the reason `group` (stored as expired, ending now), the open advice requests of the resources that an open group request stands for, other than the group's own, and the
+        request of a group that a fresher request of a group stands for (the group changed its first resource): the first version asked about each resource on its own, and the group asks once. A plan
+        of a change and an answered plan are never touched. Returns the plans that it took back."""
         try:
             open_plans = [plan for plan in self.store.plans_open() if plan.family == ADVISE and plan.state == "open"]
             waiting = {plan.case_id for plan in open_plans}
             groups: set[str] = set()
-            covered: set[str] = set()
+            members_of: dict[str, set[str]] = {}
             for case in self.store.cases_recent(GROUP_CASES_READ):
                 together = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
                 if isinstance(together, dict):
                     groups.add(case.case_id)
                     members = together.get("members")
                     if case.case_id in waiting and isinstance(members, list):
-                        covered.update(f"k{member}" for member in members if isinstance(member, str))
+                        members_of[case.case_id] = {f"k{member}" for member in members if isinstance(member, str)}
+
+            def stands_for(plan: PlanRecord, other: PlanRecord) -> bool:
+                """A request of a group that has the resource among its members, or a later request of a group that shares most of its members: the finding changed its first resource."""
+                mine, theirs = members_of.get(plan.case_id, set()), members_of.get(other.case_id, set())
+                return other.plan_id != plan.plan_id and ((plan.case_id in theirs and plan.case_id not in groups) or (other.created_at > plan.created_at and len(mine & theirs) * 2 > len(mine)))
             closed = []
             for plan in open_plans:
-                if plan.case_id in covered and plan.case_id not in groups:
+                standing = [other for other in open_plans if stands_for(plan, other)]
+                if standing:
                     plan = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                     if plan is None or plan.state != "open" or self.store.decisions_of_plan(plan.plan_id):
                         continue  # a person who put it off or asked about it has answered it
-                    plan = _plan_with(plan, state="expired", expires_at=stamp(self.clock()))  # it ends now, and not at the time that was set for it
+                    plan = _plan_with(plan, state="expired", expires_at=stamp(self.clock()), preconditions={**(plan.preconditions or {}), "takenBack": "group"})  # the field keeps the time of the end
                     self.store.plan_put(plan)
                     self._set_case(plan.case_id, "expired")
+                    self._carry(plan, max(standing, key=lambda other: (other.created_at, other.plan_id)))
                     closed.append(plan)
             return closed
         except StoreError:
             return []
+
+    def keep_approvers(self, approvers: tuple[str, ...], floor: tuple[str, ...]) -> tuple[int, int, int]:
+        """Gives each open request the people that the list names now, by the rule that chose them when the request was made (`approvers`: the role approver; `floor`, the owners, when nobody has the
+        role): who was added can answer it, who is gone cannot, and a request is never left with nobody (when nobody is named at all it keeps its people). Its approvers are in its digest, so a request
+        that changes is sealed again (one that was never sealed stays unsealed), and the people who were added are kept (`EscalationRecord` kind `added`) so that the next step of its ladder tells them. Only
+        a request that is open is touched, read again first: not a held one, not one that was answered or is being changed. Changes no right: a change is still made with the approver's own token.
+        Returns the requests that changed, the people added and the people dropped, summed over the requests."""
+        wanted = tuple(dict.fromkeys(oid.lower() for oid in (approvers or floor)))
+        plans = added = dropped = 0
+        if not wanted:
+            return plans, added, dropped
+        try:
+            for plan in self.store.plans_open():
+                if plan.state != "open" or {a.lower() for a in plan.approvers} == set(wanted):
+                    continue
+                fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
+                if fresh is None or fresh.state != "open":
+                    continue
+                kept = {a.lower() for a in fresh.approvers}
+                new = tuple(oid for oid in wanted if oid not in kept)
+                if new:
+                    self.store.escalation_claim(EscalationRecord(fresh.plan_id, "added", 1 + sum(1 for r in self.store.escalations_of(fresh.plan_id) if r.kind == "added"), stamp(self.clock()), who=new))
+                changed = replace(fresh, approvers=wanted)
+                if fresh.digest:
+                    changed = plan_digest.sealed(changed)
+                    if fresh.family == ADVISE:
+                        changed = replace(changed, code=fresh.code)  # advice changes nothing in Azure, so its code stays: a card or a letter that was sent before keeps working
+                self.store.plan_put(changed)
+                plans, added, dropped = plans + 1, added + len(new), dropped + len(kept - set(wanted))
+        except StoreError:
+            pass
+        return plans, added, dropped
+
+    def _carry(self, old: PlanRecord, new: PlanRecord) -> None:
+        """The request that stands for another keeps the oldest start, and the steps of the ladder that were made for the other count as made for it (cases/escalation.py): a request that is made again
+        does not start its wait again. What the other cost while it waited (at its own figure, for its own days, up to the day that this one was made) is carried too, so the cost of waiting of a group
+        is the sum of what each of its members cost for the days that it waited, and not the whole figure of the group for the days of the oldest member. A request that asks another question (the
+        rules changed, another lead) is made by another path and starts when it is made."""
+        fresh = self.store.plan_get(new.plan_id)
+        if fresh is not None and fresh.state == "open":
+            days = max((parse(fresh.created_at) - parse(started(old))).total_seconds() / 86400, 0.0)
+            changes: dict = {"waited_usd": round(fresh.waited_usd + old.waited_usd + (old.saving_usd_month or 0.0) / 30 * days, 2)}
+            if started(old) < started(fresh):
+                changes["waiting_since"] = started(old)
+            self.store.plan_put(replace(fresh, **changes))
+        for record in self.store.escalations_of(old.plan_id):
+            self.store.escalation_claim(replace(record, plan_id=new.plan_id))
 
     def _own_group(self, case: CaseRecord) -> bool:
         """Whether the case is about something in a group of Meternaut's own where a change may be made: the waste that it planted lives there, and the rules about asking to delete leave it alone."""
@@ -489,12 +533,29 @@ class Approvals:
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                 if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
                     continue
-                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), **({"preconditions": {**(fresh.preconditions or {}), "takenBack": why}} if why else {}))
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": why or "nothing"})
                 self.store.plan_put(fresh)
                 closed.append((fresh, case))
             return closed
         except StoreError:
             return []
+
+    def take_back_gone(self, plan_ids: Collection[str]) -> list[PlanRecord]:
+        """Takes back, as expired and ending now with the reason `gone`, the open requests whose resource is not in Azure any more (cases/escalation.py existence says which): there is nothing left
+        to decide, and nothing else ends a request now that no clock does. It is read again first, and a request that a person answered since stays. Returns the plans that it took back."""
+        closed = []
+        try:
+            for plan_id in plan_ids:
+                fresh = self.store.plan_get(plan_id)
+                if fresh is None or fresh.state != "open":
+                    continue
+                fresh = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": "gone"})
+                self.store.plan_put(fresh)
+                self._set_case(fresh.case_id, "expired")
+                closed.append(fresh)
+        except StoreError:
+            pass
+        return closed
 
     def _guard(self, case: CaseRecord) -> str:
         """The reason (a key of brief.HOLD_WORDS) that a guard holds a finding back now, or "" when none does: a rule of brief.held_reason, or a finding that cannot say what to look at."""
@@ -693,7 +754,7 @@ def _answered(plan: PlanRecord, now: dt.datetime) -> dict:
 
 def _words(state: str) -> str:
     return {"consumed": "closed: it ran", "declined": "declined", "withdrawn": "withdrawn", "approved": "approved: its change is being made",
-            "failed": "closed: the change failed"}.get(state, state)
+            "failed": "closed: the change failed", "expired": "taken back by Meternaut"}.get(state, state)
 
 
 def _refused_stepup(kind: str, message: str, plan: PlanRecord | None = None) -> tuple[None, None, DecideResult]:

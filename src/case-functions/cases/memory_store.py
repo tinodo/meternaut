@@ -5,8 +5,8 @@ import datetime as dt
 import secrets
 from typing import Callable
 
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
-                     RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, EscalationRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord,
+                     PlanRecord, RunRecord, SettingsRecord, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 
 def utc_now() -> dt.datetime:
@@ -39,6 +39,9 @@ class MemoryStore:
         self.claims: dict[str, ClaimRecord] = {}
         self.profiles: list[CapabilityRecord] = []
         self.investigations: dict[str, InvestigationRecord] = {}
+        self.escalations: dict[tuple[str, str, int], EscalationRecord] = {}
+        self.cursor = ""
+        self.truncated: dict[str, int] = {}  # a list that the store cut at its cap (store.TableStore): this one never does
         self.check: CheckRecord | None = None
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
@@ -73,6 +76,9 @@ class MemoryStore:
 
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
         return sorted((p for p in self.plans.values() if p.state != "held"), key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
+
+    def plans_expired(self) -> list[PlanRecord]:
+        return sorted((p for p in self.plans.values() if p.state == "expired"), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         return self.plans.get(plan_id)
@@ -192,6 +198,27 @@ class MemoryStore:
 
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         return sorted((m for m in self.mails if m.oid == oid and m.sent_at >= since), key=lambda m: (m.sent_at, m.mail_id))
+
+    def escalation_claim(self, record: EscalationRecord) -> bool:
+        key = (record.plan_id, record.kind, record.number)
+        if key in self.escalations:
+            return False
+        self.escalations[key] = record
+        return True
+
+    def escalation_put(self, record: EscalationRecord) -> None:
+        self.escalations[(record.plan_id, record.kind, record.number)] = record
+
+    def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
+        return sorted((r for r in self.escalations.values() if r.plan_id == plan_id), key=lambda r: (r.kind, r.number))
+
+    def cursor_get(self) -> str:
+        return self.cursor
+
+    def cursor_put(self, key: str) -> None:
+        self.cursor = key
+
+
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self.lessons[lesson.lesson_id] = lesson

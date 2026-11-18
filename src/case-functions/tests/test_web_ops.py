@@ -193,7 +193,7 @@ class TheRunsPage(unittest.TestCase):
         reply = self.console.get("/ops/runs")
         self.assertIn("What the status words mean", reply.headings(2))
         legend = reply.summary(0)
-        self.assertEqual(list(legend), ["Proposed", "Needs a person", "Dropped", "Error", "Waiting for an OK", "Approved", "Running", "Done", "Failed", "Declined", "Expired", "Done and verified",
+        self.assertEqual(list(legend), ["Proposed", "Needs a person", "Dropped", "Error", "Waiting for an OK", "Approved", "Running", "Done", "Failed", "Declined", "Taken back", "Done and verified",
                                         "Worth acting on"])
         self.assertEqual(legend["Declined"], "A person said no. Nothing changed.")
         self.assertEqual(legend["Worth acting on"], "A person said that this is worth acting on. Meternaut changed nothing in Azure.")

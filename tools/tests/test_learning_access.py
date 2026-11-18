@@ -52,9 +52,10 @@ class TheNewReads(unittest.TestCase):
         for name in TENANT:
             self.assertFalse([g["id"] for g in MANIFEST["grants"] if name in g.get("calls", [])], f"{name} is no grant of an Azure role at the estate")
 
-    def test_the_tenant_reads_are_three_ids_of_their_own_for_the_cases_identity_with_one_call_each(self):
+    def test_the_tenant_reads_are_four_ids_of_their_own_for_the_cases_identity_and_the_first_three_have_one_call_each(self):
         items = MANIFEST["tenantReads"]
-        self.assertEqual([(item["id"], item["calls"]) for item in items], [("T1", ["billing-accounts-read"]), ("T2", ["reservation-orders-read"]), ("T3", ["savings-plan-orders-read"])])
+        self.assertEqual([(item["id"], item["calls"]) for item in items], [("T1", ["billing-accounts-read"]), ("T2", ["reservation-orders-read"]), ("T3", ["savings-plan-orders-read"]),
+                                                                          ("T4", ["directory-user-read", "directory-manager-read"])])
         used = [g["id"] for g in MANIFEST["grants"]] + [r["id"] for r in MANIFEST["retired"]]
         self.assertFalse({item["id"] for item in items} & set(used))
         self.assertEqual({item["identity"] for item in items}, {"cases"})

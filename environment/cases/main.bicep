@@ -158,10 +158,12 @@ param mailSender string = ''
 @description('The host name under which people open the function app, for example the name of a listener of the platform\'s Application Gateway that forwards to this app. Empty: they open it on the app\'s own name, <function app name>.azurewebsites.net, and nothing is different from before. With a name, the setting CONSOLE_HOST (the links in the letters and the return address of the Azure sign-in) is that name, and the platform\'s sign-in reads the host of a request from the header X-Original-Host, which the Application Gateway adds, so that its own return address names this host name and not the app\'s own name (docs/proposals/07-private-by-default.md).')
 param consoleHostName string = ''
 
-@description('Hours that a plan waits for a person before it expires.')
-@minValue(1)
-@maxValue(336)
-param planTtlHours int = 72
+@description('Whom a request that waits too long is passed on to, after the people it was made for: contacts (the people listed with the role escalation, else the owners) or managers (the manager that Microsoft Entra names first, which needs the Graph permission User.Read.All, then the contacts). A request is never closed by a timer, so there is no setting for how long it waits (docs/proposals/30-escalation.md).')
+@allowed([
+  'contacts'
+  'managers'
+])
+param escalateTo string = 'contacts'
 
 @description('The git commit that the deploy of this run was made from (the workflow passes the commit of the run). The app gets it as the setting BUILD_COMMIT, which the app itself may read. The tag that a reader of the resource group sees (meternaut-build-commit, which tools/drift-check.py compares with the commit of main) is not written here: the workflow writes it after the code has been published and the app answers, so that a publish that fails leaves no tag that says otherwise. Empty: no setting is written, and nothing is different from before. A value, not a secret.')
 @maxLength(64)
@@ -593,7 +595,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'CONSOLE_HOST', value: consoleHost }
         { name: 'CONSOLE_PEOPLE', value: consolePeople }
         { name: 'MAIL_SENDER', value: mailSender }
-        { name: 'PLAN_TTL_HOURS', value: string(planTtlHours) }
+        { name: 'ESCALATE_TO', value: escalateTo }
         // The agents of the Foundry resource (environment/foundry/main.bicep). The app calls the project endpoint with its system-assigned identity and holds no key: the
         // role that lets it create and run agents is given by the template of the Foundry resource, on the project. No endpoint: the investigation is off.
         { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }

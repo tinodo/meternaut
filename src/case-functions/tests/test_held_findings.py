@@ -617,7 +617,7 @@ class ThePageOfAHeldFinding(unittest.TestCase):
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         reply = console.submit(console.get("/why/case0002").form(has_button="Ask or tell"), "Ask or tell", note="who owns it?")
-        self.assertIn("The request stays open until", reply.main.text())
+        self.assertIn("The request stays open.", reply.main.text())
         reply = console.submit(console.get("/why/case0002").form(has_button="Decide later"), "Decide later")
         self.assertIn("The request stays in your list.", reply.main.text())
 
@@ -988,9 +988,9 @@ class TheHistoryPageDoesNotCountThemAsUnanswered(unittest.TestCase):
         console.store.case_put(case)
         console.store.plan_put(make_advice(state="expired", expires_at=stamp(NOW - dt.timedelta(days=1)), created_at=stamp(NOW - dt.timedelta(days=4)),
                                            preconditions={"family": "advise", "held": "automation", "takenBack": "released"}))
-        self.assertNotIn("Closed with no answer", console.get("/history").content)
+        self.assertNotIn("request to look at a finding", console.get("/history").content)
         console.store.plan_put(make_advice(plan_id="p-quiet", state="expired", expires_at=stamp(NOW - dt.timedelta(days=1)), created_at=stamp(NOW - dt.timedelta(days=4))))
-        self.assertIn("Closed with no answer", console.get("/history").content, "an ordinary request that ran out is still said")
+        self.assertIn("1 request to look at a finding", console.get("/history").content, "an ordinary request that Meternaut took back is still said")
 
 
 if __name__ == "__main__":

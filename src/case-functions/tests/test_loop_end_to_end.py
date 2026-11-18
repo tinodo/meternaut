@@ -460,13 +460,13 @@ class TheWholeLoop(Story):
         self.assertEqual(len(self.store.plans_open()), 1)
         self.assertEqual(len(self.world.mail.sent), 2)
 
-    def test_an_unanswered_plan_expires_and_the_case_says_so(self):
+    def test_an_unanswered_plan_is_never_closed_by_the_timer_and_the_case_stays_where_it_was(self):
         watch(self.world, self.clock)
         (plan,) = self.store.plans_open()
-        self.clock.advance(hours=73)
-        self.assertEqual([p.plan_id for p in self.tick().expired], [plan.plan_id])
-        self.assertEqual(self.store.plans_open(), [])
-        self.assertEqual(self.store.cases_recent()[0].status, "expired")
+        self.clock.advance(hours=24 * 100)
+        self.assertEqual((self.tick().finished, self.tick().verified), ([], []))
+        self.assertEqual([p.plan_id for p in self.store.plans_open()], [plan.plan_id])
+        self.assertNotEqual(self.store.cases_recent()[0].status, "expired")
         self.assertTrue(self.world.resources.exists)
 
     def test_the_loop_is_off_without_its_settings(self):

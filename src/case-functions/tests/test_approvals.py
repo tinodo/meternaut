@@ -21,7 +21,7 @@ SUB = "bbbbbbbb-2222-4333-9444-555555555555"
 OTHER_SUB = "cccccccc-3333-4444-8555-666666666666"
 GROUP = "meternaut-sc-rg"
 NOW = dt.datetime(2026, 11, 5, 9, 0, 0, tzinfo=dt.timezone.utc)
-SETTINGS = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),), ttl_hours=72)
+SETTINGS = ApprovalSettings(change_scopes=(ChangeScope(SUB, GROUP),))
 IN_SUB = SETTINGS  # a scope is always one group in one subscription: there is no setting that leaves the subscription out
 APPROVER = Principal(OID, "Tino", ("owner", "approver", "ops"))
 
@@ -207,7 +207,7 @@ class BuildPlan(unittest.TestCase):
         self.assertNotIn("this is a trap", text)
         self.assertEqual((plan.family, plan.state, plan.approval_class, plan.approvers), ("delete-disk", "open", "R2", (OID,)))
         self.assertRegex(plan.code, r"^[0-9A-F]{8}$")
-        self.assertEqual(plan.expires_at, "2026-11-08T09:00:00Z")
+        self.assertEqual(plan.expires_at, "", "nothing expires: the field is kept for the digest of older plans and is empty in a plan made now")
         self.assertIn("resource group meternaut-sc-rg", plan.title)
         self.assertIn("planted-disk-1", plan.what_changes)
         self.assertIn("cannot be restored", plan.undo)
@@ -443,18 +443,22 @@ class Loop(unittest.TestCase):
         self.assertEqual(self.decide(nonce=token).kind, "declined")
         self.assertEqual(self.decide(nonce=token).kind, "refused_state")
 
-    def test_an_expired_plan_is_closed_and_refused(self):
-        self.clock.advance(hours=73)
+    def test_no_clock_closes_a_waiting_request_so_the_answer_is_taken_after_a_hundred_days(self):
+        self.clock.advance(hours=24 * 100)
+        plan, refusal = self.form()
+        self.assertIsNone(refusal)
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, self.store.case_get(self.case.case_id).status), ("open", "awaiting_ok"))
+
+    def test_a_request_that_is_approved_after_a_hundred_days_is_not_refused_for_its_age(self):
+        self.clock.advance(hours=24 * 100)
+        _, refusal = self.approvals.check_approve(APPROVER, self.plan.plan_id, self.plan.code)
+        self.assertIsNone(refusal, "the runner looks at the resource again at the click: that is what keeps an old request safe")
+
+    def test_a_request_that_meternaut_took_back_cannot_be_answered_and_says_so(self):
+        self.store.plan_put(replace(self.plan, state="expired"))
         result = self.form()[1]
         self.assertEqual((result.ok, result.kind), (False, "expired"))
-        self.assertIn("expired on 2026-11-08T09:00:00Z", result.message)
-        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "expired")
-        self.assertEqual(self.store.case_get(self.case.case_id).status, "expired")
-
-    def test_a_plan_that_expires_while_the_person_signs_in_is_refused_at_the_return(self):
-        self.clock.advance(hours=73)
-        _, refusal = self.approvals.check_approve(APPROVER, self.plan.plan_id, self.plan.code)
-        self.assertEqual(refusal.kind, "expired")
+        self.assertIn("took this request back", result.message)
 
     def test_a_closed_plan_says_what_it_is(self):
         self.decide("decline")
@@ -530,17 +534,11 @@ class Loop(unittest.TestCase):
         self.assertFalse(hasattr(ApprovalSettings, "delay_seconds"))
         self.assertNotIn("delay_seconds", ApprovalSettings.__dataclass_fields__)
 
-    def test_expire_closes_only_the_open_plans_that_are_due(self):
-        other = lead(name="planted-disk-2")
-        case = case_for(other)
-        self.store.case_put(case)
-        self.clock.advance(hours=70)
-        later = self.approvals.create(case, other, (OID,))
-        self.clock.advance(hours=3)
-        closed = self.approvals.expire()
-        self.assertEqual([p.plan_id for p in closed], [self.plan.plan_id])
-        self.assertEqual(self.store.plan_get(later.plan_id).state, "open")
-        self.assertEqual(self.store.case_get(self.case.case_id).status, "expired")
+    def test_there_is_nothing_that_expires_a_request(self):
+        self.assertFalse(hasattr(self.approvals, "expire"))
+        self.assertNotIn("ttl_hours", ApprovalSettings.__dataclass_fields__)
+        self.clock.advance(hours=24 * 100)
+        self.assertEqual([p.plan_id for p in self.store.plans_open()], [self.plan.plan_id])
 
     def test_the_plan_the_page_shows_has_no_model_text(self):
         data = json.loads(self.plan.to_json())
@@ -603,7 +601,7 @@ class TheCheckAfterTheExtraSignIn(unittest.TestCase):
         self.assertEqual((refusal.kind, refusal.plan), ("refused_state", None))
         self.assertIn("does not exist", refusal.message)
         for state, words in (("open", "open"), ("consumed", "closed: it ran"), ("failed", "closed: the change failed"), ("declined", "declined"), ("withdrawn", "withdrawn"),
-                             ("expired", "expired")):
+                             ("expired", "taken back by Meternaut")):
             with self.subTest(state=state):
                 self.store.plan_put(replace(self.store.plan_get(self.plan.plan_id), state=state))
                 refusal = self.refused("refused_state")

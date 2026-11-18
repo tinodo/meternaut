@@ -8,9 +8,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..brief import HOLD_WORDS
-from ..models import HELD, PlanRecord
+from ..models import HELD, PlanRecord, started
 from . import words
-from .common import MORE, brief_of, counted, figure_cell, measured_tile, read, saving_cell, verified_brief
+from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
 from .figures import NO_LINES, WEAKEST_FIRST, a_year, cost_of, figure_for, title_of
 from .layout import head, kpi, kpis, link, notice, page, paragraph, table
@@ -19,16 +19,18 @@ PER = 1000  # the most that one read of the store gives
 LEAD = ("Every saving that Meternaut found, each finding counted once, by what became of it. Money is in US dollars, and a year is twelve times the month. "
         "A saving is an estimate until Cost Management confirms it.")
 NOTE = (f'It reads up to {PER:,} findings of each status, and a status that holds that many says "at least". '
-        "No saving is added up for a finding that was declined, expired, dropped or not finished. "
+        "No saving is added up for a finding that was declined, taken back, dropped or not finished. "
         '"Saving measured" counts every change that Cost Management confirmed, so it can be larger than the row "Confirmed by Cost Management".')
 # Row, statuses, what became of them, and whether their savings are added up
 GROUPS = (
-    ("Waiting for a person", ("needs_human", "proposed", "awaiting_ok"), "A person has to answer or look at it before anything changes. Findings that are held back, with no request yet, are here too.", True),
+    ("Waiting for a person", ("needs_human", "proposed", "awaiting_ok"), "A person has to answer or look at it before anything changes. Nothing closes it by time: if nobody answers, it goes on to the next person. "
+     "Findings that are held back, with no request yet, are here too.", True),
     ("Being made", ("approved", "running"), "A person approved. The change is being made now.", True),
     ("Made, not yet confirmed", ("done",), f"The change was made. {NO_LINES}", True),
     ("Confirmed by Cost Management", ("verified",), words.CASE_STATUS["verified"][1], True),
     ("Worth acting on", ("acknowledged",), words.CASE_STATUS["acknowledged"][1], True),
-    ("Declined or expired", ("declined", "expired"), "A person said no, or nobody answered in time. Nothing changed.", False),
+    ("Declined", ("declined",), "A person said no. Nothing changed.", False),
+    ("Taken back", ("expired",), "Meternaut took the request back, and the request says why. A finding that is still true is asked about again. Nothing changed.", False),
     ("Dropped", ("dropped",), "No change is suggested. The AIs advised keeping the resource.", False),
     ("Could not be finished", ("error", "failed"), "A check or a model call failed, or the change failed or was stopped.", False),
 )
@@ -137,6 +139,20 @@ def _row(group: Group) -> list:
     return [name, found, join(saving, "<br>") if saving else "Nothing to add up.", join(none, "<br>") if none else "None."]
 
 
+def _longest_wait(ctx: Ctx) -> Safe:
+    """The request that has waited longest: how long, with whom it is now and what waiting has cost it so far (by code, from its own figure). Nothing when none waits or the store cannot say."""
+    plans, ok = read(lambda: ctx.store.plans_open(), [])
+    waiting = [p for p in plans if p.state == "open"]
+    if not ok or not waiting:
+        return Safe("")
+    plan = min(waiting, key=lambda p: (started(p), p.plan_id))
+    case, _ = read(lambda: ctx.store.case_get(plan.case_id), None)
+    waited = brief_of(ctx, plan, case).waiting
+    if waited is None:
+        return Safe("")
+    return join([paragraph(f"The request that has waited longest has waited {waited.days} day{'s' if waited.days != 1 else ''}, and it is with {waited.with_whom}. {waited.cost}".rstrip()), off_notice(ctx)])
+
+
 def _held_out(ctx: Ctx, waiting: Group) -> tuple[Group | None, dict[str, PlanRecord]]:
     """Takes the findings that a guard holds back (the request of each is in the state HELD) out of the row of what waits for a person and makes their own row of them, so that no finding is in
     two rows and no figure is added twice. None when no finding is held, or the plans cannot be read (they stay where they were)."""
@@ -187,7 +203,7 @@ def savings_page(ctx: Ctx) -> Response:
         title = "The findings cannot be read" if all(group.dead for group in groups) else "Part of the findings cannot be read"
         parts.append(notice("error", title, "I cannot read all of them now, so some counts and figures are missing or are at least. Nothing has changed."))
     headers = ["What became of it", "Findings", "Saving a year", "Findings with no saving figure"]
-    parts += [table("savings", "Savings found, by what became of each finding", headers, [_row(group) for group in groups], row_header=True), paragraph(NOTE)]
+    parts += [table("savings", "Savings found, by what became of each finding", headers, [_row(group) for group in groups], row_header=True), _longest_wait(ctx), paragraph(NOTE)]
     if held_group is not None:
         parts.append(_held_section(ctx, held_group, held))
     if ctx.principal.has("ops"):  # the page of every run is for that role alone
