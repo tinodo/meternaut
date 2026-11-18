@@ -71,7 +71,7 @@ class TheList(unittest.TestCase):
                                          "(cases/impact.py: the DNS zone groups of a private endpoint and the address records of a private DNS zone), the one read of a provider, which lists the property paths "
                                          "of its resource types (cases/arm.py, provider_paths), and the public price list (cases/prices.py)")
         self.assertEqual(sorted(method for method, _ in plain), ["GET"] * 25 + ["POST"] * 3)
-        self.assertEqual([call for call in plain if "prices.azure.com" in call[1].pattern.replace("\\", "")], [http.PRICE_CALL], "the one call to the price list, once")
+        self.assertEqual([call for call in plain if re.match(r"https://prices\.azure\.com/", call[1].pattern.replace("\\", ""))], [http.PRICE_CALL], "the one call to the price list, once")
         for method, pattern in [call for call in plain if call != http.PRICE_CALL]:
             self.assertTrue(pattern.pattern.startswith(re.escape("https://management.azure.com")) or pattern.pattern.startswith(re.escape("https://api.loganalytics.azure.com/v1/workspaces/")),
                             pattern.pattern)

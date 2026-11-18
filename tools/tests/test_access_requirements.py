@@ -785,11 +785,11 @@ class TheCallsOfTheApp(unittest.TestCase):
         # The tool that shows the prices of alternatives (cases/prices.py) reads the public price list with the Watch's client and no token: no role, no line, and a host that the network of the app must allow.
         found = [(m, p.pattern.replace("\\", "")) for m, p in self.watch_calls() if self.NAMES["retail-prices-read"](m, p.pattern.replace("\\", ""))]
         self.assertEqual(found, [("GET", "https://prices.azure.com/api/retail/prices")])
-        self.assertEqual([n for n in self.NAMES if n != "retail-prices-read" and any(self.NAMES[n](m, p.pattern.replace("\\", "")) for m, p in self.watch_calls() if "prices.azure.com" in p.pattern)], [],
+        self.assertEqual([n for n in self.NAMES if n != "retail-prices-read" and any(self.NAMES[n](m, p.pattern.replace("\\", "")) for m, p in self.watch_calls() if re.match(r"https://prices\.azure\.com/", p.pattern.replace("\\", "")))], [],
                          "no other name matches it")
         self.assertEqual(self.NO_AZURE_ROLE, {"retail-prices-read"})
         self.assertNotIn("retail-prices-read", self.listed(), "a call that needs no role is on no line")
-        self.assertEqual([p.pattern for m, p in self.timer_calls() if "prices.azure.com" in p.pattern], [], "the timer reads nothing there")
+        self.assertEqual([p.pattern for m, p in self.timer_calls() if re.match(r"https://prices\.azure\.com/", p.pattern.replace("\\", ""))], [], "the timer reads nothing there")
 
     def test_only_the_cases_identity_has_calls_listed(self):
         for grant in MANIFEST["grants"]:

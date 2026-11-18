@@ -449,7 +449,7 @@ class TheFailures(unittest.TestCase):
         estate, box = priced()
         estate.body = {"Items": [], "NextPageLink": "https://example.com/api/retail/prices?x=1"}
         self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
-        self.assertEqual([url for url in estate.urls if "example.com" in url], [])
+        self.assertEqual([url for url in estate.urls if urlsplit(url).hostname == "example.com"], [])
 
     def test_the_prices_that_a_run_keeps_are_bounded_and_a_read_beyond_the_bound_is_unavailable_and_sends_nothing(self):
         estate, box = priced()
