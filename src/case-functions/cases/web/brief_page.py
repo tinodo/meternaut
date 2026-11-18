@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
+from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -331,7 +331,7 @@ def _ai_words(case: CaseRecord) -> Safe:
 def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None) -> Safe:
     rows: list[tuple[str, object]] = []
     if case is not None:
-        status_word, meaning = words.CASE_STATUS.get(case.status, (case.status, ""))
+        status_word, meaning = words.CLOSED_BY_THE_BILL if case.status == "expired" and taken_back(plan) == "verified" else words.CASE_STATUS.get(case.status, (case.status, ""))
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
         rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
                  ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),
@@ -342,7 +342,8 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if plan is not None:
         waiting = action is not None and plan.state == "approved" and action.state == "queued" and action.step_up
         rows += [("Request code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
-                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)), ("Made", ctx.when(plan.created_at))]
+                 ("State of the request", words.WAITING_TEXT if waiting else words.CLOSED_BY_THE_BILL[1] if taken_back(plan) == "verified" else words.PLAN_STATE.get(plan.state, plan.state)),
+                 ("Made", ctx.when(plan.created_at))]
         if plan.state == HELD:
             rows.append(("Ends", "It ends when nothing holds the finding back any more."))
     if ctx.services.host:

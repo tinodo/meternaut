@@ -932,14 +932,20 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             began = tool_clock()
             # The picture that code reads for a beat has a time of its own, so that a resource with very many measurements cannot take the time of the beat: what does not finish is unread and named.
             capped = by == "code" and name == "profile" and hasattr(toolbox, "budget_seconds")
+            # The list prices that code reads are a trial of the toolbox: what it leaves behind never costs the call of the Investigator for the same prices its own read (Toolbox.trial).
+            trying = by == "code" and name == "price_alternatives" and hasattr(toolbox, "trial")
             if capped:
                 kept_budget = toolbox.budget_seconds
                 toolbox.budget_seconds = min(kept_budget, beats.SEED_PICTURE_SECONDS)
+            if trying:
+                toolbox.trial = True
             try:
                 text = toolbox.call(name, arguments)
             finally:
                 if capped:
                     toolbox.budget_seconds = kept_budget
+                if trying:
+                    toolbox.trial = False
             try:
                 fields = beats.call_fields(name, arguments, text, tool_clock() - began)
                 saved = toolbox.log[-1].get("saved") if toolbox.log and isinstance(toolbox.log[-1], dict) else None

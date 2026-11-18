@@ -19,7 +19,7 @@ from typing import Callable, Mapping, Sequence
 
 from . import config as cfg
 from . import costs as cost_words
-from . import advisor, decide, detectors, escalation, evidence, guards, investigate, roles, upkeep, usage, wiring
+from . import advisor, decide, detectors, escalation, evidence, guards, investigate, roles, upkeep, usage, verify, wiring
 from . import harness as harness_module
 from . import scope as scope_mod
 from .approvals import HELD_BACK, NOTHING_TO_SAY, is_fixture
@@ -32,7 +32,7 @@ from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity
 from .memory_store import parse, stamp
 from .modelcalls import ModelError, Models
-from .models import GROUP_FACT, CaseRecord, RunRecord, StoreError
+from .models import COST_DAYS, GROUP_FACT, CaseRecord, RunRecord, StoreError, members
 from .redact import Redactor
 from .roles import RoleError, clean_text
 
@@ -44,7 +44,6 @@ READ_SHARE = 0.6
 # A subscription that was started inside the share may finish its own reads (Advisor, locks, cost lines) this much later; a call after that is refused by the client, as after the deadline.
 READ_GRACE = 0.1
 SCOPES_SHOWN = 5  # the subscriptions that run.started names, at eight characters each; it also carries their count
-COST_DAYS = 30  # the closed days of cost_usd_30d, and of the series that a case with an open plan carries (CaseRecord.cost_series)
 COST_IDS = 50  # the resource ids that one Cost Management query asks about
 USE_MAX_RESOURCES = 30  # the resources whose use one Watch reads (one read of Azure Monitor for each of their metrics): the others wait for the next Watch
 USE_MIN_SECONDS = 30  # the use of a resource is not read when the run has less time than this left: one read of Azure Monitor may take that long
@@ -268,15 +267,6 @@ def _unread_note(estate: Estate, deadline_seconds: int) -> str:
     return f"{what}: the time for reading them ({int(READ_SHARE * deadline_seconds)} of the {deadline_seconds} seconds of the run) was used up"
 
 
-def _members(case: CaseRecord) -> list[str]:
-    """The lower-case ids of what a case stands for: its resource, or the ones that a group case kept (none when it kept fewer than it covers)."""
-    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
-    if not isinstance(group, dict):
-        return [case.resource_id.lower()]
-    ids = group.get("resourceIds")
-    return [i.lower() for i in ids] if isinstance(ids, list) and len(ids) == group.get("count") and all(isinstance(i, str) for i in ids) else []
-
-
 def _subscription(resource_id: str) -> str:
     return resource_id.split("/")[2] if resource_id.startswith("/subscriptions/") else ""
 
@@ -306,6 +296,44 @@ def _with_series(kept: CaseRecord, series: list[float] | None, last: dt.date, co
     return replace(kept, **changes)
 
 
+def _daily(s: Services, due: Mapping[str, list[str]], last: dt.date, amortized: bool = False) -> tuple[dict[str, list[float] | None], str, bool]:
+    """The daily cost of each key of `due` (a case or a request, with the resources that its cost is the sum of) on the COST_DAYS closed days that end on `last`, in US dollars, one query for each
+    subscription and COST_IDS resources: the actual cost, or the amortized one (a purchase spread over its term). A key whose resources were not all read has no entry, and None is no cost line on any
+    of the days. Then the first reason that a read failed, and whether Azure asked to slow down: that ends the reading."""
+    first = last - dt.timedelta(days=COST_DAYS - 1)
+    by_sub: dict[str, list[str]] = {}
+    for resource in sorted({i for ids in due.values() for i in ids}):
+        by_sub.setdefault(_subscription(resource), []).append(resource)
+    daily: dict[str, list[float]] = {}
+    read: set[str] = set()
+    why = ""
+    stopped = False
+    for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
+        try:
+            rows = s.arm.cost_days(sub, first, last, amortized=amortized, where=("ResourceId", tuple(chunk)))
+        except HttpError as error:
+            why = why or clean_text(s.redact(error), 200)
+            if error.status == 429:
+                stopped = True
+                break
+            continue
+        if any(code != "USD" for _, _, _, code in rows):
+            why = why or "the cost lines are not in US dollars"
+            continue
+        for day, resource, amount, _ in rows:
+            if 0 <= (day - first).days < COST_DAYS:
+                daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
+        read.update(chunk)
+    found = {key: [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)] if any(i in daily for i in ids) else None for key, ids in due.items() if read.issuperset(ids)}
+    return found, why, stopped
+
+
+def _amortized(s: Services, cases: Mapping[str, CaseRecord], last: dt.date) -> dict[str, list[float] | None]:
+    """The amortized daily cost of the cases that cases/verify.py asks about, by the key that it gave: a commitment (a reservation, a savings plan) is spread over its term there, so that it does not
+    make the cost of a resource that it covers fall to nothing, as the actual cost does. A case that was not read in whole has no entry."""
+    return _daily(s, {key: members(case) for key, case in cases.items()}, last, True)[0]
+
+
 def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable[[str], None]) -> None:
     """A step of a Watch: reads the daily cost (CaseRecord.cost_series) of each case with an open plan whose series does not end yesterday, in US dollars only, one query for each
     subscription and COST_IDS resources, and one query for a case about a whole subscription or resource group (the cost of every line in it: Arm.scope_days). A case that Azure has no cost line
@@ -329,33 +357,11 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                 if scope.subscription not in other:
                     wholes[case.case_id] = (scope.subscription, scope.group)
                 continue
-            ids = _members(case)
+            ids = members(case)
             subs = {_subscription(i) for i in ids}
             if ids and "" not in subs and subs.isdisjoint(other):
                 due[case.case_id] = ids
-        by_sub: dict[str, list[str]] = {}
-        for resource in sorted({i for ids in due.values() for i in ids}):
-            by_sub.setdefault(_subscription(resource), []).append(resource)
-        daily: dict[str, list[float]] = {}
-        read: set[str] = set()
-        why = ""
-        stopped = False
-        for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
-            try:
-                rows = s.arm.cost_days(sub, first, last, where=("ResourceId", tuple(chunk)))
-            except HttpError as error:
-                why = why or clean_text(s.redact(error), 200)
-                if error.status == 429:
-                    stopped = True
-                    break
-                continue
-            if any(code != "USD" for _, _, _, code in rows):
-                why = why or "the cost lines are not in US dollars"
-                continue
-            for day, resource, amount, _ in rows:
-                if 0 <= (day - first).days < COST_DAYS:
-                    daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
-            read.update(chunk)
+        series_of, why, stopped = _daily(s, due, last)
         whole_series: dict[tuple[str, str], list[float] | None] = {}
         for sub, group in sorted(set(wholes.values())):
             if stopped:
@@ -379,14 +385,10 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                     seen = True
             whole_series[(sub, group)] = [round(value, 4) or 0.0 for value in found] if seen else None
         done = 0
-        left_over: list[str] = []
-        for case_id, ids in due.items():
-            if not read.issuperset(ids):
-                left_over.append(case_id)
-                continue
-            series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)] if any(i in daily for i in ids) else None
+        left_over: list[str] = [case_id for case_id in due if case_id not in series_of]
+        for case_id, series in series_of.items():
             try:
-                ex.store.case_update(case_id, lambda kept: _with_series(kept, series, last, False))  # only these fields, on the case as it is stored now
+                ex.store.case_update(case_id, lambda kept, series=series: _with_series(kept, series, last, False))  # only these fields, on the case as it is stored now
                 done += 1
             except StoreError as error:
                 why = why or clean_text(s.redact(error), 200)
@@ -525,25 +527,28 @@ def _revive(s: Services, say: Callable[[str], None]) -> None:
         say(f"the requests that a clock closed could not be opened again ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
 
 
-def _take_back_gone(s: Services, estate: "detectors.Estate", say: Callable[[str], None]) -> None:
+def _take_back_gone(s: Services, estate: "detectors.Estate", say: Callable[[str], None]) -> dict[str, str]:
     """Takes back the open requests whose resource is not in Azure any more (cases/escalation.py existence), and only in a subscription that this Watch read in full: one that was read in part, whose read
-    failed or was asked to wait is never judged, and the note says how many requests were not checked and why. It never fails the run."""
+    failed or was asked to wait is never judged, and the note says how many requests were not checked and why. Returns what the check said of each open request (`gone`, `there` or the word of why not),
+    which cases/verify.py reads. It never fails the run."""
     def full(subscription: str) -> bool:
         found = estate.collected.get(subscription)
         return found is not None and found.sources_failed == 0 and found.context.recent is not None and found.context.managed_groups is not None
-    def members(plan):
+    def ids_of(plan):
         case = s.extras.store.case_get(plan.case_id)
         grouped = case is not None and isinstance(case.facts, dict) and GROUP_FACT in case.facts
-        return _members(case) if grouped else [plan.resource_id]  # a group is gone only when every resource of it is
+        return members(case) if grouped else [plan.resource_id]  # a group is gone only when every resource of it is
     try:
-        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full, members)
+        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full, ids_of)
         closed = s.extras.approvals.take_back_gone([plan_id for plan_id, word in answer.items() if word == "gone"])
         if closed:
             say(f"{len(closed)} request{'s were' if len(closed) != 1 else ' was'} taken back: the resource is gone")
         for word, count in Counter(word for word in answer.values() if word in escalation.UNCHECKED).items():
             say(f"{count} request{'s' if count != 1 else ''}: whether the resource is still there was not checked ({escalation.UNCHECKED[word]})")
+        return answer
     except Exception as error:  # noqa: BLE001 (this step never stops the run)
         say(f"whether the resources of the open requests are still there could not be checked ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+        return {}
 
 
 def execute(s: Services, trigger: str) -> Summary:
@@ -725,11 +730,12 @@ def execute(s: Services, trigger: str) -> Summary:
     held = Counter(held_ids)  # the words of the History for each finding that was held back by a case of this Watch
     held[NOTHING_TO_SAY] += investigation.said_nothing
     held.update({HELD_BACK[why]: count for why, count in investigation.held_back.items()})
+    there: dict[str, str] = {}  # whether the resource of each open request is still in Azure (_take_back_gone), which verify.step reads after the daily cost
     if s.extras is not None:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
         _revive(s, say)  # before the take-back: a request that comes back and that the rules hold back is taken back in the same Watch, and the ladder never chases it
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
-        _take_back_gone(s, estate, say)  # after the revival: a request that comes back for a resource that is gone is taken back at once
+        there = _take_back_gone(s, estate, say)  # after the revival: a request that comes back for a resource that is gone is taken back at once
         if not s.extras.escalating:
             h.emit("escalation.off", reason="no mail sender")  # a request that nobody answers is not passed on without one: the History says so at each Watch
     summary.held += sum(held.values())
@@ -737,6 +743,7 @@ def execute(s: Services, trigger: str) -> Summary:
         if count:
             say(f"{count} finding{'s' if count != 1 else ''} {reason}")
     read_cost_series(s, contexts, say)
+    verify.step(s, there, say, _amortized)
     read_use_series(s, say)
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)

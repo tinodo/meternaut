@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
+from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people, taken_back  # the pages know the brief, and the brief knows when a change needs two people
 from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
@@ -22,6 +22,13 @@ def read(fn: Callable[[], T], default: T) -> tuple[T, bool]:
         return fn(), True
     except Exception:  # noqa: BLE001 (any failure of a read is a section that cannot be read)
         return default, False
+
+
+def closed_by_the_bill(ctx: Ctx) -> tuple[list[PlanRecord], bool]:
+    """The requests that the bill closed (cases/verify.py), the newest closing first, whenever they were made. None times out and the bill needs two weeks, so a request is closed long after it was
+    made, and a list of the requests that were made lately (plans_recent) is not where to look for it."""
+    plans, ok = read(ctx.store.plans_expired, [])
+    return sorted((plan for plan in plans if taken_back(plan) == "verified"), key=lambda plan: plan.expires_at, reverse=True), ok
 
 
 def cases_by_id(ctx: Ctx, wanted: set[str]) -> dict[str, CaseRecord]:

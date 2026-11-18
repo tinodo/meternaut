@@ -22,7 +22,8 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, AUTOMATED, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord,
+                     PlanRecord, Readiness, started)
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -120,6 +121,7 @@ TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back:
               "group": "Meternaut took this request back: it was one of several requests about single resources, and one request for the whole group of them waits now.",
               "nothing": "Meternaut took this request back: the finding does not say what to look at.",
               "gone": "Meternaut took this request back: the resource is not in Azure any more, so there is nothing left to decide.",
+              "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
@@ -788,6 +790,12 @@ def _priced(case: CaseRecord | None) -> pricing.Saved | None:
     return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d))
 
 
+def advisor_estimate(case: CaseRecord | None) -> bool:
+    """Whether the figure of a case is Azure Advisor's own estimate, which no cost line of the resource backs (the page calls it a Scenario and says so): a recommendation of Advisor, or a finding of the
+    investigation that asks for a change and that code could not price from the bill lines that it names. The bill has nothing to hold such a figure against (cases/verify.py)."""
+    return case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change" and _priced(case) is None))
+
+
 def impact_of(case: CaseRecord | None) -> Impact | None:
     """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
     model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding. A figure that code worked out from the bill lines does not switch
@@ -1399,7 +1407,7 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(figure, 2), priced.level, priced.basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
         return Saving(round(figure, 2), "Scenario", _advisor_basis(case), waiting, "")
-    advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
+    advisor = advisor_estimate(case)
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
     return Saving(round(figure, 2), "Expected", "the cost lines of the last 30 days", waiting, "")
@@ -1676,6 +1684,17 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
                    sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0, plan.waited_usd, own or 0), pending[-4:])
 
 
+def _seen_line(plan: PlanRecord) -> tuple[str, ...]:
+    """What the bill showed when a request was closed because the cost went down, from the numbers that the plan kept (cases/verify.py): what its cheapest week before the request cost a month, what
+    the dearer of the last two weeks cost a month, and the saving that the request stated. It is a figure of the case, on the page of the request only, and nothing is added up. Nothing when a number is missing."""
+    kept = plan.preconditions if isinstance(plan.preconditions, dict) else {}
+    before, after, stated = _figure(kept.get(COST_AT_ASK)), _figure(kept.get(COST_SEEN)), _figure(plan.saving_usd_month)
+    if before is None or after is None:
+        return ()
+    return (f"Before the request, its cheapest week cost {usd_text(before)} a month. In each of the last two weeks of the bill it cost at most {usd_text(after)} a month "
+            "(the newest two days are left out, because the bill is late)." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
+
+
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state in ("open", HELD):
@@ -1684,8 +1703,10 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone"}.get(why, "Taken back")
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure."), title if why in ("released", "left-alone", "gone") else "Taken back by Meternaut", "", plan.expires_at)
+            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed: the cost has gone down"}.get(why, "Taken back")
+            verified = why == "verified"  # somebody changed something in Azure then: Meternaut did not, and the page says that and not that nothing was changed
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
+                           title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
     if state == "declined":
