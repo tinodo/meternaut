@@ -663,6 +663,29 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertIn("/ok/p1", " ".join(history.links()))
         self.assertNotIn("request to look at a finding", history.content, "it is not one of the requests that Meternaut took back for no reason of its own")
 
+    def decided(self, count):
+        """`count` requests that were made after the closed one and answered since: they fill the places that a list of the newest requests has."""
+        for n in range(count):
+            plan = self.world.ask(f"d{n}")
+            self.world.store.plan_put(replace(plan, state="declined", created_at=stamp(self.world.now - 10 * DAY)))
+            self.world.store.decision_put(DecisionRecord(f"d{n}", TINO, "Tino", "decline", stamp(self.world.now - 9 * DAY), "B4N8X2KM"))
+
+    def test_a_request_that_the_bill_closed_long_after_it_was_made_is_listed_on_the_day_that_it_was_closed_whatever_its_age_and_however_many_newer_requests_were_answered(self):
+        self.world.store.plan_put(replace(self.world.plan(), created_at=stamp(self.world.now - 60 * DAY)))
+        self.decided(14)
+        start, history = self.console.get("/"), self.console.get("/history")
+        self.assertIn("Closed: the cost has gone down", start.content)
+        self.assertIn(SAID, history.content)
+        self.assertIn("/ok/p1", " ".join(history.links()))
+        self.assertEqual(history.content.count("1 request to look at a finding"), 0)
+
+    def test_the_list_by_the_day_of_closing_says_when_the_requests_that_the_bill_closed_cannot_be_read(self):
+        def refuse():
+            raise RuntimeError("the store is down")
+        self.world.store.plans_expired = refuse
+        self.assertIn("I cannot read the recent decisions now", self.console.get("/").content)
+        self.assertIn("Cannot be read now", self.console.get("/history").content)
+
     def test_the_history_still_counts_the_other_requests_that_were_taken_back_in_one_line_for_a_day(self):
         self.world.ask("q1")
         self.world.approvals.take_back_gone(["q1"])

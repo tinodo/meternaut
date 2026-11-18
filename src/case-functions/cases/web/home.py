@@ -15,7 +15,7 @@ from typing import Mapping, Sequence
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import answerable, brief_of, cases_by_id, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
+from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
                       use_block)
@@ -394,8 +394,11 @@ def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, Actio
 def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[str, ActionRecord]) -> Safe:
     """The last five requests that were decided (or that nobody answered, for a change), for the person who is named in them: what, who, when and the result."""
     heading = Safe('<div class="sec"><h2 id="recent">Recently decided</h2></div>')
-    mine = [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired" and taken_back(p) != "verified")][:DECIDED_CONSIDERED] if ok else []
-    if not ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
+    decided = [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired" and taken_back(p) != "verified")][:DECIDED_CONSIDERED] if ok else []
+    closed, closed_ok = closed_by_the_bill(ctx)  # the requests that the bill closed are in the list whenever they were made: the ones that were made lately are not where it closes them
+    have = {p.plan_id for p in decided}
+    mine = [*decided, *[p for p in closed if p.plan_id not in have and answerable(ctx, p)][:DECIDED_SHOWN]]
+    if not ok or not closed_ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
         return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
     for plan in mine:

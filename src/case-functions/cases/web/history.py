@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from ..brief import REASON_WORDS, TAKEN_BACK, plan_headline, taken_back
 from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
-from .common import answerable, read
+from .common import answerable, closed_by_the_bill, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip, short_title
 from .layout import head, kpi, kpis, link, notice, page, paragraph
@@ -92,15 +92,17 @@ def _events(ctx: Ctx, since: str) -> Feed:
     failed: set[str] = set()
     cut: set[str] = set()
     plans, ok = read(lambda: ctx.store.plans_recent(PLANS_ASKED), [])
-    if not ok:
+    closed, closed_ok = closed_by_the_bill(ctx)
+    if not (ok and closed_ok):
         failed.add("plans")
     old = stamp(ctx.now - dt.timedelta(days=DAYS + MAX_DECISION_AGE))
     if len(plans) >= PLANS_ASKED and plans[-1].created_at >= old:  # the oldest plan that was read is still inside the window, so older ones may be as well
         cut.add("plans")
     quiet: dict[str, list[str]] = {}  # the advice that Meternaut took back, for each day: one line, not one for each, and none of them takes a place of the plans that are read
     mine = []
-    for plan in plans:
-        if answerable(ctx, plan) and plan.created_at >= old:
+    bill = {plan.plan_id for plan in closed}
+    for plan in [*closed, *(plan for plan in plans if plan.plan_id not in bill)]:  # a request that the bill closed is listed on the day that it was closed, however old it is
+        if answerable(ctx, plan) and (plan.created_at >= old or plan.plan_id in bill):
             if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
                 continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
             if plan.family == "advise" and plan.state == "expired" and taken_back(plan) != "verified":
