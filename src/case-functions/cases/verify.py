@@ -11,8 +11,8 @@ would make wrong. The request is judged from the next Watch on: it is verified w
 
 It judges only what it can hold the bill against, and says why when it could not (a typed word, once for each Watch):
 
-* a finding with a saving of its own, a figure that code worked out from the bill (Azure Advisor's own figure has no cost to be held against, and a whole subscription or resource group moves for
-  too many reasons);
+* a finding with a saving of its own, a figure that code worked out from the bill (an estimate of Azure Advisor's, which no cost line backs, has nothing to be held against: brief.advisor_estimate,
+  and a whole subscription or resource group moves for too many reasons);
 * a daily cost that was read whole up to yesterday and in US dollars: a read that failed, was partial or was not in dollars leaves the series as it was, which ends earlier and is never used (`stale`);
 * a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone.
 
@@ -25,6 +25,7 @@ import math
 from collections import Counter
 from typing import Callable, Mapping, Sequence
 
+from . import brief
 from . import costs as cost_words
 from .detectors import ADVISOR
 from .meters import MONTH, WEEK
@@ -61,7 +62,7 @@ def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) 
     """What the bill says about an open request of advice: (`verified`, what a month costs now), (`baseline`, the cost to keep as the cost at the request: it has none yet), or a word that says why it
     cannot be said: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `unchecked` (whether the resource is still
     there was not checked: `there` is the word of cases/escalation.py existence), or `still` (the cost has not gone down, or not for long enough). The second number is 0 for those. `last` is yesterday."""
-    if case is None or case.detector == ADVISOR or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):
+    if case is None or brief.advisor_estimate(case) or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):
         return "unpriced", 0.0
     if case.cost_state == cost_words.CURRENCY:
         return "currency", 0.0
@@ -94,8 +95,8 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
         cases: dict[str, CaseRecord] = {}
         why: Counter[str] = Counter()
         for plan in ex.store.plans_open():
-            if plan.state != "open" or plan.family != ADVISE:
-                continue
+            if plan.state != "open" or plan.family != ADVISE or (plan.preconditions or {}).get("source") == ADVISOR:
+                continue  # an Advisor recommendation has no cost to be held against: its case is not even read
             case = ex.store.case_get(plan.case_id)
             word, figure = judge(plan, case, last, there.get(plan.plan_id, ""))
             if word == "verified":

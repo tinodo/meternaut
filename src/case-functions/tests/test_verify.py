@@ -41,6 +41,11 @@ def vm(name: str) -> str:
     return f"/subscriptions/{SUB}/resourceGroups/team-apps-rg/providers/Microsoft.Compute/virtualMachines/vm-{name}"
 
 
+def priced(saving: float, cost: float) -> dict:
+    """The change that a finding states, priced by code from the bill lines that it names (cases/pricing.py): what makes a saving the finding's own and not Azure Advisor's estimate."""
+    return {"change": {"price": {"lowUsd": saving, "highUsd": saving, "billUsd": max(saving, cost), "form": "none", "lines": 1}}}
+
+
 class Lines:
     def __init__(self):
         self.found = []
@@ -69,10 +74,11 @@ class World:
     def yesterday(self) -> str:
         return (self.now - DAY).date().isoformat()
 
-    def ask(self, plan_id="p1", weeks=FLAT, saving=120.0, newest=None, sealed=False, **case_changes):
-        """An open request of advice for a finding with a saving of its own, as it stands when this Watch has read its daily cost."""
-        fields = dict(case_id=f"c-{plan_id}", plan_id=plan_id, resource_id=vm(plan_id), resource_name=f"vm-{plan_id}", saving_usd_month=saving, cost_usd_30d=sum(bill(weeks, newest)),
-                      cost_series=bill(weeks, newest), cost_series_end=self.yesterday())
+    def ask(self, plan_id="p1", weeks=FLAT, saving=120.0, newest=None, sealed=False, own=True, facts=None, **case_changes):
+        """An open request of advice for a finding with a saving of its own (`own`: code priced it from the bill, else it is Advisor's estimate), as it stands when this Watch has read its daily cost."""
+        cost = sum(bill(weeks, newest))
+        fields = dict(case_id=f"c-{plan_id}", plan_id=plan_id, resource_id=vm(plan_id), resource_name=f"vm-{plan_id}", saving_usd_month=saving, cost_usd_30d=cost,
+                      cost_series=bill(weeks, newest), cost_series_end=self.yesterday(), facts={**make_advice_case().facts, **(priced(saving, cost) if own and saving else {}), **(facts or {})})
         fields.update(case_changes)
         case = make_advice_case(**fields)
         plan = make_advice(plan_id=plan_id, case_id=case.case_id, resource_id=case.resource_id, resource_name=case.resource_name, saving_usd_month=saving,
@@ -249,7 +255,7 @@ class WhatTheStepCloses(unittest.TestCase):
 
     def test_a_saving_of_more_than_the_cost_asks_for_half_of_the_cost(self):
         world = World()
-        world.ask(saving=500.0)
+        world.ask(saving=500.0, cost_usd_30d=900.0)
         world.watch()
         world.read((300.0, 300.0, 160.0, 160.0))
         world.watch()
@@ -293,17 +299,29 @@ class WhatTheStepCloses(unittest.TestCase):
 
 
 class WhatTheStepDoesNotClose(unittest.TestCase):
-    def test_a_finding_with_no_saving_of_its_own_a_recommendation_of_advisor_and_a_whole_scope_are_never_verified_and_nothing_is_said(self):
+    def test_a_finding_with_no_saving_of_its_own_an_estimate_of_advisor_and_a_whole_scope_are_never_verified_and_nothing_is_said(self):
         world = World()
         world.ask("none", saving=None)
         world.ask("zero", saving=0.0)
         world.ask("advisor", detector="advisor-cost")
+        world.ask("estimate", own=False)  # Advisor's figure, cited by a finding that asks for a change and that code could not price from the bill
         world.ask("scope", resource_id=f"/subscriptions/{SUB}/resourceGroups/team-apps-rg")
         self.assertEqual(world.watch(), [])
         world.read(FELL)
         self.assertEqual(world.watch(), [])
         self.assertEqual(([plan.state for plan in world.store.plans_open()], [COST_AT_ASK in plan.preconditions for plan in world.store.plans_open()], world.lines.found),
-                         (["open"] * 4, [False] * 4, []))
+                         (["open"] * 5, [False] * 5, []))
+
+    def test_a_request_that_azure_advisor_made_is_not_even_read(self):
+        world = World()
+        plan = world.ask("adv")
+        world.store.plan_put(replace(plan, preconditions={**plan.preconditions, "source": "advisor-cost"}))
+        world.ask("own")
+        read = []
+        original = world.store.case_get
+        world.store.case_get = lambda case_id: read.append(case_id) or original(case_id)
+        world.watch()
+        self.assertEqual(read, ["c-own"])
 
     def test_a_request_to_change_something_in_azure_is_never_verified(self):
         world = World()
@@ -593,7 +611,8 @@ class InAWatch(unittest.TestCase):
         self.extras = loop_for(self.clock)
         self.store = self.extras.store
         self.vm = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{self.GROUP}/providers/Microsoft.Compute/virtualMachines/vm-one"
-        self.store.case_put(make_advice_case(resource_id=self.vm, resource_name="vm-one", subscription_id=SUBSCRIPTION, resource_group=self.GROUP, plan_id="plan0002", cost_series=None))
+        self.store.case_put(make_advice_case(resource_id=self.vm, resource_name="vm-one", subscription_id=SUBSCRIPTION, resource_group=self.GROUP, plan_id="plan0002", cost_series=None,
+                                             facts={**make_advice_case().facts, **priced(120.0, 300.0)}))
         self.store.plan_put(make_advice(resource_id=self.vm, resource_name="vm-one", subscription_id=SUBSCRIPTION, resource_group=self.GROUP, created_at=stamp(WATCH_NOW), expires_at="",
                                         approvers=(OID,)))
 

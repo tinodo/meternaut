@@ -790,6 +790,12 @@ def _priced(case: CaseRecord | None) -> pricing.Saved | None:
     return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d))
 
 
+def advisor_estimate(case: CaseRecord | None) -> bool:
+    """Whether the figure of a case is Azure Advisor's own estimate, which no cost line of the resource backs (the page calls it a Scenario and says so): a recommendation of Advisor, or a finding of the
+    investigation that asks for a change and that code could not price from the bill lines that it names. The bill has nothing to hold such a figure against (cases/verify.py)."""
+    return case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change" and _priced(case) is None))
+
+
 def impact_of(case: CaseRecord | None) -> Impact | None:
     """What removing the resource of a finding of the investigation would do, when the finding asks whether it is used or asks to delete it: the digest of cases/impact.py (the verdict is code's: no
     model sees it or changes it), cleaned again here, or the line that says that nothing was analysed. None for every other finding. A figure that code worked out from the bill lines does not switch
