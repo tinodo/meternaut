@@ -504,6 +504,10 @@ class TheSharedReader(unittest.TestCase):
         self.assertEqual(len(reader.log(second)[0]), 1, "and the other reader reads it with its own: the refusal was not kept for it")
         self.assertEqual(len([c for c in estate.calls if "eventtypes" in c["path"].lower()]), 2)
 
+    def test_the_budget_of_the_tools_for_one_beat_is_24_reads_and_30_seconds_of_reading_and_a_toolbox_with_no_reader_makes_one_with_it(self):
+        reader = toolbox(DepthEstate())._owners()
+        self.assertEqual((tb.OWNER_READS, tb.OWNER_SECONDS, reader.max_reads, reader.seconds), (24, 30.0, 24, 30.0), "a picture of five resources reads five logs and a beat makes up to five pictures")
+
 
 def aged(estate, label, **found):
     estate.ages[estate.id_of(label).lower()] = found
