@@ -1,6 +1,7 @@
 """Savings found, for the roles ops and owner: every saving that Meternaut found, each finding counted once, by what became of it. Counts and money only; it changes nothing.
 
-A line of the table is one level (Scenario, Expected or Verified) with its basis. A confirmed finding shows what Cost Management confirmed. What was declined, dropped or not finished is counted
+A line of the table is one level of figure (what the records call Scenario, Expected or Verified: an assumption, a figure worked out from the bill, a saving that Cost Management confirmed) with one
+sentence of what it rests on, and no page shows the level as a label. A confirmed finding shows what Cost Management confirmed. What was declined, dropped or not finished is counted
 and not added up. It reads at most PER findings of each status and says "at least" for what may be more, or could not be read.
 """
 from __future__ import annotations

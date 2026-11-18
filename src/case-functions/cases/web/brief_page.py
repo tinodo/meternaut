@@ -76,7 +76,7 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     if not outcome.state:
         return Safe("")
     kind = {"expired": "warning", "failed": "error", "done": "success", "verified": "success"}.get(outcome.state, "info")
-    when = paragraph(ctx.when(outcome.at)) if outcome.at else Safe("")
+    when = paragraph(ctx.moment(outcome.at)) if outcome.at else Safe("")
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
 
 
@@ -278,7 +278,7 @@ def _own_answers(ctx: Ctx, decisions: list[DecisionRecord]) -> Safe:
     if later:
         parts.append(paragraph("You chose to decide later. Nothing has changed."))
     if confirmed is not None:
-        parts.append(paragraph(fmt("You confirmed this request on {when}. Nothing has changed. A second person has to approve it.", when=ctx.when(confirmed.at))))
+        parts.append(paragraph(fmt("You confirmed this request on {when}. Nothing has changed. A second person has to approve it.", when=ctx.moment(confirmed.at))))
     return join(block(part) for part in parts)
 
 

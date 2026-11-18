@@ -354,7 +354,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.console.store.action_put(make_action())
         reply = self.page(state="approved")
         self.assertEqual(reply.status, 200)
-        self.assertEqual(self.notice(reply), ("Approved", "Approved by Tino. The change is being made now. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
+        self.assertEqual(self.notice(reply), ("Approved", "Approved by Tino. The change is being made now. 5 November, 09:59 CET"))
         self.assertEqual(reply.forms(), [])
         self.assertEqual(reply.root.find_all("button"), [])
         for gone in ("Cancel my OK", "Nothing has changed yet", "The change starts at", "start time", "the runner"):

@@ -3,7 +3,8 @@
 It is built from the style guide (docs/ui/style-guide.html). The decision with the most at stake is in focus, with its figures and a chart of its cost (and, for a kind of resource that has
 one, a chart of its use). The others follow in two lanes, the changes that are ready to decide and the findings that are worth a closer look: one row for each decision, with its figure a
 year and a month, its risk and a small chart of its cost.
-Findings of one kind that nobody asked about as a group are one row that opens. Money is what Cost Management reports, in US dollars, and a year is twelve times a month. When nothing waits,
+Findings of one kind that nobody asked about as a group are one row that opens. Money is what Cost Management reports, in whole US dollars from 100 up, and a year is twelve times a month; no
+sentence of the page says so, except for a cost that is not in dollars. When nothing waits,
 one sentence says so and says when the Watch looks next. The switches, the runs and what Meternaut can change in Azure are on the pages of the platform team (ops.py), not here.
 """
 from __future__ import annotations

@@ -1154,6 +1154,27 @@ class Times(unittest.TestCase):
             reply = self.console.get("/ok/plan0001")
         self.assertIn("Sun 8 Nov 2026 20:30 UTC (Mon 9 Nov 2026 05:30 JST)", reply.content)
 
+    def test_a_time_in_a_sentence_or_a_box_is_said_as_a_person_says_it_with_the_time_in_their_own_zone(self):
+        moment = dt.datetime(2026, 11, 8, 8, 0, tzinfo=dt.timezone.utc)
+        now = dt.datetime(2026, 11, 20, tzinfo=dt.timezone.utc)
+        est, jst = dt.timezone(dt.timedelta(hours=-5), "EST"), dt.timezone(dt.timedelta(hours=9), "JST")
+        self.assertEqual(core.plain_time(moment, None, now), "8 November, 08:00 UTC")
+        self.assertEqual(core.plain_time(moment, est, now), "8 November, 03:00 EST")
+        self.assertEqual(core.plain_time(dt.datetime(2026, 11, 8, 20, 30, tzinfo=dt.timezone.utc), jst, now), "9 November, 05:30 JST", "the day of the person's own zone")
+        self.assertEqual(core.plain_time(moment, None, dt.datetime(2027, 1, 2, tzinfo=dt.timezone.utc)), "8 November 2026, 08:00 UTC", "the year only when it is not this year")
+        self.assertEqual(core.plain_time(moment, None), "8 November 2026, 08:00 UTC")
+
+    def test_the_box_of_a_request_that_was_taken_back_says_when_in_the_plain_style_and_the_details_keep_the_full_time(self):
+        self.console.store.plan_put(make_plan(state="expired", created_at="2026-11-08T08:00:00Z", expires_at="2026-11-08T08:00:00Z"))
+        with self.zone("America/New_York", -5, "EST"):
+            reply = self.console.get("/ok/plan0001")
+        self.assertIn("Taken back", reply.main.text())
+        self.assertIn("8 November, 03:00 EST", reply.main.text())
+        self.assertIn('<time datetime="2026-11-08T08:00:00Z">8 November, 03:00 EST</time>', reply.text)
+        self.assertIn("Sun 8 Nov 2026 08:00 UTC (03:00 EST)", reply.content, "the Details say it in full")
+        self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="UTC"))
+        self.assertIn("8 November, 08:00 UTC", self.console.get("/ok/plan0001").main.text())
+
     def test_utc_and_a_zone_that_is_not_known_show_utc_alone(self):
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="UTC"))
         self.assert_utc_alone(self.console.get("/ok/plan0001"))

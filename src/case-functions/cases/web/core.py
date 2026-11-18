@@ -15,7 +15,7 @@ from functools import lru_cache
 from typing import Callable, Iterable, Mapping
 from urllib.parse import parse_qsl, quote, urlsplit
 
-from ..brief import visible
+from ..brief import MONTH_NAMES, visible
 from ..models import TIME_FORMAT, Checker, Decider, Delegate, Principal, Store
 from ..people import People
 
@@ -207,6 +207,14 @@ def short_date(moment: dt.datetime) -> str:
     return f"{DAYS[moment.weekday()][:3]} {moment.day} {MONTHS[moment.month - 1]} {moment.year}"
 
 
+def plain_time(moment: dt.datetime, zone: dt.tzinfo | None, now: dt.datetime | None = None) -> str:
+    """`8 November, 09:00 CET`: the day as a person says it (with the year when it is not the year of `now`) and the time in the person's own time zone, or in UTC when that is not known."""
+    moment = utc(moment)
+    local = moment.astimezone(zone) if zone is not None else moment
+    year = "" if now is not None and local.year == utc(now).year else f" {local.year}"
+    return f"{local.day} {MONTH_NAMES[local.month - 1]}{year}, {local:%H:%M} {(local.tzname() or 'UTC') if zone is not None else 'UTC'}"
+
+
 def time_text(moment: dt.datetime, zone: dt.tzinfo | None) -> str:
     """`Thu 5 Nov 2026 09:00 UTC (10:00 CET)`. The second part appears when the person's time zone is known and is not UTC."""
     moment = utc(moment)
@@ -298,6 +306,14 @@ class Ctx:
         if moment is None:
             return esc(clean_line(value) or empty)
         return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(moment), text=time_text(moment, self.zone()))
+
+    def moment(self, value: object, empty: str = "not set") -> Safe:
+        """A time as a person says it in a sentence or a box of a page, `8 November, 09:00 CET`, as `<time>` text: the plain day with the time of the person's own time zone (UTC when it is not known).
+        The Details and the tables keep `when`, which says the weekday, the year and both zones."""
+        found = parse_time(value)
+        if found is None:
+            return esc(clean_line(value) or empty)
+        return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(found), text=plain_time(found, self.zone(), self.now))
 
     def day(self, value: object, empty: str = "not set") -> Safe:
         """A day as `<time>` text in the person's own time zone, where it is known (else in UTC): `Thu 5 Nov`."""
