@@ -257,6 +257,15 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
                 self.assertEqual([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], ["product", "service"])
                 self.assertEqual((found.alternatives, found.failed), ([list_prices("m1", "service")], 0))
 
+    def test_the_service_is_asked_for_too_when_the_product_shows_the_line_of_the_meter_alone_and_the_answer_that_shows_more_is_kept(self):
+        kind = "contoso.compute/rigs"
+        for what, service, kept in (("the service is whole", {}, "service"), ("the service is cut", TOO_LONG, "product"), ("the service shows no more", ONE_LINE, "product"), ("the service is refused", '{"error":"unavailable"}', "product")):
+            with self.subTest(what=what):
+                box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"product": ONE_LINE, "service": service})
+                found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
+                self.assertEqual([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], ["product", "service"])
+                self.assertEqual((found.alternatives, found.failed), ([{"service": list_prices("m1", "service"), "product": {**list_prices("m1"), **ONE_LINE}}[kept]], 0))
+
     def test_the_cheapest_lines_of_a_service_that_is_too_long_to_show_are_not_kept_for_siblings_and_a_product_that_is_cut_is_kept(self):
         kind = "contoso.compute/rigs"
         for what, cut in (("more lines than an answer holds", {"lines": 90, "next_offset": 3}), ("a list that was not read to its end", {"complete": False}), ("both", TOO_LONG)):
@@ -446,6 +455,7 @@ TOO_LONG = {"lines": 4985, "complete": False, "next_offset": 3}  # what a servic
 NO_PRICE = {"rows": [], "lines": 0, "returned": 0}  # what a product that has no line in the unit of the meter says
 
 
+ONE_LINE = {"rows": [["p2", "Tier 2", "Sku 2", "Unit Hours", 0.5, None]], "lines": 1, "returned": 1}  # what a product that has only the line of the meter itself says
 class PricedToolbox(SeedToolbox):
     """A SeedToolbox whose pictures show the meters of each resource as the real ones do (rN has m(2N-1), the dearest, and m(2N)) and that answers the tool for alternatives with `list_prices`. A text
     in `answers` still replaces an answer. `prices` replaces the answer for a way of asking (`service` or `product`): a text, or the fields of `list_prices` that it changes."""

@@ -24,7 +24,7 @@ BEAT_KINDS = 2  # the most kinds of one beat: the dearest one that no beat has, 
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
-SEED_CALLS = SEED_RESOURCES + 2 + 2  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and the list prices of the dearest meter of the dearest resource, which are read twice when the product of the meter shows none
+SEED_CALLS = SEED_RESOURCES + 2 + 2  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and the list prices of the dearest meter of the dearest resource, which are read twice when the product of the meter shows none or only the line of the meter itself
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
 SOFT_SHARE = 0.5  # the share of the seconds of a beat after which its tool calls are refused and the agent is told to write its answer (it was 0.7 for the whole run): the model and its tools have this much, and the rest is for the answer
 ANSWER_SECONDS = 60  # what the agent has after that to write its answer: the hard time of a beat is its soft time and this (never more than the seconds of the beat), so that the rounds of an answer always fit
@@ -151,16 +151,21 @@ def _cost(listing: dict, row: list) -> float:
 
 def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
     """The answer of the tool for alternatives for a meter: the lines of its product, which is what the tool shows by default, so that a call of the Investigator for the same lines is answered from what
-    this read kept; when the product shows no price or the price list could not be read, the answer for every product of its service, when that shows all of its lines (it would else show its cheapest
-    lines and not the siblings of the meter). {} when there is none: a meter that the price list does not take is not asked about again."""
+    this read kept; when the product shows no more than the line of the meter itself, or no price, or the price list could not be read, the answer for every product of its service (a tier can be a product
+    of its own), when that shows all of its lines (it would else show its cheapest lines and not the siblings of the meter), and the one that shows more is kept. {} when there is none: a meter that the
+    price list does not take is not asked about again."""
+    kept: dict = {}
     for within in ("product", "service"):
         text = call("price_alternatives", {"meter": meter, "within": within, "offset": None})
         prices = _said(text)
-        if prices.get("rows") and (within == "product" or (prices.get("next_offset") is None and prices.get("complete") is not False)):
-            return prices
+        rows = prices.get("rows")
+        if rows and (within == "product" or (prices.get("next_offset") is None and prices.get("complete") is not False)):
+            if len(rows) > 1:
+                return prices
+            kept = kept or prices
         if _error_of(text) not in (None, "unavailable"):
             break
-    return {}
+    return kept
 
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
