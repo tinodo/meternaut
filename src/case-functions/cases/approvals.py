@@ -567,9 +567,10 @@ class Approvals:
         return closed
 
     def keep_cost(self, costs: Mapping[str, float]) -> None:
-        """Keeps in each open request of advice that is named here, and has none yet, what its finding cost in the 30 days before the Watch first looked at it (`COST_AT_ASK`): the cost that the bill is held
-        against when it may show that the request was acted on (cases/verify.py). The cost that a case records moves with every Watch that still finds it, so it is kept apart, once. It is read again first,
-        and written only while the request is open. Advice keeps its code: it changes nothing in Azure, and a card or a letter that was sent before keeps working."""
+        """Keeps in each open request of advice that is named here, and has none yet, what a month cost by the cheapest of the four whole weeks before the Watch first looked at it (`COST_AT_ASK`): the
+        cost that the bill is held against when it may show that the request was acted on (cases/verify.py). The cost that a case records moves with every Watch that still finds it, so it is kept apart,
+        once. It is read again first, and written only while the request is open. A request that is sealed is sealed again, as when its people change (keep_approvers), and advice keeps its code: it
+        changes nothing in Azure, and a card or a letter that was sent before keeps working."""
         try:
             for plan_id, usd in costs.items():
                 fresh = self.store.plan_get(plan_id)
@@ -581,9 +582,10 @@ class Approvals:
             pass
 
     def take_back_verified(self, seen: Mapping[str, float]) -> list[PlanRecord]:
-        """Takes back, as expired and ending now with the reason `verified`, the open requests of advice whose cost has gone down as they suggested (cases/verify.py says which, with what the last weeks
-        cost a month, which the plan keeps as `COST_SEEN` for the page of the request): nothing is left to ask, and nothing else ends such a request now that no clock does. It is read again first, and a
-        request that a person answered since, in any way, stays theirs. Meternaut changed nothing: the cost is lower, and why is not known. Returns the plans that it took back."""
+        """Takes back, as expired and ending now with the reason `verified`, the open requests of advice whose cost has gone down as they suggested (cases/verify.py says which, with what a month cost by
+        the dearer of the two newest weeks, which the plan keeps as `COST_SEEN` for the page of the request): nothing is left to ask, and nothing else ends such a request now that no clock does. The
+        case goes to `expired`, as for any request that Meternaut took back: its status `verified` is for a change that was made and confirmed, and a finding with that status is added up as one. It is
+        read again first, and a request that a person answered since, in any way, stays theirs. Meternaut changed nothing: the cost is lower, and why is not known. Returns the plans that it took back."""
         closed = []
         try:
             for plan_id, after in seen.items():

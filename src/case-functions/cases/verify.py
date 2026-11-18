@@ -1,19 +1,22 @@
-"""A request ends when the bill shows what it suggested (docs/proposals/30-escalation.md, item 19).
+"""A request ends when the bill shows what it suggested (docs/proposals/30-escalation.md, item 20).
 
 No clock closes a request (AGENTS.md rule 38), so somebody who did what a request of advice suggests, and never answered it, would be reminded and passed on for ever. After the daily cost of the open
 requests is read (cases/run.py read_cost_series: nothing is read twice, no model takes part and no new kind of call is made), this step holds each open request of advice against it. When what the
-finding costs has gone down by more than half of the saving that the request stated, and has stayed down for two weeks, the request is taken back with the reason `verified` (cases/approvals.py
+finding costs has gone down by at least half of the saving that the request stated, and has stayed down for two weeks, the request is taken back with the reason `verified` (cases/approvals.py
 take_back_verified). Meternaut changed nothing and does not know why the cost went down: a cost can also fall for another reason, and a request that nobody answered is then closed as if somebody had acted.
+
+The 30 closed days are cut into the four whole weeks that end LAG days before the newest day (the bill is one to two days late), each scaled to a month. The first time that the step sees an open request with
+a whole daily cost it keeps what the cheapest of those weeks that cost anything came to (`COST_AT_ASK`): not the cost of the 30 days, which a spike of a few days or a cost that fell before the request
+would make wrong. The request is judged from the next Watch on: it is verified when each of the two newest weeks costs at most that, less half of the saving (the saving is never more than the cost).
 
 It judges only what it can hold the bill against, and says why when it could not (a typed word, once for each Watch):
 
 * a finding with a saving of its own, a figure that code worked out from the bill (Azure Advisor's own figure has no cost to be held against, and a whole subscription or resource group moves for
-  too many reasons), and a cost in US dollars that the Watch recorded when it first looked at the request (`COST_AT_ASK`: the cost that a case records moves with every Watch that finds it again);
-* a daily cost that was read whole up to yesterday: a read that failed, was partial or was not in dollars leaves the series as it was, which ends earlier and is never used (`stale`);
+  too many reasons);
+* a daily cost that was read whole up to yesterday and in US dollars: a read that failed, was partial or was not in dollars leaves the series as it was, which ends earlier and is never used (`stale`);
 * a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone.
 
-The newest two days are left out, because the bill is one to two days behind. The fall has to hold on the week before them and on the week before that, so that a dip of a day, or of a week, cannot close
-a request. A request that a person answered in any way is theirs and stays.
+A cost that fell in a single week, or for a few days, is no fall, and a request that a person answered in any way is theirs and stays.
 """
 from __future__ import annotations
 
@@ -37,19 +40,21 @@ def _dollars(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
 
 
-def monthly(days: Sequence[float]) -> float:
-    """What these days cost, scaled to a month."""
-    return MONTH / len(days) * sum(days)
+def weeks(series: Sequence[float]) -> list[float]:
+    """What a month costs by each whole week of the closed days, the oldest first, without the newest LAG days: a week of 7 days scaled to the 30 of a month."""
+    return [MONTH / WEEK * sum(series[n:n + WEEK]) for n in range(0, len(series) - LAG, WEEK)]
+
+
+def cheapest(series: Sequence[float]) -> float:
+    """What a month costs by the cheapest of those weeks that cost anything, 0 when none did: the lowest that the cost had been, so a spike does not raise it and a cost that already fell does not hide."""
+    return min((week for week in weeks(series) if week > 0), default=0.0)
 
 
 def fall(series: Sequence[float], before: float, saving: float) -> float | None:
-    """What a month costs now by the bill, when the cost has gone down by more than half of `saving` from `before` and has stayed there, else None. The days are the 30 closed days, the newest last; the
-    newest LAG are left out. The week before them, and the week before that, each scaled to a month, must cost at most `before` less half of `saving`: so a cost that fell by less, or for a few days,
-    or only lately, is no fall. Returns the cost of a month by the newer week."""
-    level = before - saving / 2
-    end = len(series) - LAG
-    newer, older = series[end - WEEK:end], series[end - 2 * WEEK:end - WEEK]
-    return monthly(newer) if monthly(newer) <= level and monthly(older) <= level else None
+    """What a month costs now by the bill, when each of the two newest weeks costs at most `before` less half of `saving`, else None. The saving counts for no more than `before` (nothing saves more than
+    it costs). Both weeks have to be down, so a cost that fell by less, or for a few days, or only lately, is no fall. Returns the dearer of the two weeks: what the verdict rests on."""
+    older, newer = weeks(series)[-2:]
+    return max(older, newer) if max(older, newer) <= before - min(saving, before) / 2 else None
 
 
 def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) -> tuple[str, float]:
@@ -60,20 +65,18 @@ def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) 
         return "unpriced", 0.0
     if case.cost_state == cost_words.CURRENCY:
         return "currency", 0.0
-    now, before = _dollars(case.cost_usd_30d), _dollars((plan.preconditions or {}).get(COST_AT_ASK))
-    if before is None:
-        return ("baseline", now) if now and case.cost_state in ("", cost_words.LINES) else ("unpriced", 0.0)
-    saving = max(_dollars(plan.saving_usd_month) or 0.0, _dollars(case.saving_usd_month) or 0.0)
     series = case.cost_series
-    if not 0 < saving <= before:
-        return "unpriced", 0.0
     if not isinstance(series, list) or len(series) != MONTH or any(_dollars(day) is None for day in series):
         return "unread", 0.0
     if case.cost_series_end != last.isoformat():
         return "stale", 0.0
+    before = _dollars((plan.preconditions or {}).get(COST_AT_ASK))
+    if before is None:
+        usual = cheapest(series)
+        return ("baseline", usual) if usual > 0 else ("unpriced", 0.0)
     if there != "there":
         return "unchecked", 0.0
-    after = fall(series, before, saving)
+    after = fall(series, before, max(_dollars(plan.saving_usd_month) or 0.0, _dollars(case.saving_usd_month) or 0.0))
     return ("still", 0.0) if after is None else ("verified", after)
 
 

@@ -103,7 +103,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
         if answerable(ctx, plan) and plan.created_at >= old:
             if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
                 continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
-            if plan.family == "advise" and plan.state == "expired":
+            if plan.family == "advise" and plan.state == "expired" and taken_back(plan) != "verified":
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
@@ -131,7 +131,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
             events += _action_events(ctx, plan, actions[plan.plan_id])
         if plan.state == "expired":
             why = taken_back(plan)
-            events.append(Event(plan.expires_at, "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else "A timer closed it before requests were kept open."))
+            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else "A timer closed it before requests were kept open."))
     for found in quiet.values():
         events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding", "Taken back by Meternaut: each says why."))
     cases, ok = read(lambda: ctx.store.cases_recent(CASES_ASKED), [])

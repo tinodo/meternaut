@@ -1679,13 +1679,14 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
 
 
 def _seen_line(plan: PlanRecord) -> tuple[str, ...]:
-    """What the bill showed when a request was closed because the cost went down, from the numbers that the plan kept (cases/verify.py): what the finding cost in the 30 days before the request, what the
-    last weeks cost a month, and the saving that the request stated. It is a figure of the case, on the page of the request only, and nothing is added up. Nothing when a number is missing."""
+    """What the bill showed when a request was closed because the cost went down, from the numbers that the plan kept (cases/verify.py): what its cheapest week before the request cost a month, what
+    the dearer of the last two weeks cost a month, and the saving that the request stated. It is a figure of the case, on the page of the request only, and nothing is added up. Nothing when a number is missing."""
     kept = plan.preconditions if isinstance(plan.preconditions, dict) else {}
     before, after, stated = _figure(kept.get(COST_AT_ASK)), _figure(kept.get(COST_SEEN)), _figure(plan.saving_usd_month)
     if before is None or after is None:
         return ()
-    return (f"The finding cost {usd_text(before)} in the 30 days before the request. The last weeks cost {usd_text(after)} a month." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
+    return (f"Before the request, its cheapest week cost {usd_text(before)} a month. In each of the last two weeks of the bill it cost at most {usd_text(after)} a month "
+            "(the newest two days are left out, because the bill is late)." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
 
 
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
@@ -1697,7 +1698,8 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
             title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed: the cost has gone down"}.get(why, "Taken back")
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed in Azure.", *(_seen_line(plan) if why == "verified" else ())),
+            verified = why == "verified"  # somebody changed something in Azure then: Meternaut did not, and the page says that and not that nothing was changed
+            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
                            title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
