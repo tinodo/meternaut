@@ -108,7 +108,7 @@ def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
 @dataclass
 class Seed:
     """What code read for a beat before the Investigator started: how many resources each kind has, the handles of the dearest ones, their pictures (the answers of the tool `profile`: the dearest few at
-    the grain of the hour, the others at the day) and how many reads gave no answer."""
+    the grain of the hour, the others at the day) and how many reads gave no answer or no answer in full (a listing that says that it could not read some subscriptions)."""
 
     counts: dict[str, int] = field(default_factory=dict)
     handles: list[str] = field(default_factory=list)
@@ -140,6 +140,8 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
         if not listing:
             found.failed += 1
             continue
+        if listing.get("unavailable") or listing.get("not_read"):
+            found.failed += 1  # some subscriptions were not read: what it lists is not all that there is, and the beat must not be called empty for it
         total = listing.get("total")
         if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             found.counts[kind] = total
@@ -159,9 +161,10 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
 
 def empty(beat: Beat, seeded: Seed | None) -> bool:
     """Whether a beat has nothing for the Investigator to look at: it names kinds and no lines of the bill that no resource owns, code listed every one of them (a seed lists SEED_RESOURCES at most, and a
-    beat may hold kinds that it does not name) and no listing gave a handle or a count above 0. A listing that gave no answer shows no resource either."""
+    beat may hold kinds that it does not name) and no listing gave a handle or a count above 0, and every read gave its whole answer. A listing that gave no answer, or could not read every subscription,
+    shows no resource that may be there: that beat is not empty, and the Investigator may list again."""
     return (seeded is not None and bool(beat.kinds) and not beat.billing and not beat.rest and len(beat.kinds) <= SEED_RESOURCES and not seeded.handles
-            and not any(seeded.counts.values()))
+            and not any(seeded.counts.values()) and not seeded.failed)
 
 
 @dataclass

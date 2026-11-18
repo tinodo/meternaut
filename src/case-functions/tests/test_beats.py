@@ -149,6 +149,16 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
         found = beats.seed(box.call, beats.Beat(1, ("contoso.compute/rigs",), False, 0, 1))
         self.assertEqual((found.handles, found.pictures, found.failed), (["r1"], None, 1))
 
+    def test_a_listing_that_could_not_read_every_subscription_is_counted_too_and_keeps_what_it_listed(self):
+        kind = "contoso.compute/rigs"
+        for caveat in ({"unavailable": ["a subscription"]}, {"not_read": {"count": 1, "first": ["a subscription"], "why": "the time of one call for reading subscriptions was used up"}}):
+            with self.subTest(caveat=caveat):
+                box = SeedToolbox({kind: [resource_of(1, kind)]}, answers={"list_resources": json.dumps({"type": kind, "total": 1, "cols": ["handle", "usd30d"], "rows": [["r1", 100.0]], **caveat})})
+                found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
+                self.assertEqual((found.handles, found.failed, found.counts), (["r1"], 1, {kind: 1}))
+        box = SeedToolbox({kind: [resource_of(1, kind)]}, answers={"list_resources": json.dumps({"type": kind, "total": 1, "cols": ["handle", "usd30d"], "rows": [["r1", 100.0]], "costs": "unavailable"})})
+        self.assertEqual(beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1)).failed, 0, "a listing without costs lists every resource")
+
     def test_a_beat_of_the_lines_that_no_resource_owns_reads_nothing(self):
         box = SeedToolbox({})
         found = beats.seed(box.call, beats.Beat(1, (), True, 0, 1))
@@ -716,19 +726,31 @@ class WhenABeatHasNothingToLookAt(unittest.TestCase):
 
     def test_when_no_listing_gave_a_resource_in_any_beat_no_session_runs_and_the_investigation_failed_with_a_note_that_says_why(self):
         h = rig([])
-        h.toolbox = SeedToolbox(pooled()[0], answers={"list_resources": '{"error":"unavailable"}'})
+        h.toolbox = SeedToolbox({})
         result = h.go()
         self.assertEqual((result.ran, result.state, result.tokens, result.tool_calls, len(h.foundry.investigator_runs())), (False, "failed", 0, 0, 0))
         self.assertEqual([(e["beat"], e["end"], e["ok"], e["tokens"]) for e in h.of("investigation.beat")], [(n, "empty", True, 0) for n in (1, 2, 3)])
         self.assertEqual(result.note, "no resource of its kinds was listed, so the Investigator was not asked")
-        self.assertIn("beat 1: 1 of the reads that code makes for its start gave no answer", h.notes, "the read that failed is told too")
         self.assertEqual(h.of("investigation.finished")[0]["ok"], False)
 
-    def test_a_beat_is_empty_only_when_every_kind_that_it_has_was_listed_with_no_resource_or_no_listing_and_it_holds_no_bill(self):
+    def test_a_listing_that_failed_or_could_not_read_every_subscription_does_not_make_a_beat_empty_so_the_investigator_is_asked_and_may_list_again(self):
+        partial = {"type": "any", "total": 0, "cols": ["handle"], "rows": [], "unavailable": ["a subscription"]}
+        for what, answer in (("no answer", '{"error":"unavailable"}'), ("not in full", json.dumps(partial))):
+            with self.subTest(what=what):
+                h = rig([script(), script(), script()])
+                h.toolbox = SeedToolbox(pooled()[0], answers={"list_resources": answer})
+                result = h.go()
+                self.assertEqual(len(h.foundry.investigator_runs()), 3, "a beat that code could not look at is looked at by the Investigator")
+                self.assertEqual([(e["beat"], e["end"]) for e in h.of("investigation.beat")], [(n, "answered") for n in (1, 2, 3)])
+                self.assertEqual(result.state, "ran")
+                self.assertTrue(any(note.startswith("beat 1: ") and "could not be read in full" in note for note in h.notes), "the read that failed is told too")
+                self.assertNotIn("no resource of its kinds was listed, so the Investigator was not asked", h.notes)
+
+    def test_a_beat_is_empty_only_when_every_kind_that_it_has_was_listed_in_full_with_no_resource_and_it_holds_no_bill(self):
         kind, other = "contoso.compute/rigs", "fabrikam.store/vaults"
         many = tuple(f"contoso.thing{n}/kind" for n in range(beats.SEED_RESOURCES + 1))
-        for beat, seeded, empty in ((beats.Beat(1, (kind,)), beats.Seed({kind: 0}), True), (beats.Beat(1, (kind,)), beats.Seed(failed=1), True),
-                                    (beats.Beat(1, (kind, other)), beats.Seed({kind: 0, other: 0}), True),
+        for beat, seeded, empty in ((beats.Beat(1, (kind,)), beats.Seed({kind: 0}), True), (beats.Beat(1, (kind,)), beats.Seed(failed=1), False), (beats.Beat(1, (kind,)), beats.Seed({kind: 0}, failed=1), False),
+                                    (beats.Beat(1, (kind, other)), beats.Seed({kind: 0, other: 0}), True), (beats.Beat(1, (kind, other)), beats.Seed({kind: 0}, failed=1), False),
                                     (beats.Beat(1, (kind, other)), beats.Seed({kind: 0, other: 3}, ["r1"]), False), (beats.Beat(1, (kind,)), beats.Seed({kind: 2}), False),
                                     (beats.Beat(1, (kind,)), beats.Seed({}, ["r1"]), False), (beats.Beat(1, (kind,), True), beats.Seed({kind: 0}), False),
                                     (beats.Beat(1, (), True), beats.Seed(), False), (beats.Beat(), beats.Seed(), False), (beats.Beat(1, (kind,), False, 3), beats.Seed({kind: 0}), False),

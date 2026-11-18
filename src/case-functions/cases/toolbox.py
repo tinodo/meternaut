@@ -162,7 +162,7 @@ FAN_IN = 10  # the resources that refer to one resource, above which neighbors a
 NEIGHBOR_GROUPS = 12  # the rows of that summary
 DOSSIER_WORKERS = 6  # the reads of one profile that are made at the same time
 OWNER_READS = 24  # the Activity Logs that the tools read in one beat: a picture of five resources reads five of them and a beat makes up to five pictures (it was 12)
-OWNER_SECONDS = 30.0  # and the seconds that those reads may take in one beat, added up over the reads that run at the same time (ownership.OwnerReader), and not the time between them
+OWNER_SECONDS = 150.0  # and the seconds that those reads may take in one beat, added up over the reads that run at the same time (ownership.OwnerReader), and not the time between them: five reads were measured at 31 seconds (6.2 each, one picture), so at 150 the 24 reads bind first and the seconds bind only when the log is slower than 6.25 seconds a read (it was 30, used up by the first picture of a beat)
 HISTORY_COLUMNS = ("handle", "age_days", "created_by", "changed_days", "changed_by", "written_14d")
 AGES = ("// meternaut:ages\nresources\n| where id in~ ({ids})\n| project id, sd = systemData, made = coalesce(tostring(properties.timeCreated), tostring(properties.creationTime), "
         "tostring(properties.createdTime), tostring(properties.creationDate), tostring(properties.CreationDate), tostring(properties.createdDate), tostring(properties.dateCreated), "

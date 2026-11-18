@@ -1001,7 +1001,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         if seeded is not None:
             result.seeded = len(seeded.handles)
             if seeded.failed:
-                note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
+                note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start could not be read in full")
         if focused:
             seeds.append(s.monotonic() - at)
         if beats.empty(beat, seeded):
