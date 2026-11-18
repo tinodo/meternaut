@@ -32,7 +32,6 @@ SALVAGE_SECONDS = 25  # a beat that is cut off (its hard time, its tokens, or th
 SALVAGE_MIN_LEFT = 40  # and only when at least this many seconds are left in the time of the beats
 SEED_ESTIMATE_SECONDS = 60  # what the reads of a beat are expected to take before any beat has been read; later, what the beats before it took (on average)
 SEED_PICTURE_SECONDS = 25  # the time that each picture that code reads for a beat may take (the toolbox's budget of one measurement, 60 seconds, is lowered to this for those two calls): a part that did not finish is `unread` and named, and the Investigator may read it itself
-SEED_PRICE_SECONDS = 15  # the time that each read of the list prices that code makes for a beat may take (the toolbox's time for the reads of one call, 45 seconds, is lowered to this, and its read of the price list stops between pages when it is used up, so a page in flight can pass it): a list that did not finish says complete false, and the product of the meter is read instead
 STEP_SECONDS = 30  # nor does it ask the model when less than this is left after the reads that code made for it: one step could not end inside its hard time
 OPEN_SECONDS = 480  # the time that one open session has for tool calls, as it had it when the investigation had 600 seconds: the way back (INVESTIGATE_BEATS=1) is the old behaviour
 MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model costs 13 to 20 thousand, and a beat that starts with less cannot ask and be answered inside its hard limit (harness.beat_limit)
@@ -150,13 +149,17 @@ def _cost(listing: dict, row: list) -> float:
 
 
 def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
-    """The answer of the tool for alternatives for a meter that shows every product of its service, or, when the service has more lines than one answer holds or its list was not read to its end (the
-    table would show its cheapest lines and not the siblings of the meter), the answer that shows the lines of the product of the meter. {} when there is none: a refusal of the service is a refusal of
-    the product too, and the product is not asked."""
-    prices = _said(call("price_alternatives", {"meter": meter, "within": "service", "offset": None}))
-    if prices.get("next_offset") is not None or prices.get("complete") is False:
-        prices = _said(call("price_alternatives", {"meter": meter, "within": "product", "offset": None}))
-    return prices
+    """The answer of the tool for alternatives for a meter: the lines of its product, which is what the tool shows by default, so that a call of the Investigator for the same lines is answered from what
+    this read kept; when the product shows no price or the price list could not be read, the answer for every product of its service, when that shows all of its lines (it would else show its cheapest
+    lines and not the siblings of the meter). {} when there is none: a meter that the price list does not take is not asked about again."""
+    for within in ("product", "service"):
+        text = call("price_alternatives", {"meter": meter, "within": within, "offset": None})
+        prices = _said(text)
+        if prices.get("rows") and (within == "product" or (prices.get("next_offset") is None and prices.get("complete") is not False)):
+            return prices
+        if _error_of(text) not in (None, "unavailable"):
+            break
+    return {}
 
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:

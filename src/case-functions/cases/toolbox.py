@@ -105,6 +105,7 @@ MAX_RESULT_CHARS = 6000
 MEASURE_RESULT_CHARS = 12000  # for measure and metric_summary, which answer for a whole type: 54 resources with 3 metrics are about 8,500 characters, and 80 with 4 are cut, the last ones named as unread
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
 MAX_LISTED = 40  # resources or cost lines in one answer
+TRIAL_LINES = 200  # the most lines of a price list that a trial read keeps for the run: a product has a few dozen, and a whole service is never kept from a trial
 MAX_MEASURE_ROWS = 80  # resources in one measure answer
 DEFAULT_LISTED = 40  # resources in a list or a measurement when the agent gives no limit
 DEFAULT_LINES = 20  # cost lines when the agent gives no limit
@@ -1031,6 +1032,8 @@ class Toolbox:
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
         self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
+        self.trial = False  # True while a call is a trial: a read that code makes for a beat, which leaves no failure and no list that is not whole or is larger than a product behind (cases/investigate.py sets it)
+        self._trials: list[Failed] = []  # the trial reads of the price list that failed one after the other: two end the trials of the run, and no call of the Investigator is held by them
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
         self._aged: dict[str, tuple[object, object]] = {}  # lower-case id -> the systemData and the creation time of the properties that Resource Graph gave (None for what it lacks)
@@ -2774,15 +2777,24 @@ class Toolbox:
         scope = product if within == "product" else None
         key = (service, region, scope)
         book = self._books.get(key, self._prices_down)
+        if book is None and self.trial and len(self._trials) >= 2:
+            book = self._trials[-1]  # two reads that code made did not get the list: code asks no more, and the Investigator's own call is not held by it
         if book is None:
             if sum(len(held_book.lines) for held_book in self._books.values() if isinstance(held_book, prices.Book)) >= prices.MAX_HELD:
                 self.notes.append(f"price_alternatives: the run holds {prices.MAX_HELD} prices of the list already, and the app keeps no more")
                 return {"error": "unavailable"}
-            book = self._books[key] = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, min(prices.SECONDS, self.read_seconds)))
-            if isinstance(book, Failed) and getattr(book.error, "status", None) == 0:
-                self._prices_down = book  # no answer at all: the host is not asked again in this run
-            elif isinstance(book, prices.Book) and book.error is not None:
-                self.notes.append(f"price_alternatives: the price list was read in part only ({str(book.error)[:200]})")
+            book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, min(prices.SECONDS, self.read_seconds)))
+            if not self.trial:
+                self._books[key] = book
+                if isinstance(book, Failed) and getattr(book.error, "status", None) == 0:
+                    self._prices_down = book  # no answer at all: the host is not asked again in this run
+                elif isinstance(book, prices.Book) and book.error is not None:
+                    self.notes.append(f"price_alternatives: the price list was read in part only ({str(book.error)[:200]})")
+            elif isinstance(book, prices.Book) and book.complete and len(book.lines) <= TRIAL_LINES:
+                self._books[key] = book  # a whole list of the size of a product: the Investigator's own call for it is answered from it
+                self._trials.clear()
+            elif isinstance(book, Failed):
+                self._trials.append(book)
         if isinstance(book, Failed):
             self._fail("price_alternatives", "the price list", book)
             return self._why(book.error)
