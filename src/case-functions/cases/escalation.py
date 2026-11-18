@@ -185,6 +185,9 @@ def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str],
     return answer
 
 
+_MEMORY: dict[str, dict] = {}  # what the rounds of a process remember, for each storage account: the timer builds a new hook every minute (loop.tick), so a hook cannot hold it. A module does, as loop._teams_off_said does; that the Functions worker keeps a module between two calls of the timer is not proved, which is why the store has the say and this only stands in for it
+
+
 @dataclass
 class Ladder:
     """What one round of the ladder works with."""
@@ -199,7 +202,7 @@ class Ladder:
     contacts: tuple[str, ...] = ()  # the people responsible for Meternaut, for the last line of a letter
     tag: Callable[[PlanRecord], str] = lambda plan: ""
     emit: Callable[..., object] = lambda kind, **fields: None
-    memory: dict = field(default_factory=dict)  # what the rounds of one process remember: the cursor, when the store cannot keep it (the timer hands the same dict to each round, which builds a ladder of its own)
+    memory: dict = field(default_factory=dict)  # what the rounds of this process remember (`_MEMORY`): the cursor that the store could not keep
 
 
 def _names(targets: tuple[Target, ...]) -> tuple[str, ...]:
@@ -396,23 +399,26 @@ def weekly(ladder: Ladder, plans: Iterable[PlanRecord] | None = None, records: M
 
 
 def _round(ladder: Ladder, plans: list[PlanRecord]) -> list[PlanRecord]:
-    """The requests that this round looks at (`_window`), from the cursor. The cursor is read from the store when this process has none yet and kept in `ladder.memory` after that, so a store that cannot
-    be read or written does not send every round back to the oldest requests (the rest would starve, and nobody would know): the round goes on from the cursor that the process kept, and says in one History
-    line of counts how many reads and writes of the cursor failed."""
-    failed = 0
-    cursor = ladder.memory.get("cursor")
+    """The requests that this round looks at (`_window`), from the cursor that the store keeps. A store that cannot read or write it does not send every round back to the oldest requests (the rest would
+    starve, and nobody would know): the round goes on from the cursor that this process kept in `ladder.memory` (`_MEMORY`: the timer builds a ladder of its own every minute), and says in one History line
+    of counts how many reads and writes of the cursor failed. A restart loses that memory, and the next round then starts at the oldest request. While all the requests fit in one round there is no cursor
+    to read, to keep or to lose."""
+    if len(plans) <= ROUND_PLANS:
+        return _window(plans, "")[0]
+    failed, memory = 0, ladder.memory
+    cursor = memory.pop("unsaved", None)  # a cursor that the store did not take: newer than the one that it has, which is not asked
     if cursor is None:
         try:
             cursor = ladder.store.cursor_get()
         except StoreError:
-            cursor, failed = "", 1
+            cursor, failed = memory.get("cursor", ""), 1
     looked, after = _window(plans, cursor)
-    ladder.memory["cursor"] = after
+    memory["cursor"] = after
     if after != cursor:
         try:
             ladder.store.cursor_put(after)  # before the work: a request that a round cannot finish is not met again at once, and the others are not held back by it
         except StoreError:
-            failed += 1
+            memory["unsaved"], failed = after, failed + 1
     if failed:
         ladder.emit("escalation.cursor", failed=failed)
     return looked
@@ -476,7 +482,7 @@ def hook(env: Mapping[str, str], settings: LoopSettings, store: Store, people: P
     from .notify import build_mailer, contacts_of  # imported here: notify imports the web pages, which import a good part of the app
     mailer = build_mailer(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     mailer.deny = tuple(item.strip().lower() for item in settings.escalation.deny)
-    memory: dict = {}  # what the rounds of this process remember: each builds a ladder of its own
+    memory = _MEMORY.setdefault(settings.store_account, {})  # the rounds of this process share it: each builds a ladder of its own
 
     def on_round(arm: object = None, emit: Callable[..., object] = lambda kind, **fields: None) -> int:
         client = Client(directory_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)

@@ -993,6 +993,20 @@ class BrokenCursor(Writes):
         raise StoreError("the table service did not answer")
 
 
+class UnwritableCursor(Writes):
+    """A store whose row of the cursor can be read and not written."""
+
+    def cursor_put(self, key):
+        raise StoreError("the table service did not answer")
+
+
+class UnreadableCursor(Writes):
+    """A store whose row of the cursor can be written and not read."""
+
+    def cursor_get(self):
+        raise StoreError("the table service did not answer")
+
+
 class TheIndexOfWhoWasTold(unittest.TestCase):
     """The pages list the advice that a step was delivered to a person for from an index row (Store.told_*), which each round keeps from the records of the requests that it looks at."""
 
@@ -1046,6 +1060,32 @@ class TheIndexOfWhoWasTold(unittest.TestCase):
 
 
 class TheCursorThatCannotBeKept(unittest.TestCase):
+    def setUp(self):
+        escalation._MEMORY.clear()
+        self.addCleanup(escalation._MEMORY.clear)
+
+    @staticmethod
+    def requests(store, count, created=START):
+        for n in range(count):
+            store.case_put(make_case(case_id=f"c{n}", status="needs_human", plan_id=f"p{n}", resource_name=f"disk-p{n}"))
+            store.plan_put(advice(f"p{n}", f"c{n}", created=created))
+
+    @staticmethod
+    def rounds(store, clock, count=3, *, account="stexample", said=None):
+        """Rounds as the timer makes them: a hook built anew for each (wiring.build_extras does it every minute), a minute apart, so that a hook cannot keep anything from one round to the next. Returns the
+        requests that each round read."""
+        asked, looked = [], []
+        original = store.escalations_of
+        store.escalations_of = lambda plan_id: (asked.append(plan_id), original(plan_id))[1]
+        for _ in range(count):
+            before = len(asked)
+            on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER, "STORE_ACCOUNT_NAME": account}), store, PEOPLE, lambda resource: "token", str, transport=SendMail(),
+                                       sleep=lambda s: None, monotonic=lambda: 0.0, clock=clock)
+            on_round(None, lambda kind, **fields: said.append((kind, fields)) if said is not None else None)
+            looked.append(set(asked[before:]))
+            clock.advance(minutes=1)
+        return looked
+
     def test_rounds_that_cannot_read_or_write_the_cursor_still_go_round_all_the_requests_and_say_so(self):
         world = World(plans=60, store=BrokenCursor)
         reads = TheWorkOfARound.counting(world)
@@ -1056,20 +1096,44 @@ class TheCursorThatCannotBeKept(unittest.TestCase):
         said = [fields for kind, fields in world.events if kind == "escalation.cursor"]
         self.assertEqual(said, [{"failed": 2}] + [{"failed": 1}] * 9, "counts only: the read and the write of the first round, and the write of each round after it, which does not read the cursor again")
 
-    def test_the_rounds_of_the_timer_keep_it_in_the_process_because_each_builds_a_ladder_of_its_own(self):
-        clock, mailer = Clock(), SendMail()
-        store, said = BrokenCursor(clock), []
-        for n in range(60):
-            store.case_put(make_case(case_id=f"c{n}", status="needs_human", plan_id=f"p{n}", resource_name=f"disk-p{n}"))
-            store.plan_put(advice(f"p{n}", f"c{n}"))
-        reads = TheWorkOfARound.counting(SimpleNamespace(store=store))
-        on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=mailer, sleep=lambda s: None,
-                                   monotonic=lambda: 0.0, clock=clock)
-        for _ in range(10):
-            on_round(None, lambda kind, **fields: said.append(kind))
-            clock.advance(minutes=3)
-        self.assertEqual(len(reads), 60)
-        self.assertEqual(said, ["escalation.cursor"] * 10)
+    def test_rounds_that_each_build_a_hook_of_their_own_go_round_all_the_requests_whatever_the_store_cannot_do_with_the_cursor(self):
+        for name, store_class, failed in (("neither read nor written", BrokenCursor, [2, 1, 1]), ("read and not written", UnwritableCursor, [1, 1, 1]), ("written and not read", UnreadableCursor, [1, 1, 1])):
+            with self.subTest(cursor=name):
+                escalation._MEMORY.clear()
+                clock, said = Clock(), []
+                store = store_class(clock)
+                self.requests(store, 60)
+                looked = self.rounds(store, clock, said=said)
+                self.assertEqual([len(found) for found in looked], [25, 25, 25])
+                self.assertEqual(len(set().union(*looked)), 60, "every request was looked at within ceil(60 / 25) rounds")
+                self.assertEqual(said, [("escalation.cursor", {"failed": n}) for n in failed], "counts only")
+
+    def test_the_cursor_of_the_store_has_the_say_and_the_memory_of_the_process_only_stands_in_for_it(self):
+        clock = Clock()
+        store = Writes(clock)
+        self.requests(store, 60)
+        (first,) = self.rounds(store, clock, 1)
+        escalation._MEMORY["stexample"]["cursor"] = "9999-12-31T00:00:00Z/the-end"  # what a process may have kept while the store was not well
+        (second,) = self.rounds(store, clock, 1)
+        self.assertEqual((len(first), len(second), first & second), (25, 25, set()), "the second round went on from the cursor of the store")
+
+    def test_two_stores_in_one_process_do_not_share_what_it_remembers(self):
+        clock = Clock()
+        mine, other = BrokenCursor(clock), BrokenCursor(clock)
+        self.requests(mine, 60)
+        self.requests(other, 60, created=START + 30 * DAY)  # all of them after the requests of the first store: its cursor would send the other store back to its oldest
+        looked = {"mine": [], "other": []}
+        for _ in range(3):
+            looked["mine"] += self.rounds(mine, clock, 1, account="stexample")
+            looked["other"] += self.rounds(other, clock, 1, account="stother")
+        self.assertEqual([len(set().union(*found)) for found in looked.values()], [60, 60])
+
+    def test_a_store_that_cannot_keep_the_cursor_is_not_asked_and_says_nothing_while_all_the_requests_fit_in_one_round(self):
+        clock, said = Clock(), []
+        store = BrokenCursor(clock)
+        self.requests(store, escalation.ROUND_PLANS)
+        looked = self.rounds(store, clock, 2, said=said)
+        self.assertEqual(([len(found) for found in looked], said), ([25, 25], []), "no cursor is needed, so none can fail")
 
 
 class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
