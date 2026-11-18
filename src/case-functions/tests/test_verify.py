@@ -407,6 +407,15 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
         world.watch()
         self.assertEqual(world.plan(), after, "kept once: a second Watch writes nothing")
 
+    def test_a_cost_that_was_kept_is_never_kept_again_and_only_a_request_that_is_open_takes_one(self):
+        world = World()
+        world.ask()
+        other = world.ask("p2")
+        world.store.plan_put(replace(other, state="declined"))
+        world.approvals.keep_cost({"p1": 300.0, "p2": 300.0, "nobody": 1.0})
+        world.approvals.keep_cost({"p1": 50.0})  # a Watch that was late with its own reading
+        self.assertEqual((world.plan("p1").preconditions[COST_AT_ASK], COST_AT_ASK in world.plan("p2").preconditions), (300.0, False))
+
     def test_the_step_never_stops_the_run_and_says_what_it_could_not_do(self):
         world = World()
         world.ask()
