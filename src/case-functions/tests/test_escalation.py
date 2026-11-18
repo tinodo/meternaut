@@ -1058,6 +1058,46 @@ class TheIndexOfWhoWasTold(unittest.TestCase):
         notes = [fields["note"] for kind, fields in world.events if kind == "run.note"]
         self.assertEqual([note.split(":")[0] for note in notes], ["the index of who was told could not be kept"])
 
+    def test_the_row_says_when_the_last_step_was_delivered_to_the_person_and_not_the_first(self):
+        world = World(store=Writes)
+        for days in (3, 4, 7, 7, 7, 7):  # the steps of days 3, 7, 14, 21, 28 and 35: the contact is told by the steps from day 14 on
+            world.clock.advance(days=days)
+            world.tick(2)
+        told = sorted(r.last_try for r in world.steps() if CONTACT in r.delivered)
+        self.assertGreater(len(set(told)), 1, "the contact was told by several steps")
+        self.assertEqual(world.store.told_get(CONTACT), {"p1": told[-1]})
+
+    def test_a_row_of_a_person_who_is_told_nothing_any_more_goes_when_the_round_comes_to_them_and_a_row_that_must_stay_stays(self):
+        world = World()
+        long_ago, lately, old_open = (stamp(world.clock() - n * DAY) for n in (50, 10, 90))
+        for person in world.people.persons:
+            for plan_id, at in (("gone", long_ago), ("lately", lately), ("p1", old_open)):
+                world.store.told_put(person.oid, plan_id, at)
+        for _ in world.people.persons:  # a person of the list is met in each round, whoever the round told
+            world.tick()
+            world.clock.advance(minutes=1)
+        self.assertEqual([world.store.told_get(person.oid) for person in world.people.persons], [{"lately": lately, "p1": old_open}] * len(world.people.persons))
+
+    def test_a_person_that_is_not_on_the_list_has_no_row_because_they_cannot_sign_in_to_use_it(self):
+        world = World()
+        for days in (3, 4):  # step 2 goes to the manager of the approver, who is not on the list
+            world.clock.advance(days=days)
+            world.tick(2)
+        self.assertEqual(world.steps()[1].delivered, (MANAGER,))
+        self.assertEqual((set(world.store.told_get(A)), world.store.told_get(MANAGER)), ({"p1"}, {}))
+
+    def test_nothing_is_removed_while_the_list_of_open_requests_is_cut_because_it_cannot_say_which_requests_have_ended(self):
+        world = World()
+        world.clock.advance(days=3)
+        world.tick(2)
+        world.store.told_put(A, "gone", stamp(world.clock() - 50 * DAY))
+        world.store.truncated = {"open": 10000}
+        world.tick()
+        self.assertEqual(set(world.store.told_get(A)), {"p1", "gone"})
+        world.store.truncated = {}
+        world.tick()
+        self.assertEqual(set(world.store.told_get(A)), {"p1"})
+
 
 class TheCursorThatCannotBeKept(unittest.TestCase):
     def setUp(self):

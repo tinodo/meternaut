@@ -429,22 +429,29 @@ TOLD_DAYS = 45  # how long the index keeps the row of a request that is not open
 
 def _told(ladder: Ladder, looked: Sequence[PlanRecord], records: Mapping[str, list[EscalationRecord]], open_ids: set[str]) -> None:
     """Keeps the index of who a step was delivered to (Store.told_get), from the records of the requests that this round looks at: the pages list the advice that a person is told about but not named on
-    from that one small read instead of the ladder of every request, and the page of one request still asks its own ladder. A row that is missing is written (a step that was just delivered, a request
-    that carries the steps of the one that it stands for, a write that failed), and a row of a request that is not open and was last delivered more than TOLD_DAYS days ago is removed. A round goes on
-    without it, and says so in the History, when the store cannot keep it."""
-    store, old = ladder.store, stamp(ladder.clock() - dt.timedelta(days=TOLD_DAYS))
+    from that one small read instead of the ladder of every request, and the page of one request still asks its own ladder. Only a person of the list has rows (the others cannot sign in to use them).
+    A row is written when it is missing (a step that was just delivered, a request that carries the steps of the one that it stands for, a write that failed) or older than the last step that was
+    delivered to the person for that request, so that it says when they were last told. A row of a request that is not open and was last delivered more than TOLD_DAYS days ago is removed when the round
+    meets the person: the people that the requests of this round delivered steps to, and one more person of the list in each round (by the clock), so that the rows of a person who is told nothing any
+    more go too. Nothing is removed while the list of open requests is cut at its cap, which cannot say which requests have ended. A round goes on without the index, and says so in the History, when
+    the store cannot keep it."""
+    store, people, now = ladder.store, ladder.people, ladder.clock()
+    old, cut = stamp(now - dt.timedelta(days=TOLD_DAYS)), bool(getattr(store, "truncated", {}).get("open"))
     try:
         delivered: dict[str, dict[str, str]] = {}
         for plan in looked:
             for step in (r for r in records[plan.plan_id] if r.kind == "step"):
-                for oid in step.delivered:
-                    when = delivered.setdefault(oid.lower(), {})
+                for oid in (o.lower() for o in step.delivered if people.by_oid(o)):
+                    when = delivered.setdefault(oid, {})
                     when[plan.plan_id] = max(when.get(plan.plan_id, ""), step.last_try or step.at)
+        if people.persons and not cut:
+            delivered.setdefault(people.persons[int(now.timestamp() // 60) % len(people.persons)].oid.lower(), {})
         for oid, found in delivered.items():
             have = store.told_get(oid)
-            for plan_id in found.keys() - have.keys():
-                store.told_put(oid, plan_id, found[plan_id])
-            for plan_id in [plan_id for plan_id, at in have.items() if plan_id not in open_ids and at < old]:
+            for plan_id, at in found.items():
+                if at > have.get(plan_id, ""):
+                    store.told_put(oid, plan_id, at)
+            for plan_id in [plan_id for plan_id, at in have.items() if plan_id not in open_ids and at < old and not cut]:
                 store.told_delete(oid, plan_id)
     except Exception as error:  # noqa: BLE001 (the index is an addition to the pages: a round goes on without it)
         ladder.emit("run.note", note=f"the index of who was told could not be kept: {type(error).__name__}")
