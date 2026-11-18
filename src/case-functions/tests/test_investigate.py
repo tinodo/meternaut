@@ -14,7 +14,7 @@ from unittest import mock
 
 from support import APP_ROOT, ENV, NOW, RG, SUBSCRIPTION, LogCapture, Ticker, fixed_clock
 
-from cases import agents, approvals, config as cfg, decide, investigate, loop_config, people as people_mod, pricing, roles, wiring
+from cases import agents, approvals, brief, config as cfg, decide, investigate, loop_config, people as people_mod, pricing, roles, wiring
 from cases.approvals import Approvals, build_advice
 from cases.brief import HELD_UNPROVEN
 from cases.detectors import Context
@@ -2197,6 +2197,46 @@ class WhatIsNotTakenUpAgain(unittest.TestCase):
         again = Harness()
         again.go()
         self.assertEqual((h.result.cases, again.result.cases), (2, 2))
+
+
+class WhenAFindingThatWasPricedIsJudgedAgainWithNoPrice(unittest.TestCase):
+    """The request of a finding that code priced stays what it was asked as: a later judgment that names no price (no change stated, or a change that code cannot price from the bill that it reads)
+    neither takes the request back as one that the rules changed, nor takes the figure of the request from its case and its page."""
+
+    def judged_twice(self, again: dict):
+        clock = Moving()
+        extras = loop_for(clock)
+        change, meters = priced("r1", usd=40.0)
+        evidence = {"r1": metrics(MetricA=40)}
+        first = finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)], change=change)
+        Harness(FakeFoundry(answer(first)), FakeToolbox([resource(1, cost_usd_30d=40.0)], evidence, meters=meters), clock=clock, extras=extras).go()
+        (plan,) = extras.store.plans_open()
+        self.assertEqual(plan.saving_usd_month, 40.0, "it was asked with a saving that code priced")
+        clock.advance(days=8)  # the days of the recheck have passed: the finding is judged again, and this judgment has no meter to price a change by
+        second = finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)], **again)
+        h = Harness(FakeFoundry(answer(second)), FakeToolbox([resource(1, cost_usd_30d=40.0)], evidence), clock=clock, extras=extras)
+        h.go()
+        return h, extras, plan, clock
+
+    def test_the_request_is_not_taken_back_and_its_page_keeps_the_figure(self):
+        for label, again in (("no change stated", {}), ("a change that code cannot price", {"change": priced("r1", usd=40.0)[0]})):
+            with self.subTest(label):
+                h, extras, plan, clock = self.judged_twice(again)
+                self.assertEqual(h.result.cases, 1, "it was judged again")
+                case = extras.store.case_get(key_of(resource(1)))
+                self.assertEqual(extras.approvals.hold_back_empty(), [], "nothing is taken back: the request was asked with a saving")
+                (still,) = extras.store.plans_open()
+                self.assertEqual((still.plan_id, still.state, brief.taken_back(still)), (plan.plan_id, "open", ""))
+                self.assertEqual(brief.build_brief(case, still, None, (), now=clock(), may_answer=True).saving.monthly, 40.0, "the page does not say that nothing was measured for a request that was asked with a figure")
+
+    def test_a_case_that_no_request_waits_for_keeps_no_figure_that_it_was_not_priced_with(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        raw = answer(finding(handles=["r1"], basis="low-usage", proposal="change", evidence=[entry("r1", "MetricA", 40)]))
+        for _ in range(2):
+            Harness(FakeFoundry(raw), FakeToolbox([resource(1, cost_usd_30d=40.0)], {"r1": metrics(MetricA=40)}), clock=clock, extras=extras).go()
+            clock.advance(days=8)
+        self.assertEqual((extras.store.case_get(key_of(resource(1))).saving_usd_month, extras.store.plans_open()), (None, []))
 
 
 # -- the caps ----------------------------------------------------------------------------------------------------------------------------------------

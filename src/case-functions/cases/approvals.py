@@ -534,8 +534,8 @@ class Approvals:
 
     def hold_back_empty(self) -> list[tuple[PlanRecord, CaseRecord]]:
         """Takes back the open advice requests of the findings that cannot say what to look at (brief.says_nothing), that the rules of today hold back (held_why), that were made when a deletion
-        could be asked on less than they ask for now (brief.made_under_old_rules) or that are a finding of the investigation with no saving that code priced (UNPRICED), when nobody has answered
-        them: no request is made for such a finding, and one that was made before is closed, as
+        could be asked on less than they ask for now (brief.made_under_old_rules) or that are a finding of the investigation with no saving that code priced (UNPRICED) and whose request states
+        none (a request that was asked with a saving stays, whatever a later judgment names), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
         expired and ending now, like the requests that supersede() takes back, and the plan keeps why (`preconditions["takenBack"]`, written with its end: the page, the letter and the card say so in
         words, and a case that is judged again cannot lose it). The case is not touched: it keeps its status (a finding that no person has seen). A request that a person put off or asked about is
         theirs and stays, and so is a change that is running or done. Returns the plans that it closed, each with its case."""
@@ -543,7 +543,7 @@ class Approvals:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
-                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or why_not_ask(case) == UNPRICED) else "")
+                why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or (why_not_ask(case) == UNPRICED and not (plan.saving_usd_month or 0) > 0)) else "")
                 if case is None or not (why or brief.says_nothing(case)):
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
@@ -755,6 +755,15 @@ class Approvals:
             located = family.locate(lead.resource_id, self.settings.gates)
             return family.facts(Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock), lead, located)
         except (Stop, Unreadable):
+            return None
+
+    def asked_saving(self, case: CaseRecord | None) -> float | None:
+        """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the page of the
+        request does not say that nothing was measured for a request that was asked with a figure, and hold_back_empty does not take it back for it."""
+        try:
+            return next((p.saving_usd_month for p in self.store.plans_open() if case is not None and p.case_id == case.case_id and p.family == ADVISE and p.state == "open"
+                         and (p.saving_usd_month or 0) > 0), None)
+        except StoreError:
             return None
 
     def advise(self, case: CaseRecord, approvers: tuple[str, ...]) -> PlanRecord | None:

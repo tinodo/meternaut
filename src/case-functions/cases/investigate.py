@@ -1472,10 +1472,13 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         found = (_impact_of(s, out, lead) or _kept_impact(old)) if checked else None
         if found is not None:
             lead = replace(lead, facts={**lead.facts, impact.KEY: found})
+        saving = _figure(outcome.monthly_saving_usd)
+        if not saving and outcome.status != "dropped":
+            saving = ex.approvals.asked_saving(old) or saving  # judged again with no price while a request that was asked with one is open: the case keeps the figure of that request
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,
-            recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=_figure(outcome.monthly_saving_usd),
+            recommendation=outcome.recommendation, confidence=outcome.confidence, saving_usd_month=saving,
             summary=clean_text(outcome.summary, 600), objections=tuple(clean_text(o, 300) for o in outcome.objections), guards=tuple(outcome.guards),
             models=dict(models), steps=steps, facts=lead.facts, first_seen_at=old.first_seen_at if old and old.first_seen_at else now, updated_at=now,
             runs_seen=(old.runs_seen + 1) if old else 1, owner=owner, learned=learned,
