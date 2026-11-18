@@ -44,6 +44,8 @@ PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn
 HELD = "held"
 # The key, in the preconditions of an advice request, of the time (a stamp) when something that is no person last changed the resource (cases/brief.py automation_note): the warning of the request.
 AUTOMATED = "automated"
+ADVISOR = "advisor-cost"  # the detector of Azure Advisor's own recommendations (cases/detectors.py makes the leads)
+COST_DAYS = 30  # the closed days of cost_usd_30d, and of the series that a case with an open plan carries (CaseRecord.cost_series)
 # The keys, in the preconditions of an advice request, of what a month cost by the cheapest of the whole weeks before the Watch first looked at the request (COST_AT_ASK), which the bill is held
 # against later, of how far apart those weeks were (COST_SPREAD: a fall has to be bigger), of a short digest of the resources that this cost is the cost of (COST_OF: a finding that is found again with
 # other resources has another cost to be held against), and of what a month cost by the dearer of the two newest weeks when the bill showed the fall that the request suggested (COST_SEEN): US
@@ -266,6 +268,15 @@ class PlanRecord(Record):
 def started(plan: PlanRecord) -> str:
     """When the wait of a request began: the start that it carries from the request that it stands for, else the time that it was made."""
     return plan.waiting_since or plan.created_at
+
+
+def members(case: CaseRecord) -> list[str]:
+    """The lower-case ids of what a case stands for: its resource, or the ones that a group case kept (none when it kept fewer than it covers)."""
+    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
+    if not isinstance(group, dict):
+        return [case.resource_id.lower()]
+    ids = group.get("resourceIds")
+    return [i.lower() for i in ids] if isinstance(ids, list) and len(ids) == group.get("count") and all(isinstance(i, str) for i in ids) else []
 
 
 @dataclass(frozen=True)

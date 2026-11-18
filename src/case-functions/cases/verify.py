@@ -36,9 +36,8 @@ from typing import Callable, Mapping, Sequence
 
 from . import brief
 from . import costs as cost_words
-from .detectors import ADVISOR
 from .meters import MONTH, WEEK
-from .models import ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SPREAD, GROUP_FACT, CaseRecord, PlanRecord
+from .models import ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_DAYS, COST_OF, COST_SPREAD, GROUP_FACT, CaseRecord, PlanRecord, members
 from .roles import clean_text
 
 LAG = 2  # the newest closed days that are left out: the bill is one to two days behind
@@ -70,9 +69,7 @@ def baseline(series: Sequence[float]) -> tuple[float, float] | None:
 def subject(case: CaseRecord) -> str:
     """A short digest of the resources that the daily cost of a case is the cost of: the ids that a group names (the cost is their sum), else its own resource. A finding that is found again with other
     resources has another cost to be held against, and the baseline of the first is no baseline for it."""
-    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
-    ids = group["resourceIds"] if isinstance(group, dict) and isinstance(group.get("resourceIds"), list) else [case.resource_id]
-    return hashlib.sha256("\n".join(sorted(str(i).lower() for i in ids)).encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256("\n".join(sorted(members(case))).encode("utf-8")).hexdigest()[:12]
 
 
 def fall(series: Sequence[float], plan: PlanRecord, case: CaseRecord) -> float | None:
@@ -102,7 +99,7 @@ def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str, 
     if case.cost_state == cost_words.CURRENCY:
         return "currency", ()
     series = case.cost_series if amortized is None else amortized
-    if not isinstance(series, list) or len(series) != MONTH or any(_dollars(day) is None for day in series):
+    if not isinstance(series, list) or len(series) != COST_DAYS or any(_dollars(day) is None for day in series):
         return "unread", ()
     if case.cost_series_end != last.isoformat():
         return "stale", ()

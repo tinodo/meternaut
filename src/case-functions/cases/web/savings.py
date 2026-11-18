@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..brief import HOLD_WORDS, taken_back
-from ..models import HELD, PlanRecord, started
+from ..models import ADVISOR, HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
@@ -42,7 +42,6 @@ HELD_HEADERS = ["Finding", "Saving a year", "How sure", "Why no request was made
 SEEN_NAME = "Saved (seen on the bill)"
 SEEN_MEANING = ("The cost of these went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing, and a cost can also go down for another reason.")
 SEEN_CLAIM = "The figures are on the page of each finding. None is added up here."
-ADVISOR = "advisor-cost"  # the detector of Azure Advisor's own recommendations (cases/detectors.py)
 
 
 @dataclass

@@ -1407,7 +1407,7 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(figure, 2), priced.level, priced.basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
         return Saving(round(figure, 2), "Scenario", _advisor_basis(case), waiting, "")
-    advisor = case is not None and (case.detector == "advisor-cost" or (case.detector == "investigation" and case.recommendation == "change"))
+    advisor = advisor_estimate(case)
     if advisor:
         return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
     return Saving(round(figure, 2), "Expected", "the cost lines of the last 30 days", waiting, "")

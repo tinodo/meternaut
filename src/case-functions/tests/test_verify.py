@@ -804,6 +804,26 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertEqual(len(brief.build_brief(None, bare, None, (), now=self.world.now).outcome.lines), 2)
 
 
+class EachOfThemIsDefinedOnce(unittest.TestCase):
+    """What more than one module needs is defined in one place (AGENTS.md rule 13)."""
+
+    @staticmethod
+    def sources():
+        root = Path(verify.__file__).parent
+        return {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8") for path in [*root.glob("*.py"), *(root / "web").glob("*.py")]}
+
+    def test_the_days_of_a_series_the_detector_of_advisor_and_the_ids_that_a_case_stands_for_are_defined_in_one_module_each(self):
+        sources = self.sources()
+        for pattern, home in ((r"^COST_DAYS = ", "models.py"), (r"^ADVISOR = ", "models.py"), (r"^def _?members\(case: CaseRecord", "models.py")):
+            with self.subTest(pattern):
+                self.assertEqual([name for name, text in sources.items() if re.search(pattern, text, re.M)], [home])
+
+    def test_the_test_for_an_estimate_of_advisor_is_written_once_and_the_step_takes_its_series_length_from_where_it_is_defined(self):
+        sources = self.sources()
+        self.assertEqual(sources["brief.py"].count('case.detector == "investigation" and case.recommendation == "change"'), 1)
+        self.assertNotIn("MONTH", re.findall(r"len\(series\) != (\w+)", sources["verify.py"]))
+
+
 class InAWatch(unittest.TestCase):
     """Whole Watches against the fake estate: the real daily cost, the real check of the resource and the step after them."""
     GROUP = "team-apps-rg"

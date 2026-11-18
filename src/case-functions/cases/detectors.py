@@ -18,9 +18,9 @@ from . import estimate as estimates
 from .arm import Arm, ScopeCost
 from .http import HttpError
 from .identity import IdentityError
+from .models import ADVISOR
 from .roles import clean_text
 
-ADVISOR = "advisor-cost"
 RECENT_DAYS = 7
 
 # Every query starts with a comment that names it, so that a test (and a person reading the log of Resource Graph) can tell which one it is.

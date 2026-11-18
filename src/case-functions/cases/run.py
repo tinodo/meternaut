@@ -32,7 +32,7 @@ from .http import Client, HttpError, allowed_calls, default_transport
 from .identity import Identity
 from .memory_store import parse, stamp
 from .modelcalls import ModelError, Models
-from .models import GROUP_FACT, CaseRecord, RunRecord, StoreError
+from .models import COST_DAYS, GROUP_FACT, CaseRecord, RunRecord, StoreError, members
 from .redact import Redactor
 from .roles import RoleError, clean_text
 
@@ -44,7 +44,6 @@ READ_SHARE = 0.6
 # A subscription that was started inside the share may finish its own reads (Advisor, locks, cost lines) this much later; a call after that is refused by the client, as after the deadline.
 READ_GRACE = 0.1
 SCOPES_SHOWN = 5  # the subscriptions that run.started names, at eight characters each; it also carries their count
-COST_DAYS = 30  # the closed days of cost_usd_30d, and of the series that a case with an open plan carries (CaseRecord.cost_series)
 COST_IDS = 50  # the resource ids that one Cost Management query asks about
 USE_MAX_RESOURCES = 30  # the resources whose use one Watch reads (one read of Azure Monitor for each of their metrics): the others wait for the next Watch
 USE_MIN_SECONDS = 30  # the use of a resource is not read when the run has less time than this left: one read of Azure Monitor may take that long
@@ -268,15 +267,6 @@ def _unread_note(estate: Estate, deadline_seconds: int) -> str:
     return f"{what}: the time for reading them ({int(READ_SHARE * deadline_seconds)} of the {deadline_seconds} seconds of the run) was used up"
 
 
-def _members(case: CaseRecord) -> list[str]:
-    """The lower-case ids of what a case stands for: its resource, or the ones that a group case kept (none when it kept fewer than it covers)."""
-    group = case.facts.get(GROUP_FACT) if isinstance(case.facts, dict) else None
-    if not isinstance(group, dict):
-        return [case.resource_id.lower()]
-    ids = group.get("resourceIds")
-    return [i.lower() for i in ids] if isinstance(ids, list) and len(ids) == group.get("count") and all(isinstance(i, str) for i in ids) else []
-
-
 def _subscription(resource_id: str) -> str:
     return resource_id.split("/")[2] if resource_id.startswith("/subscriptions/") else ""
 
@@ -341,7 +331,7 @@ def _daily(s: Services, due: Mapping[str, list[str]], last: dt.date, amortized: 
 def _amortized(s: Services, cases: Mapping[str, CaseRecord], last: dt.date) -> dict[str, list[float] | None]:
     """The amortized daily cost of the cases that cases/verify.py asks about, by the key that it gave: a commitment (a reservation, a savings plan) is spread over its term there, so that it does not
     make the cost of a resource that it covers fall to nothing, as the actual cost does. A case that was not read in whole has no entry."""
-    return _daily(s, {key: _members(case) for key, case in cases.items()}, last, True)[0]
+    return _daily(s, {key: members(case) for key, case in cases.items()}, last, True)[0]
 
 
 def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable[[str], None]) -> None:
@@ -367,7 +357,7 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                 if scope.subscription not in other:
                     wholes[case.case_id] = (scope.subscription, scope.group)
                 continue
-            ids = _members(case)
+            ids = members(case)
             subs = {_subscription(i) for i in ids}
             if ids and "" not in subs and subs.isdisjoint(other):
                 due[case.case_id] = ids
@@ -544,12 +534,12 @@ def _take_back_gone(s: Services, estate: "detectors.Estate", say: Callable[[str]
     def full(subscription: str) -> bool:
         found = estate.collected.get(subscription)
         return found is not None and found.sources_failed == 0 and found.context.recent is not None and found.context.managed_groups is not None
-    def members(plan):
+    def ids_of(plan):
         case = s.extras.store.case_get(plan.case_id)
         grouped = case is not None and isinstance(case.facts, dict) and GROUP_FACT in case.facts
-        return _members(case) if grouped else [plan.resource_id]  # a group is gone only when every resource of it is
+        return members(case) if grouped else [plan.resource_id]  # a group is gone only when every resource of it is
     try:
-        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full, members)
+        answer = escalation.existence(s.arm, [plan for plan in s.extras.store.plans_open() if plan.state == "open"], full, ids_of)
         closed = s.extras.approvals.take_back_gone([plan_id for plan_id, word in answer.items() if word == "gone"])
         if closed:
             say(f"{len(closed)} request{'s were' if len(closed) != 1 else ' was'} taken back: the resource is gone")
