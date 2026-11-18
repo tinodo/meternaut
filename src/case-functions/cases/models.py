@@ -392,13 +392,14 @@ def escalated_to(records: typing.Iterable[EscalationRecord], oid: str) -> bool:
     return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.delivered} for r in records)
 
 
-def may_answer(principal: "Principal", plan: PlanRecord, ladder: typing.Callable[[], typing.Iterable[EscalationRecord]] = lambda: ()) -> bool:
+def may_answer(principal: "Principal", plan: PlanRecord, told: typing.Callable[[], bool] = lambda: False) -> bool:
     """The one rule of who may answer a request, for the decider and the pages. A person who is named on it may, with the role approver, or the role owner when it is advice, which changes nothing in
-    Azure. Advice may also be answered by a person that a step of its ladder was delivered to (`ladder` is read only when nothing else lets the person answer), whatever their role on the list: the
-    contacts, the owners, the people that the ladder came to last. Every answer of advice is theirs (worth acting on, not worth it, not mine, a question, decide later) and none of a change, which
-    only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
+    Azure. Advice may also be answered by a person that a step of its ladder was delivered to, whatever their role on the list (`told` says so for this request, and is called only when nothing else lets
+    the person answer): the contacts, the owners, the people that the ladder came to last. The decider and the page of one request answer `told` from the ladder of that request (`escalated_to`); a page
+    that lists many requests answers it from the index of the person (Store.told_get), which only decides what to list. Every answer of advice is theirs (worth acting on, not worth it, not mine, a
+    question, decide later) and none of a change, which only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
     named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and escalated_to(ladder(), principal.oid))
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and told())
 
 
 @dataclass(frozen=True)
@@ -642,6 +643,15 @@ class Store(Protocol):
         ...
     def escalation_put(self, record: EscalationRecord) -> None: ...
     def escalations_of(self, plan_id: str) -> list[EscalationRecord]: ...
+    def told_get(self, oid: str) -> dict[str, str]:
+        """The requests that a step of the ladder was delivered to this person for, with when it was last delivered: the index that a page lists the advice of a person who is not named on it from, in one
+        small read (cases/escalation.py keeps it from the records of the ladder). The ladder of a request, not this, says who may answer it."""
+        ...
+    def told_put(self, oid: str, plan_id: str, at: str) -> None: ...
+    def told_delete(self, oid: str, plan_id: str) -> None: ...
+    def reading(self) -> typing.ContextManager:
+        """A block in which the lists of plans are read once and kept right by the writes of this store: the Watch asks them for each case, and a table that grows makes each ask many reads."""
+        ...
     def cursor_get(self) -> str:
         """The key of the request that the last round of the ladder ended with (cases/escalation.py `_window`), or an empty text: the next round goes on with the request after it."""
         ...

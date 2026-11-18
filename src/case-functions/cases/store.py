@@ -6,6 +6,7 @@ other service, is refused before it leaves the app.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import hashlib
 import re
@@ -35,8 +36,13 @@ LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
 CHECKS = "mnchecks"
 # What each investigation looked at (cases/activity.py): one row each, the newest KEPT_INVESTIGATIONS.
 INVESTIGATIONS = "mninvestigations"
-# The ladder of every request that waits (cases/escalation.py): a row for each step and each put-off, in the partition of its plan.
+# The ladder of every request that waits (cases/escalation.py): a row for each step and each put-off, in the partition of its plan. And the index of who a step was delivered to: a row for each person and
+# request, in the partition TOLD + the object id of the person (Store.told_get).
 ESCALATIONS = "mnescalations"
+TOLD = "told-"
+# The lists of plans that the ladder, the pages, the letters and the Watch depend on: the filter that reads each, and the states that belong to it. Inside `reading()` each is read once.
+PLAN_LISTS = {"open": ("(state eq 'open' or state eq 'approved')", lambda state: state in ("open", "approved")), "held": ("state eq 'held'", lambda state: state == "held"),
+              "recent": ("state ne 'held'", lambda state: state != "held"), "expired": ("state eq 'expired'", lambda state: state == "expired")}
 TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS, ESCALATIONS)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
@@ -92,6 +98,7 @@ class TableStore:
         self.base = f"https://{account}.table.core.windows.net"
         self._ready: set[str] = set()
         self.truncated: dict[str, int] = {}  # the lists that the last read cut at the cap (_query): the Watch says so in the History and the start page says so
+        self._kept: dict[str, dict[str, PlanRecord]] | None = None  # the lists of plans that `reading()` holds
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token(RESOURCE)}", "x-ms-version": VERSION, "x-ms-date": format_datetime(self.clock(), usegmt=True),
@@ -268,20 +275,35 @@ class TableStore:
         raise StoreError("the case was changed by another step every time that it was read", 412)
 
     def plans_open(self) -> list[PlanRecord]:
-        rows = self._query(PLANS, "PartitionKey eq 'p' and (state eq 'open' or state eq 'approved')", PAGE * MAX_PAGES, "open")
-        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+        return self._plans("open")
 
     def plans_held(self) -> list[PlanRecord]:
-        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'held'", PAGE * MAX_PAGES, "held")
-        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+        return self._plans("held")
 
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
-        plans = self._records(self._query(PLANS, "PartitionKey eq 'p' and state ne 'held'", PAGE * MAX_PAGES, "recent"), PlanRecord)
-        return sorted(plans, key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
+        return self._plans("recent")[:limit]
 
     def plans_expired(self) -> list[PlanRecord]:
-        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'expired'", PAGE * MAX_PAGES, "expired")
-        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+        return self._plans("expired")
+
+    def _plans(self, name: str) -> list[PlanRecord]:
+        """One list of plans, newest first, read up to the cap (PAGE * MAX_PAGES rows, and `truncated[name]` says when it was cut). Inside `reading()` it is read once and kept by `plan_put`."""
+        if self._kept is None or name not in self._kept:
+            rows = self._query(PLANS, f"PartitionKey eq 'p' and {PLAN_LISTS[name][0]}", PAGE * MAX_PAGES, name)
+            found = {plan.plan_id: plan for plan in self._records(rows, PlanRecord)}
+            if self._kept is None:
+                return sorted(found.values(), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+            self._kept[name] = found
+        return sorted(self._kept[name].values(), key=lambda p: (p.created_at, p.plan_id), reverse=True)
+
+    @contextlib.contextmanager
+    def reading(self):
+        """The Watch asks the lists of plans for each case, and each ask is many reads of a table that only grows: inside this block each list is read once, and the writes of this store keep it right."""
+        self._kept = {}
+        try:
+            yield
+        finally:
+            self._kept = None
 
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         row, _ = self._get(PLANS, "p", plan_id)
@@ -289,6 +311,10 @@ class TableStore:
 
     def plan_put(self, plan: PlanRecord) -> None:
         self._upsert(PLANS, "p", plan.plan_id, plan, state=plan.state)
+        for name, kept in (self._kept or {}).items():  # a list that this block holds stays what a fresh read would give
+            kept.pop(plan.plan_id, None)
+            if PLAN_LISTS[name][1](plan.state):
+                kept[plan.plan_id] = plan
 
     def decisions_of_plan(self, plan_id: str) -> list[DecisionRecord]:
         rows = self._query(DECISIONS, f"PartitionKey eq '{self._quoted(plan_id)}'", 50)
@@ -460,6 +486,16 @@ class TableStore:
 
     def cursor_put(self, key: str) -> None:
         self._upsert(ESCALATIONS, "cursor", "ladder", None, key=key)
+
+    def told_get(self, oid: str) -> dict[str, str]:
+        rows = self._query(ESCALATIONS, f"PartitionKey eq '{self._quoted(TOLD + oid.lower())}'", PAGE * MAX_PAGES, "told")
+        return {str(row["RowKey"]): str(row.get("at") or "") for row in rows}
+
+    def told_put(self, oid: str, plan_id: str, at: str) -> None:
+        self._upsert(ESCALATIONS, TOLD + oid.lower(), plan_id, None, at=at)
+
+    def told_delete(self, oid: str, plan_id: str) -> None:
+        self._delete(ESCALATIONS, TOLD + oid.lower(), plan_id)
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)

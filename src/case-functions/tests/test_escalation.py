@@ -13,7 +13,7 @@ from cases.approvals import ApprovalSettings, Approvals
 from cases.escalation import Ladder
 from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, parse, stamp
-from cases.models import DecisionRecord, EscalationRecord, Principal, SettingsRecord
+from cases.models import DecisionRecord, EscalationRecord, Principal, SettingsRecord, StoreError
 from cases.people import Person
 from cases.store import TableStore, table_calls
 
@@ -981,6 +981,95 @@ class TheCapOfTheTable(unittest.TestCase):
         watch.run()
         (line,) = [line for line in watch.lines.found if line["type"] == "plans.truncated"]
         self.assertEqual({key: value for key, value in line.items() if key not in ("v", "ts", "runId", "requestId")}, {"type": "plans.truncated", "open": 10000})
+
+
+class BrokenCursor(Writes):
+    """A store whose row of the cursor cannot be read or written."""
+
+    def cursor_get(self):
+        raise StoreError("the table service did not answer")
+
+    def cursor_put(self, key):
+        raise StoreError("the table service did not answer")
+
+
+class TheIndexOfWhoWasTold(unittest.TestCase):
+    """The pages list the advice that a step was delivered to a person for from an index row (Store.told_*), which each round keeps from the records of the requests that it looks at."""
+
+    def test_a_step_that_was_delivered_is_in_the_index_of_the_person_at_the_next_round_and_one_that_was_held_is_not(self):
+        world = World(store=Writes)
+        world.add("p2", "c2", approvers=(OWNER,))
+        world.store.settings_put(SettingsRecord(oid=OWNER, quiet_from="00:00", quiet_to="23:59"))
+        world.clock.advance(days=3)
+        world.tick()
+        self.assertEqual((world.steps("p1")[0].outcome, world.steps("p2")[0].outcome), ("sent", "held"))
+        world.tick()
+        self.assertEqual((set(world.store.told_get(A)), world.store.told_get(OWNER)), ({"p1"}, {}))
+        self.assertEqual(world.store.told_get(A)["p1"], world.steps("p1")[0].last_try, "the time of the delivery")
+
+    def test_a_row_that_is_missing_is_written_again_by_the_next_round_whatever_made_it_miss(self):
+        world = World()
+        world.clock.advance(days=3)
+        world.tick(2)
+        world.store.told_delete(A, "p1")
+        world.tick()
+        self.assertEqual(set(world.store.told_get(A)), {"p1"})
+
+    def test_the_steps_that_a_request_carries_from_the_request_that_it_stands_for_are_in_the_index_too(self):
+        world = World(plans=0)
+        world.add("p2", "c2", created=START + 2 * DAY)
+        world.store.escalation_claim(EscalationRecord("p2", "step", 1, stamp(START + 3 * DAY), "same", (A,), ("Ada",), (A,), "email", "sent", last_try=stamp(START + 3 * DAY)))
+        world.clock.advance(days=4)
+        world.tick()
+        self.assertEqual(set(world.store.told_get(A)), {"p2"})
+
+    def test_a_row_of_a_request_that_is_not_open_goes_after_45_days_and_never_before_and_never_for_an_open_one(self):
+        world = World()
+        world.add("p2", "c2", state="expired", preconditions={"family": "advise", "takenBack": "gone"})
+        world.clock.advance(days=3)
+        world.tick(2)
+        long_ago, lately, old_open = (stamp(world.clock() - n * DAY) for n in (50, 10, 90))
+        world.store.told_put(A, "p2", long_ago)
+        world.store.told_put(A, "p3", lately)
+        world.store.told_put(A, "p1", old_open)
+        world.tick()
+        self.assertEqual(set(world.store.told_get(A)), {"p1", "p3"})
+
+    def test_a_round_goes_on_and_says_so_when_the_index_cannot_be_kept(self):
+        world = World(store=Writes)
+        world.store.told_put = lambda *args: (_ for _ in ()).throw(StoreError("the table service did not answer"))
+        world.clock.advance(days=3)
+        world.tick(2)
+        self.assertEqual(len(world.steps()), 1, "the step was made and delivered all the same")
+        notes = [fields["note"] for kind, fields in world.events if kind == "run.note"]
+        self.assertEqual([note.split(":")[0] for note in notes], ["the index of who was told could not be kept"])
+
+
+class TheCursorThatCannotBeKept(unittest.TestCase):
+    def test_rounds_that_cannot_read_or_write_the_cursor_still_go_round_all_the_requests_and_say_so(self):
+        world = World(plans=60, store=BrokenCursor)
+        reads = TheWorkOfARound.counting(world)
+        for _ in range(10):
+            world.tick()
+            world.clock.advance(minutes=3)
+        self.assertEqual(len(reads), 60)
+        said = [fields for kind, fields in world.events if kind == "escalation.cursor"]
+        self.assertEqual(said, [{"failed": 2}] + [{"failed": 1}] * 9, "counts only: the read and the write of the first round, and the write of each round after it, which does not read the cursor again")
+
+    def test_the_rounds_of_the_timer_keep_it_in_the_process_because_each_builds_a_ladder_of_its_own(self):
+        clock, mailer = Clock(), SendMail()
+        store, said = BrokenCursor(clock), []
+        for n in range(60):
+            store.case_put(make_case(case_id=f"c{n}", status="needs_human", plan_id=f"p{n}", resource_name=f"disk-p{n}"))
+            store.plan_put(advice(f"p{n}", f"c{n}"))
+        reads = TheWorkOfARound.counting(SimpleNamespace(store=store))
+        on_round = escalation.hook({}, loop_config.load({**FULL, "MAIL_SENDER": SENDER}), store, PEOPLE, lambda resource: "token", str, transport=mailer, sleep=lambda s: None,
+                                   monotonic=lambda: 0.0, clock=clock)
+        for _ in range(10):
+            on_round(None, lambda kind, **fields: said.append(kind))
+            clock.advance(minutes=3)
+        self.assertEqual(len(reads), 60)
+        self.assertEqual(said, ["escalation.cursor"] * 10)
 
 
 class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):

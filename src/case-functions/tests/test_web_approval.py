@@ -1432,6 +1432,14 @@ class WhenTheLadderComesToAPerson(unittest.TestCase):
                 self.assertEqual((snapshot(self.console.store), self.console.delegate.begins), (before, []))
                 self.setUp()
 
+    def test_the_decider_goes_by_the_ladder_of_the_request_and_never_by_a_row_of_the_index(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.console.store.told_put(oid, "plan0002", stamp(NOW))  # a row that no delivered step bears out
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
+                self.setUp()
+
     def test_the_loop_itself_refuses_a_person_that_no_step_was_delivered_to_even_when_the_page_is_skipped(self):
         for label, oid in self.WHO:
             with self.subTest(label):
@@ -1465,6 +1473,68 @@ class TheStartPageSaysWhenTheListIsCut(unittest.TestCase):
         console.store.truncated = {"open": 10000}  # what the table store says when it cut the list of open requests at its cap
         page = console.get("/")
         self.assertEqual((page.status, page.content.count(CUT_OPEN)), (200, 1))
+
+
+class TheListsOfAPersonTheLadderCameToReadOneIndex(unittest.TestCase):
+    """The pages list the advice that a step of the ladder was delivered to a person for, though it does not name them, from one small read of the index of that person (Store.told_get), not from the
+    ladder of every request: what a page reads does not grow with the requests that wait. The page of one request still asks the ladder of that one request: the index only says what to list."""
+
+    WHO = (("an owner", OWNER), ("a person with the role ops", OPS), ("an approver who is not named on them", MAYA))
+
+    @staticmethod
+    def fill(console, who, count, delivered=True):
+        index = getattr(console.store, "told_put", lambda *args: None)  # a store without the index reads the ladder of every request, which is what the test shows it must not
+        for n in range(count):
+            plan_id = f"plan{n:04d}"
+            console.store.case_put(make_advice_case(case_id=f"case{n:04d}", plan_id=plan_id, resource_id=f"{VM}{n}"))
+            console.store.plan_put(make_advice(plan_id=plan_id, case_id=f"case{n:04d}", resource_id=f"{VM}{n}", approvers=(TINO,), created_at=at(days=-n)))
+            console.store.escalation_claim(EscalationRecord(plan_id, "step", 2, stamp(NOW), "contact", (who,), ("Name",), (who,) if delivered else (), "email", "sent" if delivered else "held"))
+            if delivered:
+                index(who, plan_id, stamp(NOW))
+
+    def reads(self, who, count):
+        console = Console()
+        self.fill(console, who, count)
+        seen = []
+        for name in ("escalations_of", "told_get"):
+            original = getattr(console.store, name, None)
+            if original is not None:
+                setattr(console.store, name, lambda *args, original=original, name=name: (seen.append(name), original(*args))[1])
+        pages = [console.get(path, oid=who) for path in ("/", "/history")]
+        return len(seen), pages
+
+    def test_what_the_start_page_and_the_history_read_does_not_grow_with_the_requests_that_wait(self):
+        for label, who in self.WHO:
+            with self.subTest(label):
+                few, _ = self.reads(who, 10)
+                many, pages = self.reads(who, 40)
+                self.assertLessEqual(many, few, "forty requests cost no more reads than ten")
+                self.assertLessEqual(many, 6, "the steps of the few that the page shows with them, and one read of the index")
+                self.assertEqual([page.status for page in pages], [200, 200])
+                self.assertIn("Go through the 40 requests one by one", pages[0].content, "the person still sees all the requests that the ladder came to them with")
+
+    def test_the_page_of_one_request_asks_the_ladder_of_that_request_and_never_the_index(self):
+        for label, who in self.WHO:
+            with self.subTest(label):
+                console = Console()
+                self.fill(console, who, 3, delivered=False)  # the ladder came to them, but nothing was delivered
+                getattr(console.store, "told_put", lambda *args: None)(who, "plan0000", stamp(NOW))  # an index row that the ladder does not bear out
+                self.assertEqual(console.get("/ok/plan0000", oid=who).status, 403)
+                self.assertEqual(console.post("/ok/plan0000", {"decision": "decline", "code": "B4N8X2KM", "nonce": "x"}, oid=who).status, 403)
+
+    def test_a_step_that_was_delivered_for_one_request_lets_the_person_answer_that_request_and_a_request_that_none_was_delivered_for_stays_refused(self):
+        for label, who in self.WHO:
+            with self.subTest(label):
+                console = Console()
+                self.fill(console, who, 3)
+                console.store.escalation_put(EscalationRecord("plan0002", "step", 2, stamp(NOW), "contact", (who,), ("Name",), (), "email", "held"))  # for plan 2 nothing was delivered
+                self.assertEqual([console.get(f"/ok/plan000{n}", oid=who).status for n in (0, 1, 2)], [200, 200, 403])
+
+    def test_a_person_who_is_not_on_the_list_any_more_is_refused_whatever_the_index_says(self):
+        console = Console()
+        self.fill(console, STRANGER, 2)
+        self.assertEqual([console.get(f"/ok/plan000{n}", oid=STRANGER).status for n in (0, 1)], [403, 403])
+        self.assertEqual(console.get("/", oid=STRANGER).status, 403)
 
 
 class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):
