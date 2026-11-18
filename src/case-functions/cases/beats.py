@@ -37,7 +37,8 @@ OPEN_SECONDS = 480  # the time that one open session has for tool calls, as it h
 MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model costs 13 to 20 thousand, and a beat that starts with less cannot ask and be answered inside its hard limit (harness.beat_limit)
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
-INPUT_CHARS = result_cap("profile") + CARRY_CHARS + MAX_RESULT_CHARS + 1000  # the first input of a beat: its pictures, what the beats before it concluded and one answer of the tool for alternatives, each at its cap, and a little for the rest; when it would be longer the alternatives are left out, the last first
+INPUT_CHARS = result_cap("profile") + CARRY_CHARS + MAX_RESULT_CHARS + 1000  # the first input of a beat: its pictures, what the beats before it concluded and one answer of the tool for alternatives, each at its cap, and a little for the rest; when it would be longer the alternatives are left out
+ALTERNATIVES_SOURCE = "Azure's public pay-as-you-go list prices for one meter of the dearest resource of this beat, read by code. They are not the prices that this customer pays, and a line of another size or tier is not shown to be equivalent."  # what the alternatives of an input say of themselves
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
 EMPTY = "empty"  # the end of a beat that code did not give to the Investigator, because no resource of its kinds was listed
 PRELOAD = "preload"  # the name that the line of the History gives to the read ahead that code makes of the resources of a beat's kinds (Toolbox.preload); it is no tool of the agent
@@ -265,9 +266,9 @@ def carry(results: Sequence[Result]) -> list[dict]:
 
 
 def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[dict]) -> str:
-    """What the Investigator is given for a beat: the budget of tool calls, the beat (its number, how many there are, its kinds), how many resources each kind has, the pictures that code read, the list prices
-    that code read for the dearest meter of the dearest resource (`alternatives`: answers of the tool for alternatives, whose price handles a change may cite), and what the beats before it concluded. When
-    that is longer than INPUT_CHARS the alternatives are left out, the last first. An open beat is given the budget alone, as one session always was."""
+    """What the Investigator is given for a beat: the budget of tool calls, the beat (its number, how many there are, its kinds), how many resources each kind has, the pictures that code read, what the beats
+    before it concluded and, after all of that, the list prices that code read for the dearest meter of the dearest resource (`alternatives`: the answers of the tool for alternatives, whose price handles a
+    change may cite, and what they say of their own source). When that is longer than INPUT_CHARS the alternatives are left out. An open beat is given the budget alone, as one session always was."""
     where: dict = {"number": beat.number, "of": beat.of, "focus": list(beat.kinds)}
     if beat.billing:
         where["billingOnly"] = True
@@ -282,12 +283,12 @@ def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[di
         body["pictures"] = seeded.pictures
     if earlier:
         body["earlier"] = list(earlier)
-    alternatives = list(seeded.alternatives) if seeded is not None else []
-    while True:
-        text = json.dumps({**body, **({"alternatives": alternatives} if alternatives else {})}, sort_keys=True, separators=(",", ":"))
-        if len(text) <= INPUT_CHARS or not alternatives:
-            return text
-        alternatives.pop()
+    text = json.dumps(body, sort_keys=True, separators=(",", ":"))[:-1]
+    if seeded is not None and seeded.alternatives:
+        longer = text + ',"alternatives":' + json.dumps({"answers": seeded.alternatives, "source": ALTERNATIVES_SOURCE}, sort_keys=True, separators=(",", ":")) + "}"
+        if len(longer) <= INPUT_CHARS:
+            return longer
+    return text + "}"
 
 
 def _error_of(text: object) -> str | None:
