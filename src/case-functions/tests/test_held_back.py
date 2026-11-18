@@ -9,7 +9,7 @@ from dataclasses import replace
 from support import SUBSCRIPTION, NOW
 from test_names_and_cost import DEV, PROBLEM, a_subscription_with_a_bill, advisor_item, the_case
 from test_run_loop import OID, Moving, loop_for, watch
-from test_web_support import make_advice, make_advice_case, make_decision
+from test_web_support import make_advice, make_advice_case, make_decision, page_of
 
 from cases import brief, learning
 from cases.advisor import ADVICE_NONE
@@ -299,6 +299,10 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
         self.assertEqual((shown.outcome.state, shown.outcome.title), ("expired", "Taken back"))
         self.assertEqual(shown.outcome.lines, (brief.TAKEN_BACK["rules"], "Nothing was changed in Azure."))
         self.assertEqual(brief.taken_back(after), "rules")
+        _, text = page_of(kept, after)
+        self.assertIn("Taken back", text)
+        self.assertIn("Meternaut's rules changed, so it took this request back", text)
+        self.assertIn("Nothing was changed in Azure.", text)
 
     def test_a_finding_that_no_saving_backs_gets_no_held_request_either_and_is_not_asked_about_again(self):
         self.watch()
