@@ -68,6 +68,16 @@ def refresh(store, ranked: Sequence[Lead]) -> int:
     return changed
 
 
+def keep_approvers(ex, history: History) -> None:
+    """Gives the open requests the people that the list names now (Approvals.keep_approvers, with the same rule that chose them: `ex.approvers()`, and the owners as the floor) and says so in the
+    History in one line of counts, and only when something changed: a person who was added can answer the requests that were made before, and a person who is gone cannot."""
+    plans, added, dropped = ex.approvals.keep_approvers(ex.approvers(), tuple(p.oid for p in ex.people.with_role("owner")))
+    if plans:
+        history.emit("plan.approvers", plans=plans, added=added, dropped=dropped)
+    if getattr(ex.store, "truncated", None):
+        history.emit("plans.truncated", **ex.store.truncated)  # the lists of requests that the store cut at its cap, with how many rows it kept: counts only, one line for a Watch
+
+
 def held(history: History, case: CaseRecord, why: str = "") -> str:
     """Says in the History that a finding was held back, because it cannot say what to look at (`why` empty) or by a rule of cases/brief.py held_reason (`why` is its reason): its case stays, no request
     is made. Returns the words that it said."""

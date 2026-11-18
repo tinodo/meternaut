@@ -285,14 +285,17 @@ class AboutTheWeeklyDesk(unittest.TestCase):
         other.on_run(make_run())
         self.assertEqual(other.graph.sent, [])
 
-    def test_a_request_that_is_answered_or_out_of_time_does_not_wait(self):
-        for changes in ({"state": "declined"}, {"expires_at": "2026-11-03T09:00:00Z"}):
-            with self.subTest(changes=changes):
-                closed = Fixture()
-                closed.store.case_put(make_case(status="proposed"))
-                closed.store.plan_put(plan(**changes))
-                closed.on_run(make_run())
-                self.assertEqual(closed.graph.sent, [])
+    def test_a_request_that_is_answered_does_not_wait_and_an_old_end_time_closes_nothing(self):
+        closed = Fixture()
+        closed.store.case_put(make_case(status="proposed"))
+        closed.store.plan_put(plan(state="declined"))
+        closed.on_run(make_run())
+        self.assertEqual(closed.graph.sent, [])
+        old = Fixture()
+        old.store.case_put(make_case(status="proposed"))
+        old.store.plan_put(plan(expires_at="2026-11-03T09:00:00Z"))
+        old.on_run(make_run())
+        self.assertEqual(len(old.graph.sent), 1, "an open request waits however old it is")
 
     def test_a_request_that_only_asks_whether_it_is_worth_acting_on_has_no_letter_of_its_own_and_is_in_the_desk(self):
         advice = plan(plan_id="adv1", case_id="c2", family="advise", approval_class="R1", resource_name="disk-two", expires_at="2026-12-01T09:30:00Z")

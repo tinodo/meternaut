@@ -20,6 +20,8 @@ The work on names and on the cost that Cost Management shows added `CaseRecord.c
 `subscription_name` and `advice` (all empty: nothing was looked up), and `RunRecord.held` (0). Nothing was renamed or removed. A series of daily costs that is kept with no number above nothing is
 not drawn (cases/web/figures.py), so a record of before that holds thirty zeros for a resource that had no cost line shows what a record of now shows: no line.
 The page "What the AI looked at" added InvestigationRecord (its own table) and no field of an older record.
+The escalation of a request that waits (docs/proposals/30-escalation.md) added EscalationRecord (its own table) and the role `escalation`. A request no longer expires: `PlanRecord.expires_at` stays,
+because the digest of a plan covers every field, and is empty in a request made now; a plan of before keeps its value, which nothing reads as a deadline.
 """
 from __future__ import annotations
 
@@ -35,6 +37,7 @@ CASE_STATUSES = ("proposed", "needs_human", "dropped", "error", "awaiting_ok", "
 # What a case is while a person has still to answer, and what it is once the loop has finished with it.
 CASE_OPEN = ("awaiting_ok", "approved", "running")
 CASE_CLOSED = ("done", "failed", "declined", "expired", "verified", "acknowledged")
+# `expired` is the stored word for a request that Meternaut itself took back, with its reason in `preconditions["takenBack"]` (cases/brief.py TAKEN_BACK): no clock ends a request (AGENTS.md rule 38).
 PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn", "failed", "held")
 # The state of the request of a finding that a guard holds back (cases/approvals.py Approvals.settle): it is no open request, so nothing that lists the open ones (the Decisions page, the
 # letters of a request, the cards, the cap of ADVICE_OPEN_MAX) sees it, and it takes the answers that ask for nothing: a question, "not mine", "later" and "not worth it".
@@ -67,7 +70,12 @@ ACTION_STATES = ("queued", "running", "done", "failed", "unknown", "verified", "
 SWITCH_NAMES = ("all", "changes", "messages", "investigation")
 NOTE_KINDS = ("note", "do_not_touch")
 CHANNELS = ("email", "teams", "desk")
-ROLES = ("owner", "approver", "ops")
+ROLES = ("owner", "approver", "ops", "escalation")
+# Who an escalation step goes to, as the word that the record keeps (cases/escalation.py, cases/directory.py): the people the request was made for, the manager that the directory names, the
+# address of an escalation tag, the escalation contacts, or the owners when nothing else was found. And what a record of the ladder is: a step, a person's put-off ("later"), a pass-on ("not mine")
+# or the people who were added to the approvers of the request after it was made (Approvals.keep_approvers), whom the next step tells.
+ESCALATION_SOURCES = ("same", "manager", "tag", "contact", "owners")
+ESCALATION_KINDS = ("step", "snooze", "pass", "added")
 # The most characters that the address which the function app sends a person to (the sign-in of Microsoft Entra) may have after the host and the slash behind it. The pages refuse a
 # longer one, and the code that makes the address keeps to it.
 MAX_SIGNIN_PATH = 2000
@@ -232,6 +240,16 @@ class PlanRecord(Record):
     # SHA-256 over every other field of the plan but state and code (cases/families/digest.py), 64 hexadecimal characters. The sign-in binds it and the runner compares it before it acts:
     # empty only in a plan that was made before the digest existed, which cannot be approved.
     digest: str = ""
+    # When the wait of the request began, when that is before the request was made: a request that stands for another one keeps the oldest start (cases/approvals.py supersede). Not in the digest.
+    waiting_since: str = ""
+    # What the requests that this one stands for cost while they waited, in dollars (each at its own figure, for its own days, up to the day that this one was made). The cost of waiting adds what this one
+    # has cost since it was made. Not in the digest.
+    waited_usd: float = 0.0
+
+
+def started(plan: PlanRecord) -> str:
+    """When the wait of a request began: the start that it carries from the request that it stands for, else the time that it was made."""
+    return plan.waiting_since or plan.created_at
 
 
 @dataclass(frozen=True)
@@ -346,6 +364,41 @@ class MailRecord(Record):
     status: str  # sent, held, refused, failed
     plan_id: str | None = None
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class EscalationRecord(Record):
+    """One record of the ladder of a request that waits (cases/escalation.py): a step, made once, or a person's put-off. A step keeps who was told by which source, the words of what could not
+    be looked up, and what became of the message. Names are text from the directory: cut and cleaned, shown escaped, never trusted."""
+
+    plan_id: str
+    kind: str  # one of ESCALATION_KINDS
+    number: int  # the step (1, 2, ...) or the put-off (1, 2, 3)
+    at: str  # when it was made
+    source: str = ""  # one of ESCALATION_SOURCES (a step only)
+    who: tuple[str, ...] = ()  # object ids of the people that a step goes to; the person who put it off
+    names: tuple[str, ...] = ()
+    delivered: tuple[str, ...] = ()  # of `who`, those whose message the mailer accepted
+    channel: str = "email"
+    outcome: str = "due"  # due, held, failed or sent
+    notes: tuple[str, ...] = ()  # words of cases/directory.py NOTES: what could not be looked up on the way
+    detail: str = ""  # why a message is held or failed, in plain words
+    tries: int = 0
+    last_try: str = ""
+
+
+def escalated_to(records: typing.Iterable[EscalationRecord], oid: str) -> bool:
+    """Whether a step of the ladder of a request was delivered to this person (cases/escalation.py): a message that was sent, not one that was only meant for them."""
+    return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.delivered} for r in records)
+
+
+def may_answer(principal: "Principal", plan: PlanRecord, ladder: typing.Callable[[], typing.Iterable[EscalationRecord]] = lambda: ()) -> bool:
+    """The one rule of who may answer a request, for the decider and the pages. A person who is named on it may, with the role approver, or the role owner when it is advice, which changes nothing in
+    Azure. Advice may also be answered by a person that a step of its ladder was delivered to (`ladder` is read only when nothing else lets the person answer), whatever their role on the list: the
+    contacts, the owners, the people that the ladder came to last. Every answer of advice is theirs (worth acting on, not worth it, not mine, a question, decide later) and none of a change, which
+    only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
+    named = principal.oid.lower() in {a.lower() for a in plan.approvers}
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and escalated_to(ladder(), principal.oid))
 
 
 @dataclass(frozen=True)
@@ -525,6 +578,7 @@ class Store(Protocol):
         """The requests of the findings that a guard holds back (the state HELD), newest first. plans_recent leaves them out: they never end by the clock, and a bulk of them would crowd the newest plans."""
         ...
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]: ...
+    def plans_expired(self) -> list[PlanRecord]: ...
     def plan_get(self, plan_id: str) -> PlanRecord | None: ...
     def plan_put(self, plan: PlanRecord) -> None: ...
     def decisions_of_plan(self, plan_id: str) -> list[DecisionRecord]: ...
@@ -583,6 +637,15 @@ class Store(Protocol):
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         """The messages to one person that were sent at or after `since` (a time in the TIME_FORMAT)."""
         ...
+    def escalation_claim(self, record: EscalationRecord) -> bool:
+        """Keeps a step or a put-off only when none with that number is kept yet, and says whether it did: a step is made once, whoever asks."""
+        ...
+    def escalation_put(self, record: EscalationRecord) -> None: ...
+    def escalations_of(self, plan_id: str) -> list[EscalationRecord]: ...
+    def cursor_get(self) -> str:
+        """The key of the request that the last round of the ladder ended with (cases/escalation.py `_window`), or an empty text: the next round goes on with the request after it."""
+        ...
+    def cursor_put(self, key: str) -> None: ...
     def lesson_put(self, lesson: LessonRecord) -> None: ...
     def lessons_of(self, resource_type: str, limit: int = 500) -> list[LessonRecord]:
         """The lessons of one resource type (any family), at most `limit`."""

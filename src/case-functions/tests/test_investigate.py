@@ -189,7 +189,7 @@ def loop_for(clock, store=None, *, recheck_days=7):
     """The parts of the loop that a Watch run uses, with a store in memory."""
     store = store or MemoryStore(clock=clock)
     settings = loop_config.LoopSettings(store_account="stexample", change_scopes=(ChangeScope(SUBSCRIPTION, GROUP),), console_host="func.example.net",
-                                        mail_sender=None, planted_tag="meternaut-planted", plan_ttl_hours=72, recheck_days=recheck_days)
+                                        mail_sender=None, planted_tag="meternaut-planted", recheck_days=recheck_days)
     people = people_mod.People((people_mod.Person(OID, "Tino", ("owner", "approver", "ops"), "tino@example.com"),))
     return wiring.Extras(settings, store, people, Approvals(store, wiring.approval_settings(settings), clock))
 

@@ -118,7 +118,8 @@ class TheBriefOfADeleteDisk(unittest.TestCase):
 
     def test_the_age_the_end_the_models_and_nothing_decided_yet(self):
         b = self.brief
-        self.assertEqual((b.found_at, b.age_days, b.expires_at), (make_case().first_seen_at, 3, make_plan().expires_at))
+        self.assertEqual((b.found_at, b.age_days), (make_case().first_seen_at, 3))
+        self.assertFalse(hasattr(b, "expires_at"), "nothing expires")
         self.assertEqual(b.models, ("model-detective-x", "model-skeptic-y"))
         self.assertEqual((b.outcome.state, b.outcome.lines, b.two_people), ("", (), False))
         self.assertEqual((b.reasoning, b.doubt), ("The disk is not attached and nothing uses it.", "It may hold data that somebody wants."))
@@ -126,11 +127,18 @@ class TheBriefOfADeleteDisk(unittest.TestCase):
     def test_a_plan_of_two_people_says_so(self):
         self.assertTrue(brief_of(make_case(), make_plan(approval_class="R3")).two_people)
 
-    def test_an_open_plan_past_its_time_is_expired_and_has_no_answers(self):
-        late = brief_of(make_case(), make_plan(expires_at=at(minutes=-1)), may_answer=True)
-        self.assertEqual((late.state, late.answers, late.outcome.state), ("expired", (), "expired"))
-        self.assertEqual(brief_of(make_case(), make_plan(expires_at="not a time"), may_answer=True).state, "expired")
-        self.assertEqual(brief_of(make_case(), make_plan(expires_at=at()), may_answer=True).state, "expired", "a plan that ends at this moment has ended")
+    def test_an_open_plan_stays_open_whatever_its_old_end_time_says_and_has_its_answers(self):
+        for old_end in (at(minutes=-1), "not a time", at()):
+            late = brief_of(make_case(), make_plan(expires_at=old_end), may_answer=True)
+            self.assertEqual((late.state, late.outcome.state), ("open", ""))
+            self.assertIn("approve", late.answers, "no clock closes a request (AGENTS.md rule 38)")
+
+    def test_an_open_request_says_how_long_it_has_waited_with_whom_it_is_and_what_waiting_has_cost(self):
+        waited = brief_of(make_case(), make_plan(created_at=at(days=-9)), may_answer=True).waiting
+        self.assertEqual((waited.days, waited.with_whom, waited.told, waited.put_off), (9, "the people it was made for", (), 0))
+        self.assertTrue(waited.cost.startswith("9 days at $"), waited.cost)
+        self.assertNotIn("about", waited.cost, "a figure that is not a Scenario has no `about`")
+        self.assertIsNone(brief_of(make_case(), make_plan(state="declined")).waiting, "only an open request waits")
 
     def test_the_brief_is_the_same_for_the_same_records_and_a_naive_time_is_utc(self):
         one = brief_of(make_case(), make_plan())
@@ -204,7 +212,7 @@ class TheBriefOfAdvice(unittest.TestCase):
 class TheBriefWithoutAPlan(unittest.TestCase):
     def test_a_case_without_a_plan_is_information_and_asks_nothing(self):
         b = brief_of(make_case(), None, may_answer=True)
-        self.assertEqual((b.kind, b.family, b.state, b.plan_id, b.plan_code, b.expires_at), ("info", "", "none", "", "", ""))
+        self.assertEqual((b.kind, b.family, b.state, b.plan_id, b.plan_code), ("info", "", "none", "", ""))
         self.assertEqual(b.headline, "Consider deleting the disk planted-disk-1 in group meternaut-test-rg")
         self.assertEqual((b.change, b.who_acts, b.answers), (brief.NO_CHANGE, "", ()))
         self.assertEqual((b.undo.reversible, b.risk.level), (True, "low"))
@@ -629,10 +637,17 @@ class TheOutcome(unittest.TestCase):
     def test_a_request_that_is_open_has_no_outcome(self):
         self.assertEqual(self.outcome("open").state, "")
 
-    def test_expired_nobody_answered(self):
+    def test_a_request_that_a_timer_closed_says_so_and_never_that_nobody_answered_in_time(self):
         found = self.outcome("expired")
-        self.assertEqual((found.state, found.title, found.lines, found.result, found.at), ("expired", "Expired", ("Nobody answered in time.", "Nothing changed."),
-                                                                                       "Expired, nobody answered", make_plan().expires_at))
+        self.assertEqual((found.state, found.title, found.result, found.at), ("expired", "Taken back", "Closed by a timer", make_plan().expires_at))
+        self.assertNotIn("Nobody answered in time", " ".join(found.lines))
+        self.assertIn("A timer closed this request before Meternaut kept every request open.", found.lines[0])
+        self.assertNotIn("opened again", " ".join(found.lines))
+
+    def test_a_request_that_meternaut_took_back_says_why(self):
+        plan = make_plan(state="expired", preconditions={"takenBack": "group"})
+        found = brief_of(make_case(), plan).outcome
+        self.assertEqual((found.title, found.result, found.lines[0]), ("Taken back", "Taken back by Meternaut", brief.TAKEN_BACK["group"]))
 
     def test_declined_names_who_and_the_reason(self):
         found = self.outcome("declined", decisions=[make_decision(decision="decline", reason="handled", approver_name="Maya")])

@@ -111,7 +111,6 @@ class Executed:
 
 @dataclass
 class TickResult:
-    expired: list[PlanRecord] = field(default_factory=list)
     finished: list[ActionRecord] = field(default_factory=list)
     verified: list[ActionRecord] = field(default_factory=list)
 
@@ -439,12 +438,11 @@ def verdict_text(family: Family, verification: dict, said: str) -> str:
 
 
 def tick(s: RunnerServices) -> TickResult:
-    """What runs every minute: closes the plans that have expired and the approvals whose change never started or never showed, finishes a refusal that stopped half way, and checks the changes
-    that were made.
+    """What runs every minute: closes the approvals whose change never started or never showed, finishes a refusal that stopped half way, and checks the changes that were made. No request is closed
+    by a clock: a request that waits is escalated (cases/escalation.py), and ends by an answer, by the finding not being true any more, or by Meternaut taking it back with a reason.
 
     It makes no change: its token is the reader's and its list of calls holds no write."""
     result = TickResult()
-    result.expired = Approvals(s.store, s.settings, s.clock).expire()
     now = s.clock()
     for action in s.store.actions_recent(50):
         if action.state == "withdrawn":

@@ -1,9 +1,11 @@
+import dataclasses
 import re
 import unittest
 
 from test_web_support import MAYA, NOW, OPS, OWNER, SUB, STRANGER, TINO, XSS, XSS_ESCAPED, Console, FailingStore, at, make_action, make_case, make_plan, snapshot
 
 from cases import pricing
+from cases.brief import ESCALATION_OFF
 from cases.memory_store import MemoryStore
 from cases.models import CASE_STATUSES, StoreError
 
@@ -11,7 +13,7 @@ PATH = "/ops/savings"
 AMOUNTS = {"proposed": 10.0, "needs_human": 20.0, "awaiting_ok": 30.0, "approved": 40.0, "running": 50.0, "done": 60.0, "verified": 70.0, "acknowledged": 80.0,
            "declined": 91.0, "expired": 101.0, "dropped": 111.0, "error": 121.0, "failed": 131.0}
 SCENARIO = ("needs_human", "acknowledged")  # the findings whose figure is Azure Advisor's own estimate: the level Scenario
-ROWS = ("Waiting for a person", "Being made", "Made, not yet confirmed", "Confirmed by Cost Management", "Worth acting on", "Declined or expired", "Dropped", "Could not be finished")
+ROWS = ("Waiting for a person", "Being made", "Made, not yet confirmed", "Confirmed by Cost Management", "Worth acting on", "Declined", "Taken back", "Dropped", "Could not be finished")
 EXPECTED_BASIS = "Based on the cost lines of the last 30 days."
 SCENARIO_BASIS = "Based on Azure Advisor's own estimate: no cost line of this resource backs it."
 NOTHING_CHANGED = "Nothing was changed, so no saving is claimed for this approval."
@@ -103,10 +105,10 @@ class TheSavingsPage(unittest.TestCase):
     def test_each_finding_is_counted_once_in_the_row_of_what_became_of_it(self):
         counts = {name: row["Findings"] for name, row in rows_of(self.reply).items()}
         self.assertEqual(counts, {"Waiting for a person": "3", "Being made": "2", "Made, not yet confirmed": "1", "Confirmed by Cost Management": "1", "Worth acting on": "1",
-                                  "Declined or expired": "2", "Dropped": "1", "Could not be finished": "2"})
+                                  "Declined": "1", "Taken back": "1", "Dropped": "1", "Could not be finished": "2"})
         self.assertEqual(sum(int(count) for count in counts.values()), len(CASE_STATUSES))
         for statuses, name in ((("proposed", "needs_human", "awaiting_ok"), "Waiting for a person"), (("approved", "running"), "Being made"), (("done",), "Made, not yet confirmed"),
-                               (("verified",), "Confirmed by Cost Management"), (("acknowledged",), "Worth acting on"), (("declined", "expired"), "Declined or expired"),
+                               (("verified",), "Confirmed by Cost Management"), (("acknowledged",), "Worth acting on"), (("declined",), "Declined"), (("expired",), "Taken back"),
                                (("dropped",), "Dropped"), (("error", "failed"), "Could not be finished")):
             with self.subTest(name=name):
                 console = Console()
@@ -120,13 +122,15 @@ class TheSavingsPage(unittest.TestCase):
         self.assertEqual(rows["Being made"]["Saving a year"], f"$1,080 a year Saves, Expected. $90.00 a month. {EXPECTED_BASIS}")
         self.assertEqual(rows["Made, not yet confirmed"]["Saving a year"], f"$720 a year Saves, Expected. $60.00 a month. {EXPECTED_BASIS}")
         self.assertEqual(rows["Worth acting on"]["Saving a year"], f"$960 a year Saves, Scenario. $80.00 a month. {SCENARIO_BASIS}")
-        for name in ("Declined or expired", "Dropped", "Could not be finished"):
+        for name in ("Declined", "Taken back", "Dropped", "Could not be finished"):
             with self.subTest(name=name):
                 self.assertEqual((rows[name]["Saving a year"], rows[name]["Findings with no saving figure"]), ("No saving is claimed.", "Not added up."))
                 self.assertNotRegex(rows[name]["What became of it"] + rows[name]["Saving a year"], r"\$")
-        self.assertIn("A person said no, or nobody answered in time. Nothing changed.", rows["Declined or expired"]["What became of it"])
+        self.assertIn("A person said no. Nothing changed.", rows["Declined"]["What became of it"])
+        self.assertIn("Meternaut took the request back, and the request says why.", rows["Taken back"]["What became of it"])
+        self.assertNotIn("nobody answered in time", self.reply.content, "nothing ends by the clock")
         self.assertIn("Cost Management reports a cost 8 to 72 hours after it happens.", rows["Made, not yet confirmed"]["What became of it"])
-        self.assertIn("A person has to answer or look at it before anything changes. Findings that are held back, with no request yet, are here too.", rows["Waiting for a person"]["What became of it"])
+        self.assertIn("A person has to answer or look at it before anything changes. Nothing closes it by time: if nobody answers, it goes on to the next person.", rows["Waiting for a person"]["What became of it"])
         text = self.reply.content
         for amount in ("$1,092", "$1,212", "$1,332", "$1,452", "$1,572", "$6,660", "$10,440"):
             self.assertNotIn(amount, text, "what was declined, expired, dropped or not finished is added up nowhere")
@@ -296,7 +300,7 @@ class TheWindowsAndTheFailures(unittest.TestCase):
         reply = console.get(PATH)
         rows = rows_of(reply)
         self.assertEqual((rows["Dropped"]["Findings"], rows["Could not be finished"]["Findings"]), ("At least 1,000", "999"))
-        self.assertEqual(rows["Declined or expired"]["Findings"], "0")
+        self.assertEqual(rows["Declined"]["Findings"], "0")
         self.assertIn("up to 1,000 findings of each status", reply.content)
 
     def test_a_counted_status_that_holds_a_thousand_findings_gives_its_savings_as_at_least_and_the_tiles_say_that_they_are_not_complete(self):
@@ -331,7 +335,7 @@ class TheWindowsAndTheFailures(unittest.TestCase):
                     self.assertTrue(found[1].endswith("Not complete: there may be more."), found[1])
                 else:
                     self.assertEqual(found[:2], ("$3,780 a year", "8 findings · Scenario, Expected, Verified. The basis is in the table."), "a status that is not added up is not in the tile")
-                    self.assertEqual(rows_of(reply)["Declined or expired"]["Findings"], "2")
+                    self.assertEqual(rows_of(reply)["Declined"]["Findings"], "1")
 
     def test_a_group_of_two_statuses_that_is_read_in_part_gives_at_least_and_says_that_part_cannot_be_read(self):
         console = Console(store=OneStatusDown("awaiting_ok", lambda: NOW))
@@ -422,6 +426,19 @@ class WhatItShowsOfTheEstate(unittest.TestCase):
     def test_a_page_that_is_the_same_for_the_same_records(self):
         one, two = seeded().get(PATH), seeded().get(PATH)
         self.assertEqual(one.text, two.text)
+
+
+class TheNoticeWhenTheLadderDoesNotRun(unittest.TestCase):
+    def test_the_start_page_the_savings_page_and_the_request_page_say_that_nothing_is_passed_on_when_no_mail_sender_is_set_up_and_say_nothing_when_it_is(self):
+        console = Console()
+        console.store.case_put(make_case())
+        console.store.plan_put(make_plan())
+        paths = ("/", PATH, "/ok/plan0001")
+        for path in paths:
+            self.assertNotIn(ESCALATION_OFF, console.get(path).content, path)
+        console.services = dataclasses.replace(console.services, escalating=False)
+        for path in paths:
+            self.assertIn(ESCALATION_OFF, console.get(path).content, path)
 
 
 class WhoMayOpenIt(unittest.TestCase):

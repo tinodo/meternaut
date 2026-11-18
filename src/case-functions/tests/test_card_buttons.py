@@ -240,7 +240,7 @@ class WhenNothingCanBeAnsweredOnTheCard(unittest.TestCase):
                 self.assertEqual(urls(card), [URL], "no button that answers is on a card that nothing can answer")
 
     def test_a_request_that_is_over_or_that_this_person_may_not_answer_has_no_answers_either(self):
-        for label, brief in (("declined", brief_of(plan=make_plan(state="declined"))), ("expired", brief_of(plan=make_plan(expires_at="2026-11-04T09:30:00Z"))),
+        for label, brief in (("declined", brief_of(plan=make_plan(state="declined"))), ("taken back", brief_of(plan=make_plan(state="expired"))),
                              ("not theirs", brief_of(may_answer=False)), ("a finding", brief_of(plan=make_advice_plan(state="consumed")))):
             with self.subTest(label):
                 self.assertEqual(cards.answers_of(brief), ())

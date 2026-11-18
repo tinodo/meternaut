@@ -1,18 +1,22 @@
 """A request for a group of resources closes the older requests for single resources of that group (cases/approvals.py: supersede, which the Watch calls after the investigation), and an
 advice that nobody answered is not a row of "Recently decided" (cases/web/home.py). Everything in these tests is invented.
 """
+import datetime as dt
 import unittest
 from dataclasses import replace
 
 from support import APP_ROOT  # noqa: F401
 
 from cases.approvals import Approvals
+from cases.brief import waiting_cost
 from cases.memory_store import MemoryStore, stamp
-from cases.models import ADVISE, GROUP_FACT
+from cases.models import ADVISE, GROUP_FACT, EscalationRecord, started
 from test_advise import NAMED, SETTINGS, Clock
 from test_run import estate_with, investigating, of_type
 from test_run_loop import Moving, loop_for
 from test_web_support import NOW, SUB, FailingStore, make_advice_case, make_decision
+
+OID = "aaaaaaaa-1111-4222-8333-444444444444"
 
 
 def short(n: int) -> str:
@@ -104,14 +108,12 @@ class WhenTheRequestOfAGroupWaits(unittest.TestCase):
         self.assertEqual(sorted(plan.case_id for plan in closed), [f"k{short(3)}", f"k{short(4)}", f"k{short(5)}"])
         self.assertEqual((self.state(1), self.state(2)), ("open", "open"))
 
-    def test_a_closed_plan_ends_when_it_was_closed_and_not_at_the_time_that_was_set_for_it(self):
-        before = self.plans[1].expires_at
+    def test_a_closed_plan_ends_when_it_was_closed_and_says_why_it_was_taken_back(self):
         self.clock.advance(hours=5)
         self.approvals.supersede()
         closed = self.store.plan_get(self.plans[1].plan_id)
-        self.assertEqual((closed.state, closed.expires_at), ("expired", stamp(self.clock())))
-        self.assertLess(closed.expires_at, before, "the 72 hours that were set for it were not over")
-        self.assertEqual(self.store.plan_get(self.plans[6].plan_id).expires_at, self.plans[6].expires_at, "the request of the group keeps its own time")
+        self.assertEqual((closed.state, closed.expires_at, closed.preconditions["takenBack"]), ("expired", stamp(self.clock()), "group"))
+        self.assertEqual(self.store.plan_get(self.plans[6].plan_id).expires_at, self.plans[6].expires_at, "the request of the group is not touched")
 
     def test_a_member_list_that_is_not_a_list_of_text_closes_nothing_and_raises_nothing(self):
         for members in ("text", None, [1, 2, None], {"a": 1}):
@@ -128,6 +130,79 @@ class WhenTheRequestOfAGroupWaits(unittest.TestCase):
                 asked(store, self.clock, range(1, 7), group=6, of=range(1, 7))
                 store.fail = {name}
                 self.assertEqual(Approvals(store, SETTINGS, self.clock).supersede(), [])
+
+
+class WhenARequestIsMadeAgain(unittest.TestCase):
+    """The wait of a finding does not start again when a request stands for another one: the Watch makes requests again often, and a wait that restarted would never reach its first step."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.store = MemoryStore(clock=self.clock)
+        self.approvals = Approvals(self.store, SETTINGS, self.clock)
+
+    def test_the_request_of_a_group_keeps_the_oldest_start_and_the_steps_that_were_made_for_the_requests_that_it_stands_for(self):
+        plans = asked(self.store, self.clock, range(1, 7), group=6, of=range(1, 7))
+        self.store.plan_put(replace(plans[1], created_at="2026-10-20T08:00:00Z"))
+        self.store.escalation_claim(EscalationRecord(plans[1].plan_id, "step", 1, "2026-10-23T08:00:00Z", "same", (OID,), ("Ada",), (OID,), "email", "sent"))
+        self.approvals.supersede()
+        stands = self.store.plan_get(plans[6].plan_id)
+        self.assertEqual((started(stands), stands.created_at), ("2026-10-20T08:00:00Z", plans[6].created_at))
+        self.assertEqual([(r.kind, r.number, r.delivered) for r in self.store.escalations_of(stands.plan_id)], [("step", 1, (OID,))], "the reminder that was sent is not sent again")
+        self.assertEqual(stands.digest, plans[6].digest, "the start is no part of what a person approves")
+
+    def test_a_fresher_request_of_a_group_that_stands_for_an_older_one_keeps_the_start_of_the_older(self):
+        older = single(6)
+        self.store.case_put(older)
+        before = self.approvals.advise(older, NAMED)
+        self.store.case_put(grouped(older, range(1, 7)))
+        self.clock.advance(days=2)
+        newer = single(7)
+        self.store.case_put(newer)
+        after = self.approvals.advise(newer, NAMED)
+        self.store.case_put(grouped(newer, range(2, 8)))
+        self.approvals.supersede()
+        self.assertEqual(self.store.plan_get(before.plan_id).state, "expired")
+        stands = self.store.plan_get(after.plan_id)
+        self.assertEqual((stands.state, started(stands), stands.created_at), ("open", before.created_at, after.created_at))
+
+    def test_a_group_that_stands_for_singles_costs_the_sum_of_what_each_cost_for_its_own_days_and_not_its_whole_figure_for_the_oldest_days(self):
+        plans = asked(self.store, self.clock, range(1, 4), group=3, of=range(1, 4))
+        for n, days, saving in ((1, 10, 30.0), (2, 5, 60.0)):  # one waited 10 days at $30 a month, the other 5 days at $60, and the group is made now with all three
+            self.store.plan_put(replace(plans[n], created_at=stamp(self.clock() - dt.timedelta(days=days)), saving_usd_month=saving))
+        self.store.plan_put(replace(plans[3], saving_usd_month=120.0))
+        self.approvals.supersede()
+        stands = self.store.plan_get(plans[3].plan_id)
+        self.assertEqual((stands.waited_usd, started(stands)), (20.0, stamp(self.clock() - dt.timedelta(days=10))), "$10 and $10: not $120 a month over 10 days, which is $40")
+        self.assertEqual(stands.digest, plans[3].digest, "what was carried is no part of what a person approves")
+        self.clock.advance(days=3)
+        text = waiting_cost(120.0, "Expected", 13, stands.waited_usd, 3)
+        self.assertIn("$32 so far, of which $20 is what the requests that this one replaced cost for the days that each of them waited", text)
+        self.assertEqual(waiting_cost(120.0, "Expected", 13), "13 days at $120.00 a month is $52", "a request that replaced none reads as it always did")
+
+    def test_a_request_that_stands_for_one_with_the_same_members_carries_what_it_cost_so_far(self):
+        older = single(6)
+        self.store.case_put(older)
+        before = self.approvals.advise(older, NAMED)
+        self.store.plan_put(replace(before, saving_usd_month=90.0, waited_usd=6.0))
+        self.store.case_put(grouped(older, range(1, 7)))
+        self.clock.advance(days=2)
+        newer = single(7)
+        self.store.case_put(newer)
+        after = self.approvals.advise(newer, NAMED)
+        self.store.case_put(grouped(newer, range(2, 8)))
+        self.approvals.supersede()
+        self.assertEqual(self.store.plan_get(after.plan_id).waited_usd, 12.0, "$6 that it carried and $90 a month for the 2 days that it stood")
+
+    def test_a_request_that_asks_another_question_starts_when_it_is_made_and_the_closed_word_of_the_old_one_says_why(self):
+        case = single(1)
+        self.store.case_put(case)
+        old = self.approvals.advise(case, NAMED)
+        self.store.plan_put(replace(old, state="expired", preconditions={**old.preconditions, "takenBack": "rules"}))
+        self.clock.advance(days=9)
+        self.store.case_put(replace(case, plan_id=None))
+        again = self.approvals.advise(self.store.case_get(case.case_id), NAMED)
+        self.assertEqual((again.waiting_since, again.created_at), ("", stamp(self.clock())))
+        self.assertEqual(self.store.plan_get(old.plan_id).preconditions["takenBack"], "rules")
 
 
 class WhenTheWatchRuns(unittest.TestCase):

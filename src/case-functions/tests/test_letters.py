@@ -276,9 +276,9 @@ class WhatEveryLetterHas(unittest.TestCase):
         for moment in (naive, zoned):
             self.assertEqual(letters.approval_letter(plan, case, PERSON, BASE, moment), letters.approval_letter(plan, case, PERSON, BASE, NOW))
             self.assertEqual(letters.digest_letter(PERSON, BASE, moment, waiting(2)), letters.digest_letter(PERSON, BASE, NOW, waiting(2)))
-        late = dt.datetime(2026, 11, 8, 9, 45, 0, tzinfo=dt.timezone.utc)
-        self.assertIsNone(letters.digest_letter(PERSON, BASE, late, [(plan, case)]), "after its time a request does not wait")
-        self.assertIsNone(letters.digest_letter(PERSON, BASE, late.astimezone(dt.timezone(dt.timedelta(hours=-5))), [(plan, case)]))
+        late = dt.datetime(2026, 12, 8, 9, 45, 0, tzinfo=dt.timezone.utc)
+        self.assertIsNotNone(letters.digest_letter(PERSON, BASE, late, [(plan, case)]), "no clock ends a request: it waits however old it is")
+        self.assertEqual(letters.digest_letter(PERSON, BASE, late, [(plan, case)]), letters.digest_letter(PERSON, BASE, late.astimezone(dt.timezone(dt.timedelta(hours=-5))), [(plan, case)]))
 
     def test_a_letter_cannot_be_changed_after_it_is_made(self):
         letter = letters.first_contact_letter(PERSON, BASE, NOW)
@@ -461,13 +461,11 @@ class Approval(unittest.TestCase):
                 self.assertIn("See the request", letter.html)
                 self.assertNotIn(">Review and decide<", letter.html)
 
-    def test_an_open_plan_past_its_time_says_so(self):
-        letter = self.letter(plan=make_plan(expires_at="2026-11-05T10:00:00Z"))
-        self.assertIn("This request is closed: expired.", letter.text)
-        self.assertIn("See the request", letter.html)
-
-    def test_a_time_that_cannot_be_read_is_not_shown_as_waiting(self):
-        self.assertIn("This request is closed: expired.", self.letter(plan=make_plan(expires_at="soon")).text)
+    def test_an_open_plan_whose_old_end_time_has_passed_is_still_an_open_request(self):
+        for old_end in ("2026-11-05T10:00:00Z", "soon"):
+            letter = self.letter(plan=make_plan(expires_at=old_end))
+            self.assertNotIn("This request is closed", letter.text)
+            self.assertIn("Review and decide", letter.html)
 
     def test_the_plan_id_in_the_link_must_be_an_opaque_id(self):
         for bad in ("", "../x", "a b", "p?x=1", "x" * 65, "p\n1", "p/../q"):
@@ -505,10 +503,9 @@ class Digest(unittest.TestCase):
         self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, []))
         closed = [(dataclasses.replace(plan, state="declined"), case) for plan, case in waiting(2)]
         self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, closed))
-        past = [(dataclasses.replace(plan, expires_at="2026-11-05T10:00:00Z"), case) for plan, case in waiting(2)]
-        self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, past), "a request past its time does not wait")
-        unreadable = [(dataclasses.replace(plan, expires_at="soon"), case) for plan, case in waiting(2)]
-        self.assertIsNone(letters.digest_letter(PERSON, BASE, NOW, unreadable), "a time that cannot be read is over, as the page counts it")
+        for old_end in ("2026-11-05T10:00:00Z", "soon"):
+            old = [(dataclasses.replace(plan, expires_at=old_end), case) for plan, case in waiting(2)]
+            self.assertIsNotNone(letters.digest_letter(PERSON, BASE, NOW, old), "an old end time closes nothing: the request waits")
 
     def test_it_lists_the_requests_that_wait_one_line_each_with_the_title_and_the_figure_a_year_and_its_level_the_largest_first(self):
         letter = self.digest(3)

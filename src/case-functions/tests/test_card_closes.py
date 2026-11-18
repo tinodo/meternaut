@@ -92,8 +92,10 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         not_mine = dataclasses.replace(self.ANNA, decision="not_mine")
         self.assertIn("Decided: Withdrawn by Anna, 5 Nov 10:30 UTC.", self.closing(make_plan(state="withdrawn"), decisions=[not_mine])["closed"]["text"])
 
-    def test_an_expired_request_says_expired(self):
-        self.assertEqual(self.closing(make_plan(expires_at="2026-11-04T09:30:00Z"))["closed"]["text"], "Expired. Nothing more to do.")
+    def test_a_request_that_meternaut_took_back_says_so_on_its_closing_card(self):
+        said = self.closing(make_plan(state="expired", preconditions={"takenBack": "group"}))["closed"]["text"]
+        self.assertTrue(said.startswith("Taken back. Meternaut took this request back"), said)
+        self.assertNotIn("Nobody answered", said)
 
     def test_a_name_cannot_start_a_link_or_a_list(self):
         hostile = dataclasses.replace(self.ANNA, approver_name="[x](https://evil.example) **b**")
@@ -232,7 +234,7 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
         made = ActionRecord(cs.PLAN_ID, "c1", "delete-disk", "r1", "done", "2026-11-05T10:30:00Z", finished_at="2026-11-05T10:31:00Z", result="Deleted.")
         for make, state, decision, action, words in ((cs.change_plan, "consumed", "approve", made, "Decided: Approved and done by Anna"),
                                                      (cs.advice_plan, "consumed", "approve", None, "Decided: Worth acting on by Anna"),
-                                                     (cs.advice_plan, "expired", None, None, "Expired. Nothing more to do.")):
+                                                     (cs.advice_plan, "expired", None, None, "Taken back. A timer closed this request")):
             with self.subTest(state=state, plan=make.__name__):
                 world = cs.World()
                 plan = world.open_plan(make(expires_at="2026-12-01T00:00:00Z"))
@@ -345,7 +347,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
 
     def test_a_card_that_was_closed_is_not_a_card_that_was_sent_when_the_request_is_open_again(self):
         self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
-        self.assertEqual(self.closing(), ["Expired. Nothing more to do."])
+        self.assertEqual(self.closing()[0][:34], "Taken back. A timer closed this re")
         self.world.store.plan_put(self.plan)
         self.fake.calls.clear()
         self.world.clock.advance(minutes=1)
@@ -355,7 +357,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
         offers.record_posted(written(message="1731331299999"), self.world.store, self.world.people, self.world.clock)
         self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
         self.fake.calls.clear()
-        self.assertEqual(self.closing(), ["Expired. Nothing more to do."])
+        self.assertEqual(self.closing()[0][:34], "Taken back. A timer closed this re")
         (update,) = self.fake.messages()
         self.assertEqual(update["message"], "1731331299999", "the new card closes in its turn, and the old one is not closed again")
 

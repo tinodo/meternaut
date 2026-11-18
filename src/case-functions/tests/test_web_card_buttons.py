@@ -343,14 +343,14 @@ class WhenTheButtonCannotBeUsed(unittest.TestCase):
                 self.assert_nothing_is_sent(reply, status)
                 self.assertEqual(reply.headings(1), [title])
 
-    def test_a_request_whose_time_is_over_says_so_even_before_the_timer_has_closed_it(self):
+    def test_a_request_with_an_old_end_time_has_no_expiry_page_and_still_takes_the_answer(self):
         console = seeded()
         query = token_for(console, "plan0001", "decline")
         console.store.plan_put(make_plan(expires_at=at(minutes=-1)))
         reply = console.get("/ok/plan0001/decline", query=query)
-        self.assert_nothing_is_sent(reply, 410)
-        self.assertEqual(reply.headings(1), ["This request expired"])
-        self.assertEqual(console.store.plan_get("plan0001").state, "open", "a page records nothing: the timer closes it")
+        self.assertEqual(reply.status, 200)
+        self.assertNotEqual(reply.headings(1), ["This request expired"])
+        self.assertEqual(console.store.plan_get("plan0001").state, "open", "a page records nothing")
 
     def test_a_switch_that_holds_the_answers_is_said_and_the_token_is_kept(self):
         console = seeded()

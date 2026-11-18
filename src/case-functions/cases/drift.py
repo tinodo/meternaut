@@ -185,6 +185,8 @@ def probes(endpoint: str, gateway_host: str) -> list[tuple[str, tuple, str, str,
     watch = http.allowed_calls(endpoint, gateway_host or None)
     own = drift_calls(endpoint)
     docs = http.docs_calls()
+    directory = http.directory_calls()
+    users = f"https://{http.GRAPH_HOST}/v1.0/users"
     page_host, prefix = next(iter(http.DOCS_PAGES.items()))
     page = f"https://{page_host}{prefix}probe/page"
     delete, put, patch = CHANGING
@@ -229,6 +231,18 @@ def probes(endpoint: str, gateway_host: str) -> list[tuple[str, tuple, str, str,
         ("another host by the study", docs, "GET", "https://example.invalid/en-us/probe", False),
         ("the estate by the study", docs, "GET", f"{ARM}/subscriptions", False),
         ("a documentation page by the watch", watch, "GET", page, False),
+        # The escalation's own list (http.directory_calls): the profile and the manager of one person, read with GET, and nothing else.
+        ("a profile by the escalation", directory, "GET", f"{users}/{EXAMPLE_ID}", True),
+        ("a manager by the escalation", directory, "GET", f"{users}/{EXAMPLE_ID}/manager", True),
+        ("a profile by address by the escalation", directory, "GET", f"{users}/probe@example.invalid", True),
+        ("a change of a profile by the escalation", directory, patch, f"{users}/{EXAMPLE_ID}", False),
+        ("a change of a manager by the escalation", directory, put, f"{users}/{EXAMPLE_ID}/manager/$ref", False),
+        ("the list of people by the escalation", directory, "GET", users, False),
+        ("the groups of a person by the escalation", directory, "GET", f"{users}/{EXAMPLE_ID}/memberOf", False),
+        ("the beta version by the escalation", directory, "GET", f"https://{http.GRAPH_HOST}/beta/users/{EXAMPLE_ID}", False),
+        ("another host by the escalation", directory, "GET", f"https://example.invalid/v1.0/users/{EXAMPLE_ID}", False),
+        ("the estate by the escalation", directory, "GET", f"{ARM}/subscriptions", False),
+        ("the directory by the watch", watch, "GET", f"{users}/{EXAMPLE_ID}", False),
         # The public price list, which the Watch's tool for the prices of alternatives reads (cases/prices.py): one GET with no token on its one path, and nothing else of that host.
         ("the price list by the watch", watch, "GET", f"https://{http.PRICES_HOST}{http.PRICES_PATH}", True),
         ("a post to the price list by the watch", watch, "POST", f"https://{http.PRICES_HOST}{http.PRICES_PATH}", False),

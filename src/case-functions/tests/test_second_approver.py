@@ -121,8 +121,8 @@ class TheFirstPersonConfirms(TwoFlow):
             self.assertEqual(self.confirm().kind, "refused_paused", f"the switch {name} holds a confirmation as it holds an approval")
             self.store.switch_put(SwitchRecord(name=name, paused=False))
         self.clock.advance(hours=73)
-        self.assertEqual(self.confirm().kind, "expired")
-        self.assertEqual(self.store.decisions_of_plan(self.plan.plan_id), [])
+        self.assertEqual(self.confirm().kind, "confirmed", "no clock closes a request: it is confirmed after any time, and the change is read again at the runner")
+        self.assertEqual(len(self.store.decisions_of_plan(self.plan.plan_id)), 1)
 
     def test_a_plan_that_is_not_the_one_that_its_digest_names_cannot_be_confirmed(self):
         self.store.plan_put(replace(self.plan, what_changes="Somebody changed this text."))  # the digest and the code are those of the old text

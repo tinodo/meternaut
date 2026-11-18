@@ -236,7 +236,7 @@ stateDiagram-v2
     Sent --> Talking : Ask or tell
     Talking --> Sent : the answer arrives in the same thread
     Sent --> PlanShown : Review the plan
-    PlanShown --> Closed : approved on the page or the plan expires
+    PlanShown --> Closed : approved on the page or taken back
     PlanShown --> Sent : Cancel or Open the Recommendation
     Sent --> Reminded : day 7, once
     Reminded --> Sent : Open the Recommendation

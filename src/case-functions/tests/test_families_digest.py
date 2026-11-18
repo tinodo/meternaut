@@ -35,7 +35,7 @@ CHECKED = frozenset(field.name for field in dataclasses.fields(PlanRecord)) - se
 def different(value, name=""):
     """A value of the same type as `value` that is not equal to it (a time stays a time that can be read)."""
     if name in ("created_at", "expires_at"):
-        return stamp(parse(value) + dt.timedelta(days=1))
+        return stamp(parse(value) + dt.timedelta(days=1)) if value else "2026-11-01T00:00:00Z"  # a plan has no end time any more: any time is another value
     if isinstance(value, bool):
         return not value
     if isinstance(value, (int, float)):
@@ -87,16 +87,16 @@ class TheDigest(unittest.TestCase):
         advice = world.approvals.advise(case, (OID,))
         self.assertEqual((advice.digest, advice.code), (plan_digest.digest_of(advice), plan_digest.code_of(advice.digest)))
 
-    def test_each_field_but_the_three_that_follow_from_the_rest_changes_the_digest(self):
-        self.assertEqual(CHECKED, {field.name for field in dataclasses.fields(PlanRecord)} - {"state", "digest", "code"})
+    def test_each_field_but_the_five_that_follow_from_the_rest_or_are_no_part_of_the_request_changes_the_digest(self):
+        self.assertEqual(CHECKED, {field.name for field in dataclasses.fields(PlanRecord)} - {"state", "digest", "code", "waiting_since", "waited_usd"})
         for name in sorted(CHECKED):
             with self.subTest(field=name):
                 other = replace(self.plan, **{name: different(getattr(self.plan, name), name)})
                 self.assertNotEqual(plan_digest.digest_of(other), self.plan.digest)
                 self.assertNotEqual(plan_digest.problem(other, self.plan.digest), "")
 
-    def test_the_state_the_digest_and_the_code_are_not_part_of_it(self):
-        for name, value in (("state", "approved"), ("state", "consumed"), ("code", "ABCD1234"), ("digest", "0" * 64)):
+    def test_the_state_the_digest_the_code_and_the_start_of_the_wait_are_not_part_of_it(self):
+        for name, value in (("state", "approved"), ("state", "consumed"), ("code", "ABCD1234"), ("digest", "0" * 64), ("waiting_since", "2026-10-01T00:00:00Z"), ("waited_usd", 12.5)):
             self.assertEqual(plan_digest.digest_of(replace(self.plan, **{name: value})), self.plan.digest, name)
 
     def test_the_parameters_of_the_change_are_in_the_digest_whatever_the_order_of_their_keys(self):

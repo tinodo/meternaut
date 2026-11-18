@@ -9,14 +9,13 @@ one sentence says so and says when the Watch looks next. The switches, the runs 
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
 from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, things
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
-from .common import (brief_of, cases_by_id, counted as _count, decisions_for, effective_state, is_expired, may_answer, measured_tile, read,
-                     verified_brief)
+from .common import answerable, brief_of, cases_by_id, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
                       use_block)
@@ -25,6 +24,7 @@ from .layout import code, details, kpi, kpis, link, notice, page, paragraph, tab
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
 ROWS_MAX = 100
 DECIDED_SHOWN = 5
+LONGEST_SHOWN = 3
 DECIDED_CONSIDERED = 12
 RECENT_PLANS = 60
 RECENT_ACTIONS = 100
@@ -34,7 +34,7 @@ HELD_LISTED = 10  # the findings that a guard holds back which the start page li
 SORTS = (("impact", "Impact", "Most at stake first."), ("age", "Age", "Waiting longest first."), ("risk", "Risk", "Lowest risk first."))
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
-            "withdrawn": ("Withdrawn", "", "square"), "expired": ("Expired", "", "square")}
+            "withdrawn": ("Withdrawn", "", "square"), "expired": ("Taken back", "", "square")}
 
 
 @dataclass(frozen=True)
@@ -324,7 +324,7 @@ def _held(ctx: Ctx) -> Safe:
 def _held_rows(ctx: Ctx) -> list[tuple[str, Safe]]:
     """One line for each finding that a guard holds back and that this person is named for, with the id of its case: its title with a link to its page, its figure, and why no request was made."""
     plans, _ = read(lambda: ctx.store.plans_held(), [])
-    mine = [plan for plan in plans if may_answer(ctx.principal, plan)]  # type: ignore[arg-type]
+    mine = [plan for plan in plans if answerable(ctx, plan)]
     cases = cases_by_id(ctx, {plan.case_id for plan in mine})
     rows = []
     for plan in mine:
@@ -349,10 +349,14 @@ def _open(ctx: Ctx) -> tuple[list[Row], bool]:
     plans, ok = read(lambda: ctx.store.plans_open(), [])
     if not ok:
         return [], False
-    mine = [p for p in plans if p.state == "open" and may_answer(ctx.principal, p) and not is_expired(ctx, p)]  # type: ignore[arg-type]
+    mine = [p for p in plans if p.state == "open" and answerable(ctx, p)]
     later_ids = {d.plan_id for d in read(lambda: ctx.store.decisions_by(ctx.principal.oid, 200), [])[0] if d.decision == "later"}  # type: ignore[union-attr]
     cases = cases_by_id(ctx, {p.case_id for p in mine})
-    return [Row(brief_of(ctx, plan, cases.get(plan.case_id), decisions=decisions_for(ctx, plan)), cases.get(plan.case_id), plan.plan_id in later_ids) for plan in mine], True
+    rows = [Row(brief_of(ctx, plan, cases.get(plan.case_id), decisions=decisions_for(ctx, plan), ladder=False), cases.get(plan.case_id), plan.plan_id in later_ids) for plan in mine]
+    # The steps of a request are one read of the table each: they are read for the few requests that the page shows with them (the ones that wait longest), not for every request of the person.
+    for index in sorted(range(len(rows)), key=lambda i: (-(rows[i].brief.waiting.days if rows[i].brief.waiting else 0), mine[i].plan_id))[:LONGEST_SHOWN]:
+        rows[index] = replace(rows[index], brief=brief_of(ctx, mine[index], cases.get(mine[index].case_id), decisions=decisions_for(ctx, mine[index])))
+    return rows, True
 
 
 def walk_ids(ctx: Ctx, rows: Sequence[Row], skip: str = "") -> list[str]:
@@ -382,7 +386,7 @@ def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, Actio
     """What Cost Management confirmed after the changes of this person's requests, a month, and after how many changes: what code measured, never what was expected."""
     total, count = 0.0, 0
     for plan in plans:
-        brief = verified_brief(ctx, plan, actions.get(plan.plan_id)) if may_answer(ctx.principal, plan) else None  # type: ignore[arg-type]
+        brief = verified_brief(ctx, plan, actions.get(plan.plan_id)) if answerable(ctx, plan) else None
         if brief is not None:
             total, count = total + brief.saving.monthly, count + 1  # type: ignore[operator]
     return total, count
@@ -394,7 +398,7 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
     if not ok:
         return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
-    for plan in [p for p in plans if may_answer(ctx.principal, p) and effective_state(ctx, p) != "open" and not (p.family == ADVISE and effective_state(ctx, p) == "expired")][:DECIDED_CONSIDERED]:  # type: ignore[arg-type]
+    for plan in [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired")][:DECIDED_CONSIDERED]:
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]).outcome
         if not outcome.state:
             continue
@@ -406,6 +410,18 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
     if not rows:
         return join([heading, paragraph("Nothing was decided yet.")])
     return join([heading, fmt('<ul class="recent">{rows}</ul>', rows=join(row for _, row in rows[:DECIDED_SHOWN]))])
+
+
+def _longest(ctx: Ctx, rows: Sequence[Row]) -> Safe:
+    """The requests that have waited longest, each with how long, with whom it is now and what waiting has cost so far: the start page's way of saying that nothing waits unseen. A figure is the
+    request's own (by code), and nothing is added up."""
+    longest = sorted((r for r in rows if r.brief.waiting is not None and r.brief.waiting.days >= 1), key=lambda r: (-r.brief.waiting.days, r.brief.plan_id))[:LONGEST_SHOWN]  # type: ignore[union-attr]
+    if not longest:
+        return Safe("")
+    items = [fmt('<li><a href="{href}">{title}</a><span class="quiet">{days} day{s} with {whom}. {cost}</span></li>', href=ctx.url(f"/ok/{link_part(r.brief.plan_id)}"), title=r.brief.headline,
+                 days=r.brief.waiting.days, s="" if r.brief.waiting.days == 1 else "s", whom=r.brief.waiting.with_whom, cost=r.brief.waiting.cost)  # type: ignore[union-attr]
+             for r in longest]
+    return join([Safe('<div class="sec"><h2 id="longest">Waiting the longest</h2></div>'), fmt('<ul class="recent">{items}</ul>', items=join(items))])
 
 
 def home(ctx: Ctx) -> Response:
@@ -429,5 +445,5 @@ def home(ctx: Ctx) -> Response:
                     _lane(ctx, "ready", "Ready to decide", f"A change in Azure that you may approve. {order}", ready, largest, show, True),
                     _lane(ctx, "look", "Worth a closer look", f"No change is proposed yet. A saving here is an estimate, and a cost is the most that a change could save. {order}", look, largest,
                           show, False),
-                    more, _held(ctx)])
+                    more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), cut_notice(ctx), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

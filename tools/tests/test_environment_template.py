@@ -775,8 +775,10 @@ class Cases(unittest.TestCase):
     def test_the_app_is_told_where_it_keeps_its_records_where_it_may_run_a_change_how_a_person_signs_in_to_azure_and_who_may_use_it(self):
         body = self.found["functionApp"][1]
         for setting in ("STORE_ACCOUNT_NAME", "CHANGE_SCOPES", "SIGNIN_TENANT_ID", "SIGNIN_CLIENT_ID", "CONSOLE_HOST", "CONSOLE_PEOPLE",
-                        "MAIL_SENDER", "PLAN_TTL_HOURS", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"):
+                        "MAIL_SENDER", "ESCALATE_TO", "OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID"):
             self.assertIn(f"name: '{setting}'", body, setting)
+        self.assertRegex(self.code, r"@allowed\(\[\n  'contacts'\n  'managers'\n\]\)\nparam escalateTo string = 'contacts'\n", "a request is passed on to the contacts or to the managers, never to nobody (AGENTS.md rule 38)")
+        self.assertNotIn("planTtlHours", self.code, "no request is closed by a clock")
         for gone in ("WRITER_RESOURCE_GROUP", "WRITER_SUBSCRIPTION_ID", "WRITER_CLIENT_ID", "APPROVAL_DELAY_SECONDS", "approvalDelaySeconds"):
             self.assertNotIn(gone, self.source, f"{gone}: Meternaut holds no right to change Azure, and an approval has no window to cancel in")
         self.assertIn("{ name: 'STORE_ACCOUNT_NAME', value: storage.name }", self.code)
@@ -796,7 +798,7 @@ class Cases(unittest.TestCase):
     def test_the_settings_of_the_loop_are_the_ones_the_app_reads(self):
         config = text("src/case-functions/cases/loop_config.py")
         names = set(re.findall(r'^([A-Z_]+) = "\1"$', config, re.M))
-        left_to_their_defaults = {"PLANTED_TAG", "RECHECK_DAYS"}
+        left_to_their_defaults = {"PLANTED_TAG", "RECHECK_DAYS", "ESCALATION_DAYS", "ESCALATION_REPEAT_DAYS", "ESCALATION_TAG", "ESCALATION_DENY", "ESCALATION_SNOOZES", "ESCALATION_SNOOZE_DAYS"}
         read_only_without_the_list = {"CHANGE_RESOURCE_GROUP", "CHANGE_SUBSCRIPTION_ID"}  # the two older settings of one group: read only when CHANGE_SCOPES is not set
         self.assertIn("CHANGE_SCOPES", names)
         for name in names - left_to_their_defaults - read_only_without_the_list:

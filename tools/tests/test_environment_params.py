@@ -1498,5 +1498,50 @@ class TheStudySwitch(unittest.TestCase):
         self.assertIsInstance(given["study"], bool)
 
 
+class TheEscalationSwitch(unittest.TestCase):
+    """The ladder of a request that waits asks the contacts or the managers after the people the request was made for, and the variable ESCALATE_TO of the environment hub says which (docs/proposals/30-escalation.md).
+    The builder reads it, refuses any other word, and gives the cases file one string, which the template gives the app as the setting ESCALATE_TO: a plain word, so a variable, and no identifier of the estate."""
+
+    CASES_TEMPLATE = TheStudySwitch.CASES_TEMPLATE
+
+    def build(self, **changes):
+        return run({**SETTINGS, **changes})
+
+    def test_it_is_contacts_when_the_variable_is_not_set_or_empty_and_only_the_cases_file_carries_it(self):
+        for changes, expected in (({}, "contacts"), ({"ESCALATE_TO": ""}, "contacts"), ({"ESCALATE_TO": "   "}, "contacts"), ({"ESCALATE_TO": "contacts"}, "contacts"), ({"ESCALATE_TO": " Managers "}, "managers")):
+            code, out, err, files = self.build(**changes)
+            self.assertEqual((code, err), (0, ""), changes)
+            self.assertEqual(values(files["cases.parameters.json"])["escalateTo"], expected, changes)
+            for name, document in files.items():
+                if name != "cases.parameters.json":
+                    self.assertNotIn("escalateTo", document.get("parameters", {}), name)
+            self.assertNotIn("escalate", out.lower(), "no output of the workflow carries it")
+
+    def test_off_and_any_other_word_is_refused_before_anything_is_written_and_is_never_echoed(self):
+        for bad in ("off", "none", "managers,contacts", "sk-not-a-secret-but-it-looks-like-one"):
+            code, out, err, files = self.build(ESCALATE_TO=bad)
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("ESCALATE_TO is contacts or managers", err)
+            self.assertIn("Nothing was changed.", err)
+            self.assertNotIn(bad, err, "the log of the Hub is public, and the variable may hold anything")
+
+    def test_the_template_allows_the_words_of_the_builder_gives_the_app_the_setting_and_the_app_reads_the_same_words(self):
+        self.assertEqual(bicep_params(self.CASES_TEMPLATE)["escalateTo"], ("string", True))
+        allowed = re.search(r"@allowed\(\[((?:\s*'[a-z]+')+)\s*\]\)\nparam escalateTo string = 'contacts'\n", self.CASES_TEMPLATE)
+        self.assertEqual(re.findall(r"'([a-z]+)'", allowed.group(1)), list(ep.ESCALATE_WORDS), "the template and the builder allow the same words, and contacts is the default of both")
+        self.assertEqual(self.CASES_TEMPLATE.count("{ name: 'ESCALATE_TO', value: escalateTo }\n"), 1)
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import loop_config
+        finally:
+            sys.path.remove(app)
+        for word in ep.ESCALATE_WORDS + ("off",):
+            problems: list = []
+            settings = loop_config.escalation_of({"ESCALATE_TO": word}, problems)
+            self.assertEqual((bool(problems), settings.to if not problems else ""), (word == "off", "" if word == "off" else word), word)
+
+
 if __name__ == "__main__":
     unittest.main()

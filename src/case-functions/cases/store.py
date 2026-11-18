@@ -16,8 +16,8 @@ from urllib.parse import quote
 
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
-from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord, PlanRecord,
-                     Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, EscalationRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord,
+                     PlanRecord, Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -35,7 +35,9 @@ LESSONS, CLAIMS, PROFILES = "mnlessons", "mnclaims", "mnprofiles"
 CHECKS = "mnchecks"
 # What each investigation looked at (cases/activity.py): one row each, the newest KEPT_INVESTIGATIONS.
 INVESTIGATIONS = "mninvestigations"
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS)
+# The ladder of every request that waits (cases/escalation.py): a row for each step and each put-off, in the partition of its plan.
+ESCALATIONS = "mnescalations"
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS, ESCALATIONS)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -78,6 +80,10 @@ def type_key(resource_type: str) -> str:
     return resource_type.replace("/", "_")
 
 
+def _escalation_key(record: EscalationRecord) -> str:
+    return f"{ {'step': 's', 'snooze': 'z', 'pass': 'p', 'added': 'a'}[record.kind] }{record.number:04d}"
+
+
 class TableStore:
     def __init__(self, client: Client, token: Callable[[str], str], account: str, *, clock: Callable[[], dt.datetime] = utc_now) -> None:
         if not re.fullmatch(r"[a-z0-9]{3,24}", account):
@@ -85,6 +91,7 @@ class TableStore:
         self.client, self.token, self.account, self.clock = client, token, account, clock
         self.base = f"https://{account}.table.core.windows.net"
         self._ready: set[str] = set()
+        self.truncated: dict[str, int] = {}  # the lists that the last read cut at the cap (_query): the Watch says so in the History and the start page says so
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token(RESOURCE)}", "x-ms-version": VERSION, "x-ms-date": format_datetime(self.clock(), usegmt=True),
@@ -165,10 +172,12 @@ class TableStore:
             raise
         return True
 
-    def _query(self, table: str, filter_text: str = "", limit: int = PAGE) -> list[dict]:
-        """The rows of a table. A table that is not there yet has no rows: a read never makes one (only the first write does)."""
+    def _query(self, table: str, filter_text: str = "", limit: int = PAGE, cut: str = "") -> list[dict]:
+        """The rows of a table, in key order, following the continuation of the service up to `limit` rows (and MAX_PAGES calls). A table that is not there yet has no rows: a read never makes one (only the
+        first write does). With `cut` the read says in `self.truncated[cut]` how many rows it kept when the service still had more, and clears it when it had not: a list that nothing may silently lose."""
         rows: list[dict] = []
         next_keys: dict[str, str] = {}
+        more = False
         for _ in range(MAX_PAGES):
             parts = [f"$top={min(limit - len(rows), PAGE)}"]
             if filter_text:
@@ -186,10 +195,17 @@ class TableStore:
             rows += [row for row in body["value"] if isinstance(row, dict)]
             partition = response.headers.get("x-ms-continuation-nextpartitionkey")
             if len(rows) >= limit or not partition:
+                more = bool(partition)
                 break
             next_keys = {"NextPartitionKey": partition}
             if response.headers.get("x-ms-continuation-nextrowkey"):
                 next_keys["NextRowKey"] = response.headers["x-ms-continuation-nextrowkey"]
+        else:
+            more = True
+        if cut and more:
+            self.truncated[cut] = len(rows[:limit])
+        elif cut:
+            self.truncated.pop(cut, None)
         return rows[:limit]
 
     @staticmethod
@@ -252,16 +268,20 @@ class TableStore:
         raise StoreError("the case was changed by another step every time that it was read", 412)
 
     def plans_open(self) -> list[PlanRecord]:
-        rows = self._query(PLANS, "PartitionKey eq 'p' and (state eq 'open' or state eq 'approved')", PAGE)
+        rows = self._query(PLANS, "PartitionKey eq 'p' and (state eq 'open' or state eq 'approved')", PAGE * MAX_PAGES, "open")
         return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
     def plans_held(self) -> list[PlanRecord]:
-        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'held'", PAGE)
+        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'held'", PAGE * MAX_PAGES, "held")
         return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
     def plans_recent(self, limit: int = 50) -> list[PlanRecord]:
-        plans = self._records(self._query(PLANS, "PartitionKey eq 'p' and state ne 'held'", PAGE), PlanRecord)
+        plans = self._records(self._query(PLANS, "PartitionKey eq 'p' and state ne 'held'", PAGE * MAX_PAGES, "recent"), PlanRecord)
         return sorted(plans, key=lambda p: (p.created_at, p.plan_id), reverse=True)[:limit]
+
+    def plans_expired(self) -> list[PlanRecord]:
+        rows = self._query(PLANS, "PartitionKey eq 'p' and state eq 'expired'", PAGE * MAX_PAGES, "expired")
+        return sorted(self._records(rows, PlanRecord), key=lambda p: (p.created_at, p.plan_id), reverse=True)
 
     def plan_get(self, plan_id: str) -> PlanRecord | None:
         row, _ = self._get(PLANS, "p", plan_id)
@@ -423,6 +443,23 @@ class TableStore:
     def mails_since(self, oid: str, since: str) -> list[MailRecord]:
         flt = f"PartitionKey eq '{self._quoted(oid)}' and RowKey ge '{self._quoted(compact(since))}'"
         return sorted(self._records(self._query(MAILS, flt, PAGE), MailRecord), key=lambda m: (m.sent_at, m.mail_id))
+
+    def escalation_claim(self, record: EscalationRecord) -> bool:
+        return self._insert(ESCALATIONS, record.plan_id, _escalation_key(record), record)
+
+    def escalation_put(self, record: EscalationRecord) -> None:
+        self._upsert(ESCALATIONS, record.plan_id, _escalation_key(record), record)
+
+    def escalations_of(self, plan_id: str) -> list[EscalationRecord]:
+        found = self._records(self._query(ESCALATIONS, f"PartitionKey eq '{self._quoted(plan_id)}'", PAGE), EscalationRecord)
+        return sorted(found, key=lambda r: (r.kind, r.number))
+
+    def cursor_get(self) -> str:
+        row, _ = self._get(ESCALATIONS, "cursor", "ladder")
+        return str((row or {}).get("key") or "")
+
+    def cursor_put(self, key: str) -> None:
+        self._upsert(ESCALATIONS, "cursor", "ladder", None, key=key)
 
     def lesson_put(self, lesson: LessonRecord) -> None:
         self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)

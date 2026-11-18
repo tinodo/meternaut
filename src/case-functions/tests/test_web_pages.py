@@ -20,7 +20,7 @@ TITLE = "Delete the unattached disk planted-disk-1"  # the headline of a request
 
 
 def opens(reply) -> str:
-    """The line under the title of a request page: what it is, where, when it was found and until when it is open."""
+    """The line under the title of a request page: what it is, where and when it was found. It has no end time: nothing expires."""
     return reply.main.find("div", class_="head").find("p").text()
 
 
@@ -241,7 +241,7 @@ class TheDecisionsPage(unittest.TestCase):
                 reply = console.get("/", oid=who)
                 self.assertIn("Nothing waits for you.", reply.content)
                 self.assertEqual(reply.main.find_all("section"), [])
-        for changes in (dict(state="approved"), dict(state="declined"), dict(state="expired"), dict(expires_at=at(minutes=-1)), dict(expires_at="not a time")):
+        for changes in (dict(state="approved"), dict(state="declined"), dict(state="expired")):
             with self.subTest(changes=changes):
                 console.store.plan_put(make_plan(**changes))
                 self.assertIn("Nothing waits for you.", console.get("/").content)
@@ -444,8 +444,8 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.plan_put(make_advice(plan_id=f"plan4{n:03d}", case_id=f"case4{n:03d}", resource_id=f"{VM_ID}-e{n}", state="expired", created_at=at(days=-6), expires_at=at(days=-1)))
         console.store.plan_put(make_plan(plan_id="plan0005", case_id="case0005", state="expired", created_at=at(days=-6), expires_at=at(days=-2)))
         listing = [li.text() for li in console.get("/").main.find("ul", class_="recent").find_all("li")]
-        self.assertEqual(len(listing), 1, "six advices that expired are not rows, and the change that expired is")
-        self.assertIn("Expired", listing[0])
+        self.assertEqual(len(listing), 1, "six advices that were taken back are not rows, and the change that was taken back is")
+        self.assertIn("Taken back", listing[0])
         self.assertNotIn("oversized-vm-1", listing[0])
 
     def test_what_moved_to_the_page_of_the_platform_team_is_not_on_the_start_page(self):
@@ -510,7 +510,7 @@ class TheBriefOfACase(unittest.TestCase):
     def test_it_is_the_brief_of_the_case_with_its_form_for_a_person_who_may_answer(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), [TITLE])
-        self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertEqual([f.action for f in self.reply.forms()], ["/ok/plan0001"])
 
     def test_a_person_who_is_not_named_reads_the_brief_and_cannot_answer_and_sees_nobody_elses_decisions(self):
@@ -978,7 +978,7 @@ class TheHistory(unittest.TestCase):
             ("Declined", TITLE, "Tino · reason: it is already handled"),
             ("Search", "1 new finding", ""),
             ("Checked", TITLE, "Cost lines show no cost.")])
-        self.assertEqual(feed["Tue 3 Nov"], [("Expired", TITLE, "Nobody answered in time."),
+        self.assertEqual(feed["Tue 3 Nov"], [("Taken back", TITLE, "A timer closed it before requests were kept open."),
                                               ("Worth acting on", "Consider changing the virtual machine oversized-vm-1", "Tino")])
         self.assertIn(("Change made", TITLE, "Deleted. Azure no longer lists the resource."), feed["Mon 2 Nov"])
         self.assertIn(("Approved", TITLE, "Tino"), feed["Mon 2 Nov"])
@@ -1057,7 +1057,7 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", resource_name=f"endpoint-k{n}", plan_id=f"plan6{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan6{n:03d}", case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", state="expired", created_at=at(days=-1, hours=-1), expires_at=at(days=-1)))
         feed = self.feed(self.console.get("/history"))
-        self.assertIn(("Closed", "49 requests to look at a finding", "Closed with no answer."), feed["Wed 4 Nov"])
+        self.assertIn(("Closed", "49 requests to look at a finding", "Taken back by Meternaut: each says why."), feed["Wed 4 Nov"])
         self.assertIn(("Declined", TITLE, "Tino · reason: it is already handled"), feed["Wed 4 Nov"], "the decisions of the other plans are still there")
 
     def test_a_line_that_names_a_request_links_to_its_page(self):
@@ -1070,9 +1070,9 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", resource_name=f"endpoint-h{n}", plan_id=f"plan5{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-n)))
         feed = self.feed(self.console.get("/history"))
-        self.assertEqual(feed["Tue 3 Nov"][0], ("Expired", TITLE, "Nobody answered in time."), "the change that expired is a line of its own")
-        self.assertIn(("Closed", "3 requests to look at a finding", "Closed with no answer."), feed["Wed 4 Nov"])
-        self.assertFalse([line for lines in feed.values() for line in lines if line[0] == "Expired" and line[1].startswith("Consider")], feed)
+        self.assertEqual(feed["Tue 3 Nov"][0], ("Taken back", TITLE, "A timer closed it before requests were kept open."), "the change that was taken back is a line of its own")
+        self.assertIn(("Closed", "3 requests to look at a finding", "Taken back by Meternaut: each says why."), feed["Wed 4 Nov"])
+        self.assertFalse([line for lines in feed.values() for line in lines if line[0] == "Taken back" and line[1].startswith("Consider")], feed)
 
     def test_the_old_addresses_of_my_decisions_and_what_i_did_here_answer_with_the_same_page(self):
         for path in ("/me/decisions", "/me/activity"):
@@ -1116,11 +1116,18 @@ class TheHistory(unittest.TestCase):
 
 
 class Times(unittest.TestCase):
+    """The time of a page is the day the request was made (the page shows no end time: nothing expires)."""
+
     def setUp(self):
         self.console = seeded()
+        self.console.store.plan_put(make_plan(created_at="2026-11-08T08:00:00Z"))
 
     def zone(self, name, offset_hours, label):
         return mock.patch.object(core, "zone_of", return_value=dt.timezone(dt.timedelta(hours=offset_hours), label))
+
+    def assert_utc_alone(self, reply):
+        self.assertIn("Sun 8 Nov 2026 08:00 UTC", reply.content)
+        self.assertNotIn("08:00 UTC (", reply.content)
 
     def test_a_time_is_shown_in_utc_and_in_the_persons_zone_with_its_name(self):
         with self.zone("America/New_York", -5, "EST"):
@@ -1128,30 +1135,29 @@ class Times(unittest.TestCase):
         self.assertIn("Sun 8 Nov 2026 08:00 UTC (03:00 EST)", reply.content)
 
     def test_a_zone_on_another_day_names_the_day(self):
-        self.console.store.plan_put(make_plan(expires_at="2026-11-08T20:30:00Z"))
+        self.console.store.plan_put(make_plan(created_at="2026-11-08T20:30:00Z"))
         with self.zone("Asia/Tokyo", 9, "JST"):
             reply = self.console.get("/ok/plan0001")
         self.assertIn("Sun 8 Nov 2026 20:30 UTC (Mon 9 Nov 2026 05:30 JST)", reply.content)
 
     def test_utc_and_a_zone_that_is_not_known_show_utc_alone(self):
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="UTC"))
-        reply = self.console.get("/ok/plan0001")
-        self.assertTrue(opens(reply).endswith("open until Sun 8 Nov 2026 08:00 UTC"), opens(reply))
-        self.assertNotIn("UTC (", reply.content)
+        self.assert_utc_alone(self.console.get("/ok/plan0001"))
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="Mars/Olympus_Mons"))
-        self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
+        self.assert_utc_alone(self.console.get("/ok/plan0001"))
         self.console.store.settings_put(SettingsRecord(oid=TINO, timezone="../../etc/passwd"))
-        self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
+        self.assert_utc_alone(self.console.get("/ok/plan0001"))
 
     def test_a_person_whose_settings_cannot_be_read_still_gets_the_page_in_utc(self):
         console = Console(store=FailingStore(fail={"settings_get"}, clock=lambda: NOW))
         console.seed()
+        console.store.plan_put(make_plan(created_at="2026-11-08T08:00:00Z"))
         reply = console.get("/ok/plan0001")
         self.assertEqual(reply.status, 200)
-        self.assertTrue(opens(reply).endswith("open until Sun 8 Nov 2026 08:00 UTC"), opens(reply))
+        self.assert_utc_alone(reply)
 
     def test_a_time_that_is_not_a_time_is_shown_as_it_is_stored_and_escaped(self):
-        self.console.store.plan_put(make_plan(expires_at="<b>soon</b>"))
+        self.console.store.plan_put(make_plan(created_at="<b>soon</b>"))
         reply = self.console.get("/ok/plan0001")
         self.assertEqual(reply.status, 200)
         self.assertNotIn("<b>soon</b>", reply.text)
@@ -1178,7 +1184,7 @@ class Times(unittest.TestCase):
                 self.assertIsNone(core.canonical_zone("Mars/Olympus_Mons"))
                 self.assertIsNone(core.canonical_zone("Europe"))
                 self.assertIsNone(core.zone_of("Europe/Amsterdam"))
-                self.assertTrue(opens(self.console.get("/ok/plan0001")).endswith("open until Sun 8 Nov 2026 08:00 UTC"))
+                self.assert_utc_alone(self.console.get("/ok/plan0001"))
         finally:
             core.zone_index.cache_clear()
 

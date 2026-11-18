@@ -32,7 +32,7 @@ from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Co
 
 CHANGE_GROUP = "meternaut-sc-rg"
 SCOPES = (ChangeScope(SUB, CHANGE_GROUP),)
-SETTINGS = ApprovalSettings(change_scopes=SCOPES, ttl_hours=72)
+SETTINGS = ApprovalSettings(change_scopes=SCOPES)
 SIGNIN = SigninSettings("cccccccc-1111-4222-8333-444444444444", "dddddddd-1111-4222-8333-444444444444", "eeeeeeee-1111-4222-8333-444444444444", "app.example.test")
 BOTH = Principal(TINO, "Tino", ("owner", "approver", "ops"))
 APPROVER = Principal(MAYA, "Maya", ("approver",))
@@ -143,7 +143,7 @@ class MakingTheAdvice(Base):
         self.assertEqual((plan.family, plan.state, plan.approval_class, plan.approvers), (ADVISE, "open", "R1", NAMED))
         self.assertEqual(plan.preconditions, {"family": ADVISE, "caseStatus": "needs_human"})
         self.assertRegex(plan.code, r"^[0-9A-F]{8}$")
-        self.assertEqual(parse(plan.expires_at) - parse(plan.created_at), dt.timedelta(hours=72))
+        self.assertEqual(plan.expires_at, "", "nothing expires")
         self.assertEqual((plan.what_changes, plan.could_go_wrong, plan.undo), (brief.ADVICE_CHANGE, brief.acting_risk(self.case).text, brief.ADVICE_UNDO))
         self.assertTrue(plan.could_go_wrong.startswith("If you act on it: "), "the risk of the plan is that of acting: answering changes nothing")
         self.assertIn("Nothing changes in Azure", plan.what_changes)
@@ -214,7 +214,7 @@ class MakingTheAdvice(Base):
 
     def test_a_finding_that_a_person_answered_lately_is_not_put_to_them_again_for_thirty_days(self):
         self.assertEqual(ADVICE_QUIET_DAYS, 30)
-        for decision, state in (("approve", "consumed"), ("decline", "declined"), ("not_mine", "withdrawn")):
+        for decision, state in (("approve", "consumed"), ("decline", "declined")):
             with self.subTest(decision):
                 self.setUp()
                 self.assertTrue(self.answer(BOTH, decision).ok)
@@ -226,13 +226,10 @@ class MakingTheAdvice(Base):
                 self.assertIsNotNone(again, "31 days after the answer")
                 self.assertNotEqual(again.plan_id, self.plan.plan_id)
 
-    def test_a_request_that_nobody_answered_is_made_again_at_once(self):
-        self.clock.advance(hours=73)
-        self.assertEqual(len(self.approvals.expire()), 1)
-        again = self.approvals.advise(self.case, NAMED)
-        self.assertIsNotNone(again)
-        self.assertNotEqual(again.plan_id, self.plan.plan_id)
-        self.assertEqual(again.state, "open")
+    def test_a_request_that_nobody_answered_is_not_made_again_it_stays_open_and_waits(self):
+        self.clock.advance(hours=24 * 100)
+        self.assertIsNone(self.approvals.advise(self.case, NAMED), "the open request is the one that waits")
+        self.assertEqual((self.plan_now().state, self.store.plans_open()), ("open", [self.plan]))
 
     def test_a_store_that_cannot_be_read_means_no_plan_and_no_error(self):
         for name in ("do_not_touch", "plans_open", "plans_recent"):
@@ -480,11 +477,18 @@ class TheAnswers(Base):
         self.assertTrue(self.answer(BOTH, "ask", reason="other", note="x").ok)
         self.assertEqual(self.decisions()[0].reason, "")
 
-    def test_this_is_not_mine_withdraws_the_plan_and_sends_the_case_back_to_a_person(self):
+    def test_this_is_not_mine_keeps_the_request_open_and_passes_it_on(self):
         result = self.answer(OWNER_ONLY, "not_mine")
         self.assertEqual((result.ok, result.kind), (True, "not_mine"))
-        self.assertEqual((self.plan_now().state, self.case_now().status), ("withdrawn", "needs_human"))
+        self.assertIn("passes the request on", result.message)
+        self.assertEqual((self.plan_now().state, self.case_now().status), ("open", "needs_human"), "an answer that ends nothing: the request goes to the next person")
         self.assertEqual([(d.decision, d.approver_oid) for d in self.decisions()], [("not_mine", OWNER)])
+        self.assertEqual([(r.kind, r.number, r.who) for r in self.store.escalations_of(self.plan.plan_id)], [("pass", 1, (OWNER,))])
+
+    def test_decide_later_is_recorded_as_a_put_off_that_the_ladder_reads(self):
+        self.assertTrue(self.answer(BOTH, "later").ok)
+        self.assertTrue(self.answer(BOTH, "later").ok)
+        self.assertEqual([(r.kind, r.number, r.who) for r in self.store.escalations_of(self.plan.plan_id)], [("snooze", 1, (TINO,)), ("snooze", 2, (TINO,))])
 
     def test_ask_or_tell_records_the_words_and_leaves_the_request_open(self):
         result = self.answer(BOTH, "ask", note="Is the monthly batch job still running on it?")
@@ -562,34 +566,25 @@ class TheAnswers(Base):
 
 
 class TheExpiry(Base):
-    def test_a_request_that_nobody_answered_closes_as_expired_with_no_record_no_action_and_no_letter(self):
-        self.clock.advance(hours=73)
-        closed = self.approvals.expire()
-        self.assertEqual([p.plan_id for p in closed], [self.plan.plan_id])
-        self.assertEqual((self.plan_now().state, self.case_now().status), ("expired", "expired"))
+    """No clock closes a request (AGENTS.md rule 38): it waits as long as it is open, and the ladder of cases/escalation.py passes it on."""
+
+    def test_a_request_that_nobody_answered_stays_open_for_ever_with_no_record_no_action_and_no_letter(self):
+        self.clock.advance(hours=24 * 100)
+        self.assertEqual((self.plan_now().state, self.case_now().status), ("open", "needs_human"))
         self.assertEqual((self.decisions(), self.store.actions, self.store.mails), ([], {}, []))
-        self.assertEqual(self.approvals.expire(), [], "it closes once")
+        self.assertEqual(self.store.plans_open(), [self.plan])
 
-    def test_a_request_is_open_until_its_time_is_over(self):
-        self.clock.advance(hours=71)
-        self.assertEqual(self.approvals.expire(), [])
+    def test_an_answer_that_comes_after_a_hundred_days_is_taken(self):
+        self.clock.advance(hours=24 * 100)
+        result = self.answer(BOTH, "ask", note="x")
+        self.assertEqual((result.ok, result.kind), (True, "asked"))
         self.assertEqual(self.plan_now().state, "open")
-        self.assertTrue(self.answer(BOTH, "later").ok)
 
-    def test_an_answer_that_comes_after_the_time_is_refused_and_closes_the_request(self):
-        self.clock.advance(hours=73)
-        for decision in ANSWERS:
-            with self.subTest(decision):
-                result = self.answer(BOTH, decision, note="x")
-                self.assertEqual((result.ok, result.kind), (False, "expired"))
-        self.assertEqual((self.plan_now().state, self.case_now().status, self.decisions()), ("expired", "expired", []))
-
-    def test_a_request_that_was_asked_about_still_expires_and_keeps_the_question(self):
+    def test_a_request_that_was_asked_about_keeps_waiting_and_keeps_the_question(self):
         self.assertTrue(self.answer(BOTH, "ask", note="a question").ok)
-        self.clock.advance(hours=73)
-        self.assertEqual(len(self.approvals.expire()), 1)
+        self.clock.advance(hours=24 * 100)
         self.assertEqual([d.decision for d in self.decisions()], ["ask"])
-        self.assertEqual(self.plan_now().state, "expired")
+        self.assertEqual(self.plan_now().state, "open")
 
     def test_nothing_that_closes_a_plan_can_send_a_letter(self):
         text = (APP_ROOT / "cases" / "approvals.py").read_text(encoding="utf-8")
@@ -694,11 +689,11 @@ class AdviceNeverReachesAzure(Base):
         self.assertEqual(self.azure.calls, [])
         self.assertEqual(self.plan_now().state, "open")
 
-    def test_the_timer_closes_an_advise_plan_without_a_call(self):
-        self.clock.advance(hours=73)
+    def test_the_timer_closes_nothing_by_time_and_makes_no_call(self):
+        self.clock.advance(hours=24 * 100)
         result = tick(self.services())
-        self.assertEqual([p.plan_id for p in result.expired], [self.plan.plan_id])
-        self.assertEqual((result.finished, result.verified, self.azure.calls), ([], [], []))
+        self.assertFalse(hasattr(result, "expired"))
+        self.assertEqual((result.finished, result.verified, self.azure.calls, self.plan_now().state), ([], [], [], "open"))
 
     def test_the_list_of_calls_of_a_change_holds_no_way_to_delete_or_to_replace_a_virtual_machine_and_no_family_of_advice(self):
         url = f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{CHANGE_GROUP}/providers/Microsoft.Compute/virtualMachines/oversized-vm-1"
@@ -834,15 +829,14 @@ class TheWholeWay(unittest.TestCase):
         labels = [label for f in self.console.get(self.path).forms() if f.action == self.path for _, _, label in f.buttons]
         self.assertIn("Worth acting on", labels)
 
-    def test_a_request_whose_time_is_over_says_so_and_takes_no_answer(self):
+    def test_a_request_that_waited_a_hundred_days_is_still_open_takes_the_answer_and_has_no_expiry_page(self):
+        self.console.now = self.console.now + dt.timedelta(days=100)
         form = self.console.get(self.path).form(self.path)
-        self.console.now = self.console.now + dt.timedelta(hours=73)
         reply = self.console.submit(form, "Worth acting on")
-        self.assertEqual(reply.status, 410)
-        self.assertIn("This request expired", reply.headings())
-        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, self.store.decisions_of_plan(self.plan.plan_id)), ("expired", []))
+        self.assertEqual(reply.status, 200)
+        self.assertEqual([(d.decision) for d in self.store.decisions_of_plan(self.plan.plan_id)], ["approve"])
+        self.assertNotIn("This request expired", reply.headings())
         self.assert_azure_untouched()
-        self.assertEqual([f for f in self.console.get(self.path).forms() if f.action == self.path], [])
 
     def test_the_old_addresses_of_the_question_and_of_not_mine_take_the_same_answers(self):
         form = self.console.get(self.path).form(self.path)
@@ -851,7 +845,7 @@ class TheWholeWay(unittest.TestCase):
         self.assertEqual([d.decision for d in self.store.decisions_of_plan(self.plan.plan_id)], ["ask"])
         fresh = self.console.get(self.path).form(self.path)
         self.assertEqual(self.console.post(f"{self.path}/not-mine", dict(fresh.fields)).status, 200)
-        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "withdrawn")
+        self.assertEqual(self.store.plan_get(self.plan.plan_id).state, "open", "not mine passes the request on, and it stays open")
         self.assert_azure_untouched()
 
 

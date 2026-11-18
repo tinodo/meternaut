@@ -284,15 +284,13 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual((plan.state, answers, action), ("open", [], None))
         self.assertEqual((self.entra.asked, self.azure.calls), ([], []))
 
-    def test_a_plan_that_runs_out_of_time_between_the_redirect_and_the_return_is_not_approved(self):
+    def test_a_plan_whose_old_end_time_has_passed_between_the_redirect_and_the_return_is_approved_all_the_same(self):
         self.reseal(expires_at="2026-11-05T09:05:00Z")
         _, query = self.sign_in_address(self.sign_in())
         self.entra.nonce = query["nonce"]
         self.console.now = self.console.now.replace(minute=6)
         returned = self.come_back({"code": CODE, "state": query["state"]})
-        self.assertEqual((returned.status, returned.headings(1)), (410, ["This request expired"]))
-        self.assertEqual(self.console.store.case_get("k1").status, "expired")
-        self.assertEqual((self.entra.asked, self.azure.calls, self.open_requests()[1]), ([], [], []))
+        self.assertEqual((returned.status, returned.headings(1)), (200, ["The change was made"]), "no clock closes a request: the resource was looked at again, and the change was made")
 
     def test_a_wrong_code_a_token_of_somebody_else_and_a_pulled_switch_each_have_their_page_and_start_no_sign_in(self):
         main = self.form(button=APPROVE)
@@ -324,13 +322,12 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertNotIn("Location", late.headers)
         self.assertEqual(self.azure.deletes(), 1)
 
-    def test_a_plan_whose_time_is_over_has_its_page_and_closes_the_case(self):
+    def test_a_plan_that_is_days_old_has_no_expiry_page_and_goes_on_to_the_confirmation(self):
         main = self.form(button=APPROVE)
         self.console.now = self.console.now.replace(day=9)
         late = self.console.post(self.path, {**main.fields, "decision": "approve", "nonce": self.console.store.nonce_new(TINO, self.plan.plan_id)})
-        self.assertEqual((late.status, late.headings(1)), (410, ["This request expired"]))
-        self.assertIn("This request expired on Sun 8 Nov 2026 09:00 UTC", late.content)
-        self.assertEqual(self.console.store.case_get("k1").status, "expired")
+        self.assertEqual((late.status, late.headings(1)), (200, ["Confirm: Delete the unattached disk planted-disk-1"]))
+        self.assertEqual(self.console.store.case_get("k1").status, "awaiting_ok")
         self.assertEqual((self.entra.asked, self.azure.calls), ([], []))
 
     def test_a_question_then_an_approval_leaves_one_answer(self):

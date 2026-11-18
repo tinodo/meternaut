@@ -681,6 +681,9 @@ class TheCallsOfTheApp(unittest.TestCase):
         "billing-accounts-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Billing/billingAccounts"),
         "reservation-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Capacity/reservationOrders"),
         "savings-plan-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.BillingBenefits/savingsPlanOrders"),
+        # The two reads of the directory that the ladder of a request that waits makes (cases/http.py, directory_calls: Microsoft Graph, one person's profile and one person's manager).
+        "directory-user-read": lambda m, p: m == "GET" and p.startswith("https://graph.microsoft.com/v1.0/users/") and not p.endswith("/manager"),
+        "directory-manager-read": lambda m, p: m == "GET" and p.startswith("https://graph.microsoft.com/v1.0/users/") and p.endswith("/manager"),
         # The public price list of Azure (cases/prices.py): one GET with no token, on a host that is no part of Azure Resource Manager.
         "retail-prices-read": lambda m, p: m == "GET" and p == "https://prices.azure.com/api/retail/prices",
         # The property paths that the platform lists for the resource types of one provider (cases/arm.py, provider_paths): the address is the provider itself, and nothing after its namespace.
@@ -705,6 +708,10 @@ class TheCallsOfTheApp(unittest.TestCase):
             sys.path.remove(app)
         return runner.read_calls((ChangeScope(PROJECT, "rg-project"),))
 
+    @staticmethod
+    def directory_calls():
+        return cases_http.directory_calls()
+
     def names_of(self, calls, whose):
         names = []
         for method, pattern in calls:
@@ -719,7 +726,7 @@ class TheCallsOfTheApp(unittest.TestCase):
     def listed(*ids):
         found = {c for g in MANIFEST["grants"] if not ids or g["id"] in ids for c in g.get("calls", [])}
         if not ids:
-            found |= {c for item in MANIFEST.get("tenantReads", []) for c in item["calls"]}  # the reads at the tenant or a billing scope, which a person gives (T1 to T3)
+            found |= {c for item in MANIFEST.get("tenantReads", []) for c in item["calls"]}  # the reads at the tenant or a billing scope, which a person gives (T1 to T4)
         return found
 
     def test_every_call_that_the_app_may_make_is_a_requirement_or_needs_no_azure_role(self):
@@ -738,8 +745,19 @@ class TheCallsOfTheApp(unittest.TestCase):
                               "private-endpoint-read", "p2s-gateway-read", "compute-usage-read", "metrics-read"}, set(r1["calls"]))
 
     def test_the_calls_in_the_file_are_the_calls_of_the_watch_and_of_the_timer_and_no_other(self):
-        names = set(self.names_of(self.watch_calls(), "the Watch")) | set(self.names_of(self.timer_calls(), "the timer"))
+        names = set(self.names_of(self.watch_calls(), "the Watch")) | set(self.names_of(self.timer_calls(), "the timer")) | set(self.names_of(self.directory_calls(), "the escalation"))
         self.assertEqual(sorted(names - self.NO_AZURE_ROLE), sorted(self.listed()), "the calls of the app and the calls in the requirements differ")
+
+    def test_the_two_reads_of_the_directory_are_gets_of_a_list_of_their_own_and_the_requirement_that_a_person_gives_names_them(self):
+        calls = self.directory_calls()
+        self.assertEqual([method for method, _ in calls], ["GET", "GET"])
+        self.assertEqual(sorted(self.names_of(calls, "the escalation")), ["directory-manager-read", "directory-user-read"])
+        (t4,) = [item for item in MANIFEST["tenantReads"] if item["id"] == "T4"]
+        self.assertEqual((t4["identity"], sorted(t4["calls"])), ("cases", ["directory-manager-read", "directory-user-read"]))
+        self.assertTrue(any("User.Read.All" in role and "not an Azure role" in role for role in t4["roles"]))
+        self.assertFalse([g["id"] for g in MANIFEST["grants"] if set(t4["calls"]) & set(g.get("calls", []))], "the directory is read with a Graph permission, not with an Azure role")
+        for method, pattern in [*self.watch_calls(), *self.timer_calls()]:
+            self.assertNotIn("graph.microsoft.com", pattern.pattern.replace("\\", ""), "the Watch and the timer read no directory: only the escalation does")
 
     def test_the_watch_makes_no_write_call_with_its_own_identities(self):
         # A change to Azure is made with the token of the person who approved it, from a list of its own: this list is the one of the app's identities.

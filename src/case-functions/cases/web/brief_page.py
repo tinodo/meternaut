@@ -18,8 +18,8 @@ import json
 from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
-from .common import action_block, confidence, detector_cell, kind_text, read
-from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number, parse_time
+from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
+from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
 from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_for, risk_chip, series_of, series_reason, title_of, under, use_block
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
@@ -33,16 +33,31 @@ VERDICT_CHIPS = {"safe": ("low", "circle"), "check": ("mid", "triangle"), "keep"
 # -- the parts of the page ------------------------------------------------------------------------------------------------------------------------
 
 def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
-    """The way back, the title, and one line: what kind of resource and where, how long ago it was found, and until when the request is open. No countdown."""
+    """The way back, the title, and one line: what kind of resource and where, and how long ago it was found. No countdown: nothing closes the request but an answer."""
     _, ago = ago_text(ctx.now, brief.found_at)
     place = f"resource group {brief.where.group}" if brief.where.group else ""
     named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" else ""
     bits: list[object] = [bit for bit in (brief.where.kind, place, named, f"found {ago}" if ago else "") if bit]
-    if brief.state == "open" and brief.expires_at:
-        bits.append(fmt("open until {when}", when=ctx.when(brief.expires_at)))
     meta = fmt("<p>{meta}</p>", meta=join(bits, " · ")) if bits else Safe("")
     back = paragraph(link(ctx.url("/"), "Back to the decisions"))
     return join([back, fmt('<div class="head"><div><h1>{title}</h1>{meta}</div></div>', title=title, meta=meta)])
+
+
+def _waiting(ctx: Ctx, brief: Brief) -> Safe:
+    """What an open request has waited for, with whom it is now, what waiting has cost so far (by code, from the figure of the request) and who was told, in a few rows. Nothing for a request that is
+    not open."""
+    waiting = brief.waiting
+    if waiting is None:
+        return Safe("")
+    rows: list[tuple[str, object]] = [("Waiting", f"{waiting.days} day{'s' if waiting.days != 1 else ''}, since {waiting.since}"), ("With", waiting.with_whom),
+                                      ("What waiting has cost", waiting.cost or "No saving was measured, so what waiting costs is not worked out.")]
+    if waiting.told:
+        rows.append(("Told", "; ".join(waiting.told)))
+    if waiting.pending:
+        rows.append(("Not told yet", "; ".join(waiting.pending)))
+    if waiting.put_off:
+        rows.append(("Put off", f"{waiting.put_off} time{'s' if waiting.put_off != 1 else ''}"))
+    return join([Safe("<h2>Waiting</h2>"), summary(rows), off_notice(ctx)])
 
 
 def _chips(brief: Brief) -> Safe:
@@ -231,9 +246,6 @@ def _whose(brief: Brief) -> Safe:
 def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str], errors: dict[str, str]) -> Safe:
     """The one form of the page: one text box (a question, an objection or something to remember), the reason of a decline, and a button for each answer that exists now. The
     plan code and a one-time token are hidden fields. When a switch holds the answer that approves, the form says so and leaves that button out."""
-    end = parse_time(plan.expires_at)
-    seconds = int((end - ctx.now).total_seconds()) if end else 0
-    ttl = max(900, min(86400, seconds))
     labels = words.ANSWER_LABEL[brief.kind]
     primary = [button(labels[name], name="decision", value=name, kind="primary" if name in ("approve", "confirm") else "secondary")
                for name in ("confirm", "approve", "decline") if name in brief.answers]
@@ -251,7 +263,7 @@ def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str]
         held = notice("warning", "Meternaut is paused", PAUSED_ADVICE, "You can still say that it is not worth it, ask or tell, say that this is not yours, or decide later.")
     else:
         held = notice("warning", "Changes are paused", PAUSED_CHANGES, "You can still decline, ask or tell, say that this is not yours, or decide later.")
-    return join([held, form(ctx.url(f"/ok/{link_part(plan.plan_id)}"), hidden("code", plan.code), hidden("nonce", ctx.nonce(plan.plan_id, ttl)), *fields, *rows)])
+    return join([held, form(ctx.url(f"/ok/{link_part(plan.plan_id)}"), hidden("code", plan.code), hidden("nonce", ctx.nonce(plan.plan_id, 86400)), *fields, *rows)])
 
 
 def _own_answers(ctx: Ctx, decisions: list[DecisionRecord]) -> Safe:
@@ -329,8 +341,9 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     if plan is not None:
         waiting = action is not None and plan.state == "approved" and action.state == "queued" and action.step_up
         rows += [("Request code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
-                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)),
-                 ("Expires", "It ends when nothing holds the finding back any more." if plan.state == HELD else ctx.when(plan.expires_at))]
+                 ("State of the request", words.WAITING_TEXT if waiting else words.PLAN_STATE.get(plan.state, plan.state)), ("Made", ctx.when(plan.created_at))]
+        if plan.state == HELD:
+            rows.append(("Ends", "It ends when nothing holds the finding back any more."))
     if ctx.services.host:
         rows.append(("Served from", ctx.services.host))
     parts: list[object] = [summary(rows)]
@@ -361,7 +374,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now)]
+    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

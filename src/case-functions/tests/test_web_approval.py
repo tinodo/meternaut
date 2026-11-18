@@ -1,14 +1,19 @@
 import re
 import unittest
 
-from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
+from test_web_support import (ACTS_ON, MAYA, NOW, OPS, OWNER, PEOPLE, SIGNIN_URL, STRANGER, TINO, VM, Console, FailingStore, ScriptedDecider, ScriptedDelegate, at, make_action,
                               make_advice, make_advice_case, make_case, make_decision, make_plan, snapshot)
 
 from cases.brief import SECOND_WORDS
+from cases.approvals import ApprovalSettings, Approvals
 from cases.costs import analysis_url
-from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, StoreError, SwitchRecord
+from cases.memory_store import MemoryStore, stamp
+from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, EscalationRecord, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
+from cases.web.common import CUT_OPEN
+
+CORA = "44444444-5555-6666-7777-888888888888"  # a contact of the ladder: the role escalation and no other
 
 APPROVE = "Approve"
 CODE = "0.AbCdEfGhIjKlMnOpQrSt-code-from-the-sign-in"
@@ -47,15 +52,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), [TITLE])
         self.assertEqual(self.reply.root.find("title").text(), f"{TITLE} - Meternaut")
-        self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(),
-                         "Managed disk · resource group meternaut-test-rg · found 3 days ago · open until Sun 8 Nov 2026 08:00 UTC (09:00 CET)")
+        self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(), "Managed disk · resource group meternaut-test-rg · found 3 days ago")
         self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$86 a year")
         self.assertEqual(self.reply.main.find("p", class_="figsub").text(),
                          "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
         self.assertIn("Money is in US dollars, and a year is twelve times the month.", self.reply.content)
 
     def test_the_page_answers_the_eight_questions_in_this_order(self):
-        self.assertEqual(self.reply.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(self.reply.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertIn("How sure: High.", self.reply.content)
         self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("$7.17", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
                                                  "Locks and keep tags": ("None found", "Azure, checked by code")})
@@ -163,7 +167,7 @@ class ThePage(unittest.TestCase):
         case_page = self.console.get("/why/case0001")
         self.assertEqual(case_page.status, 200)
         self.assertEqual(case_page.headings(1), [TITLE])
-        self.assertEqual(case_page.headings(2)[:5], ["If you approve", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(case_page.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
         self.assertEqual(case_page.facts(), self.reply.facts())
 
     def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
@@ -212,17 +216,17 @@ class ThePage(unittest.TestCase):
         other = form.node.find_all("div", class_="acts")[0]
         self.assertEqual([(b.text(), b.attrs["class"]) for b in other.find_all("button")], [("This is not mine", "subtle sm"), ("Ask or tell", "subtle sm"), ("Decide later", "subtle sm")])
 
-    def test_the_token_lasts_until_the_plan_expires_but_not_longer_than_a_day(self):
+    def test_the_token_of_the_form_lasts_a_day_whatever_the_age_of_the_request(self):
         store = self.console.store
         seen = []
         original = store.nonce_new
         store.nonce_new = lambda oid, purpose, ttl_seconds=3600: seen.append(ttl_seconds) or original(oid, purpose, ttl_seconds)
         self.console.get("/ok/plan0001")
         self.assertEqual(set(seen), {86400})
-        self.console.store.plan_put(make_plan(expires_at=at(minutes=30)))
+        self.console.store.plan_put(make_plan(expires_at=at(minutes=30), created_at=at(days=-100)))
         seen.clear()
         self.console.get("/ok/plan0001")
-        self.assertEqual(set(seen), {1800})
+        self.assertEqual(set(seen), {86400}, "an old end time shortens nothing: no clock ends a request")
 
     def test_a_question_that_the_person_asked_before_is_shown_to_them_alone(self):
         self.console.store.decision_put(make_decision(decision="ask", note="Is this the standby disk?"))
@@ -245,9 +249,10 @@ class ThePage(unittest.TestCase):
         self.assertEqual([label for _, _, label in alone.forms()[0].buttons], ["Decline", "This is not mine", "Ask or tell", "Decide later"])
 
     def test_time_is_in_utc_and_in_the_persons_own_zone(self):
-        content = self.reply.content
-        self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", content)
-        self.assertIn('datetime="2026-11-08T08:00:00Z"', self.reply.text)
+        self.console.store.plan_put(make_plan(created_at="2026-11-08T08:00:00Z"))
+        reply = self.console.get("/ok/plan0001")
+        self.assertIn("Sun 8 Nov 2026 08:00 UTC (09:00 CET)", reply.content)
+        self.assertIn('datetime="2026-11-08T08:00:00Z"', reply.text)
 
     def test_the_page_has_no_cancel_no_start_time_and_no_form_that_posts_to_withdraw(self):
         self.assertEqual(self.reply.status, 200)
@@ -285,19 +290,17 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         (title,) = reply.main.find_all("p", class_="notice-title")
         return title.text(), title.parent.text().replace(title.text(), "", 1).strip()
 
-    def test_a_plan_whose_time_is_over_shows_it_has_expired_also_when_the_record_still_says_open(self):
-        reply = self.page(expires_at=at(minutes=-1))
-        self.assert_no_buttons(reply)
-        self.assertEqual(self.notice(reply), ("Expired", "Nobody answered in time. Nothing changed. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
-        self.assertNotIn("Open until", reply.content)
+    def test_an_old_end_time_closes_nothing_the_request_is_open_and_has_its_buttons(self):
+        for old_end in (at(minutes=-1), at(), "not a time"):
+            reply = self.page(expires_at=old_end)
+            self.assertEqual(reply.status, 200)
+            self.assertEqual([f.action for f in reply.forms()], ["/ok/plan0001"], "no clock ends a request (AGENTS.md rule 38)")
+            self.assertNotIn("Expired", reply.content)
 
-    def test_the_plan_that_expires_at_this_moment_has_expired(self):
-        self.assert_no_buttons(self.page(expires_at=at()))
-
-    def test_a_plan_that_has_expired_in_the_record(self):
+    def test_a_plan_that_meternaut_took_back_shows_it_and_no_buttons(self):
         reply = self.page(state="expired")
         self.assert_no_buttons(reply)
-        self.assertIn("Expired", reply.content)
+        self.assertEqual(self.notice(reply)[0], "Taken back")
 
     def test_each_other_state_shows_its_state_in_words_and_no_buttons(self):
         for state, title, words_ in (("declined", "Declined", "Declined by Tino. Reason: it is already handled. Nothing changed."),
@@ -532,7 +535,7 @@ class WhoMayAnswer(unittest.TestCase):
 KINDS = {  # the status, the title of the page, and a sentence that the page always has
     "declined": (200, "Declined", "Declined. Nothing has changed. The request is closed."),
     "asked": (200, "Recorded: your words", "Recorded with your name. It approves nothing, and Meternaut does not answer yet."),
-    "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list."),
+    "later": (200, "Noted", "Noted. Nothing is approved and nothing has changed. The request stays in your list. If nobody answers it, it goes on to the next person."),
     "acknowledged": (200, "Recorded: worth acting on", "Recorded. Nothing was changed in Azure."),
     "confirmed": (200, "Recorded: you confirmed the request", "Recorded with your name. Nothing was changed. A second person has to approve it. The change then runs with their own permissions."),
     "not_mine": (200, "Recorded: not yours", "Recorded. Nothing is approved. The request goes back to finding the right owner."),
@@ -552,7 +555,7 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "refused_state": (409, "This request cannot take an answer", ""),
     "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
     "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
-    "expired": (410, "This request expired", "This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed."),
+    "expired": (410, "This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed."),
     "duplicate": (409, "Already answered", "You answered this request already. Your first answer stands, and nothing has changed."),
     "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
 }
@@ -644,15 +647,13 @@ class EveryKindOfResult(unittest.TestCase):
                 wanted = ("/", "Back to the decisions") if kind in BACK_TO_THE_LIST else ("/ok/plan0001", "Back to the request")
                 self.assertEqual(self.backs(self.by_decider(kind, plan=False)), [wanted], "the address of the page names the plan")
 
-    def test_the_time_of_an_expired_result_is_read_from_the_plan_in_the_store_and_left_out_when_no_plan_is_known(self):
-        for route in (self.by_decider, self.by_begin):
+    def test_the_page_of_a_request_that_was_taken_back_has_no_time_of_an_expiry(self):
+        for route in (self.by_decider, self.by_begin, self.by_return):
             with self.subTest(route=route.__name__):
                 reply = route("expired", plan=False)
-                self.assertIn("This request expired on Sun 8 Nov 2026 08:00 UTC (09:00 CET). Nothing has changed.", reply.content)
-        reply = self.by_return("expired", plan=False)
-        self.assertEqual(reply.status, 410)
-        self.assertNotIn("Sun 8 Nov 2026", reply.content)
-        self.assertIn("Nothing has changed.", reply.content)
+                self.assertEqual(reply.status, 410)
+                self.assertIn("Meternaut took this request back, so it cannot be answered. Nothing has changed.", reply.content)
+                self.assertNotIn("Sun 8 Nov 2026", reply.content)
 
     def test_a_refusal_of_the_role_shows_no_plan_details(self):
         for route in self.routes:
@@ -673,7 +674,7 @@ class EveryKindOfResult(unittest.TestCase):
                  "stopped": "Meternaut did not make the change.", "azure_refused": "Azure refused the change.",
                  "failed": "The change failed.", "signin_failed": "Nothing is approved.",
                  "step_up_failed": "The extra sign-in check that Azure asked for was not completed. The change was not made.",
-                 "refused_state": "This request is not open for an answer now. It may be answered, expired or replaced. Nothing has changed.",
+                 "refused_state": "This request is not open for an answer now. It may be answered or taken back. Nothing has changed.",
                  "error": "The approval service did not answer."}
         self.assertEqual(set(lines), set(SHOWS_THE_MESSAGE))
         for route in self.routes:
@@ -1349,7 +1350,7 @@ class AgainstTheLoop(unittest.TestCase):
     def test_asking_or_telling_leaves_the_request_open_and_is_shown_to_the_person_who_wrote_it(self):
         reply = self.console.submit(self.form(), "Ask or tell", note="Is it the standby disk?")
         self.assertEqual(reply.headings(1), ["Recorded: your words"])
-        self.assertIn("The request stays open until Sun 8 Nov 2026 08:00 UTC", reply.content)
+        self.assertIn("The request stays open.", reply.content)
         page = self.console.get("/ok/plan0001")
         self.assertEqual(len(page.forms()), 1)
         self.assertIn("Is it the standby disk?", page.content)
@@ -1368,6 +1369,114 @@ class AgainstTheLoop(unittest.TestCase):
         reply = self.console.submit(self.form(), "This is not mine")
         self.assertEqual(reply.headings(1), ["Recorded: not yours"])
         self.assertEqual(self.console.store.plan_get("plan0001").state, "withdrawn")
+
+
+class WhenTheLadderComesToAPerson(unittest.TestCase):
+    """A person to whom a step of the ladder of a request of advice was delivered answers it, whatever their role on the list (the contacts, the owners, an approver who is not named on it): every answer
+    of advice, none of which changes Azure, and never a change (cases/escalation.py, docs/proposals/30-escalation.md). A request that no step was delivered to them with is not theirs."""
+
+    WHO = (("the role escalation", CORA), ("the role owner", OWNER), ("the role approver, not named on it", MAYA), ("the role ops", OPS))
+
+    def setUp(self):
+        store = MemoryStore(lambda: NOW)
+        self.console = Console(decider=Approvals(store, ApprovalSettings(change_scopes=()), lambda: NOW), store=store,
+                               people=People((*PEOPLE.persons, Person(CORA, "Cora", ("escalation",), "cora@example.com"))))
+        self.console.seed()  # plan0001: a change that Tino may approve
+        self.console.store.case_put(make_advice_case())
+        self.console.store.plan_put(make_advice(approvers=(TINO,)))
+
+    def come_to(self, oid, plan_id="plan0002", delivered=True):
+        self.console.store.escalation_claim(EscalationRecord(plan_id, "step", 2, stamp(NOW), "contact", (oid,), ("Cora",), (oid,) if delivered else (), "email", "sent" if delivered else "held"))
+
+    def test_a_person_that_the_ladder_has_not_come_to_is_refused_and_nothing_is_shown_or_recorded(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                before = snapshot(self.console.store)
+                for plan_id in ("plan0001", "plan0002"):
+                    reply = self.console.get(f"/ok/{plan_id}", oid=oid)
+                    self.assertEqual((plan_id, reply.status, reply.root.find_all("button")), (plan_id, 403, []))
+                    self.assertNotIn("oversized-vm-1", reply.content)
+                    self.assertEqual(self.console.post(f"/ok/{plan_id}", {"decision": "decline", "code": "B4N8X2KM", "nonce": "x"}, oid=oid).status, 403)
+                self.assertEqual(snapshot(self.console.store), before)
+
+    def test_a_step_that_came_to_a_person_but_was_not_delivered_does_not_let_them_answer(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid, delivered=False)
+                self.assertEqual(self.console.get("/ok/plan0002", oid=oid).status, 403)
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
+                self.setUp()
+
+    def test_a_person_that_a_step_was_delivered_to_opens_the_advice_with_every_answer_of_advice_and_is_told_why_they_see_it(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid)
+                reply = self.console.get("/ok/plan0002", oid=oid)
+                self.assertEqual(reply.status, 200)
+                self.assertEqual([b[2] for f in reply.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])
+                self.assertIn("the ladder of this request came to you", reply.content)
+                self.assertNotIn("you have the role approver", reply.content)
+                self.setUp()
+
+    def test_a_person_never_answers_a_change_even_when_a_step_was_delivered_to_them_with_it(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                self.come_to(oid, "plan0001")
+                before = snapshot(self.console.store)
+                self.assertEqual(self.console.get("/ok/plan0001", oid=oid).status, 403)
+                for decision in ("approve", "decline", "not_mine", "later", "ask", "confirm"):
+                    self.assertEqual(self.console.post("/ok/plan0001", {"decision": decision, "code": "7F3K92QD", "nonce": "x"}, oid=oid).status, 403, decision)
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.check_approve(principal, "plan0001", "7F3K92QD")[1].kind, "refused_role")
+                self.assertEqual((snapshot(self.console.store), self.console.delegate.begins), (before, []))
+                self.setUp()
+
+    def test_the_loop_itself_refuses_a_person_that_no_step_was_delivered_to_even_when_the_page_is_skipped(self):
+        for label, oid in self.WHO:
+            with self.subTest(label):
+                principal = self.console.services.people.principal(oid, "x")
+                self.assertEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role")
+                self.come_to(oid)
+                self.assertNotEqual(self.console.decider.decide(principal, "plan0002", "decline", "B4N8X2KM", "nonce").kind, "refused_role", "with a step delivered to them the loop goes on to its next check")
+                self.setUp()
+
+    def test_each_answer_of_such_a_person_is_recorded_with_their_name_and_changes_nothing_in_azure(self):
+        for label, oid in self.WHO:
+            for button, title, state, case_status, note in (("Worth acting on", "Recorded: worth acting on", "consumed", "acknowledged", ""), ("Not worth it", "Recorded: not worth it", "declined", "declined", "no"),
+                                                            ("This is not mine", "Recorded: not yours", "open", "needs_human", ""), ("Ask or tell", "Recorded: your words", "open", "needs_human", "Who owns it?"),
+                                                            ("Decide later", "Noted", "open", "needs_human", "")):
+                with self.subTest(label, answer=button):
+                    self.setUp()
+                    self.come_to(oid)
+                    (form,) = self.console.get("/ok/plan0002", oid=oid).forms()
+                    reply = self.console.submit(form, button, oid=oid, **({"note": note} if note else {}))
+                    self.assertEqual((reply.status, reply.headings(1)), (200, [title]))
+                    (record,) = self.console.store.decisions_of_plan("plan0002")
+                    self.assertEqual(record.approver_oid, oid)
+                    self.assertEqual((self.console.store.plan_get("plan0002").state, self.console.store.case_get("case0002").status), (state, case_status))
+                    self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
+
+
+class TheStartPageSaysWhenTheListIsCut(unittest.TestCase):
+    def test_it_says_in_one_sentence_that_some_open_requests_are_not_listed_and_says_nothing_when_the_list_is_whole(self):
+        console = Console()
+        self.assertNotIn(CUT_OPEN, console.get("/").content)
+        console.store.truncated = {"open": 10000}  # what the table store says when it cut the list of open requests at its cap
+        page = console.get("/")
+        self.assertEqual((page.status, page.content.count(CUT_OPEN)), (200, 1))
+
+
+class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):
+    def test_the_steps_are_read_only_for_the_requests_that_it_shows_with_them_not_for_every_request_of_the_person(self):
+        console = Console()
+        for n in range(12):
+            console.store.case_put(make_advice_case(case_id=f"case{n:04d}", plan_id=f"plan{n:04d}", resource_id=f"{VM}{n}"))
+            console.store.plan_put(make_advice(plan_id=f"plan{n:04d}", case_id=f"case{n:04d}", resource_id=f"{VM}{n}", approvers=(TINO,), created_at=at(days=-n)))
+        reads, original = [], console.store.escalations_of
+        console.store.escalations_of = lambda plan_id: (reads.append(plan_id), original(plan_id))[1]
+        self.assertEqual(console.get("/").status, 200)
+        self.assertEqual((0 < len(set(reads)) <= 3, max(map(reads.count, reads))), (True, 1), "one read for each of the three that wait longest, and none for the rest")
 
 
 if __name__ == "__main__":

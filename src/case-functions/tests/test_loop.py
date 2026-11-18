@@ -109,7 +109,7 @@ class TheTimer(unittest.TestCase):
 
     def test_a_round_with_nothing_to_do_only_reads_and_makes_no_table(self):
         result = self.tick(LOOP_ENV, HOUR)
-        self.assertEqual((result.expired, result.finished, result.verified), ([], [], []))
+        self.assertEqual((result.finished, result.verified), ([], []))
         self.assertEqual({m for m, _ in self.calls}, {"GET"})
         self.assertEqual(self.tables.tables, {})
 
