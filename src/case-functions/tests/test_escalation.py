@@ -709,6 +709,58 @@ class TheWorkOfARound(unittest.TestCase):
             world.clock.advance(minutes=1)
         self.assertEqual(len(reads), 60)
 
+    def test_every_request_is_looked_at_within_ceil_n_over_the_cap_rounds_whatever_the_spacing_of_the_rounds(self):
+        for plans in (60, 130):
+            for minutes in range(1, 7):
+                with self.subTest(requests=plans, minutes_between_rounds=minutes):
+                    world = World(plans=plans)
+                    reads = self.counting(world)
+                    for _ in range(-(-plans // escalation.ROUND_PLANS)):
+                        world.tick()
+                        world.clock.advance(minutes=minutes)
+                    self.assertEqual(len(reads), plans, "a round of the timer may be skipped when another runs long, so the spacing is not ours to choose")
+
+    def test_the_cursor_is_kept_in_the_store_so_a_restart_goes_on_where_the_round_stopped(self):
+        world = World(plans=60, store=Writes)
+        reads = self.counting(world)
+        world.tick()
+        self.assertEqual(len(reads), escalation.ROUND_PLANS)
+        again = Ladder(world.store, world.people, world.mailer, directory_of(world.graph, world.people, True), world.settings, BASE, world.clock, ("Olga (olga@example.com)",), emit=world.say)
+        escalation.tick(again)  # a new process: nothing in it but the store
+        self.assertEqual(len(reads), 2 * escalation.ROUND_PLANS, "the second round took the next requests, not the first ones again")
+        self.assertTrue(world.store.cursor_get())
+
+    def test_the_cursor_is_kept_by_the_table_store_too(self):
+        service = FakeTables()
+        client = http.Client(table_calls(ACCOUNT), str, transport=service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        make = lambda clock: TableStore(client, lambda resource: "token", ACCOUNT, clock=clock)
+        world = World(plans=60, store=make)
+        reads = self.counting(world)
+        world.tick()
+        self.assertEqual(make(world.clock).cursor_get(), world.store.cursor_get())
+        self.assertNotEqual(world.store.cursor_get(), "")
+        world.tick()
+        self.assertEqual(len(reads), 2 * escalation.ROUND_PLANS)
+
+    def test_an_empty_list_and_a_cursor_whose_request_has_gone_are_handled(self):
+        empty = World(plans=0)
+        empty.tick(2)
+        self.assertEqual((empty.store.cursor_get(), empty.events), ("", []))
+        world = World(plans=60)
+        reads = self.counting(world)
+        world.store.cursor_put("2026-11-02T10:00:00Z/p30-that-is-gone")  # the request that the last round ended with was answered since
+        world.tick()
+        ordered = sorted(world.store.plans_open(), key=escalation._key)
+        wanted = [plan.plan_id for plan in ordered if escalation._key(plan) > "2026-11-02T10:00:00Z/p30-that-is-gone"][:escalation.ROUND_PLANS]
+        self.assertEqual(sorted(reads), sorted(wanted), "the round goes on with the next request after the key, whether or not that request is still there")
+
+    def test_a_round_that_has_reached_the_last_request_goes_on_with_the_oldest(self):
+        plans = [advice(f"p{n:03d}", f"c{n}", created=START + dt.timedelta(minutes=n)) for n in range(30)]
+        chosen, cursor = escalation._window(plans, escalation._key(plans[27]))
+        self.assertEqual([p.plan_id for p in chosen], [f"p{n:03d}" for n in (28, 29, *range(0, 23))])
+        self.assertEqual(cursor, escalation._key(plans[22]))
+        self.assertEqual(escalation._window(plans[:10], "x"), (sorted(plans[:10], key=escalation._key), "x"), "while all fit in one round the cursor is not moved")
+
     def test_a_weekly_letter_that_fails_is_tried_every_15_minutes_12_times_and_then_once_a_day(self):
         world = World()
         world.add("p9", "c9", created=START - 20 * DAY)

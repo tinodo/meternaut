@@ -283,12 +283,21 @@ def _records(store: Store, plans: Iterable[PlanRecord]) -> dict[str, list[Escala
     return {plan.plan_id: store.escalations_of(plan.plan_id) for plan in plans}
 
 
-def _window(plans: list[PlanRecord], now: dt.datetime) -> list[PlanRecord]:
-    """The requests that a round looks at: all of them while there are no more than ROUND_PLANS, else the next ROUND_PLANS in the order of their start (who waits longest first), a different part each
-    minute, so that every request is looked at within a few minutes and no round costs more than ROUND_PLANS reads, however many requests wait."""
-    ordered = sorted(plans, key=lambda plan: (started(plan), plan.plan_id))
-    part = int(now.timestamp() // 60) % max(-(-len(ordered) // ROUND_PLANS), 1)
-    return ordered[part * ROUND_PLANS:(part + 1) * ROUND_PLANS]
+def _key(plan: PlanRecord) -> str:
+    return f"{started(plan)}/{plan.plan_id}"
+
+
+def _window(plans: list[PlanRecord], cursor: str) -> tuple[list[PlanRecord], str]:
+    """The requests that a round looks at, and the cursor that the next round goes on from: all of them while there are no more than ROUND_PLANS, else the next ROUND_PLANS after the cursor (the key of the
+    request that the last round ended with: its start and its id) in the order of their start (who waits longest first), and round again to the oldest. The cursor is kept in the store, so every
+    request is looked at within ceil(N / ROUND_PLANS) rounds, however far apart the rounds are (a round of the timer is skipped when another runs long) and whatever a restart does; a request that
+    has gone since the cursor was kept changes nothing, because only the order is used. No round reads more than ROUND_PLANS requests."""
+    ordered = sorted(plans, key=_key)
+    if len(ordered) <= ROUND_PLANS:
+        return ordered, cursor
+    first = next((i for i, plan in enumerate(ordered) if _key(plan) > cursor), 0)
+    chosen = [ordered[(first + i) % len(ordered)] for i in range(ROUND_PLANS)]
+    return chosen, _key(chosen[-1])
 
 
 def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, records: Mapping[str, list[EscalationRecord]] | None = None) -> int:
@@ -391,7 +400,16 @@ def tick(ladder: Ladder) -> int:
     try:
         now = ladder.clock()
         plans = [p for p in ladder.store.plans_open() if p.state == "open"]
-        looked = _window(plans, now)
+        try:
+            cursor = ladder.store.cursor_get()
+        except StoreError:
+            cursor = ""  # a cursor that cannot be read starts the round with the oldest request
+        looked, after = _window(plans, cursor)
+        if after != cursor:
+            try:
+                ladder.store.cursor_put(after)  # before the work: a request that a round cannot finish is not met again at once, and the others are not held back by it
+            except StoreError:
+                pass
         records = _records(ladder.store, looked)
         for plan in looked:
             mine = sorted(records[plan.plan_id], key=lambda r: r.number)

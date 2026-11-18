@@ -444,6 +444,13 @@ class TableStore:
         found = self._records(self._query(ESCALATIONS, f"PartitionKey eq '{self._quoted(plan_id)}'", PAGE), EscalationRecord)
         return sorted(found, key=lambda r: (r.kind, r.number))
 
+    def cursor_get(self) -> str:
+        row, _ = self._get(ESCALATIONS, "cursor", "ladder")
+        return str((row or {}).get("key") or "")
+
+    def cursor_put(self, key: str) -> None:
+        self._upsert(ESCALATIONS, "cursor", "ladder", None, key=key)
+
     def lesson_put(self, lesson: LessonRecord) -> None:
         self._upsert(LESSONS, "l", lesson.lesson_id, lesson, rtype=self._quoted(type_key(lesson.resource_type)), family=self._quoted(lesson.family), updatedAt=lesson.updated_at)
 
