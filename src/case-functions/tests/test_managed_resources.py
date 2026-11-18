@@ -23,7 +23,7 @@ from cases.detectors import Lead
 from cases.families import digest as plan_digest
 from cases.families.gates import ChangeScope
 from cases.memory_store import MemoryStore, stamp
-from cases.models import ADVISE, AUTOMATED, HELD, started
+from cases.models import ADVICE_OPEN_HARD, ADVISE, AUTOMATED, HELD, started
 
 TWO_DAYS = ("Something that runs by itself changed it 2 days ago and would change it back, so a change by hand would not last. "
             "Change it where it is defined (the template or pipeline that deploys it).")
@@ -217,7 +217,10 @@ class TheHeldRequestsOfTheOldReasonBecomeRequests(Base):
         self.settle()
         self.assertEqual((PROMOTE_NEW, sorted(p.saving_usd_month for p in self.store.plans_open())), (5, [40.0, 50.0, 60.0, 70.0, 80.0]))
         waiting = self.store.plans_held()
-        self.assertEqual((sorted(p.saving_usd_month for p in waiting), {brief.held_of(p) for p in waiting}), ([10.0, 20.0, 30.0], {"waiting"}), "held: Waiting for a free place")
+        self.assertEqual((sorted(p.saving_usd_month for p in waiting), {brief.held_of(p) for p in waiting}), ([10.0, 20.0, 30.0], {"automation"}),
+                         "they wait for the next Watch and nothing else: the reason that they had, and its words, not those of a place that is not free")
+        shown = brief.hold_of(waiting[0], self.store.case_get(waiting[0].case_id), self.now)
+        self.assertEqual((shown.heading, shown.why), (brief.HOLD_WORDS["automation"][0], brief.HOLD_WORDS["automation"][1].format(when="2 days ago")))
         self.settle()
         self.assertEqual((len(self.store.plans_open()), self.store.plans_held()), (8, []), "the next Watch goes on")
         before = dict(self.store.plans)
@@ -244,6 +247,61 @@ class TheHeldRequestsOfTheOldReasonBecomeRequests(Base):
         self.settle()
         self.settle()
         self.assertEqual((sorted(brief.held_of(p) for p in self.store.plans_held()), self.store.plans_open(), self.approvals.promoted), (["impact", "unchecked"], [], []))
+
+    def test_a_held_request_of_the_reason_rules_is_never_made_an_open_request_by_this_step_although_no_guard_holds_it_now(self):
+        self.put("rules")
+        self.settle()
+        self.assertEqual([brief.held_of(p) for p in self.store.plans_held()], ["rules"])
+        self.assertEqual(self.approvals._guard(self.store.case_get("k-rules")), "", "no guard holds the finding of the rules back now: only the reason of its request keeps it from being promoted")
+        self.settle()
+        self.settle()
+        self.assertEqual((self.store.plans_open(), self.approvals.promoted, [brief.held_of(p) for p in self.store.plans_held()]), ([], [], ["rules"]),
+                         "a guard that ends by itself closes nothing: a judgment does, and the normal path asks")
+
+    def test_a_request_that_waits_for_the_next_watch_stays_as_it_was_and_every_held_request_stays_linked_to_its_case_after_a_judgment(self):
+        cases = [self.legacy(number, float(saving))[0] for number, saving in enumerate((10, 80, 30, 70, 20, 60, 40, 50), 1)]
+        for case in cases:
+            self.judged_again(self.store.case_get(case.case_id))  # what every judgment of the investigation does: the case is written again, with no link to a request
+        self.assertEqual({self.store.case_get(case.case_id).plan_id for case in cases}, {None})
+        self.settle()
+        opened, waiting = self.store.plans_open(), self.store.plans_held()
+        self.assertEqual((len(opened), len(waiting)), (PROMOTE_NEW, 3))
+        for plan in (*opened, *waiting):
+            self.assertEqual(self.store.case_get(plan.case_id).plan_id, plan.plan_id, "the page of the finding finds its request through this link")
+        self.assertEqual({brief.held_of(p) for p in waiting}, {"automation"}, "the three wait for the next Watch and nothing else: they keep the reason that they had, and its words")
+        console = Console(store=self.store)
+        console.use(self.approvals)
+        reply = console.get(f"/why/{waiting[0].case_id}")
+        self.assertIn(brief.HOLD_WORDS["automation"][0], reply.content)
+        for label in ("Not worth it", "Ask or tell", "Decide later", "This is not mine"):
+            self.assertTrue(reply.has_button(label), label)
+
+    def test_a_request_that_waits_for_a_place_says_so_and_is_linked_to_its_case_and_so_is_one_when_nobody_can_answer(self):
+        for number in range(ADVICE_OPEN_MAX):
+            other = make_advice_case(case_id=f"k-open-{number}", resource_id=f"{BASE}/Microsoft.Foo/bars/o{number}", resource_name=f"o{number}", plan_id=None, status="needs_human")
+            self.store.case_put(other)
+            self.approvals.advise(other, (TINO,))
+        case, held = self.legacy(1, 50.0, status="needs_human")
+        self.judged_again(self.store.case_get(case.case_id))
+        self.settle()
+        plan = self.store.plan_get(held.plan_id)
+        self.assertEqual((plan.state, brief.held_of(plan), self.store.case_get(case.case_id).plan_id), (HELD, "waiting", held.plan_id))
+        other_case, other_held = self.legacy(2, 120.0)
+        self.judged_again(self.store.case_get(other_case.case_id))
+        self.settle(())
+        self.assertEqual(self.store.case_get(other_case.case_id).plan_id, other_held.plan_id, "nobody can answer: nothing is promoted, and the link stays")
+
+    def test_a_promoted_request_keeps_the_code_that_it_had_so_that_a_page_made_before_still_answers_it(self):
+        case, held = self.legacy(1, 120.0)
+        console = Console(store=self.store)
+        console.use(self.approvals)
+        form = console.get(f"/why/{case.case_id}").form(has_button="Not worth it")  # a page that was opened while the request was held
+        self.settle()
+        plan = self.store.plan_get(held.plan_id)
+        self.assertEqual((plan.state, plan.code), ("open", held.code))
+        self.assertNotEqual(plan_digest.code_of(plan.digest), plan.code, "it is the code that the request had, not the code of what it is now: advice changes nothing in Azure, and nothing checks its digest")
+        self.assertEqual(console.submit(form, "Not worth it", reason="handled").status, 200)
+        self.assertEqual((self.store.plan_get(held.plan_id).state, self.store.case_get(case.case_id).status), ("declined", "declined"))
 
     def test_a_finding_that_nobody_is_to_be_asked_about_is_closed_and_not_promoted(self):
         quiet = dict(objections=("no measurement backs this finding; a person has to judge it",))
@@ -377,9 +435,26 @@ class TheCapAndTheOrderOfTheRequests(Base):
             self.store.case_put(case)
             self.assertIsNotNone(self.approvals.advise(case, (TINO,)))
 
-    def test_the_places_are_thirty_and_the_waiting_words_say_how_many_are_open(self):
-        self.assertEqual(ADVICE_OPEN_MAX, 30)
-        self.assertEqual(brief.HOLD_WORDS["waiting"][1], "Nothing holds it back any more, but 30 requests are open already, each worth at least as much as this one, so Meternaut has not asked about it yet.")
+    def test_the_places_are_thirty_up_to_a_ceiling_of_forty_five_and_the_waiting_words_say_so(self):
+        self.assertEqual((ADVICE_OPEN_MAX, ADVICE_OPEN_HARD), (30, 45))
+        self.assertEqual(brief.HOLD_WORDS["waiting"][1], "Nothing holds it back any more, but it waits for a free place: Meternaut keeps 30 requests open at once for findings that the AIs did not settle, up to 45 "
+                                                           "when a finding is worth more than the smallest of them, and no more.")
+
+    def test_the_ceiling_holds_whatever_a_finding_is_worth_nothing_open_is_displaced_and_a_freed_place_goes_to_the_dearest_that_waits(self):
+        self.fill()
+        for number in range(100, 120):
+            dearer = self.case(number, 500.0 + number)
+            self.store.case_put(dearer)
+            self.approvals.advise(dearer, (TINO,))
+        self.assertEqual(len(self.store.plans_open()), ADVICE_OPEN_HARD, "30 open, and the 15 dearer findings that came first were asked about: nothing is asked about beyond the ceiling")
+        self.assertEqual(len({p.case_id for p in self.store.plans_open()} & {f"k-cap-{n}" for n in range(ADVICE_OPEN_MAX)}), ADVICE_OPEN_MAX, "nothing that was open was displaced")
+        self.settle()
+        waiting = sorted(self.store.plans_held(), key=lambda p: p.case_id)
+        self.assertEqual(([p.case_id for p in waiting], {brief.held_of(p) for p in waiting}), ([f"k-cap-{n}" for n in range(115, 120)], {"waiting"}), "the five that did not fit are shown")
+        least = min(self.store.plans_open(), key=lambda p: p.saving_usd_month)
+        self.assertTrue(self.answer(least, "decline", reason="handled").ok)
+        self.settle()
+        self.assertEqual(([p.case_id for p, _ in self.approvals.promoted], len(self.store.plans_open())), (["k-cap-119"], ADVICE_OPEN_HARD), "one place was freed: the dearest of the five takes it")
 
     def test_a_finding_worth_more_than_the_least_open_request_is_asked_and_one_worth_no_more_waits_and_is_shown(self):
         self.fill()

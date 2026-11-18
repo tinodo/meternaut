@@ -394,10 +394,11 @@ def _measured(ctx: Ctx, plans: Sequence[PlanRecord], actions: Mapping[str, Actio
 def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[str, ActionRecord]) -> Safe:
     """The last five requests that were decided (or that nobody answered, for a change), for the person who is named in them: what, who, when and the result."""
     heading = Safe('<div class="sec"><h2 id="recent">Recently decided</h2></div>')
-    if not ok:
+    mine = [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired")][:DECIDED_CONSIDERED] if ok else []
+    if not ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
         return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
-    for plan in [p for p in plans if answerable(ctx, p) and p.state != "open" and not (p.family == ADVISE and p.state == "expired")][:DECIDED_CONSIDERED]:
+    for plan in mine:
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]).outcome
         if not outcome.state:
             continue
@@ -430,7 +431,7 @@ def home(ctx: Ctx) -> Response:
     plans, plans_ok = read(lambda: ctx.store.plans_recent(RECENT_PLANS), [])
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(RECENT_ACTIONS), [])[0]}
     units = _ranked(_units(rows), sort)
-    if not ok:
+    if not ok or ctx.told_failed:  # the open requests, or the index of the requests that the person was told about, could not be read
         top = join([Safe("<h1>Decisions</h1>"), notice("error", "The requests cannot be read", "I cannot read the open requests now. Nothing has changed.")])
     else:
         ready = [u for u in units if u.first.brief.kind == "change"]

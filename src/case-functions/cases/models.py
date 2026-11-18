@@ -92,9 +92,14 @@ MAX_SIGNIN_PATH = 2000
 ADVISE = "advise"
 # A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
 ADVICE_QUIET_DAYS = 30
-# And no more than this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed
-# only by an answer, and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. A finding worth more than the least of them is not held by it.
+# Up to this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed only by an
+# answer (or by Meternaut taking a request back and saying why), and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. While fewer are
+# open every such finding is asked about. From this many on, only a finding that is worth more than the smallest open request is, so that a finding worth much never waits for ever behind requests that
+# nobody answers, and the set may grow up to ADVICE_OPEN_HARD.
 ADVICE_OPEN_MAX = 30
+# The most requests for findings that the AIs did not settle that are open at once, whatever a finding is worth. Nothing that is open is ever displaced, closed or hidden: what is beyond waits, shown
+# as held back (`waiting`), and the dearest of it takes a place when an answer frees one. Without a ceiling a stream of dearer findings would grow the set without end.
+ADVICE_OPEN_HARD = 45
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15
@@ -401,13 +406,14 @@ def escalated_to(records: typing.Iterable[EscalationRecord], oid: str) -> bool:
     return any(r.kind == "step" and oid.lower() in {o.lower() for o in r.delivered} for r in records)
 
 
-def may_answer(principal: "Principal", plan: PlanRecord, ladder: typing.Callable[[], typing.Iterable[EscalationRecord]] = lambda: ()) -> bool:
+def may_answer(principal: "Principal", plan: PlanRecord, told: typing.Callable[[], bool] = lambda: False) -> bool:
     """The one rule of who may answer a request, for the decider and the pages. A person who is named on it may, with the role approver, or the role owner when it is advice, which changes nothing in
-    Azure. Advice may also be answered by a person that a step of its ladder was delivered to (`ladder` is read only when nothing else lets the person answer), whatever their role on the list: the
-    contacts, the owners, the people that the ladder came to last. Every answer of advice is theirs (worth acting on, not worth it, not mine, a question, decide later) and none of a change, which
-    only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
+    Azure. Advice may also be answered by a person that a step of its ladder was delivered to, whatever their role on the list (`told` says so for this request, and is called only when nothing else lets
+    the person answer): the contacts, the owners, the people that the ladder came to last. The decider and the page of one request answer `told` from the ladder of that request (`escalated_to`); a page
+    that lists many requests answers it from the index of the person (Store.told_get), which only decides what to list. Every answer of advice is theirs (worth acting on, not worth it, not mine, a
+    question, decide later) and none of a change, which only a named approver makes, with their own sign-in to Azure (AGENTS.md rule 29)."""
     named = principal.oid.lower() in {a.lower() for a in plan.approvers}
-    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and escalated_to(ladder(), principal.oid))
+    return (named and (principal.has("approver") or (plan.family == ADVISE and principal.has("owner")))) or (plan.family == ADVISE and told())
 
 
 @dataclass(frozen=True)
@@ -651,6 +657,15 @@ class Store(Protocol):
         ...
     def escalation_put(self, record: EscalationRecord) -> None: ...
     def escalations_of(self, plan_id: str) -> list[EscalationRecord]: ...
+    def told_get(self, oid: str) -> dict[str, str]:
+        """The requests that a step of the ladder was delivered to this person for, with when it was last delivered: the index that a page lists the advice of a person who is not named on it from, in one
+        small read (cases/escalation.py keeps it from the records of the ladder). The ladder of a request, not this, says who may answer it."""
+        ...
+    def told_put(self, oid: str, plan_id: str, at: str) -> None: ...
+    def told_delete(self, oid: str, plan_id: str) -> None: ...
+    def reading(self) -> typing.ContextManager:
+        """A block in which the lists of plans are read once and kept right by the writes of this store: the Watch asks them for each case, and a table that grows makes each ask many reads."""
+        ...
     def cursor_get(self) -> str:
         """The key of the request that the last round of the ladder ended with (cases/escalation.py `_window`), or an empty text: the next round goes on with the request after it."""
         ...

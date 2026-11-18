@@ -19,7 +19,7 @@ def finding(n: int, **more) -> dict:
     return {**{"n": n, "basis": "no-usage", "proposal": "delete", "sure": 0.85, "resources": 4, "says": "Nothing used these in the window.", "verdict": "agree", "kept": True}, **more}
 
 
-FINDINGS = (finding(1, fates={"request": 3, "automation": 1}, left={"guarded": 1}),
+FINDINGS = (finding(1, fates={"request": 3, "automation": 1, "managed": 2}, left={"guarded": 1}),
             finding(2, basis="other", proposal="investigate", sure=0.4, resources=6, says="Looks unusual.", verdict="", kept=False, left={"unknown": 6}),
             finding(3, basis="oversized", proposal="change", sure=0.7, resources=2, says="Larger than needed.", verdict="disagree", doubts=["A monthly job may need it."], fates={"person": 2}))
 
@@ -103,7 +103,8 @@ class TheLatestInvestigation(unittest.TestCase):
         first, dropped, third = table.rows
         self.assertEqual(first["What it says"], "Nothing used these in the window. No recorded usage. Proposal: delete.")
         self.assertEqual((first["How sure (0 to 1)"], first["Resources"], first["The second AI"]), ("0.85", "4", "Agrees"))
-        self.assertEqual(first["What became of it"], "3 resources: a request was made 1 resource: a request was made; an automation manages the resource Left out: 1 resource held back by a guard")
+        self.assertEqual(first["What became of it"], "3 resources: a request was made 1 resource: held back, managed by an automation 2 resources: a request was made; an automation manages the resource "
+                         "Left out: 1 resource held back by a guard", "a record of a run before the warning says what it said (`automation`), and a record of a run after it says `managed`")
         self.assertEqual((dropped["What it says"], dropped["Resources"], dropped["The second AI"]),
                          ("Looks unusual. Another reason. Proposal: investigate.", "6 listed", "Not asked: the finding was dropped before it"))
         self.assertEqual(dropped["What became of it"], "Dropped: no resource of it was left (6 resources that no tool showed)")

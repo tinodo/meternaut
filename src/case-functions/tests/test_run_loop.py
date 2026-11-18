@@ -1,3 +1,4 @@
+import contextlib
 import datetime as dt
 import json
 import unittest
@@ -74,6 +75,20 @@ class WhatTheLoopKeeps(unittest.TestCase):
         self.extras.escalating = True
         _, events, _ = watch(estate_with(), self.extras, self.clock)
         self.assertEqual([e for e in events if e["type"] == "escalation.off"], [])
+
+    def test_a_watch_reads_the_lists_of_the_plans_once_for_the_whole_run_and_leaves_the_block_when_it_ends(self):
+        entered = []
+        original = self.store.reading
+
+        @contextlib.contextmanager
+        def spy():
+            entered.append("in")
+            with original():
+                yield
+            entered.append("out")
+        self.store.reading = spy
+        watch(estate_with(), self.extras, self.clock)
+        self.assertEqual(entered, ["in", "out"])
 
     def test_the_waste_that_meternaut_planted_is_taken_up_first_even_when_dearer_leads_are_there(self):
         _, events, _ = watch(estate_with(endpoints=5), self.extras, self.clock)

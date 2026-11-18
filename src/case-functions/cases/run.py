@@ -7,6 +7,7 @@ takes is not taken from the deadline of the cases that follow it.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import logging
 import os
@@ -779,7 +780,8 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
             harness = harness_module.build(settings, foundry, extras, env=env, clock=clock, monotonic=monotonic, redact=redact)
         services = Services(settings, client, Arm(client, identity.token), Models(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
                             foundry, harness)
-        return execute(services, trigger)
+        with extras.store.reading() if extras is not None and hasattr(extras.store, "reading") else contextlib.nullcontext():  # each list of plans is read once for the whole run
+            return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)
         reason = clean_text(redact(f"{type(error).__name__}: {error}"), 300)
         history.emit("run.failed", reason=reason)

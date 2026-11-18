@@ -6,7 +6,7 @@ came from the estate or from an AI is escaped and set in a labelled quote, never
 from __future__ import annotations
 
 from . import brief_page
-from .common import answerable as can_answer, checked_brief, read
+from .common import checked_brief, may_open as can_answer, read
 from .core import Ctx, Response
 from .layout import message_page
 

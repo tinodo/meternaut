@@ -201,7 +201,7 @@ class EachReasonMakesTheFindingVisible(Base):
         self.assertIsNotNone(self.approvals.advise(last, (TINO,)), "the nine that are open and the three that are held make twelve plans, and the tenth place is still free")
         another = make_advice_case(case_id="k-another", resource_id=f"{BASE}/Microsoft.Foo/bars/another", resource_name="another", plan_id=None, status="needs_human")
         self.store.case_put(another)
-        self.assertIsNone(self.approvals.advise(another, (TINO,)), "the limit is what it was: ten open requests for what the AIs did not settle")
+        self.assertIsNone(self.approvals.advise(another, (TINO,)), "the limit is what it was: ADVICE_OPEN_MAX open requests for what the AIs did not settle, and a finding that is worth no more than the smallest waits")
 
 
 class TheAnswersAreTheOnesThatExist(Base):

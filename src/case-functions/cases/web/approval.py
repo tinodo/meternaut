@@ -18,7 +18,7 @@ from ..brief import PAUSED_ADVICE, Brief, called_of
 from ..cardlinks import LABEL, PAGE_LABEL, read as read_link, sure_label
 from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, DecideResult, PlanRecord, Readiness
 from . import brief_page
-from .common import answerable, brief_of, checked_brief, decisions_for, read
+from .common import brief_of, checked_brief, decisions_for, may_open, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
 from .figures import title_of
 from .home import walk
@@ -72,7 +72,7 @@ def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
     plan = ctx.store.plan_get(plan_id)
     if plan is None:
         return None, (_not_found(ctx) if principal.has("approver") else _refused_role(ctx))  # type: ignore[union-attr]
-    if not answerable(ctx, plan):
+    if not may_open(ctx, plan):  # type: ignore[arg-type]
         return None, _refused_role(ctx)
     return plan, None
 

@@ -1,6 +1,7 @@
 """A store that keeps everything in memory: what the tests of the pages, the approval loop and the change use, and the contract that the Table store has to meet."""
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import secrets
 from typing import Callable
@@ -41,6 +42,7 @@ class MemoryStore:
         self.investigations: dict[str, InvestigationRecord] = {}
         self.escalations: dict[tuple[str, str, int], EscalationRecord] = {}
         self.cursor = ""
+        self.told: dict[str, dict[str, str]] = {}
         self.truncated: dict[str, int] = {}  # a list that the store cut at its cap (store.TableStore): this one never does
         self.check: CheckRecord | None = None
 
@@ -217,6 +219,19 @@ class MemoryStore:
 
     def cursor_put(self, key: str) -> None:
         self.cursor = key
+
+    def told_get(self, oid: str) -> dict[str, str]:
+        return dict(self.told.get(oid.lower(), {}))
+
+    def told_put(self, oid: str, plan_id: str, at: str) -> None:
+        self.told.setdefault(oid.lower(), {})[plan_id] = at
+
+    def told_delete(self, oid: str, plan_id: str) -> None:
+        self.told.get(oid.lower(), {}).pop(plan_id, None)
+
+    @contextlib.contextmanager
+    def reading(self):
+        yield  # reads here cost nothing, so there is nothing to keep
 
 
 
