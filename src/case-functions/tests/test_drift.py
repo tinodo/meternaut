@@ -462,8 +462,11 @@ class TheCallsOfTheCheck(unittest.TestCase):
                       "another host", "a change of a disk", "a role assignment", "another route of the gateway", "another gateway", "making an agent by the check", "a response by the check"):
             self.assertIn(label, what, label)
             self.assertFalse(what[label][1], f"{label} must be refused")
-        for label in ("a response of an agent", "making an agent", "reading an agent", "ending a conversation", "a chat completion of the gateway", "the list of agents", "the list of connections"):
+        for label in ("a response of an agent", "making an agent", "reading an agent", "ending a conversation", "a chat completion of the gateway", "the list of agents", "the list of connections",
+                      "the price list by the watch"):
             self.assertTrue(what[label][1], f"{label} must be let through")
+        for label in ("a post to the price list by the watch", "another path of the price list host by the watch"):
+            self.assertFalse(what[label][1], f"{label} must be refused")
         self.assertEqual(len(drift.probes(FOUNDRY_ENDPOINT, "")), len(made) - 5, "without a gateway host the probes of the gateway are left out")
 
     def test_a_list_that_lets_a_model_call_go_to_the_project_direct_fails_the_control(self):

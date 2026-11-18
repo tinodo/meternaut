@@ -5,7 +5,7 @@ anything else is refused before it leaves the app, so a mistake in the code cann
 retried a bounded number of times. Two exceptions: the Foundry project of the app, where the app makes and reads its own agents and makes and deletes its own conversations
 (foundry_calls), and the AI Gateway, which every model call goes through and which has the one POST of a chat completion (ai_gateway_calls). No chat completion goes to the Foundry
 resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)). The Study (cases/study.py) has one list more, of public documentation pages that it reads with no
-token (docs_calls), on a client of its own.
+token (docs_calls), on a client of its own. Its one call to the public price list is also on the Watch's list, for the tool that shows the prices of alternatives (cases/prices.py): a GET, with no token.
 """
 from __future__ import annotations
 
@@ -117,10 +117,12 @@ def ai_gateway_calls(host: str) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
 
 # The public pages of Microsoft's documentation that the Study reads (cases/library.py), and nothing else of the internet: two hosts of pages, whose paths begin with the English folder
 # (an address of another language or of no language is answered by a redirect, which the client does not follow), and the Azure Retail Prices API. GET only, no token of any kind, and a
-# list of its own: the Watch's list (allowed_calls) holds none of them.
+# list of its own: the Watch's list (allowed_calls) holds none of the pages, and holds the call to the Azure Retail Prices API below, which the tool for the prices of alternatives makes.
 DOCS_PAGES = {"learn.microsoft.com": "/en-us/", "azure.microsoft.com": "/en-us/"}
 PRICES_HOST = "prices.azure.com"
 PRICES_PATH = "/api/retail/prices"
+# The one call to the price list, a GET with no token: the Study's list holds it, and so does the Watch's (allowed_calls), for the tool that shows the prices of alternatives (cases/prices.py).
+PRICE_CALL = ("GET", re.compile(re.escape(f"https://{PRICES_HOST}{PRICES_PATH}")))
 DOC_PATH = r"(?:(?!\.+(?:/|$))[A-Za-z0-9._~-]{1,100}/?){1,16}"
 
 
@@ -128,7 +130,7 @@ def docs_calls() -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """The calls of the Study to public documentation: a GET of a page under /en-us/ of the two hosts, and a GET of the price list. A path is plain words between slashes (no encoded
     character, no folder that is only dots), and the query is checked by cases/library.py, which makes the call: this list sees the address without its query."""
     pages = tuple(("GET", re.compile(re.escape(f"https://{host}{prefix}") + DOC_PATH)) for host, prefix in DOCS_PAGES.items())
-    return pages + (("GET", re.compile(re.escape(f"https://{PRICES_HOST}{PRICES_PATH}"))),)
+    return pages + (PRICE_CALL,)
 
 
 def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | None = None) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -136,9 +138,10 @@ def allowed_calls(foundry_endpoint: str | None = None, ai_gateway_host: str | No
     call of ai_gateway_calls; without them the app makes none, and every call of the Watch to Azure is a read (two POSTs of Azure Resource Manager and one of the Logs query API ask a
     question: a query). The one GET of /subscriptions lists the subscriptions that the app's own identity can read (scope.py): the Reader role covers it (R1 of
     environment/access-requirements.json), and the address has no part after it. The GET of one subscription (/subscriptions/<id>, nothing after the id) gives its display name, with the same role. The reads of the investigation's deeper tools name their own addresses (a workspace, its tables, its saved
-    searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties. The one GET of a provider (/subscriptions/<id>/providers/<namespace>, nothing after the namespace) gives the property paths that the platform lists for its resource types (Reader holds it, R1), which the toolbox shows a property by."""
+    searches, the deployments of an account, the activity log, the diagnostic settings of a resource, the DNS zone groups of a private endpoint and the address records of a private DNS zone) and never a resource as such: a GET of one resource would read any of its properties. The one GET of a provider (/subscriptions/<id>/providers/<namespace>, nothing after the namespace) gives the property paths that the platform lists for its resource types (Reader holds it, R1), which the toolbox shows a property by. The first entry is the one GET of the public price list (PRICE_CALL): it carries no token and needs no role."""
     arm = re.escape(f"https://{ARM_HOST}")
     calls = (
+        PRICE_CALL,
         ("POST", re.compile(arm + r"/providers/Microsoft\.ResourceGraph/resources", re.I)),
         ("POST", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/query", re.I)),
         ("GET", re.compile(arm + rf"/subscriptions/{GUID}/providers/Microsoft\.CostManagement/benefitRecommendations", re.I)),
@@ -285,11 +288,11 @@ class Client:
 
     def request(self, method: str, url: str, *, headers: Mapping[str, str] | None = None, body: object = None, form: Mapping[str, str] | None = None, xml: str | None = None,
                 timeout: float = 30, retries: int = 2, retry_after_max: float = 60, retry_statuses: frozenset[int] = RETRY_STATUSES,
-                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0) -> Response:
+                retry_network: bool = True, backoff: float = 1.0, backoff_max: float = 30.0, limit: int | None = None) -> Response:
         """One call. A call that may already have been carried out (a model call whose answer did not arrive) is made with retry_network=False.
 
         `body` is sent as JSON, `form` as a form (the token endpoint of Microsoft Entra takes a form) and `xml` as XML text (the Queue service takes its messages so). A call has one of
-        them or none.
+        them or none. `limit` is the most of the answer that the transport reads (a call that asks for a page of a list sets it, and checks that the answer is shorter).
 
         A call that is retried waits as long as the service says (Retry-After, up to `retry_after_max`). When the service says nothing the pause is `backoff` seconds
         (with jitter) before the first repeat, twice that before the second, and so on, up to `backoff_max`."""
@@ -314,7 +317,7 @@ class Client:
                 raise HttpError(0, f"{method} {urlsplit(url).netloc}: the deadline of the run was reached", unsent=True)
             unsent = False
             try:
-                status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)))
+                status, answer_headers, answer = self.transport(method, url, merged, data, timeout if left is None else max(1.0, min(timeout, left)), *(() if limit is None else (limit,)))
             except (OSError, TimeoutError, HTTPException, urllib.error.URLError) as error:
                 status, answer_headers, answer = 0, {}, self.redact(f"network error: {type(error).__name__}").encode()
                 unsent = isinstance(error, urllib.error.URLError)
