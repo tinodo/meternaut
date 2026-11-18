@@ -8,7 +8,7 @@ from dataclasses import replace
 
 from support import SUBSCRIPTION, NOW
 from test_names_and_cost import DEV, PROBLEM, a_subscription_with_a_bill, advisor_item, the_case
-from test_run_loop import OID, Moving, loop_for, watch
+from test_run_loop import GROUP, OID, Moving, loop_for, watch
 from test_web_support import make_advice, make_advice_case, make_decision, page_of
 
 from cases import brief, learning
@@ -339,6 +339,14 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
         self.store.case_put(replace(self.case, saving_usd_month=120.0))
         summary, events, _ = self.watch()
         self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
+
+    def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
+        mine = unpriced(case_id="kmine1", plan_id="pmine1", resource_group=GROUP, resource_name="contoso-mine")
+        self.store.case_put(mine)
+        self.store.plan_put(request_for(mine, title=f"Check whether the account contoso-mine in group {GROUP} is still used", created_at="2026-11-01T09:00:00Z", expires_at=""))
+        summary, events, _ = self.watch()
+        self.assertEqual((self.store.plan_get("pmine1").state, [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]), ("open", []))
+        self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held), ("expired", 1))
 
     def test_a_request_that_the_old_clock_closed_and_that_comes_back_is_taken_back_in_the_same_watch_and_never_chased(self):
         closed = request_for(self.case, state="expired", created_at="2026-10-26T12:00:00Z", expires_at="2026-10-29T12:00:00Z")
