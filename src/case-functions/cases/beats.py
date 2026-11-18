@@ -24,8 +24,8 @@ BEAT_KINDS = 2  # the most kinds of one beat: the dearest one that no beat has, 
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
-SEED_ALTERNATIVES = 1  # the dearest resources of a beat whose dearest meter has its list prices read for every product of its service (the tool for alternatives): the Investigator is given what a change to another product would cost, and need not ask
-SEED_CALLS = SEED_RESOURCES + 2 + SEED_ALTERNATIVES  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and the list prices of one meter for each resource that gets them
+SEED_ALTERNATIVES = 1  # the dearest resources of a beat whose dearest meter has its list prices read (the tool for alternatives): the Investigator is given what a change to another product of the service would cost, and need not ask
+SEED_CALLS = SEED_RESOURCES + 2 + 2 * SEED_ALTERNATIVES  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and for each resource that gets list prices one read of the service of its meter and one of its product
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
 SOFT_SHARE = 0.5  # the share of the seconds of a beat after which its tool calls are refused and the agent is told to write its answer (it was 0.7 for the whole run): the model and its tools have this much, and the rest is for the answer
 ANSWER_SECONDS = 60  # what the agent has after that to write its answer: the hard time of a beat is its soft time and this (never more than the seconds of the beat), so that the rounds of an answer always fit
@@ -141,10 +141,21 @@ def _dearest_meter(found: Seed, handle: str) -> str | None:
     return None
 
 
+def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
+    """The answer of the tool for alternatives for a meter that shows every product of its service, or, when the service has more lines than one answer holds or its list was not read to its end (the
+    table would show its cheapest lines and not the siblings of the meter), the answer that shows the lines of the product of the meter, when that shows all of them. {} when there is none: a refusal
+    of the service is a refusal of the product too, and the product is not asked."""
+    for within in ("service", "product"):
+        prices = _said(call("price_alternatives", {"meter": meter, "within": within, "offset": None}))
+        if prices.get("next_offset") is None and prices.get("complete") is not False:
+            return prices
+    return {}
+
+
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
     """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
     and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
-    dearest SEED_ALTERNATIVES of them, the list prices of the dearest meter of its picture, for every product of its service (`price_alternatives`): what a change to another product would cost. It costs no
+    dearest SEED_ALTERNATIVES of them, the list prices of the dearest meter of its picture (`price_alternatives`, see `_prices`): what a change to another product of its service would cost. It costs no
     model tokens, and what it shows is registered as evidence like any answer of a tool. A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves
     `alternatives` empty and is no read that failed: the Investigator may ask for them itself. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the
     listings find them in its caches; a read ahead that fails leaves the listings to make their own."""
@@ -177,7 +188,7 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
             found.failed += 1
     for handle in found.handles[:SEED_ALTERNATIVES]:
         meter = _dearest_meter(found, handle)
-        prices = _said(call("price_alternatives", {"meter": meter, "within": "service", "offset": None})) if meter else {}
+        prices = _prices(call, meter) if meter else {}
         if prices.get("rows"):
             found.alternatives.append(prices)
     return found
