@@ -924,21 +924,26 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         except Exception:  # noqa: BLE001 (a line of the History never costs the agent its answer)
             LOG.warning("a line of a tool call could not be written")
 
+    # What bounds the time of a read that code makes for a beat (cases/beats.py): the toolbox's budget of one measurement for a picture, and its time for the reads of one call for the list prices.
+    code_times = {"profile": ("budget_seconds", beats.SEED_PICTURE_SECONDS), "price_alternatives": ("read_seconds", beats.SEED_PRICE_SECONDS)}
+
     def recorded(beat: beats.Beat, by: str, number: list[int]) -> Callable[[str, dict], str]:
         """The handler of the tool calls of a beat: the toolbox's own, and one line of the History for each call that it runs (cases/beats.call_fields), `by` code for the reads that code makes for a
         beat and `agent` for the calls of the Investigator."""
         def handler(name: str, arguments: dict) -> str:
             began = tool_clock()
-            # The picture that code reads for a beat has a time of its own, so that a resource with very many measurements cannot take the time of the beat: what does not finish is unread and named.
-            capped = by == "code" and name == "profile" and hasattr(toolbox, "budget_seconds")
+            # A read that code makes for a beat has a time of its own, so that a resource with very many measurements, or a list of prices of thousands of lines, cannot take the time of the beat: what does
+            # not finish is unread and named, or says that its list was not complete.
+            held, seconds = code_times.get(name, (None, 0.0)) if by == "code" else (None, 0.0)
+            capped = held is not None and hasattr(toolbox, held)
             if capped:
-                kept_budget = toolbox.budget_seconds
-                toolbox.budget_seconds = min(kept_budget, beats.SEED_PICTURE_SECONDS)
+                kept_time = getattr(toolbox, held)
+                setattr(toolbox, held, min(kept_time, seconds))
             try:
                 text = toolbox.call(name, arguments)
             finally:
                 if capped:
-                    toolbox.budget_seconds = kept_budget
+                    setattr(toolbox, held, kept_time)
             try:
                 fields = beats.call_fields(name, arguments, text, tool_clock() - began)
                 saved = toolbox.log[-1].get("saved") if toolbox.log and isinstance(toolbox.log[-1], dict) else None

@@ -1264,6 +1264,25 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         self.assertEqual(profiles[:2], [beats.SEED_PICTURE_SECONDS, 60.0], "the picture that code reads is held to its time, the call that the agent makes is not")
         self.assertEqual(h.toolbox.budget_seconds, 60.0, "and the budget is what it was after")
 
+    def test_the_list_prices_that_code_reads_for_a_beat_have_a_time_of_their_own_and_the_calls_of_the_agent_keep_the_toolbox_s_time(self):
+        seen = []
+
+        class Watching(PricedToolbox):
+            read_seconds = 45.0  # the time that a call has for its reads, which the read of the price list is held to
+
+            def call(self, name, arguments):
+                seen.append((name, self.read_seconds))
+                return super().call(name, arguments)
+
+        found, _ = pooled()
+        h = rig([script(one("r1"), calls=(("price_alternatives", {"meter": "m1", "within": "product", "offset": None}),)), script(), script()])
+        h.toolbox = Watching(found)
+        h.go()
+        asked = [seconds for name, seconds in seen if name == "price_alternatives"]
+        self.assertEqual(asked[:2], [beats.SEED_PRICE_SECONDS, 45.0], "the read that code makes is held to its time, the call that the agent makes is not")
+        self.assertEqual([seconds for name, seconds in seen if name == "profile"][:2], [45.0, 45.0], "and the time of the pictures is not the time of the prices")
+        self.assertEqual(h.toolbox.read_seconds, 45.0, "the time is what it was after")
+
     def test_one_session_with_no_beats_has_the_same_lines_for_the_calls_of_the_agent_alone(self):
         h = ti.Harness(BeatFoundry([script(one("r1"), calls=(("profile", {"handles": ["r1"]}), ("estate_overview", {})))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)
         h.go()
