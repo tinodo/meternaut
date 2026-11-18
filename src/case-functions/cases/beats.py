@@ -1,7 +1,7 @@
 """The beats of an investigation (docs/proposals/25-beats.md): the estate is looked at in parts, the dearest first, each part in a short session of the Investigator that starts from
 pictures that code has already read. A single long session starves: its model reads everything said so far again at every step, so it costs the square of its steps, and it ends where its
-budget ends, whatever is left. Here code chooses the parts from what the kinds of resource cost, reads the picture of the dearest resources of each part, and tells each part what the parts
-before it concluded.
+budget ends, whatever is left. Here code chooses the parts from what the kinds of resource cost, reads the picture of the dearest resources of each part and the list prices of the dearest meter of
+the dearest one, and tells each part what the parts before it concluded.
 
 Everything is made from the bill, by dollars, and from what the tools showed. No kind of resource, no measurement and no rule of what is waste is written in this file: a kind comes in as a
 word that the cost lines gave, and goes out as the same word.
@@ -9,6 +9,7 @@ word that the cost lines gave, and goes out as the same word.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from itertools import zip_longest
 from types import SimpleNamespace
@@ -16,26 +17,28 @@ from typing import Callable, Mapping, Sequence
 
 from . import activity
 from .detectors import Context
-from .toolbox import ERRORS, TOOLS, type_word
+from .toolbox import ERRORS, MAX_RESULT_CHARS, METER_PATTERN, TOOLS, result_cap, type_word
 
 FLOOR_PERCENT = 95  # the dearest kinds that together make this share of the cost of the last 30 days have a beat of their own; the cheaper ones are left to the last beat
 BEAT_KINDS = 2  # the most kinds of one beat: the dearest one that no beat has, and at most one more of the same service (it was three: the dearest things then had a third of a session)
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
-SEED_CALLS = SEED_RESOURCES + 2  # the reads that this takes at most: a listing for each kind that is seeded, and a picture at the hour and one at the day
+SEED_ALTERNATIVES = 1  # the dearest resources of a beat whose dearest meter has its list prices read for every product of its service (the tool for alternatives): the Investigator is given what a change to another product would cost, and need not ask
+SEED_CALLS = SEED_RESOURCES + 2 + SEED_ALTERNATIVES  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and the list prices of one meter for each resource that gets them
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
 SOFT_SHARE = 0.5  # the share of the seconds of a beat after which its tool calls are refused and the agent is told to write its answer (it was 0.7 for the whole run): the model and its tools have this much, and the rest is for the answer
 ANSWER_SECONDS = 60  # what the agent has after that to write its answer: the hard time of a beat is its soft time and this (never more than the seconds of the beat), so that the rounds of an answer always fit
 SALVAGE_SECONDS = 25  # a beat that is cut off (its hard time, its tokens, or three rounds that gave no text) is asked once more to write its answer, with no tool, and this long to do it
 SALVAGE_MIN_LEFT = 40  # and only when at least this many seconds are left in the time of the beats
 SEED_ESTIMATE_SECONDS = 60  # what the reads of a beat are expected to take before any beat has been read; later, what the beats before it took (on average)
-SEED_PICTURE_SECONDS = 25  # the time that each picture that code reads for a beat may take (the toolbox's budget of one measurement, 60 seconds, is lowered to this for those two calls): a part that did not finish is `unread` and named, and the Investigator may read it itself
+SEED_PICTURE_SECONDS = 25  # the time that each picture that code reads for a beat may take (the toolbox's budget of one measurement, 60 seconds, is lowered to this for those two calls): a part that did not finish is `unread` and named, and the Investigator may read it itself. The read of the list prices keeps the time of its own, which is less (prices.SECONDS)
 STEP_SECONDS = 30  # nor does it ask the model when less than this is left after the reads that code made for it: one step could not end inside its hard time
 OPEN_SECONDS = 480  # the time that one open session has for tool calls, as it had it when the investigation had 600 seconds: the way back (INVESTIGATE_BEATS=1) is the old behaviour
 MIN_TOKENS = 60_000  # nor with fewer tokens than this: one step of the model costs 13 to 20 thousand, and a beat that starts with less cannot ask and be answered inside its hard limit (harness.beat_limit)
 CARRY_CHARS = 3000  # what a beat is told of the beats before it, at most
 CARRY_ITEMS = 6
+INPUT_CHARS = result_cap("profile") + CARRY_CHARS + MAX_RESULT_CHARS + 1000  # the first input of a beat: its pictures, what the beats before it concluded and one answer of the tool for alternatives, each at its cap, and a little for the rest; when it would be longer the alternatives are left out, the last first
 BILLING = "billing-only"  # stands in the ranking for the lines of the bill that no resource owns; it has no slash, so it is never a kind
 EMPTY = "empty"  # the end of a beat that code did not give to the Investigator, because no resource of its kinds was listed
 PRELOAD = "preload"  # the name that the line of the History gives to the read ahead that code makes of the resources of a beat's kinds (Toolbox.preload); it is no tool of the agent
@@ -108,12 +111,14 @@ def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
 @dataclass
 class Seed:
     """What code read for a beat before the Investigator started: how many resources each kind has, the handles of the dearest ones, their pictures (the answers of the tool `profile`: the dearest few at
-    the grain of the hour, the others at the day) and how many reads gave no answer or no answer in full (a listing that says that it could not read some subscriptions)."""
+    the grain of the hour, the others at the day), how many reads gave no answer or no answer in full (a listing that says that it could not read some subscriptions) and the list prices of the dearest
+    meter of the dearest resource (the answers of the tool for alternatives that showed prices; a refusal leaves none and is no read that failed)."""
 
     counts: dict[str, int] = field(default_factory=dict)
     handles: list[str] = field(default_factory=list)
     pictures: list[dict] | None = None
     failed: int = 0
+    alternatives: list[dict] = field(default_factory=list)
 
 
 def _said(text: object) -> dict:
@@ -124,11 +129,25 @@ def _said(text: object) -> dict:
     return found if isinstance(found, dict) and found and "error" not in found else {}
 
 
+def _dearest_meter(found: Seed, handle: str) -> str | None:
+    """The handle of the dearest meter of a resource, from its picture: the first cell of the first row of its meters, which come in the order of their cost (cases/dossier.py). None when the picture
+    of the resource was not read or shows none."""
+    for picture in found.pictures or []:
+        for part in picture.get("profiles") if isinstance(picture.get("profiles"), list) else []:
+            meters = part.get("meters") if isinstance(part, dict) and part.get("handle") == handle else None
+            cols, rows = (meters.get("cols"), meters.get("rows")) if isinstance(meters, dict) else (None, None)
+            if isinstance(cols, list) and cols[:1] == ["meter"] and isinstance(rows, list) and rows and isinstance(rows[0], list) and rows[0]:
+                return rows[0][0] if isinstance(rows[0][0], str) and re.fullmatch(METER_PATTERN, rows[0][0]) else None
+    return None
+
+
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
     """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
-    and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. It costs no model
-    tokens, and what it shows is registered as evidence like any answer of a tool. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the listings find
-    them in its caches; a read ahead that fails leaves the listings to make their own."""
+    and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
+    dearest SEED_ALTERNATIVES of them, the list prices of the dearest meter of its picture, for every product of its service (`price_alternatives`): what a change to another product would cost. It costs no
+    model tokens, and what it shows is registered as evidence like any answer of a tool. A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves
+    `alternatives` empty and is no read that failed: the Investigator may ask for them itself. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the
+    listings find them in its caches; a read ahead that fails leaves the listings to make their own."""
     found, lists = Seed(), []
     if warm is not None and len(beat.kinds) > 1:
         try:
@@ -156,6 +175,11 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
             found.pictures = [*(found.pictures or []), picture]
         else:
             found.failed += 1
+    for handle in found.handles[:SEED_ALTERNATIVES]:
+        meter = _dearest_meter(found, handle)
+        prices = _said(call("price_alternatives", {"meter": meter, "within": "service", "offset": None})) if meter else {}
+        if prices.get("rows"):
+            found.alternatives.append(prices)
     return found
 
 
@@ -217,8 +241,9 @@ def carry(results: Sequence[Result]) -> list[dict]:
 
 
 def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[dict]) -> str:
-    """What the Investigator is given for a beat: the budget of tool calls, the beat (its number, how many there are, its kinds), how many resources each kind has, the pictures that code read, and what the
-    beats before it concluded. An open beat is given the budget alone, as one session always was."""
+    """What the Investigator is given for a beat: the budget of tool calls, the beat (its number, how many there are, its kinds), how many resources each kind has, the pictures that code read, the list prices
+    that code read for the dearest meter of the dearest resource (`alternatives`: answers of the tool for alternatives, whose price handles a change may cite), and what the beats before it concluded. When
+    that is longer than INPUT_CHARS the alternatives are left out, the last first. An open beat is given the budget alone, as one session always was."""
     where: dict = {"number": beat.number, "of": beat.of, "focus": list(beat.kinds)}
     if beat.billing:
         where["billingOnly"] = True
@@ -233,7 +258,12 @@ def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[di
         body["pictures"] = seeded.pictures
     if earlier:
         body["earlier"] = list(earlier)
-    return json.dumps(body, sort_keys=True, separators=(",", ":"))
+    alternatives = list(seeded.alternatives) if seeded is not None else []
+    while True:
+        text = json.dumps({**body, **({"alternatives": alternatives} if alternatives else {})}, sort_keys=True, separators=(",", ":"))
+        if len(text) <= INPUT_CHARS or not alternatives:
+            return text
+        alternatives.pop()
 
 
 def _error_of(text: object) -> str | None:
