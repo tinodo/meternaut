@@ -26,8 +26,10 @@ from cases.memory_store import MemoryStore, parse, stamp
 from cases.models import (ADVISE, CASE_CLOSED, CASE_STATUSES, DECISIONS, DECLINE_REASONS, ActionRecord, CaseRecord, DecisionRecord, NoteRecord, Principal,
                           SwitchRecord)
 from cases.runner import RunnerServices, change_calls, execute, tick
+from cases.store import TableStore, table_calls
 from cases.web import words
 from test_runner import FakeAzure
+from test_store import ACCOUNT, FakeTables, plan as stored_plan
 from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Console, FailingStore, make_advice_case, make_run)
 
 CHANGE_GROUP = "meternaut-sc-rg"
@@ -379,6 +381,39 @@ class ThePlanOfAFinding(Base):
     def test_a_case_that_is_dropped_gets_nothing(self):
         case = replace(self.case, case_id="case0009", resource_id=VM + "-b", status="dropped")
         self.assertIsNone(self.approvals.plan_for(case, lead_of(case), NAMED))
+
+
+class TheListsAreReadOncePerWatch(unittest.TestCase):
+    """The finding that a person has to look at is asked about for each case of a Watch, and each asks the lists of the open and of the recent requests: a table that grows (no clock closes a request) made
+    that three reads of a thousand rows each time. The store reads each list once for the whole Watch (Store.reading) and keeps it right by its own writes."""
+
+    def table(self):
+        service = FakeTables()
+        client = Client(table_calls(ACCOUNT), str, transport=service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        return service, TableStore(client, lambda resource: "token", ACCOUNT, clock=Clock())
+
+    def test_ten_cases_of_a_watch_read_each_list_of_the_plans_once_and_a_plan_that_one_case_made_is_seen_by_the_next(self):
+        service, store = self.table()
+        for n in range(2500):
+            store.plan_put(stored_plan(f"closed{n:04d}", "declined"))
+        cases = [make_advice_case(case_id=f"k{n}", resource_id=f"{VM}{n}", plan_id=None, updated_at=stamp(NOW), first_seen_at=stamp(NOW)) for n in range(10)]
+        for case in cases:
+            store.case_put(case)
+        approvals = Approvals(store, SETTINGS, Clock())
+        listings = lambda: len([call for call in service.calls if call[0] == "GET" and "mnplans()" in call[1]])
+        before = listings()
+        with store.reading():
+            made = [approvals.advise(case, NAMED) for case in cases]
+            again = approvals.advise(cases[0], NAMED)
+            self.assertEqual((all(made), again), (True, None), "the plan that the first case made is seen by the second request about the same resource: one plan for it")
+            self.assertEqual(len(store.plans_open()), 10)
+        self.assertLessEqual(listings() - before, 4, "the open list in a page and the recent list in three of a thousand rows, once for the Watch")
+        for case in cases:
+            store.plan_put(replace(store.plan_get(store.case_get(case.case_id).plan_id), state="declined"))
+        before = listings()
+        for case in cases:
+            approvals.advise(replace(case, plan_id=None), NAMED)
+        self.assertGreaterEqual(listings() - before, 4 * 10, "outside a Watch every case asks again")
 
 
 class TheGate(Base):

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable, Mapping, Sequence
 
 from . import brief as brief_mod
@@ -185,6 +185,9 @@ def existence(arm: object, plans: Iterable[PlanRecord], in_full: Callable[[str],
     return answer
 
 
+_MEMORY: dict[str, dict] = {}  # what the rounds of a process remember, for each storage account: the timer builds a new hook every minute (loop.tick), so a hook cannot hold it. A module does, as loop._teams_off_said does; that the Functions worker keeps a module between two calls of the timer is not proved, which is why the store has the say and this only stands in for it
+
+
 @dataclass
 class Ladder:
     """What one round of the ladder works with."""
@@ -199,6 +202,7 @@ class Ladder:
     contacts: tuple[str, ...] = ()  # the people responsible for Meternaut, for the last line of a letter
     tag: Callable[[PlanRecord], str] = lambda plan: ""
     emit: Callable[..., object] = lambda kind, **fields: None
+    memory: dict = field(default_factory=dict)  # what the rounds of this process remember (`_MEMORY`): the cursor that the store could not keep
 
 
 def _names(targets: tuple[Target, ...]) -> tuple[str, ...]:
@@ -394,24 +398,75 @@ def weekly(ladder: Ladder, plans: Iterable[PlanRecord] | None = None, records: M
     return sent
 
 
+def _round(ladder: Ladder, plans: list[PlanRecord]) -> list[PlanRecord]:
+    """The requests that this round looks at (`_window`), from the cursor that the store keeps. A store that cannot read or write it does not send every round back to the oldest requests (the rest would
+    starve, and nobody would know): the round goes on from the cursor that this process kept in `ladder.memory` (`_MEMORY`: the timer builds a ladder of its own every minute), and says in one History line
+    of counts how many reads and writes of the cursor failed. A restart loses that memory, and the next round then starts at the oldest request. While all the requests fit in one round there is no cursor
+    to read, to keep or to lose."""
+    if len(plans) <= ROUND_PLANS:
+        return _window(plans, "")[0]
+    failed, memory = 0, ladder.memory
+    cursor = memory.pop("unsaved", None)  # a cursor that the store did not take: newer than the one that it has, which is not asked
+    if cursor is None:
+        try:
+            cursor = ladder.store.cursor_get()
+        except StoreError:
+            cursor, failed = memory.get("cursor", ""), 1
+    looked, after = _window(plans, cursor)
+    memory["cursor"] = after
+    if after != cursor:
+        try:
+            ladder.store.cursor_put(after)  # before the work: a request that a round cannot finish is not met again at once, and the others are not held back by it
+        except StoreError:
+            memory["unsaved"], failed = after, failed + 1
+    if failed:
+        ladder.emit("escalation.cursor", failed=failed)
+    return looked
+
+
+TOLD_DAYS = 45  # how long the index keeps the row of a request that is not open any more: the pages list the requests of the last weeks
+
+
+def _told(ladder: Ladder, looked: Sequence[PlanRecord], records: Mapping[str, list[EscalationRecord]], open_ids: set[str]) -> None:
+    """Keeps the index of who a step was delivered to (Store.told_get), from the records of the requests that this round looks at: the pages list the advice that a person is told about but not named on
+    from that one small read instead of the ladder of every request, and the page of one request still asks its own ladder. Only a person of the list has rows (the others cannot sign in to use them).
+    A row is written when it is missing (a step that was just delivered, a request that carries the steps of the one that it stands for, a write that failed) or older than the last step that was
+    delivered to the person for that request, so that it says when they were last told. A row of a request that is not open and was last delivered more than TOLD_DAYS days ago is removed when the round
+    meets the person: the people that the requests of this round delivered steps to, and one more person of the list in each round (by the clock), so that the rows of a person who is told nothing any
+    more go too. Nothing is removed while the list of open requests is cut at its cap, which cannot say which requests have ended. A round goes on without the index, and says so in the History, when
+    the store cannot keep it."""
+    store, people, now = ladder.store, ladder.people, ladder.clock()
+    old, cut = stamp(now - dt.timedelta(days=TOLD_DAYS)), bool(getattr(store, "truncated", {}).get("open"))
+    try:
+        delivered: dict[str, dict[str, str]] = {}
+        for plan in looked:
+            for step in (r for r in records[plan.plan_id] if r.kind == "step"):
+                for oid in (o.lower() for o in step.delivered if people.by_oid(o)):
+                    when = delivered.setdefault(oid, {})
+                    when[plan.plan_id] = max(when.get(plan.plan_id, ""), step.last_try or step.at)
+        if people.persons and not cut:
+            delivered.setdefault(people.persons[int(now.timestamp() // 60) % len(people.persons)].oid.lower(), {})
+        for oid, found in delivered.items():
+            have = store.told_get(oid)
+            for plan_id, at in found.items():
+                if at > have.get(plan_id, ""):
+                    store.told_put(oid, plan_id, at)
+            for plan_id in [plan_id for plan_id, at in have.items() if plan_id not in open_ids and at < old and not cut]:
+                store.told_delete(oid, plan_id)
+    except Exception as error:  # noqa: BLE001 (the index is an addition to the pages: a round goes on without it)
+        ladder.emit("run.note", note=f"the index of who was told could not be kept: {type(error).__name__}")
+
+
 def tick(ladder: Ladder) -> int:
     """One round of the ladder: the steps that are due (at most one for each request), then the letters that wait to go, then the weekly letter. A round looks at ROUND_PLANS requests at most (see
-    `_window`), and each of them is read once for the three parts of it. Returns the steps made. It never raises."""
+    `_round`), and each of them is read once for the three parts of it. Returns the steps made. It never raises."""
     made = 0
     try:
         now = ladder.clock()
         plans = [p for p in ladder.store.plans_open() if p.state == "open"]
-        try:
-            cursor = ladder.store.cursor_get()
-        except StoreError:
-            cursor = ""  # a cursor that cannot be read starts the round with the oldest request
-        looked, after = _window(plans, cursor)
-        if after != cursor:
-            try:
-                ladder.store.cursor_put(after)  # before the work: a request that a round cannot finish is not met again at once, and the others are not held back by it
-            except StoreError:
-                pass
+        looked = _round(ladder, plans)
         records = _records(ladder.store, looked)
+        _told(ladder, looked, records, {p.plan_id for p in plans})
         for plan in looked:
             mine = sorted(records[plan.plan_id], key=lambda r: r.number)
             steps, snoozes = [r for r in mine if r.kind == "step"], [r for r in mine if r.kind == "snooze"]
@@ -434,11 +489,12 @@ def hook(env: Mapping[str, str], settings: LoopSettings, store: Store, people: P
     from .notify import build_mailer, contacts_of  # imported here: notify imports the web pages, which import a good part of the app
     mailer = build_mailer(settings, store, people, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     mailer.deny = tuple(item.strip().lower() for item in settings.escalation.deny)
+    memory = _MEMORY.setdefault(settings.store_account, {})  # the rounds of this process share it: each builds a ladder of its own
 
     def on_round(arm: object = None, emit: Callable[..., object] = lambda kind, **fields: None) -> int:
         client = Client(directory_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         found = Directory(client, token, people, managers=settings.escalation.managers, deny=settings.escalation.deny)
         reader = tag_reader(arm, settings.escalation.tag) if arm is not None else (lambda plan: "")
-        return tick(Ladder(store, people, mailer, found, settings.escalation, settings.base_url, clock, contacts_of(people), reader, emit))
+        return tick(Ladder(store, people, mailer, found, settings.escalation, settings.base_url, clock, contacts_of(people), reader, emit, memory))
 
     return on_round

@@ -6,7 +6,7 @@ import math
 from typing import Callable, Iterable, TypeVar
 
 from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people  # the pages know the brief, and the brief knows when a change needs two people
-from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, may_answer
+from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
 from .figures import a_year, chip, cost_of, dollars, figure_for
@@ -128,8 +128,14 @@ def pulled(ctx: Ctx, *names: str) -> bool:
 
 
 def answerable(ctx: Ctx, plan: PlanRecord) -> bool:
-    """`models.may_answer` for the person of this page: the one rule of who may answer a request. The ladder of the request is read only when nothing else lets the person answer it, and it is advice."""
-    return may_answer(ctx.principal, plan, lambda: ctx.ladder(plan.plan_id))  # type: ignore[arg-type]
+    """`models.may_answer` for a LIST: the requests that the person of this page may answer, where the advice that a step of the ladder was delivered to them for comes from their index (`Ctx.told`: one small
+    read for the whole page, not the ladder of every request). It only decides what to list: the page of one request and the decider ask the ladder of that request (`may_open`)."""
+    return may_answer(ctx.principal, plan, lambda: plan.plan_id in ctx.told())  # type: ignore[arg-type]
+
+
+def may_open(ctx: Ctx, plan: PlanRecord) -> bool:
+    """`models.may_answer` for the page of ONE request: a step that was delivered is looked up in the ladder of this request itself, never in the index."""
+    return may_answer(ctx.principal, plan, lambda: escalated_to(ctx.ladder(plan.plan_id), ctx.principal.oid))  # type: ignore[arg-type, union-attr]
 
 
 # -- what happened to the change ---------------------------------------------------------------------------------------------------------------------
