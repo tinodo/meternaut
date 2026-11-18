@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, text_of, times_text, waited_text, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -38,6 +38,8 @@ def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
     place = f"resource group {brief.where.group}" if brief.where.group and brief.group is None else ""
     named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" and brief.group is None else ""
     bits: list[object] = [bit for bit in (brief.where.kind if brief.group is None else "", place, named, f"found {ago}" if ago else "") if bit]
+    if brief.group is not None and ago:
+        bits = [f"They were found {ago}."]  # a finding about many resources has no kind or place of its own to put before it
     meta = fmt('<p class="meta">{meta}</p>', meta=join(bits, " · ")) if bits else Safe("")
     back = paragraph(link(ctx.url("/"), "Back to the decisions"))
     return join([back, fmt('<div class="head"><div><h1>{title}</h1>{meta}</div></div>', title=title, meta=meta)])
@@ -60,7 +62,7 @@ def _waiting(ctx: Ctx, brief: Brief) -> Safe:
 def _chips(brief: Brief) -> Safe:
     """Three chips at most, each with a word and a shape: the risk, how sure the AIs are, and what a change leaves behind (or that the answer changes nothing in Azure)."""
     level = brief.confidence.level
-    chips = [risk_chip(brief.risk.level, IF_ACTED if brief.risk.text.startswith(ACTING) else ""), chip(f"{level} confidence", "info" if level == "High" else "")]
+    chips = [risk_chip(brief.risk.level, IF_ACTED if brief.risk.acting else ""), chip(f"{level} confidence", "info" if level == "High" else "")]
     if brief.kind == "change":
         chips.append(chip("Can be undone", "low", "circle") if brief.undo.reversible else chip("Cannot be undone", "high", "diamond"))
     elif brief.kind == "advice":
@@ -149,7 +151,7 @@ def _happens(brief: Brief) -> Safe:
     if brief.kind == "advice":
         if brief.state not in ("open", HELD):
             return Safe("")  # nobody can answer it any more: what became of it is said above
-        risk = [paragraph(brief.risk.text)] if brief.risk.text.startswith(ACTING) else []
+        risk = [paragraph(brief.risk.text)] if brief.risk.acting else []
         return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">What happens if you answer</h2>{lines}</section>', lines=join([paragraph(f"{brief.change} {brief.who_acts}"), *risk]))
     heading = ("If you approve" if brief.state == "open" else "What the change is") if brief.kind == "change" else "What changes"
     if brief.ready is not None and brief.ready.state == REFUSED and brief.kind == "change":
@@ -329,6 +331,8 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     rows: list[tuple[str, object]] = []
     if case is not None:
         status_word, meaning = words.CLOSED_BY_THE_BILL if case.status == "expired" and taken_back(plan) == "verified" else words.CASE_STATUS.get(case.status, (case.status, ""))
+        if case.status == "needs_human":
+            meaning = f"A person has to look at it. {why_a_person(case, plan)}".strip()  # only the reasons that are true of this finding, not the glossary of every one
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
         rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
                  ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),

@@ -33,7 +33,7 @@ LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$
 # nothing in Azure" against "Low risk, Low confidence, Changes nothing in Azure"). The limits are the measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to
 # 56) keep the limits that they had. The approval letter of advice then said in three plain sentences what an answer does and who acts ("Meternaut changes nothing in Azure. Your answer is recorded
 # with your name. If you decide to act, you do it yourself in Azure with your own rights."), and the longest one, that of a group that code priced and that the limit of a run cut, is 186 words.
-MOST_WORDS = {"first contact": 110, "approval": 190, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, in words that a person reads once
+MOST_WORDS = {"first contact": 110, "approval": 195, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, in words that a person reads once; the longest, a priced group that the limit of a run cut, is 192 words, 33 of them the footer that phase 2 rewrites
 
 
 def make_plan(**changes) -> PlanRecord:
@@ -420,7 +420,7 @@ class Approval(unittest.TestCase):
 
     def test_the_figure_is_a_saving_a_cost_or_nothing_that_can_be_shown_and_each_says_what_it_is_and_why(self):
         saves = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=80.0, detector="orphan-managed-disk")).text
-        self.assertIn("It costs $80.00 a month, about $960 a year.\nNobody has worked out how much of that could be saved.", saves)
+        self.assertIn("It costs $80.00 a month, about $960 a year.\nNobody has worked out what a change would save.", saves)
         none = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=0.0)).text
         self.assertIn("Azure has not reported a cost for this yet.", none)
         unread = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=None)).text
@@ -487,7 +487,7 @@ class Approval(unittest.TestCase):
         self.assertEqual(letter.text.splitlines()[0], "Look at the disk disk-zq7-name", "the title of the page, not the headline with its place")
         self.assertIn("Managed disk, resource group rg-zq7-group", letter.text)
         self.assertIn("Medium risk if you act, Low confidence, Answering changes nothing in Azure", letter.text)
-        self.assertIn("If you act: What depends on it can slow down or stop.", letter.text, "the risk is that of doing what the title suggests, said apart from the answer")
+        self.assertIn("What could go wrong: If you act, what depends on it can slow down or stop.", letter.text, "the risk is that of doing what the title suggests, said apart from the answer")
         self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
         self.assertNotIn("sign in to Azure", letter.text)
         self.assertNotIn("Undo:", letter.text, "an answer to advice changes nothing, so there is nothing to say about an undo")

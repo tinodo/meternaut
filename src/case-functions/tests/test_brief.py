@@ -181,11 +181,11 @@ class TheBriefOfAdvice(unittest.TestCase):
     def test_nothing_changes_in_azure_and_the_answers_are_the_five(self):
         b = self.brief
         self.assertEqual((b.kind, b.family, b.state), ("advice", "advise", "open"))
-        self.assertEqual(b.headline, "Look at the virtual machine oversized-vm-1 in group team-apps-rg: it may be larger than its use needs")
+        self.assertEqual(b.headline, "Look at the virtual machine oversized-vm-1 in group team-apps-rg, because it may be larger than its use needs")
         self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_CHANGE, brief.ADVICE_WHO, ""))
         self.assertEqual((b.undo.reversible, b.undo.how), (True, ""), "an answer to advice changes nothing, so there is nothing to say about an undo")
         self.assertEqual(b.risk, brief.acting_risk(self.case), "the risk is that of doing what the title suggests, and answering changes nothing in Azure")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act: What depends on it can slow down or stop."))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act, what depends on it can slow down or stop."))
         self.assertEqual(b.answers, ("approve", "decline", "not_mine", "ask", "later"))
         self.assertEqual(b.where.kind, "Virtual machine")
         self.assertEqual(b.where.portal_url, f"https://portal.azure.com/#resource{VM}")
@@ -277,6 +277,8 @@ class TheConfidence(unittest.TestCase):
         self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 2}})).level, "High")
         some = confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1, "B": 0}, "citedMetrics": 3}}))
         self.assertEqual((some.level, some.because), ("Medium", "Confidence is medium. Both AIs agree. Meternaut checked the 3 numbers that the AI quoted against Azure, and 2 are right."))
+        one_of_three = confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}, "citedMetrics": 3}}))
+        self.assertEqual(one_of_three.because, "Confidence is medium. Both AIs agree. Meternaut checked the 3 numbers that the AI quoted against Azure, and 1 is right.")
         none = confidence_of(make_case(**{**investigated, "facts": {}}))
         self.assertEqual((none.level, none.because), ("Low", "Confidence is low. Both AIs agree. The AI quoted no number that Meternaut could check."))
         self.assertEqual(confidence_of(make_case(**{**investigated, "facts": {"metrics": {"A": 1}}})).because,
@@ -402,7 +404,7 @@ class TheSaving(unittest.TestCase):
 
     def test_expected_when_cost_lines_back_it_with_the_cost_of_waiting(self):
         saving = brief_of(make_case(), make_plan(saving_usd_month=41.2, waiting_costs_usd_day=1.37)).saving
-        self.assertEqual((saving.monthly, saving.level, saving.basis, saving.waiting_per_day), (41.2, "Expected", brief.BILL_BASIS, 1.37))
+        self.assertEqual((saving.monthly, saving.level, saving.basis, saving.waiting_per_day), (41.2, "Expected", "It is based on your bill for the last 30 days.", 1.37))
         self.assertEqual(brief_of(make_case(), make_plan(saving_usd_month=30.0, waiting_costs_usd_day=None)).saving.waiting_per_day, 1.0, "a month of 30 days")
 
     def test_scenario_when_azure_advisor_or_a_proposed_change_is_the_only_basis(self):
@@ -430,7 +432,7 @@ class TheSaving(unittest.TestCase):
         nothing = brief_of(make_case(cost_usd_30d=0.0, cost_state="lines"), make_plan(saving_usd_month=0)).saving
         self.assertEqual(nothing.why_none, "Cost Management shows no cost for this in the last 30 days.")
         costly = brief_of(make_case(cost_usd_30d=848.75, saving_usd_month=None), make_plan(saving_usd_month=None)).saving
-        self.assertEqual((costly.monthly, costly.why_none), (None, "Nobody has worked out how much of that could be saved."))
+        self.assertEqual((costly.monthly, costly.why_none), (None, "Nobody has worked out what a change would save."))
         self.assertNotIn("could not read", costly.why_none, "a cost that is known is never said to be missing")
         self.assertEqual([none.specific, free.specific, costly.specific], [False, False, False], "that no saving was worked out from the cost that was read is not a reason of the finding's own")
         for bad in (-5.0, math.nan, math.inf, True, "7"):
@@ -583,8 +585,8 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         for case in (plain, modelled):
             risk = brief.acting_risk(case)
             self.assertEqual((brief.still_used(case), risk.level, bool(brief.check_first(case))), (True, "high", True))
-            self.assertIn(brief.UNPROVEN, risk.text)
-            self.assertIn(brief.SHARED_RISK, risk.text)
+            self.assertIn("Nothing proves that it is unused, so acting on it could break something that still uses it.", risk.text)
+            self.assertIn("Traffic that you cannot see from here may depend on it.", risk.text)
 
 
 class TheOwner(unittest.TestCase):
@@ -652,7 +654,8 @@ class TheOutcome(unittest.TestCase):
     def test_a_request_that_meternaut_took_back_says_why(self):
         plan = make_plan(state="expired", preconditions={"takenBack": "group"})
         found = brief_of(make_case(), plan).outcome
-        self.assertEqual((found.title, found.result, found.lines[0]), ("Taken back", "Taken back by Meternaut", brief.TAKEN_BACK["group"]))
+        self.assertEqual((found.title, found.result, found.lines[0]), ("Taken back", "Taken back by Meternaut", "Meternaut took this request back. It was one of several requests about single resources, "
+                                                                                                          "and one request for the whole group waits now."))
 
     def test_declined_names_who_and_the_reason(self):
         found = self.outcome("declined", decisions=[make_decision(decision="decline", reason="handled", approver_name="Maya")])

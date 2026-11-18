@@ -20,6 +20,7 @@ SCENARIO_BASIS = "It is Azure Advisor's own estimate, and the bill of this resou
 VERIFIED_BASIS = "The bill since the change shows no cost for this resource."
 NOTHING_CHANGED = "Nothing was changed, so no saving is claimed for this approval."
 LOOK = "They wait for a person to answer or look at them."
+LOOK_ONE = "It waits for a person to answer or look at it."
 TILE_AND_ROW = '"Saving measured" counts every change that Cost Management confirmed, so it can be larger than the row "Confirmed by Cost Management".'
 
 
@@ -180,12 +181,12 @@ class TheSavingsPage(unittest.TestCase):
         console = Console()
         console.store.case_put(finding("proposed"))
         tiles = tiles_of(console.get(PATH))
-        self.assertEqual(tiles["Found in all"][:2], ("$120 a year", "It is the saving of 1 finding. The table says what each figure rests on."))
-        self.assertEqual(tiles["Waiting for a person"][:2], ("$120 a year", f"It is the saving of 1 finding. {LOOK}"))
+        self.assertEqual(tiles["Found in all"][:2], ("$120 a year", "It is the saving of 1 finding. The table says what its figure rests on."))
+        self.assertEqual(tiles["Waiting for a person"][:2], ("$120 a year", f"It is the saving of 1 finding. {LOOK_ONE}"))
         console.store.case_put(finding("approved"))
         tiles = tiles_of(console.get(PATH))
         self.assertEqual(tiles["Found in all"][:2], ("$600 a year", "It is the saving of 2 findings. The table says what each figure rests on."))
-        self.assertEqual(tiles["Waiting for a person"][1], f"It is the saving of 1 finding. {LOOK}", "only the first row")
+        self.assertEqual(tiles["Waiting for a person"][1], f"It is the saving of 1 finding. {LOOK_ONE}", "only the first row")
 
     def test_saving_measured_adds_up_every_confirmed_change_whoever_made_it_and_is_the_tile_of_the_decisions_page_for_a_person_named_in_them(self):
         console = Console()
@@ -233,7 +234,7 @@ class TheSavingsPage(unittest.TestCase):
         self.assertEqual(row["Findings"], "3")
         self.assertEqual(row["Saving a year"], f"Could save about $1,440 a year ($120 a month) {EXPECTED_BASIS}", "two findings of 60 a month: the one that changed nothing adds nothing")
         self.assertEqual(row["Findings with no saving figure"], f"1 finding. {NOTHING_CHANGED}")
-        self.assertEqual(tiles_of(reply)["Found in all"][:2], ("$1,440 a year", "It is the saving of 2 of 3 findings. The others have no saving figure. The table says what each figure rests on."))
+        self.assertEqual(tiles_of(reply)["Found in all"][:2], ("$1,440 a year", "It is the saving of 2 of 3 findings. The other has no saving figure. The table says what each figure rests on."))
         self.assertEqual(tiles_of(reply)["Saving measured"][0], "—", "nothing was confirmed by Cost Management")
         self.assertNotIn("disk-", reply.text)
 
@@ -513,9 +514,9 @@ class TheSavingsOfAzureAdvisor(unittest.TestCase):
         row = self.row(console)
         self.assertEqual(row["Findings"], "2")
         self.assertIn("Could save about $1,800 a year", row["Saving a year"], "1,200 and 600 a year, each once")
-        self.assertIn("It is Azure Advisor's own estimate", row["Saving a year"])
+        self.assertIn("It adds up Azure Advisor's own estimate of each finding.", row["Saving a year"].replace("&#x27;", "'"), "two findings: the note of one of them is not said beside their sum")
         self.assertNotIn("It is based on your bill", row["Saving a year"], "no other level is mixed in")
-        self.assertIn("Azure Advisor's own estimate of the smallest of its variants", console.get(PATH).content.replace("&#x27;", "'"))
+        self.assertNotIn("of this resource", row["Saving a year"].replace("&#x27;", "'"))
 
     def test_a_finding_that_advisor_also_names_is_counted_with_its_own_figure_and_advisors_is_not_added_to_it(self):
         console = Console()
@@ -529,6 +530,19 @@ class TheSavingsOfAzureAdvisor(unittest.TestCase):
         self.assertIn("$120", row["Saving a year"], "Advisor's figure for the finding that has none of its own: 10 a month")
         self.assertNotIn("$480", row["Saving a year"])
         self.assertNotIn("$840", row["Saving a year"])
+
+
+class TheBasisOfACell(unittest.TestCase):
+    def test_a_note_about_one_resource_is_not_said_beside_the_sum_of_several_and_the_bill_is_said_for_all(self):
+        from cases import brief
+        from cases.web import savings
+
+        note = "It assumes that 30 to 60 percent of the 2 bill lines of this resource would go away. The saving could be anywhere from $144 to $288 a month. Meternaut counts the low end."
+        self.assertEqual(savings._basis_of([144.0, {note}, 1]), note)
+        self.assertEqual(savings._basis_of([288.0, {note}, 2]), "It adds up the figure of each finding.")
+        self.assertEqual(savings._basis_of([240.0, {brief.BILL_BASIS}, 2]), "It is based on your bill for the last 30 days.")
+        self.assertEqual(savings._basis_of([240.0, {note, brief.BILL_BASIS}, 3]), "It adds up the figure of each finding.")
+        self.assertEqual(savings._basis_of([240.0, {brief.ADVISOR_BASIS, brief.ADVISOR_BASIS_MANY}, 2]), "It adds up Azure Advisor's own estimate of each finding.")
 
 
 if __name__ == "__main__":

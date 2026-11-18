@@ -25,6 +25,7 @@ ABSENT = {"metrics": {"MetricA": {"total": None, "days": 30, "days_with_data": 0
 ENDPOINTS = "microsoft.network/privateendpoints"
 NOT_PRICED_ONE = ("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named as an approver. "
                   "The AI looks at it again at its next search.")
+UNPROVEN_AND_SHARED = ("Nothing proves that it is unused, so acting on it could break something that still uses it. Traffic that you cannot see from here may depend on it.")
 
 
 def watch(raw, resources, evidence, **options) -> Harness:
@@ -61,7 +62,7 @@ class MissingDataIsNotZero(unittest.TestCase):
                 self.assertIn(f"finding 1: {HELD_UNPROVEN}", h.notes)
                 plan = made_before(h, case)
                 self.assertTrue(plan.title.startswith("Check whether the resource thing-1"), plan.title)
-                self.assertTrue(plan.could_go_wrong.startswith(brief.ACTING + brief.UNPROVEN), plan.could_go_wrong)
+                self.assertTrue(plan.could_go_wrong.startswith("Nothing proves that it is unused, so acting on it could break something that still uses it."), plan.could_go_wrong)
 
     def test_a_deletion_with_a_measured_zero_on_every_resource_of_a_kind_that_others_do_not_share_stays_a_deletion(self):
         h = watch(finding(basis="other", proposal="delete", confidence=0.9), [resource(1, cost_usd_30d=70.0), resource(2, cost_usd_30d=80.0)], {"r1": metrics(MetricA=0), "r2": metrics(MetricA=0)})
@@ -150,7 +151,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
                 self.assertEqual((stake.stake_of(b).state, stake.stake_of(b).note), ("cost", brief.NOT_WORKED_OUT))
                 self.assertEqual(("Use, last 30 days", NOT_MEASURED), next((f.label, f.value) for f in b.facts if f.label.startswith("Use")))
                 self.assertEqual(b.check_first, CHECK_FIRST)
-                self.assertEqual((b.risk.level, b.risk.text), ("high", brief.ACTING + brief.UNPROVEN + " " + brief.SHARED_RISK))
+                self.assertEqual((b.risk.level, b.risk.text), ("high", UNPROVEN_AND_SHARED))
                 self.assertEqual(stake.chips_of(b), ("High risk if you act", "Low confidence", "Answering changes nothing in Azure"))
                 self.assertEqual((b.change, b.undo.how), (brief.ADVICE_CHANGE, ""), "answering changes nothing in Azure, and says so apart from the risk")
 
@@ -160,7 +161,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         reply, text = page_of(case, plan)
         self.assertEqual(reply.headings(1), ["Check whether the private endpoint pe-apim-demo is still used"])
         self.assertEqual(reply.main.find("p", class_="chips").text(), "High risk if you act Low confidence Answering changes nothing in Azure")
-        self.assertIn(brief.ACTING + brief.UNPROVEN + " " + brief.SHARED_RISK, reply.main.text())
+        self.assertIn(UNPROVEN_AND_SHARED, reply.main.text())
         self.assertIn(brief.ADVICE_CHANGE, reply.main.text())
         self.assertIn("Check first", reply.headings(2))
         for line in CHECK_FIRST:
@@ -173,10 +174,10 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         self.assertEqual(texts["headline"], "Check whether the private endpoint pe-apim-demo is still used")
         self.assertEqual(texts["chips"], "High risk if you act, Low confidence, Answering changes nothing in Azure")
         self.assertEqual(texts["check-first"], CHECK_FIRST_SHORT)
-        self.assertEqual(texts["risk"], brief.ACTING + brief.UNPROVEN + " " + brief.SHARED_RISK)
+        self.assertEqual(texts["risk"], UNPROVEN_AND_SHARED)
         letter = letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS)
         for words in ("Check whether the private endpoint pe-apim-demo is still used", "High risk if you act, Low confidence, Answering changes nothing in Azure", CHECK_FIRST_SHORT,
-                      "If you act: " + brief.UNPROVEN + " " + brief.SHARED_RISK):
+                      "What could go wrong: " + UNPROVEN_AND_SHARED):
             self.assertIn(words, letter.text)
         self.assertNotIn("Consider deleting", letter.text)
         self.assertNotIn("Low risk", letter.text)
@@ -186,14 +187,14 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
                                 facts={"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "metricDaysWithData": {"MetricA": 27}, "metricDays": {"MetricA": 30}})
         b = brief.build_brief(case, make_advice(resource_id=DISK, resource_name="disk-demo", resource_group="rg-platform"), now=WEB_NOW, may_answer=True)
         self.assertEqual(b.headline, "Consider deleting the disk disk-demo in group rg-platform")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", brief.ACTING + brief.RARE_USE))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", "Acting on it could break something that uses it less often than Meternaut measured."))
         self.assertEqual((b.check_first, stake.chips_of(b)[0]), ((), "Medium risk if you act"))
         self.assertIn("with a value on 27 of those days", next(f.value for f in b.facts if f.label == "MetricA"))
 
     def test_a_finding_about_a_kind_that_others_share_says_so_whatever_it_asks(self):
         asks_to_change = endpoint_case(recommendation="change", facts={"basis": "oversized", "proposal": "change", "metrics": {"MetricA": 4}})
         b = brief.build_brief(asks_to_change, endpoint_plan(asks_to_change, title="Look at the private endpoint pe-apim-demo"), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.headline.startswith("Look at"), b.risk.level, b.risk.text), (True, "high", brief.ACTING + brief.SHARED_RISK))
+        self.assertEqual((b.headline.startswith("Look at"), b.risk.level, b.risk.text), (True, "high", "Traffic that you cannot see from here may depend on it."))
         self.assertEqual(b.check_first, (), "it is not the question whether the resource is still used")
 
     def test_a_request_with_no_plan_and_a_case_of_the_older_detectors_keep_their_words(self):
@@ -320,7 +321,7 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         self.assertEqual((held["reason"], RULES_CHANGED), ("held back: Meternaut's rules changed", "held back: Meternaut's rules changed"))
         b = brief.build_brief(kept, after, now=WEB_NOW)
         self.assertEqual((b.outcome.state, b.outcome.title), ("expired", "Taken back"))
-        self.assertEqual(b.outcome.lines, (brief.TAKEN_BACK["rules"], "Nothing was changed in Azure."))
+        self.assertEqual(b.outcome.lines, ("Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.", "Nothing was changed in Azure."))
         card = cards.closed_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{after.plan_id}"))
         text = {block["id"]: block["text"] for block in walk_blocks(card)}["closed"]
         self.assertTrue(text.startswith("Taken back. Meternaut took this request back because its rules changed."), text)
@@ -357,7 +358,9 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
     def test_each_reason_says_what_it_is_and_only_the_rules_say_that_the_rules_changed(self):
         case, plan = self.open_request("Consider deleting the private endpoint pe-apim-demo in group rg-platform")
         ended = replace(plan, state="expired", expires_at="2026-11-04T09:00:00Z")
-        for why, first in (("rules", brief.TAKEN_BACK["rules"]), ("automation", brief.TAKEN_BACK["automation"]), ("unchecked", brief.TAKEN_BACK["unchecked"])):
+        for why, first in (("rules", "Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now."),
+                           ("automation", "Meternaut took this request back. An application changed the resource lately, so an automation may manage it."),
+                           ("unchecked", "Meternaut took this request back, because nobody had looked up who changed the resource.")):
             with self.subTest(why=why):
                 b = brief.build_brief(case, replace(ended, preconditions={**ended.preconditions, "takenBack": why}), now=WEB_NOW)
                 self.assertEqual((b.outcome.title, b.outcome.lines), ("Taken back", (first, "Nothing was changed in Azure.")))
@@ -487,7 +490,7 @@ class TheStyleGuideAndTheRecordHoldTheWords(unittest.TestCase):
     def test_the_words_of_the_two_risks_and_of_the_title_are_in_the_style_guide_and_in_the_record_of_the_brief(self):
         for path, needed in ((REPO_ROOT / "docs" / "ui" / "style-guide.html", ("High risk" + brief.IF_ACTED, "Answering changes nothing in Azure", brief.UNPROVEN, brief.SHARED_RISK,
                                                                                "Check whether the private endpoint", brief.NOT_WORKED_OUT, "Check first")),
-                             (REPO_ROOT / "docs" / "proposals" / "09-the-decision-brief.md", ("Check whether the private endpoint x is still used", brief.ACTING.strip(), brief.UNPROVEN,
+                             (REPO_ROOT / "docs" / "proposals" / "09-the-decision-brief.md", ("Check whether the private endpoint x is still used", "High risk if you act", brief.UNPROVEN,
                                                                                                brief.SHARED_RISK, "held back: managed by an automation", "Missing data is not zero"))):
             text = path.read_text(encoding="utf-8")
             for words in needed:

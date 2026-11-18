@@ -16,7 +16,7 @@ What every letter keeps (AGENTS.md rule 13 (d), 26 (c) and 36):
   WCAG AA in a light and in a dark palette, and a link text that says where the link goes. The words that the code writes are ASCII in the plain text; a name that came from Azure is
   shown as Azure has it (a resource group may use other letters), after the hidden and direction characters are taken out.
 - Plain, short, technical wording. No metaphor, no question, no urgency and no countdown. A saving is an estimate until cost lines confirm it.
-- Money is said in the words of the pages and only once in US dollars. A letter never says that it has no figure: it says what is known and why the rest is not.
+- Money is said in the words of the pages (cases/costs.py money), in a sentence that says who worked the saving out and what it rests on. A letter never says that it has no figure: it says what is known and why the rest is not.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ MAX_HELD = 3  # the findings that are held back which the weekly letter lists: a
 MAX_FACTS = 3
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on. "save" is the green of the figure of a saving (the pages'
-# green for money saved); it never stands alone: the label "Saves, Expected" is beside it.
+# green for money saved); it never stands alone: the sentence that says who worked the saving out and what it rests on is beside it.
 LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6", "button": "#0b5cad", "button_text": "#ffffff", "save": "#0e700e"}
 DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": "#9cc9ff", "head": "#2b2f36", "rule": "#6b7280", "button": "#9cc9ff", "button_text": "#0b1f33", "save": "#54b054"}
 
@@ -259,8 +259,8 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     changes in Azure and, when acting has a risk, what it is."""
     owner = ("Whose is it", _data(brief.owner.text, 200))
     if brief.kind == "advice":
-        risk = brief.risk.text.removeprefix(brief_mod.ACTING)
-        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("If you act", _data(risk, 240)),) if brief.risk.text.startswith(brief_mod.ACTING) else ()))
+        risk = brief.risk.text
+        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
             ("What could go wrong", _data(brief.risk.text, 200)))
@@ -294,7 +294,7 @@ def _heads_up(brief: Brief) -> str:
 
 def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
     """One request that waits for an answer: the title and the place, the risk, how sure and whether it can be undone as words (a letter has no shapes: the words carry it), what it is
-    worth (the figure a year and a month with its level and its basis, and once that money is in US dollars), three facts, what changes, what could go wrong, and one link to the page where
+    worth (a sentence that says who worked the saving out and what it is a year and a month, and under it what it rests on), three facts, what changes, what could go wrong, and one link to the page where
     the person decides. Opening the link records no decision."""
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
@@ -379,7 +379,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
                   held: Sequence[tuple[PlanRecord, CaseRecord | None]] = ()) -> Letter | None:
     """The decisions that wait for a person, counted and ranked as the Decisions page does it (the page's own code groups them, so that findings of one kind about several resources are one
     line here as they are one row there, "4 storage accounts in 3 resource groups", and the number in the subject is the number that the page shows; `later` holds the plans that the person
-    put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure a year with its level ("$1,682 a year, Expected") and no total: a total is
+    put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure in one sentence ("It could save about $1,682 a year.") and no total: a total is
     the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then.
 
     `held` holds the requests of the findings that a guard holds back that this person is named for (cases/approvals.py Approvals.settle): one short block after the decisions, with at most

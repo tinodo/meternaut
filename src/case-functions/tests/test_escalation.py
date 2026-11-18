@@ -1247,6 +1247,12 @@ class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
         self.assertEqual((told, pending), (("Ada, asked first, was told on 5 November 2026.", "Mae, the manager, was told on 9 November 2026.",
                                             "Nina, added to the people of the request, was told on 9 November 2026."), ()))
 
+    def test_a_step_that_told_several_people_lists_them_with_and_so_that_the_words_about_the_step_belong_to_all(self):
+        step = EscalationRecord("p1", "step", 1, stamp(START), "same", ("o1", "o2", "o3"), ("Ada", "Mae", "Nina"), ("o1", "o2", "o3"), "email", "sent", last_try=stamp(START))
+        self.assertEqual(brief_mod.told_lines([step])[0], ("Ada, Mae and Nina, asked first, were told on 2 November 2026.",))
+        two = dataclasses.replace(step, who=("o1", "o2"), names=("Ada", "Mae"), delivered=())
+        self.assertEqual(brief_mod.told_lines([two]), ((), ("Ada and Mae, asked first, have not been told yet. No message was sent yet.",)))
+
     def test_a_person_who_was_dropped_before_the_step_is_not_told(self):
         world, watch = self.world()
         watch.run()

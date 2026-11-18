@@ -220,8 +220,11 @@ def resource_cell(name: str, resource_type: str, group: str) -> Safe:
 
 
 def detector_cell(detector: str) -> Safe:
+    """How a finding was found, in words. The id of the detector follows in code type, unless the words hold it already ("Found by the Watch's own investigation")."""
     plain = words.DETECTOR.get(detector)
-    return fmt("{plain}<br><code>{id}</code>", plain=plain, id=detector) if plain else code(detector)
+    if not plain:
+        return code(detector)
+    return esc(plain) if detector.lower() in plain.lower() else fmt("{plain} ({id})", plain=plain, id=code(detector))
 
 
 def confidence(value: object) -> str:

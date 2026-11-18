@@ -77,12 +77,12 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         earlier = listed(desk(console).sent[0][1]["body"]["content"])
-        self.assertEqual([line.split(". ", 1)[0] for line in earlier], ["Look at the virtual machine oversized-vm-1: it may be larger than its use needs", "Delete the unattached disk planted-disk-1"], "the larger saving first")
+        self.assertEqual([line.split(". ", 1)[0] for line in earlier], ["Look at the virtual machine oversized-vm-1, because it may be larger than its use needs", "Delete the unattached disk planted-disk-1"], "the larger saving first")
         console.store.decision_put(make_decision(plan_id="plan0002", decision="later"))
         console.store.mails.clear()
         later = desk(console)
         self.assertEqual([line.split(". ", 1)[0] for line in listed(later.sent[0][1]["body"]["content"])],
-                         ["Delete the unattached disk planted-disk-1", "Look at the virtual machine oversized-vm-1: it may be larger than its use needs"], "what a person put off is last")
+                         ["Delete the unattached disk planted-disk-1", "Look at the virtual machine oversized-vm-1, because it may be larger than its use needs"], "what a person put off is last")
         self.assertIn("You chose to decide later", console.get("/").content)
         self.assertEqual(page_count(console.get("/")), 2, "it is counted, as the page counts it")
         self.assertEqual(later.subjects(), ["[Meternaut] 2 decisions wait for you"])
@@ -98,7 +98,7 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         self.assertEqual(page_count(reply), 1, "an owner who is no approver sees the advice and not the change")
         graph = desk(console, env)
         self.assertEqual(graph.subjects(), ["[Meternaut] 1 decision waits for you"])
-        self.assertEqual([line.split(". ", 1)[0] for line in listed(graph.sent[0][1]["body"]["content"])], ["Look at the virtual machine oversized-vm-1: it may be larger than its use needs"])
+        self.assertEqual([line.split(". ", 1)[0] for line in listed(graph.sent[0][1]["body"]["content"])], ["Look at the virtual machine oversized-vm-1, because it may be larger than its use needs"])
 
 
 if __name__ == "__main__":

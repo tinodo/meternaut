@@ -40,6 +40,7 @@ USE_LATER = (f"Azure Monitor shows use a few hours after it happens, and Meterna
 USE_MANY = "Use is not drawn for a finding about many resources."
 ADDED = "It adds up the figure of each request."  # the basis of a row that stands for several requests
 ADDED_FINDINGS = "It adds up the figure of each finding."  # the basis of a cell of the page of savings found, which stands for several findings
+ADDED_ADVISOR = "It adds up Azure Advisor's own estimate of each finding."  # the same for a cell whose findings are all Advisor's
 SHAPES = {"circle": '<circle cx="6" cy="6" r="4"/>', "triangle": '<path d="M6 1.5 11 10.5H1z"/>', "diamond": '<path d="M6 1 11 6 6 11 1 6z"/>',
           "square": '<rect x="2" y="2" width="8" height="8" rx="1.5"/>'}  # a chip says what it is in words and in a shape, never by colour alone
 NICE = (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10)

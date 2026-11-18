@@ -249,7 +249,7 @@ class TheFigureInWords(unittest.TestCase):
     def test_a_cost_says_what_it_costs_and_that_nobody_has_worked_out_the_saving(self):
         found = self.of(saving=None, cost=358.11)
         self.assertEqual((found.state, found.level, found.monthly), ("cost", "", 358.11))
-        self.assertEqual((found.lead, found.note), ("It costs $358 a month, about $4,297 a year.", "Nobody has worked out how much of that could be saved."))
+        self.assertEqual((found.lead, found.note), ("It costs $358 a month, about $4,297 a year.", "Nobody has worked out what a change would save."))
         self.assertEqual(found.short, "It costs $4,297 a year; nobody has worked out the saving.")
 
     def test_nothing_that_can_be_shown_says_why_and_shows_no_year_and_no_month(self):

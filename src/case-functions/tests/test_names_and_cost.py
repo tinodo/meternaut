@@ -98,7 +98,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
     def test_the_figure_is_the_whole_bill_and_says_so_and_says_what_it_is_made_of_and_no_total_counts_it(self):
         figure = figures.figure_for([self.brief], [figures.cost_of(self.brief, self.case)])
         self.assertEqual((figure.state, figure.label, figure.monthly, figure.whole), ("cost", "Costs", 148.95, True))
-        self.assertEqual(figure.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(figure.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out what a change would save.")
         self.assertEqual(figure.made_of, "It is made of Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
         self.assertFalse(figure.counts)
 
@@ -111,7 +111,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
         card = reply.main.find("section", class_="focus")
         lines = [p.text() for p in card.find_all("p") if "figsub" in p.classes()]
         self.assertEqual(card.find("p", class_="say").text(), "It costs $149 a month, about $1,787 a year.")
-        self.assertEqual(lines[0], "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(lines[0], "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out what a change would save.")
         self.assertEqual(lines[1], "It is made of Virtual Network $88.10, Microsoft Defender for Cloud $41.25 and Azure Cognitive Search $19.60.")
         link = next(a for a in card.find_all("a") if a.text() == "Open in Cost analysis")
         self.assertEqual((link.attrs["href"], link.attrs["rel"]), (analysis_url(SUBSCRIPTION), "noopener"))

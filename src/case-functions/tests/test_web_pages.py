@@ -210,7 +210,7 @@ class TheDecisionsPage(unittest.TestCase):
         (row,) = rows(console.get("/"), "look")
         self.assertEqual(spans(row.find("span", class_="impact save")), ["Could save", "$1,440 a year", "$120 a month"])
         self.assertIn("It is Azure Advisor's own estimate, and the bill of this resource does not back it.", row.text())
-        self.assertEqual(row.find("span", class_="t").text(), "Look at the virtual machine oversized-vm-1: it may be larger than its use needs")
+        self.assertEqual(row.find("span", class_="t").text(), "Look at the virtual machine oversized-vm-1, because it may be larger than its use needs")
 
     def test_what_a_finding_costs_is_shown_when_nothing_says_what_a_change_would_save_and_nothing_is_ever_no_figure(self):
         console = Console()
@@ -221,9 +221,9 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.plan_put(make_advice(plan_id=f"plan8{n:03d}", case_id=f"case8{n:03d}", resource_id=rid, resource_name=f"d{n}", resource_group=f"rg-{n}", saving_usd_month=None))
         reply = console.get("/")
         found = {row.find("span", class_="t").text(): spans(row.find("span", class_="impact cost") or row.find("span", class_="impact none")) for row in rows(reply, "look")}
-        self.assertEqual(found, {"Look at the disk d0: it may be larger than its use needs": ["Costs", "$36 a year", "$3.00 a month"],
-                                 "Look at the disk d1: it may be larger than its use needs": ["Cost not visible", "—", "Azure has not reported a cost for this yet."],
-                                 "Look at the disk d2: it may be larger than its use needs": ["Cost not visible", "—", "Meternaut could not read what this costs."]})
+        self.assertEqual(found, {"Look at the disk d0, because it may be larger than its use needs": ["Costs", "$36 a year", "$3.00 a month"],
+                                 "Look at the disk d1, because it may be larger than its use needs": ["Cost not visible", "—", "Azure has not reported a cost for this yet."],
+                                 "Look at the disk d2, because it may be larger than its use needs": ["Cost not visible", "—", "Meternaut could not read what this costs."]})
         self.assertNotIn("No figure", reply.content)
 
     def test_no_page_says_what_money_is_in_and_nothing_is_called_saved_before_cost_management_measured_it(self):
@@ -656,7 +656,7 @@ class TheBriefOfAnInvestigation(unittest.TestCase):
         self.assertIn("Azure Monitor", self.reply.measured()["MetricA"][1])
 
     def test_the_headline_says_look_at_it_with_the_reason_that_the_finding_gives_and_the_page_says_how_sure_it_is(self):
-        self.assertEqual(self.reply.headings(1), ["Look at the disk planted-disk-1: it may be larger than its use needs"])
+        self.assertEqual(self.reply.headings(1), ["Look at the disk planted-disk-1, because it may be larger than its use needs"])
         self.assertIn("Confidence is", self.reply.content)
 
     def test_the_two_agents_words_are_in_labelled_boxes_and_in_full_in_the_details(self):
@@ -754,7 +754,7 @@ class TheRequestPage(unittest.TestCase):
         storage(console, 1, cost=lambda n: 358.11)
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
         self.assertEqual((classes, figure), (["say"], "It costs $358 a month, about $4,297 a year."))
-        self.assertEqual(sub, "Nobody has worked out how much of that could be saved.")
+        self.assertEqual(sub, "Nobody has worked out what a change would save.")
         storage(console, 1, cost=lambda n: None)
         classes, figure, sub = self.stake(console.get("/ok/plan5000"))
         self.assertEqual((classes, figure, sub), (["say"], "Meternaut could not read what this costs.", ""))

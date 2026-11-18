@@ -528,7 +528,7 @@ def _basis(found: Mapping, form: str, low: float, high: float) -> str:
     else:
         text = f"It is based on {bill} that the change would remove, {counted}." + ("" if _firm(found) else " Their cost is uneven or has changed, so the figure is less certain.")
     if high > low:
-        text += f" It counts the low end of a range of {money(low)} to {money(high)} a month."
+        text += f" The saving could be anywhere from {money(low)} to {money(high)} a month. Meternaut counts the low end."
     uneven = _whole(found.get("uneven"))
     if uneven:
         text += f" {_count(uneven, 'bill line')} {'is' if uneven == 1 else 'are'} uneven from day to day."

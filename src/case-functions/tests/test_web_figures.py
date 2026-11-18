@@ -112,7 +112,7 @@ class TheFigure(unittest.TestCase):
     def test_without_a_saving_the_cost_is_the_figure_and_without_a_cost_nothing_is_and_the_reason_is_said(self):
         cost = figures.figure_of([self.saving(None)], [10.0, None, 5.0])
         self.assertEqual((cost.state, cost.label, cost.monthly, cost.level), ("cost", "Costs", 15.0, ""))
-        self.assertEqual(cost.note, "Nobody has worked out how much of that could be saved.")
+        self.assertEqual(cost.note, "Nobody has worked out what a change would save.")
         free = figures.figure_of([self.saving(None)], [0.0])
         self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "Azure has not reported a cost for this yet."))
         unread = figures.figure_of([self.saving(None)], [None])
@@ -167,9 +167,9 @@ class TheStatesOfACostThatShowsNone(unittest.TestCase):
     def test_the_cost_of_a_whole_subscription_or_group_says_so_is_made_of_its_services_and_no_total_counts_it(self):
         whole = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["subscription"], made_of="It is made of Virtual Network $88.10.")
         self.assertEqual((whole.state, whole.monthly, whole.whole, whole.counts, whole.made_of), ("cost", 148.95, True, False, "It is made of Virtual Network $88.10."))
-        self.assertEqual(whole.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(whole.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out what a change would save.")
         both = figures.figure_of([self.NOTHING] * 2, [1.0, 2.0], reads=["lines"] * 2, scopes=["subscription", "group"])
-        self.assertEqual(both.note, "It adds up everything that Cost Management shows for these resource groups and subscriptions in the last 30 days. Nobody has worked out how much of that could be saved.")
+        self.assertEqual(both.note, "It adds up everything that Cost Management shows for these resource groups and subscriptions in the last 30 days. Nobody has worked out what a change would save.")
         one = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["resource"], made_of="It is made of Virtual Network $88.10.")
         self.assertEqual((one.whole, one.counts, one.made_of), (False, True, ""), "a resource is a cost that a change could save, and it has no services to name")
         mixed = figures.figure_of([self.NOTHING] * 2, [1.0, 2.0], reads=["lines"] * 2, scopes=["subscription", "resource"])

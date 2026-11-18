@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ACTING, ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
+from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -164,7 +164,7 @@ def _decision_lines(brief: Brief) -> list[dict]:
     Azure and, when acting has a risk, what it is: one block each."""
     owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
     if brief.kind == "advice":
-        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", md(brief.risk.text, 300))] if brief.risk.text.startswith(ACTING) else []), owner]
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", md(brief.risk.text, 300))] if brief.risk.acting else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
     change = md(brief.change, 300) + " It runs with your own permissions." + (f" {md(two, 320)}" if two else "")
     return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(brief.risk.text, 240)}"), owner]

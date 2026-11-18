@@ -128,7 +128,7 @@ class TheRunsPage(unittest.TestCase):
         self.assertIn("It is based on your bill for the last 30 days.", first["What it would save"], "a figure says what it rests on (rule 13)")
         second = next(r for r in table.rows if r["Status"] == "Needs a person")
         self.assertEqual((second["Recommendation"], second["Confidence (0 to 1)"]), ("Investigate", "0.50"))
-        self.assertIn("Costs $7.17 a month, about $86 a year Nobody has worked out how much of that could be saved.", second["What it would save"], "no saving is claimed where none was measured")
+        self.assertIn("Costs $7.17 a month, about $86 a year Nobody has worked out what a change would save.", second["What it would save"], "no saving is claimed where none was measured")
         self.assertNotIn("Could save", second["What it would save"])
         self.assertIn("/why/case0001", reply.links())
         self.assertIn("/why/case0002", reply.links())

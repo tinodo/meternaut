@@ -284,7 +284,7 @@ class TheFigureOnTheCard(unittest.TestCase):
 
     def test_a_cost_says_what_it_costs_and_that_nobody_has_worked_out_the_saving(self):
         _, tile = self.tile(saving=None, cost=358.11)
-        self.assertEqual(tile, {"value": "It costs $358 a month, about $4,297 a year.", "price-basis": "Nobody has worked out how much of that could be saved."})
+        self.assertEqual(tile, {"value": "It costs $358 a month, about $4,297 a year.", "price-basis": "Nobody has worked out what a change would save."})
 
     def test_nothing_that_can_be_shown_has_no_year_and_says_why(self):
         for cost, why in ((0.0, "Azure has not reported a cost for this yet."), (None, "Meternaut could not read what this costs.")):

@@ -397,6 +397,11 @@ BANNED = ("saving not measured", "The most that a change could save", "Money is 
 SENTENCE_START = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
+ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
+OLD_MONEY = re.compile(r"\b(?:Saves|Could save|Costs),\s+(?:Scenario|Expected|Verified)\b|\bBased on the \d+ (?:bill )?lines?\b")  # the money line of the old pages: a level as a label, and "Based on the 2 bill lines"
+DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
+LABEL_COLON = re.compile(r"^([^:.?!]{3,60}): (?=[A-Z][a-z])")  # "Impact not analysed: Meternaut did not look ...": a sentence after a colon starts with a capital letter
+RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source", "Responsible for Meternaut")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart; the footer is the last (phase 2 says it as a sentence)
 MOST_WORDS = 40
 STOPS = ".?!"
 SENTENCES_ONLY = ("paragraph", "item")  # these end with a full stop, a question mark or an exclamation mark; a heading, a label, a term, a cell and a button need none
@@ -416,6 +421,12 @@ def problems(shown: Rendered) -> list[str]:
         found += [f"{where}: says '{fragment}'" for fragment in BANNED if fragment.lower() in text.lower()]
         if GUID_FORM.search(text) and not block.details:
             found.append(f"{where}: an id outside the Details")
+        if ISO_DATE.search(text) and not block.details:
+            found.append(f"{where}: an ISO date outside the Details")
+        if OLD_MONEY.search(text):
+            found.append(f"{where}: an old money label")
+        if DOUBLED.search(text):
+            found.append(f"{where}: a doubled word")
         if block.kind == "chart" or not re.search(r"[A-Za-z]", text):
             continue
         if PUNCTUATION.search(text):
@@ -431,6 +442,9 @@ def problems(shown: Rendered) -> list[str]:
                 found.append(f"{where}: a sentence of {len(sentence.split())} words")
             if sentence.count(": ") > 1 and block.kind != "button":  # the name of a button is its words and the title of the request after a colon
                 found.append(f"{where}: a colon chain")
+            label = LABEL_COLON.match(sentence)
+            if label and label.group(1) not in RUN_IN and block.kind not in ("button", "heading", "label"):
+                found.append(f"{where}: a capital letter after the colon of '{label.group(1)}'")
         sentence = block.kind in SENTENCES_ONLY or (block.kind == "value" and len(text.split()) >= SHORT_VALUE)
         if sentence and re.sub(r"[)\"”’']+$", "", text)[-1:] not in tuple(STOPS):
             found.append(f"{where}: no full stop at the end")
@@ -491,6 +505,11 @@ class TheWordsReadAsSentences(unittest.TestCase):
             "a colon chain": _made("paragraph", "What could go wrong: if you act on it: nothing shows that it is unused."),
             "no full stop at the end": [_made("paragraph", "It costs a lot"), _made("item", "It costs a lot"), _made("value", "It costs a lot of money here")],
             "an id outside the Details": _made("paragraph", f"It was changed by {GUID_OF_AN_APP}."),
+            "an ISO date outside the Details": _made("paragraph", "It has waited since 2026-11-02."),
+            "an old money label": [_made("paragraph", "Saves, Scenario. $144.00 a month. Based on the 2 bill lines."), _made("paragraph", "Costs, Expected. It is based on the 2 bill lines."),
+                                   _made("paragraph", "Based on the 2 bill lines of this resource.")],
+            "a doubled word": [_made("paragraph", "The Watch's own investigation investigation found it."), _made("value", "Found by the Watch's own investigation investigation", details=True)],
+            "a capital letter after the colon": [_made("paragraph", "Impact not analysed: Meternaut did not look at what depends on it."), _made("item", "If you act: What depends on it can slow down or stop.")],
         }
         for fault, made in faults.items():
             for one in made if isinstance(made, list) else [made]:
@@ -500,8 +519,9 @@ class TheWordsReadAsSentences(unittest.TestCase):
     def test_what_is_allowed_passes(self):
         allowed = [_made("label", "Medium risk if you act"), _made("heading", "What it costs"), _made("button", "Open in the Azure portal"), _made("cell", "Could save about $1,682 a year ($140 a month)"),
                    _made("term", "Resource id"), _made("value", "case0102"), _made("value", "$848", details=True), _made("paragraph", "It costs $848 a month, about $10,180 a year."),
+                   _made("value", "Mon 2 Nov 2026 08:00 UTC (09:00 CET), run 2026-11-02", details=True), _made("paragraph", "Look at the disk x, because it may be larger than its use needs."),
                    _made("paragraph", f"The id {GUID_OF_AN_APP} is in the Details.", details=True), _made("quote", "it  costs, ,nothing . and the AI wrote this lower case"),
-                   _made("paragraph", "Nobody has worked out how much of that could be saved. (It is an estimate.)"), _made("item", "Heads-up: An automation changed this 2 days ago.")]
+                   _made("paragraph", "Nobody has worked out what a change would save. (It is an estimate.)"), _made("item", "Heads-up: An automation changed this 2 days ago.")]
         for one in allowed:
             with self.subTest(one.blocks[0].kind, text=one.blocks[0].text):
                 self.assertEqual([], problems(one))
@@ -518,6 +538,34 @@ class TheWordsReadAsSentences(unittest.TestCase):
                       "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
                 for surface, shown in on.items():
                     self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}'")
+
+    def test_what_is_put_back_by_hand_makes_the_lint_fail_on_the_page_the_letter_and_the_card(self):
+        # The four shapes that came back by hand after the review of the words: a date in the form of a record in the body of a page, the money line of the old pages, a label with a colon before a
+        # sentence, and a word twice. Each is said where a sentence of the real code is said, and each of the three surfaces must fail for it.
+        put_back = {
+            "an ISO date outside the Details": "It has waited since 2026-11-02.",
+            "an old money label": "Saves, Scenario. $144.00 a month. Based on the 2 bill lines.",
+            "a capital letter after the colon of 'Impact not analysed'": "Impact not analysed: Meternaut did not look at what depends on it.",
+            "a doubled word": "The Watch's own investigation investigation found it.",
+        }
+        for fault, said in put_back.items():
+            with self.subTest(fault), mock.patch.object(brief_mod, "ADVICE_WHO", said):
+                account, plan = _ai_account(), _ai_plan()
+                brief = brief_mod.build_brief(account, plan, None, (), now=NOW, may_answer=True)
+                on = {"page": _page("page", account, plan),
+                      "letter": _letter("letter", letters.approval_letter(plan, account, PERSON, BASE, NOW, CONTACTS)),
+                      "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
+                for surface, shown in on.items():
+                    self.assertTrue(any(fault in line for line in problems(shown)), f"the {surface} does not fail for '{fault}': {problems(shown)}")
+
+    def test_the_detector_that_the_details_say_twice_makes_the_lint_fail(self):
+        from cases.web import brief_page
+        from cases.web.core import Safe
+
+        with mock.patch.object(brief_page, "detector_cell", lambda detector: Safe("Found by the Watch's own investigation<br><code>investigation</code>")):
+            shown = _page("page", _ai_account(), _ai_plan())
+        self.assertTrue(any("a doubled word" in line and "own investigation investigation" in line for line in problems(shown)), problems(shown))
+        self.assertEqual([], [line for line in problems(_page("page", _ai_account(), _ai_plan())) if "a doubled word" in line], "the real row says it once")
 
     def test_an_id_that_a_page_shows_outside_the_details_makes_the_lint_fail(self):
         with mock.patch.object(brief_mod, "ADVICE_WHO", f"The id is {GUID_OF_AN_APP}."):

@@ -768,7 +768,7 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         content = graph.sent[0][1]["body"]["content"]
         lines = listed(content)
         self.assertEqual(len(lines), 1 + letters.MAX_HELD, "the decision and three of the four that are held, the largest first")
-        self.assertEqual(lines[0], "Look at the virtual machine oversized-vm-1: it may be larger than its use needs. It could save about $1,440 a year.")
+        self.assertEqual(lines[0], "Look at the virtual machine oversized-vm-1, because it may be larger than its use needs. It could save about $1,440 a year.")
         self.assertTrue(lines[1].startswith("Check whether the private endpoint pe-1 is still used. It costs $2,880 a year; nobody has worked out the saving. Meternaut's rules changed"), lines[1])
         self.assertIn("1 more is held back. It is on the page.", content)
         self.assertEqual(content.count("https://"), 1)

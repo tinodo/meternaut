@@ -879,6 +879,16 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
 
+    def test_the_line_under_the_title_and_the_owner_say_it_of_the_many_and_not_of_one(self):
+        self.assertEqual(self.reply.main.find("p", class_="meta").text(), "They were found today.", "no kind or place of its own comes before it")
+        self.assertIn("Nobody is named as the owner in the tags of the first resource.", self.text)
+        self.assertEqual(brief.owner_of(dataclasses.replace(self.case, owner={}), None, brief.group_of(self.case)).text, "Meternaut has not looked up who owns these 60 resources yet.")
+        self.assertNotIn("who owns this resource", self.text)
+        single = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
+        case = only_case(single)
+        self.assertEqual(brief.owner_of(dataclasses.replace(case, owner={})).text, "Meternaut has not looked up who owns this resource yet.")
+        self.assertIn("Nobody is named as the owner in its tags.", page_of(case, single.store.plans_open()[0])[1])
+
     def test_nothing_else_on_the_page_changes_the_sections_are_those_of_any_request_about_one_resource(self):
         one = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
         single, _ = page_of(only_case(one), one.store.plans_open()[0])

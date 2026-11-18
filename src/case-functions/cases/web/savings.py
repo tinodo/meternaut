@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..brief import HOLD_WORDS, taken_back, waited_text
+from ..brief import BILL_BASIS, HOLD_WORDS, from_advisor, taken_back, waited_text
 from ..models import ADVISOR, HELD, PlanRecord, started
 from . import words
 from .common import MORE, brief_of, counted, figure_cell, measured_tile, off_notice, read, saving_cell, verified_brief
 from .core import Ctx, Response, Safe, fmt, join, link_part, number
-from .figures import ADDED_FINDINGS, NO_LINES, WEAKEST_FIRST, Figure, a_year, cost_of, figure_for, title_of
+from .figures import ADDED_ADVISOR, ADDED_FINDINGS, NO_LINES, WEAKEST_FIRST, Figure, a_year, cost_of, figure_for, title_of
 from .layout import head, kpi, kpis, link, notice, page, paragraph, table
 
 PER = 1000  # the most that one read of the store gives
@@ -122,20 +122,34 @@ def _held_of(n: int, held: int) -> str:
     return " All of them are held back." if held == n else f" Of the {n:,}, {held} {'is' if held == 1 else 'are'} held back."
 
 
-def _money(label: str, groups: list, tail: str, held: int = 0) -> Safe:
+def _money(label: str, groups: list, tails: tuple[str, str], held: int = 0) -> Safe:
+    """A tile of money over some rows. `tails` is what its note ends with, for one finding and for several."""
     lines = [line for group in groups for line in group.levels.values()]
     if not lines:
         return _tile(label, groups, "—", "", "No saving is known yet.")
     n, found = sum(line[2] for line in lines), sum(len(group.cases) for group in groups)
-    rest = f"It is the saving of {counted(n, 'finding')}." if n == found else f"It is the saving of {n:,} of {found:,} findings. The others have no saving figure."
-    return _tile(label, groups, a_year(sum(line[0] for line in lines)), "a year", f"{rest}{_held_of(n, held)} {tail}", True)
+    others = "The other has" if found - n == 1 else "The others have"
+    rest = f"It is the saving of {counted(n, 'finding')}." if n == found else f"It is the saving of {n:,} of {found:,} findings. {others} no saving figure."
+    return _tile(label, groups, a_year(sum(line[0] for line in lines)), "a year", f"{rest}{_held_of(n, held)} {tails[0] if n == 1 else tails[1]}", True)
 
 
 def _tiles(groups: list, measured: list, failed: bool, cut: bool, held: int = 0) -> Safe:
     """Saving measured adds up every confirmed change, as the Decisions page does for the changes of one person. The tile of everything that was found says how many of those findings are held back."""
     saved = kpi("Saving measured", "—", "", "Cannot be read now.") if failed else measured_tile(sum(measured), len(measured), cut)
-    return kpis(_money("Found in all", [group for group in groups if group.added], "The table says what each figure rests on.", held),
-                _money("Waiting for a person", groups[:1], "They wait for a person to answer or look at them."), saved)
+    return kpis(_money("Found in all", [group for group in groups if group.added], ("The table says what its figure rests on.", "The table says what each figure rests on."), held),
+                _money("Waiting for a person", groups[:1], ("It waits for a person to answer or look at it.", "They wait for a person to answer or look at them.")), saved)
+
+
+def _basis_of(line: list) -> str:
+    """What a cell that adds up the figures of some findings says that they rest on: the sentence of the one finding that it holds; for several, the sentence that they share when it is about no
+    resource in particular (the bill), that it adds up Advisor's estimate of each when all are Advisor's, and else that it adds up the figure of each (a note about "this resource" or about its
+    range would stand beside a total that is not its own)."""
+    notes = line[1]
+    if line[2] == 1 and len(notes) == 1:
+        return next(iter(notes))
+    if notes == {BILL_BASIS}:
+        return BILL_BASIS
+    return ADDED_ADVISOR if notes and all(from_advisor(note) for note in notes) else ADDED_FINDINGS
 
 
 def _row(group: Group) -> list:
@@ -146,7 +160,7 @@ def _row(group: Group) -> list:
     found = fmt("{lead}{n}{part}", lead=lead, n=number(len(group.cases)), part=Safe("<br>Part of it cannot be read now.") if group.failed else "")
     if not group.added:
         return [name, found, group.claim, "Not added up."]
-    saving = [figure_cell(Figure("save", "Saves" if level == "Verified" else "Could save", line[0], level, ""), next(iter(line[1])) if len(line[1]) == 1 else ADDED_FINDINGS, group.lower)
+    saving = [figure_cell(Figure("save", "Saves" if level == "Verified" else "Could save", line[0], level, ""), _basis_of(line), group.lower)
               for level in WEAKEST_FIRST if (line := group.levels.get(level))]
     none = [f"{lead}{counted(n, 'finding')}. {why}" for why, n in sorted(group.none.items(), key=lambda item: (-item[1], item[0]))]
     return [name, found, join(saving, "<br>") if saving else "Nothing to add up.", join(none, "<br>") if none else "None."]

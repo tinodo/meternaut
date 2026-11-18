@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
+from ..brief import IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
@@ -163,7 +163,7 @@ def _meta(ctx: Ctx, unit: Unit) -> str:
 
 
 def _chips(unit: Unit) -> Safe:
-    acting = all(m.brief.risk.text.startswith(ACTING) for m in unit.members)
+    acting = all(m.brief.risk.acting for m in unit.members)
     chips = [risk_chip(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]), IF_ACTED if acting else "")]
     if unit.figure.state != "save":
         chips.append(chip("Needs measuring"))

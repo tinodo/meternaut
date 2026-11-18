@@ -222,7 +222,7 @@ def time_text(moment: dt.datetime, zone: dt.tzinfo | None) -> str:
 
 
 def usd(value: object) -> str:
-    """Money as the guide writes it: a dollar sign, thousands separated, two decimals. The page says once that money is in US dollars."""
+    """Money to the cent, for the lines that show an exact amount (the History, the Details). A request says money in whole dollars from $100 up (cases/costs.py money)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return "not known"
     return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"

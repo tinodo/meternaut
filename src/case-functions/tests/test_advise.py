@@ -148,7 +148,7 @@ class MakingTheAdvice(Base):
         self.assertRegex(plan.code, r"^[0-9A-F]{8}$")
         self.assertEqual(plan.expires_at, "", "nothing expires")
         self.assertEqual((plan.what_changes, plan.could_go_wrong, plan.undo), (brief.ADVICE_CHANGE, brief.acting_risk(self.case).text, brief.ADVICE_UNDO))
-        self.assertTrue(plan.could_go_wrong.startswith(brief.ACTING), "the risk of the plan is that of acting: answering changes nothing")
+        self.assertTrue(brief.acting_risk(self.case).acting, "the risk of the plan is that of acting: answering changes nothing")
         self.assertIn("Meternaut changes nothing in Azure", plan.what_changes)
         self.assertEqual((plan.resource_id, plan.resource_name, plan.resource_group, plan.case_id), (VM, "oversized-vm-1", "team-apps-rg", self.case.case_id))
         self.assertEqual(self.store.plan_get(plan.plan_id), plan)
