@@ -24,7 +24,7 @@ from cases.models import ADVISE, GROUP_FACT, CaseRecord, NoteRecord, Principal, 
 
 TYPE = "microsoft.network/privateendpoints"
 HOSTILE_NAME = "<script>alert(1)</script>\n[click](https://evil.example/x) \u202eevil " + "n" * 200
-HEADLINE = "Look at 60 private endpoints in 14 groups, the first is pe-60"
+HEADLINE = "Look at 60 private endpoints in 14 groups, starting with pe-60"
 
 
 def absent() -> dict:
@@ -284,7 +284,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         b = brief.build_brief(case, None, now=WEB_NOW)
         self.assertEqual((b.saving.monthly, b.saving.level, b.group.count), (350.0, "Expected", 7))
         self.assertIn("7 resources", b.saving.basis)
-        self.assertEqual(b.headline, "Look at 7 private endpoints in 7 groups, the first is pe-01")
+        self.assertEqual(b.headline, "Look at 7 private endpoints in 7 groups, starting with pe-01")
         self.assertEqual(h.of("investigation.finding")[0]["savingUsdMonth"], 350.0)
 
     def test_a_group_whose_resources_are_only_partly_named_is_priced_for_those_and_says_how_many(self):
@@ -722,7 +722,7 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         self.assertEqual(self.case.facts[GROUP_FACT]["capped"], 10)
         self.assertEqual((self.b.facts[0].label, self.b.facts[0].value), ("Covers", "20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out"))
         self.assertEqual(self.b.group.capped, 10)
-        self.assertEqual(self.b.headline, "Look at 20 private endpoints in 14 groups, the first is pe-70", "the headline says how many the case stands for")
+        self.assertEqual(self.b.headline, "Look at 20 private endpoints in 14 groups, starting with pe-70", "the headline says how many the case stands for")
 
     def test_the_page_and_the_card_have_the_row_and_the_letter_has_it_and_keeps_to_its_words(self):
         _, text = page_of(self.case, self.plan)
@@ -731,10 +731,11 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         card = json.dumps(cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}")))
         self.assertIn("and 10 more that the limit of one run left out", card)
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        self.assertIn("Covers: 20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", letter.text)
-        self.assertIn("Together they cost: ", letter.text)
+        self.assertIn("Left out: 10 more private endpoints, because of the limit of one run", letter.text)
+        self.assertNotIn("Covers", letter.text, "the title says how many, and the row of what the limit of a run left out is all that a letter adds")
+        self.assertNotIn("Together they cost", letter.text)
         self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
-        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"] + 1, "a group that the limit of a run cut and that code priced is one word over the 170 of a letter: the words are for words2")
+        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertLessEqual(word_count(weekly), MOST_WORDS["digest"])
 
@@ -763,8 +764,8 @@ class TheBriefOfAGroup(unittest.TestCase):
     def test_the_rows_say_what_it_covers_what_it_costs_together_the_bill_lines_it_would_shrink_and_give_examples_and_the_cost_row_of_one_resource_is_not_there(self):
         self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:4]],
                          [("Covers", "60 private endpoints in 14 resource groups", "Azure Resource Graph"),
-                          ("Together they cost", "$1,830.00 in the last 30 days", "Azure cost lines"),
-                          ("Bill lines it would shrink", "60 lines, $1,830.00 a month", "Azure cost lines"),
+                          ("Together they cost", "$1,830 in the last 30 days", "Azure cost lines"),
+                          ("Bill lines it would shrink", "60 lines, $1,830 a month", "Azure cost lines"),
                           ("Examples", "pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "Azure Resource Graph")])
         self.assertNotIn("Cost, last 30 days", [f.label for f in self.b.facts])
         self.assertLessEqual(len(self.b.facts), brief.MAX_FACTS)
@@ -788,15 +789,15 @@ class TheBriefOfAGroup(unittest.TestCase):
                 plural = brief._plural(noun)
                 self.assertNotEqual(plural, noun)
                 self.assertTrue(plural.startswith(noun[:-1]), (noun, plural))
-                self.assertEqual(brief.group_headline(brief.Group(7, 12.5, rtype, 3, ("b", "c")), "a", "investigate"), f"Look at 7 {plural} in 3 groups, the first is a")
+                self.assertEqual(brief.group_headline(brief.Group(7, 12.5, rtype, 3, ("b", "c")), "a", "Look at"), f"Look at 7 {plural} in 3 groups, starting with a")
         for noun, plural in (("private endpoint", "private endpoints"), ("public IP address", "public IP addresses"), ("Redis cache", "Redis caches"), ("app", "apps"),
                              ("resource", "resources"), ("gateway", "gateways"), ("policy", "policies"), ("box", "boxes")):
             self.assertEqual(brief._plural(noun), plural)
 
     def test_one_group_one_kind_that_is_not_known_and_a_name_that_is_missing_are_said_in_plain_words(self):
-        for digest, headline, covers in (({"count": 6, "type": "other", "groups": 1, "names": [], "costUsd30d": 12.0}, "Look at 6 resources in 1 group, the first is pe-60", "6 resources in 1 resource group"),
-                                         ({"count": 6, "type": TYPE, "names": [], "costUsd30d": 12.0}, "Look at 6 private endpoints, the first is pe-60", "6 private endpoints"),
-                                         ({"count": 1200, "type": TYPE, "groups": 40, "names": ["a"], "costUsd30d": 12.0}, "Look at 1,200 private endpoints in 40 groups, the first is pe-60",
+        for digest, headline, covers in (({"count": 6, "type": "other", "groups": 1, "names": [], "costUsd30d": 12.0}, "Look at 6 resources in 1 group, starting with pe-60", "6 resources in 1 resource group"),
+                                         ({"count": 6, "type": TYPE, "names": [], "costUsd30d": 12.0}, "Look at 6 private endpoints, starting with pe-60", "6 private endpoints"),
+                                         ({"count": 1200, "type": TYPE, "groups": 40, "names": ["a"], "costUsd30d": 12.0}, "Look at 1,200 private endpoints in 40 groups, starting with pe-60",
                                           "1,200 private endpoints in 40 resource groups")):
             with self.subTest(digest=digest):
                 case = group_case(digest)
@@ -871,14 +872,23 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_page_has_the_title_the_figure_of_the_saving_the_rows_and_the_one_form(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), ["60 private endpoints in 14 resource groups"])
-        self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$21,960 a year")
-        self.assertIn("Saves, Expected. $1,830.00 a month. Based on the 60 bill lines of 60 resources that the change would remove, at the rate of the last 7 days.", self.text)
-        self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830.00 in the last 30 days Azure cost lines "
-                      "Bill lines it would shrink 60 lines, $1,830.00 a month Azure cost lines "
+        self.assertEqual(self.reply.headings(1), ["Look at 60 private endpoints in 14 resource groups"])
+        self.assertEqual(self.reply.main.find("p", class_="say save").text(), "Meternaut worked out that this could save about $21,960 a year ($1,830 a month).")
+        self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830 in the last 30 days Azure cost lines "
+                      "Bill lines it would shrink 60 lines, $1,830 a month Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
+
+    def test_the_line_under_the_title_and_the_owner_say_it_of_the_many_and_not_of_one(self):
+        self.assertEqual(self.reply.main.find("p", class_="meta").text(), "They were found today.", "no kind or place of its own comes before it")
+        self.assertIn("Nobody is named as the owner in the tags of the first resource.", self.text)
+        self.assertEqual(brief.owner_of(dataclasses.replace(self.case, owner={}), None, brief.group_of(self.case)).text, "Meternaut has not looked up who owns these 60 resources yet.")
+        self.assertNotIn("who owns this resource", self.text)
+        single = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
+        case = only_case(single)
+        self.assertEqual(brief.owner_of(dataclasses.replace(case, owner={})).text, "Meternaut has not looked up who owns this resource yet.")
+        self.assertIn("Nobody is named as the owner in its tags.", page_of(case, single.store.plans_open()[0])[1])
 
     def test_nothing_else_on_the_page_changes_the_sections_are_those_of_any_request_about_one_resource(self):
         one = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
@@ -898,18 +908,18 @@ class WhatAPersonSees(unittest.TestCase):
         console.store.case_put(self.case)
         console.store.plan_put(plan)
         text = console.get("/").main.text()
-        self.assertIn("1 decision.", text)
-        self.assertIn("60 private endpoints in 14 resource groups", text)
+        self.assertIn("1 decision waits for you.", text)
+        self.assertIn("Look at 60 private endpoints in 14 resource groups", text)
         self.assertIn("$21,960 a year", text)
-        self.assertIn("$1,830.00 a month", text)
+        self.assertIn("$1,830 a month", text)
         self.assertIn("Review all 60", text)
         self.assertNotIn("No figure", text)
 
     def test_the_weekly_letter_has_the_title_and_the_saving_a_year_with_no_total_and_stays_within_its_words(self):
         letter = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] 1 decision waits for you")
-        self.assertIn("- 60 private endpoints in 14 resource groups: $21,960 a year, Expected.\n", letter.text)
-        self.assertNotIn("Look at", letter.text, "the title of the page, not the headline")
+        self.assertIn("- Look at 60 private endpoints in 14 resource groups. It could save about $21,960 a year.\n", letter.text)
+        self.assertNotIn("starting with", letter.text, "the title of the page, not the headline")
         self.assertLessEqual(word_count(letter), MOST_WORDS["digest"])
         self.assertEqual(letter.html.count('href="'), 1)
         self.assertTrue(letter.text.isascii())
@@ -919,30 +929,30 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertNotIn("$65,880", three.text, "no total: a total belongs to the Decisions page")
         self.assertLessEqual(word_count(three), MOST_WORDS["digest"])
 
-    def test_the_decision_letter_has_the_three_rows_and_stays_within_the_words_of_a_letter(self):
+    def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: $1,830.00 in the last 30 days",
-                    "Bill lines it would shrink: 60 lines, $1,830.00 a month", "If you answer: Nothing changes in Azure. Your answer is recorded with your name."):
-            self.assertIn(row, letter.text)
-        self.assertEqual(letter.text.splitlines()[0], "60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
-        self.assertIn("$21,960 a year\nSaves, Expected. $1,830.00 a month. Based on the 60 bill lines of 60 resources that the change would remove, at the rate of the last 7 days.\n"
-                      "Money is in US dollars, and a year is twelve times the month.", letter.text)
+        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
+        for repeated in ("Covers", "Together they cost", "Bill lines it would shrink", "Whose is it"):
+            self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
+        self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
+        self.assertIn("Meternaut worked out that this could save about $21,960 a year ($1,830 a month).", letter.text)
         self.assertNotIn("No figure", letter.text)
         self.assertNotIn("resource group rg", letter.text, "a request for many resources has no place of its own: the title counts the groups")
         self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
         self.assertTrue(letter.text.isascii())
-        for gone in ("?", "!", "saved", "\u2013", "\u2014"):
+        for gone in ("?", "!", "\u2013", "\u2014"):
             self.assertNotIn(gone, letter.text.lower())
+        self.assertNotRegex(letter.text.lower(), r"(?<!could be )saved", "nothing is called saved before Cost Management measured it")
 
     def test_the_card_has_the_title_the_figure_and_the_first_three_rows(self):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW, may_answer=True)
         card = cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}"))
         text = json.dumps(card)
         found = {block["id"]: block["text"] for block in walk_blocks(card)}
-        self.assertEqual(found["headline"], "60 private endpoints in 14 resource groups")
+        self.assertEqual(found["headline"], "Look at 60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
-        self.assertEqual((found["value"], found["saving-word"]), ("$21,960 a year", "Saves, Expected. $1,830.00 a month."))
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830.00 in the last 30 days", "Bill lines it would shrink", "60 lines, $1,830.00 a month"):
+        self.assertEqual(found["value"], "Meternaut worked out that this could save about $21,960 a year \\($1,830 a month\\).")
+        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Bill lines it would shrink", "60 lines, $1,830 a month"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 
@@ -975,7 +985,7 @@ class WhatAHostileEstateCanDo(unittest.TestCase):
         b = brief.build_brief(self.case, self.plan, now=WEB_NOW)
         self.assertNotIn("\n", b.headline)
         self.assertLessEqual(len(b.headline), 200)
-        self.assertTrue(b.headline.startswith("Look at 60 private endpoints in 14 groups, the first is <script>alert(1)</script>"))
+        self.assertTrue(b.headline.startswith("Look at 60 private endpoints in 14 groups, starting with <script>alert(1)</script>"))
         self.assertNotIn("](", b.headline)
         for fact in b.facts:
             self.assertNotIn("\n", fact.value)
@@ -1005,12 +1015,12 @@ class WhatAHostileEstateCanDo(unittest.TestCase):
         resources = [dataclasses.replace(r, resource_type="<script>alert(1)</script> x/y") for r in endpoints(8)]
         case = only_case(watch(raw_of(8), resources))
         self.assertEqual(case.facts[GROUP_FACT]["type"], "other")
-        self.assertEqual(brief.build_brief(case, None, now=WEB_NOW).headline, "Look at 8 resources in 8 groups, the first is pe-08")
+        self.assertEqual(brief.build_brief(case, None, now=WEB_NOW).headline, "Look at 8 resources in 8 groups, starting with pe-08")
         mixed = endpoints(8)
         mixed[0] = dataclasses.replace(mixed[0], resource_type="microsoft.network/publicipaddresses")
         self.assertEqual(only_case(watch(raw_of(8), mixed)).facts[GROUP_FACT]["type"], "other", "resources of different types are resources")
         hostile = group_case({"count": 8, "type": "<script>alert(1)</script>\n" * 50, "groups": 2, "names": [], "costUsd30d": 1.0})
-        self.assertEqual(brief.build_brief(hostile, None, now=WEB_NOW).headline, "Look at 8 resources in 2 groups, the first is pe-60")
+        self.assertEqual(brief.build_brief(hostile, None, now=WEB_NOW).headline, "Look at 8 resources in 2 groups, starting with pe-60")
 
 
 class TheWordsOfTheCode(unittest.TestCase):

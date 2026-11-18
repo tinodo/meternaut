@@ -24,7 +24,7 @@ CASES = {
         undo="A deleted disk cannot be restored and its data is lost. A new disk with the same name can be made, empty.",
         observed="Azure Resource Graph lists the resource as unattached or unassigned and as planted by Meternaut.",
         headline="Delete the unattached disk planted-disk-1 in group meternaut-fam-rg",
-        change="Deletes the disk planted-disk-1 in resource group meternaut-fam-rg. Nothing else changes.",
+        change="Azure deletes the disk planted-disk-1 in resource group meternaut-fam-rg. Nothing else changes.",
         rechecked=("Right before it acts, Meternaut reads the disk again. It stops unless the disk is still unattached, still tagged as planted by Meternaut, still in this resource "
                    "group and not locked."),
         risk="If something still uses the disk, that use stops, and the data on it is lost for good.",
@@ -36,10 +36,10 @@ CASES = {
         what_changes=("When you approve, Meternaut deletes the public IP address named planted-ip-1 in resource group meternaut-fam-rg (subscription bbbbbbbb) with "
                       "your own permissions. It changes nothing else. Right before it deletes, it reads the resource again and stops unless the resource is still unattached or "
                       "unassigned, still carries the tag that marks it as planted by Meternaut, is still in this resource group and has no management lock."),
-        undo="A deleted public IP address cannot be restored. The address is released and may not be given again; a new one can be made.",
+        undo="A deleted public IP address cannot be restored. The address is released and may not be given again. A new one can be made.",
         observed="Azure Resource Graph lists the resource as unattached or unassigned and as planted by Meternaut.",
         headline="Delete the unassigned public IP address planted-ip-1 in group meternaut-fam-rg",
-        change="Deletes the public IP address planted-ip-1 in resource group meternaut-fam-rg. Nothing else changes.",
+        change="Azure deletes the public IP address planted-ip-1 in resource group meternaut-fam-rg. Nothing else changes.",
         rechecked=("Right before it acts, Meternaut reads the public IP address again. It stops unless the public IP address is still unassigned, still tagged as planted by Meternaut, "
                    "still in this resource group and not locked."),
         risk="If something still points at the address, that traffic stops, and the same address may not be given again.",
@@ -92,7 +92,7 @@ class TheFirstTwoFamiliesSayWhatTheySaid(unittest.TestCase):
                 self.assertEqual((shown.undo.reversible, shown.undo.how), (False, spec["brief_undo"]))
                 self.assertEqual(shown.who_acts, brief.WHO_ACTS)
                 self.assertEqual((shown.saving.monthly, shown.saving.level, shown.saving.basis, shown.saving.waiting_per_day),
-                                 (3.65, "Expected", "the cost lines of the last 30 days", 0.12))
+                                 (3.65, "Expected", brief.BILL_BASIS, 0.12))
 
     def test_the_older_detectors_lead_to_these_two_and_to_nothing_else(self):
         self.assertEqual({detector: family for detector, family in registry.DETECTOR_FAMILY.items()},

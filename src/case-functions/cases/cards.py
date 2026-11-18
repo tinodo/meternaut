@@ -102,14 +102,12 @@ def _header(kind: str) -> dict:
 
 
 def _stake(brief: Brief) -> dict:
-    """What is at stake, as a tile in the words of the pages (cases/stake.py): the figure a year in large type, its label and the month, its basis or why there is none, and, where a figure is shown, the
-    one line that says what the money is in (AGENTS.md rule 13 (c) and 36). How long the request has waited and what waiting costs are on the page and not on the card: neither helps a person decide."""
+    """What is at stake, as a tile in the words of the pages (cases/stake.py): the sentence that opens the money block in bold, the sentences under it (what the figure rests on, or that nobody has worked out
+    the saving, or why not), and what the cost is made of and the estimate when there are any. How long the request has waited and what waiting costs are on the page and not on the card: neither
+    helps a person decide."""
     stake = stake_of(brief)
-    label = f"{md(stake.label, 80)}. {md(stake.month, 40)} a month." if stake.month else f"{md(stake.label, 80)}."
-    items = [_block("saving-word", label, weight="Bolder"), _block("price-basis", md(stake.note, NOTE_CHARS), isSubtle=True)]
+    items = [_block("value", md(stake.lead, NOTE_CHARS), weight="Bolder")] + ([_block("price-basis", md(stake.note, NOTE_CHARS), isSubtle=True)] if stake.note else [])
     items += [_block(name, md(text, 300), isSubtle=True) for name, text in (("made-of", stake.made_of), ("estimate", stake.estimate)) if text]
-    if stake.year:
-        items = [_block("value", md(stake.year, 60), size="Large", weight="Bolder"), *items, _block("money", md(stake.money, 120), isSubtle=True, size="Small")]
     return {"type": "Container", "id": "value-tile", "style": "emphasis", "items": items}
 
 
@@ -155,19 +153,21 @@ def _impact(brief: Brief) -> list[dict]:
 
 
 def _undo(brief: Brief) -> dict:
-    """Whether it can be undone: one bold line when it cannot, and nothing decorative."""
+    """Whether a change can be undone: one bold line when it cannot, and nothing decorative."""
     if not brief.undo.reversible:
         return _block("undo", "Undo: This cannot be undone.", weight="Bolder")
     return _block("undo", f"**Undo:** {md(brief.undo.how, 200)}")
 
 
 def _decision_lines(brief: Brief) -> list[dict]:
-    """What changes and with whose rights, whether it can be undone, what could go wrong and whose resource it is: one line each."""
-    approving = brief.kind == "change"
-    two = (brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else "") if approving else ""
-    change = md(brief.change, 300) + (" It runs with your own permissions." if approving else "") + (f" {md(two, 320)}" if two else "")
-    return [_block("change", f"**{'If you approve' if approving else 'If you answer'}:** {change}"), _undo(brief),
-            _block("risk", f"**Risk, {md(brief.risk.level, 12)}:** {md(brief.risk.text, 240)}"), _block("owner", f"**Owner:** {md(brief.owner.text, 200)}")]
+    """What happens if the person answers, and whose resource it is: for a change what changes and with whose rights, whether it can be undone and what could go wrong; for advice that nothing changes in
+    Azure and, when acting has a risk, what it is: one block each."""
+    owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
+    if brief.kind == "advice":
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", md(brief.risk.text, 300))] if brief.risk.acting else []), owner]
+    two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
+    change = md(brief.change, 300) + " It runs with your own permissions." + (f" {md(two, 320)}" if two else "")
+    return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(brief.risk.text, 240)}"), owner]
 
 
 def _page_set(title: str, ctx: CardContext, *, positive: bool = False) -> dict:
@@ -272,7 +272,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     _check_context(ctx, brief)
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
-    body = [*_place(brief), _chips(brief), _stake(brief), *_heads_up(brief), _block("confidence", f"**How sure: {md(brief.confidence.level, 12)}.** {md(brief.confidence.because, 240)}"), *_learned(brief),
+    body = [*_place(brief), _chips(brief), _stake(brief), *_heads_up(brief), _block("confidence", md(brief.confidence.because, 400)), *_learned(brief),
             *_facts(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 

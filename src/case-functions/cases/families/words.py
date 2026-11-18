@@ -73,7 +73,7 @@ DELETE_WORDING = {
         noun="public IP address", title="Delete an unassigned public IP address", verb="Delete the unassigned public IP address", state="unassigned",
         observed="Azure Resource Graph lists the resource as unattached or unassigned and as planted by Meternaut.",
         risk="If something still points at the address, that traffic stops, and the same address may not be given again.",
-        undo="A deleted public IP address cannot be restored. The address is released and may not be given again; a new one can be made.",
+        undo="A deleted public IP address cannot be restored. The address is released and may not be given again. A new one can be made.",
         brief_undo="A deleted public IP address cannot be restored. The address is released, and a new one can be made."),
     "microsoft.compute/snapshots": _idle(
         "snapshot", "Delete a snapshot", "Delete the snapshot", "not in use",
@@ -152,7 +152,7 @@ def deletes(default_type: str) -> Callable[[PlanRecord | None, str, str, str], W
         label = name or "this resource"
         return Words(
             headline=f"{w.verb} {label}{_place(group)}",
-            change=f"Deletes the {w.noun} {label} in resource group {group or 'this group'}. Nothing else changes.",
+            change=f"Azure deletes the {w.noun} {label} in resource group {group or 'this group'}. Nothing else changes.",
             rechecked=(f"Right before it acts, Meternaut reads the {w.noun} again. It stops unless the {w.noun} is still {w.state}, still tagged as planted by "
                        "Meternaut, still in this resource group and not locked."),
             risk=w.risk, level=w.level, undo=w.brief_undo or w.undo, reversible=False)
@@ -163,11 +163,11 @@ def stop_vm(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words
     label = name or "this resource"
     return Words(
         headline=f"Stop (deallocate) the virtual machine {label}{_place(group)}",
-        change=(f"Stops the virtual machine {label} in resource group {group or 'this group'} and releases its compute. Its disks and any public IP address stay and keep billing. "
+        change=(f"Azure stops the virtual machine {label} in resource group {group or 'this group'} and releases its compute. Its disks and any public IP address stay and keep billing. "
                 "Nothing else changes."),
         rechecked=("Right before it acts, Meternaut reads the machine again. It stops unless the machine is still running or stopped, still tagged as planted by Meternaut, still in this "
                    "resource group and not locked."),
-        risk="Whatever runs on the machine stops. Only its compute is saved: its disks and any public IP address keep billing.", level="medium",
+        risk="Whatever runs on the machine stops. Only its compute is saved. Its disks and any public IP address keep billing.", level="medium",
         undo="Start the machine again, in the Azure portal or with the Azure CLI. A dynamic address may be another one, and a start can fail when the region has no room for the size.",
         reversible=True)
 
@@ -179,9 +179,9 @@ def resize_vm(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Wor
     label = name or "this resource"
     return Words(
         headline=f"Resize the virtual machine {label} to {want}{_place(group)}",
-        change=f"Changes the size of the virtual machine {label} in resource group {group or 'this group'} from {was} to {want}. A running machine restarts. Nothing else changes.",
-        rechecked=("Right before it acts, Meternaut reads the machine again. It stops unless the machine is still of the same size, running, stopped or released, the new size is still one "
-                   "that it can take, and it is still tagged as planted by Meternaut, still in this resource group and not locked."),
+        change=f"Azure changes the size of the virtual machine {label} in resource group {group or 'this group'} from {was} to {want}. A running machine restarts. Nothing else changes.",
+        rechecked=("Right before it acts, Meternaut reads the machine again. It stops unless the machine still has the same size and is running, stopped or released. It also stops unless the new "
+                   "size is still one that it can take, and the machine is still tagged as planted by Meternaut, still in this resource group and not locked."),
         risk="A running machine restarts, and a smaller size has fewer processors and less memory, so a workload that needs them slows down or fails.", level="medium",
         undo=f"Resize the machine back to {was} in the Azure portal or with the Azure CLI. That restarts a running machine again.", reversible=True)
 
@@ -192,7 +192,7 @@ def change_disk_tier(plan: PlanRecord | None, rtype: str, name: str, group: str)
     label = name or "this resource"
     return Words(
         headline=f"Move the disk {label} to {to}{_place(group)}",
-        change=f"Changes the type of the disk {label} in resource group {group or 'this group'} from {frm} to {to}. Nothing else changes.",
+        change=f"Azure changes the type of the disk {label} in resource group {group or 'this group'} from {frm} to {to}. Nothing else changes.",
         rechecked=("Right before it acts, Meternaut reads the disk again. It stops unless the disk is still the same tier, still unattached (or attached to a machine that is stopped and "
                    "released), still tagged as planted by Meternaut, still in this resource group and not locked."),
         risk="A lower tier has lower limits on operations and throughput, so a workload that needs them slows down.", level="medium",
@@ -210,11 +210,11 @@ def scale_vpn_gateway(plan: PlanRecord | None, rtype: str, name: str, group: str
     old, new = (f"{was} scale units" if was else "its scale units"), (f"{want} scale units" if want else "fewer scale units")
     return Words(
         headline=f"Scale the point-to-site gateway {label} down to {new}{_place(group)}",
-        change=(f"Changes the scale units of the point-to-site gateway {label} in resource group {group or 'this group'} from {old} to {new}. Users who are connected may be disconnected "
+        change=(f"Azure changes the scale units of the point-to-site gateway {label} in resource group {group or 'this group'} from {old} to {new}. Users who are connected may be disconnected "
                 "while it changes. Nothing else changes."),
         rechecked=(f"Right before it acts, Meternaut reads the gateway and its connection count again. It stops unless the gateway still has {old}, its last operation worked, nobody was "
                    f"connected in the last {CONNECTION_DAYS} days, and it is still tagged as planted by Meternaut, still in this resource group and not locked."),
-        risk=("Azure says to plan for downtime when the scale units of a point-to-site gateway change: users who are connected may be disconnected while it changes, and with fewer scale units "
+        risk=("Azure says to plan for downtime when the scale units of a point-to-site gateway change. Users who are connected may be disconnected while it changes, and with fewer scale units "
               "the gateway carries fewer connections and less traffic."), level="medium",
         undo=(f"Set the scale units back to {was or 'what they were'} on the Point to site page of the virtual hub in the Azure portal, or with az network p2s-vpn-gateway update --scale-unit. "
               "That change takes minutes too."),
@@ -229,7 +229,7 @@ class Shown:
     called: str  # the change as a noun of a sentence: "The delete was refused or failed ..."
     resource_type: str = ""  # the type that a plan of the family changes when its own preconditions do not say
     saving_level: str = "Expected"  # Verified, Expected or Scenario: only used with a basis of the family's own
-    saving_basis: str = ""  # what the figure is computed from, when it is not the cost lines of the last 30 days as they are (the brief says that for a family without one)
+    saving_basis: str = ""  # the sentences that say what the figure rests on, when it is not the bill of the last 30 days as it is (the brief says that for a family without one)
     no_figure: str = ""  # why a plan that has no figure claims none
     # The change ends the cost of the resource (a delete, a stop), so that cost lines which show none afterwards are the aim. A change that only lowers the cost (a resize, a change of tier)
     # leaves the resource billing: for it a missing cost line is a line that is not in yet, never "no cost", and a family has to say so to be read the other way.
@@ -242,11 +242,10 @@ SHOWN: dict[str, Shown] = {
     "delete-public-ip": Shown(deletes("microsoft.network/publicipaddresses"), "delete", "microsoft.network/publicipaddresses", cost_ends=True, summary="delete an unassigned public IP address"),
     "stop-vm": Shown(
         stop_vm, "stop", "microsoft.compute/virtualmachines", cost_ends=True, summary="stop a virtual machine and release its compute (deallocate it)",
-        saving_basis="the cost lines of the machine in the last 30 days (its disks and public IP addresses keep billing and are not counted)"),
+        saving_basis="It is based on what the machine cost in the last 30 days. Its disks and public IP addresses keep billing, and Meternaut does not count them."),
     "resize-vm": Shown(
         resize_vm, "resize", "microsoft.compute/virtualmachines", saving_level="Scenario", summary="resize a virtual machine to a smaller size of the same series",
-        saving_basis=("the cost lines of the last 30 days, scaled by the share of the machine's processors that is left in the same size series (the price list was not read, "
-                      "so it is an estimate)")),
+        saving_basis=("It assumes that the cost falls with the share of processors that is left in the same size series. Meternaut did not read the price list, so this is an estimate.")),
     "change-disk-tier": Shown(
         change_disk_tier, "change of tier", "microsoft.compute/disks", summary="move a managed disk one tier down (Premium SSD to Standard SSD, Standard SSD to Standard HDD)",
         no_figure="The price of a disk depends on its size and its type, and Meternaut does not read the price list, so it claims no figure for this change."),
@@ -255,7 +254,7 @@ SHOWN: dict[str, Shown] = {
     "scale-vpn-gateway": Shown(
         scale_vpn_gateway, "scale-down", "microsoft.network/p2svpngateways", saving_level="Scenario",
         summary="lower the scale units of a point-to-site gateway by one step (never below 1) when nobody has been connected for days",
-        saving_basis=("the cost lines of the last 30 days, scaled by the share of the gateway's scale units that is taken away (the price list was not read, so it is an estimate)")),
+        saving_basis="It assumes that the cost falls with the share of scale units that is taken away. Meternaut did not read the price list, so this is an estimate."),
 }
 
 

@@ -217,7 +217,7 @@ class TheButtonsOfAdvice(unittest.TestCase):
         self.assertEqual((no["type"], no["title"], no["url"]), ("Action.OpenUrl", "Not worth it", DECLINE_URL))
         self.assertEqual((page["title"], page["url"]), ("Open the request", URL))
         self.assertNotIn("sure", by_id(self.card), "advice changes nothing in Azure: nothing is asked twice")
-        self.assertTrue(by_id(self.card)["change"]["text"].startswith("**If you answer:** Nothing changes in Azure."))
+        self.assertTrue(by_id(self.card)["change"]["text"].startswith("**If you answer:** Meternaut changes nothing in Azure."))
 
     def test_the_words_are_those_of_the_page(self):
         from cases.web import words

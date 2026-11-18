@@ -736,10 +736,10 @@ class Determinism(unittest.TestCase):
 
     def test_the_time_comes_from_the_clock_of_the_services(self):
         console = seeded()
-        self.assertIn("Waiting 0 days, since 2026-11-05", console.get("/ok/plan0001").content)
+        self.assertIn("It has waited less than a day, since 5 November", console.get("/ok/plan0001").content)
         console.now = console.now.replace(day=9)
         reply = console.get("/ok/plan0001")
-        self.assertIn("Waiting 4 days, since 2026-11-05", reply.content)
+        self.assertIn("It has waited 4 days, since 5 November", reply.content)
         self.assertNotIn("Nobody answered in time", reply.content)
         self.assertNotIn("Open until", reply.content)
 

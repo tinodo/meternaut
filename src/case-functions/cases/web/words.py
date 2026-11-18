@@ -8,10 +8,10 @@ from ..brief import GUARD_WORDS, TYPE_WORDS, WAITING_FOR_THE_CHECK as WAITING_TE
 
 # state -> (short word, what it means)
 CASE_STATUS = {
-    "proposed": ("Proposed", "A change is suggested. The first model recommended it, the second model agreed, and no guard stopped it."),
-    "needs_human": ("Needs a person", "A person has to look at it. A guard fired, the second model did not agree, the first model was not sure enough, or Azure Advisor recommends it and no AI looked at it."),
-    "dropped": ("Dropped", "No change is suggested. The first model recommended keeping the resource."),
-    "error": ("Error", "The finding could not be finished. A check or a model call failed."),
+    "proposed": ("Proposed", "A change is suggested. The first AI recommended it, the second AI agreed, and no check held it back."),
+    "needs_human": ("Needs a person", "A person has to look at it. A check held it back, the second AI did not agree, the first AI was not sure enough, or Azure Advisor recommends it and no AI looked at it."),
+    "dropped": ("Dropped", "No change is suggested. The first AI recommended keeping the resource."),
+    "error": ("Error", "The finding could not be finished. A check or a call to an AI failed."),
     "awaiting_ok": ("Waiting for an OK", "A request was made and waits for a person's OK."),
     "approved": ("Approved", "A person approved the request. The change is being made now."),
     "running": ("Running", "The change has started and is not confirmed yet."),
@@ -34,7 +34,7 @@ PLAN_STATE = {
     "failed": "Failed. The change could not be finished.",
 }
 # What the details of a request that the bill closed say in place of the words of a request that Meternaut took back for no reason of its own: the cost went down, and Meternaut changed nothing.
-CLOSED_BY_THE_BILL = ("Closed: the cost has gone down", "The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.")
+CLOSED_BY_THE_BILL = ("Closed because the cost went down", "The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.")
 
 WITHDRAWN_ACTION = "Not made: a check refused the change before anything was written. Nothing changed."
 # What the page of an approved plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.

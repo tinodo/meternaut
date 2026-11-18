@@ -182,17 +182,17 @@ class ThePastAndItsLine(unittest.TestCase):
 
     def test_the_one_line_is_the_one_of_the_brief(self):
         line = learning.past_line({"n": 4, "approved": 3, "enough": True, "ratio": 0.92, "boomerangs": 0})
-        self.assertEqual(line, "Past cases like this: 3 of 4 approved; savings came in at 92 percent of the estimate.")
-        self.assertEqual(learning.past_line({"n": 4, "approved": 3, "enough": True}), "Past cases like this: 3 of 4 approved.")
-        self.assertEqual(learning.past_line({"n": 5, "approved": 4, "enough": True, "boomerangs": 1}), "Past cases like this: 4 of 5 approved; 1 was undone within weeks.")
+        self.assertEqual(line, "Of 4 past cases like this, 3 were approved. Savings came in at 92 percent of the estimate.")
+        self.assertEqual(learning.past_line({"n": 4, "approved": 3, "enough": True}), "Of 4 past cases like this, 3 were approved.")
+        self.assertEqual(learning.past_line({"n": 5, "approved": 4, "enough": True, "boomerangs": 1}), "Of 5 past cases like this, 4 were approved. 1 was undone within weeks.")
         self.assertEqual(learning.past_line({"n": 6, "approved": 4, "enough": True, "ratio": 1.0, "boomerangs": 2}),
-                         "Past cases like this: 4 of 6 approved; savings came in at 100 percent of the estimate; 2 were undone within weeks.")
+                         "Of 6 past cases like this, 4 were approved. Savings came in at 100 percent of the estimate. 2 were undone within weeks.")
 
     def test_below_the_smallest_sample_it_says_that_there_is_no_history_yet_and_a_case_with_no_record_of_it_says_nothing(self):
-        self.assertEqual(learning.past_line({"n": 2, "approved": 2, "enough": False}), "Past cases like this: no history yet.")
-        self.assertEqual(learning.past_line({"n": 0, "approved": 0, "enough": False}), "Past cases like this: no history yet.")
+        self.assertEqual(learning.past_line({"n": 2, "approved": 2, "enough": False}), "There is no history of cases like this yet.")
+        self.assertEqual(learning.past_line({"n": 0, "approved": 0, "enough": False}), "There is no history of cases like this yet.")
         for odd in ({"n": "4", "approved": 3, "enough": True}, {"n": 4, "approved": 5, "enough": True}, {"n": True, "approved": 1, "enough": True}, {"approved": 1}, {"n": 4, "approved": 3}):
-            self.assertEqual(learning.past_line(odd), "Past cases like this: no history yet.", odd)
+            self.assertEqual(learning.past_line(odd), "There is no history of cases like this yet.", odd)
         for none in (None, "", [], 5):
             self.assertEqual(learning.past_line(none), "")
 

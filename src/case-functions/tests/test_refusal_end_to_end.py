@@ -64,7 +64,7 @@ class WhenTheTagIsGoneBeforeThePageIsOpened(TheStory):
         text = page.main.text()
         self.assertIn(NOT_NOW, text)
         self.assertIn(f"It {TAG_REASON[3:]}. Nothing was changed.", text)
-        self.assertIn("What happens next: Meternaut looks again every time this page opens, and offers Approve again when the change can be made.", text)
+        self.assertIn("Meternaut looks again every time this page opens, and offers Approve again when the change can be made.", text)
         self.assertFalse(page.has_button(APPROVE))
         self.assertEqual(self.buttons(page), ["Decline", "This is not mine", "Ask or tell", "Decide later"])
         self.assertEqual(self.person_calls(), [], "the person has signed in to nothing, and nothing was asked with their token")

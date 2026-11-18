@@ -25,7 +25,7 @@ from cases.families.gates import ChangeScope
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ADVICE_OPEN_HARD, ADVISE, AUTOMATED, HELD, started
 
-TWO_DAYS = ("Something that runs by itself changed it 2 days ago and would change it back, so a change by hand would not last. "
+TWO_DAYS = ("An automation changed this 2 days ago and would change it back, so a change by hand would not last. "
             "Change it where it is defined (the template or pipeline that deploys it).")
 
 
@@ -40,7 +40,7 @@ class TheWarning(unittest.TestCase):
         for days, said in ((0, "today"), (1, "yesterday"), (14, "2 weeks ago")):
             with self.subTest(days=days):
                 note = brief.automation_note(automation(owner={"lookedUp": True, "automatedAt": days_ago(days)}), NOW)
-                self.assertIn(f"changed it {said} and would change it back", note)
+                self.assertIn(f"changed this {said} and would change it back", note)
                 self.assertTrue(note.endswith("(the template or pipeline that deploys it)."))
         for label, owner in (("15 days ago", {"lookedUp": True, "automatedAt": days_ago(15)}), ("no write", {"lookedUp": True}), ("nothing looked up", {}),
                              ("a record from before the field: a person changed it", {"lookedUp": True, "changedBy": "alice@example.com", "changedAt": days_ago(1)})):
@@ -55,7 +55,7 @@ class TheWarning(unittest.TestCase):
     def test_it_holds_no_name_and_no_id_and_the_old_words_of_the_hold_stay_as_they_were(self):
         for text in (brief.automation_note(automation(), NOW), brief.HEADS_UP):
             self.assertNotRegex(text, r"(?i)alice|platform-team|[0-9a-f]{8}-|/subscriptions/")
-        self.assertEqual(brief.HOLD_WORDS["automation"][1], "Something that runs by itself changed it {when} and would change it back, so a change by hand would not last.")
+        self.assertEqual(brief.HOLD_WORDS["automation"][1], "An automation changed this {when} and would change it back, so a change by hand would not last.")
         self.assertIn("automation", brief.TAKEN_BACK)
         self.assertEqual(brief.held_reason(automation(), NOW), "", "an automation is no hold")
 
@@ -208,7 +208,7 @@ class TheHeldRequestsOfTheOldReasonBecomeRequests(Base):
         self.assertEqual((self.store.case_get(case.case_id).plan_id, self.store.case_get(case.case_id).status), (plan.plan_id, "proposed"))
         self.assertEqual(self.approvals.promoted, [(plan, case)])
         found = brief.build_brief(case, plan, now=self.now, may_answer=True)
-        self.assertEqual((found.state, found.hold, found.heads_up, found.waiting.days, found.waiting.since), ("open", None, TWO_DAYS, 5, held.created_at[:10]))
+        self.assertEqual((found.state, found.hold, found.heads_up, found.waiting.days, found.waiting.since), ("open", None, TWO_DAYS, 5, brief.day_text(held.created_at, self.now)))
         self.assertEqual(found.saving.monthly, 120.0)
 
     def test_the_dearest_come_first_at_most_five_a_watch_and_the_rest_wait_and_go_on_at_the_next_watch(self):
@@ -374,7 +374,7 @@ class TheLadderTreatsAPromotedRequestLikeAnyOpenOne(unittest.TestCase):
         self.assertEqual((step.number, step.source), (1, "same"), "the reminder is due at once: it has waited five days")
         (sent,) = world.mail.sent_to("ada@example.com")
         self.assertIn("A decision has waited 5 days", sent[1])
-        self.assertIn("Heads-up: Something that runs by itself changed it yesterday and would change it back", sent[2])
+        self.assertIn("Heads-up: An automation changed this yesterday and would change it back", sent[2])
         world.clock.advance(days=2)
         world.tick()
         self.assertEqual([r.number for r in world.steps("p1")], [1, 2], "and the next step on the seventh day, as for any request")
@@ -400,7 +400,7 @@ class TheFirstDay(unittest.TestCase):
         (sent,) = world.mail.sent_to("ada@example.com")
         self.assertEqual(sent[1], "[Meternaut] 5 decisions have waited without an answer")
         self.assertEqual(len(listed(sent[2])), 5)
-        self.assertEqual(sent[2].count("Heads-up: Something that runs by itself changed it 2 days ago"), 5)
+        self.assertEqual(sent[2].count("Heads-up: An automation changed this 2 days ago"), 5)
         world.clock.advance(hours=23)
         world.tick()
         self.assertEqual(len(world.mail.sent_to("ada@example.com")), 1, "never more than one a day")
@@ -418,7 +418,7 @@ class TheFirstDay(unittest.TestCase):
         self.assertEqual((len(sent), len(held), len(world.queue_fake.cards())), (3, 2, 3), "three cards at most in a week: the other two wait for Monday")
         self.assertIn("weekly budget of 3 messages", held[0].detail)
         for text in (block for card in world.queue_fake.cards() for block in [b for b in walk_blocks(card) if b["id"] == "heads-up"]):
-            self.assertTrue(text["text"].startswith("**Heads-up:** Something that runs by itself changed it 2 days ago"))
+            self.assertTrue(text["text"].startswith("**Heads-up:** An automation changed this 2 days ago"))
 
     def test_the_weekly_desk_lists_five_lines_with_the_warning_once_on_the_desk_day(self):
         console = Console()
@@ -450,8 +450,8 @@ class TheCapAndTheOrderOfTheRequests(Base):
 
     def test_the_places_are_thirty_up_to_a_ceiling_of_forty_five_and_the_waiting_words_say_so(self):
         self.assertEqual((ADVICE_OPEN_MAX, ADVICE_OPEN_HARD), (30, 45))
-        self.assertEqual(brief.HOLD_WORDS["waiting"][1], "Nothing holds it back any more, but it waits for a free place: Meternaut keeps 30 requests open at once for findings that the AIs did not settle, up to 45 "
-                                                           "when a finding is worth more than the smallest of them, and no more.")
+        self.assertEqual(brief.HOLD_WORDS["waiting"][1], "Nothing holds it back any more, but it waits for a free place. Meternaut keeps 30 requests open at once for findings that the AIs did not settle, "
+                                                           "and up to 45 when a finding is worth more than the smallest of them.")
 
     def test_the_ceiling_holds_whatever_a_finding_is_worth_nothing_open_is_displaced_and_a_freed_place_goes_to_the_dearest_that_waits(self):
         self.fill()
@@ -531,7 +531,7 @@ class EveryListRanksByTheFigureThenByWhoWaitedLongest(unittest.TestCase):
                     for n in range(1, len(rows) + 1)]
         self.assertEqual([unit.first.case.resource_name for unit in home.units_of(ctx_rows)], wanted, "the Decisions page, which is the start page, ranks with this code")
         letter_lines = listed(desk(console).sent[0][1]["body"]["content"])
-        self.assertEqual([next(name for name in wanted if name in line) for line in letter_lines], wanted, "the weekly desk lists the rows of the page in the same order")
+        self.assertEqual([next(name for name in wanted if re.search(rf"\b{name}\b", line)) for line in letter_lines], wanted, "the weekly desk lists the rows of the page in the same order")
 
 
 class TheRevivalAndTheMigrationAgree(Base):
@@ -565,7 +565,7 @@ class TheOldWordsStillRenderForOldRequests(unittest.TestCase):
         case = automation()
         held = replace(make_advice(), state=HELD, preconditions={"held": "automation"})
         found = brief.hold_of(held, case, NOW)
-        self.assertEqual((found.reason, found.heading, found.why), ("automation", "Something that runs by itself changes it", brief.HOLD_WORDS["automation"][1].format(when="2 days ago")))
+        self.assertEqual((found.reason, found.heading, found.why), ("automation", "An automation changes it", brief.HOLD_WORDS["automation"][1].format(when="2 days ago")))
         ended = replace(make_advice(), state="expired", expires_at="2026-11-04T09:00:00Z", preconditions={"takenBack": "automation"})
         outcome = brief.build_brief(case, ended, now=NOW).outcome
         self.assertEqual((outcome.title, outcome.lines[0]), ("Taken back", brief.TAKEN_BACK["automation"]))

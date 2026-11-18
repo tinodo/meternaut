@@ -401,21 +401,21 @@ class WhatThePageShowsForAMachine(unittest.TestCase):
     def test_the_stop_is_shown_with_what_it_does_who_does_it_how_it_is_undone_and_what_could_go_wrong(self):
         shown, plan = self.shown("delete")
         self.assertEqual(shown.headline, "Stop (deallocate) the virtual machine planted-vm-1 in group meternaut-fam-rg")
-        self.assertIn("Stops the virtual machine planted-vm-1 in resource group meternaut-fam-rg and releases its compute", shown.change)
+        self.assertIn("Azure stops the virtual machine planted-vm-1 in resource group meternaut-fam-rg and releases its compute", shown.change)
         self.assertEqual(shown.who_acts, brief.WHO_ACTS)
         self.assertTrue(shown.undo.reversible)
         self.assertIn("Start the machine again", shown.undo.how)
         self.assertEqual((shown.risk.level, shown.kind, shown.family), ("medium", "change", "stop-vm"))
         self.assertIn("Right before it acts, Meternaut reads the machine again", shown.rechecked)
         self.assertEqual((shown.saving.monthly, shown.saving.level), (60.0, "Expected"))
-        self.assertIn("its disks and public IP addresses keep billing and are not counted", shown.saving.basis)
+        self.assertIn("Its disks and public IP addresses keep billing, and Meternaut does not count them.", shown.saving.basis)
 
     def test_the_resize_is_shown_as_a_scenario_because_the_price_list_was_not_read(self):
         shown, plan = self.shown("change")
         self.assertEqual(shown.headline, "Resize the virtual machine planted-vm-1 to Standard_D2s_v5 in group meternaut-fam-rg")
         self.assertIn("from Standard_D4s_v5 to Standard_D2s_v5. A running machine restarts.", shown.change)
         self.assertEqual((shown.saving.monthly, shown.saving.level), (30.0, "Scenario"))
-        self.assertIn("the price list was not read, so it is an estimate", shown.saving.basis)
+        self.assertIn("Meternaut did not read the price list, so this is an estimate.", shown.saving.basis)
         self.assertTrue(shown.undo.reversible)
         self.assertIn("Resize the machine back to Standard_D4s_v5", shown.undo.how)
 

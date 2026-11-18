@@ -20,7 +20,7 @@ from ..models import ADVISE, DECLINE_REASONS, HELD, MAX_SIGNIN_PATH, REFUSED, De
 from . import brief_page
 from .common import brief_of, checked_brief, decisions_for, may_open, read
 from .core import MAX_NOTE, Ctx, Response, Safe, clean_line, fmt, join, link_part
-from .figures import title_of
+from .figures import risk_chip, title_of
 from .home import walk
 from .layout import SEND_SCRIPT, SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
 
@@ -338,9 +338,11 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     answer = form(back, hidden("code", code), hidden("nonce", nonce), hidden("note", note), hidden("confirm", "yes"),
                   fmt('<div class="acts"><a class="btn primary" href="{back}">No, go back</a>{yes}</div>', back=back, yes=yes))
     rows = [(name, value) for name, value in brief_page.consequences(brief) if name not in ("Undo", "What could go wrong")]  # the notice says both
+    place = f" in resource group {brief.where.group}" if brief.where.group else ""
+    named = f", subscription {brief.where.subscription_name or brief.where.subscription}" if (brief.where.subscription_name or brief.where.subscription) else ""
     body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here."),
-                 notice("warning", "This cannot be undone", f"{brief.risk.text} Risk: {brief.risk.level}."), summary(rows),
-                 fmt('<p class="m">{where}</p>', where=f"{brief.where.kind} {brief.where.name}, resource group {brief.where.group}, subscription {brief.where.subscription_name or brief.where.subscription}."),
+                 notice("warning", "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
+                 fmt('<p class="m">{where}</p>', where=f"This is the {brief.where.noun} {brief.where.name}{place}{named}."),
                  answer])
     return page(ctx, f"Confirm: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
 

@@ -14,7 +14,7 @@ The [technical design](../design/README.md) fixes what the experience may rely o
 |---|---|---|
 | 1 | One decision, one person, about two minutes | Every card carries one decision for the person who can take it |
 | 2 | Evidence one tap away | Details in the message, Explain answered in the thread, the notebook page (full reasoning and receipts), a person behind that |
-| 3 | Honest numbers | Every saving you may act on has a range, its price basis and one of Scenario, Expected or Verified |
+| 3 | Honest numbers | Every saving you may act on has a range and says in a plain sentence what it rests on |
 | 4 | What changes, how to undo it, what waiting forgoes | Stated before anyone is asked to decide |
 | 5 | Disagreement is welcome | Challenge and Teach are as easy as yes, and the answer visibly changes what happens next |
 | 6 | Attention is a budget | Quiet by default, quieter when ignored, louder only when waiting costs more than interrupting |
@@ -33,7 +33,7 @@ People never see the system's internal names. The table is the bridge between th
 | Lesson | **Note**: "what I know about your resources", with a scope, an expiry, and edit and delete |
 | Evidence levels | **From Microsoft's documentation**, **Price confirmed**, **Seen on your bills**, **Proven by a change here** |
 | Price basis | **At your agreement's rates**, **At the rates on your bill**, **At list prices. I cannot see your rates.**, **At retail rates. Your partner's rates are not visible.**: beside every saving figure |
-| Scenario, expected, verified saving | **Scenario saving** (no rate or bill line behind it), **Expected saving** (a bill line confirms the meter), **Verified saving** (measured after the change) |
+| Scenario, expected, verified saving | **Scenario saving** (no rate or bill line behind it, said as an assumption), **Expected saving** (a bill line confirms the meter, said as based on your bill), **Verified saving** (measured after the change, said as confirmed by Cost Management) |
 | Stored quote | **Price check**; "quote" means only an offer from a partner or a billing owner |
 | Credential | **Standing permission**: an optional mode, not built; a customer grants it with its own role to an identity of its own choosing, and Meternaut holds none by default |
 | Approval, Action | **Your OK**, **Change** |

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1340 720" width="1340" height="720" role="img" aria-labelledby="t d" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif">
   <title id="t">The same Recommendation at five levels of access</title>
-  <desc id="d">Five columns show the value tile, the price basis, the saving word, the purchase path and what more access would buy for the same invented one-year compute commitment, under billing reach, subscription with costs, subscription without costs, a partner-sold subscription and pay-as-you-go.</desc>
+  <desc id="d">Five columns show the value tile, the price basis, what the figure rests on, the purchase path and what more access would buy for the same invented one-year compute commitment, under billing reach, subscription with costs, subscription without costs, a partner-sold subscription and pay-as-you-go.</desc>
   <rect width="1340" height="720" fill="#F3F2F1"/>
   <text x="32" y="46" font-size="22" font-weight="700" fill="#242424" text-anchor="start">The same Recommendation at five levels of access</text>
   <text x="32" y="72" font-size="13.5" font-weight="400" fill="#5C5C5C" text-anchor="start">An invented example: a one-year compute commitment for the order platform. Only the figure, the words and the purchase path change; the care does not.</text>
@@ -15,7 +15,7 @@
   <rect x="58" y="252" width="196" height="66" rx="6" fill="#FFFFFF" stroke="#9FC7EE" stroke-width="1"/>
   <text x="68" y="272" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">At your agreement's rates</text>
   <rect x="58" y="330" width="118" height="22" rx="11" fill="#E7F4E7"/>
-  <text x="67" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">Expected saving</text>
+  <text x="67" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">It is based on your bill</text>
   <text x="48" y="394" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">Buying it</text>
   <text x="48" y="414" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">Two people approve one plan bound to</text>
   <text x="48" y="432" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">a stored price check. The approver's</text>
@@ -36,7 +36,7 @@
   <rect x="320" y="252" width="196" height="66" rx="6" fill="#FFFFFF" stroke="#9FC7EE" stroke-width="1"/>
   <text x="330" y="272" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">At the rates on your bill</text>
   <rect x="320" y="330" width="118" height="22" rx="11" fill="#E7F4E7"/>
-  <text x="329" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">Expected saving</text>
+  <text x="329" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">It is based on your bill</text>
   <text x="310" y="394" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">Buying it</text>
   <text x="310" y="414" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">The AI writes the request for your</text>
   <text x="310" y="432" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">billing owner. Two people approve</text>
@@ -57,7 +57,7 @@
   <text x="592" y="272" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">At list prices. I cannot see</text>
   <text x="592" y="288" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">your rates.</text>
   <rect x="582" y="330" width="118" height="22" rx="11" fill="#FFF4CE"/>
-  <text x="591" y="345" font-size="12" font-weight="700" fill="#7A5200" text-anchor="start">Scenario saving</text>
+  <text x="591" y="345" font-size="12" font-weight="700" fill="#7A5200" text-anchor="start">It is an assumption</text>
   <text x="572" y="394" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">Buying it</text>
   <text x="572" y="414" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">The AI writes the request for your</text>
   <text x="572" y="432" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">billing owner, as a scenario. Two</text>
@@ -81,7 +81,7 @@
   <text x="854" y="288" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">partner's rates are not</text>
   <text x="854" y="304" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">visible.</text>
   <rect x="844" y="330" width="118" height="22" rx="11" fill="#FFF4CE"/>
-  <text x="853" y="345" font-size="12" font-weight="700" fill="#7A5200" text-anchor="start">Scenario saving</text>
+  <text x="853" y="345" font-size="12" font-weight="700" fill="#7A5200" text-anchor="start">It is an assumption</text>
   <text x="834" y="394" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">Buying it</text>
   <text x="834" y="414" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">The AI writes the request for your</text>
   <text x="834" y="432" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">partner. Their quote settles the</text>
@@ -105,7 +105,7 @@
   <rect x="1106" y="252" width="196" height="66" rx="6" fill="#FFFFFF" stroke="#9FC7EE" stroke-width="1"/>
   <text x="1116" y="272" font-size="12" font-weight="600" fill="#0F6CBD" text-anchor="start">At the rates on your bill</text>
   <rect x="1106" y="330" width="118" height="22" rx="11" fill="#E7F4E7"/>
-  <text x="1115" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">Expected saving</text>
+  <text x="1115" y="345" font-size="12" font-weight="700" fill="#0E700E" text-anchor="start">It is based on your bill</text>
   <text x="1096" y="394" font-size="12.5" font-weight="700" fill="#242424" text-anchor="start">Buying it</text>
   <text x="1096" y="414" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">A reservation for the steady</text>
   <text x="1096" y="432" font-size="12.5" font-weight="400" fill="#242424" text-anchor="start">machines only: a savings plan is not</text>

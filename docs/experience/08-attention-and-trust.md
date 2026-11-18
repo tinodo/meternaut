@@ -112,7 +112,7 @@ Learn documents the label and thumbs per message, not for card messages; the cli
 ### What every message tells the person
 
 - **Why you are getting this:** the evidence that made you the owner of record, on every card but Hello, whose introduction says why it writes ([04](04-messages-and-cards.md)). (An invented example.) "Why you are getting this: you confirmed on Monday that you look after rg-webshop-qa (the directory lists you for 3 of its 14 resources, and you created the other 11)."
-- **Chips:** beside every saving figure, in words: the price basis and the saving word (how sure it is). Other money figures state their basis in the sentence. (Invented.) Without cost access, E3 reads "At list prices. I cannot see your rates."; under a partner agreement the chip reads "At retail rates. Your partner's rates are not visible."
+- **Basis:** under every saving figure, in one sentence: what it rests on (how sure it is). Other money figures state their basis in the sentence. (Invented.) Without cost access, E3 reads "At list prices. I cannot see your rates."; under a partner agreement the line reads "At retail rates. Your partner's rates are not visible."
 - **What I do not know:** the limit of this Recommendation. (An invented example.) E3: "I cannot tell whether anyone keeps these two disks for a restore."
 - **Receipt:** every tap gets a visible reply, such as "Received. Nothing has changed yet."
 - **History:** the one page of decisions and changes ([06](06-web-pages.md)).

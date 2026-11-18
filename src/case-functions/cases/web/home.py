@@ -3,7 +3,8 @@
 It is built from the style guide (docs/ui/style-guide.html). The decision with the most at stake is in focus, with its figures and a chart of its cost (and, for a kind of resource that has
 one, a chart of its use). The others follow in two lanes, the changes that are ready to decide and the findings that are worth a closer look: one row for each decision, with its figure a
 year and a month, its risk and a small chart of its cost.
-Findings of one kind that nobody asked about as a group are one row that opens. Money is what Cost Management reports, in US dollars, and a year is twelve times a month. When nothing waits,
+Findings of one kind that nobody asked about as a group are one row that opens. Money is what Cost Management reports, in whole US dollars from 100 up, and a year is twelve times a month; no
+sentence of the page says so, except for a cost that is not in dollars. When nothing waits,
 one sentence says so and says when the Watch looks next. The switches, the runs and what Meternaut can change in Azure are on the pages of the platform team (ops.py), not here.
 """
 from __future__ import annotations
@@ -13,11 +14,11 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import ACTING, IF_ACTED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things
+from ..brief import IF_ACTED, NOT_WORKED_OUT, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import (RISKS, WEAKEST_FIRST, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, series_of, spark, summed, title_of, under,
+from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, spark, summed, title_of, under,
                       use_block)
 from .layout import code, details, kpi, kpis, link, notice, page, paragraph, table
 
@@ -31,7 +32,7 @@ RECENT_ACTIONS = 100
 HELD_CASES = 300  # the cases of each status that are looked at for the findings that are held back (the same number as cases/learning.py reads)
 HELD_PLANS = 200  # the plans that are looked at for the answers that people gave lately (the same number as cases/learning.py reads)
 HELD_LISTED = 10  # the findings that a guard holds back which the start page lists, each with a link: the page of savings found has all of them
-SORTS = (("impact", "Impact", "Most at stake first."), ("age", "Age", "Waiting longest first."), ("risk", "Risk", "Lowest risk first."))
+SORTS = (("impact", "Impact", "The one with the most at stake is first."), ("age", "Age", "The one that has waited longest is first."), ("risk", "Risk", "The one with the lowest risk is first."))
 OUTCOMES = {"done": ("Done", "low", "circle"), "verified": ("Done", "low", "circle"), "unchanged": ("Nothing to change", "", "square"), "declined": ("Declined", "", "square"),
             "failed": ("Failed", "high", "diamond"), "approved": ("Approved", "info", "square"), "running": ("Running", "info", "square"), "answered": ("Answered", "info", "square"),
             "withdrawn": ("Withdrawn", "", "square"), "expired": ("Taken back", "", "square"), "cost-down": ("Cost went down", "low", "circle")}
@@ -98,7 +99,7 @@ class Unit:
 
 
 def _figure(members: Sequence[Row]) -> Figure:
-    return figure_for([m.brief for m in members], [m.cost for m in members], "the figures of each, added up" if len(members) > 1 else "")
+    return figure_for([m.brief for m in members], [m.cost for m in members], ADDED if len(members) > 1 else "")
 
 
 def _unit(members: Sequence[Row]) -> Unit:
@@ -163,7 +164,7 @@ def _meta(ctx: Ctx, unit: Unit) -> str:
 
 
 def _chips(unit: Unit) -> Safe:
-    acting = all(m.brief.risk.text.startswith(ACTING) for m in unit.members)
+    acting = all(m.brief.risk.acting for m in unit.members)
     chips = [risk_chip(max((m.brief.risk.level for m in unit.members), key=lambda level: RISKS.get(level, RISKS["medium"])[3]), IF_ACTED if acting else "")]
     if unit.figure.state != "save":
         chips.append(chip("Needs measuring"))
@@ -205,7 +206,7 @@ def _members(ctx: Ctx, unit: Unit, name: str) -> Safe:
 
 def _row(ctx: Ctx, unit: Unit, rank: int, top: float, primary: bool) -> Safe:
     markup, name = _title(unit)
-    basis = fmt('<span class="m">{note}</span>', note=unit.figure.note) if unit.figure.state == "save" else Safe("")
+    basis = fmt('<span class="m">{note}</span>', note=unit.figure.note) if unit.figure.state in ("save", "cost") else Safe("")
     parts = fmt('<span class="rank">{rank}</span><span class="main"><span class="t">{title}</span><span class="m">{meta}</span>{basis}<span class="chips">{chips}</span></span>'
                 '{impact}<span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis, chips=_chips(unit), impact=_impact(unit, top),
                 spark=spark(unit.series, unit.reason))
@@ -223,16 +224,13 @@ def _focus(ctx: Ctx, unit: Unit) -> Safe:
     """The decision with the most at stake, large: its figures, what changes and why, what was checked, how to undo it, and a chart of its cost."""
     brief, figure = unit.first.brief, unit.figure
     markup, name = _title(unit)
-    if figure.monthly is not None:
-        big = fmt('<p class="fig{save}">{year}<small> a year</small></p>', save=" save" if figure.state == "save" else "", year=a_year(figure.monthly))
-        sub = f"{figure.label}. {dollars(figure.monthly)} a month. {figure.note}"
-    else:
-        big, sub = Safe('<p class="fig">—</p>'), f"{figure.label}. {figure.note}"
-    facts = [("What changes", brief.change), ("Why", plain(brief.reasoning, 240)), ("Checked", brief.rechecked), ("Undo", brief.undo.how)]
+    lead, rest = says(brief, figure) if len(unit.members) == 1 else says_many(figure)
+    big = fmt('<p class="say{save}">{lead}</p>', save=" save" if figure.state == "save" else "", lead=lead)
+    facts = ([("What changes", brief.change)] if brief.kind != "advice" else []) + [("What the AI says", plain(brief.reasoning, 240)), ("Checked", brief.rechecked)] + ([("Undo", brief.undo.how)] if brief.kind == "change" else [])
     return fmt('<article class="focus" aria-labelledby="focus-title"><div><p class="eyebrow"><span class="rank first" aria-hidden="true">1</span>Start here</p>'
-               '<h3 id="focus-title">{title}</h3><p class="m">{meta}</p>{big}<p class="figsub">{sub}</p>{under}<p class="chips">{chips}</p><dl class="facts">{facts}</dl>'
+               '<h3 id="focus-title">{title}</h3><p class="m meta">{meta}</p>{big}{rest}{under}<p class="chips">{chips}</p><dl class="facts">{facts}</dl>'
                '<p class="acts"><a class="btn primary" href="{href}">Review and decide<span class="visually-hidden">: {name}</span></a></p></div><div>{chart}</div></article>',
-               title=markup, meta=_meta(ctx, unit), big=big, sub=sub, under=under(figure), chips=_chips(unit),
+               title=markup, meta=_meta(ctx, unit), big=big, rest=fmt('<p class="figsub">{rest}</p>', rest=rest) if rest else Safe(""), under=under(figure), chips=_chips(unit),
                facts=join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=label, text=text) for label, text in facts if text), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"), name=name,
                chart=join([chart(unit.series, unit.reason), use_block([(m.brief, m.case) for m in unit.members], ctx.now)]))
 
@@ -251,26 +249,16 @@ def _lane(ctx: Ctx, anchor: str, title: str, blurb: str, units: Sequence[Unit], 
 def _summary(units: Sequence[Unit], measured: tuple[float, int]) -> Safe:
     saves = [u for u in units if u.figure.state == "save"]
     costs = [u for u in units if u.figure.state == "cost" and u.figure.counts]
-    levels = ", ".join(w for w in WEAKEST_FIRST if w in {u.figure.level for u in saves})
-    ready = (kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"{_count(len(saves), 'decision')} · {levels}. The basis is in each row.", True)  # type: ignore[misc]
+    ready = (kpi("Ready to save", a_year(sum(u.figure.monthly for u in saves)), "a year", f"It is the saving of {_count(len(saves), 'decision')}. Each row says what its figure rests on.", True)  # type: ignore[misc]
              if saves else kpi("Ready to save", "—", "", "No saving is known yet."))
-    under = (kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year", f"{_count(len(costs), 'decision')} · saving not measured. Cost Management, 30 days.")  # type: ignore[misc]
+    under = (kpi("Cost under review", a_year(sum(u.figure.monthly for u in costs)), "a year",
+                 f"It is the cost of {_count(len(costs), 'decision')}, as Cost Management shows it. {NOT_WORKED_OUT}")  # type: ignore[misc]
              if costs else kpi("Cost under review", "—", "", "Nothing is under review."))
     return kpis(ready, under, measured_tile(*measured))
 
 
 def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:
-    saves = sum(u.figure.monthly for u in units if u.figure.state == "save")  # type: ignore[misc]
-    costs = sum(u.figure.monthly for u in units if u.figure.state == "cost" and u.figure.counts)  # type: ignore[misc]
-    if not units:
-        lead = f"Nothing waits for you. The next search is {ctx.next_search()}."
-    else:
-        lead = f"{_count(len(units), 'decision')}."
-        if saves > 0:
-            lead += f" {a_year(saves)} a year is ready to save" + (f", and {a_year(costs)} a year more is under review." if costs > 0 else ".")
-        elif costs > 0:
-            lead += f" {a_year(costs)} a year is under review."
-        lead += " Money is in US dollars, and a year is twelve times the month."
+    lead = f"{_count(len(units), 'decision')} {'waits' if len(units) == 1 else 'wait'} for you." if units else f"Nothing waits for you. The next search is {ctx.next_search()}."
     links = join(fmt('<a href="{href}"{current}>{label}</a>', href=ctx.url(f"/?sort={key}"), label=label, current=Safe(' aria-current="true"') if key == sort else Safe(""))
                  for key, label, _ in SORTS)
     seg = fmt('<div class="seg" role="group" aria-label="Sort the decisions"><span>Sort by</span>{links}</div>', links=links) if len(units) > 1 else Safe("")
@@ -309,14 +297,15 @@ def _held(ctx: Ctx) -> Safe:
         return Safe("")
     held, ruled = len(cases), sum(1 for case in cases if held_reason(case, ctx.now))
     lines = [paragraph(f"{_count(ruled, 'finding')} {'are' if ruled != 1 else 'is'} held back because nobody has looked up who changed the resource, or because "
-                       "what depends on it was not checked. Meternaut asks about the resource when it knows. Nothing was changed in Azure.")] if ruled else []
+                       "what depends on it was not checked. Meternaut makes a request as soon as it knows. Nothing was changed in Azure.")] if ruled else []
     rest = held - ruled
     if rest:
         many = rest != 1
-        lines.append(paragraph(f"Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
-                               f"or the places for requests are full. The AI looks at {'them' if many else 'it'} again at its next search."))
+        lead = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. " if ruled else ""
+        lines.append(paragraph(f"{lead}Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
+                               f"the places for requests are full, or nobody is named as an approver. The AI looks at {'them' if many else 'it'} again at its next search."))
     if listed:
-        lines.append(fmt('<p>These are held back, and nothing is asked of you to approve:</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
+        lines.append(fmt('<p>These findings are held back, so nothing is asked of you.</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count
     return details(f"Held back: {_count(held + others, 'finding')}", *lines)
 
@@ -332,17 +321,15 @@ def _held_rows(ctx: Ctx) -> list[tuple[str, Safe]]:
         if case is None or case.status not in ("needs_human", "proposed"):
             continue
         found = brief_of(ctx, plan, case)
-        rows.append((case.case_id, fmt('<li><span>{title}</span><span class="quiet">{figure} · {heading}</span></li>', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title_of(found)[1]),
-                                       figure=_stake_words(found, case), heading=found.hold.heading if found.hold else "")))
+        rows.append((case.case_id, fmt('<li><span>{title}</span><span class="quiet">{heading}. {figure}</span></li>', title=link(ctx.url(f"/why/{link_part(case.case_id)}"), title_of(found)[1]),
+                                       figure=_stake_words(found, case), heading=found.hold.heading if found.hold else "Held back")))
     return rows
 
 
 def _stake_words(found: Brief, case: CaseRecord) -> str:
-    """The figure of a finding in a few words, as a list of requests says it ("$1,682 a year, Expected")."""
+    """The figure of a finding in one sentence, as a list of requests says it ("It could save about $1,682 a year.")."""
     figure = figure_for([found], [cost_of(found, case)])
-    if figure.monthly is None:
-        return "cost not visible"
-    return f"{a_year(figure.monthly)} a year, {figure.level}" if figure.state == "save" else f"costs {a_year(figure.monthly)} a year, saving not measured"
+    return short_of(figure.state, figure.level, figure.monthly, figure.note)
 
 
 def _open(ctx: Ctx) -> tuple[list[Row], bool]:
@@ -422,8 +409,8 @@ def _longest(ctx: Ctx, rows: Sequence[Row]) -> Safe:
     longest = sorted((r for r in rows if r.brief.waiting is not None and r.brief.waiting.days >= 1), key=lambda r: (-r.brief.waiting.days, r.brief.plan_id))[:LONGEST_SHOWN]  # type: ignore[union-attr]
     if not longest:
         return Safe("")
-    items = [fmt('<li><a href="{href}">{title}</a><span class="quiet">{days} day{s} with {whom}. {cost}</span></li>', href=ctx.url(f"/ok/{link_part(r.brief.plan_id)}"), title=r.brief.headline,
-                 days=r.brief.waiting.days, s="" if r.brief.waiting.days == 1 else "s", whom=r.brief.waiting.with_whom, cost=r.brief.waiting.cost)  # type: ignore[union-attr]
+    items = [fmt('<li><a href="{href}">{title}</a><span class="quiet">It has waited {days}, and it is with {whom}. {cost}</span></li>', href=ctx.url(f"/ok/{link_part(r.brief.plan_id)}"), title=r.brief.headline,
+                 days=waited_text(r.brief.waiting.days), whom=r.brief.waiting.with_whom, cost=r.brief.waiting.cost)  # type: ignore[union-attr]
              for r in longest]
     return join([Safe('<div class="sec"><h2 id="longest">Waiting the longest</h2></div>'), fmt('<ul class="recent">{items}</ul>', items=join(items))])
 
@@ -444,10 +431,10 @@ def home(ctx: Ctx) -> Response:
         largest = max((u.figure.monthly for u in units if u.figure.monthly and u.figure.counts), default=1.0)
         rest = max(0, len(ready) - show) + max(0, len(look) - show)
         order = next(blurb for key, _, blurb in SORTS if key == sort)
-        more = paragraph(fmt('{n} more wait. <a href="{href}">Show all</a>.', n=rest, href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
+        more = paragraph(fmt('{n} more {waits}. <a href="{href}">Show all</a>.', n=rest, waits="decision waits" if rest == 1 else "decisions wait", href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
         top = join([_head(ctx, units, sort), walk_start(ctx, walk_ids(ctx, rows)), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
-                    _lane(ctx, "ready", "Ready to decide", f"A change in Azure that you may approve. {order}", ready, largest, show, True),
-                    _lane(ctx, "look", "Worth a closer look", f"No change is proposed yet. A saving here is an estimate, and a cost is the most that a change could save. {order}", look, largest,
-                          show, False),
+                    _lane(ctx, "ready", "Ready to decide", f"Each of these is a change that Meternaut would make in Azure after you approve it. {order}", ready, largest, show, True),
+                    _lane(ctx, "look", "Worth a closer look", "Meternaut proposes no change for these yet. A saving here is an estimate. Where a row shows only a cost, "
+                          f"nobody has worked out what a change would save. {order}", look, largest, show, False),
                     more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), cut_notice(ctx), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

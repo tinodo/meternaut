@@ -403,7 +403,7 @@ class TheSavingsFoundPageCountsTheHonestFigure(unittest.TestCase):
         watched = Watched().run()
         row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
         self.assertEqual(row["Findings"], "9")
-        self.assertIn("Saves, Scenario", row["Saving a year"])
+        self.assertIn("Could save about", row["Saving a year"])
         self.assertIn(f"${round(12 * sum(month(c) for c in watched.cases())):,}", row["Saving a year"])
         self.assertAlmostEqual(12 * sum(month(c) for c in watched.cases()), COUNTED, delta=0.06 * 9)
         raw = the_list()[1]
@@ -483,7 +483,7 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
         self.assertEqual([c.case_id for c in watched.store.cases_recent() if c.resource_id.lower() == disk.lower()], [mate.case_id], "never two cases for one disk")
         self.assertGreater(brief_mod.advisor_saving(found) or 0, 0, "Advisor's own figure is still read from its digest, beside the model's")
         row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
-        self.assertTrue(row["Saving a year"].startswith("$60 a year"), "twelve times the model's 5.00 and nothing of Advisor's 18.42 a year added: " + row["Saving a year"])
+        self.assertTrue(row["Saving a year"].startswith("Could save about $60 a year ($5.00 a month)"), "twelve times the model's 5.00 and nothing of Advisor's 18.42 a year added: " + row["Saving a year"])
 
     def test_the_case_that_advisor_made_before_the_investigation_found_the_same_disk_leaves_savings_found_when_the_investigation_case_exists(self):
         disk = disk_id("disk-0")
@@ -501,7 +501,7 @@ class TheDiskAndTheDetectorThatFoundItAreOneCase(unittest.TestCase):
         live = [c for c in watched.store.cases_recent() if c.resource_id.lower() == disk.lower() and c.status in ("needs_human", "proposed")]
         self.assertEqual([c.case_id for c in live], [mate.case_id], "the disk is one case that waits for a person: Advisor's own case is closed")
         row = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
-        self.assertTrue(row["Saving a year"].startswith("$60 a year"), row["Saving a year"])
+        self.assertTrue(row["Saving a year"].startswith("Could save about $60 a year ($5.00 a month)"), row["Saving a year"])
 
 
 class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
@@ -554,13 +554,13 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         table = reply.table("advisor")
         self.assertEqual((table.headers, len(table.rows)), (["For how long", "Saves a year", "Looked back"], 6), "what is the same in every variant is said once, in the sentence")
         self.assertEqual([(row["For how long"], row["Saves a year"], row["Looked back"]) for row in (table.rows[0], table.rows[-1])],
-                         [("1 year", "$321.00", "7 days"), ("3 years", "$960.00", "60 days")], "the smallest first")
+                         [("1 year", "$321", "7 days"), ("3 years", "$960", "60 days")], "the smallest first")
         text = reply.content.replace("&#x27;", "'")
         self.assertIn("6 variants of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and look-back", text)
         self.assertIn(f"they are alternatives, and Meternaut counts the smallest: {self.year} a year", text)
-        self.assertIn("The largest is $960.00 a year with a term of 3 years", text)
-        self.assertIn("Saves, Scenario", text)
-        self.assertIn("smallest of its variants: they are alternatives, and only one is bought", text)
+        self.assertIn("The largest is $960 a year with a term of 3 years", text)
+        self.assertIn(f"Azure Advisor estimates that this could save about {self.year} a year", text)
+        self.assertIn(brief_mod.ADVISOR_BASIS_MANY, text)
         self.assertNotIn("add up to", text)
 
     def test_the_page_of_an_alternative_says_what_is_counted_instead_and_counts_nothing_for_itself(self):
@@ -569,7 +569,7 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         text = Console(store=self.watched.store).get(f"/ok/{plan.plan_id}").content.replace("&#x27;", "'")
         self.assertIn("Advisor lists another purchase for this subscription that saves more (reservations)", text)
         self.assertIn("nothing is added for this request", text)
-        self.assertNotIn("Saves, Scenario", text)
+        self.assertNotIn("Meternaut worked out that this could save", text)
         self.assertEqual(brief_mod.build_brief(case, plan, now=NOW).saving.monthly, None)
 
     def test_the_page_says_the_order_of_work_that_nothing_was_checked_and_that_meternaut_does_not_buy(self):
@@ -577,7 +577,7 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         for words in (brief_mod.ADVISOR_FIRST, brief_mod.ADVISOR_FIRST_RISK, "Meternaut does not buy it", brief_mod.ADVISOR_RISK):
             self.assertIn(words, content)
         self.assertNotIn("Why the AIs think so", content)
-        self.assertIn("How sure Meternaut is", content)
+        self.assertIn("How sure it is", content)
 
     def test_the_details_say_that_no_ai_looked_at_it_and_claim_no_text_or_fact_of_an_ai(self):
         content = self.page.content

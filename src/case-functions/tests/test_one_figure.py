@@ -1,9 +1,9 @@
 """One figure on the page, in the letter and on the card (AGENTS.md rule 34 and 36), and the words that no letter and no card says any more.
 
-The page of a request, the letter and the Teams card are renders of one brief. They show the figure in one language: the figure a year (whole dollars, twelve times the month) and a month
-(cents), its label and its basis or its reason in one line, and once that money is in US dollars; the title with the place under it; the risk, how sure and what a change leaves behind as
-words; and one footer line. cases/stake.py sets the words of the code of the pages (cases/web/figures.py) for the letter and the card, and these tests hold the three together for every state
-of the figure, so that they can never differ. Every name and number is INVENTED.
+The page of a request, the letter and the Teams card are renders of one brief. They show the figure in one language: the sentence that opens it (what a change could save, or what the thing costs,
+in a year and a month of whole dollars) and the sentences under it (what the figure rests on, or that nobody has worked out the saving, or why there is no figure); the title with the place under
+it; the risk, how sure and what a change leaves behind as words; and one footer line. cases/stake.py sets the words of the code of the pages (cases/web/figures.py) for the letter and the card,
+and these tests hold the three together for every state of the figure, so that they can never differ. Every name and number is INVENTED.
 """
 import dataclasses
 import re
@@ -21,10 +21,8 @@ from cases.web import figures
 BASE = "https://meternaut.example"
 PERSON = Person(TINO, "Tino", ("owner", "approver", "ops"), "tino@example.com")
 CONTACTS = ("Olga (olga@example.com)", "Tino (tino@example.com)")
-MONEY = "Money is in US dollars, and a year is twelve times the month."
 BANNED = ("No figure", "No saving is shown", "Talk to a person", "Decide:", "saving: about")
-WAITING = re.compile(r" Waiting costs about \$[\d,.]+ a day\.$")
-YEAR = re.compile(r"(?:\$[\d,]+|under \$1) a year")
+WAITING = re.compile(r" ?Waiting costs about \$[\d,.]+ a day\.")
 
 
 class Case:
@@ -143,28 +141,21 @@ def done_cases() -> list[Case]:
 
 
 def page_figure(reply) -> tuple[str, str]:
-    """What the card of the request page says about the figure: the large line (a dash when there is none) and the line under it, without what waiting costs."""
+    """What the card of the request page says about the figure: the sentence that opens it and the sentences under it, without what waiting costs a day."""
     card = reply.main.find("section", class_="focus")
-    year = next(p.text() for p in card.find_all("p") if "fig" in p.classes())
-    sub = next(p.text() for p in card.find_all("p") if "figsub" in p.classes())
-    return year, WAITING.sub("", sub)
+    lead = next(p.text() for p in card.find_all("p") if "say" in p.classes())
+    rest = " ".join(p.text() for p in card.find_all("p") if "figsub" in p.classes())
+    return lead, WAITING.sub("", rest).strip()
 
 
-def letter_figure(letter) -> tuple[str, str, str]:
-    """The year, the line under it and the line about money that a letter says, from its text ("" for what is not there)."""
-    lines = letter.text.splitlines()
-    for number, line in enumerate(lines):
-        if re.match(r"(Saves, |Costs, saving not measured|Cost not visible)", line):
-            year = lines[number - 1] if number and YEAR.fullmatch(lines[number - 1]) else ""
-            money = lines[number + 1] if number + 1 < len(lines) and lines[number + 1] == MONEY else ""
-            return year, line, money
-    raise AssertionError("the letter has no figure")
+def letter_words(letter) -> str:
+    """The text of a letter on one line."""
+    return " ".join(letter.text.split())
 
 
-def card_figure(card) -> tuple[str, str, str]:
-    found = by_id(card)
-    sub = f"{found['saving-word']['text']} {found['price-basis']['text']}"
-    return found["value"]["text"] if "value" in found else "", sub, found["money"]["text"] if "money" in found else ""
+def card_words(card) -> str:
+    """The text of a card on one line, as a person reads it: without the bold marks and the backslashes of Markdown."""
+    return " ".join(" ".join(texts(card)).replace("\\", "").replace("**", "").split())
 
 
 def page_chips(reply) -> list[str]:
@@ -172,38 +163,35 @@ def page_chips(reply) -> list[str]:
 
 
 class ThePageTheLetterAndTheCardShowOneFigure(unittest.TestCase):
-    def test_the_year_the_month_the_label_and_the_basis_are_the_same_on_all_three_in_every_state_of_the_figure(self):
+    def test_the_sentences_of_the_figure_are_the_same_on_all_three_in_every_state_of_the_figure(self):
         for fixture in decision_cases():
             with self.subTest(fixture.label):
-                page_year, page_sub = page_figure(fixture.page())
-                letter_year, letter_sub, letter_money = letter_figure(fixture.letter())
-                card_year, card_sub, card_money = card_figure(fixture.card())
-                shown = page_year != "—"
-                self.assertEqual(letter_year, page_year if shown else "")
-                self.assertEqual(card_year, page_year if shown else "")
-                self.assertEqual(card_sub, page_sub)
-                self.assertEqual(letter_sub, page_sub)
-                self.assertEqual((letter_money, card_money), (MONEY, MONEY) if shown else ("", ""), "said once, where an amount is shown")
+                said = stake.stake_of(fixture.brief())
+                note = WAITING.sub("", said.note).strip()
+                page_lead, page_rest = page_figure(fixture.page())
+                self.assertEqual(page_lead, said.lead)
+                self.assertTrue(note in page_rest, (note, page_rest))
+                for surface, text in (("letter", letter_words(fixture.letter())), ("card", card_words(fixture.card()))):
+                    self.assertIn(said.lead, text, surface)
+                    self.assertIn(note, text, surface)
 
-    def test_the_longest_basis_is_shown_whole_on_the_card_and_in_the_letter_and_its_last_part_is_not_cut(self):
+    def test_the_longest_basis_is_shown_whole_on_the_page_the_card_and_in_the_letter_and_its_last_part_is_not_cut(self):
         fixture = next(f for f in decision_cases() if f.label.startswith("the longest basis"))
-        _, page_sub = page_figure(fixture.page())
-        self.assertGreater(len(page_sub), 240, "the fixture is a long one")
-        for sub in (page_sub, card_figure(fixture.card())[1], letter_figure(fixture.letter())[1]):
-            self.assertTrue(sub.endswith("Azure Advisor's $1,234.56 is not added."), sub)
+        _, page_rest = page_figure(fixture.page())
+        self.assertGreater(len(page_rest), 240, "the fixture is a long one")
+        for text in (page_rest, card_words(fixture.card()), letter_words(fixture.letter())):
+            self.assertIn("Azure Advisor's $1,235 is not added.", text)
 
-    def test_a_change_that_ran_shows_the_figure_of_the_page_and_says_verified_only_when_the_cost_lines_confirm_it(self):
+    def test_a_change_that_ran_shows_the_figure_of_the_page_and_says_that_it_saves_only_when_the_cost_lines_confirm_it(self):
         for fixture in done_cases()[:3]:
             with self.subTest(fixture.label):
-                page_year, page_sub = page_figure(fixture.page())
-                letter_year, letter_sub, _ = letter_figure(fixture.letter())
-                card_year, card_sub, _ = card_figure(fixture.card())
-                shown = page_year != "—"
-                self.assertEqual((letter_year, card_year), (page_year, page_year) if shown else ("", ""))
-                self.assertEqual(card_sub, page_sub)
-                self.assertTrue(letter_sub.startswith(page_sub), (letter_sub, page_sub))
-                self.assertEqual("Verified" in letter_sub, fixture.verified)
-                self.assertEqual("Verified" in card_sub, fixture.verified)
+                said = stake.stake_of(fixture.brief())
+                page_lead, _ = page_figure(fixture.page())
+                self.assertEqual(page_lead, said.lead)
+                for text in (letter_words(fixture.letter()), card_words(fixture.card())):
+                    self.assertIn(said.lead, text)
+                    self.assertEqual("The change saves" in text, fixture.verified)
+                self.assertEqual(page_lead.startswith("The change saves"), fixture.verified)
 
     def test_the_title_the_chips_and_the_place_are_those_of_the_page(self):
         for fixture in decision_cases():
@@ -222,10 +210,11 @@ class ThePageTheLetterAndTheCardShowOneFigure(unittest.TestCase):
                 else:
                     self.assertNotIn("place", found, "a request for many resources has no place of its own: its title counts the resources and the groups")
 
-    def test_the_line_that_says_what_money_is_in_is_said_in_the_words_of_the_page(self):
-        reply = decision_cases()[0].page()
-        self.assertIn(MONEY, reply.main.text())
-        self.assertEqual(stake.MONEY, MONEY)
+    def test_no_page_no_letter_and_no_card_says_what_money_is_in_or_what_a_year_is(self):
+        for fixture in decision_cases() + done_cases():
+            with self.subTest(fixture.label):
+                for text in (fixture.page().main.text(), fixture.letter().text, card_words(fixture.card())):
+                    self.assertNotRegex(text, r"US dollars|twelve times")
 
     def test_the_title_is_the_one_of_the_code_of_the_pages_and_never_the_headline_with_its_place(self):
         for fixture in decision_cases():
@@ -233,7 +222,6 @@ class ThePageTheLetterAndTheCardShowOneFigure(unittest.TestCase):
                 b = fixture.brief()
                 self.assertEqual(stake.title_text(b), figures.title_of(b)[1])
                 self.assertNotIn(" in group ", stake.title_text(b))
-                self.assertFalse(stake.title_text(b).startswith("Look at "))
 
     def test_the_cost_that_the_brief_holds_is_the_one_that_the_pages_read(self):
         for fixture in decision_cases() + done_cases():
@@ -251,35 +239,32 @@ class TheFigureInWords(unittest.TestCase):
         case, plan = storage_account("plan5000", changes.pop("saving", 30.0), changes.pop("cost", 41.2), **changes)
         return stake.stake_of(brief_mod.build_brief(case, plan, now=WEB_NOW))
 
-    def test_a_saving_is_a_year_in_whole_dollars_a_month_in_cents_its_label_and_its_basis(self):
+    def test_a_saving_says_who_made_it_the_year_the_month_and_what_it_rests_on(self):
         found = self.of()
-        self.assertEqual((found.state, found.level, found.year, found.month, found.label), ("save", "Scenario", "$360 a year", "$30.00", "Saves, Scenario"))
-        self.assertEqual(found.note, "Based on Azure Advisor's own estimate: no cost line of this resource backs it.")
-        self.assertEqual(found.line, "Saves, Scenario. $30.00 a month. Based on Azure Advisor's own estimate: no cost line of this resource backs it.")
-        self.assertEqual(found.short, "$360 a year, Scenario")
-        self.assertEqual(found.money, MONEY)
+        self.assertEqual((found.state, found.level, found.monthly), ("save", "Scenario", 30.0))
+        self.assertEqual(found.lead, "Azure Advisor estimates that this could save about $360 a year ($30.00 a month).")
+        self.assertTrue(found.note.startswith("It is Azure Advisor's own estimate, and the bill of this resource does not back it."), found.note)
+        self.assertEqual(found.short, "It could save about $360 a year.")
 
-    def test_a_cost_is_the_most_that_a_change_could_save_and_says_that_nothing_measured_a_saving(self):
+    def test_a_cost_says_what_it_costs_and_that_nobody_has_worked_out_the_saving(self):
         found = self.of(saving=None, cost=358.11)
-        self.assertEqual((found.state, found.level, found.year, found.month, found.label), ("cost", "", "$4,297 a year", "$358.11", "Costs, saving not measured"))
-        self.assertEqual(found.line, "Costs, saving not measured. $358.11 a month. The most that a change could save: what it would save was not worked out.")
-        self.assertEqual(found.short, "costs $4,297 a year, saving not measured")
-        self.assertEqual(found.money, MONEY)
+        self.assertEqual((found.state, found.level, found.monthly), ("cost", "", 358.11))
+        self.assertEqual((found.lead, found.note), ("It costs $358 a month, about $4,297 a year.", "Nobody has worked out what a change would save."))
+        self.assertEqual(found.short, "It costs $4,297 a year; nobody has worked out the saving.")
 
-    def test_nothing_that_can_be_shown_says_why_and_shows_no_year_no_month_and_no_money_line(self):
-        for cost, why in ((0.0, "Azure has no cost line for this yet."), (None, "No cost line was read yet.")):
+    def test_nothing_that_can_be_shown_says_why_and_shows_no_year_and_no_month(self):
+        for cost, why in ((0.0, "Azure has not reported a cost for this yet."), (None, "Meternaut could not read what this costs.")):
             with self.subTest(cost=cost):
                 found = self.of(saving=None, cost=cost)
-                self.assertEqual((found.state, found.year, found.month, found.label, found.note), ("none", "", "", "Cost not visible", why))
-                self.assertEqual((found.line, found.short, found.money), (f"Cost not visible. {why}", "cost not visible", ""))
+                self.assertEqual((found.state, found.monthly, found.lead, found.note, found.short), ("none", None, why, "", why))
 
     def test_a_year_is_twelve_times_the_month_in_whole_dollars(self):
         for monthly, year in ((7.17, "$86"), (41.2, "$494"), (140.16, "$1,682"), (358.11, "$4,297"), (0.03, "under $1")):
             with self.subTest(monthly=monthly):
                 found = self.of(saving=monthly, cost=monthly)
-                self.assertEqual(found.year, f"{year} a year")
-                self.assertEqual(found.year, f"{figures.a_year(monthly)} a year")
-                self.assertEqual(found.month, figures.dollars(monthly))
+                self.assertIn(f"{year} a year", found.lead)
+                self.assertIn(figures.a_year_text(monthly), found.lead)
+                self.assertIn(f"({figures.dollars(monthly)} a month)", found.lead)
 
     def test_the_chips_are_words_the_risk_how_sure_and_what_a_change_leaves_behind(self):
         change = brief_mod.build_brief(make_case(), make_plan(), now=WEB_NOW)
@@ -287,7 +272,7 @@ class TheFigureInWords(unittest.TestCase):
         reversible = dataclasses.replace(change, undo=dataclasses.replace(change.undo, reversible=True), risk=dataclasses.replace(change.risk, level="low"))
         self.assertEqual(stake.chips_of(reversible), ("Low risk", "High confidence", "Can be undone"))
         advice = brief_mod.build_brief(make_advice_case(), make_advice(), now=WEB_NOW)
-        self.assertEqual(stake.chips_of(advice), ("Medium risk if you act on it", "Low confidence", "Answering changes nothing in Azure"), "the risk is of acting; answering changes nothing")
+        self.assertEqual(stake.chips_of(advice), ("Medium risk if you act", "Low confidence", "Answering changes nothing in Azure"), "the risk is of acting; answering changes nothing")
         odd = dataclasses.replace(change, risk=dataclasses.replace(change.risk, level="weird"))
         self.assertEqual(stake.chips_of(odd)[0], "Medium risk", "a risk that is not a risk is read as the middle one, as on the page")
         self.assertEqual(len(stake.chips_of(brief_mod.build_brief(make_case(), None, now=WEB_NOW))), 2, "a case without a request says nothing of an answer")
@@ -348,13 +333,13 @@ class NoLetterAndNoCardSaysTheOldWords(unittest.TestCase):
                 letter, card = fixture.letter(), fixture.card()
                 (footer,) = [line for line in letter.text.splitlines() if line.startswith("Written by an AI")]
                 self.assertEqual(letter.text.rstrip().splitlines()[-1], footer)
-                self.assertIn("a person approves every change.", footer)
+                self.assertIn("A person approves every change.", footer)
                 self.assertIn("You got this because", footer)
                 self.assertTrue(footer.endswith("Responsible for Meternaut: Olga (olga@example.com)."), "the first of the contacts who is not the reader")
                 last = card["body"][-1]
                 self.assertEqual(last["id"], "ai-footer")
                 self.assertTrue(last["text"].startswith("Written by an AI"))
-                self.assertIn("a person approves every change.", last["text"])
+                self.assertIn("A person approves every change.", last["text"])
                 self.assertTrue(last["text"].endswith("Responsible for Meternaut: Olga (olga@example.com)."), last["text"])
                 self.assertEqual(cardcheck.check(card), [])
 
@@ -407,7 +392,7 @@ class TheCardNamesOnePersonWhoIsResponsible(unittest.TestCase):
 
     def test_the_footer_of_a_card_names_one_person_and_leaves_the_sentence_out_when_there_is_none(self):
         line = cards.footer(("m1",), "You got this because you are on my list of people.", ("Olga (olga@example.com)", "Otto"))["text"]
-        self.assertEqual(line, "Written by an AI (models: m1); a person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
+        self.assertEqual(line, "Written by an AI (models: m1). A person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
         self.assertNotIn("Responsible", cards.footer((), "Why.", ())["text"])
         first = cards.first_contact_card("Maya", BASE, offers.contacts_of(self.PEOPLE, TINO))
         self.assertTrue(by_id(first)["ai-footer"]["text"].endswith("Responsible for Meternaut: Olga (olga@example.com)."))

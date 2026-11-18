@@ -301,7 +301,7 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
         self.assertEqual(brief.taken_back(after), "rules")
         _, text = page_of(kept, after)
         self.assertIn("Taken back", text)
-        self.assertIn("Meternaut's rules changed, so it took this request back", text)
+        self.assertIn("Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.", text)
         self.assertIn("Nothing was changed in Azure.", text)
 
     def test_a_finding_that_no_saving_backs_gets_no_held_request_either_and_is_not_asked_about_again(self):

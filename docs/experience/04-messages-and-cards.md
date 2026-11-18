@@ -51,7 +51,7 @@ flowchart LR
 
 **One footer line.** Every card ends with one subtle line: that an AI wrote it and a person approves every change, why this person got the card, and whom to talk to, as the name and address of a person at the adopting organisation, never a button or a link.
 
-**Whose prices, and how sure.** Every saving figure carries two chips, in words, never colour alone: the price basis, for example "At the rates on your bill", and the saving word: **Scenario saving** (priced without your rates or a bill line to confirm it), **Expected saving** (a bill line confirms the meter) or **Verified saving** (measured after the change and compared with the prediction). A range sits under every saving a person may act on; a list that only points at decisions, such as the weekly desk, shows "about" and the saving word, with the range one tap away. Any other money figure in a sentence carries its basis there, as in "as invoiced". A **price check** is the system's own stored price computation, with the time it was made and the time it expires.
+**Whose prices, and how sure.** Every saving figure says what it rests on, in one sentence and never by colour alone ("It is based on your bill for the last 30 days."). A **Scenario saving** and an **Expected saving** read "could save about $1,682 a year"; a **Verified saving** reads "saves". A range sits under every saving a person may act on; the weekly desk shows "about", and the range is one tap away. Any other money figure carries its basis in its sentence, as in "as invoiced". A **price check** is the system's own stored price computation, with the time it was made and the time it expires.
 
 **Figure notes.** A savings or waste figure is **amortised**: a commitment's cost spread over its term. A budget, invoice or monthly-close figure is **as invoiced**. A figure for a period not yet invoiced is an **estimate**: charges can change until the fifth day after the period ends ([Learn](https://learn.microsoft.com/azure/cost-management-billing/costs/understand-cost-mgt-data); [reports and dashboards](07-reports-and-dashboards.md) has the rest). C5 says "amortised" beside its saving and "as invoiced" beside its payment.
 
@@ -65,7 +65,7 @@ flowchart LR
 |---|---|
 | 1. Sender row | "Meternaut (AI)" and the type label "Recommendation" |
 | 2. Headline and scope | The one change proposed, in the owner's words, ending in a question; its scope |
-| 3. Value tile | A range, never a single figure; the price-basis chip; the saving word; what keeping things as they are forgoes, stated once |
+| 3. Value tile | A range, never a single figure; one sentence of what it rests on; what keeping things as they are forgoes, stated once |
 | 4. Why I think so, What I checked | The evidence in a line or two and why I prefer this option to one that saves more; the strongest objection and what was done about it, side by side |
 | 5. Decisions | Review the plan, "No, leave it as it is", Not mine: one tap each |
 | 6. Talk back | The Details toggle, and "Ask or tell", which opens a small input |
@@ -74,7 +74,7 @@ flowchart LR
 
 Five controls are visible: three decisions and two toggles.
 
-**The ten parts.** The numbers above mark places on the screen. The Recommendation itself has ten parts ([design](../design/03-agents-and-workflows.md#6-what-a-person-receives)): what it proposes; why, and how to check; options; consequences; what was tested; what would change my mind; effort; reversibility; what happens on yes; how everyone will know. The face shows the first three, plus short forms of consequences and what was tested. **Inside Details** are at most two other options, each with its own button, range, saving word and price basis, then the other seven parts and "Fewer like this".
+**The ten parts.** The numbers above mark places on the screen. The Recommendation itself has ten parts ([design](../design/03-agents-and-workflows.md#6-what-a-person-receives)): what it proposes; why, and how to check; options; consequences; what was tested; what would change my mind; effort; reversibility; what happens on yes; how everyone will know. The face shows the first three, plus short forms of consequences and what was tested. **Inside Details** are at most two other options, each with its own button, range and basis sentence, then the other seven parts and "Fewer like this".
 
 **A refusal is never chased.** "No, leave it as it is" closes this ask and no reminder follows; the same Recommendation returns only if the evidence changes materially or a note expires, and then it says why. "Not mine" hands the item to cover, says nothing about the person and optionally asks why.
 

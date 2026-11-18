@@ -146,9 +146,9 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
                 saving = a_brief(plan, case).saving
                 self.assertEqual((saving.monthly, saving.level), (figure, level))
                 self.assertTrue(saving.basis if figure is not None else saving.why_none)
-        self.assertIn("its disks and public IP addresses keep billing", a_brief(*made("stop-vm")[1:]).saving.basis)
-        self.assertIn("the price list was not read, so it is an estimate", a_brief(*made("resize-vm")[1:]).saving.basis)
-        self.assertIn("scaled by the share of the gateway's scale units that is taken away", a_brief(*made("scale-vpn-gateway")[1:]).saving.basis)
+        self.assertIn("Its disks and public IP addresses keep billing", a_brief(*made("stop-vm")[1:]).saving.basis)
+        self.assertIn("Meternaut did not read the price list, so this is an estimate.", a_brief(*made("resize-vm")[1:]).saving.basis)
+        self.assertIn("the share of scale units that is taken away", a_brief(*made("scale-vpn-gateway")[1:]).saving.basis)
 
     def test_the_words_of_a_known_family_are_the_registrys_and_a_text_in_the_stored_plan_changes_none_of_them(self):
         for name in MAKERS:
@@ -166,7 +166,7 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
         self.assertEqual(plan.family, "advise")
         b = a_brief(plan, case)
         self.assertEqual((b.kind, b.who_acts), ("advice", brief.ADVICE_WHO))
-        self.assertEqual(b.who_acts, "Meternaut may not change this resource. If you act on it, you do it in Azure with your own rights.")
+        self.assertEqual(b.who_acts, "If you decide to act, you do it yourself in Azure with your own rights.")
         self.assertEqual((b.change, b.rechecked), (brief.ADVICE_CHANGE, ""))
 
 
@@ -186,9 +186,9 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 self.assertEqual(found["Who does it"], expected.who_acts)
                 self.assertEqual(found["Checked again"], expected.rechecked)
                 self.assertEqual(found["Undo"], expected.undo.how if expected.undo.reversible else "This cannot be undone.")
-                self.assertEqual(found["What could go wrong"], f"{expected.risk.text} Risk: {expected.risk.level}.")
+                self.assertEqual(found["What could go wrong"], expected.risk.text)
                 self.assertEqual([text for _, _, text in reply.forms()[0].buttons][0], APPROVE)
-                self.assertIn(f"{expected.where.kind} {plan.resource_name}, resource group {fs.GROUP}", reply.content)
+                self.assertIn(f"{expected.where.kind} · resource group {fs.GROUP}", reply.main.text())
 
     def test_a_change_that_cannot_be_undone_says_so_in_bold_and_one_that_can_does_not(self):
         for name in MAKERS:
@@ -198,14 +198,16 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 bold = [strong.text() for strong in reply.main.find_all("strong")]
                 self.assertEqual("This cannot be undone." in bold, not REVERSIBLE[name], bold)
 
-    def test_the_figure_says_the_level_and_the_figure_or_why_there_is_none(self):
+    def test_the_figure_says_what_it_rests_on_or_why_there_is_none(self):
         world, plan, case = made("change-disk-tier")
         reply = console_of(world, plan, case).get(f"/ok/{plan.plan_id}")
         sub = reply.main.find("p", class_="figsub").text()
-        self.assertTrue(sub.startswith("Costs, saving not measured. $20.00 a month. The price of a disk depends on its size and its type"), sub)
+        self.assertEqual(reply.main.find("p", class_="say").text(), "It costs $20.00 a month, about $240 a year.")
+        self.assertTrue(sub.startswith("The price of a disk depends on its size and its type"), sub)
         world, plan, case = made("resize-vm")
         reply = console_of(world, plan, case).get(f"/ok/{plan.plan_id}")
-        self.assertIn("Saves, Scenario. $30.00 a month.", reply.main.find("p", class_="figsub").text())
+        self.assertEqual(reply.main.find("p", class_="say save").text(), "Meternaut worked out that this could save about $360 a year ($30.00 a month).")
+        self.assertIn("Meternaut did not read the price list, so this is an estimate.", reply.main.find("p", class_="figsub").text())
 
 
 class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
@@ -223,7 +225,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertNotIn("sign in", letter.text.lower())
                 self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 160), letter.text)
                 self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
-                self.assertIn(f"Risk, {b.risk.level}", letter.text)
+                self.assertIn("What could go wrong: ", letter.text)
                 self.assertIn(brief.plain(b.risk.text, 200), letter.text)
                 self.assertIn("Review and decide: ", letter.text)
 
@@ -254,7 +256,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(found["chips"], ", ".join((figures.RISKS[b.risk.level][0], f"{b.confidence.level} confidence", "Can be undone" if REVERSIBLE[name] else "Cannot be undone")))
                 self.assertIn(cards.md(b.change, 300), found["change"])
                 self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, 200)}")
-                self.assertEqual(found["risk"], f"**Risk, {b.risk.level}:** {cards.md(b.risk.text, 240)}")
+                self.assertEqual(found["risk"], f"**What could go wrong:** {cards.md(b.risk.text, 240)}")
                 self.assertEqual({a["url"] for a in _actions(card) if "url" in a}, {f"{BASE}/ok/{b.plan_id}"})
                 self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"], "a card made without link tokens has the page link only; no card approves a change in Azure")
                 json.dumps(card)
@@ -263,9 +265,9 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
         _, plan, case = made("change-disk-tier")
         b = a_brief(plan, case)
         found = texts_of(cards.card_for(b, card_context(b)))
-        self.assertEqual((found["value"], found["saving-word"]), ("$240 a year", "Costs, saving not measured. $20.00 a month."))
+        self.assertEqual(found["value"], "It costs $20.00 a month, about $240 a year.")
         self.assertIn("does not read the price list", found["price-basis"])
-        self.assertEqual(found["money"], "Money is in US dollars, and a year is twelve times the month.")
+        self.assertNotIn("money", found)
 
 
 def _actions(card) -> list[dict]:

@@ -7,7 +7,7 @@ import support  # noqa: F401  (puts the app on the path)
 from test_web_support import NOW, SUB, make_advice, make_advice_case, make_case, make_plan
 
 from cases import estimate, usage
-from cases.brief import Saving, build_brief
+from cases.brief import BILL_BASIS, Saving, build_brief
 from cases.models import GROUP_FACT
 from cases.web import figures
 
@@ -40,7 +40,7 @@ class TheSeries(unittest.TestCase):
 class TheMoney(unittest.TestCase):
     def test_a_year_is_twelve_times_the_month_in_whole_dollars_and_a_month_has_its_cents(self):
         self.assertEqual([figures.a_year(value) for value in (7.17, 100.74, 358.11, 0.01, 0.0)], ["$86", "$1,209", "$4,297", "under $1", "$0"])
-        self.assertEqual((figures.dollars(7.17), figures.dollars(1209.0), figures.dollars(1209.0, cents=False)), ("$7.17", "$1,209.00", "$1,209"))
+        self.assertEqual((figures.dollars(7.17), figures.dollars(1209.0), figures.dollars(99.5), figures.dollars(848.3)), ("$7.17", "$1,209", "$99.50", "$848"))
 
     def test_only_a_finite_number_is_a_number(self):
         self.assertEqual([figures.number_of(value) for value in (1, 2.5, 0)], [1.0, 2.5, 0.0])
@@ -97,25 +97,26 @@ class TheCharts(unittest.TestCase):
 
 
 class TheFigure(unittest.TestCase):
-    def saving(self, monthly, level="Expected", basis="the cost lines of the last 30 days"):
+    def saving(self, monthly, level="Expected", basis=BILL_BASIS):
         return Saving(monthly, level, basis, None, "")
 
     def test_a_saving_is_the_figure_when_every_request_has_one_and_it_says_its_level_and_its_basis(self):
         one = figures.figure_of([self.saving(30.0)], [215.1])
-        self.assertEqual((one.state, one.label, one.monthly, one.level, one.note), ("save", "Saves, Expected", 30.0, "Expected", "Based on the cost lines of the last 30 days."))
-        many = figures.figure_of([self.saving(30.0), self.saving(10.0, "Scenario", "Azure Advisor's own estimate")], [None, None], "the figures of each, added up")
-        self.assertEqual((many.label, many.monthly, many.note), ("Saves, Scenario", 40.0, "Based on the figures of each, added up."), "the weakest level of them")
-        verified = figures.figure_of([self.saving(30.0, "Verified"), self.saving(1.0)], [None, None], "the figures of each, added up")
+        self.assertEqual((one.state, one.label, one.monthly, one.level, one.note), ("save", "Could save", 30.0, "Expected", "It is based on your bill for the last 30 days."))
+        many = figures.figure_of([self.saving(30.0), self.saving(10.0, "Scenario", "It is Azure Advisor's own estimate.")], [None, None], figures.ADDED)
+        self.assertEqual((many.label, many.monthly, many.note, many.level), ("Could save", 40.0, "It adds up the figure of each request.", "Scenario"), "the weakest level of them")
+        verified = figures.figure_of([self.saving(30.0, "Verified"), self.saving(1.0)], [None, None], figures.ADDED)
         self.assertEqual(verified.level, "Expected")
+        self.assertEqual(figures.figure_of([self.saving(30.0, "Verified")], [None]).label, "Saves", "what Cost Management confirmed is a saving, not one that could be")
 
     def test_without_a_saving_the_cost_is_the_figure_and_without_a_cost_nothing_is_and_the_reason_is_said(self):
         cost = figures.figure_of([self.saving(None)], [10.0, None, 5.0])
-        self.assertEqual((cost.state, cost.label, cost.monthly, cost.level), ("cost", "Costs, saving not measured", 15.0, ""))
-        self.assertIn("what it would save was not worked out", cost.note)
+        self.assertEqual((cost.state, cost.label, cost.monthly, cost.level), ("cost", "Costs", 15.0, ""))
+        self.assertEqual(cost.note, "Nobody has worked out what a change would save.")
         free = figures.figure_of([self.saving(None)], [0.0])
-        self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "Azure has no cost line for this yet."))
+        self.assertEqual((free.state, free.label, free.monthly, free.note), ("none", "Cost not visible", None, "Azure has not reported a cost for this yet."))
         unread = figures.figure_of([self.saving(None)], [None])
-        self.assertEqual((unread.state, unread.note), ("none", "No cost line was read yet."))
+        self.assertEqual((unread.state, unread.note), ("none", "Meternaut could not read what this costs."))
         self.assertEqual(figures.figure_of([], []).state, "none")
 
     def test_one_saving_without_a_figure_among_many_makes_the_row_a_cost_and_never_a_partial_sum(self):
@@ -141,17 +142,17 @@ class TheStatesOfACostThatShowsNone(unittest.TestCase):
     def test_each_state_has_its_own_words_and_the_figure_is_none_in_all_of_them(self):
         said = {state: self.none(state, costs=[0.0 if state in ("none", "lines") else None]) for state in ("none", "lines", "failed", "currency", "")}
         self.assertEqual({state: (found.state, found.monthly, found.read, found.note) for state, found in said.items()}, {
-            "none": ("none", None, "none", "Azure has no cost line for this yet."),
+            "none": ("none", None, "none", "Azure has not reported a cost for this yet."),
             "lines": ("none", None, "lines", "Cost Management shows no cost for this in the last 30 days."),
-            "failed": ("none", None, "failed", "Cost could not be read just now."),
-            "currency": ("none", None, "currency", "The cost lines are not in US dollars."),
-            "": ("none", None, "", "No cost line was read yet.")})
+            "failed": ("none", None, "failed", "Meternaut could not read what this costs just now."),
+            "currency": ("none", None, "currency", "The cost is not in US dollars, so Meternaut shows no amount."),
+            "": ("none", None, "", "Meternaut could not read what this costs.")})
 
     def test_a_row_of_several_says_the_state_that_says_the_most_and_speaks_of_them_in_the_plural(self):
         self.assertEqual(self.none("none", "failed").read, "failed")
         self.assertEqual(self.none("none", "").read, "", "a cost that was not read is told before one that Azure has no line for")
         self.assertEqual(self.none("lines", "none", costs=[0.0, 0.0]).read, "none")
-        self.assertEqual(self.none("none", "none", costs=[0.0, 0.0]).note, "Azure has no cost line for these yet.")
+        self.assertEqual(self.none("none", "none", costs=[0.0, 0.0]).note, "Azure has not reported a cost for these yet.")
 
     def test_a_cost_that_has_lines_is_a_cost_and_the_estimate_is_never_part_of_it(self):
         found = figures.figure_of([self.NOTHING], [12.5], reads=["lines"], estimate=self.ESTIMATE)
@@ -164,32 +165,33 @@ class TheStatesOfACostThatShowsNone(unittest.TestCase):
         self.assertEqual(figures.figure_of([self.NOTHING], [0.0], reads=["none"], estimate=self.ESTIMATE).estimate, self.ESTIMATE)
 
     def test_the_cost_of_a_whole_subscription_or_group_says_so_is_made_of_its_services_and_no_total_counts_it(self):
-        whole = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["subscription"], made_of="Made of: Virtual Network $88.10.")
-        self.assertEqual((whole.state, whole.monthly, whole.whole, whole.counts, whole.made_of), ("cost", 148.95, True, False, "Made of: Virtual Network $88.10."))
-        self.assertEqual(whole.note, "All the cost lines of the subscription in the last 30 days. What a change would save was not worked out.")
+        whole = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["subscription"], made_of="It is made of Virtual Network $88.10.")
+        self.assertEqual((whole.state, whole.monthly, whole.whole, whole.counts, whole.made_of), ("cost", 148.95, True, False, "It is made of Virtual Network $88.10."))
+        self.assertEqual(whole.note, "It adds up everything that Cost Management shows for the subscription in the last 30 days. Nobody has worked out what a change would save.")
         both = figures.figure_of([self.NOTHING] * 2, [1.0, 2.0], reads=["lines"] * 2, scopes=["subscription", "group"])
-        self.assertEqual(both.note, "All the cost lines of these resource groups and subscriptions in the last 30 days. What a change would save was not worked out.")
-        one = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["resource"], made_of="Made of: Virtual Network $88.10.")
+        self.assertEqual(both.note, "It adds up everything that Cost Management shows for these resource groups and subscriptions in the last 30 days. Nobody has worked out what a change would save.")
+        one = figures.figure_of([self.NOTHING], [148.95], reads=["lines"], scopes=["resource"], made_of="It is made of Virtual Network $88.10.")
         self.assertEqual((one.whole, one.counts, one.made_of), (False, True, ""), "a resource is a cost that a change could save, and it has no services to name")
         mixed = figures.figure_of([self.NOTHING] * 2, [1.0, 2.0], reads=["lines"] * 2, scopes=["subscription", "resource"])
         self.assertEqual((mixed.whole, mixed.counts), (False, True))
 
     def test_under_the_figure_stand_what_it_is_made_of_and_the_estimate_each_in_a_line_of_its_own(self):
-        both = figures.Figure("none", "Cost not visible", None, "", "x", "none", False, "Made of: A $1.00.", self.ESTIMATE)
+        both = figures.Figure("none", "Cost not visible", None, "", "x", "none", False, "It is made of A $1.00.", self.ESTIMATE)
         text = str(figures.under(both))
         self.assertEqual(text.count('<p class="figsub">'), 2)
-        self.assertIn("Made of: A $1.00.", text)
-        self.assertIn("Estimate at list price, not Azure&#x27;s bill: about $1.54 a month for a disk of this type and size (tier S4). East US list prices of 12 November 2026.", text)
+        self.assertIn("It is made of A $1.00.", text)
+        self.assertIn(estimate.words(self.ESTIMATE).replace("'", "&#x27;"), text)
+        self.assertIn("This is an estimate at list price, not Azure&#x27;s bill.", text)
         self.assertEqual(str(figures.under(figures.Figure("none", "Cost not visible", None, "", "x"))), "")
 
     def test_the_reason_that_a_chart_is_missing_follows_the_state_and_the_chart_says_that_it_fills_in_only_when_that_is_so(self):
         for (states, costly, ids), reason in (((["none"], False, True), figures.NONE_REASON), ((["none", "none"], False, True), figures.NONE_REASON_MANY),
-                                              ((["failed"], False, True), figures.READ_AGAIN), ((["currency"], False, True), "The cost lines are not in US dollars."),
+                                              ((["failed"], False, True), figures.READ_AGAIN), ((["currency"], False, True), figures.NO_CHART_CURRENCY),
                                               (([""], False, True), figures.NO_LINES), ((["lines"], True, True), figures.READ_LATER), ((["none"], False, False), figures.WHEN_JUDGED)):
             with self.subTest(states=states, costly=costly, ids=ids):
                 self.assertEqual(figures.reason_of(states, costly, ids), reason)
         self.assertIn("The chart fills in then.", str(figures.chart(None, figures.READ_AGAIN)))
-        for reason in (figures.NONE_REASON, figures.NONE_REASON_MANY, "The cost lines are not in US dollars."):
+        for reason in (figures.NONE_REASON, figures.NONE_REASON_MANY, figures.NO_CHART_CURRENCY):
             self.assertNotIn("fills in then", str(figures.chart(None, reason)), "these reasons say what the chart waits for themselves")
 
 
@@ -439,8 +441,8 @@ class TheUseChart(unittest.TestCase):
     def test_the_quiet_figure_is_a_caption_and_a_reason_and_no_drawing(self):
         self.assertEqual(str(figures.use_quiet(VM, "A reason.")), '<figure class="chart"><figcaption>CPU use per day <span>no use figures yet</span></figcaption><p class="m">A reason.</p></figure>')
         self.assertIn("<span>not drawn</span>", str(figures.use_quiet(PE, figures.USE_MANY, "not drawn")))
-        self.assertEqual(figures.USE_LATER, "Azure Monitor shows use a few hours after it happens. The next search reads it. A chart is drawn once 20 of the last 30 days have a value: "
-                                            "a new resource, a stopped machine and a resource that does not offer this metric have fewer.")
+        self.assertEqual(figures.USE_LATER, "Azure Monitor shows use a few hours after it happens, and Meternaut reads it at its next search. A chart needs a value on 20 of the last 30 days. "
+                                            "A new resource, a stopped machine and a resource that does not offer this metric have fewer.")
         self.assertEqual(figures.USE_MANY, "Use is not drawn for a finding about many resources.")
 
 

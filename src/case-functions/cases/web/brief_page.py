@@ -15,19 +15,19 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ACTING, ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
 from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
-from .figures import Figure, a_year, chart, chip, cost_of, dollars, figure_for, risk_chip, series_of, series_reason, title_of, under, use_block
+from .figures import Figure, chart, chip, cost_of, figure_for, risk_chip, says, series_of, series_reason, title_of, under, use_block, waiting_words
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
 STEP_HEADERS = ["Step", "Model", "Tokens in", "Tokens out", "Milliseconds", "Result", "Note"]
 PAUSED = PAUSED_CHANGES
-MONEY = Safe('<p class="m">Money is in US dollars, and a year is twelve times the month.</p>')
 VERDICT_CHIPS = {"safe": ("low", "circle"), "check": ("mid", "triangle"), "keep": ("high", "diamond")}  # the colour and the shape of the verdict of the impact check
+UNCHECKED = "Meternaut did not check the wording."  # what the label of a quote of an AI says besides who wrote it
 
 
 # -- the parts of the page ------------------------------------------------------------------------------------------------------------------------
@@ -35,35 +35,34 @@ VERDICT_CHIPS = {"safe": ("low", "circle"), "check": ("mid", "triangle"), "keep"
 def _head(ctx: Ctx, brief: Brief, title: Safe) -> Safe:
     """The way back, the title, and one line: what kind of resource and where, and how long ago it was found. No countdown: nothing closes the request but an answer."""
     _, ago = ago_text(ctx.now, brief.found_at)
-    place = f"resource group {brief.where.group}" if brief.where.group else ""
-    named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" else ""
-    bits: list[object] = [bit for bit in (brief.where.kind, place, named, f"found {ago}" if ago else "") if bit]
-    meta = fmt("<p>{meta}</p>", meta=join(bits, " · ")) if bits else Safe("")
+    place = f"resource group {brief.where.group}" if brief.where.group and brief.group is None else ""
+    named = f"subscription {brief.where.subscription_name}" if brief.where.subscription_name and brief.scope != "subscription" and brief.group is None else ""
+    bits: list[object] = [bit for bit in (brief.where.kind if brief.group is None else "", place, named, f"found {ago}" if ago else "") if bit]
+    if brief.group is not None and ago:
+        bits = [f"They were found {ago}."]  # a finding about many resources has no kind or place of its own to put before it
+    meta = fmt('<p class="meta">{meta}</p>', meta=join(bits, " · ")) if bits else Safe("")
     back = paragraph(link(ctx.url("/"), "Back to the decisions"))
     return join([back, fmt('<div class="head"><div><h1>{title}</h1>{meta}</div></div>', title=title, meta=meta)])
 
 
 def _waiting(ctx: Ctx, brief: Brief) -> Safe:
-    """What an open request has waited for, with whom it is now, what waiting has cost so far (by code, from the figure of the request) and who was told, in a few rows. Nothing for a request that is
-    not open."""
+    """What an open request has waited for, with whom it is now, what waiting has cost so far (by code, from the figure of the request) and who was told, in a few sentences. Nothing for a request that
+    is not open."""
     waiting = brief.waiting
     if waiting is None:
         return Safe("")
-    rows: list[tuple[str, object]] = [("Waiting", f"{waiting.days} day{'s' if waiting.days != 1 else ''}, since {waiting.since}"), ("With", waiting.with_whom),
-                                      ("What waiting has cost", waiting.cost or "No saving was measured, so what waiting costs is not worked out.")]
-    if waiting.told:
-        rows.append(("Told", "; ".join(waiting.told)))
-    if waiting.pending:
-        rows.append(("Not told yet", "; ".join(waiting.pending)))
+    days = waited_text(waiting.days)
+    lines = [f"It has waited {days}, since {waiting.since}, and it is with {waiting.with_whom}.",
+             waiting.cost or "Meternaut cannot say what waiting costs, because nobody has worked out a saving.", *waiting.told, *waiting.pending]
     if waiting.put_off:
-        rows.append(("Put off", f"{waiting.put_off} time{'s' if waiting.put_off != 1 else ''}"))
-    return join([Safe("<h2>Waiting</h2>"), summary(rows), off_notice(ctx)])
+        lines.append(f"The people who were asked put it off {times_text(waiting.put_off)}.")
+    return join([Safe("<h2>Waiting</h2>"), *(paragraph(line) for line in lines), off_notice(ctx)])
 
 
 def _chips(brief: Brief) -> Safe:
     """Three chips at most, each with a word and a shape: the risk, how sure the AIs are, and what a change leaves behind (or that the answer changes nothing in Azure)."""
     level = brief.confidence.level
-    chips = [risk_chip(brief.risk.level, IF_ACTED if brief.risk.text.startswith(ACTING) else ""), chip(f"{level} confidence", "info" if level == "High" else "")]
+    chips = [risk_chip(brief.risk.level, IF_ACTED if brief.risk.acting else ""), chip(f"{level} confidence", "info" if level == "High" else "")]
     if brief.kind == "change":
         chips.append(chip("Can be undone", "low", "circle") if brief.undo.reversible else chip("Cannot be undone", "high", "diamond"))
     elif brief.kind == "advice":
@@ -77,7 +76,7 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     if not outcome.state:
         return Safe("")
     kind = {"expired": "warning", "failed": "error", "done": "success", "verified": "success"}.get(outcome.state, "info")
-    when = paragraph(ctx.when(outcome.at)) if outcome.at else Safe("")
+    when = paragraph(ctx.moment(outcome.at)) if outcome.at else Safe("")
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
 
 
@@ -111,34 +110,33 @@ def _figure_of(brief: Brief, case: CaseRecord | None) -> Figure:
 
 
 def _analysis(brief: Brief) -> Safe:
-    """The one link of the cost box to Cost analysis in the Azure portal, for the scope that the cost is the cost of (made from ids that code has checked, in cases/costs.py)."""
+    """The one link of the cost box to Cost analysis in the Azure portal, for the scope that the cost is the cost of (made from ids that code has checked, in cases/costs.py). A screen reader
+    hears which scope it is."""
     if not brief.cost_url:
         return Safe("")
-    return fmt('<p class="m"><a href="{href}" rel="noopener">Open in Cost analysis</a> <span class="muted">for {scope}</span></p>', href=brief.cost_url, scope=brief.cost_scope)
+    return fmt('<p class="m"><a href="{href}" rel="noopener" aria-label="Open in Cost analysis for {scope}">Open in Cost analysis</a></p>', href=brief.cost_url, scope=brief.cost_scope)
 
 
 def _stake(brief: Brief, figure: Figure) -> Safe:
-    """What is at stake: the figure a year, then the figure a month with its level and its basis (or what it costs, and why no saving is shown when the finding has a reason of its own),
-    what the cost is made of and the estimate when there are any, the heads-up about a resource that something that runs by itself changes (when there is one), what waiting costs, the money that the page is in, once, and the link to Cost analysis."""
-    note = figure.note if figure.state == "save" or not brief.saving.specific else brief.saving.why_none
+    """What is at stake, in whole sentences (figures.says): the one that opens it, large (green for a saving), then what the figure rests on and what waiting costs, what the cost is made of and
+    the estimate when there are any, the heads-up about a resource that something that runs by itself changes (when there is one) and the link to Cost analysis."""
+    lead, rest = says(brief, figure)
+    rest = " ".join(part for part in (rest, waiting_words(brief, figure)) if part)
     heads = fmt('<p class="m"><strong>{label}:</strong> {text}</p>', label=HEADS_UP, text=brief.heads_up) if brief.heads_up else Safe("")
-    if figure.monthly is None:
-        return fmt('<p class="fig">—</p><p class="figsub">{label}. {note}</p>{under}{heads}{money}{link}', label=figure.label, note=note, under=under(figure), heads=heads, money=MONEY, link=_analysis(brief))
-    waiting = f" Waiting costs about {dollars(brief.saving.waiting_per_day)} a day." if figure.state == "save" and brief.saving.waiting_per_day else ""
-    return fmt('<p class="fig{save}">{year}<small> a year</small></p><p class="figsub">{label}. {month} a month. {note}{waiting}</p>{under}{heads}{money}{link}',
-               save=" save" if figure.state == "save" else "", year=a_year(figure.monthly), label=figure.label, month=dollars(figure.monthly), note=note, waiting=waiting,
-               under=under(figure), heads=heads, money=MONEY, link=_analysis(brief))
+    first = fmt('<p class="say{save}">{lead}</p>', save=" save" if figure.state == "save" else "", lead=lead)
+    return join([first, fmt('<p class="figsub">{rest}</p>', rest=rest) if rest else Safe(""), under(figure), heads, _analysis(brief)])
 
 
 def consequences(brief: Brief) -> list[tuple[str, object]]:
-    """What happens if the person says yes, as names and values: what changes, who does it with whose rights, what is read again, whether it can be undone and what could go wrong."""
+    """What happens if the person approves a change, as names and values: what changes, who does it with whose rights, what is read again, whether it can be undone and what could go wrong, each in
+    whole sentences. Advice has no such rows: it is one short paragraph (_happens)."""
     if brief.kind == "info":
         return [("What changes", brief.change)]
     rows: list[tuple[str, object]] = [("What changes", brief.change), ("Who does it", brief.who_acts)]
     if brief.rechecked:
         rows.append(("Checked again", brief.rechecked))
     rows.append(("Undo", Safe("<strong>This cannot be undone.</strong>") if not brief.undo.reversible else brief.undo.how))
-    rows.append(("What could go wrong", fmt("{text} Risk: {level}.", text=brief.risk.text, level=brief.risk.level)))
+    rows.append(("What could go wrong", brief.risk.text))
     if brief.second is not None:
         rows.append(("Who approves", brief.second.line))
     elif brief.two_people:
@@ -146,17 +144,28 @@ def consequences(brief: Brief) -> list[tuple[str, object]]:
     return rows
 
 
-def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
-    """The card: what is at stake in figures and in charts (the cost of each day, and, for a kind of resource that has one, its use), and what happens if the person says yes. The heading says
-    what the person is about to do."""
-    figure = _figure_of(brief, case)
-    heading = {"change": "If you approve", "advice": "If you answer"}.get(brief.kind, "What changes")
+def _happens(brief: Brief) -> Safe:
+    """What happens if the person answers: for advice that waits, one short paragraph (nothing changes in Azure, the answer is recorded, and a person who acts does it themselves) and, when acting has
+    a risk, the sentence that says it; for a change, the blocks of what changes, who does it, what is read again, whether it can be undone and what could go wrong; for a finding with no request,
+    what changes. The heading says what the person is about to do."""
+    if brief.kind == "advice":
+        if brief.state not in ("open", HELD):
+            return Safe("")  # nobody can answer it any more: what became of it is said above
+        risk = [paragraph(brief.risk.text)] if brief.risk.acting else []
+        return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">What happens if you answer</h2>{lines}</section>', lines=join([paragraph(f"{brief.change} {brief.who_acts}"), *risk]))
+    heading = ("If you approve" if brief.state == "open" else "What the change is") if brief.kind == "change" else "What changes"
     if brief.ready is not None and brief.ready.state == REFUSED and brief.kind == "change":
         heading = "What the change would do"  # the form has no answer that approves: the card says what the request is, not what an approval would do
     facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in consequences(brief))
+    return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">{heading}</h2><dl class="facts">{facts}</dl></section>', heading=heading, facts=facts)
+
+
+def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
+    """The card: what the request is worth or costs, in sentences and in charts (the cost of each day, and, for a kind of resource that has one, its use)."""
+    figure = _figure_of(brief, case)
     plot = join([chart(series_of(case.cost_series) if case is not None else None, series_reason(brief, case)), use_block([(brief, case)], now)])
-    return fmt('<section class="focus" aria-labelledby="decision-title"><div><h2 class="eyebrow" id="decision-title">{heading}</h2>{stake}</div><div>{plot}</div><dl class="facts">{facts}</dl></section>',
-               heading=heading, stake=_stake(brief, figure), facts=facts, plot=plot)
+    return fmt('<section class="focus" aria-labelledby="decision-title"><div><h2 class="eyebrow" id="decision-title">{heading}</h2>{stake}</div><div>{plot}</div></section>',
+               heading="What it is worth" if figure.state == "save" else "What it costs", stake=_stake(brief, figure), plot=plot)
 
 
 def _advisor(brief: Brief) -> Safe:
@@ -181,17 +190,15 @@ def _measured(brief: Brief) -> Safe:
 
 
 def _why(brief: Brief) -> Safe:
-    """How sure the AIs are and why, in their own words, each in a box that says that no code checked it, and how past requests like this were answered. A request that no AI looked at says how sure
-    Meternaut is, and nothing of an AI."""
-    parts: list[object] = [Safe("<h2>Why the AIs think so</h2>" if brief.models else "<h2>How sure Meternaut is</h2>"),
-                           paragraph(fmt("<strong>How sure: {level}.</strong> {because}", level=brief.confidence.level, because=brief.confidence.because))]
-    parts += [paragraph(line, "muted") for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
-    if brief.reasoning:
-        parts.append(quoted("The AI's reasoning (not checked by code)", brief.reasoning))
-    if brief.how:
-        parts.append(quoted("What the AI says a person would do (not checked by code)", brief.how))
+    """What the AI saw, in its own words (a labelled quote for each, which says that Meternaut did not check the wording), and how sure it is and why: the sentences of code, the second AI's doubt in
+    its own quote, and how past requests like this were answered. A request that no AI looked at has no quote and says how sure it is, and nothing of an AI."""
+    said = [quoted(f"What the AI says. {UNCHECKED}", brief.reasoning)] if brief.reasoning else []
+    said += [quoted(f"What the AI says you could do. {UNCHECKED}", brief.how)] if brief.how else []
+    parts: list[object] = [Safe("<h2>What the AI saw</h2>"), *said] if said else []
+    parts += [Safe("<h2>Why it is not sure</h2>" if brief.confidence.level == "Low" else "<h2>How sure it is</h2>"), paragraph(brief.confidence.because)]
+    parts += [paragraph(line) for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
     if brief.doubt:
-        parts.append(quoted("The second AI's doubt", brief.doubt))
+        parts.append(quoted("What the second AI doubts.", brief.doubt))
     return join(block(part) for part in parts)
 
 
@@ -228,18 +235,10 @@ def _check_first(brief: Brief) -> Safe:
 
 
 def _whose(brief: Brief) -> Safe:
-    """Whose it is: the kind and the name of what the finding is about, where it is (the resource group, and the subscription by its name: the start of its id when the name was not read), and the
-    link to the page of the resource in the Azure portal when the finding is about one resource."""
-    where = brief.where
-    sub = where.subscription_name or where.subscription
-    if brief.scope == "subscription":
-        place = fmt("{kind} {name}.", kind=where.kind, name=where.name if where.subscription_name else where.subscription)
-    elif brief.scope == "group":
-        place = fmt("{kind} {name}, subscription {sub}.", kind=where.kind, name=where.name, sub=sub)
-    else:
-        place = fmt("{kind} {name}, resource group {group}, subscription {sub}.", kind=where.kind, name=where.name, group=where.group, sub=sub)
-    portal = paragraph(fmt('<a href="{href}" rel="noopener">Open in the Azure portal</a>', href=where.portal_url)) if where.portal_url else Safe("")
-    return join([Safe("<h2>Whose is it</h2>"), paragraph(brief.owner.text), paragraph(place), portal])
+    """Whose it is, in sentences (brief.owner: the tag that names an owner, and who made and last changed the resource, with a day and without an id), and the link to the page of the resource in the
+    Azure portal when the finding is about one resource. The kind, the name and the place of the resource are in the line under the title."""
+    portal = paragraph(fmt('<a href="{href}" rel="noopener">Open in the Azure portal</a>', href=brief.where.portal_url)) if brief.where.portal_url else Safe("")
+    return join([Safe("<h2>Whose is it</h2>"), paragraph(brief.owner.text), portal])
 
 
 # -- the answer ----------------------------------------------------------------------------------------------------------------------------------
@@ -253,7 +252,7 @@ def answer_form(ctx: Ctx, plan: PlanRecord, brief: Brief, values: dict[str, str]
     other = [button(labels[name], name="decision", value=name, kind="subtle sm") for name in ("not_mine", "ask", "later") if name in brief.answers]
     fields = [
         textarea("note", "note", "A question, an objection or something to remember", values.get("note", ""),
-                 hint=f"Optional, up to {MAX_NOTE} characters. \"Ask or tell\" needs it. It is recorded with your name, Meternaut does not answer yet, and it approves nothing.",
+                 hint=f"You can leave this empty, but \"Ask or tell\" needs it. It can hold up to {MAX_NOTE} characters. Meternaut records it with your name. It approves nothing, and Meternaut does not answer it yet.",
                  error=errors.get("note", ""), maxlength=MAX_NOTE),
         select("reason", "reason", "Why decline, if you do", words.DECLINE_REASON, values.get("reason", ""), error=errors.get("reason", "")),
     ]
@@ -279,7 +278,7 @@ def _own_answers(ctx: Ctx, decisions: list[DecisionRecord]) -> Safe:
     if later:
         parts.append(paragraph("You chose to decide later. Nothing has changed."))
     if confirmed is not None:
-        parts.append(paragraph(fmt("You confirmed this request on {when}. Nothing has changed: a second person has to approve it.", when=ctx.when(confirmed.at))))
+        parts.append(paragraph(fmt("You confirmed this request on {when}. Nothing has changed. A second person has to approve it.", when=ctx.moment(confirmed.at))))
     return join(block(part) for part in parts)
 
 
@@ -332,11 +331,18 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     rows: list[tuple[str, object]] = []
     if case is not None:
         status_word, meaning = words.CLOSED_BY_THE_BILL if case.status == "expired" and taken_back(plan) == "verified" else words.CASE_STATUS.get(case.status, (case.status, ""))
+        if case.status == "needs_human":
+            meaning = why_a_person(case) or "A person has to look at it."  # only the reasons that are true of this finding, not the glossary of every one
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
         rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
                  ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),
                  ("First seen", ctx.when(case.first_seen_at)), ("Last updated", ctx.when(case.updated_at)), ("Seen in", "1 run" if case.runs_seen == 1 else f"{case.runs_seen} runs"),
                  ("Resource type", kind_text(case.resource_type))]
+        owner = case.owner if isinstance(case.owner, dict) else {}
+        for label, key in (("Created by (an application)", "createdBy"), ("Last changed by (an application)", "changedBy")):  # the page says "an application", and keeps the id here
+            who = text_of(owner.get(key), 80)
+            if GUID.fullmatch(who):
+                rows.append((label, code(who.lower())))
     elif plan is not None:
         rows += [("Resource id", code(plan.resource_id)), ("Subscription", code(plan.subscription_id))]
     if plan is not None:
@@ -376,7 +382,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _waiting(ctx, brief)]
+    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _happens(brief), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

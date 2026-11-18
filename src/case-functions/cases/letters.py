@@ -16,7 +16,7 @@ What every letter keeps (AGENTS.md rule 13 (d), 26 (c) and 36):
   WCAG AA in a light and in a dark palette, and a link text that says where the link goes. The words that the code writes are ASCII in the plain text; a name that came from Azure is
   shown as Azure has it (a resource group may use other letters), after the hidden and direction characters are taken out.
 - Plain, short, technical wording. No metaphor, no question, no urgency and no countdown. A saving is an estimate until cost lines confirm it.
-- Money is said in the words of the pages and only once in US dollars. A letter never says that it has no figure: it says what is known and why the rest is not.
+- Money is said in the words of the pages (cases/costs.py money), in a sentence that says who worked the saving out and what it rests on. A letter never says that it has no figure: it says what is known and why the rest is not.
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ MAX_HELD = 3  # the findings that are held back which the weekly letter lists: a
 MAX_FACTS = 3
 
 # Text and background pairs. The tests check the ratios that WCAG AA asks for (4.5 to 1) for every text colour on the colour it sits on. "save" is the green of the figure of a saving (the pages'
-# green for money saved); it never stands alone: the label "Saves, Expected" is beside it.
+# green for money saved); it never stands alone: the sentence that says who worked the saving out and what it rests on is beside it.
 LIGHT = {"background": "#ffffff", "text": "#1b1b1b", "muted": "#4a4a4a", "link": "#0b5cad", "head": "#eef2f7", "rule": "#c9ced6", "button": "#0b5cad", "button_text": "#ffffff", "save": "#0e700e"}
 DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": "#9cc9ff", "head": "#2b2f36", "rule": "#6b7280", "button": "#9cc9ff", "button_text": "#0b1f33", "save": "#54b054"}
 
@@ -100,16 +100,15 @@ class _Paragraph:
     text: str
     muted: bool = False
     strong: bool = False
+    label: bool = False  # a line of words that is no sentence (a place, a list of chips): it has no full stop
 
 
 @dataclass(frozen=True)
 class _Figure:
-    """The figure of a request: a large line (the figure a year, empty when there is none), the line under it (its label, the month, its basis or its reason) and, where money is shown, the
-    one line that says what the money is in. `saving` colours the large line green: the label beside it says what it is."""
+    """The money of a request: the sentence that opens it (large, in green for a saving: the words beside it say what it is) and the sentences under it (what it rests on, what the cost is made of)."""
 
-    year: str
+    lead: str
     sub: str
-    money: str
     saving: bool
 
 
@@ -140,13 +139,14 @@ class _Doc:
     def heading(self, text: str) -> None:
         self.blocks[0] = _Heading(text)
 
-    def paragraph(self, text: str, muted: bool = False, strong: bool = False) -> None:
-        self.blocks.append(_Paragraph(text, muted, strong))
+    def paragraph(self, text: str, muted: bool = False, strong: bool = False, label: bool = False) -> None:
+        self.blocks.append(_Paragraph(text, muted, strong, label))
 
     def figure(self, stake: Stake, then: str = "") -> None:
-        """The figure in the words of the pages, and `then` (what happens next to it) at the end of the line under it. What the cost of a whole subscription is made of, and the estimate at list
-        price for a disk that Azure has no cost line for (which says that it is an estimate, and the date of its price table), stand in the same line, after the figure's own words."""
-        self.blocks.append(_Figure(stake.year, " ".join(part for part in (_data(stake.line, LINE_CHARS), _data(stake.extra, 400), then) if part), stake.money, stake.state == "save"))
+        """The money in the words of the pages: the sentence that opens it, and under it what it rests on and `then` (what happens next to it). What the cost of a whole subscription is made of, and the
+        estimate at list price for a disk that Azure has no cost line for (which says that it is an estimate, and the date of its price table), stand in the same lines, after the figure's own words."""
+        self.blocks.append(_Figure(_data(stake.lead or stake.note, LINE_CHARS), " ".join(part for part in (_data(stake.note, LINE_CHARS) if stake.lead else "", _data(stake.extra, 400), then) if part),
+                                   stake.state == "save"))
 
     def facts(self, *rows: tuple[str, str]) -> None:
         if rows:
@@ -173,7 +173,7 @@ def _plain(blocks: list[object]) -> str:
         elif isinstance(block, _Paragraph):
             lines += [block.text, ""]
         elif isinstance(block, _Figure):
-            lines += [line for line in (block.year, block.sub, block.money) if line] + [""]
+            lines += [line for line in (block.lead, block.sub) if line] + [""]
         elif isinstance(block, _Facts):
             lines += [f"{label}: {value}" for label, value in block.rows] + [""]
         elif isinstance(block, _Items):
@@ -195,13 +195,12 @@ def _block_html(block: object) -> str:
         name, color = ("mn-muted", light["muted"]) if block.muted else ("mn-fg", light["text"])
         size = "14px" if block.muted else "16px"
         weight = "font-weight:600;" if block.strong else ""
-        return f'<p class="{name}" style="margin:0 0 12px 0;font-size:{size};{weight}color:{color};">{_e(block.text)}</p>'
+        return f'<p class="{name}{" mn-label" if block.label else ""}" style="margin:0 0 12px 0;font-size:{size};{weight}color:{color};">{_e(block.text)}</p>'
     if isinstance(block, _Figure):
         name, color = ("mn-save", light["save"]) if block.saving else ("mn-fg", light["text"])
-        big = (f'<p class="{name}" style="margin:0;font-size:32px;line-height:1.25;font-weight:700;color:{color};">{_e(block.year)}</p>' if block.year else "")
-        sub = f'<p class="mn-fg" style="margin:0 0 {4 if block.money else 12}px 0;color:{light["text"]};">{_e(block.sub)}</p>'
-        money = f'<p class="mn-muted" style="margin:0 0 12px 0;font-size:14px;color:{light["muted"]};">{_e(block.money)}</p>' if block.money else ""
-        return big + sub + money
+        lead = f'<p class="{name}" style="margin:0 0 4px 0;font-size:20px;line-height:1.35;font-weight:700;color:{color};">{_e(block.lead)}</p>' if block.lead else ""
+        sub = f'<p class="mn-fg" style="margin:0 0 12px 0;color:{light["text"]};">{_e(block.sub)}</p>' if block.sub else ""
+        return lead + sub
     if isinstance(block, _Facts):
         border = f'1px solid {light["rule"]}'
         rows = "".join(
@@ -255,14 +254,16 @@ def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    """Whose resource it is, what changes (who does it, with whose rights), whether it can be undone and what could go wrong: one line each. A change that needs two people says so in the
-    same line, in words that stay true whatever has happened since the letter was written."""
-    acts = " It runs with your own permissions." if brief.kind == "change" else ""
+    """Whose resource it is, what happens if the person answers and what could go wrong: one line each. For a change that is what changes (who does it, with whose rights), whether it can be undone
+    and what could go wrong; a change that needs two people says so in the same line, in words that stay true whatever has happened since the letter was written. For advice it is that nothing
+    changes in Azure and, when acting has a risk, what it is."""
+    owner = ("Whose is it", _data(brief.owner.text, 200))
+    if brief.kind == "advice":
+        risk = brief.risk.text
+        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    return (("Owner", _data(brief.owner.text, 160)),
-            ("If you approve" if brief.kind == "change" else "If you answer", _data(brief.change, 200) + acts + two),
-            ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
-            (f"Risk, {brief.risk.level}", _data(brief.risk.text, 200)))
+    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
+            ("What could go wrong", _data(brief.risk.text, 200)))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
@@ -283,7 +284,7 @@ def _place(doc: "_Doc", brief: Brief) -> None:
     """The line under the title: the kind of resource and its resource group (a request for many resources has none: its title counts them)."""
     place = place_of(brief)
     if place:
-        doc.paragraph(_data(place, 160), muted=True)
+        doc.paragraph(_data(place, 160), muted=True, label=True)
 
 
 def _heads_up(brief: Brief) -> str:
@@ -293,19 +294,19 @@ def _heads_up(brief: Brief) -> str:
 
 def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
     """One request that waits for an answer: the title and the place, the risk, how sure and whether it can be undone as words (a letter has no shapes: the words carry it), what it is
-    worth (the figure a year and a month with its level and its basis, and once that money is in US dollars), three facts, what changes, what could go wrong, and one link to the page where
+    worth (a sentence that says who worked the saving out and what it is a year and a month, and under it what it rests on), three facts, what changes, what could go wrong, and one link to the page where
     the person decides. Opening the link records no decision."""
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
-    about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its rows say how many, what they cost together and which, and the letter keeps to them
+    about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its title says how many, its figure what they cost or save, and the letter adds only what a run left out
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(title_text(brief), 200))
     if brief.state != "open":
         closed = (brief.outcome.title or brief.state).lower()
-        doc.paragraph(f"This request is closed: {closed}. Nothing can be answered now.")
+        doc.paragraph(f"This request is closed ({closed}). Nothing can be answered now.")
     _place(doc, brief)
-    doc.paragraph(", ".join(chips_of(brief)), strong=True)
+    doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     doc.figure(stake_of(brief))
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
@@ -313,10 +314,10 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         if line:
             doc.paragraph(_data(line, 240))
     if about_group:
-        rows = _fact_rows(brief)
-        doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well
+        if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out
+            doc.facts(("Left out", _data(f"{brief_mod.number_text(brief.group.capped)} more {brief_mod.group_things(brief.group)}, because of the limit of one run", 120)))
         said = _decision_rows(brief)
-        doc.facts(*said[:2], said[3])  # whose it is, that the answer changes nothing in Azure, and the risk of acting on it: a letter for many resources has no room for more
+        doc.facts(*(said if brief.owner.known else said[1:]))  # that the answer changes nothing in Azure and the risk of acting on it; whose it is only when it is known (of the first resource, and a letter for many has no room for "nobody is named")
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))
@@ -354,7 +355,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
         said = [_data(line, 240) for line in (action.result, *brief_mod.check_lines(action.verification if isinstance(action.verification, dict) else {}, action.result or "")) if line]
         doc.facts(*([("Result", " ".join(said[:3]))] if said else []))
         stake = stake_of(brief)
-        doc.figure(stake, then="Cost lines confirm it after a few days." if stake.state == "save" and stake.level != "Verified" else "")
+        doc.figure(stake, then="Cost Management confirms it 8 to 72 hours after the change." if stake.state == "save" and stake.level != "Verified" else "")
         doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 200))
     else:
         was = {"failed": "was tried and did not complete", "unknown": "was started, and its result is not known"}.get(action.state, "is in progress")
@@ -378,7 +379,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
                   held: Sequence[tuple[PlanRecord, CaseRecord | None]] = ()) -> Letter | None:
     """The decisions that wait for a person, counted and ranked as the Decisions page does it (the page's own code groups them, so that findings of one kind about several resources are one
     line here as they are one row there, "4 storage accounts in 3 resource groups", and the number in the subject is the number that the page shows; `later` holds the plans that the person
-    put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure a year with its level ("$1,682 a year, Expected") and no total: a total is
+    put off, which the page ranks last). At most five lines, one for each decision, with its title and its figure in one sentence ("It could save about $1,682 a year.") and no total: a total is
     the page's. One link: to the page of the request when only one request waits, else to the page that lists them. None when nothing waits: nothing is sent then.
 
     `held` holds the requests of the findings that a guard holds back that this person is named for (cases/approvals.py Approvals.settle): one short block after the decisions, with at most
@@ -392,16 +393,17 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     count = len(rows)
     doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you" if rows else f"{len(kept)} finding{' is' if len(kept) == 1 else 's are'} held back from a request")
     if rows:
-        doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "")
+        doc.items(*(f"{_data(row.title, 200)}. {row.stake.short}" + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "")
                     + (f" {_heads_up(row.brief)}" if row.brief is not None and row.brief.heads_up else "") for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
-        doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
+        doc.paragraph(_more(count - MAX_LISTED))
     if kept:
         found = sorted((brief_mod.build_brief(case, plan, None, (), now=now) for plan, case in kept), key=lambda b: (-(stake_of(b).monthly or 0.0), title_text(b), b.plan_id))  # what is at stake first
-        doc.paragraph("Found, and held back from a request. Nothing is asked of you to approve, and nothing changes in Azure.", strong=True)
-        doc.items(*(f"{_data(title_text(b), 200)}: {stake_of(b).short}. {_data(b.hold.why, 240)} {_data(b.hold.needs, 240)}" for b in found[:MAX_HELD] if b.hold is not None))
+        doc.paragraph("These findings are held back from a request, so nothing is asked of you. Nothing changes in Azure.", strong=True)
+        doc.items(*(f"{_data(title_text(b), 200)}. {stake_of(b).short} {_data(b.hold.why, 240)} {_data(b.hold.needs, 240)}" for b in found[:MAX_HELD] if b.hold is not None))
         if len(found) > MAX_HELD:
-            doc.paragraph(f"{len(found) - MAX_HELD} more are held back. They are on the page.")
+            rest = len(found) - MAX_HELD
+            doc.paragraph(f"{rest} more {'is' if rest == 1 else 'are'} held back. {'It is' if rest == 1 else 'They are'} on the page.")
     only = rows[0].brief if count == 1 else None
     if only is not None:
         doc.button("Review and decide", _plan_url(base, only.plan_id))
@@ -417,22 +419,23 @@ ESCALATION_WHY = {
     "same": "This is a reminder. You are named as an approver of this request, and nobody has answered it.",
     "manager": "You are told because you are the manager of {who}, who was asked first and has not answered.",
     "tag": "You are told because your address is in the escalation tag of this resource, of its resource group or of its subscription.",
-    "contact": "You are told because you are an escalation contact: when nobody answers a request, it comes to you.",
+    "contact": "You are told because you are an escalation contact. When nobody answers a request, it comes to you.",
     "owners": "You are told because no manager and no escalation contact could be found, so a request that nobody answers comes to the owners of Meternaut.",
 }
 # The same reasons in a few words, for a line of a letter that lists several requests.
 ESCALATION_WHY_SHORT = {
-    "same": "It is a reminder: you are named as an approver.",
+    "same": "You are told because you are named as an approver.",
     "manager": "You are told because you are the manager of the person who was asked.",
     "tag": "You are told because your address is in the escalation tag.",
     "contact": "You are told because you are an escalation contact.",
     "owners": "You are told because no manager or escalation contact could be found.",
 }
 ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
-                    "I change nothing myself: a person decides on a web page.")
+                    "I change nothing myself. A person decides on a web page.")
 ESCALATION_ADDED = "You were added to the people who answer this request after it was made."
 ESCALATION_ADDED_SOME = "You were added to the people who answer some of these requests after they were made."
-ESCALATION_CAN = "You can answer on the page: it is worth acting on, it is not worth it, you have a question, it is not yours (then I pass it on), or you decide later (at most three times)."
+ESCALATION_CAN = ("On the page you can say that it is worth acting on, that it is not worth it or that it is not yours (then I pass it on). "
+                  "You can also ask a question, or decide later, at most three times.")
 ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 
 
@@ -444,7 +447,19 @@ def waited_days(plan: PlanRecord, now: dt.datetime, own: bool = False) -> int:
 
 
 def _days(days: int) -> str:
-    return f"{days} day{'s' if days != 1 else ''}"
+    return brief_mod.waited_text(days)
+
+
+def _how_long(days: int, waited: str) -> str:
+    """How long a request has waited, said once: the sentence of what waiting has cost says the days itself ("Waiting 12 days has cost ..."), and one that does not (the request has waited less than a
+    day, or has no saving) is put after "It has waited ..."."""
+    if waited.startswith(f"Waiting {_days(days)}"):
+        return waited
+    return " ".join(part for part in (f"It has waited {_days(days)}.", waited) if part)
+
+
+def _more(count: int, where: str = "on the page") -> str:
+    return f"{count} more {'waits' if count == 1 else 'wait'} {where}."
 
 
 def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), *, source: str, asked: str = "",
@@ -466,19 +481,18 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     for note in notes:
         doc.paragraph(_data(note, 200), muted=True)
     _place(doc, brief)
-    doc.paragraph(", ".join(chips_of(brief)), strong=True)
+    doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     doc.figure(stake)
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
     waited = waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))
-    rows = [("Waiting", f"{_days(days)}, since {_data(started(plan)[:10], 12)}"),
-            ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
-            ("Told before", "; ".join(_data(t, 160) for t in told[:4]) or "Nobody else yet.")]
+    since = brief_mod.day_text(started(plan), now) or _data(started(plan)[:10], 12)
+    doc.paragraph(f"It has waited {_days(days)}, since {since}. " + (waited or "Meternaut cannot say what waiting costs, because nobody has worked out a saving."))
+    doc.paragraph(" ".join(_data(t, 200) for t in told[:4]) or "Nobody else has been told yet.")
     if pending:
-        rows.append(("Not told yet", "; ".join(_data(t, 160) for t in pending[:4])))
+        doc.paragraph(" ".join(_data(t, 240) for t in pending[:4]))
     if put_off:
-        rows.append(("Put off", f"{put_off} time{'s' if put_off != 1 else ''} by the people who were asked."))
-    doc.facts(*rows)
+        doc.paragraph(f"The people who were asked put it off {brief_mod.times_text(put_off)}.")
     listed = bool(person.roles)  # a person from the directory who is not on the list cannot open the page
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
@@ -502,11 +516,11 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case, source in rows[:MAX_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  ESCALATION_WHY_SHORT.get(source, ESCALATION_WHY_SHORT["owners"]), _heads_up(brief)) if part))
     doc.items(*lines)
     if count > MAX_LISTED:
-        doc.paragraph(f"and {count - MAX_LISTED} more.")
+        doc.paragraph(_more(count - MAX_LISTED))
     listed = bool(person.roles)
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
@@ -528,12 +542,12 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case in rows[:WEEKLY_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  _heads_up(brief)) if part))
     if lines:
         doc.items(*lines)
     if count > WEEKLY_LISTED:
-        doc.paragraph(f"and {count - WEEKLY_LISTED} more.")
+        doc.paragraph(_more(count - WEEKLY_LISTED))
     for problem in problems:
         doc.paragraph(_data(problem, 300))
     doc.button("Open the decisions", f"{base}/")

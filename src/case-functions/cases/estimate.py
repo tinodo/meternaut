@@ -17,6 +17,8 @@ import math
 import re
 from typing import NamedTuple
 
+from .costs import money
+
 TABLE_DATE = "2026-11-12"
 LABEL = "Estimate at list price, not Azure's bill"
 MAX_SIZE_GIB = 4096
@@ -96,9 +98,9 @@ def summed(estimates: "list[Estimate | None]") -> Estimate | None:
 
 
 def words(found: Estimate) -> str:
-    """The estimate as the sentence that every page, letter and card says it with: that it is an estimate at list price and not Azure's bill, what it is the price of, and the date of the price
-    table. Nothing but numbers of the table goes into it."""
-    price = f"${found.monthly:,.2f}"
-    what = "a disk of this type and size" if found.count == 1 else f"these {found.count} disks"
+    """The estimate as the two sentences that every page, letter and card says it with: that it is an estimate at list price and not Azure's bill, and what the disks cost at the list prices of a
+    date. Nothing but numbers of the table goes into it."""
+    price = money(found.monthly)
+    what = "A disk of this type and size" if found.count == 1 else f"These {found.count} disks"
     tier = f"tier {found.tier}" if "/" not in found.tier else f"tiers {found.tier.replace('/', ', ')}"
-    return f"{LABEL}: about {price} a month for {what} ({tier}). East US list prices of {date_words(found.table)}."
+    return f"This is an {LABEL[0].lower()}{LABEL[1:]}. {what} ({tier}) {'costs' if found.count == 1 else 'cost'} about {price} a month at East US list prices of {date_words(found.table)}."

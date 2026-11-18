@@ -20,7 +20,7 @@ from typing import Callable, Collection, Sequence, TypeVar
 
 from .arm import DNS_ZONE_ID, SCOPE_ID, Arm
 from .brief import IMPACT as KEY
-from .brief import MEASURED_DAYS, plain, quantity, who_text
+from .brief import MEASURED_DAYS, day_text, plain, quantity, who_text
 from .http import HttpError, Refused
 from .identity import IdentityError
 from .ownership import NOT_VISIBLE, UNAVAILABLE, OwnerReader
@@ -184,9 +184,9 @@ def _traffic(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str
 
 
 def _day(value: dt.datetime | str) -> str:
-    """A day as a person reads it, always the day in UTC and never "yesterday": a page may be opened days after the read."""
+    """A day as a person reads it ("25 September 2026"), always the day in UTC, with its year and never "yesterday": a page may be opened days after the read."""
     moment = dt.datetime.strptime(value, STAMP) if isinstance(value, str) else value
-    return f"{moment.day} {moment:%b %Y} UTC"
+    return day_text(moment.date().isoformat())
 
 
 def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str, str, str]:
@@ -211,7 +211,7 @@ def _change(reader: Reader, failed: dict[str, str], endpoint: str) -> tuple[str,
         return f"{_day(write[0])}, by {'Meternaut' if kind(write[1]) == 'meternaut' else who_text(write[1])}"
 
     found = next((write for write in writes if kind(write[1]) == "automation"), writes[0])
-    more = f"; an application or service identity wrote on {_day(found[0])}" if found != writes[0] else ""  # the row says the newest write: an automation's older one is the second thing that it says
+    more = f"; an automation wrote on {_day(found[0])}" if found != writes[0] else ""  # the row says the newest write: an automation's older one is the second thing that it says
     return kind(found[1]), found[0].strftime(STAMP), f"{who(writes[0])}{more}; {len(writes)} change{'s' if len(writes) != 1 else ''} in {span}"
 
 
@@ -244,7 +244,7 @@ def _judge(f: dict, things: str) -> tuple[str, list[str]]:
     elif state in ("rejected", "disconnected") and f["searched"]:
         good.append("Nothing that Azure Resource Graph lists mentions its addresses.")
     if f["changedBy"] == "automation":
-        check.append(f"An application or service identity changed it on {_day(f['changedAt'])}: an automation may manage it and make it again.")
+        check.append(f"An automation changed it on {_day(f['changedAt'])}. That automation may manage the endpoint and change it again.")
     if not f["complete"]:
         check.append("Not everything could be read (see Not checked), so this cannot be called safe.")
     if keep:

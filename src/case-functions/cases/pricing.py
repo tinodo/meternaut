@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Collection, Iterable, Mapping, NamedTuple, Sequence
 
+from .costs import money
 from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
 from .roles import MAX_CITED_NAME, clean_text
 
@@ -50,17 +51,17 @@ NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 PLAIN = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+){0,5}")  # a word of an alternative that the Skeptic is shown, beside the check of the tools: letters, digits and single spaces, at most 6 words and 40 characters
 WHY = {
-    "none": "No saving was worked out: the AI did not name the bill lines that a change would shrink (a bill line that no resource owns has no handle to name).",
-    "lines": f"No saving was worked out: the bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
-    "remains": "No saving was worked out: what would remain of the bill lines was not stated in a form that code can check.",
-    "currency": "No saving was worked out: the cost is not in US dollars.",
-    "nothing": f"No saving was worked out: the bill lines that the AI named cost nothing in the last {WEEK} days.",
-    "credit": "No saving was worked out: what is given back on the bill of this resource is as much as the bill lines that the AI named cost.",
-    "alternative": "No saving was worked out: the alternative that the AI named is not a price that the tool for alternatives showed for this bill line in this run, or its price changes with the quantity.",
-    "units": "No saving was worked out: the units differ, so the alternative cannot be priced against the bill line.",
-    "listed": "No saving was worked out: the list price of the current meter is not known, so the alternative cannot be compared with it like for like.",
-    "dearer": "No saving was worked out: at the rate of the bill, or at list prices, the alternative costs as much as the bill line or more.",
-    "quantity": "No saving was worked out: the bill line has no cost per unit to price the alternative by (no quantity, or no cost over its window).",
+    "none": "No saving was worked out, because the AI did not name the bill lines that a change would shrink.",
+    "lines": f"No saving was worked out. The bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
+    "remains": "No saving was worked out, because the AI did not say what would remain of the bill lines in a form that Meternaut can check.",
+    "currency": "No saving was worked out, because the cost is not in US dollars.",
+    "nothing": f"No saving was worked out, because the bill lines that the AI named cost nothing in the last {WEEK} days.",
+    "credit": "No saving was worked out, because what the resource gets back on its bill is as much as the bill lines that the AI named cost.",
+    "alternative": "No saving was worked out. The alternative that the AI named is not a price that the tool for alternatives showed for this bill line in this run, or its price changes with the quantity.",
+    "units": "No saving was worked out, because the units differ, so the alternative cannot be priced against the bill line.",
+    "listed": "No saving was worked out, because Meternaut does not know the list price of the current meter, so it cannot compare the alternative with it like for like.",
+    "dearer": "No saving was worked out, because the alternative costs as much as the bill line or more, at the rate of the bill and at list prices.",
+    "quantity": "No saving was worked out, because the bill line has no cost per unit to price the alternative by (no quantity, or no cost over its window).",
 }
 
 
@@ -466,14 +467,10 @@ class Saved(NamedTuple):
     low: float
     high: float
     level: str
-    basis: str  # a phrase for "Based on ...", from closed words and numbers: no text of the estate
+    basis: str  # the sentences that say what the figure rests on, from closed words and numbers: no text of the estate
     bill: float  # what the bill lines that the figure rests on cost: a month at the lower of their two rates, or in the last 30 days for a figure made before the rates
     lines: int
     per: str = f"in the last {MONTH} days"  # the period of `bill`
-
-
-def _usd(value: float) -> str:
-    return f"${value:,.2f}"
 
 
 def _count(number: int, noun: str) -> str:
@@ -499,44 +496,48 @@ def _rate(found: Mapping) -> str:
 
 
 def _basis(found: Mapping, form: str, low: float, high: float) -> str:
+    """What a figure rests on, as whole sentences: the bill lines that it starts from and the rate that it counts them at, what a form that is not the bill alone assumes and whose assumption it is
+    (the AI's, which Meternaut did not check), and what the figure leaves out."""
     lines, many, members = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1, _whole(found.get("members"))
-    whose = f"{many} of {members} resources" if members and members > many else _count(many, "resource")  # how many of the resources are priced comes first: a card cuts the end of the line
-    text = f"the {_count(lines, 'bill line')} of {whose} that the change would {'remove' if form == 'none' else 'shrink'}, {_rate(found)}"
+    whose = f"{many} of {members} resources" if members and members > many else ("this resource" if many == 1 else f"{many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
+    bill = f"the {_count(lines, 'bill line')} of {whose}"
+    counted = f"counted {_rate(found)}"
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
+    numbers = _number(start) is not None and _number(target) is not None
     if form == "quantity":
-        text += (f", scaled by the share of the window from {start:,.10g} to {target:,.10g}" if _number(start) is not None and _number(target) is not None else ", scaled by the share of the window that the AI proposed")
-        text += f", in the unit {unit}" if isinstance(unit, str) and UNIT.fullmatch(unit) else ""
-        text += ": the AI's target"
+        said = (f"a fall from {start:,.10g} to {target:,.10g}" if numbers else "the share of the window that the AI proposed") + (f" in the unit {unit}" if isinstance(unit, str) and UNIT.fullmatch(unit) else "")
+        text = f"It assumes the AI's target of {said}, applied to {bill} that the change would shrink, {counted}."
     elif form == "ratio":
         name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
-        text += (f", scaled by the change{name} from {start:g} to {target:g}" if _number(start) is not None and _number(target) is not None else ", scaled by the change that the AI proposed")
-        text += ": the AI's target"
+        said = f"a change{name} from {start:g} to {target:g}" if numbers else "the change that the AI proposed"
+        text = f"It assumes the AI's target of {said}, applied to {bill} that the change would shrink, {counted}."
     elif form == "share_of_days":
-        text += f", scaled to {days} days of every {span}: the AI's proposal" if _whole(days) and _whole(span) else ", scaled to the days that it is needed: the AI's proposal"
+        said = f"needed {days} days of every {span}" if _whole(days) and _whole(span) else "needed only on the days that the AI named"
+        text = f"It assumes the AI's proposal that it is {said}, applied to {bill} that the change would shrink, {counted}."
     elif form == "assumed":
         pair = [round(share * 100) for share in away] if isinstance(away, list) and len(away) == 2 and all(_number(share) is not None for share in away) else []
-        text += (f", of which {pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent would go away" if pair else ", of which a share would go away")
-        text += ": the AI's own assumption, not checked by code"
+        said = f"{pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent" if pair else "a share"
+        text = f"It assumes that {said} of {bill} would go away, {counted}. That is the AI's own assumption, and Meternaut did not check it."
     elif form == "alternative":
         ratio = _number(found.get("ratio"))
-        text += ", repriced at the alternative's list price scaled by " + (f"your bill's rate, ratio {ratio:g}" if ratio is not None and ratio > 0 else "the rate of each bill line") + ", or at list prices"
-        text += ": the alternative has not been checked for features"
+        scaled = f"your bill's rate, which is {ratio:g} of list," if ratio is not None and ratio > 0 else "the rate of each bill line"
+        text = f"It assumes a switch of {bill} to the alternative's list price, scaled by {scaled} or taken at list prices, {counted}. Meternaut did not check the alternative for features."
     elif form == "mixed":
-        text += ", each by its own rule; part rests on the AI's own proposals"
-        text += "; the alternative has not been checked for features" if (_whole(found.get("switched")) or 0) > 0 else ""
-    elif not _firm(found):
-        text += ", a Scenario and not Expected, because the rate is uneven or has changed"
+        text = f"It applies a rule of its own to each of {bill}, {counted}. Part of it rests on the AI's own proposals."
+        text += " Meternaut did not check the alternatives for features." if (_whole(found.get("switched")) or 0) > 0 else ""
+    else:
+        text = f"It is based on {bill} that the change would remove, {counted}." + ("" if _firm(found) else " Their cost is uneven or has changed, so the figure is less certain.")
     if high > low:
-        text += f"; {_usd(low)} to {_usd(high)} a month"
+        text += f" The saving could be anywhere from {money(low)} to {money(high)} a month. Meternaut counts the low end."
     uneven = _whole(found.get("uneven"))
     if uneven:
-        text += f"; {_count(uneven, 'bill line')} {'is' if uneven == 1 else 'are'} uneven from day to day"
+        text += f" {_count(uneven, 'bill line')} {'is' if uneven == 1 else 'are'} uneven from day to day."
     skipped = _whole(found.get("skipped"))
     if skipped:
-        text += f"; {_count(skipped, 'named thing')} not counted"
+        text += f" {_count(skipped, 'named thing')} {'was' if skipped == 1 else 'were'} not counted."
     advisor = _number(found.get("advisorUsd"))
     if advisor is not None and advisor > 0:
-        text += f"; Azure Advisor's {_usd(advisor)} is not added"
+        text += f" Azure Advisor's {money(advisor)} is not added."
     return text
 
 
@@ -570,6 +571,12 @@ def point(facts: object, cost: float | None = None) -> float | None:
 def stated(facts: object) -> bool:
     """Whether the facts of a case hold the change that a finding states, priced or not: the case then says what it is worth now, its own price or why it has none."""
     return bool(_change(facts))
+
+
+def action_of(facts: object) -> str:
+    """The action of the change that a finding states in typed form (one of ACTIONS), or "" when it states none."""
+    word = _change(facts).get("action")
+    return word if isinstance(word, str) and word in ACTIONS else ""
 
 
 def missing(facts: object) -> str:

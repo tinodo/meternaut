@@ -47,9 +47,14 @@ ACCESS_WORDS = {
 }
 RESOURCE_GRAPH = "Azure Resource Graph"
 MONITOR = "Azure Monitor"
-CHECKED = "Azure, checked by code"
-# The verb of a headline, from what the first AI recommends: a finding that asks for a look (investigate, or no recommendation that is known) is "Look at".
-VERBS = {"delete": "Consider deleting", "change": "Consider changing", "keep": "Keep"}
+CHECKED = "Azure, checked by Meternaut"
+# The verb of a headline, from what the first AI recommends and states: a finding that asks for a look (investigate, a change that no typed action names, or no recommendation that is known) is
+# "Look at", and then the title may say why, from the finding's typed basis (BASIS_TITLES). A change that the finding states in typed form is named by its action.
+LOOK = "Look at"
+VERBS = {"delete": "Consider deleting", "keep": "Keep"}
+CHANGE_VERBS = {"remove": "Consider removing", "reduce": "Consider reducing", "switch": "Consider switching", "schedule": "Consider scheduling", "commit": "Consider a commitment for"}
+BASIS_TITLES = {"no-usage": "nothing may be using it", "low-usage": "it may be used very little", "oversized": "it may be larger than its use needs",
+                "duplicate": "it may duplicate another resource", "unused-feature": "one of its features may be unused", "commitment-misfit": "its commitment may not fit what it uses"}  # each fits any resource, whether or not Azure reports a cost for it
 # Missing data is not zero: a measurement shows that nothing used a resource only when at least this many days of its window had a value (the chart of use asks the same, usage.MIN_DAYS).
 MEASURED_DAYS = 20
 USE_BASES = ("no-usage", "low-usage", "unused-feature")  # what a finding of the investigation has for a basis when it says that something is not used
@@ -72,68 +77,69 @@ AUTOMATION_DAYS = 14
 HELD_REASONS = ("unchecked", "impact")
 HEADS_UP = "Heads-up"  # the label of the warning line of a request about a resource that an automation manages (the page, the card, the letters)
 AUTOMATION_ACT = "Change it where it is defined (the template or pipeline that deploys it)."
-# Why a finding has no request, as every page and letter says it: the heading (one line a reason), the guard's sentence and what the guard still needs. `{when}` is how long ago something that runs
+# Why a finding has no request, as every page and letter says it: the heading (a short label), the guard's sentence and what the guard still needs. `{when}` is how long ago something that runs
 # by itself changed the resource. A finding that a guard holds back is shown, in a request of its own that no person is asked to approve (cases/approvals.py Approvals.settle). `automation` is no
 # guard now (automation_note is a warning on a request): its words stay for the held requests that were made before, and are shown as they were.
 HOLD_WORDS = {
-    "automation": ("Something that runs by itself changes it",
-                   "Something that runs by itself changed it {when} and would change it back, so a change by hand would not last.",
-                   f"Whoever looks after what runs by itself can change it there. Meternaut asks about it as usual when nothing has changed it for {AUTOMATION_DAYS} days."),
-    "unchecked": ("Nobody has looked up who changed it",
-                  "Nobody has looked up who changed it, so Meternaut does not ask anyone to delete it.",
+    "automation": ("An automation changes it",
+                   "An automation changed this {when} and would change it back, so a change by hand would not last.",
+                   f"Whoever looks after the automation can change it there. Meternaut asks about it as usual when nothing has changed it for {AUTOMATION_DAYS} days."),
+    "unchecked": ("Who changed it is not known",
+                  "Meternaut cannot yet say who changed this resource, so it does not ask anyone to delete it.",
                   "Meternaut looks it up at its next search. Nothing is asked of you."),
-    "impact": ("What depends on it was not checked to the end",
-               "What depends on it was not checked to the end, so Meternaut does not ask anyone to remove it.",
-               "Meternaut checks again at its next search. You can look at what uses it in the meantime."),
+    "impact": ("What depends on it is not known",
+               "Meternaut did not finish checking what depends on this resource, so it does not ask anyone to remove it.",
+               "Meternaut checks again at its next search. Meanwhile you can look at what uses it."),
     "nothing": ("Meternaut has nothing to say about it yet",
-                "Meternaut has no figure, no name of a thing and no words of Azure Advisor for it, so it cannot say what to look at.",
+                "Meternaut has no figure, no name and no words from Azure Advisor for this finding, so it cannot say what to look at.",
                 "Nothing is asked of you. Meternaut asks again when it can say what to look at."),
     "rules": ("Meternaut's rules changed",
-              "Meternaut's rules changed, and it had asked about this on less evidence than it asks for now.",
+              "Meternaut's rules changed. It had asked about this on less evidence than it asks for now.",
               "Nothing is asked of you. Meternaut looks at it again at its next search."),
     "waiting": ("Waiting for a free place",
-                f"Nothing holds it back any more, but it waits for a free place: Meternaut keeps {ADVICE_OPEN_MAX} requests open at once for findings that the AIs did not settle, up to {ADVICE_OPEN_HARD} "
-                "when a finding is worth more than the smallest of them, and no more.",
+                f"Nothing holds it back any more, but it waits for a free place. Meternaut keeps {ADVICE_OPEN_MAX} requests open at once for findings that the AIs did not settle, "
+                f"and up to {ADVICE_OPEN_HARD} when a finding is worth more than the smallest of them.",
                 "Nothing is asked of you. Meternaut asks about it when a place is free."),
 }
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
 IMPACT = "impact"
 CHANGE = pricing.KEY  # the key of the change that a finding states, kept in the facts of the case (cases/pricing.py makes its digest)
 IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
-NOT_ANALYSED = "Impact not analysed: Meternaut did not look at what depends on it."
-SAFE_RISK = "Nothing that Meternaut could read depends on it, and it could not read everything."
-KEEP_RISK = "It is in use, and removing it breaks what uses it."
-# The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card.
-ACTING = "If you act on it: "
-IF_ACTED = " if you act on it"  # what the chip of such a risk adds to its word: "High risk if you act on it"
-UNPROVEN = "Unproven: nothing shows that nothing uses it."
-SHARED_RISK = "Could break traffic that you cannot see from here."
-RARE_USE = "Something that is used less often than the days measured may still need it."
-CHANGE_RISK = "What depends on it can slow down or stop."
-NOT_MEASURED = "Not measured: no measurement is cited for this finding, so nothing shows that nothing uses it."
-NOT_LOOKED_UP = "Not checked: who changed it."
-TAKEN_BACK = {"rules": "Meternaut's rules changed, so it took this request back: it asks about this resource on less evidence than Meternaut's rules ask for now.",
-              "automation": "Meternaut took this request back: an application or service identity changed the resource lately, so an automation may manage it.",
-              "unchecked": "Meternaut took this request back: nobody has looked up who changed the resource.",
-              "impact": "Meternaut took this request back: nobody checked what depends on the resource.",
-              "advisor": "Meternaut took this request back: it was one request for all of Azure Advisor's recommendations about this subscription. Each decision has its own now.",
-              "delisted": "Meternaut took this request back: Azure Advisor does not list this recommendation any more.",
-              "group": "Meternaut took this request back: it was one of several requests about single resources, and one request for the whole group of them waits now.",
-              "nothing": "Meternaut took this request back: the finding does not say what to look at.",
-              "gone": "Meternaut took this request back: the resource is not in Azure any more, so there is nothing left to decide.",
+NOT_ANALYSED = "Meternaut did not look at what depends on it."
+SAFE_RISK = "Meternaut found nothing that depends on it, but it could not read everything, so acting on it still has some risk."
+KEEP_RISK = "It is in use, so removing it would break what uses it."
+# The risk of doing what an advice suggests, which is not the risk of answering: the second says so on every page, letter and card. Each sentence says what acting does, so that it stands alone
+# (Risk.acting marks them).
+IF_ACTED = " if you act"  # what the chip of such a risk adds to its word: "High risk if you act"
+UNPROVEN = "Nothing proves that it is unused, so acting on it could break something that still uses it."
+SHARED_RISK = "Traffic that you cannot see from here may depend on it."
+RARE_USE = "Acting on it could break something that uses it less often than Meternaut measured."
+CHANGE_RISK = "If you act, what depends on it can slow down or stop."
+COMMIT_RISK = "It commits you to pay for a term."  # the risk of a commitment that a finding names (a purchase, which no resource is changed or removed for)
+NOT_MEASURED = "The AI cited no measurement, so nothing shows whether anything uses it."
+NOT_LOOKED_UP = "Meternaut did not look up who changed it."
+TAKEN_BACK = {"rules": "Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.",
+              "automation": "Meternaut took this request back. An application changed the resource lately, so an automation may manage it.",
+              "unchecked": "Meternaut took this request back, because nobody had looked up who changed the resource.",
+              "impact": "Meternaut took this request back, because nobody had checked what depends on the resource.",
+              "advisor": "Meternaut took this request back. It was one request for all of Azure Advisor's recommendations about this subscription, and each recommendation has its own request now.",
+              "delisted": "Meternaut took this request back, because Azure Advisor does not list this recommendation any more.",
+              "group": "Meternaut took this request back. It was one of several requests about single resources, and one request for the whole group waits now.",
+              "nothing": "Meternaut took this request back, because the finding does not say what to look at.",
+              "gone": "Meternaut took this request back, because the resource is not in Azure any more. There is nothing left to decide.",
               "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
-              "left-alone": "A person asked that Meternaut leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
+              "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
-WITH_WHOM = {"same": "the people it was made for", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
+WITH_WHOM = {"same": "the people who were asked first", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
              "contact": "the escalation contact", "owners": "the owners of Meternaut"}
 SAID_HOW = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
 ADDED_HOW = "added to the people of the request"
-ESCALATION_OFF = "Escalation is not running: no mail sender is set up, so a request that nobody answers is not passed on."
-CHECK_FIRST = ("What it connects to: open it in the Azure portal and read what it points at and what uses it.",
-               "Who owns it: ask the owner that this page names, or the team that runs the subscription that it is in.",
-               "Its traffic: read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
-CHECK_FIRST_SHORT = "Check first: what it connects to, who owns it, and its traffic."
+ESCALATION_OFF = "Escalation is not running, because no mail sender is set up. A request that nobody answers is not passed on."
+CHECK_FIRST = ("Open it in the Azure portal and read what it points at and what uses it.",
+               "Ask the owner that this page names, or the team that runs its subscription, whether it is still needed.",
+               "Read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
+CHECK_FIRST_SHORT = "Before you act, check what it connects to, who owns it and what its traffic looks like."
 
 # resource type -> (what the resource is, in a sentence of a person)
 TYPE_WORDS = {
@@ -194,9 +200,9 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
 # The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
 # reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family, and a page says it
 # once, in these words: no button and no line of an approval repeats that the person signs in to Azure (the person does, when Azure asks).
-WHO_ACTS = ("You do, with your own permissions: when you approve, Azure checks your rights and the change is made right then. "
+WHO_ACTS = ("You do it, with your own permissions. When you approve, Azure checks your rights and makes the change right then. "
             "Meternaut holds no right of its own to change anything.")
-TWO_PEOPLE = "Two people approve this: one confirms the request, then another approves it."
+TWO_PEOPLE = "Two people approve this. One confirms the request, and then another approves it."
 # What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
 SECOND_WORDS = {
     "first": "Two people approve this. One of them confirms the request, which changes nothing, and then another approves it. Nobody has confirmed it yet.",
@@ -206,9 +212,9 @@ SECOND_WORDS = {
     "alone": ("Two people approve this, and fewer than two people are listed as approvers of it, so nobody can approve it. You can decline it, say that it is not yours, "
               "or ask the people who are responsible for Meternaut to add a second approver."),
 }
-ADVICE_CHANGE = "Nothing changes in Azure. Your answer is recorded with your name."
-ADVICE_WHO = "Meternaut may not change this resource. If you act on it, you do it in Azure with your own rights."
-ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."
+ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded with your name."
+ADVICE_WHO = "If you decide to act, you do it yourself in Azure with your own rights."
+ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
@@ -224,7 +230,7 @@ PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer 
 # What a request says when a look at the resource (cases/precheck.py) shows that the checks which the runner makes right before the change would refuse it: the title of the box, what happens
 # next, and the answers that are left. The reason is the check's own, in plain words, and then "Nothing was changed.". When the look could not be made, one line says so.
 NOT_NOW_TITLE = "Meternaut will not change this {noun} now"
-NOT_NOW_NEXT = ("What happens next: Meternaut looks again every time this page opens, and offers Approve again when the change can be made. "
+NOT_NOW_NEXT = ("Meternaut looks again every time this page opens, and offers Approve again when the change can be made. "
                 "Until then you can decline this request, decide later, or ask or tell.")
 COULD_NOT_LOOK = "Meternaut could not look at the {noun} just now, so it cannot say whether the change can be made."
 LOOKS_AGAIN = "It looks again right before it acts, and it changes nothing if a check fails."
@@ -274,6 +280,7 @@ class Undo:
 class Risk:
     level: str  # low, medium or high
     text: str
+    acting: bool = False  # the risk of doing what a request suggests, not of answering it (the chip then says "if you act")
 
 
 @dataclass(frozen=True)
@@ -311,8 +318,8 @@ class Waiting:
     figure of the request; empty when no saving was measured). Made from the ladder of cases/escalation.py."""
 
     days: int
-    since: str  # the date, YYYY-MM-DD
-    with_whom: str  # in words: "the people it was made for", "the manager of the person who was asked first", ...
+    since: str  # the day as words ("2 November"), without the year in the year of the request
+    with_whom: str  # in words: "the people who were asked first", "the manager of the person who was asked first", ...
     told: tuple[str, ...]
     put_off: int
     cost: str
@@ -450,6 +457,8 @@ class Brief:
     hold: Hold | None = None
     # The warning of an open request of advice about a resource that something that runs by itself changed (heads_up_of): "" for every other request.
     heads_up: str = ""
+    # The verb of its headline (verb_of): the title of a request for many resources is this verb and how many of what.
+    verb: str = LOOK
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -514,11 +523,9 @@ def number_text(value: object) -> str:
 
 
 def usd_text(value: object) -> str:
-    """Money as the guide writes it: a dollar sign, thousands separated, two decimals ($1,682.40). The page says once that money is in US dollars. Empty for what is not a finite number."""
+    """Money as every page, letter and card writes it (cost_words.money): whole dollars from 100 up ($1,682) and cents below ($41.20). Empty for what is not a finite number."""
     number = _figure(value)
-    if number is None:
-        return ""
-    return f"-${abs(number):,.2f}" if number < 0 else f"${number:,.2f}"
+    return "" if number is None else cost_words.money(number)
 
 
 def _bytes(value: float) -> str:
@@ -562,14 +569,40 @@ def days_text(days: object) -> str:
     return ""
 
 
+def waited_text(days: int) -> str:
+    """How long a request has waited, in words: "less than a day", "1 day", "9 days"."""
+    return "less than a day" if days < 1 else "1 day" if days == 1 else f"{days} days"
+
+
+def times_text(count: int) -> str:
+    """How often something happened, in words: "once", "twice", "3 times"."""
+    return {1: "once", 2: "twice"}.get(count, f"{count} times")
+
+
+def _stop(text: str) -> str:
+    """A sentence of code or of a person's own words with a full stop at its end, and nothing for no text."""
+    return text if not text or text[-1] in ".!?" else f"{text}."
+
+
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 
 
 def who_text(value: object, limit: int = 80) -> str:
-    """Who made or changed a resource, as the Activity Log names the caller. A person is a sign-in name. An application, a managed identity or a service principal is only an
-    id (a GUID), which names nobody: it is said to be an identity, with its id for a lookup in Azure."""
+    """Who made or changed a resource, as the Activity Log names the caller. A person is a sign-in name. An application, a managed identity or a service principal is only an id (a GUID), which
+    names nobody: it is called "an application", and the id stays in the Details of the page."""
     text = text_of(value, limit)
-    return f"an application or service identity (id {text.lower()})" if GUID.fullmatch(text) else text
+    return "an application" if GUID.fullmatch(text) else text
+
+
+def day_text(value: object, now: dt.datetime | None = None) -> str:
+    """A day as a person reads it: "11 November 2026", and "11 November" when it is a day of the year of `now`. Empty for what is not a date (a stamp or a day of the form YYYY-MM-DD)."""
+    try:
+        day = dt.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return ""
+    text = f"{day.day} {MONTH_NAMES[day.month - 1]}"
+    return text if now is not None and day.year == _utc(now).year else f"{text} {day.year}"
 
 
 def kind_words(resource_type: str) -> tuple[str, str]:
@@ -609,9 +642,9 @@ def models_of(case: CaseRecord | None) -> tuple[str, ...]:
 
 
 def written_by(models: Sequence[str]) -> str:
-    """The first sentence of the footer line: that an AI wrote what is on the page or in the letter, and which models."""
+    """The first sentences of the footer line: that an AI wrote what is on the page or in the letter, and which models, and that a person approves every change."""
     names = ", ".join(models)
-    return f"Written by an AI (models: {names}); a person approves every change." if names else "Written by an AI; a person approves every change."
+    return f"Written by an AI (models: {names}). A person approves every change." if names else "Written by an AI. A person approves every change."
 
 
 def contact_text(name: object, address: object = "") -> str:
@@ -815,7 +848,7 @@ def impact_of(case: CaseRecord | None) -> Impact | None:
     reasons, missing = lines("reasons", 240), lines("unchecked", 160)
     first = reasons[0].partition(". ")[0].rstrip(".") + "." if reasons else ""  # a card and a letter have room for the first sentence of the first reason: the page has them all
     when = parse_time(found.get("readAt"))
-    read = f"Read on {when.day} {when:%b %Y} UTC." if when else "The date that it was read is not known."  # the date of the read, in UTC: nothing here says "today" or "yesterday"
+    read = f"Read on {day_text(when.date().isoformat())}." if when else "The date that it was read is not known."  # the day of the read, in UTC, with its year: nothing here says "today" or "yesterday"
     return Impact(found["verdict"], reasons, rows, lines("removal", 400), text_of(found.get("undo"), 300), f"Not checked: {'; '.join(missing)}." if missing else "",
                   f"Impact: {IMPACT_VERDICTS[found['verdict']]}. {read} {first}".strip() + ("" if found.get("complete") is True else " Part of it could not be read."), read)
 
@@ -866,17 +899,21 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     """The risk of doing what a request suggests, which is not the risk of answering it (that changes nothing in Azure): worked out by code from the kind of resource and the evidence level. Never
     low, because a change is at least a medium risk; high for a resource that others share when nothing measured shows that nothing uses it."""
     if case is None:
-        return Risk("medium", ACTING + CHANGE_RISK)
+        return Risk("medium", CHANGE_RISK, True)
     if _commitment(case):
-        return Risk("high", ACTING + ADVISOR_RISK)  # a commitment is a one-way door, whatever else is known
+        return Risk("high", ADVISOR_RISK, True)  # a commitment is a one-way door, whatever else is known
+    verb = verb_of(case)  # the sentence follows the verb of the title: it says what that verb does, and not what the basis of the finding would suggest
+    if verb == CHANGE_VERBS["commit"]:
+        return Risk("high", COMMIT_RISK, True)
     verdict = (_impact_digest(case.facts) or {}).get("verdict")  # what the check of what depends on it found outranks the guess from the kind of resource
     if verdict in ("safe", "keep"):
-        return Risk("medium" if verdict == "safe" else "high", ACTING + (SAFE_RISK if verdict == "safe" else KEEP_RISK))  # a change is never a low risk: the reads cannot see everything
+        return Risk("medium" if verdict == "safe" else "high", SAFE_RISK if verdict == "safe" else KEEP_RISK, True)  # a change is never a low risk: the reads cannot see everything
     group = group_of(case)
     others = shared(group.kind if group is not None else case.resource_type)
     proven = group is None and measured_zero(case.facts)
-    parts = ([UNPROVEN] if _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
-    return Risk("high" if others and not proven else "medium", ACTING + " ".join(parts or [RARE_USE if proven else CHANGE_RISK]))
+    removes = verb in (VERBS["delete"], CHANGE_VERBS["remove"], LOOK)  # a title that deletes, removes or asks whether the resource is used: the use of the resource is what is at stake
+    parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
+    return Risk("high" if others and not proven else "medium", " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
@@ -884,11 +921,22 @@ def check_first(case: CaseRecord | None) -> tuple[str, ...]:
     return CHECK_FIRST if still_used(case) and _impact_digest(case.facts) is None else ()
 
 
+def verb_of(case: CaseRecord | None, recommendation: str | None = None) -> str:
+    """The verb of the headline of a finding, from what it asks for: "Consider deleting" for a deletion that a measured zero backs, "Consider reducing", "Consider switching", "Consider scheduling",
+    "Consider removing" or "Consider a commitment for" for a change that the finding states in typed form and names by its action, "Keep", and "Look at" for every finding that names no change
+    (a look, or a change that no typed action names: the AI's words are never part of a title)."""
+    proposal = proposal_of(case) if case is not None else recommendation
+    if proposal == "change":
+        return CHANGE_VERBS.get(pricing.action_of(case.facts if case is not None else None), LOOK)
+    return VERBS.get(proposal or "", LOOK)
+
+
 def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None,
                 case: CaseRecord | None = None) -> str:
     """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model. `together` is the group that a case stands for (group_of), when it
     stands for many resources: the line then says how many, of what kind and in how many groups, and names the first. A case that is an Advisor recommendation (`case`) says it in Advisor's
-    own words (advice_of), then what it is about."""
+    own words (advice_of), then what it is about. A finding that only asks for a look says why when its typed basis can say it in a fixed phrase that fits any resource (BASIS_TITLES): "Look at the
+    disk x, because nothing may be using it"."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
@@ -897,15 +945,17 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
     if shown(family) is None and family and family != ADVISE and plan_title:
         return text_of(plan_title, 160)
     if together is not None:
-        return group_headline(together, name, recommendation)
+        return group_headline(together, name, verb_of(case, recommendation))
     words = advice_of(case)
     if words is not None and case is not None:
         return _advisor_headline(words[0], cost_words.scope_of(case.resource_id).kind or "resource", name, group, case.subscription_name, case.subscription_id)
     noun = kind_words(rtype)[1]
     if still_used(case):
         return f"Check whether the {noun} {label}{place} is still used"
-    verb = VERBS.get((proposal_of(case) if case is not None else recommendation) or "", "Look at")
-    return f"{verb} the {noun} {label}{place}"
+    verb = verb_of(case, recommendation)
+    facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
+    why = BASIS_TITLES.get(str(facts.get("basis"))) if verb == LOOK else None
+    return f"{verb} the {noun} {label}{place}" + (f", because {why}" if why else "")
 
 
 def plan_headline(plan: PlanRecord) -> str:
@@ -915,12 +965,25 @@ def plan_headline(plan: PlanRecord) -> str:
     return headline_of(plan.family, plan.resource_name, plan.resource_group, type_of(plan.family, plan.preconditions), None, plan.title, plan)
 
 
+def _verdict(case: CaseRecord | None) -> str:
+    """What the second AI said, as the case kept it (CaseRecord.learned["skeptic"]: agree, disagree, unsure, or none when it was not asked); empty for a case that kept nothing."""
+    learned = case.learned if case is not None and isinstance(case.learned, dict) else {}
+    found = learned.get("skeptic")
+    return found if isinstance(found, str) and found in ("agree", "disagree", "unsure", "none") else ""
+
+
 def _agreed(case: CaseRecord | None, plan: PlanRecord | None) -> bool | None:
-    """Whether the second AI agreed, as far as the records show: True, False, or None when the status moved on and no longer says."""
+    """Whether the second AI agreed, as far as the records show: True, False, or None when the status moved on and no longer says. What it said (`_verdict`) outranks the status: a case that a check
+    holds back for a person has the verdict of the second AI as well."""
     if plan is not None and shown(plan.family) is not None:
         return True
     if case is None:
         return None
+    verdict = _verdict(case)
+    if verdict == "agree":
+        return True
+    if verdict in ("disagree", "unsure"):
+        return False
     then = (plan.preconditions.get("caseStatus") if plan is not None and isinstance(plan.preconditions, dict) else None) or case.status
     if then in AGREED:
         return True
@@ -947,7 +1010,7 @@ def _metrics(case: CaseRecord) -> dict:
 
 
 def past_line(digest: object) -> str:
-    """The one line of a brief about how past requests like this were answered: "Past cases like this: 3 of 4 approved; savings came in at 92 percent of the estimate." The digest is what
+    """The one line of a brief about how past requests like this were answered: "Of 4 past cases like this, 3 were approved. Savings came in at 92 percent of the estimate." The digest is what
     cases/learning.py keeps in `CaseRecord.learned["past"]`: n (the requests that a person answered), approved, `enough` (n is at least the smallest sample), ratio (what the cost lines
     showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough it says that there is no history yet; for a case that has no record of its
     past at all (it was found before there was one) there is no line."""
@@ -956,15 +1019,15 @@ def past_line(digest: object) -> str:
     answered, approved = digest.get("n"), digest.get("approved")
     whole = isinstance(answered, int) and isinstance(approved, int) and not isinstance(answered, bool) and not isinstance(approved, bool)
     if digest.get("enough") is not True or not whole or not 0 <= approved <= answered:
-        return "Past cases like this: no history yet."
-    text = f"Past cases like this: {approved} of {answered} approved"
+        return "There is no history of cases like this yet."
+    text = f"Of {answered} past case{'' if answered == 1 else 's'} like this, {approved} {'was' if approved == 1 else 'were'} approved."
     ratio = _figure(digest.get("ratio"))
     if ratio is not None and ratio >= 0:
-        text += f"; savings came in at {round(ratio * 100)} percent of the estimate"
+        text += f" Savings came in at {round(ratio * 100)} percent of the estimate."
     boomerangs = digest.get("boomerangs")
     if isinstance(boomerangs, int) and not isinstance(boomerangs, bool) and boomerangs > 0:
-        text += f"; {boomerangs} {'was' if boomerangs == 1 else 'were'} undone within weeks"
-    return text + "."
+        text += f" {boomerangs} {'was' if boomerangs == 1 else 'were'} undone within weeks."
+    return text
 
 
 def _held_by_history(case: CaseRecord | None) -> bool:
@@ -972,11 +1035,22 @@ def _held_by_history(case: CaseRecord | None) -> bool:
     return case is not None and isinstance(case.learned, dict) and case.learned.get("held") == "history"
 
 
+def _numbers_checked(metrics: dict, cited: int | None) -> str:
+    """The sentence about the numbers that the AI quoted and that Meternaut checked against what the tools showed in the same run: how many were quoted and how many are right."""
+    if not metrics and not cited:
+        return "The AI quoted no number that Meternaut could check."
+    total, right = cited or len(metrics), len(metrics)
+    quoted = "the one number that the AI quoted" if total == 1 else f"the {total} numbers that the AI quoted"
+    result = (("it is right" if right else "it is not right") if total == 1 else "all are right" if right == total else "none is right" if not right else f"{right} {'is' if right == 1 else 'are'} right")
+    return f"Meternaut checked {quoted} against Azure, and {result}."
+
+
 def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Confidence:
     """How sure it is, by code, from the second AI's verdict, the checks that fired and the share of the numbers that the AI cited and that code re-checked.
 
     High: both AIs agree, no check fired, every cited number was re-checked, and the first AI was sure. Low: a check held it back, the second AI did not agree (or gave no
-    verdict), no number backs a finding of the investigation, the first AI was not sure enough, or past requests like this were rarely approved. Medium: the rest."""
+    verdict), no number backs a finding of the investigation, the first AI was not sure enough, or past requests like this were rarely approved. Medium: the rest. The words say the level,
+    what the second AI did, which check held it back, how many of the numbers that the AI quoted are right and what the history says: whole sentences, in that order."""
     if case is None:
         return Confidence("Low", "No record of the review is stored.")
     if _by_advisor(case):
@@ -992,45 +1066,46 @@ def confidence_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> Co
     step = _skeptic_step(case)
     asked = bool(case.models.get("skeptic")) if isinstance(case.models, dict) else step is not None
     first = _figure(case.confidence)
-    pieces: list[str] = []
+    unsure = first is not None and first < SURE_ENOUGH
     own = [o for o in case.objections if isinstance(o, str) and o.strip() and not _code_note(o)]
-    if agreed is True:
-        pieces.append("Both AI reviewers agree")
-    elif agreed is None:
-        pieces.append("The second AI's verdict is no longer recorded")
-    elif step is not None and step.get("ok") is False:
-        pieces.append("The second AI gave no verdict")
-    elif not asked:
-        pieces.append("Only one AI reviewed it")
-    elif own:
-        pieces.append("The second AI raised an objection")
-    else:
-        pieces.append("The AI reviewers did not settle it")
-    if guards:
-        pieces.append("a check by code held it back (" + "; ".join(GUARD_WORDS.get(g, text_of(g, 40)).rstrip(".").lower() for g in guards[:2]) + ")")
-    if investigated:
-        if not metrics:
-            pieces.append("no number backs it")
-        elif cited:
-            pieces.append(f"code checked {len(metrics)} of {cited} numbers again")
-        else:
-            pieces.append(f"code checked {len(metrics)} number{'' if len(metrics) == 1 else 's'} again")
-    else:
-        pieces.append("code read the facts itself")
-    if first is not None and first < SURE_ENOUGH:
-        pieces.append("the first AI was not sure enough")
-    if held:
-        pieces.append("past requests like this were rarely approved, so a person has to decide")
-    low = bool(guards) or agreed is False or (investigated and not metrics) or (first is not None and first < SURE_ENOUGH) or held
+    low = bool(guards) or agreed is False or (investigated and not metrics) or unsure or held
     all_checked = not investigated or (bool(metrics) and (cited is None or cited == len(metrics)))
-    if low:
-        level = "Low"
-    elif agreed is True and all_checked and (first is None or first >= CONFIDENT):
-        level = "High"
+    level = "Low" if low else "High" if agreed is True and all_checked and (first is None or first >= CONFIDENT) else "Medium"
+    pieces = ["The AI is not sure (low confidence)." if unsure else f"Confidence is {level.lower()}."]
+    if agreed is True:
+        pieces.append("The second AI agreed, with a caution." if own and _verdict(case) == "agree" else "Both AIs agree.")
+    elif agreed is None:
+        pieces.append("Meternaut no longer has the verdict of the second AI.")
+    elif step is not None and step.get("ok") is False:
+        pieces.append("The second AI gave no verdict.")
+    elif not asked:
+        pieces.append("Only one AI looked at it.")
+    elif own:
+        pieces.append("A second AI doubted it.")
     else:
-        level = "Medium"
-    sentence = "; ".join(pieces) + "."
-    return Confidence(level, sentence[0].upper() + sentence[1:])
+        pieces.append("The two AIs did not settle it.")
+    if guards:
+        pieces.append(" ".join(["A check held it back.", *(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2])]))
+    pieces.append(_numbers_checked(metrics, cited) if investigated else "Meternaut read the facts from Azure itself.")
+    if held:
+        pieces.append("Past requests like this were rarely approved, so a person has to decide.")
+    return Confidence(level, " ".join(pieces))
+
+
+def why_a_person(case: CaseRecord) -> str:
+    """What is true of a finding that needs a person, as sentences, for the Details: Azure Advisor's own recommendation that no AI looked at, or each of these that applies to this one: a check held it
+    back, what the second AI said (it agreed with a caution, it did not agree, it was not sure, it was not asked), the first AI was not sure enough, past requests like this were rarely approved.
+    The second AI's objections are kept whatever it said (cases/decide.py), so its verdict decides, and a case that kept none says only that it raised an objection. Empty when the record says none."""
+    if _by_advisor(case):
+        return "Azure Advisor recommends it, and no AI looked at it."
+    first = _figure(case.confidence)
+    doubted = any(isinstance(o, str) and o.strip() and not _code_note(o) for o in case.objections)
+    verdict = _verdict(case)
+    second = ("The second AI agreed, with a caution." if verdict == "agree" and doubted else "The second AI did not agree." if verdict == "disagree" else
+              "The second AI was not sure." if verdict == "unsure" else "Only one AI looked at it." if verdict == "none" else "The second AI raised an objection." if doubted and not verdict else "")
+    reasons = (("A check held it back.", any(isinstance(g, str) for g in case.guards)), (second, bool(second)),
+               ("The first AI was not sure enough.", first is not None and first < SURE_ENOUGH), ("Past requests like this were rarely approved.", _held_by_history(case)))
+    return " ".join(text for text, applies in reasons if applies)
 
 
 def reasoning_of(case: CaseRecord | None) -> str:
@@ -1046,23 +1121,12 @@ def how_of(case: CaseRecord | None) -> str:
     return text_of(how, MAX_REASON) if isinstance(how, str) and case is not None and case.status != "error" else ""
 
 
-def doubt_of(case: CaseRecord | None, plan: PlanRecord | None = None) -> str:
-    """The second AI's strongest objection: the first of its own, never a note that code wrote. When there is none, what the second AI did instead."""
+def doubt_of(case: CaseRecord | None) -> str:
+    """The second AI's strongest objection, in its own words: the first of its own, never a note that code wrote. Empty when it raised none: the words about how sure it is say what the second AI did."""
     if case is None or case.status == "error" or _by_advisor(case):
         return ""
     own = [o for o in case.objections if isinstance(o, str) and o.strip() and not _code_note(o)]
-    if own:
-        return text_of(own[0], MAX_REASON)
-    step = _skeptic_step(case)
-    asked = bool(case.models.get("skeptic")) if isinstance(case.models, dict) else step is not None
-    if not asked:
-        return "The second AI was not asked."
-    if step is not None and step.get("ok") is False:
-        return "The second AI gave no verdict on this finding."
-    agreed = _agreed(case, plan)
-    if agreed is True:
-        return "The second AI raised no objection."
-    return "The second AI raised no objection in words."
+    return text_of(own[0], MAX_REASON) if own else ""
 
 
 # -- a case that stands for many resources ------------------------------------------------------------------------------------------------------------
@@ -1105,10 +1169,15 @@ def things(count: int, rtype: str, groups: int = 0, place: str = "resource group
     return _things(Group(count, None, rtype, groups, ()), place)
 
 
-def group_headline(group: Group, name: str, recommendation: str | None) -> str:
-    """The headline of a case that stands for many resources: "Look at 60 private endpoints in 14 groups, the first is pe-1". The first is the one that the case belongs to."""
+def group_things(group: Group) -> str:
+    """The kind of the resources that a case stands for, as a plural noun of a sentence: "private endpoints", "resources" when they differ."""
+    return _plural(kind_words(group.kind)[1])
+
+
+def group_headline(group: Group, name: str, verb: str = LOOK) -> str:
+    """The headline of a case that stands for many resources: "Look at 60 private endpoints in 14 groups, starting with pe-1". The first is the one that the case belongs to."""
     first = text_of(name, MAX_NAME)
-    return f"{VERBS.get(recommendation or '', 'Look at')} {_things(group, 'group')}" + (f", the first is {first}" if first else "")
+    return f"{verb} {_things(group, 'group')}" + (f", starting with {first}" if first else "")
 
 
 def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
@@ -1119,7 +1188,7 @@ def _group_facts(group: Group, case: CaseRecord) -> list[Fact]:
     cost = group.cost if group.cost is not None else _figure(case.cost_usd_30d)
     state = cost_state_of(case, group)
     if cost is not None and state == cost_words.NONE:
-        rows.append(Fact("Together they cost", "Azure has no cost line for them yet", "Azure cost lines"))
+        rows.append(Fact("Together they cost", "Azure has not reported a cost for them yet", "Azure cost lines"))
     elif cost is not None:
         rows.append(Fact("Together they cost", f"{usd_text(cost)} in the last 30 days", "Azure cost lines"))
     examples = [name for name in [text_of(case.resource_name, MAX_EXAMPLE), *group.names][:MAX_EXAMPLES] if name]
@@ -1139,11 +1208,15 @@ ADVISOR_KEY = "advisor"  # the key of the digest in the facts of a case (cases/a
 ADVISOR_ROWS = 12
 ADVISOR_COLUMNS = ["What", "Where", "For how long", "Saves a year", "Looked back", "Applies to"]
 TERM = re.compile(r"^P([0-9]{1,2})([YM])$")
-ADVISOR_BASIS = "Azure Advisor's own estimate: no cost line of this resource backs it"
-ADVISOR_BASIS_MANY = "Azure Advisor's own estimate of the smallest of its variants: they are alternatives, and only one is bought"
-ADVISOR_BASIS_OVERLAP = "Azure Advisor's own estimate of the largest of its recommendations about one resource: they overlap, so only one counts"
+# What a figure rests on, as the sentence that goes under it on every page, letter and card (Saving.basis). A saving of an Expected level follows from the bill alone; a Scenario says what it assumes.
+BILL_BASIS = "It is based on your bill for the last 30 days."
+NOT_WORKED_OUT = "Nobody has worked out what a change would save."
+ADVISOR_OWN = "It is Azure Advisor's own estimate"  # how every sentence of what an Advisor figure rests on begins: it is also how a figure is known for Advisor's (from_advisor)
+ADVISOR_BASIS = f"{ADVISOR_OWN}, and the bill of this resource does not back it."
+ADVISOR_BASIS_MANY = f"{ADVISOR_OWN} of the smallest of its variants. They are alternatives, and only one is bought."
+ADVISOR_BASIS_OVERLAP = f"{ADVISOR_OWN} of the largest of its recommendations about one resource. They overlap, so only one counts."
 ADVISOR_ALT = ("Advisor lists another purchase for this subscription that saves more ({alt}). You buy one or the other, so only the larger is counted, and nothing is added for this request.")
-ADVISOR_SURE = "Azure Advisor's own estimate. No AI and no check by code looked at it, and Meternaut has not checked that what it covers will keep running."
+ADVISOR_SURE = "This is Azure Advisor's own estimate. No AI looked at it, and Meternaut did not check that what it covers will keep running."
 ADVISOR_FIRST = ("Clean up first: delete what is idle and resize what is too big, then commit. A commitment locks in what runs today, "
                  "and a discount lowers the rate and does not remove waste.")
 ADVISOR_FIRST_RISK = "Meternaut has not checked that what these cover is the right size or will keep running."
@@ -1197,6 +1270,11 @@ def _commitment(case: CaseRecord | None) -> bool:
     """Whether a case is about a commitment (a reservation or a savings plan): one of its rows has a term."""
     found = advisor_digest(case)
     return found is not None and any(isinstance(row, list) and len(row) == 8 and row[3] for row in found["rows"])
+
+
+def from_advisor(basis: str) -> bool:
+    """Whether what a figure rests on is Azure Advisor's own estimate (the sentences above): the figure is Advisor's and not Meternaut's, and the sentence that opens its money says so."""
+    return basis.startswith(ADVISOR_OWN)
 
 
 def _advisor_basis(case: CaseRecord | None) -> str:
@@ -1307,7 +1385,7 @@ def scope_of_case(case: CaseRecord | None) -> str:
 
 
 def made_of_text(case: CaseRecord | None) -> str:
-    """What the cost of a finding about a whole subscription or resource group is made of, as one sentence with its largest services ("Made of: Virtual Network $88.10, Microsoft Defender for
+    """What the cost of a finding about a whole subscription or resource group is made of, as one sentence with its largest services ("It is made of Virtual Network $88.10, Microsoft Defender for
     Cloud $41.25, Azure Cognitive Search $19.60 and 5 more services $63.45."); empty for every other finding, and when the services were not kept."""
     if case is None or scope_of_case(case) == "resource":
         return ""
@@ -1317,7 +1395,7 @@ def made_of_text(case: CaseRecord | None) -> str:
     items = [f"{text_of(name, cost_words.MAX_SERVICE)} {usd_text(amount)}" for name, amount in parts["services"]]
     if parts["more"] > 0 and parts["moreUsd"] > 0:
         items.append(f"{number_text(parts['more'])} more service{'' if parts['more'] == 1 else 's'} {usd_text(parts['moreUsd'])}")
-    return "Made of: " + (items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]) + "."
+    return "It is made of " + (items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]) + "."
 
 
 def estimate_for(case: CaseRecord | None, state: str, together: Group | None = None) -> estimates.Estimate | None:
@@ -1371,27 +1449,16 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     # figure, in the branch below, and never "no cost".
     ends = fam is None or fam.cost_ends
     if action is not None and action.state == "verified" and ends and before is not None and after == 0 and before > 0:
-        return Saving(round(before, 2), "Verified", "the cost lines after the change, which show no cost for this resource", None, "")
+        return Saving(round(before, 2), "Verified", "The bill since the change shows no cost for this resource.", None, "")
     saved = _figure(check.get("savedUsdMonth"))
     if action is not None and action.state == "verified" and saved is not None and saved > 0:
-        return Saving(round(saved, 2), "Verified", "the cost lines of the whole days after the change, which are lower than those of the 30 days before it", None, "")
+        return Saving(round(saved, 2), "Verified", "The bill for the whole days since the change is lower than for the 30 days before it.", None, "")
     if figure is None or figure <= 0:
         cost = _figure(case.cost_usd_30d) if case is not None else None
         group = group_of(case)
         read = cost_state_of(case, group)
-        scope = cost_words.scope_of(case.resource_id).kind if case is not None else ""
-        thing, this = {"subscription": ("The subscription", "this subscription"), "group": ("The resource group", "this resource group")}.get(scope, ("The resource", "this resource"))
-        if read == cost_words.NONE:
-            why = cost_words.state_words(read, group is not None)
-        elif cost is None or read == "":
-            why = {cost_words.FAILED: cost_words.FAILED_WORDS, cost_words.CURRENCY: cost_words.CURRENCY_WORDS}.get(read) or (
-                "No cost line of the last 30 days was read for " + ("these resources." if group is not None else f"{this}."))
-        elif cost <= 0:
-            why = cost_words.state_words(cost_words.LINES, group is not None)  # lines that cost nothing: Cost Management shows no cost
-        elif group is not None:
-            why = f"The {number_text(group.count)} resources cost {usd_text(cost)} together in the last 30 days. What a change would save was not worked out."
-        else:
-            why = f"{thing} cost {usd_text(cost)} in the last 30 days. What a change would save was not worked out."
+        costly = read == cost_words.LINES and cost is not None and cost > 0
+        why = NOT_WORKED_OUT if costly else cost_words.state_words(read, group is not None)
         specific = False
         said = pricing.missing(case.facts if case is not None else None) or _advisor_missing(case)
         if fam is not None and fam.no_figure:
@@ -1409,8 +1476,8 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(figure, 2), "Scenario", _advisor_basis(case), waiting, "")
     advisor = advisor_estimate(case)
     if advisor:
-        return Saving(round(figure, 2), "Scenario", "Azure Advisor's own estimate: no cost line of this resource backs it", waiting, "")
-    return Saving(round(figure, 2), "Expected", "the cost lines of the last 30 days", waiting, "")
+        return Saving(round(figure, 2), "Scenario", ADVISOR_BASIS, waiting, "")
+    return Saving(round(figure, 2), "Expected", BILL_BASIS, waiting, "")
 
 
 def _word(value: object) -> str:
@@ -1432,7 +1499,7 @@ def _typed_facts(case: CaseRecord) -> list[Fact]:
     if state:
         rows.append(Fact(state[0], state[1], graph))
     if case.detector == "investigation" and facts.get("basis") in BASIS_WORDS:
-        rows.append(Fact("What the investigation found", BASIS_WORDS[facts["basis"]], "The first AI; code checks the numbers again"))
+        rows.append(Fact("What the investigation found", BASIS_WORDS[facts["basis"]], "The AI, numbers checked by Meternaut"))
     age = facts.get("ageDays")
     if isinstance(age, int) and not isinstance(age, bool) and age >= 0:
         rows.append(Fact("Age", "Made today" if age == 0 else days_text(age), graph))
@@ -1485,13 +1552,12 @@ def _metric_facts(case: CaseRecord) -> list[Fact]:
     return rows
 
 
-def _date(value: object) -> str:
+def _date(value: object, now: dt.datetime | None = None) -> str:
     text = text_of(value, 40)
-    match = re.match(r"\d{4}-\d{2}-\d{2}", text)
-    return match.group(0) if match else text
+    return day_text(text, now) or text
 
 
-def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
+def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[Fact, ...]:
     """At most five rows of evidence, chosen by code from the cost lines, the typed facts, the checks and the owner record, the most decision-relevant first: what Advisor says to look at (for
     an Advisor recommendation), the cost (for a case that stands for many resources: how many they are, what they cost together and the first few), a check that held the resource back,
     what was measured, why it is a lead and its age, its last change, the checks that found nothing, and then what it is like."""
@@ -1516,7 +1582,7 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
         covered = _group_facts(group, case)
         head += covered[:2] + rows + covered[2:]  # the cost of the case is what all of them cost: the row of the group says it; the bill lines that it would shrink come before the examples
     elif state == cost_words.NONE:
-        head.append(Fact("Cost, last 30 days", "Azure has no cost line for this yet", "Azure cost lines"))
+        head.append(Fact("Cost, last 30 days", "Azure has not reported a cost for this yet", "Azure cost lines"))
     elif cost is not None and state == cost_words.LINES:
         head.append(Fact("Cost, last 30 days", usd_text(cost), "Azure cost lines"))
     elif state in (cost_words.FAILED, cost_words.CURRENCY):
@@ -1529,35 +1595,46 @@ def facts_of(case: CaseRecord | None) -> tuple[Fact, ...]:
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}
-    changed, changed_by = _date(owner.get("changedAt")), who_text(owner.get("changedBy"), 60)
+    changed, changed_by = _date(owner.get("changedAt"), now), who_text(owner.get("changedBy"), 60)
     if changed:
-        tail.append(Fact("Last change", changed + (f" by {changed_by}" if changed_by else ""), "Azure Activity Log"))
+        tail.append(Fact("Last change", changed + (f", by {changed_by}" if changed_by else ""), "Azure Activity Log"))
     if not guards and case.status != "error":
         tail.append(Fact("Locks and keep tags", "None found", CHECKED))
     return tuple((head + typed[:2] + tail + typed[2:])[:MAX_FACTS])
 
 
-def owner_of(case: CaseRecord | None) -> OwnerLine:
-    """Who the resource probably belongs to, as plain facts from the tags and the Activity Log. Missing is said, and so is a lookup that was not made."""
+OWNER_ROLES = {"owner": "owner", "contact": "contact", "team": "team", "manager": "manager", "createdby": "creator"}  # the tags that name an owner (cases/ownership.py), as the one who it names
+
+
+def _did(past: str, by: str, day: str, last: bool = False) -> str:
+    """One sentence of who made or changed the resource and when: "An application changed it on 11 November.", "It was last changed by carol@example.com on 1 October.", "It was created on 1 March."."""
+    when = f" on {day}" if day else ""
+    if by == "an application":
+        return f"An application {past} it{when}."
+    return f"It was {'last ' if last else ''}{past}{f' by {by}' if by else ''}{when}."
+
+
+def owner_of(case: CaseRecord | None, now: dt.datetime | None = None, group: Group | None = None) -> OwnerLine:
+    """Whose the resource probably is, as plain sentences from the tags and the Activity Log. Missing is said, and so is a lookup that was not made. A finding about many resources (`group`) says
+    "these 50 resources" where nothing is known: the tags and the log that it keeps are those of the first."""
     owner = case.owner if case is not None and isinstance(case.owner, dict) else {}
     parts: list[str] = []
-    tag = text_of(owner.get("tagOwner"), 80)
+    tag, named = text_of(owner.get("tagOwner"), 80), text_of(owner.get("tagName"), 30).lower() or "owner"
     if tag:
-        named = text_of(owner.get("tagName"), 30) or "owner"
-        parts.append(f"Tag {named}: {tag}.")
-    made_by, made_at = who_text(owner.get("createdBy"), 80), _date(owner.get("createdAt"))
+        parts.append(f"The tag names {tag} as the {OWNER_ROLES[named]}." if named in OWNER_ROLES else f"The tag {named} says {tag}.")
+    elif owner.get("lookedUp"):
+        parts.append("Nobody is named as the owner in the tags of the first resource." if group is not None else "Nobody is named as the owner in its tags.")  # the tags and the log are read for the first resource of a finding about many
+    made_by, made_at = who_text(owner.get("createdBy"), 80), _date(owner.get("createdAt"), now)
     if made_by or made_at:
-        parts.append("Created" + (f" by {made_by}" if made_by else "") + (f" on {made_at}" if made_at else "") + ".")
-    last_by, last_at = who_text(owner.get("changedBy"), 80), _date(owner.get("changedAt"))
+        parts.append(_did("created", made_by, made_at))
+    last_by, last_at = who_text(owner.get("changedBy"), 80), _date(owner.get("changedAt"), now)
     if last_by or last_at:
-        parts.append("Last changed" + (f" by {last_by}" if last_by else "") + (f" on {last_at}" if last_at else "") + ".")
+        parts.append(_did("changed", last_by, last_at, True))
     if parts:
         if not owner.get("lookedUp"):
             parts.append(NOT_LOOKED_UP)  # a tag is there, but the Activity Log was not read: the line must not read as if nobody had changed the resource
-        return OwnerLine(True, " ".join(parts))
-    if owner.get("lookedUp"):
-        return OwnerLine(False, "No owner is recorded on the resource.")
-    return OwnerLine(False, "Meternaut has not looked up who owns this resource yet.")
+        return OwnerLine(bool(tag or made_by or made_at or last_by or last_at), " ".join(parts))
+    return OwnerLine(False, f"Meternaut has not looked up who owns {f'these {number_text(group.count)} resources' if group is not None else 'this resource'} yet.")
 
 
 def _where(name: str, group: str, subscription: str, resource_id: str, rtype: str, subscription_name: str = "") -> Where:
@@ -1621,7 +1698,7 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
         lines.append(text_of(check["now"], 200))
     after = _figure(check.get("costAfterUsd"))
     if after is not None and check.get("currency") in (None, "", "USD"):
-        lines.append(f"Cost lines since the change: {usd_text(after)}.")
+        lines.append(f"The bill since the change shows {usd_text(after)}.")
     before = _figure(check.get("costBeforeUsd30d"))
     if before is not None:
         lines.append(f"The 30 days before the change cost {usd_text(before)}.")
@@ -1631,31 +1708,36 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
 
 
 def _nothing_changed(result: object) -> str:
-    """The line of an approval that changed nothing: the action's own sentence of code ("The machine was already stopped ... Nothing to change.") without its last short sentence."""
+    """The line of an approval that changed nothing: that nothing was changed, and the action's own sentence of code ("The machine was already stopped ... Nothing to change.") without its last short sentence."""
     why = text_of(result, 300)
     for ending in ("Nothing to change.", "Nothing to delete."):
         if why.endswith(ending):
             why = why[: -len(ending)].rstrip()
-    if len(why) > 1 and why[0].isupper() and not why[1].isupper():
-        why = why[0].lower() + why[1:]
-    return f"Nothing was changed: {why}" if why else "Nothing was changed."
+    return f"Nothing was changed. {why}" if why else "Nothing was changed."
 
 
 def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0.0, own: int | None = None) -> str:
-    """What waiting has cost so far, by code: the figure of a month over thirty days, for the days that the request has waited, in whole dollars ("about" for a Scenario). Empty without a measured saving.
-    A request that stands for others (a group) adds what they cost while they waited, `before` (each at its own figure for its own days), to what it has cost itself for the `own` days since it was made."""
+    """What waiting has cost so far, by code, as a sentence: the figure of a month over thirty days, for the days that the request has waited, in whole dollars and always "about", because it is
+    the month shared out over the days. Empty without a measured saving. A request that stands for others (a group) adds what they cost while they waited, `before` (each at its own figure for its
+    own days), to what it has cost itself for the `own` days since it was made."""
     if monthly is None or monthly <= 0 or days < 0 or level not in ("Verified", "Expected", "Scenario"):
         return ""
-    about = "about " if level == "Scenario" else ""
     if not before:
-        return f"{days} day{'s' if days != 1 else ''} at {usd_text(monthly)} a month is {about}${monthly / 30 * days:,.0f}"
-    return (f"{days} day{'s' if days != 1 else ''}: {about}${before + monthly / 30 * (days if own is None else own):,.0f} so far, of which ${before:,.0f} is what the requests that this one replaced "
-            f"cost for the days that each of them waited")
+        if days < 1:
+            return f"Waiting has cost less than {usd_text(monthly / 30)} so far."
+        return f"Waiting {waited_text(days)} at {usd_text(monthly)} a month has cost about ${round(monthly / 30 * days):,}."
+    return (f"Waiting {waited_text(days)} has cost about ${round(before + monthly / 30 * (days if own is None else own)):,}. ${round(before):,} of that is what the requests that this one "
+            "replaced cost for the days that each of them waited.")
 
 
-def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Who the steps before step `before` told, and who they did not tell yet, as plain lines: only a message that was sent tells somebody. A held one says why, a failed one says so. A person who was
-    added to the approvers of the request (a record of the kind `added` among `steps`) is told by the first step that has them, as one of the people of the request, not as that step's source."""
+def _and(names: Sequence[str]) -> str:
+    """Names as a person lists them: "Olga", "Olga and Maya", "Olga, Maya and Tino"."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def told_lines(steps: Sequence, before: int = 1000, now: dt.datetime | None = None) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Who the steps before step `before` told, and who they did not tell yet, as whole sentences: only a message that was sent tells somebody. A held one says why, a failed one says so. A person
+    who was added to the approvers of the request (a record of the kind `added` among `steps`) is told by the first step that has them, as one of the people of the request, not as that step's source."""
     told, pending = [], []
     added = {o.lower() for s in steps if s.kind == "added" for o in s.who}
     first: dict[str, int] = {}
@@ -1666,10 +1748,13 @@ def told_lines(steps: Sequence, before: int = 1000) -> tuple[tuple[str, ...], tu
         for how, mine in ((SAID_HOW.get(step.source, ""), lambda o: not (o.lower() in added and first[o.lower()] == step.number)), (ADDED_HOW, lambda o: o.lower() in added and first[o.lower()] == step.number)):
             done = [plain(n, 80) for o, n in zip(step.who, step.names) if o in step.delivered and mine(o)]
             left = [plain(n, 80) for o, n in zip(step.who, step.names) if o not in step.delivered and mine(o)]
+            who = f", {how}," if how else ""
+            day = day_text(step.last_try or step.at, now)
             if done:
-                told.append(f"{', '.join(done)} ({how}), {(step.last_try or step.at)[:10]}")
+                told.append(f"{_and(done)}{who} {'was' if len(done) == 1 else 'were'} told{f' on {day}' if day else ''}.")
             if left:
-                pending.append(f"{', '.join(left)} ({how}): " + (f"held: {plain(step.detail, 120)}" if step.outcome == "held" else "could not be delivered" if step.outcome == "failed" else "not sent yet"))
+                why = f"The message is held. {_stop(plain(step.detail, 120))}".rstrip() if step.outcome == "held" else "The message could not be delivered." if step.outcome == "failed" else "No message was sent yet."
+                pending.append(f"{_and(left)}{who} {'has' if len(left) == 1 else 'have'} not been told yet. {why}")
     return tuple(told), tuple(pending)
 
 
@@ -1679,8 +1764,8 @@ def waiting_of(plan: PlanRecord, saving: Saving, ladder: Sequence, now: dt.datet
     days, _ = ago_text(now, started(plan))
     own, _ = ago_text(now, plan.created_at)
     steps = sorted((r for r in ladder if r.kind == "step"), key=lambda r: r.number)
-    told, pending = told_lines(ladder)
-    return Waiting(days or 0, plain(started(plan)[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
+    told, pending = told_lines(ladder, now=now)
+    return Waiting(days or 0, day_text(started(plan), now) or plain(started(plan)[:10], 12), WITH_WHOM.get(steps[-1].source, WITH_WHOM["same"]) if steps else WITH_WHOM["same"], told[-4:],
                    sum(1 for r in ladder if r.kind == "snooze"), waiting_cost(saving.monthly, saving.level, days or 0, plan.waited_usd, own or 0), pending[-4:])
 
 
@@ -1691,8 +1776,8 @@ def _seen_line(plan: PlanRecord) -> tuple[str, ...]:
     before, after, stated = _figure(kept.get(COST_AT_ASK)), _figure(kept.get(COST_SEEN)), _figure(plan.saving_usd_month)
     if before is None or after is None:
         return ()
-    return (f"Before the request, its cheapest week cost {usd_text(before)} a month. In each of the last two weeks of the bill it cost at most {usd_text(after)} a month "
-            "(the newest two days are left out, because the bill is late)." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
+    return (f"Before the request, its cheapest week cost {usd_text(before)} a month. In each of the last two weeks of the bill, it cost at most {usd_text(after)} a month. "
+            "The newest two days are left out, because the bill is late." + (f" The request stated a saving of {usd_text(stated)} a month." if stated else ""),)
 
 
 def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
@@ -1703,7 +1788,7 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     if state == "expired":
         why = taken_back(plan, case)
         if why:  # Meternaut took it back itself, and says why: nobody was too late
-            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed: the cost has gone down"}.get(why, "Taken back")
+            title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed because the cost went down"}.get(why, "Taken back")
             verified = why == "verified"  # somebody changed something in Azure then: Meternaut did not, and the page says that and not that nothing was changed
             return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
                            title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
@@ -1713,9 +1798,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         found = _decisive(decisions, "decline")
         who = text_of(found.approver_name, 80) if found else "A person"
         reason = REASON_WORDS.get(found.reason, "") if found else ""
-        said = f"{who} said it is not worth acting on." if advice else f"Declined by {who}."
-        return Outcome("declined", "Not worth it" if advice else "Declined", (said + (f" Reason: {reason}." if reason else ""), "Nothing changed."),
-                       "Not worth it" if advice else "Declined", who, found.at if found else "")
+        because = "" if not reason else " for another reason" if found.reason == "other" else f" because {reason}"  # type: ignore[union-attr]
+        said = f"{who} said it is not worth acting on{because}." if advice else f"Declined by {who}{because}."
+        return Outcome("declined", "Not worth it" if advice else "Declined", (said, "Nothing changed."), "Not worth it" if advice else "Declined", who, found.at if found else "")
     if state == "withdrawn":
         found = _decisive(decisions, "not_mine")
         who = text_of(found.approver_name, 80) if found else "A person"
@@ -1772,9 +1857,9 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         undo = Undo(False, text_of(plan.undo, 300)) if irreversible else Undo(True, text_of(plan.undo, 300))
         risk = Risk("high" if irreversible else "medium", text_of(plan.could_go_wrong, 240) or "The risk is not recorded.")
     elif kind == "advice":
-        change, who, rechecked, undo, risk = ADVICE_CHANGE, ADVICE_WHO, "", Undo(True, ADVICE_UNDO), acting_risk(case)
+        change, who, rechecked, undo, risk = ADVICE_CHANGE, ADVICE_WHO, "", Undo(True, ""), acting_risk(case)
     else:
-        change, who, rechecked, undo, risk = NO_CHANGE, "", "", Undo(True, ADVICE_UNDO), (acting_risk(case) if case is not None and case.detector == "investigation" else Risk("low", "Nothing changes in Azure."))
+        change, who, rechecked, undo, risk = NO_CHANGE, "", "", Undo(True, ""), (acting_risk(case) if case is not None and case.detector == "investigation" else Risk("low", "Nothing changes in Azure."))
     found_at = (case.first_seen_at if case is not None and case.first_seen_at else (plan.created_at if plan is not None else ""))
     age, _ = ago_text(now, found_at)
     saving = _saving(case, plan, action, state)
@@ -1789,8 +1874,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         case_id=plain(case.case_id if case is not None else (plan.case_id if plan is not None else ""), 64), plan_id=plain(plan.plan_id if plan is not None else "", 64),
         plan_code=plain(plan.code if plan is not None else "", 16), kind=kind, family=plain(family, 40), state=plain(state, 20),
         headline=headline_of(family, name, group, rtype, recommendation, plan.title if plan is not None else "", plan, together=together, case=case),
-        saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case), reasoning=reasoning_of(case), doubt=doubt_of(case, plan),
-        change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case),
+        saving=saving, confidence=confidence_of(case, plan), facts=facts_of(case, now), reasoning=reasoning_of(case), doubt=doubt_of(case),
+        change=change, who_acts=who, rechecked=rechecked, undo=undo, risk=risk, owner=owner_of(case, now, together),
         where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
         age_days=age,
@@ -1803,7 +1888,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
-        hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now))
+        hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation))
 
 
 def order_key(brief: Brief) -> tuple:

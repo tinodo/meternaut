@@ -506,17 +506,17 @@ class TheWordsAreWrittenOnce(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.assertTrue(heading and why and needs)
                 self.assertLessEqual(len(heading), 60)
-                self.assertEqual(why.count(". "), 0, "one sentence")
+                self.assertLessEqual(why.count(". "), 1, "at most two short sentences")
                 self.assertLessEqual(needs.count(". "), 1)
                 for word in BANNED:
                     self.assertNotIn(word, (heading + why + needs).lower())
 
     def test_the_automation_sentence_says_how_long_ago_in_the_words_of_the_owner(self):
         found = brief.hold_of(replace(make_advice(), state=HELD, preconditions={"held": "automation"}), automation(), NOW)
-        self.assertTrue(found.why.startswith("Something that runs by itself changed it 2 days ago and would change it back"))
+        self.assertTrue(found.why.startswith("An automation changed this 2 days ago and would change it back"))
         for last, said in ((0, "today"), (1, "yesterday")):
-            self.assertIn(f"changed it {said} and", brief.hold_of(replace(make_advice(), state=HELD, preconditions={"held": "automation"}),
-                                                                  automation(owner={"automatedAt": days_ago(last)}), NOW).why)
+            self.assertIn(f"changed this {said} and", brief.hold_of(replace(make_advice(), state=HELD, preconditions={"held": "automation"}),
+                                                                    automation(owner={"automatedAt": days_ago(last)}), NOW).why)
 
     def test_a_request_that_is_no_held_one_has_no_hold(self):
         self.assertIsNone(brief.hold_of(make_advice(), automation(), NOW))
@@ -555,7 +555,7 @@ class ThePageOfAHeldFinding(unittest.TestCase):
             self.assertFalse(reply.has_button(label), label)
         for label in ("Not worth it", "Ask or tell", "Decide later", "This is not mine"):
             self.assertTrue(reply.has_button(label), label)
-        self.assertEqual(reply.facts()["What changes"], brief.ADVICE_CHANGE)
+        self.assertIn(f"{brief.ADVICE_CHANGE} {brief.ADVICE_WHO}", reply.main.text())
         self.assertIn("120", reply.main.text())
         self.assertIn("Held back. No request was made for the finding, and nothing changes in Azure.", reply.main.text())
 
@@ -625,10 +625,10 @@ class TheDecisionsPageListsWhatIsHeldForThePerson(unittest.TestCase):
         reply = console.get("/")
         self.assertIn("Held back: 2 findings", reply.content)
         self.assertEqual(reply.headings(1), ["Decisions"])
-        self.assertIn("These are held back, and nothing is asked of you to approve:", reply.content)
+        self.assertIn("These findings are held back, so nothing is asked of you.", reply.content)
         links = [href for href in reply.links() if "/why/k-" in href]
         self.assertEqual(sorted(links), ["/why/k-impact", "/why/k-unchecked"])
-        self.assertIn("Nobody has looked up who changed it", reply.content)
+        self.assertIn(brief.HOLD_WORDS["unchecked"][0], reply.content)
         self.assertNotIn("decision waits", reply.content)
         self.assertFalse(console.get("/", oid=MAYA).links().count("/why/k-unchecked"), "a person who is not named for it is not shown it")
         self.assertIn("Held back: 2 findings", console.get("/", oid=MAYA).content, "the count is everybody's, as it was")
@@ -662,13 +662,13 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
         self.assertEqual(reply.headings(3), [brief.HOLD_WORDS[reason][0] for reason in REASONS], "a reason that no finding has is not a heading")
         for reason in REASONS:
             table = reply.table(f"held-{reason}")
-            self.assertEqual(table.headers, ["Finding", "Saving a year", "How sure", "Why no request was made", "Who may know"])
+            self.assertEqual(table.headers, ["Finding", "Saving or cost", "How sure", "Why no request was made", "Who may know"])
             self.assertEqual(len(table.rows), 1, reason)
 
-    def test_each_has_the_figure_the_level_the_basis_the_evidence_and_the_guards_sentence(self):
+    def test_each_has_the_figure_the_basis_the_evidence_and_the_guards_sentence(self):
         row = self.reply.table("held-unchecked").rows[0]
-        self.assertEqual(row["Saving a year"], "$1,440 a year Saves, Expected. $120.00 a month. Based on the cost lines of the last 30 days.")
-        self.assertIn("confidence.", row["How sure"])
+        self.assertEqual(row["Saving or cost"], f"Could save about $1,440 a year ($120 a month) {brief.BILL_BASIS}")
+        self.assertIn("Confidence is medium.", row["How sure"])
         self.assertEqual(row["Why no request was made"], brief.HOLD_WORDS["unchecked"][1])
         self.assertEqual(row["Who may know"], "Meternaut has not looked up who owns this resource yet.")
         self.assertIn("/why/k-unchecked", self.reply.links())
@@ -686,21 +686,21 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
     def test_the_tile_counts_the_held_findings_and_says_how_many_of_them_there_are(self):
         tiles = tiles_of(self.reply)
         found = tiles["Found in all"]
-        self.assertEqual(found[:2], ("$3,240 a year", "4 of 6 findings have a saving figure · Scenario, Expected. Of which held back: 2. The basis is in the table."))
+        self.assertEqual(found[:2], ("$3,240 a year", "It is the saving of 4 of 6 findings. The others have no saving figure. Of the 4, 2 are held back. The table says what each figure rests on."))
         self.assertEqual(found[0], "$3,240 a year", "two held findings of 120 a month, and 10 and 20 a month of the two others: each counted once")
         waiting = tiles["Waiting for a person"]
         self.assertEqual(waiting[0], "$360 a year", "what waits for a person leaves out what is held")
         self.assertEqual(list(tiles), ["Found in all", "Waiting for a person", "Saving measured"])
 
-    def test_the_levels_are_the_levels_of_the_findings(self):
+    def test_each_figure_says_what_it_rests_on_by_the_basis_of_its_finding(self):
         table = self.reply.table("savings")
         held = next(row for row in table.rows if row["What became of it"].startswith("Found, and held back"))
-        self.assertIn("Saves, Expected", held["Saving a year"])
+        self.assertIn(brief.BILL_BASIS, held["Saving a year"])
         waiting = next(row for row in table.rows if row["What became of it"].startswith("Waiting"))
-        self.assertIn("Saves, Scenario", waiting["Saving a year"])
-        self.assertIn("Saves, Expected", waiting["Saving a year"])
+        self.assertIn(brief.ADVISOR_BASIS, waiting["Saving a year"])
+        self.assertIn(brief.BILL_BASIS, waiting["Saving a year"])
 
-    def test_the_level_of_a_held_finding_is_its_own_scenario_for_advisors_figure_and_expected_for_the_bill(self):
+    def test_the_basis_of_a_held_finding_is_advisors_estimate_for_advisors_figure_and_the_bill_for_the_bill(self):
         console = Console()
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
         for case in (finding("needs_human", case_id="c-bill", owner={}, detector="orphan-managed-disk", recommendation="delete", facts=MEASURED),
@@ -709,8 +709,8 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
             console.store.case_put(case)
         approvals.settle((TINO,))
         table = console.get(SAVINGS).table("held-unchecked")
-        levels = sorted(re.findall(r"Saves, (\w+)\.", " ".join(row["Saving a year"] for row in table.rows)))
-        self.assertEqual(levels, ["Expected", "Scenario"])
+        cells = [row["Saving or cost"] for row in table.rows]
+        self.assertEqual((sum(brief.BILL_BASIS in cell for cell in cells), sum(brief.ADVISOR_BASIS in cell for cell in cells)), (1, 1))
 
     def test_within_a_reason_what_is_at_stake_comes_first(self):
         console = Console()
@@ -741,9 +741,9 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         content = graph.sent[0][1]["body"]["content"]
         lines = listed(content)
         self.assertEqual(len(lines), 2)
-        self.assertTrue(any(line.startswith("Consider deleting the disk disk-u: $1,440 a year, Expected. Nobody has looked up who changed it") for line in lines), lines)
+        self.assertTrue(any(line.startswith("Consider deleting the disk disk-u. It could save about $1,440 a year. Meternaut cannot yet say who changed this resource") for line in lines), lines)
         self.assertTrue(all(brief.HOLD_WORDS[r][2] in " ".join(lines) for r in ("unchecked", "impact")))
-        self.assertIn("Found, and held back from a request. Nothing is asked of you to approve, and nothing changes in Azure.", content)
+        self.assertIn("These findings are held back from a request, so nothing is asked of you. Nothing changes in Azure.", content)
         self.assertEqual(content.count("https://"), 1, "one link, as every letter has")
         self.assertIn("See the held findings", content)
         for word in ("Approve", "Decline", "Worth acting on"):
@@ -768,9 +768,9 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         content = graph.sent[0][1]["body"]["content"]
         lines = listed(content)
         self.assertEqual(len(lines), 1 + letters.MAX_HELD, "the decision and three of the four that are held, the largest first")
-        self.assertEqual(lines[0], "Consider changing the virtual machine oversized-vm-1: $1,440 a year, Scenario.")
-        self.assertTrue(lines[1].startswith("Check whether the private endpoint pe-1 is still used: costs $2,880 a year, saving not measured. Meternaut's rules changed"), lines[1])
-        self.assertIn("1 more are held back. They are on the page.", content)
+        self.assertEqual(lines[0], "Look at the virtual machine oversized-vm-1, because it may be larger than its use needs. It could save about $1,440 a year.")
+        self.assertTrue(lines[1].startswith("Check whether the private endpoint pe-1 is still used. It costs $2,880 a year; nobody has worked out the saving. Meternaut's rules changed"), lines[1])
+        self.assertIn("1 more is held back. It is on the page.", content)
         self.assertEqual(content.count("https://"), 1)
 
     def test_the_letter_is_sent_for_a_held_finding_alone_and_never_when_nothing_is_held_or_waits(self):
@@ -842,7 +842,7 @@ class AFindingThatIsPricedAgainShowsOneFigure(unittest.TestCase):
         console.use(approvals)
         (plan,) = console.store.plans_held()
         self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), (400.0, 13.33))
-        savings = console.get(SAVINGS).table("held-unchecked").rows[0]["Saving a year"]
+        savings = console.get(SAVINGS).table("held-unchecked").rows[0]["Saving or cost"]
         start = console.get("/").content
         letter = desk(console).sent[0][1]["body"]["content"]
         for where, text in (("Savings found", savings), ("the start page", start), ("the letter", letter)):

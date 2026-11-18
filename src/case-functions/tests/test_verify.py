@@ -704,7 +704,7 @@ class TheRequestThatWasClosed(unittest.TestCase):
         (message,) = world.queue_fake.messages()
         said = " ".join(cs.texts(message["card"]))
         self.assertEqual(message["op"], "update")
-        self.assertIn("Closed: the cost has gone down. " + SAID + " Nothing was changed by Meternaut.", said)
+        self.assertIn("Closed because the cost went down. " + SAID + " Nothing was changed by Meternaut.", said)
         self.assertNotRegex(said, r"\$|\d{3}")
 
     def test_no_letter_lists_it(self):
@@ -718,7 +718,7 @@ class TheRequestThatWasClosed(unittest.TestCase):
         self.assertEqual((learning.sync(self.world.store, self.world.now + DAY), self.world.store.lessons_recent(10)), (0, [lesson]), "once")
         past = learning.past_of([lesson], lesson.resource_type, "advise")
         self.assertEqual((past.answered, past.approved, past.unanswered), (0, 0, 1), "nobody answered it: it adds to no answer and to no approval")
-        self.assertEqual(brief.past_line(learning.digest_of(past)), "Past cases like this: no history yet.")
+        self.assertEqual(brief.past_line(learning.digest_of(past)), "There is no history of cases like this yet.")
 
     def test_a_request_that_was_taken_back_for_another_reason_still_writes_no_lesson(self):
         world = World()
@@ -742,13 +742,13 @@ class ThePagesSayIt(unittest.TestCase):
         reply = self.console.get("/ok/p1")
         self.assertEqual((reply.status, reply.problems), (200, []))
         text = reply.main.text()
-        self.assertIn("Closed: the cost has gone down", text)
+        self.assertIn("Closed because the cost went down", text)
         self.assertIn(SAID + " Nothing was changed by Meternaut.", text)
-        self.assertIn("Before the request, its cheapest week cost $300.00 a month. In each of the last two weeks of the bill it cost at most $100.00 a month", text)
-        self.assertIn("(the newest two days are left out, because the bill is late). The request stated a saving of $120.00 a month.", text)
+        self.assertIn("Before the request, its cheapest week cost $300 a month. In each of the last two weeks of the bill, it cost at most $100 a month. "
+                      "The newest two days are left out, because the bill is late. The request stated a saving of $120 a month.", text)
         self.assertNotIn("Nothing was changed in Azure.", text, "somebody changed it: Meternaut did not")
         self.assertIn("State of the request The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.", text)
-        self.assertIn("Status of the finding Closed: the cost has gone down. The cost went down after the request was made", text)
+        self.assertIn("Status of the finding Closed because the cost went down. The cost went down after the request was made", text)
         self.assertNotIn("Taken back", text, "the details do not call it a take-back with nothing changed")
         self.assertNotIn("A timer closed", text)
         self.assertEqual(reply.forms(), [], "there is nothing to answer")
@@ -768,7 +768,7 @@ class ThePagesSayIt(unittest.TestCase):
 
     def test_the_start_page_and_the_history_list_it_and_the_history_links_it_and_does_not_fold_it_into_the_requests_that_were_taken_back(self):
         start, history = self.console.get("/"), self.console.get("/history")
-        self.assertIn("Closed: the cost has gone down", start.content)
+        self.assertIn("Closed because the cost went down", start.content)
         self.assertIn(SAID, history.content)
         self.assertIn("/ok/p1", " ".join(history.links()))
         self.assertNotIn("request to look at a finding", history.content, "it is not one of the requests that Meternaut took back for no reason of its own")
@@ -784,7 +784,7 @@ class ThePagesSayIt(unittest.TestCase):
         self.world.store.plan_put(replace(self.world.plan(), created_at=stamp(self.world.now - 60 * DAY)))
         self.decided(14)
         start, history = self.console.get("/"), self.console.get("/history")
-        self.assertIn("Closed: the cost has gone down", start.content)
+        self.assertIn("Closed because the cost went down", start.content)
         self.assertIn(SAID, history.content)
         self.assertIn("/ok/p1", " ".join(history.links()))
         self.assertEqual(history.content.count("1 request to look at a finding"), 0)
@@ -816,7 +816,7 @@ class ThePagesSayIt(unittest.TestCase):
 
     def test_the_page_of_savings_has_a_row_of_its_own_with_a_word_for_each_figure_and_adds_nothing_up(self):
         reply = self.console.get("/ops/savings")
-        saved, taken = self.row("Saved (seen on the bill)"), self.row("Taken back")
+        saved, taken = self.row("Cost went down (seen on the bill)"), self.row("Taken back")
         self.assertEqual((saved["Findings"], saved["Saving a year"], saved["Findings with no saving figure"]),
                          ("1", "The figures are on the page of each finding. None is added up here.", "Not added up."))
         self.assertIn("Meternaut changed nothing, and a cost can also go down for another reason.", saved["What became of it"])
@@ -832,11 +832,11 @@ class ThePagesSayIt(unittest.TestCase):
 
     def test_a_finding_that_waits_again_is_not_in_the_row_that_the_bill_showed(self):
         self.world.store.case_put(replace(self.world.store.case_get("c-p1"), status="needs_human"))
-        self.assertFalse(any(row["What became of it"].startswith("Saved (seen") for row in self.console.get("/ops/savings").table("savings").rows))
+        self.assertFalse(any(row["What became of it"].startswith("Cost went down (seen") for row in self.console.get("/ops/savings").table("savings").rows))
 
     def test_the_words_of_the_closing_are_the_ones_that_the_brief_has_and_no_figure_is_made_up_when_the_plan_kept_none(self):
         shown = brief.build_brief(self.world.store.case_get("c-p1"), self.world.plan(), None, (), now=self.world.now).outcome
-        self.assertEqual((shown.state, shown.title, shown.lines[:2]), ("expired", "Closed: the cost has gone down", (SAID, "Nothing was changed by Meternaut.")))
+        self.assertEqual((shown.state, shown.title, shown.lines[:2]), ("expired", "Closed because the cost went down", (SAID, "Nothing was changed by Meternaut.")))
         self.assertEqual((brief.TAKEN_BACK["verified"], brief.taken_back(self.world.plan())), (SAID, "verified"))
         bare = replace(self.world.plan(), preconditions={"takenBack": "verified"})
         self.assertEqual(len(brief.build_brief(None, bare, None, (), now=self.world.now).outcome.lines), 2)

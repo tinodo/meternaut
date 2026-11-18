@@ -36,7 +36,7 @@ def listed(content: str) -> list[str]:
 
 
 def page_count(reply) -> int:
-    return int(re.match(r"(\d+) decisions?\.", reply.main.find("div", class_="head").find("p").text()).group(1))
+    return int(re.match(r"(\d+) decisions? waits? for you\.", reply.main.find("div", class_="head").find("p").text()).group(1))
 
 
 def page_titles(reply) -> list[str]:
@@ -58,7 +58,7 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         on_the_page = page_titles(reply)
         self.assertEqual(len(on_the_page), 8)
         for line in lines:
-            self.assertIn(re.sub(r": [^:]*\.$", "", line), on_the_page, "a line of the letter has the title of a row of the page")
+            self.assertIn(line.split(". ", 1)[0], on_the_page, "a line of the letter has the title of a row of the page")
         self.assertIn("3 more wait on the page.", html.unescape(re.sub(r"<[^>]+>", " ", content)))
         self.assertEqual(content.count("https://"), 1)
 
@@ -69,7 +69,7 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         (subject,) = graph.subjects()
         self.assertEqual(subject, "[Meternaut] 2 decisions wait for you", "a change, and the four storage accounts as one decision")
         self.assertEqual(listed(graph.sent[0][1]["body"]["content"]),
-                         ["4 storage accounts in 4 resource groups: costs $216 a year, saving not measured.", "Delete the unattached disk planted-disk-1: $86 a year, Expected."])
+                         ["4 storage accounts in 4 resource groups. It costs $216 a year; nobody has worked out the saving.", "Delete the unattached disk planted-disk-1. It could save about $86 a year."])
         self.assertEqual(page_count(console.get("/")), 2)
 
     def test_a_request_that_a_person_put_off_is_counted_and_last_as_on_the_page(self):
@@ -77,12 +77,12 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         earlier = listed(desk(console).sent[0][1]["body"]["content"])
-        self.assertEqual([line.split(":")[0] for line in earlier], ["Consider changing the virtual machine oversized-vm-1", "Delete the unattached disk planted-disk-1"], "the larger saving first")
+        self.assertEqual([line.split(". ", 1)[0] for line in earlier], ["Look at the virtual machine oversized-vm-1, because it may be larger than its use needs", "Delete the unattached disk planted-disk-1"], "the larger saving first")
         console.store.decision_put(make_decision(plan_id="plan0002", decision="later"))
         console.store.mails.clear()
         later = desk(console)
-        self.assertEqual([line.split(":")[0] for line in listed(later.sent[0][1]["body"]["content"])],
-                         ["Delete the unattached disk planted-disk-1", "Consider changing the virtual machine oversized-vm-1"], "what a person put off is last")
+        self.assertEqual([line.split(". ", 1)[0] for line in listed(later.sent[0][1]["body"]["content"])],
+                         ["Delete the unattached disk planted-disk-1", "Look at the virtual machine oversized-vm-1, because it may be larger than its use needs"], "what a person put off is last")
         self.assertIn("You chose to decide later", console.get("/").content)
         self.assertEqual(page_count(console.get("/")), 2, "it is counted, as the page counts it")
         self.assertEqual(later.subjects(), ["[Meternaut] 2 decisions wait for you"])
@@ -98,7 +98,7 @@ class TheLetterCountsWhatThePageCounts(unittest.TestCase):
         self.assertEqual(page_count(reply), 1, "an owner who is no approver sees the advice and not the change")
         graph = desk(console, env)
         self.assertEqual(graph.subjects(), ["[Meternaut] 1 decision waits for you"])
-        self.assertEqual([line.split(":")[0] for line in listed(graph.sent[0][1]["body"]["content"])], ["Consider changing the virtual machine oversized-vm-1"])
+        self.assertEqual([line.split(". ", 1)[0] for line in listed(graph.sent[0][1]["body"]["content"])], ["Look at the virtual machine oversized-vm-1, because it may be larger than its use needs"])
 
 
 if __name__ == "__main__":

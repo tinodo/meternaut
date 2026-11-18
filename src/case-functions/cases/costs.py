@@ -23,20 +23,27 @@ CURRENCY = "currency"  # the cost lines are not in US dollars, so no figure is s
 STATES = (LINES, NONE, FAILED, CURRENCY)
 
 # The words of each state, as the figure of a request says them under "Cost not visible". Said once here, for the page, the letter and the card.
-UNREAD_WORDS = "No cost line was read yet."
-NO_LINE_WORDS = "Azure has no cost line for this yet."
+UNREAD_WORDS = "Meternaut could not read what this costs."
+NO_LINE_WORDS = "Azure has not reported a cost for this yet."
 ZERO_WORDS = "Cost Management shows no cost for this in the last 30 days."
-FAILED_WORDS = "Cost could not be read just now."
-CURRENCY_WORDS = "The cost lines are not in US dollars."
+FAILED_WORDS = "Meternaut could not read what this costs just now."
+CURRENCY_WORDS = "The cost is not in US dollars, so Meternaut shows no amount."
 STATE_WORDS = {"": UNREAD_WORDS, NONE: NO_LINE_WORDS, LINES: ZERO_WORDS, FAILED: FAILED_WORDS, CURRENCY: CURRENCY_WORDS}
 # The states in the order in which they decide what a figure of several findings says: a read that failed is told first, and a cost of nothing that Cost Management showed last.
 SAYS_FIRST = (FAILED, CURRENCY, "", NONE, LINES)
 
 
+def money(value: float) -> str:
+    """Money as a person reads it: whole dollars from 100 up ($848) and cents below ($7.17), thousands separated, the minus sign first. The pages, the letters and the cards write every amount so."""
+    amount = round(abs(float(value)), 2)
+    text = f"${math.floor(amount + 0.5):,}" if amount >= 100 else f"${amount:,.2f}"
+    return f"-{text}" if value < 0 and amount else text
+
+
 def state_words(state: str, many: bool = False) -> str:
     """What the figure of a request says when it shows no cost, for a cost that was read in this state; `many` for the row that stands for several findings ("for these" and not "for this")."""
     text = STATE_WORDS.get(state, UNREAD_WORDS)
-    return text.replace(" for this ", " for these ") if many else text
+    return text.replace(" for this ", " for these ").replace("what this costs", "what these cost") if many else text
 
 
 def worst_state(states: "list[str] | tuple[str, ...]") -> str:

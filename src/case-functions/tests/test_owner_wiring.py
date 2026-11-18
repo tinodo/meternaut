@@ -75,7 +75,7 @@ class TheOwnerLineOfACase(unittest.TestCase):
         self.assertIs(spent["lookedUp"], False)
         self.assertEqual(brief.owner_of(SimpleNamespace(owner=spent)).text, "Meternaut has not looked up who owns this resource yet.")
         quiet = investigate._owner_of(Services(Arm(([], True))), investigate.Investigation(), lead({}))
-        self.assertEqual(brief.owner_of(SimpleNamespace(owner=quiet)).text, "No owner is recorded on the resource.", "a read that answered with nothing is a lookup")
+        self.assertEqual(brief.owner_of(SimpleNamespace(owner=quiet)).text, "Nobody is named as the owner in its tags.", "a read that answered with nothing is a lookup")
 
     def test_a_lookup_that_breaks_never_costs_the_case_and_still_gives_the_tag(self):
         class Broken:

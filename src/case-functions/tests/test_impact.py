@@ -187,10 +187,11 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         found, _ = check(azure)
         self.assertEqual(found["verdict"], "check")
         self.assertIn("Something else mentions its addresses (routetables (1), networksecuritygroups (2)): check that it does not rely on this endpoint.", found["reasons"])
-        self.assertIn("An application or service identity changed it on 1 Nov 2026 UTC: an automation may manage it and make it again.", found["reasons"])
+        self.assertIn("An automation changed it on 1 November 2026. That automation may manage the endpoint and change it again.", found["reasons"])
         rows = {row[0]: row[1] for row in found["rows"]}
         self.assertEqual(rows["Things that mention its addresses"], "routetables (1), networksecuritygroups (2)")
-        self.assertTrue(rows["Last change"].startswith("1 Nov 2026 UTC, by an application or service identity (id "), rows["Last change"])
+        self.assertTrue(rows["Last change"].startswith("1 November 2026, by an application; "), rows["Last change"])
+        self.assertNotRegex(rows["Last change"], r"[0-9a-f]{8}-[0-9a-f]{4}-", "the id of the application is in the Details and not in this table")
         self.assertTrue(rows["Last change"].endswith("; 1 change in the 90 days before Meternaut read it"), rows["Last change"])
 
     def test_a_read_that_failed_is_never_none_so_the_verdict_is_never_safe_and_the_line_says_what_was_not_checked(self):
@@ -323,7 +324,7 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         arrange(events=[written(1, "alice@example.com")])(azure)
         found, _ = check(azure)
         last = {row[0]: row[1] for row in found["rows"]}["Last change"]
-        self.assertEqual(last, "3 Nov 2026 UTC, by alice@example.com; 1 change in the 90 days before Meternaut read it")
+        self.assertEqual(last, "3 November 2026, by alice@example.com; 1 change in the 90 days before Meternaut read it")
         later = impact.Reader(azure, [SUBSCRIPTION], NOW + dt.timedelta(days=5), own=[OWN])
         again = impact.analyse(later, azure.pe, ENDPOINTS)
         self.assertEqual({row[0]: row[1] for row in again["rows"]}["Last change"], last, "the same words five days later: the date of the write, not how long ago")
@@ -332,10 +333,10 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
             self.assertNotRegex(text, r"(?i)yesterday|today|days ago|last 30 days")
         arrange(events=[written(1, "alice@example.com"), written(40, AUTOMATION)])(azure)
         found, _ = check(azure)
-        self.assertEqual({row[0]: row[1] for row in found["rows"]}["Last change"].split(", by ")[0:1] + [found["facts"]["changedAt"]], ["3 Nov 2026 UTC", "2026-09-25T12:00:00Z"],
+        self.assertEqual({row[0]: row[1] for row in found["rows"]}["Last change"].split(", by ")[0:1] + [found["facts"]["changedAt"]], ["3 November 2026", "2026-09-25T12:00:00Z"],
                          "the row says the newest write, and the automation's older one is named as such")
-        self.assertIn("; an application or service identity wrote on 25 Sep 2026 UTC; 2 changes in the 90 days before Meternaut read it", {row[0]: row[1] for row in found["rows"]}["Last change"])
-        self.assertIn("An application or service identity changed it on 25 Sep 2026 UTC: an automation may manage it and make it again.", found["reasons"])
+        self.assertIn("; an automation wrote on 25 September 2026; 2 changes in the 90 days before Meternaut read it", {row[0]: row[1] for row in found["rows"]}["Last change"])
+        self.assertIn("An automation changed it on 25 September 2026. That automation may manage the endpoint and change it again.", found["reasons"])
 
     def test_no_data_for_the_traffic_is_not_zero_and_a_few_days_are_not_a_measurement(self):
         for label, points, expected in (("no data", [], "unmeasured"), ("ten days of nil", days(0, 10), "unmeasured"), ("twenty days of nil", days(0, 20), "zero"), ("a little", days(1, 3), "some")):
@@ -447,28 +448,30 @@ class WhatAPersonReads(unittest.TestCase):
         self.assertNotIn("Check first", reply.headings(2), "the reasons say what to check, not the general list")
         self.assertEqual([h for h in reply.headings(3) if h.startswith(("If it is", "How to"))], ["If it is removed", "How to undo it"])
         self.assertIn("Safe to remove", text)
-        self.assertIn("Read on 4 Nov 2026 UTC.", text, "the page says when it was read: it may be opened days later")
+        self.assertIn("Read on 4 November 2026.", text, "the page says when it was read: it may be opened days later")
         for line in (*found["reasons"], *found["removal"], found["undo"], "Not checked: " + "; ".join(found["unchecked"]) + "."):
             self.assertIn(line, text)
         (table,) = [t for t in reply.main.find_all("table") if t.find("caption").attrs.get("id") == "impact"]
         rows = {row.find("th").text(): [cell.text() for cell in row.find_all("td")] for row in table.find_all("tr")[1:]}
         self.assertEqual(rows["Traffic in the 30 days before it was read"][1], "Azure Monitor")
         self.assertEqual(len(rows), 8)
-        self.assertEqual(reply.main.find("p", class_="chips").text(), "Medium risk if you act on it Low confidence Answering changes nothing in Azure")
-        self.assertEqual(reply.facts()["What could go wrong"], f"If you act on it: {brief.SAFE_RISK} Risk: medium.")
+        self.assertEqual(reply.main.find("p", class_="chips").text(), "Medium risk if you act Low confidence Answering changes nothing in Azure")
+        self.assertIn("Meternaut found nothing that depends on it, but it could not read everything, so acting on it still has some risk.", reply.main.text())
         self.assertEqual(reply.headings(1), ["Check whether the private endpoint pe-apim-demo is still used"], "a shared kind of resource is never asked to be deleted, whatever the verdict")
 
     def test_the_risk_of_acting_follows_the_verdict_and_never_the_risk_of_answering(self):
-        for verdict, level, words in (("safe", "medium", brief.SAFE_RISK), ("keep", "high", brief.KEEP_RISK)):
+        for verdict, level, words in (("safe", "medium", "Meternaut found nothing that depends on it, but it could not read everything, so acting on it still has some risk."),
+                                      ("keep", "high", "It is in use, so removing it would break what uses it.")):
             with self.subTest(verdict=verdict):
                 case = case_with(digest_of(verdict))
                 b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-                self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, f"If you act on it: {words}", verdict))
-                self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk if you act on it")
+                self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, words, verdict))
+                self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk{brief.IF_ACTED}")
                 self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", "If you act on it: " + brief.UNPROVEN + " " + brief.SHARED_RISK))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", "Nothing proves that it is unused, so acting on it could break something that still uses it. "
+                                                                                          "Traffic that you cannot see from here may depend on it."))
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, label in (("safe", "Safe to remove"), ("keep", "Do not remove"), ("check", "Check first")):
@@ -476,7 +479,7 @@ class WhatAPersonReads(unittest.TestCase):
                 found = digest_of(verdict)
                 case = case_with(found)
                 plan = endpoint_plan(case, saving_usd_month=None)
-                line = f"Impact: {label}. Read on 4 Nov 2026 UTC. {found['reasons'][0].partition('. ')[0]}"
+                line = f"Impact: {label}. Read on 4 November 2026. {found['reasons'][0].partition('. ')[0]}"
                 b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
                 self.assertEqual(b.impact.line, line if line.endswith(".") else line + ".")
                 texts = {block["id"]: block["text"] for block in walk_blocks(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))}
@@ -493,7 +496,7 @@ class WhatAPersonReads(unittest.TestCase):
         lines = {brief.build_brief(case, plan, now=now, may_answer=True).impact.line for now in (WEB_NOW, WEB_NOW + dt.timedelta(days=9))}
         self.assertEqual(len(lines), 1, "the words do not depend on the day that the page is opened")
         shown = brief.impact_of(case)
-        self.assertEqual((shown.read, shown.line.startswith("Impact: Check first. Read on 4 Nov 2026 UTC. ")), ("Read on 4 Nov 2026 UTC.", True))
+        self.assertEqual((shown.read, shown.line.startswith("Impact: Check first. Read on 4 November 2026. ")), ("Read on 4 November 2026.", True))
         undated = brief.impact_of(case_with({key: value for key, value in found.items() if key != "readAt"}))
         self.assertEqual((undated.read, undated.line.startswith("Impact: Check first. The date that it was read is not known. ")), ("The date that it was read is not known.", True))
 
@@ -592,7 +595,7 @@ class TheInvestigationChecksWhatItProposesToRemove(unittest.TestCase):
         self.assertEqual((first, reads), ({"1": day(0), "2": day(0), "3": "", "4": ""}, 2), "the room is two: the first two are checked, and the others are not analysed")
         second, reads, said = run(8)
         self.assertEqual((second, reads), ({"1": day(0), "2": day(0), "3": day(8), "4": day(8)}, 2), "the ones with no digest go first, and the others keep theirs")
-        self.assertEqual(said["1"], "Read on 4 Nov 2026 UTC.", "a case that is judged again keeps what was read, with the date of the read, and is not shown as not analysed")
+        self.assertEqual(said["1"], "Read on 4 November 2026.", "a case that is judged again keeps what was read, with the date of the read, and is not shown as not analysed")
         third, reads, _ = run(16)
         self.assertEqual((third, reads), ({"1": day(16), "2": day(16), "3": day(8), "4": day(8)}, 2), "then the oldest digests are read again")
 
@@ -703,7 +706,7 @@ class AnOpenRequestToDeleteAResourceWhoseImpactNobodyCheckedIsTakenBack(unittest
         (held,) = [e for e in events if e["type"] == "case.held"]
         self.assertEqual((held["caseId"], held["reason"]), (old_case.case_id, IMPACT_NOT_CHECKED))
         shown = brief.build_brief(kept, after, now=WEB_NOW)
-        self.assertEqual(shown.outcome.lines, ("Meternaut took this request back: nobody checked what depends on the resource.", "Nothing was changed in Azure."))
+        self.assertEqual(shown.outcome.lines, (brief.TAKEN_BACK["impact"], "Nothing was changed in Azure."))
         new_case, new_plan = made["ip-checked"]
         self.assertEqual(extras.store.plan_get(new_plan.plan_id).state, "open", "a request whose impact was checked to the end stays")
 

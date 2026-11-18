@@ -53,28 +53,26 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.reply.headings(1), [TITLE])
         self.assertEqual(self.reply.root.find("title").text(), f"{TITLE} - Meternaut")
         self.assertEqual(self.reply.main.find("div", class_="head").find("p").text(), "Managed disk · resource group meternaut-test-rg · found 3 days ago")
-        self.assertEqual(self.reply.main.find("p", class_="fig save").text(), "$86 a year")
-        self.assertEqual(self.reply.main.find("p", class_="figsub").text(),
-                         "Saves, Expected. $7.17 a month. Based on the cost lines of the last 30 days. Waiting costs about $0.24 a day.")
-        self.assertIn("Money is in US dollars, and a year is twelve times the month.", self.reply.content)
+        self.assertEqual(self.reply.main.find("p", class_="say save").text(), "Meternaut worked out that this could save about $86 a year ($7.17 a month).")
+        self.assertEqual(self.reply.main.find("p", class_="figsub").text(), "It is based on your bill for the last 30 days. Waiting costs about $0.24 a day.")
+        self.assertNotIn("Money is in US dollars", self.reply.content)
 
     def test_the_page_answers_the_eight_questions_in_this_order(self):
-        self.assertEqual(self.reply.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
-        self.assertIn("How sure: High.", self.reply.content)
+        self.assertEqual(self.reply.headings(2)[:8], ["What it is worth", "If you approve", "Waiting", "What was measured", "What the AI saw", "How sure it is", "Whose is it", "Your answer"])
+        self.assertIn("Confidence is high.", self.reply.content)
         self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("$7.17", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
-                                                 "Locks and keep tags": ("None found", "Azure, checked by code")})
+                                                 "Locks and keep tags": ("None found", "Azure, checked by Meternaut")})
         found = self.reply.facts()
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
-        self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
-        self.assertTrue(found["Who does it"].startswith("You do, with your own permissions"), found["Who does it"])
-        self.assertIn("Azure checks your rights and the change is made right then.", found["Who does it"])
+        self.assertEqual(found["What changes"], "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertTrue(found["Who does it"].startswith("You do it, with your own permissions."), found["Who does it"])
+        self.assertIn("Azure checks your rights and makes the change right then.", found["Who does it"])
         self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
         self.assertNotIn("sign in", found["Who does it"].lower())
         self.assertNotIn("runner", found["Who does it"].lower())
         self.assertEqual(found["Undo"], "This cannot be undone.")
-        self.assertEqual(found["What could go wrong"], "If something still uses the disk, that use stops, and the data on it is lost for good. Risk: medium.")
+        self.assertEqual(found["What could go wrong"], "If something still uses the disk, that use stops, and the data on it is lost for good.")
         self.assertIn("Meternaut has not looked up who owns this resource yet.", self.reply.content)
-        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", self.reply.content)
 
     def test_the_sign_in_is_on_no_button_and_in_no_sentence_and_who_makes_the_change_is_said_once(self):
         for label, plan in (("one person", make_plan()), ("the first of two people", make_plan(approval_class="R3", approvers=(TINO, MAYA)))):
@@ -119,7 +117,7 @@ class ThePage(unittest.TestCase):
 
     def test_the_two_ais_words_are_in_boxes_that_say_that_code_did_not_check_them(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
-        self.assertEqual(labels[:2], ["The AI's reasoning (not checked by code)", "The second AI's doubt"])
+        self.assertEqual(labels[:2], ["What the AI says. Meternaut did not check the wording.", "What the second AI doubts."])
         self.assertIn("The disk is not attached and nothing uses it.", self.reply.content)
         self.assertIn("It may hold data that somebody wants.", self.reply.content)
 
@@ -142,7 +140,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual([o.text() for o in form.node.find("select").find_all("option")],
                          ["No reason", "It is still needed", "The figure is wrong", "It is already handled", "Another reason (say it in the note)"])
         self.assertIn("A question, an objection or something to remember", self.reply.content)
-        self.assertIn("It is recorded with your name, Meternaut does not answer yet, and it approves nothing.", self.reply.content)
+        self.assertIn("Meternaut records it with your name. It approves nothing, and Meternaut does not answer it yet.", self.reply.content)
 
     def test_the_old_buttons_explain_challenge_and_teach_are_one_answer_ask_or_tell(self):
         labels = [text for _, _, text in self.reply.forms()[0].buttons]
@@ -167,7 +165,7 @@ class ThePage(unittest.TestCase):
         case_page = self.console.get("/why/case0001")
         self.assertEqual(case_page.status, 200)
         self.assertEqual(case_page.headings(1), [TITLE])
-        self.assertEqual(case_page.headings(2)[:6], ["If you approve", "Waiting", "What was measured", "Why the AIs think so", "Whose is it", "Your answer"])
+        self.assertEqual(case_page.headings(2)[:8], ["What it is worth", "If you approve", "Waiting", "What was measured", "What the AI saw", "How sure it is", "Whose is it", "Your answer"])
         self.assertEqual(case_page.facts(), self.reply.facts())
 
     def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
@@ -303,7 +301,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.assertEqual(self.notice(reply)[0], "Taken back")
 
     def test_each_other_state_shows_its_state_in_words_and_no_buttons(self):
-        for state, title, words_ in (("declined", "Declined", "Declined by Tino. Reason: it is already handled. Nothing changed."),
+        for state, title, words_ in (("declined", "Declined", "Declined by Tino because it is already handled. Nothing changed."),
                                      ("withdrawn", "Not theirs", "Tino said that this is not theirs. Nothing changed."),
                                      ("consumed", "Done", "Approved by Tino, and made with their own Azure rights. Deleted. Azure no longer lists the resource."),
                                      ("failed", "Not made", "Azure refused to delete the resource."),
@@ -322,7 +320,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
                 self.assertEqual(self.notice(reply)[0], title)
                 self.assertIn(words_, self.notice(reply)[1])
                 self.assertIn(TITLE, reply.headings(1))
-                self.assertIn("If you approve", reply.headings(2), "the plan stays readable")
+                self.assertIn("What the change is", reply.headings(2), "the plan stays readable")
 
     def test_a_plan_that_was_used_shows_what_happened_to_the_change_in_the_details(self):
         self.console.store.action_put(make_action(state="done", started_at=at(minutes=-3), finished_at=at(minutes=-2), result="Deleted. Azure no longer lists the resource.",
@@ -356,7 +354,7 @@ class WhenThePlanIsNotOpen(unittest.TestCase):
         self.console.store.action_put(make_action())
         reply = self.page(state="approved")
         self.assertEqual(reply.status, 200)
-        self.assertEqual(self.notice(reply), ("Approved", "Approved by Tino. The change is being made now. Thu 5 Nov 2026 08:59 UTC (09:59 CET)"))
+        self.assertEqual(self.notice(reply), ("Approved", "Approved by Tino. The change is being made now. 5 November, 09:59 CET"))
         self.assertEqual(reply.forms(), [])
         self.assertEqual(reply.root.find_all("button"), [])
         for gone in ("Cancel my OK", "Nothing has changed yet", "The change starts at", "start time", "the runner"):
@@ -866,11 +864,12 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
     def test_it_says_what_is_lost_who_does_it_and_that_it_cannot_be_undone_without_a_question_mark(self):
         main = self.reply.main
         self.assertEqual([p.text() for p in main.find_all("p", class_="notice-title")], ["This cannot be undone"])
-        self.assertIn("If something still uses the disk, that use stops, and the data on it is lost for good. Risk: medium.", main.find("div", class_="notice warning").text())
+        self.assertIn("If something still uses the disk, that use stops, and the data on it is lost for good.", main.find("div", class_="notice warning").text())
+        self.assertIn("Medium risk", main.find("div", class_="notice warning").text())
         found = {dt.text(): dd.text() for dl in main.find_all("dl", class_="summary") for div in dl.find_all("div") for dt, dd in [(div.find("dt"), div.find("dd"))]}
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again"], "the undo and the risk are said once, in the notice")
-        self.assertEqual(found["What changes"], "Deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
-        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription bbbbbbbb.", main.text())
+        self.assertEqual(found["What changes"], "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
+        self.assertIn("This is the disk planted-disk-1 in resource group meternaut-test-rg, subscription bbbbbbbb.", main.text())
         self.assertIn("This change cannot be undone. Nothing is changed until you confirm here.", main.text())
         self.assertNotIn("sign in", main.text().lower(), "the sign-in is not on the page, and not on a button")
         self.assertEqual(main.text().count("own permissions"), 1, "who makes the change is said once")
@@ -882,7 +881,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         console.store.case_put(make_case(plan_id="plan0001", subscription_name="contoso-dev"))
         form = console.get("/ok/plan0001").form("/ok/plan0001", has_button=APPROVE)
         main = console.submit(form, APPROVE, confirm=False, note="Go on").main
-        self.assertIn("Managed disk planted-disk-1, resource group meternaut-test-rg, subscription contoso-dev.", main.text())
+        self.assertIn("This is the disk planted-disk-1 in resource group meternaut-test-rg, subscription contoso-dev.", main.text())
         self.assertNotIn("bbbbbbbb", main.text())
 
     def test_the_safe_button_is_the_main_one_and_it_is_a_plain_link_back_to_the_request(self):

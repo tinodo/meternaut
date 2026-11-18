@@ -346,7 +346,7 @@ def deliver(ladder: Ladder, plans: Mapping[str, PlanRecord] | None = None, recor
         if len(rows) == 1:
             plan, case, record, added = rows[0]
             steps = store.escalations_of(plan.plan_id)
-            told, pending = brief_mod.told_lines(steps, record.number)
+            told, pending = brief_mod.told_lines(steps, record.number, now)
             letter = letters.escalation_letter(plan, case, person, ladder.base, now, ladder.contacts, source="same" if added else record.source, asked=_asked(ladder, plan, steps),
                                                notes=tuple(NOTES.get(n, "") for n in record.notes), told=told, pending=pending, first=first,
                                                put_off=sum(1 for r in steps if r.kind == "snooze"), added=added)

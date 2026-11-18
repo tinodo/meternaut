@@ -13,7 +13,7 @@ from ..models import CHECK_GAP_MINUTES, SWITCH_NAMES, CheckRecord, SwitchRecord,
 from . import words
 from .common import CASE_HEADERS, case_rows, count, legend, read, run_result, switch_states
 from .core import ID, MAX_REASON, Ctx, Response, Safe, fmt, join, link_part, parse_time, stamp, utc
-from .figures import chip, dollars
+from .figures import chip
 from .layout import (TEXT, block, button, checks, error_summary, field, form, head, hidden, items, kpi, kpis, link, message_page, nowrap, notice, page, panel, paragraph, respond, table)
 
 PERMISSIONS_WHY = "your role lets you see how Meternaut is allowed to act"
@@ -224,10 +224,9 @@ def runs_page(ctx: Ctx) -> Response:
     if selected:
         cases = [case for case in cases if case.run_id == selected]
     parts: list[object] = [
-        head("Runs and findings", "Every run of the search and every finding that the runs looked at, newest first. This page shows what was found and what happened to it. It is not a cost report."),
+        head("Runs and findings", "This page lists every run of the search and every finding that the runs looked at, newest first. It shows what was found and what happened to it. It is not a cost report."),
         paragraph("A finding is a resource in the subscription that the search found and that may be unused or too big. Meternaut only reads it and does not use it. "
                   "Nothing is changed until a person approves the request."),
-        paragraph("Money is in US dollars, and a year is twelve times the month."),
         Safe("<h2>Runs</h2>"),
     ]
     if not runs_ok:
@@ -323,7 +322,7 @@ def rule_text(rule: TwoPeopleRule) -> str:
         return "Off. Every change needs one approver."
     summaries = change_kinds()
     kinds = [summaries[name] for name in rule.families if name in summaries]
-    parts = ([f"it saves at least {dollars(rule.min_usd_month)} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
+    parts = ([f"it saves at least ${rule.min_usd_month:,.2f} a month"] if rule.min_usd_month is not None else []) + ([f"it is one of these: {'; '.join(kinds)}"] if kinds else [])
     return f"On. A change needs two people when {' or '.join(parts)}. One confirms the request, and another approves it."
 
 
