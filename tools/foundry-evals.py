@@ -73,6 +73,8 @@ PRICING = {"tier": "PerGB2018", "retention_days": 30, "ingestion": "RespectQuota
 FAILED_CODE = "Failed"  # the platform's code word for a read that failed, as the real tools show it (never its text)
 METER_COLUMNS = ("meter", "category", "subcategory", "name", "pricing", "charge", "unit", "quantity", "usd", "share", "days", "avg_day", "min_day", "max_day", "cv", "first_day", "last_day")
 METER = ("Standard", "Usage Units", "OnDemand", "Usage", "1 Hour")  # the subcategory, name, pricing, charge and unit of the one meter that an invented scope is billed for
+PRICE_LIST = (("Basic", "Usage Units Lite", 0.1), ("Standard", "Usage Units", 0.2), ("Premium", "Usage Units Plus", 0.4))  # an invented price list of the product of that meter: SKU, meter and the price of one unit; the middle line is the meter's own
+PRICE_COLUMNS = ("price", "sku", "meter", "usd")  # the columns of a table of prices that vary: the product and the region are the same in every row of an invented list
 LINK_COLUMNS = ("handle", "type", "relation", "usd30d", "sku", "kind", "state")  # what neighbors tells of each resource that a reference joins
 LINK_SUMMARY = ("type", "relation", "count", "usd30d")  # a row of the links in a profile
 METRIC_COLUMNS = ("metric", "unit", "total", "max", "avg", "days")  # what a profile tells of each metric that has data
@@ -100,6 +102,7 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
     "commitments": {},
     "cost_history": {"handle": _TEXT, "type": _TEXT, "days": ("int", False, (7, 90)), "basis": ("choice", False, ("actual", "amortized"))},
     "cost_meters": {"handle": _TEXT, "type": _TEXT, "service": _TEXT, "days": ("int", False, (7, DAYS)), "offset": _OFFSET},
+    "price_alternatives": {"meter": ("text", True, ()), "within": ("choice", False, ("product", "service")), "offset": _OFFSET},
     "neighbors": {"handle": ("text", True, ()), "direction": ("choice", False, ("refers_to", "referred_by")), "offset": _OFFSET},
     "profile": {"handles": ("list", True, (1, 5)), "days": ("int", False, (7, DAYS)), "grain": _GRAIN},
     "changes": {"handles": ("list", True, (1, 5))},
@@ -564,6 +567,22 @@ def _cost_meters(row: dict, arguments: dict) -> dict:
             "offset": offset, "returned": len(rows), **({"next_offset": offset + len(rows)} if more else {}), "cols": columns, "rows": rows}
 
 
+def _price_alternatives(row: dict, arguments: dict) -> dict:
+    """The prices of the service of the one invented meter, in the shape of the real tool: the three lines of the invented list in the unit of the meter, the line of the meter itself (the middle one) and
+    the rate that the bill shows against its list price, from the cost and the quantity that the one invented meter is billed at. Only the meter m1 of a fixture that has a cost is known."""
+    if arguments["meter"] != "m1" or not any(r["usd"] > 0 for r in _resources(row)):
+        return _error("unknown-handle")
+    offset, resources = arguments["offset"] or 0, _resources(row)
+    spent, used = sum(r["usd"] for r in resources), sum(r["total"] or 0 for r in resources)
+    paid, retail = spent / used if spent > 0 and used > 0 else None, PRICE_LIST[1][2]
+    page = PRICE_LIST[offset:offset + 40]
+    more = offset + len(page) < len(PRICE_LIST)
+    return {"meter": "m1", "service": _service(row), "region": REGION, "within": arguments["within"] or "product", "unit": METER[-1], "match": "found", "lines": len(PRICE_LIST), "other_units": 0,
+            "complete": True, "offset": offset, "returned": len(page), **({"next_offset": offset + len(page)} if more else {}), "same": {"product": METER[0], "region": REGION}, "cols": list(PRICE_COLUMNS),
+            "rows": [[f"p{offset + place + 1}", sku, name, _number(price)] for place, (sku, name, price) in enumerate(page)],
+            "current": {"line": "p2", "retail": _number(retail), **({"paid": _number(paid)} if paid is not None else {}), "rate_ratio": None if paid is None else round(paid / retail, 4)}}
+
+
 def _links_of(row: dict, handle: str) -> dict:
     """What a resource of a fixture refers to and what refers to it: nothing, as no fixture has a reference. A part that is not listed as a resource says so."""
     if any(part["h"] == handle for part in _parts(row)):
@@ -667,7 +686,8 @@ def answers_of(row: dict) -> dict:
         ("estate_overview", _overview), ("list_resources", _list_resources), ("describe", _describe), ("metric_names", _metric_names), ("metric_summary", _metric_summary),
         ("measure", _measure), ("cost_lines", _cost_lines), ("advisor_items", _advisor_items), ("paid_features", _paid_features), ("data_volume", _data_volume),
         ("data_readers", _data_readers), ("data_writers", _data_writers), ("children", _children), ("metric_split", _metric_split), ("commitments", _commitments),
-        ("cost_history", _cost_history), ("cost_meters", _cost_meters), ("neighbors", _neighbors), ("profile", _profile), ("changes", _changes), ("recall_lessons", _recall_lessons),
+        ("cost_history", _cost_history), ("cost_meters", _cost_meters), ("price_alternatives", _price_alternatives), ("neighbors", _neighbors), ("profile", _profile), ("changes", _changes),
+        ("recall_lessons", _recall_lessons),
         ("recall_knowledge", _recall_knowledge), ("recall_open_questions", _recall_open_questions))}
 
 

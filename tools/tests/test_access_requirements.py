@@ -681,11 +681,14 @@ class TheCallsOfTheApp(unittest.TestCase):
         "billing-accounts-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Billing/billingAccounts"),
         "reservation-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.Capacity/reservationOrders"),
         "savings-plan-orders-read": lambda m, p: m == "GET" and p.endswith("/providers/Microsoft.BillingBenefits/savingsPlanOrders"),
+        # The public price list of Azure (cases/prices.py): one GET with no token, on a host that is no part of Azure Resource Manager.
+        "retail-prices-read": lambda m, p: m == "GET" and p == "https://prices.azure.com/api/retail/prices",
         # The property paths that the platform lists for the resource types of one provider (cases/arm.py, provider_paths): the address is the provider itself, and nothing after its namespace.
         "provider-paths-read": lambda m, p: m == "GET" and p.endswith("/providers/[A-Za-z0-9]{1,40}(?:.[A-Za-z0-9]{1,40}){1,3}"),
     }
     # Every model call goes to the AI Gateway, with the app's identity: the AI Gateway Models User role that the gateway's template assigns inside the project's own group, no line of this file.
-    NO_AZURE_ROLE: set = set()
+    # The one read of the public price list needs no role of any identity: it carries no token, and the network of the app has to allow the host (tools/cases-check.py says so).
+    NO_AZURE_ROLE: set = {"retail-prices-read"}
 
     @staticmethod
     def watch_calls():
@@ -777,6 +780,16 @@ class TheCallsOfTheApp(unittest.TestCase):
         self.assertEqual([(m, p.pattern) for m, p in extra], [("POST", re.escape(f"https://{host}/default/models/openai/v1/chat/completions"))])
         for method, pattern in extra:
             self.assertEqual([n for n, test in self.NAMES.items() if test(method, pattern.pattern.replace("\\", ""))], [], pattern.pattern)
+
+    def test_the_one_call_to_the_public_price_list_is_a_get_that_needs_no_role_and_is_on_no_line_of_this_file(self):
+        # The tool that shows the prices of alternatives (cases/prices.py) reads the public price list with the Watch's client and no token: no role, no line, and a host that the network of the app must allow.
+        found = [(m, p.pattern.replace("\\", "")) for m, p in self.watch_calls() if self.NAMES["retail-prices-read"](m, p.pattern.replace("\\", ""))]
+        self.assertEqual(found, [("GET", "https://prices.azure.com/api/retail/prices")])
+        self.assertEqual([n for n in self.NAMES if n != "retail-prices-read" and any(self.NAMES[n](m, p.pattern.replace("\\", "")) for m, p in self.watch_calls() if re.match(r"https://prices\.azure\.com/", p.pattern.replace("\\", "")))], [],
+                         "no other name matches it")
+        self.assertEqual(self.NO_AZURE_ROLE, {"retail-prices-read"})
+        self.assertNotIn("retail-prices-read", self.listed(), "a call that needs no role is on no line")
+        self.assertEqual([p.pattern for m, p in self.timer_calls() if re.match(r"https://prices\.azure\.com/", p.pattern.replace("\\", ""))], [], "the timer reads nothing there")
 
     def test_only_the_cases_identity_has_calls_listed(self):
         for grant in MANIFEST["grants"]:

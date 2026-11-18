@@ -2,7 +2,7 @@
   "agents": {
     "meternaut-investigator": {
       "connection": "aigateway",
-      "instructionsSha256": "2ce228c73e375f942e18abc18439108400451b60682b0798e153f00e756aff73",
+      "instructionsSha256": "ee959cfb844124cbe460d1c35937c36bd597d39c70551b5280342f4c313cf893",
       "kind": "prompt",
       "model": "gpt-5.5",
       "options": {
@@ -29,12 +29,13 @@
         "metric_summary",
         "neighbors",
         "paid_features",
+        "price_alternatives",
         "profile",
         "recall_knowledge",
         "recall_lessons",
         "recall_open_questions"
       ],
-      "toolsSha256": "97973a8cd95068a4d010c28fdb78fef47de40ca33c6fb0aef2725e3553fa839c"
+      "toolsSha256": "ceb53fd556f59e9720ccd366d576ecd66ea906aea296d854808413d5cf7dfa35"
     },
     "meternaut-scholar": {
       "connection": "aigateway",
@@ -52,7 +53,7 @@
     },
     "meternaut-skeptic": {
       "connection": "aigateway",
-      "instructionsSha256": "29c66ef525c8e53f5524fa2211dda7a033a8cf166f72d2d841dd60d4c9ca6cb4",
+      "instructionsSha256": "d01f986d4eda75a7c74c9496d9b8840f3f508206a25c8114538319e6b753a9c5",
       "kind": "prompt",
       "model": "gpt-6.1-sol",
       "options": {
@@ -70,7 +71,7 @@
   ],
   "schema": 1,
   "toolbox": {
-    "moduleSha256": "1e187deb16b03a23bdaecee51c1696a0a7d0f4e0e5a72f00e4094b5fbcae29f3"
+    "moduleSha256": "66f1e50b68d6ef15c031d07369ca89ede271e05f8960d3b12036cd21ea499203"
   },
   "tools": {
     "advisor_items": {
@@ -152,6 +153,10 @@
     "paid_features": {
       "implementationSha256": "b26d358ed46d67519fdbac2718a0be1187257dd6f0da53ed564f2b858a163937",
       "schemaSha256": "4d4150271c73237fa66a60514833637297006f50f3eafd1062b3a416a63c84ba"
+    },
+    "price_alternatives": {
+      "implementationSha256": "1cd101c1ec691e5de02f3295bbfe35f0966ceb8e0d908fd37b73fd480844191c",
+      "schemaSha256": "8fc3eeab1300e459aa3c5efece66a900c1e1f299224b823cf1eb09e1b0918b54"
     },
     "profile": {
       "implementationSha256": "cfcd70b8432501c686e5684eac4c0fab4556f2fbfb5f30fa395eaf9a51650086",

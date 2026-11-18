@@ -652,7 +652,7 @@ class TheEvaluations(unittest.TestCase):
             first = row["resources"][0]["h"] if row["resources"] else "r1"
             tables = ((row.get("workspaces") or {}).get(first) or {}).get("tables") or [{"table": None}]
             values = {"type": row["type"], "metric": row["metric"], "handle": first, "handles": [r["h"] for r in row["resources"]] or [first], "dimension": (row.get("dimensions") or ["x"])[0],
-                      "table": tables[0]["table"]}
+                      "table": tables[0]["table"], "meter": "m1"}
             with self.subTest(row=row["id"]):
                 for tool, answer in evals.answers_of(row).items():
                     for arguments in garbage:
