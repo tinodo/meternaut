@@ -11,6 +11,7 @@ from cases.memory_store import MemoryStore, stamp
 from cases.models import MAX_SIGNIN_PATH, Begun, DecideResult, EscalationRecord, StoreError, SwitchRecord
 from cases.people import People, Person
 from cases.web import approval, layout
+from cases.web.common import CUT_OPEN
 
 CORA = "44444444-5555-6666-7777-888888888888"  # a contact of the ladder: the role escalation and no other
 
@@ -1455,6 +1456,15 @@ class WhenTheLadderComesToAPerson(unittest.TestCase):
                     self.assertEqual(record.approver_oid, oid)
                     self.assertEqual((self.console.store.plan_get("plan0002").state, self.console.store.case_get("case0002").status), (state, case_status))
                     self.assertEqual((self.console.delegate.begins, self.console.delegate.finishes), ([], []))
+
+
+class TheStartPageSaysWhenTheListIsCut(unittest.TestCase):
+    def test_it_says_in_one_sentence_that_some_open_requests_are_not_listed_and_says_nothing_when_the_list_is_whole(self):
+        console = Console()
+        self.assertNotIn(CUT_OPEN, console.get("/").content)
+        console.store.truncated = {"open": 10000}  # what the table store says when it cut the list of open requests at its cap
+        page = console.get("/")
+        self.assertEqual((page.status, page.content.count(CUT_OPEN)), (200, 1))
 
 
 class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):

@@ -956,6 +956,17 @@ class TheApproversOfARequest(unittest.TestCase):
         self.assertEqual(watch.store.plan_get("p1").approvers, (A,), "nothing was half written")
 
 
+class TheCapOfTheTable(unittest.TestCase):
+    def test_a_watch_says_in_one_line_of_counts_which_lists_the_store_cut_and_says_nothing_when_it_cut_none(self):
+        watch = Watch()
+        watch.run()
+        self.assertEqual([line for line in watch.lines.found if line["type"] == "plans.truncated"], [])
+        watch.store.truncated = {"open": 10000}
+        watch.run()
+        (line,) = [line for line in watch.lines.found if line["type"] == "plans.truncated"]
+        self.assertEqual({key: value for key, value in line.items() if key not in ("v", "ts", "runId", "requestId")}, {"type": "plans.truncated", "open": 10000})
+
+
 class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):
     def world(self):
         world = World(people=WITH_NINA, store=Writes)

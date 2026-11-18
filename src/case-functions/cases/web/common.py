@@ -51,6 +51,14 @@ def off_notice(ctx: Ctx) -> Safe:
     return Safe("") if ctx.services.escalating else notice("warning", "", ESCALATION_OFF)
 
 
+CUT_OPEN = "More requests are open than Meternaut can read at once, so some of them are not listed here. Ask the person named under About this page."
+
+
+def cut_notice(ctx: Ctx) -> Safe:
+    """The one sentence that the start page says when the store cut the list of open requests at its cap (store.TableStore.truncated): nothing is lost silently."""
+    return notice("warning", "", CUT_OPEN) if getattr(ctx.store, "truncated", {}).get("open") else Safe("")
+
+
 def verified_brief(ctx: Ctx, plan: PlanRecord | None, action: ActionRecord | None) -> Brief | None:
     """The brief of a change whose saving Cost Management confirmed (the level Verified), or None: what code measured after the change, never what was expected."""
     if plan is None or action is None or action.state != "verified":

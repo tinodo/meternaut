@@ -41,6 +41,7 @@ class MemoryStore:
         self.investigations: dict[str, InvestigationRecord] = {}
         self.escalations: dict[tuple[str, str, int], EscalationRecord] = {}
         self.cursor = ""
+        self.truncated: dict[str, int] = {}  # a list that the store cut at its cap (store.TableStore): this one never does
         self.check: CheckRecord | None = None
 
     def runs_recent(self, limit: int = 20) -> list[RunRecord]:
