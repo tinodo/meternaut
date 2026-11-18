@@ -65,9 +65,9 @@ Access belongs to a scope, not a person: Maya can own a variant-B subscription a
 | **D. Partner-sold (CSP)** | Costs at retail rates only if the partner enables cost visibility (variant C until then); reservation usage shows no charge | At retail rates. Your partner's rates are not visible. | Scenario, Expected; Verified needs partner rates and invoices | A request to the partner, or the customer if the partner allowed it (off by default) |
 | **E. Pay-as-you-go** | Subscription roles; the bill is at list prices; no billing-account scope; commitment purchases are not shown | At the rates on your bill | Scenario, Expected, Verified | A request for a reservation; someone with Owner or Reservation Purchaser then decides whether to buy; no savings plan on this agreement |
 
-![An invented example: five columns, A to E, show one compute commitment under each variant: figure, price basis, saving word, how a purchase happens and what more access would buy.](../img/experience-access-variants.svg)
+![An invented example: five columns, A to E, show one compute commitment under each variant: figure, price basis, what it rests on, how a purchase happens and what more access would buy.](../img/experience-access-variants.svg)
 
-(An invented example.) In the picture every column keeps a price basis, a saving word and the same three buttons; only the figure, the words and the purchase path change. A Scenario is never called an Expected saving, and a request is never called a purchase.
+(An invented example.) In the picture every column keeps a price basis, one sentence of what the figure rests on and the same three buttons; only the figure, the words and the purchase path change. An assumption is never said to rest on the bill, and a request is never called a purchase.
 
 (An invented example.) Maya owns two unattached disks on a subscription without cost access (variant C). The chip reads "At list prices. I cannot see your rates." and the saving is a Scenario of about EUR 38 a month, never Expected.
 

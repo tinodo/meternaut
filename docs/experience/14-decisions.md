@@ -45,7 +45,7 @@
 
 | # | Decision | Instead of | Cost · security and privacy · reversibility |
 |---|---|---|---|
-| 8 | **Every saving figure carries its price basis and one of Scenario, Expected or Verified;** any other money figure carries its basis in its own sentence | A single saving number | More text on each card · a list-price scenario cannot pass as a promise, and agreements cannot be compared falsely · easy |
+| 8 | **Every saving figure says what it rests on in one plain sentence;** any other money figure carries its basis in its own sentence | A single saving number | More text on each card · a list-price scenario cannot pass as a promise, and agreements cannot be compared falsely · easy |
 | 10 | **People never see internal names:** a layer maps the design's words to screen words | Showing the design's terms | A vocabulary to keep in step with the design · none · easy |
 | 23 | **Finance letters and the Savings ledger add FinOps Foundation terms** (run rate reduction, cost avoidance, and savings only against a budget finance set) beside Scenario, Expected and Verified | The Foundation's terms alone (no confidence axis; its glossary calls "savings" ambiguous); ours alone (finance cannot reconcile) | A column in two reports · none · easy |
 | 27 | **Personas map to the FinOps Framework personas** | The older cloud-adoption "cost-conscious organization" roles page (deprecated, removal date 30 November 2026) | None · none · easy |

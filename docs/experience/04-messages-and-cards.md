@@ -65,7 +65,7 @@ flowchart LR
 |---|---|
 | 1. Sender row | "Meternaut (AI)" and the type label "Recommendation" |
 | 2. Headline and scope | The one change proposed, in the owner's words, ending in a question; its scope |
-| 3. Value tile | A range, never a single figure; the price-basis chip; the saving word; what keeping things as they are forgoes, stated once |
+| 3. Value tile | A range, never a single figure; one sentence of what it rests on; what keeping things as they are forgoes, stated once |
 | 4. Why I think so, What I checked | The evidence in a line or two and why I prefer this option to one that saves more; the strongest objection and what was done about it, side by side |
 | 5. Decisions | Review the plan, "No, leave it as it is", Not mine: one tap each |
 | 6. Talk back | The Details toggle, and "Ask or tell", which opens a small input |
@@ -74,7 +74,7 @@ flowchart LR
 
 Five controls are visible: three decisions and two toggles.
 
-**The ten parts.** The numbers above mark places on the screen. The Recommendation itself has ten parts ([design](../design/03-agents-and-workflows.md#6-what-a-person-receives)): what it proposes; why, and how to check; options; consequences; what was tested; what would change my mind; effort; reversibility; what happens on yes; how everyone will know. The face shows the first three, plus short forms of consequences and what was tested. **Inside Details** are at most two other options, each with its own button, range, saving word and price basis, then the other seven parts and "Fewer like this".
+**The ten parts.** The numbers above mark places on the screen. The Recommendation itself has ten parts ([design](../design/03-agents-and-workflows.md#6-what-a-person-receives)): what it proposes; why, and how to check; options; consequences; what was tested; what would change my mind; effort; reversibility; what happens on yes; how everyone will know. The face shows the first three, plus short forms of consequences and what was tested. **Inside Details** are at most two other options, each with its own button, range and basis sentence, then the other seven parts and "Fewer like this".
 
 **A refusal is never chased.** "No, leave it as it is" closes this ask and no reminder follows; the same Recommendation returns only if the evidence changes materially or a note expires, and then it says why. "Not mine" hands the item to cover, says nothing about the person and optionally asks why.
 
