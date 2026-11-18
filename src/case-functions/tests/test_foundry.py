@@ -653,6 +653,17 @@ class Run(unittest.TestCase):
                 self.assertEqual(result.calls[0]["chars"], len(sent))
                 self.assertEqual(len(sent), MAX_RESULT_CHARS if cut else length)
 
+    def test_a_result_is_cut_at_the_cap_of_the_tool_that_answered(self):
+        from cases.toolbox import result_cap
+        for name, cap in (("measure", 12000), ("metric_summary", 12000), ("profile", 16000), ("describe", 6000)):
+            for length, cut in ((cap, False), (cap + 1, True)):
+                with self.subTest(tool=name, length=length):
+                    self.assertEqual(result_cap(name), cap)
+                    rig = Rig()
+                    result = rig.run(reply([call(name, {}, "c1")]), reply([message("fine")]), handler=Handler("x" * length))
+                    (sent,) = [item["output"] for item in rig.service.responses[1]["input"]]
+                    self.assertEqual((len(sent), sent.endswith(fo.CUT_NOTE), result.calls[0].get("cut")), (cap if cut else length, cut, True if cut else None))
+
     def test_the_agent_may_make_as_many_calls_as_are_allowed_and_must_then_give_its_text(self):
         rig = Rig()
         handler = Handler()
@@ -995,6 +1006,44 @@ class Salvage(unittest.TestCase):
             rig.run(self.asks("c1"), reply([message("never")]), handler=Handler(), max_calls=40, stop=lambda progress: "a refusal" if progress.responses else None, salvage=lambda: 25.0)
         self.assertEqual(str(raised.exception), "Foundry run stopped by the harness: a refusal")
         self.assertEqual(raised.exception.partial.responses, 1, "no last request for a brake that is not the tokens")
+
+    def test_at_a_time_or_a_grace_cut_the_brake_is_asked_and_a_plain_reason_refuses_the_last_request_and_the_tokens_of_a_beat_let_it_through(self):
+        cuts = (("time", dict(max_calls=1, max_seconds=35), 3, 10), ("grace", dict(max_calls=1), 5, 0))  # the responses that come before the cut, and the seconds that each takes
+        for cut, options, responses, advance in cuts:
+            for reason, given in (("a switch is pulled", False), (fo.Salvageable("the token budget of the run is used up"), True)):
+                with self.subTest(cut=cut, given=given):
+                    rig = Rig()
+                    rig.service.advance = advance
+                    replies = [*[self.asks(f"c{n}") for n in range(1, responses + 1)], reply([message("the answer")])]
+                    stop = lambda progress, reason=reason, responses=responses: reason if progress.responses >= responses else None  # noqa: E731
+                    if given:
+                        result = rig.run(*replies, handler=Handler(), stop=stop, salvage=lambda: 25.0, **options)
+                        self.assertEqual((result.text, result.salvaged, result.responses), ("the answer", True, responses + 1))
+                    else:
+                        with self.assertRaises(FoundryError) as raised:
+                            rig.run(*replies, handler=Handler(), stop=stop, salvage=lambda: 25.0, **options)
+                        self.assertEqual((raised.exception.partial.responses, raised.exception.partial.salvaged), (responses, False), "no last request after a reason that is not the tokens")
+                        self.assertNotIn("harness", str(raised.exception), "the run ended as the cut ends it, with its own words")
+
+    def test_a_run_that_is_over_its_tokens_is_given_its_last_request_without_the_brake_being_asked_again_even_when_it_would_now_refuse_it(self):
+        seen = []
+
+        def stop(progress):
+            seen.append(progress.responses)
+            if progress.input_tokens + progress.output_tokens < 40:
+                return None
+            return fo.Salvageable("the token budget of the run is used up") if len(seen) == 2 else "three refusals"  # the tokens come first, as the harness tests them before the refusals
+
+        result = Rig().run(self.asks("c1", tokens=(30, 10)), reply([message("tokens answer")], 5, 2), handler=Handler(), max_calls=40, stop=stop, salvage=lambda: 25.0)
+        self.assertEqual((result.text, result.salvaged, result.out_of_tokens, seen), ("tokens answer", True, True, [0, 1]))
+
+    def test_the_word_for_a_last_request_that_failed_is_failed_when_the_error_has_no_code_no_text_of_no_answer_and_no_status(self):
+        from cases.foundry import _salvage_word
+        plain, odd = FoundryError("the service said something that is not a word"), FoundryError("a status that is no number")
+        odd.status, odd.code = True, "not a word!"
+        numbered = FoundryError("the service said no")
+        numbered.status = 502
+        self.assertEqual([_salvage_word(error) for error in (plain, odd, numbered)], ["failed", "failed", "502"])
 
     def test_an_agent_that_asks_after_the_rounds_that_it_was_given_is_asked_once_more_for_its_text_and_the_rounds_are_not_the_time_or_the_tokens(self):
         rig = Rig()

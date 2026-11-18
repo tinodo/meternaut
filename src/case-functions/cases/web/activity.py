@@ -27,6 +27,7 @@ ENDS = {"answered": ("It gave its answer", "It gave its answer within its limits
         "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),
         "tokens": ("Its tokens ran out", "The tokens that it was allowed ran out, so it was told to answer with what it had."),
         "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
+        "empty": ("It had nothing to look at", "No resource of its kinds was listed, so it was not asked."),
         "failed": ("It failed", "It gave no answer that could be read.")}
 BEATS = ("The AI looked at the estate in parts, one after the other. Code chose the parts by what each kind of resource cost in the last 30 days, the dearest first, and no amount is shown. "
          "Each part is a short session of its own, with its own tool calls, seconds and tokens, and the lines of the bill that no resource owns can be a part too.")

@@ -621,6 +621,17 @@ class Run(unittest.TestCase):
         _, out, _, _ = self.go([telemetry([*a_good_run()[:-1], *an_investigation(), a_good_run()[-1]])])
         self.assertNotIn("Claims of the findings", out, "findings that carry no counts say nothing of why")
 
+    def test_the_totals_that_no_tool_equals_are_added_up_by_what_the_cited_number_is_in_counts_only(self):
+        events = a_good_run()
+        events[-1:-1] = [*an_investigation(), event("investigation.finding", finding=1, kept=False, totalDiffers=4, diffNone=1, diffNear=0, diffStat=2, diffZero=1, diffFar=0),
+                         event("investigation.finding", finding=2, kept=True, totalDiffers=6, diffNone=0, diffNear=1, diffStat=0, diffZero=2, diffFar=3)]
+        for extra in ((), ("--counts-only",)):
+            _, out, _, _ = self.go([telemetry(events)], *extra)
+            self.assertIn("Cited totals that none of the tools' totals equals, by what the number is: 1 not a number; 1 within 5 percent of a total; 2 the maximum, the average or the days "
+                          "with data; 3 a zero; 3 another number.", out, extra)
+        _, out, _, _ = self.go([telemetry([*a_good_run()[:-1], *an_investigation(), a_good_run()[-1]])])
+        self.assertNotIn("Cited totals that none", out, "findings that carry no counts say nothing of them")
+
     def test_the_tools_that_are_named_are_the_first_twelve_by_their_seconds_and_the_others_are_counted(self):
         events = a_good_run()
         events[-1:-1] = [*an_investigation(), *[event("investigation.call", beat=1, n=n, by="agent", tool=f"tool_{chr(97 + n)}", handles=0, ok=True, chars=2, seconds=float(n)) for n in range(15)]]

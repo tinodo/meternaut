@@ -562,7 +562,7 @@ def execute(s: Services, trigger: str) -> Summary:
         record = RunRecord(
             run_id=h.run_id, trigger=trigger, started_at=started_at, finished_at=stamp(s.clock()) if finished else None, ok=summary.ok and reason is None,
             leads=summary.leads, cases=summary.cases, proposed=summary.proposed, needs_human=summary.needs_human, dropped=summary.dropped, errors=summary.errors,
-            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(clean_text(n, 300) for n in collapse(notes)[:20]), reason=reason, investigated=investigated, held=summary.held)
+            tokens=summary.tokens, seconds=summary.seconds, notes=tuple(collapse(clean_text(n, 300) for n in notes)[:20]), reason=reason, investigated=investigated, held=summary.held)
         try:
             s.extras.store.run_put(record)
         except StoreError as error:

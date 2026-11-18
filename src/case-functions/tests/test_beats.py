@@ -149,6 +149,16 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
         found = beats.seed(box.call, beats.Beat(1, ("contoso.compute/rigs",), False, 0, 1))
         self.assertEqual((found.handles, found.pictures, found.failed), (["r1"], None, 1))
 
+    def test_a_listing_that_could_not_read_every_subscription_is_counted_too_and_keeps_what_it_listed(self):
+        kind = "contoso.compute/rigs"
+        for caveat in ({"unavailable": ["a subscription"]}, {"not_read": {"count": 1, "first": ["a subscription"], "why": "the time of one call for reading subscriptions was used up"}}):
+            with self.subTest(caveat=caveat):
+                box = SeedToolbox({kind: [resource_of(1, kind)]}, answers={"list_resources": json.dumps({"type": kind, "total": 1, "cols": ["handle", "usd30d"], "rows": [["r1", 100.0]], **caveat})})
+                found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
+                self.assertEqual((found.handles, found.failed, found.counts), (["r1"], 1, {kind: 1}))
+        box = SeedToolbox({kind: [resource_of(1, kind)]}, answers={"list_resources": json.dumps({"type": kind, "total": 1, "cols": ["handle", "usd30d"], "rows": [["r1", 100.0]], "costs": "unavailable"})})
+        self.assertEqual(beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1)).failed, 0, "a listing without costs lists every resource")
+
     def test_a_beat_of_the_lines_that_no_resource_owns_reads_nothing(self):
         box = SeedToolbox({})
         found = beats.seed(box.call, beats.Beat(1, (), True, 0, 1))
@@ -613,6 +623,13 @@ class TheInvestigationInBeats(unittest.TestCase):
         self.assertEqual([r.end for r in result.beats][0], "tokens")
         self.assertEqual(h.of("investigation.beat")[0]["end"], "tokens")
 
+    def test_a_beat_that_gave_its_answer_when_it_was_asked_once_more_for_no_cause_that_the_run_names_says_its_limit(self):
+        h = rig([script(one("r1"), salvaged="rounds"), script(), script()])
+        result = h.go()
+        self.assertEqual([r.end for r in result.beats][0], "answered", "no flag of time or tokens and no refused call: the run names no cause")
+        self.assertEqual(h.of("investigation.beat")[0].get("salvaged"), True)
+        self.assertIn("beat 1: the investigator was cut off by its limit and gave its answer when it was asked once more", h.notes)
+
     def test_without_a_cost_to_rank_by_the_whole_estate_is_one_open_beat_exactly_as_one_session_always_was(self):
         h = ti.Harness(BeatFoundry([script(one("r1"))]), SeedToolbox(pooled()[0]), ti.make_settings(investigate_beats=3), with_store=True)
         result = h.go()
@@ -656,6 +673,102 @@ class TheInvestigationInBeats(unittest.TestCase):
         h = rig([script(one("r1")), script(one("r3"))], by_kind={"contoso.compute/rigs": 100.0, "fabrikam.store/vaults": 90.0}, investigate_beats=2)
         h.go()
         self.assertEqual([json.loads(run["input"])["beat"]["focus"] for run in h.foundry.investigator_runs()], [["contoso.compute/rigs"], ["fabrikam.store/vaults"]])
+
+
+class WhenABeatHasNothingToLookAt(unittest.TestCase):
+    """A beat whose kinds have no resource in what code read for it is not given to the Investigator: the fourth real run spent 43,064 tokens and three calls on one, and its finding listed no handle."""
+
+    GHOST = "contoso.ghost/things"  # a kind that the bill names and no resource has (the cost lines of resources that are gone)
+
+    @staticmethod
+    def ghosted(beats_, ghosts, unowned=0.0, per_kind=2, **settings):
+        """The estate of rig() and `ghosts`, a kind with its cost, whose resources the toolbox does not list; `unowned` is the cost of the lines of the bill that no resource owns."""
+        h = rig(beats_, per_kind=per_kind, **settings)
+        costs = h.contexts[SUBSCRIPTION].costs
+        for number, (kind, usd) in enumerate(ghosts.items(), 1):
+            provider, _, name = kind.partition("/")
+            costs[f"{RG}/rg-app/providers/{provider}/{name}/gone-{number}".lower()] = usd
+        if unowned:
+            costs[""] = unowned
+        return h
+
+    def test_a_beat_whose_kind_has_no_resource_runs_no_session_and_says_so_and_the_beats_around_it_run(self):
+        h = self.ghosted([script(one("r1")), script(one("r3")), script(one("r5"))], {self.GHOST: 2500.0}, investigate_beats=4)
+        result = h.go()
+        lines = h.of("investigation.beat")
+        self.assertEqual([(e["beat"], e["end"], e["ok"], e["toolCalls"], e["tokens"], e["seeded"], e["findings"]) for e in lines],
+                         [(1, "answered", True, 1, 44_000, 2, 1), (2, "empty", True, 0, 0, 0, 0), (3, "answered", True, 1, 44_000, 2, 1), (4, "answered", True, 1, 44_000, 2, 1)])
+        self.assertEqual(len(h.foundry.investigator_runs()), 3, "the Investigator was not asked about the beat with nothing to look at")
+        self.assertIn("beat 2: no resource of its kinds was listed, so the Investigator was not asked", h.notes)
+        (finished,) = h.of("investigation.finished")
+        self.assertEqual((finished["beats"], finished["ok"], finished["toolCalls"], result.tool_calls, result.state), (4, True, 3, 3, "ran"))
+        self.assertEqual(sum(e["tokens"] for e in lines) + 600, finished["tokens"], "the totals hold the sessions that ran and nothing for the one that did not")
+        inputs = [json.loads(run["input"]) for run in h.foundry.investigator_runs()]
+        self.assertEqual(inputs[1]["earlier"][1], {"beat": 2, "kinds": [self.GHOST], "concluded": False}, "the next beat is told that the kinds of the empty beat were not judged")
+        self.assertEqual([r.end for r in result.beats], ["answered", "empty", "answered", "answered"])
+
+    def test_a_beat_with_one_kind_that_has_resources_and_one_that_has_none_runs(self):
+        h = self.ghosted([script(one("r1")), script(one("r3")), script(one("r5"))], {"contoso.compute/ghosts": 1500.0}, investigate_beats=4)
+        h.go()
+        self.assertEqual([(e["beat"], e["kinds"], e["end"]) for e in h.of("investigation.beat")], [(1, 2, "answered"), (2, 1, "answered"), (3, 1, "answered")])
+        self.assertEqual(json.loads(h.foundry.investigator_runs()[0]["input"])["counts"], {"contoso.compute/rigs": 2, "contoso.compute/ghosts": 0})
+
+    def test_a_beat_that_holds_the_lines_of_the_bill_that_no_resource_owns_runs_with_nothing_listed(self):
+        h = self.ghosted([script()], {self.GHOST: 5000.0}, unowned=100.0, per_kind=0, investigate_beats=2)
+        h.go()
+        self.assertEqual([(e["beat"], e["kinds"], e["billing"], e["end"]) for e in h.of("investigation.beat")], [(1, 1, False, "empty"), (2, 0, True, "answered")])
+        self.assertEqual(len(h.foundry.investigator_runs()), 1)
+        ghosts = {"contoso.ghost/things": 5000.0, "fabrikam.ghost/things": 3000.0, "northwind.ghost/things": 2000.0}
+        h = self.ghosted([script()], ghosts, unowned=1000.0, per_kind=0, investigate_beats=2)
+        h.go()
+        self.assertEqual([(e["beat"], e["kinds"], e["billing"], e["end"]) for e in h.of("investigation.beat")], [(1, 1, False, "empty"), (2, 2, True, "answered")],
+                         "the last beat names kinds that no listing found and holds the lines of the bill: it runs")
+
+    def test_when_no_listing_gave_a_resource_in_any_beat_no_session_runs_and_the_investigation_failed_with_a_note_that_says_why(self):
+        h = rig([])
+        h.toolbox = SeedToolbox({})
+        result = h.go()
+        self.assertEqual((result.ran, result.state, result.tokens, result.tool_calls, len(h.foundry.investigator_runs())), (False, "failed", 0, 0, 0))
+        self.assertEqual([(e["beat"], e["end"], e["ok"], e["tokens"]) for e in h.of("investigation.beat")], [(n, "empty", True, 0) for n in (1, 2, 3)])
+        self.assertEqual(result.note, "no resource of its kinds was listed, so the Investigator was not asked")
+        self.assertEqual(h.of("investigation.finished")[0]["ok"], False)
+
+    def test_a_listing_that_failed_or_could_not_read_every_subscription_does_not_make_a_beat_empty_so_the_investigator_is_asked_and_may_list_again(self):
+        partial = {"type": "any", "total": 0, "cols": ["handle"], "rows": [], "unavailable": ["a subscription"]}
+        for what, answer in (("no answer", '{"error":"unavailable"}'), ("not in full", json.dumps(partial))):
+            with self.subTest(what=what):
+                h = rig([script(), script(), script()])
+                h.toolbox = SeedToolbox(pooled()[0], answers={"list_resources": answer})
+                result = h.go()
+                self.assertEqual(len(h.foundry.investigator_runs()), 3, "a beat that code could not look at is looked at by the Investigator")
+                self.assertEqual([(e["beat"], e["end"]) for e in h.of("investigation.beat")], [(n, "answered") for n in (1, 2, 3)])
+                self.assertEqual(result.state, "ran")
+                self.assertTrue(any(note.startswith("beat 1: ") and "could not be read in full" in note for note in h.notes), "the read that failed is told too")
+                self.assertNotIn("no resource of its kinds was listed, so the Investigator was not asked", h.notes)
+
+    def test_a_beat_is_empty_only_when_every_kind_that_it_has_was_listed_in_full_with_no_resource_and_it_holds_no_bill(self):
+        kind, other = "contoso.compute/rigs", "fabrikam.store/vaults"
+        many = tuple(f"contoso.thing{n}/kind" for n in range(beats.SEED_RESOURCES + 1))
+        for beat, seeded, empty in ((beats.Beat(1, (kind,)), beats.Seed({kind: 0}), True), (beats.Beat(1, (kind,)), beats.Seed(failed=1), False), (beats.Beat(1, (kind,)), beats.Seed({kind: 0}, failed=1), False),
+                                    (beats.Beat(1, (kind, other)), beats.Seed({kind: 0, other: 0}), True), (beats.Beat(1, (kind, other)), beats.Seed({kind: 0}, failed=1), False),
+                                    (beats.Beat(1, (kind, other)), beats.Seed({kind: 0, other: 3}, ["r1"]), False), (beats.Beat(1, (kind,)), beats.Seed({kind: 2}), False),
+                                    (beats.Beat(1, (kind,)), beats.Seed({}, ["r1"]), False), (beats.Beat(1, (kind,), True), beats.Seed({kind: 0}), False),
+                                    (beats.Beat(1, (), True), beats.Seed(), False), (beats.Beat(), beats.Seed(), False), (beats.Beat(1, (kind,), False, 3), beats.Seed({kind: 0}), False),
+                                    (beats.Beat(1, many), beats.Seed(dict.fromkeys(many[: beats.SEED_RESOURCES], 0)), False), (beats.Beat(1, (kind,)), None, False)):
+            with self.subTest(beat=beat, seeded=seeded):
+                self.assertEqual(beats.empty(beat, seeded), empty)
+
+    def test_the_end_of_an_empty_beat_is_a_word_of_the_record_and_of_the_page_and_changes_no_end_of_the_watch(self):
+        beat = beats.Beat(1, (self.GHOST,))
+        self.assertEqual(beats.carry([beats.Result(beat, end="empty")]), [{"beat": 1, "kinds": [self.GHOST], "concluded": False}])
+        done, empty = beats.Result(beats.Beat(2, ("contoso.compute/rigs",)), end="answered"), beats.Result(beat, end="empty")
+        self.assertEqual(activity.end_of(investigate.Investigation(ran=True, beats=[empty, done])), "answered")
+        self.assertEqual(activity.end_of(investigate.Investigation(ran=True, beats=[empty, beats.Result(beats.Beat(3), end="tokens"), done])), "tokens")
+        h = self.ghosted([script(one("r1")), script(one("r3")), script(one("r5"))], {self.GHOST: 2500.0}, investigate_beats=4)
+        h.go()
+        (record,) = h.store.investigations_recent()
+        self.assertEqual([(b["n"], b["end"], b["calls"], b["tokens"]) for b in record.beats], [(1, "answered", 1, 44_000), (2, "empty", 0, 0), (3, "answered", 1, 44_000), (4, "answered", 1, 44_000)])
+        self.assertEqual(record.end, "answered")
 
 
 class TheSkepticJudgesAsManyFindingsAsItTakes(unittest.TestCase):

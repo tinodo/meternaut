@@ -1,6 +1,6 @@
 """The tools of the investigator: read-only reads of the estate whose answers hold typed values only, and opaque handles instead of names.
 
-A tool answer is a JSON string of at most MAX_RESULT_CHARS characters. A resource is named by a handle (r1, r2, ...) that means something only in this run: the id,
+A tool answer is a JSON string of at most MAX_RESULT_CHARS characters (result_cap(name): MEASURE_RESULT_CHARS for measure and metric_summary, which answer for a whole type, and a cap of its own for profile). A resource is named by a handle (r1, r2, ...) that means something only in this run: the id,
 the name, the tags and every other text that somebody wrote about a resource stay in the Resource below and never go into an answer. What does go into an answer is a
 number, a flag, a GUID, or a short word in the form that the platform itself uses. The checks bound the alphabet, the length and the number of parts of a word, and
 that does not say what a word means, so a text goes into an answer only where the platform, and not the owner of the estate, chooses it:
@@ -102,6 +102,7 @@ from .models import CapabilityRecord, StoreError
 from .roles import MAX_CITED_NAME
 
 MAX_RESULT_CHARS = 6000
+MEASURE_RESULT_CHARS = 12000  # for measure and metric_summary, which answer for a whole type: 54 resources with 3 metrics are about 8,500 characters, and 80 with 4 are cut, the last ones named as unread
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
 MAX_LISTED = 40  # resources or cost lines in one answer
 MAX_MEASURE_ROWS = 80  # resources in one measure answer
@@ -160,8 +161,8 @@ NEIGHBOR_ROWS = 20  # the handles of one page of neighbors
 FAN_IN = 10  # the resources that refer to one resource, above which neighbors also gives a row for each type and relation
 NEIGHBOR_GROUPS = 12  # the rows of that summary
 DOSSIER_WORKERS = 6  # the reads of one profile that are made at the same time
-OWNER_READS = 12  # the Activity Logs that the tools of one run read
-OWNER_SECONDS = 30.0  # and the time that those reads may take
+OWNER_READS = 24  # the Activity Logs that the tools read in one beat: a picture of five resources reads five of them and a beat makes up to five pictures (it was 12)
+OWNER_SECONDS = 150.0  # and the seconds that those reads may take in one beat, added up over the reads that run at the same time (ownership.OwnerReader), and not the time between them: five reads were measured at 31 seconds (6.2 each, one picture), so at 150 the 24 reads bind first and the seconds bind only when the log is slower than 6.25 seconds a read (it was 30, used up by the first picture of a beat)
 HISTORY_COLUMNS = ("handle", "age_days", "created_by", "changed_days", "changed_by", "written_14d")
 AGES = ("// meternaut:ages\nresources\n| where id in~ ({ids})\n| project id, sd = systemData, made = coalesce(tostring(properties.timeCreated), tostring(properties.creationTime), "
         "tostring(properties.createdTime), tostring(properties.creationDate), tostring(properties.CreationDate), tostring(properties.createdDate), tostring(properties.dateCreated), "
@@ -892,8 +893,11 @@ PLACEHOLDER_PRICE = f"p{HANDLE_LIMIT}"
 
 
 def result_cap(name: object) -> int:
-    """The most characters that the answer of a tool may have: MAX_RESULT_CHARS, and for `profile`, which answers for up to dossier.MAX_HANDLES resources, what a profile of that many may take."""
-    return dossier.MAX_HANDLES * dossier.PER_HANDLE if name == "profile" else MAX_RESULT_CHARS
+    """The most characters that the answer of a tool may have: MAX_RESULT_CHARS; MEASURE_RESULT_CHARS for `measure` and `metric_summary`, which answer for a whole type; and for `profile`, which
+    answers for up to dossier.MAX_HANDLES resources, what a profile of that many may take."""
+    if name == "profile":
+        return dossier.MAX_HANDLES * dossier.PER_HANDLE
+    return MEASURE_RESULT_CHARS if name in ("measure", "metric_summary") else MAX_RESULT_CHARS
 
 
 def _page(answer: dict, rows: list, offset: int, total: int) -> None:
@@ -1891,7 +1895,7 @@ class Toolbox:
                 answer["unread"] = [handle for handle in handles if handle in skipped]
 
         refresh()
-        while len(_dump(answer)) > MAX_RESULT_CHARS and rows:
+        while len(_dump(answer)) > result_cap("metric_summary") and rows:
             last = rows[-1]["handle"]
             skipped.add(last)
             rows[:] = [row for row in rows if row["handle"] != last]
@@ -1967,7 +1971,7 @@ class Toolbox:
                     "rows": [row for handle in kept for row in rows_of(handle)]}
 
         built = answer()
-        while len(_dump(built)) > MAX_RESULT_CHARS and any(handle in summaries and handle not in skipped for handle in handles):
+        while len(_dump(built)) > result_cap("measure") and any(handle in summaries and handle not in skipped for handle in handles):
             skipped.add(next(handle for handle in reversed(handles) if handle in summaries and handle not in skipped))
             built = answer()
         for handle, entry in zip(handles, page):
