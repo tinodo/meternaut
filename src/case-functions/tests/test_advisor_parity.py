@@ -19,7 +19,7 @@ from test_web_support import MAYA, TINO, Console, make_case, make_decision, make
 
 from cases import advisor, brief as brief_mod, cards, detectors, investigate, letters
 from cases.detectors import ADVISOR
-from cases.models import ADVISE
+from cases.models import ADVICE_OPEN_MAX, ADVISE
 from cases.people import Person
 
 SUB_B = sub_id(5)
@@ -260,7 +260,7 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
 
     def test_no_guard_of_the_ai_cases_holds_an_advisor_case_back_a_small_figure_ten_open_questions_or_the_investigation(self):
         watched = Watched()
-        for n in range(10):  # the ten open requests that the AIs did not settle are the whole of ADVICE_OPEN_MAX
+        for n in range(ADVICE_OPEN_MAX):  # the open requests that the AIs did not settle are the whole of ADVICE_OPEN_MAX
             watched.store.plan_put(make_plan(plan_id=f"open{n}", case_id=f"kopen{n}", family=ADVISE, resource_id=disk_id(f"other-{n}"), state="open", approvers=(TINO,),
                                              preconditions={"family": ADVISE, "caseStatus": "needs_human"}, expires_at="2026-11-30T00:00:00Z"))
         ran = investigate.Investigation(ran=True)

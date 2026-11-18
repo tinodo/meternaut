@@ -286,6 +286,11 @@ def _place(doc: "_Doc", brief: Brief) -> None:
         doc.paragraph(_data(place, 160), muted=True)
 
 
+def _heads_up(brief: Brief) -> str:
+    """The warning about a resource that something that runs by itself changes, as the one line that every letter says it in ("" for a request that has none)."""
+    return f"{brief_mod.HEADS_UP}: {_data(brief.heads_up, 320)}" if brief.heads_up else ""
+
+
 def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
     """One request that waits for an answer: the title and the place, the risk, how sure and whether it can be undone as words (a letter has no shapes: the words carry it), what it is
     worth (the figure a year and a month with its level and its basis, and once that money is in US dollars), three facts, what changes, what could go wrong, and one link to the page where
@@ -302,6 +307,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
     doc.figure(stake_of(brief))
+    if brief.heads_up:
+        doc.paragraph(_heads_up(brief))
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
@@ -385,7 +392,8 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
     count = len(rows)
     doc = _Doc(f"{count} decision{' waits' if count == 1 else 's wait'} for you" if rows else f"{len(kept)} finding{' is' if len(kept) == 1 else 's are'} held back from a request")
     if rows:
-        doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "") for row in rows[:MAX_LISTED]))
+        doc.items(*(f"{_data(row.title, 200)}: {row.stake.short}." + (" No AI looked at it." if row.brief is not None and row.brief.by_code else "")
+                    + (f" {_heads_up(row.brief)}" if row.brief is not None and row.brief.heads_up else "") for row in rows[:MAX_LISTED]))
     if count > MAX_LISTED:
         doc.paragraph(f"{count - MAX_LISTED} more wait on the page.")
     if kept:
@@ -452,6 +460,8 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True)
     doc.figure(stake)
+    if brief.heads_up:
+        doc.paragraph(_heads_up(brief))
     waited = waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))
     rows = [("Waiting", f"{_days(days)}, since {_data(started(plan)[:10], 12)}"),
             ("What waiting has cost", waited or "No saving has been measured, so what waiting costs is not worked out."),
@@ -484,7 +494,8 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case, source in rows[:MAX_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)), f"Why you are told: {_data(source, 20)}.") if part))
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+                                                 f"Why you are told: {_data(source, 20)}.", _heads_up(brief)) if part))
     doc.items(*lines)
     if count > MAX_LISTED:
         doc.paragraph(f"and {count - MAX_LISTED} more.")
@@ -510,7 +521,8 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
     for plan, case in rows[:WEEKLY_LISTED]:
         brief = brief_mod.build_brief(case, plan, None, (), now=now)
         stake, days = stake_of(brief), waited_days(plan, now)
-        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))) if part))
+        lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}: {stake.short}.", f"Waiting {_days(days)}.", waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True)),
+                                                 _heads_up(brief)) if part))
     if lines:
         doc.items(*lines)
     if count > WEEKLY_LISTED:

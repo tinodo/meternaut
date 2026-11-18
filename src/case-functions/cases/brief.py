@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import ADVISE, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
+from .models import ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, AUTOMATED, GROUP_FACT, HELD, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Readiness, started
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -63,13 +63,17 @@ SHARED = ("microsoft.network/privateendpoints", "microsoft.network/privatednszon
           "microsoft.network/networkmanagers", "microsoft.keyvault/vaults")
 HELD_UNPROVEN = "nothing measured shows that nothing uses it, so this asks for a look and not for a deletion"  # what code notes when it turns a finding that asks to delete into a look
 HELD_SHARED = "others share this kind of resource, so this asks for a look and not for a deletion"
-# A finding that an automation manages is held back: the Activity Log names a write within this many days by an identity that is no person and not Meternaut's own. A finding that asks to delete
-# a resource whose Activity Log was not read is held back as well: an unread log shows nothing, and nothing is not "nobody changed it".
+# A resource that an automation manages gets a warning on its request, not a hold: the Activity Log names a write within this many days by an identity that is no person and not Meternaut's own
+# (automation_note). Advice changes nothing in Azure, and the right advice for such a resource is to change it where it is defined. A finding that asks to delete a resource whose Activity Log
+# was not read is held back: an unread log shows nothing, and nothing is not "nobody changed it".
 AUTOMATION_DAYS = 14
 # And a finding that asks to delete a resource of the network that others do not share is held back when what depends on it was not checked to the end (cases/impact.py): `impact`.
-HELD_REASONS = ("automation", "unchecked", "impact")
+HELD_REASONS = ("unchecked", "impact")
+HEADS_UP = "Heads-up"  # the label of the warning line of a request about a resource that an automation manages (the page, the card, the letters)
+AUTOMATION_ACT = "Change it where it is defined (the template or pipeline that deploys it)."
 # Why a finding has no request, as every page and letter says it: the heading (one line a reason), the guard's sentence and what the guard still needs. `{when}` is how long ago something that runs
-# by itself changed the resource. A finding that a guard holds back is shown, in a request of its own that no person is asked to approve (cases/approvals.py Approvals.settle).
+# by itself changed the resource. A finding that a guard holds back is shown, in a request of its own that no person is asked to approve (cases/approvals.py Approvals.settle). `automation` is no
+# guard now (automation_note is a warning on a request): its words stay for the held requests that were made before, and are shown as they were.
 HOLD_WORDS = {
     "automation": ("Something that runs by itself changes it",
                    "Something that runs by itself changed it {when} and would change it back, so a change by hand would not last.",
@@ -87,7 +91,8 @@ HOLD_WORDS = {
               "Meternaut's rules changed, and it had asked about this on less evidence than it asks for now.",
               "Nothing is asked of you. Meternaut looks at it again at its next search."),
     "waiting": ("Waiting for a free place",
-                "Nothing holds it back any more, but all the places for requests are taken, so Meternaut has not asked about it yet.",
+                f"Nothing holds it back any more, but it waits for a free place: Meternaut keeps {ADVICE_OPEN_MAX} requests open at once for findings that the AIs did not settle, up to {ADVICE_OPEN_HARD} "
+                "when a finding is worth more than the smallest of them, and no more.",
                 "Nothing is asked of you. Meternaut asks about it when a place is free."),
 }
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
@@ -441,6 +446,8 @@ class Brief:
     waiting: Waiting | None = None
     # Why no request was made, for a finding that a guard holds back (hold_of): None for every other request.
     hold: Hold | None = None
+    # The warning of an open request of advice about a resource that something that runs by itself changed (heads_up_of): "" for every other request.
+    heads_up: str = ""
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -663,17 +670,41 @@ def _automated_at(owner: dict) -> object:
     return owner.get("automatedAt") if "automatedAt" in owner else (owner.get("changedAt") if "@" not in str(owner.get("changedBy") or "@") else "")
 
 
+def automation_since(case: CaseRecord | None, now: dt.datetime) -> str:
+    """The time (a stamp) of the newest write to the resource by something that is no person, when it is within AUTOMATION_DAYS days of `now`, else "": the Activity Log names it (the owner record keeps
+    the newest, `automatedAt`; a record from before it has only the last change). A request keeps it (`preconditions["automated"]`), so that every channel says the same words."""
+    owner = case.owner if case is not None and isinstance(case.owner, dict) else {}
+    when = parse_time(_automated_at(owner))
+    return when.strftime(TIME_FORMAT) if when is not None and _utc(now) - when <= dt.timedelta(days=AUTOMATION_DAYS) else ""
+
+
+def automation_words(since: object, now: dt.datetime) -> str:
+    """The warning for a request about a resource that something that runs by itself changed at `since` (a stamp): the guard's sentence of HOLD_WORDS with how long ago, and where to change it. Code's
+    words, with no name and no id; "" without a time that can be read."""
+    _, ago = ago_text(now, since) if isinstance(since, str) else (None, "")
+    return f"{HOLD_WORDS['automation'][1].format(when=ago)} {AUTOMATION_ACT}" if ago else ""
+
+
+def automation_note(case: CaseRecord | None, now: dt.datetime) -> str:
+    """The warning that goes with a request about this finding, or "" when nothing that runs by itself changed the resource within AUTOMATION_DAYS days. It holds nothing back: nothing changes in
+    Azure when a person answers, and a change by hand on a resource that something rewrites would be undone, so the advice is to change it where it is defined. The caller exempts what Meternaut planted."""
+    return automation_words(automation_since(case, now), now)
+
+
+def heads_up_of(plan: PlanRecord | None, now: dt.datetime) -> str:
+    """The warning of an open request of advice, from the time that it kept (automation_words), as one safe line; "" for any other request."""
+    pre = plan.preconditions if plan is not None and plan.family == ADVISE and plan.state == "open" and isinstance(plan.preconditions, dict) else {}
+    return plain(automation_words(pre.get(AUTOMATED), now), 300)
+
+
 def held_reason(case: CaseRecord | None, now: dt.datetime) -> str:
-    """Why no request is made for a finding, or one that was made is taken back (one of HELD_REASONS), and "" when none is held. `automation`: the Activity Log names a write within AUTOMATION_DAYS days
-    by an identity that is no person (the owner record keeps the newest, `automatedAt`; a record from before it has only the last change). `unchecked`: the finding asks to delete the resource and who
+    """Why no request is made for a finding, or one that was made is taken back (one of HELD_REASONS), and "" when none is held. `unchecked`: the finding asks to delete the resource and who
     changed it was not looked up, or could not be (a read that failed, or a run whose reads were used up, or a Watch that never looks it up). `impact`: the finding still asks to delete a resource of
-    the network (a measured zero, and a kind that others do not share) and the check of what depends on it was not made to the end (cases/impact.py). The caller exempts what Meternaut planted."""
+    the network (a measured zero, and a kind that others do not share) and the check of what depends on it was not made to the end (cases/impact.py). An automation that manages the resource holds
+    nothing back: it is a warning on the request (automation_note). The caller exempts what Meternaut planted."""
     if case is None:
         return ""
     owner = case.owner if isinstance(case.owner, dict) else {}
-    when = parse_time(_automated_at(owner))
-    if when is not None and _utc(now) - when <= dt.timedelta(days=AUTOMATION_DAYS):
-        return "automation"
     about_a_resource = advice_of(case) is None and not cost_words.is_container(case.resource_id)  # a recommendation of Advisor, or about a whole subscription or group, is not the deletion of a resource
     if about_a_resource and _asked_delete(case) and not owner.get("lookedUp"):
         return "unchecked"
@@ -1751,7 +1782,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
-        hold=hold_of(plan, case, now))
+        hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now))
 
 
 def order_key(brief: Brief) -> tuple:

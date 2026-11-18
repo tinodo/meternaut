@@ -79,7 +79,7 @@ class Summary:
     errors: int = 0
     tokens: int = 0
     seconds: int = 0
-    held: int = 0  # the findings held back because they cannot say what to look at, or because an automation manages the resource (cases/upkeep.py)
+    held: int = 0  # the findings held back because they cannot say what to look at, or by a rule (cases/upkeep.py)
 
 
 class CaseEnded(Exception):

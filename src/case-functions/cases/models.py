@@ -42,6 +42,8 @@ PLAN_STATES = ("open", "approved", "consumed", "declined", "expired", "withdrawn
 # The state of the request of a finding that a guard holds back (cases/approvals.py Approvals.settle): it is no open request, so nothing that lists the open ones (the Decisions page, the
 # letters of a request, the cards, the cap of ADVICE_OPEN_MAX) sees it, and it takes the answers that ask for nothing: a question, "not mine", "later" and "not worth it".
 HELD = "held"
+# The key, in the preconditions of an advice request, of the time (a stamp) when something that is no person last changed the resource (cases/brief.py automation_note): the warning of the request.
+AUTOMATED = "automated"
 # `later` is a person's "not now": it records nothing but that the person has seen the request, leaves the plan open, and a later answer replaces it (like `ask`).
 DECISIONS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 # `confirm` is the first of two people on a request that needs two (cases/twopeople.py): it records that the person read the plan and agrees with it, bound to the plan's digest. It
@@ -87,6 +89,14 @@ MAX_SIGNIN_PATH = 2000
 ADVISE = "advise"
 # A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
 ADVICE_QUIET_DAYS = 30
+# Up to this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed only by an
+# answer (or by Meternaut taking a request back and saying why), and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. While fewer are
+# open every such finding is asked about. From this many on, only a finding that is worth more than the smallest open request is, so that a finding worth much never waits for ever behind requests that
+# nobody answers, and the set may grow up to ADVICE_OPEN_HARD.
+ADVICE_OPEN_MAX = 30
+# The most requests for findings that the AIs did not settle that are open at once, whatever a finding is worth. Nothing that is open is ever displaced, closed or hidden: what is beyond waits, shown
+# as held back (`waiting`), and the dearest of it takes a place when an answer frees one. Without a ceiling a stream of dearer findings would grow the set without end.
+ADVICE_OPEN_HARD = 45
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15

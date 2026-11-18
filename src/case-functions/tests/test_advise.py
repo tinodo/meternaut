@@ -264,7 +264,7 @@ class TheWorthOfARequest(unittest.TestCase):
         return [p for p in self.store.plans.values() if p.family == ADVISE and p.state == "open"]
 
     def test_the_limits_are_the_ones_that_the_start_page_and_the_owner_know(self):
-        self.assertEqual((ADVICE_MIN_USD, ADVICE_OPEN_MAX), (50.0, 10))
+        self.assertEqual((ADVICE_MIN_USD, ADVICE_OPEN_MAX), (50.0, 30))
 
     def test_a_finding_that_nothing_backs_with_no_saving_and_a_cheap_resource_gets_no_request_and_stays_an_open_question(self):
         case = self.finding()

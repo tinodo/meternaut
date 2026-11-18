@@ -368,13 +368,13 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         kept, dropped = self.record(h).findings
         self.assertEqual((kept["kept"], dropped["kept"], dropped["resources"], dropped["left"], dropped.get("fates")), (True, False, 3, {"unknown": 3}, None))
 
-    def test_a_request_that_was_held_back_is_counted_with_the_reason_that_held_it(self):
-        from test_missing_data import AnAutomationsResourceIsHeldBack as Held
+    def test_a_request_for_a_resource_that_an_automation_manages_is_counted_with_its_own_fate(self):
+        from test_missing_data import AnAutomationsResourceIsAskedAboutWithAWarning as Held
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1, cost_usd_30d=70.0)], {"r1": metrics(MetricA=0)}), with_store=True)
         h.arm.activity_events = lambda subscription, since, until, **kwargs: ([Held.written(2, Held.GUID)], True)
         h.go()
         (found,) = self.record(h).findings
-        self.assertEqual(found["fates"], {"automation": 1})
+        self.assertEqual(found["fates"], {"managed": 1}, "the new fate has a key of its own: the old key `automation` is what earlier runs wrote when they held such a resource back")
 
     def test_a_finding_that_nobody_is_asked_about_is_left_for_a_person_and_a_group_counts_every_resource_that_it_stands_for(self):
         resources = [resource(n, name=f"pe-{n:02d}", cost_usd_30d=0.5) for n in range(1, 11)]

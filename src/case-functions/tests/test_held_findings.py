@@ -29,7 +29,7 @@ BASE = f"/subscriptions/{SUB}/resourceGroups/{GROUP}/providers"
 BOB = Principal(TINO, "Tino", ("owner", "approver", "ops"))
 NOBODY = Principal(MAYA, "Maya", ("approver",))
 MEASURED = {"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "metricDaysWithData": {"MetricA": 28}, "metricDays": {"MetricA": 30}}
-REASONS = ("automation", "unchecked", "impact", "nothing", "rules")
+REASONS = ("unchecked", "impact", "nothing", "rules")
 BANNED = ("automation identity", "activity log", "console", "sign in", "sign-in", "principal", "backlog")
 
 
@@ -38,7 +38,7 @@ def days_ago(days: float) -> str:
 
 
 def automation(**more):
-    """An application or service changed the resource two days ago: the resource is managed by an automation."""
+    """An application or service changed the resource two days ago: the resource is managed by an automation (it is asked about, with a warning: it is held back for no reason)."""
     base = dict(case_id="k-automation", status="needs_human", recommendation="investigate", plan_id=None,
                 owner={"lookedUp": True, "automatedAt": days_ago(2), "tagOwner": "platform-team", "tagName": "owner", "changedBy": "alice@example.com", "changedAt": days_ago(1)})
     return make_advice_case(**{**base, **more})
@@ -72,7 +72,7 @@ def rules(**more):
     return make_advice_case(**{**base, **more})
 
 
-CASES = {"automation": automation, "unchecked": unchecked, "impact": impact, "nothing": nothing, "rules": rules}
+CASES = {"unchecked": unchecked, "impact": impact, "nothing": nothing, "rules": rules}
 
 
 class Lines:
@@ -132,58 +132,56 @@ class EachReasonMakesTheFindingVisible(Base):
         self.assertEqual(self.store.plans_open(), [], "no request is open: nobody is asked to approve anything")
 
     def test_the_request_is_made_once_and_the_next_watch_makes_none(self):
-        case = self.put("automation")
+        case = self.put("unchecked")
         self.settle()
         first = self.held_of(case.case_id)
         self.assertEqual(self.settle(), [])
         self.assertEqual([p.plan_id for p in self.store.plans_held()], [first.plan_id])
 
     def test_the_figure_the_level_and_the_guards_words_are_those_of_the_finding(self):
-        case = self.put("automation")
+        case = self.put("unchecked")
         self.settle()
         plan = self.held_of(case.case_id)
         found = brief.build_brief(case, plan, now=self.now, may_answer=True)
         self.assertEqual((found.kind, found.state, found.saving.monthly, found.saving.level), ("advice", "held", 120.0, "Expected"))
-        self.assertEqual(found.hold, brief.Hold("automation", "Something that runs by itself changes it",
-                                                "Something that runs by itself changed it 2 days ago and would change it back, so a change by hand would not last.",
-                                                brief.HOLD_WORDS["automation"][2]))
-        self.assertEqual(found.owner.text, "Tag owner: platform-team. Last changed by alice@example.com on 2026-11-04.")
+        self.assertEqual(found.hold, brief.Hold("unchecked", *brief.HOLD_WORDS["unchecked"]))
+        self.assertEqual(found.owner.text, "Meternaut has not looked up who owns this resource yet.")
 
     def test_a_finding_that_a_person_answered_lately_or_that_has_a_request_open_gets_none(self):
-        for label, plan in (("a request is open", make_advice(plan_id="p-open", case_id="k-automation", resource_id=automation().resource_id)),
-                            ("declined 3 days ago", make_advice(plan_id="p-no", case_id="k-automation", resource_id=automation().resource_id, state="declined", created_at=days_ago(3)))):
+        for label, plan in (("a request is open", make_advice(plan_id="p-open", case_id="k-unchecked", resource_id=unchecked().resource_id)),
+                            ("declined 3 days ago", make_advice(plan_id="p-no", case_id="k-unchecked", resource_id=unchecked().resource_id, state="declined", created_at=days_ago(3)))):
             with self.subTest(case=label):
                 self.setUp()
-                self.store.case_put(automation())
+                self.store.case_put(unchecked())
                 self.store.plan_put(plan)
                 self.settle()
                 self.assertEqual(self.store.plans_held(), [])
         self.setUp()
-        self.store.case_put(automation())
-        self.store.plan_put(make_advice(plan_id="p-old", case_id="k-automation", resource_id=automation().resource_id, state="declined", created_at=days_ago(40)))
+        self.store.case_put(unchecked())
+        self.store.plan_put(make_advice(plan_id="p-old", case_id="k-unchecked", resource_id=unchecked().resource_id, state="declined", created_at=days_ago(40)))
         self.settle()
         self.assertEqual(len(self.store.plans_held()), 1, "an answer is quiet for 30 days, and then the finding is shown again")
 
     def test_waste_that_meternaut_planted_in_a_group_where_it_may_change_is_never_held(self):
         group = "meternaut-test-rg"
         approvals = Approvals(self.store, ApprovalSettings(change_scopes=(ChangeScope(SUB, group),)), lambda: self.now)
-        self.store.case_put(automation(resource_group=group))
+        self.store.case_put(unchecked(resource_group=group))
         approvals.settle((TINO,))
         self.assertEqual(self.store.plans_held(), [])
 
     def test_a_finding_with_little_at_stake_and_nothing_measured_is_not_made_a_request(self):
-        quiet = automation(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0)
+        quiet = unchecked(objections=("no measurement backs this finding; a person has to judge it",), saving_usd_month=None, cost_usd_30d=3.0)
         self.assertIsNotNone(why_not_ask(quiet))
         self.store.case_put(quiet)
         self.settle()
         self.assertEqual(self.store.plans_held(), [])
 
     def test_nobody_is_made_a_request_when_no_person_can_answer_and_at_most_so_many_are_made_at_a_time(self):
-        self.put("automation")
+        self.put("unchecked")
         self.settle(())
         self.assertEqual(self.store.plans_held(), [])
         for number in range(HELD_NEW + 5):
-            self.store.case_put(automation(case_id=f"k-many-{number}", resource_id=f"{BASE}/Microsoft.Foo/bars/b{number}", resource_name=f"b{number}"))
+            self.store.case_put(unchecked(case_id=f"k-many-{number}", resource_id=f"{BASE}/Microsoft.Foo/bars/b{number}", resource_name=f"b{number}"))
         self.settle()
         self.assertEqual(len(self.store.plans_held()), HELD_NEW)
         self.settle()
@@ -194,7 +192,7 @@ class EachReasonMakesTheFindingVisible(Base):
             case = make_advice_case(case_id=f"k-open-{number}", resource_id=f"{BASE}/Microsoft.Foo/bars/o{number}", resource_name=f"o{number}", plan_id=None, status="needs_human")
             self.store.case_put(case)
             self.assertIsNotNone(self.approvals.advise(case, (TINO,)))
-        for reason in ("automation", "unchecked", "impact"):
+        for reason in ("unchecked", "impact", "nothing"):
             self.put(reason)
         self.settle()
         self.assertEqual(len(self.store.plans_held()), 3, "the places for requests are full, and the held findings are shown all the same")
@@ -203,13 +201,13 @@ class EachReasonMakesTheFindingVisible(Base):
         self.assertIsNotNone(self.approvals.advise(last, (TINO,)), "the nine that are open and the three that are held make twelve plans, and the tenth place is still free")
         another = make_advice_case(case_id="k-another", resource_id=f"{BASE}/Microsoft.Foo/bars/another", resource_name="another", plan_id=None, status="needs_human")
         self.store.case_put(another)
-        self.assertIsNone(self.approvals.advise(another, (TINO,)), "the limit is what it was: ten open requests for what the AIs did not settle")
+        self.assertIsNone(self.approvals.advise(another, (TINO,)), "the limit is what it was: ADVICE_OPEN_MAX open requests for what the AIs did not settle, and a finding that is worth no more than the smallest waits")
 
 
 class TheAnswersAreTheOnesThatExist(Base):
     def setUp(self):
         super().setUp()
-        self.case = self.put("automation")
+        self.case = self.put("unchecked")
         self.settle()
         self.plan = self.held_of(self.case.case_id)
 
@@ -226,7 +224,7 @@ class TheAnswersAreTheOnesThatExist(Base):
             with self.subTest(decision=decision):
                 self.assertTrue(self.answer(self.plan, decision, note="who owns it?").ok)
                 self.assertEqual(self.store.plan_get(self.plan.plan_id).state, HELD)
-        self.assertEqual(self.store.case_get(self.case.case_id).status, "needs_human")
+        self.assertEqual(self.store.case_get(self.case.case_id).status, self.case.status)
 
     def test_not_worth_it_with_a_reason_closes_the_finding_and_it_is_not_shown_again_for_a_month(self):
         result = self.answer(self.plan, "decline", reason="handled")
@@ -259,8 +257,8 @@ class TheAnswersAreTheOnesThatExist(Base):
         self.assertEqual((learning.sync(self.store, self.now), self.store.lessons_recent(10)), (0, []))
 
     def test_the_page_says_that_it_does_not_end_by_the_clock(self):
-        console = held_console("automation")
-        text = console.get("/why/k-automation").main.text()
+        console = held_console("unchecked")
+        text = console.get("/why/k-unchecked").main.text()
         self.assertIn("It ends when nothing holds the finding back any more.", text)
         self.assertNotIn("open until", text)
 
@@ -286,7 +284,7 @@ class TheQuietDaysCountFromTheAnswer(Base):
         for age in (2, 35):
             for decision, more in (("decline", {"reason": "handled"}), ("not_mine", {})):
                 with self.subTest(age=age, decision=decision):
-                    case, plan = self.held("automation")
+                    case, plan = self.held("unchecked")
                     self.now += dt.timedelta(days=age)
                     self.assertTrue(self.answer(plan, decision, **more).ok)
                     self.judged_again(case, owner={"lookedUp": True})  # found again the day after, and nothing holds it back: only the quiet days do
@@ -312,14 +310,13 @@ class TheQuietDaysCountFromTheAnswer(Base):
 class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
     def setUp(self):
         super().setUp()
-        self.case = self.put("automation")
+        self.case = self.put("unchecked")
         self.settle()
         self.plan = self.held_of(self.case.case_id)
         self.ex = SimpleNamespace(approvals=self.approvals, approvers=lambda: (TINO,))
 
-    def test_an_automation_that_stops_changing_the_resource_does_not_close_it_until_the_finding_is_judged_again(self):
+    def test_a_guard_that_is_not_read_again_does_not_close_it_by_the_clock(self):
         self.now += dt.timedelta(days=20)
-        self.assertEqual(brief.held_reason(self.case, self.now), "", "the guard is over by itself")
         self.assertEqual(self.settle(), [])
         self.assertEqual(self.store.plan_get(self.plan.plan_id).state, HELD, "only a judgment with the facts of that day closes it")
 
@@ -333,7 +330,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
         closed = self.store.plan_get(self.plan.plan_id)
         self.assertEqual((closed.state, closed.preconditions["takenBack"]), ("expired", "released"))
         (said,) = [line for line in self.lines.found if line["type"] == "case.released"]
-        self.assertEqual((said["caseId"], said["reason"], said["was"], said["detector"]), (self.case.case_id, RELEASED, HELD_BACK["automation"], "investigation"))
+        self.assertEqual((said["caseId"], said["reason"], said["was"], said["detector"]), (self.case.case_id, RELEASED, HELD_BACK["unchecked"], "investigation"))
         self.assertEqual(RELEASED, "no longer held back")
         self.assertEqual(upkeep.take_back(self.ex, self.history), {})
         self.assertEqual(len([line for line in self.lines.found if line["type"] == "case.released"]), 1, "said once")
@@ -380,7 +377,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
         closed = self.store.plan_get(self.plan.plan_id)
         self.assertEqual((closed.state, closed.preconditions["takenBack"], self.store.plans_held()), ("expired", "left-alone", []))
         (said,) = [line for line in self.lines.found if line["type"] == "case.released"]
-        self.assertEqual((said["caseId"], said["reason"], said["was"]), (self.case.case_id, LEFT_ALONE, HELD_BACK["automation"]))
+        self.assertEqual((said["caseId"], said["reason"], said["was"]), (self.case.case_id, LEFT_ALONE, HELD_BACK["unchecked"]))
         self.assertEqual(LEFT_ALONE, "closed: a person marked it do-not-touch")
         self.assertEqual(upkeep.take_back(self.ex, self.history), {})
         self.assertEqual(len([line for line in self.lines.found if line["type"] == "case.released"]), 1, "said once")
@@ -396,7 +393,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
 
     def test_when_the_guard_ends_and_no_place_is_free_the_finding_stays_held_until_a_real_request_exists(self):
         self.fill_the_places()
-        self.judged_again(self.case, owner={"lookedUp": True, "automatedAt": days_ago(30)})
+        self.judged_again(self.case, owner={"lookedUp": True, "automatedAt": days_ago(30)}, status="needs_human")  # only a finding that the AIs did not settle waits for a place
         self.assertIsNone(self.approvals.advise(self.store.case_get(self.case.case_id), (TINO,)), "no place is free: the normal path makes no request")
         self.assertEqual(self.settle(), [], "and the held one is not closed: the finding would have no request at all")
         waiting = self.held_of(self.case.case_id)
@@ -431,7 +428,7 @@ class AGuardThatEndsIsJudgedAgainByTheNormalPath(Base):
         self.assertEqual(self.settle(), [], "it is no news: nobody saw it twice")
         self.assertEqual([p.plan_id for p in self.store.plans_held()], [self.plan.plan_id])
         self.assertEqual(self.store.plan_get("p-stray").preconditions["takenBack"], "released")
-        self.store.case_put(automation(case_id="k-twin"))  # the same resource, found by another detector
+        self.store.case_put(unchecked(case_id="k-twin"))  # the same resource, found by another detector
         self.settle()
         self.assertEqual([p.plan_id for p in self.store.plans_held()], [self.plan.plan_id])
 
@@ -473,38 +470,38 @@ class TheHistoryWordsStayAsTheyAre(Base):
         self.assertIn("case.released", events.LOOP_KINDS)
 
     def test_a_request_that_is_taken_back_is_still_said_as_held_back_and_then_shown_as_a_held_finding(self):
-        self.put("automation", plan_id="p-old", status="needs_human")
-        self.store.plan_put(make_advice(plan_id="p-old", case_id="k-automation", resource_id=automation().resource_id, title="Check whether the virtual machine is still used"))
+        self.put("unchecked", plan_id="p-old", status="needs_human")
+        self.store.plan_put(make_advice(plan_id="p-old", case_id="k-unchecked", resource_id=unchecked().resource_id, title="Check whether the virtual machine is still used"))
         ex = SimpleNamespace(approvals=self.approvals, approvers=lambda: (TINO,))
-        self.assertEqual(upkeep.take_back(ex, self.history), {"held back: managed by an automation": 1})
+        self.assertEqual(upkeep.take_back(ex, self.history), {"held back: not checked who changed it": 1})
         (held,) = [line for line in self.lines.found if line["type"] == "case.held"]
-        self.assertEqual(held["reason"], "held back: managed by an automation")
-        self.assertEqual((self.store.plan_get("p-old").state, brief.held_of(self.held_of("k-automation"))), ("expired", "automation"))
+        self.assertEqual(held["reason"], "held back: not checked who changed it")
+        self.assertEqual((self.store.plan_get("p-old").state, brief.held_of(self.held_of("k-unchecked"))), ("expired", "unchecked"))
         self.assertEqual([line for line in self.lines.found if line["type"] == "case.released"], [])
 
 
 class TheStoreKeepsThemApart(Base):
     def test_the_recent_plans_leave_out_the_held_ones_so_that_a_bulk_of_them_crowds_nothing_and_they_have_a_query_of_their_own(self):
-        for reason in ("automation", "unchecked", "impact"):
+        for reason in ("unchecked", "impact", "nothing"):
             self.put(reason)
         self.settle()
         self.store.plan_put(make_advice(plan_id="p-old", case_id="k-old", state="declined", created_at=days_ago(20)))
         self.assertEqual([p.plan_id for p in self.store.plans_recent(10)], ["p-old"])
-        self.assertEqual(sorted(p.case_id for p in self.store.plans_held()), ["k-automation", "k-impact", "k-unchecked"])
+        self.assertEqual(sorted(p.case_id for p in self.store.plans_held()), ["k-impact", "k-nothing", "k-unchecked"])
         self.assertEqual(self.store.plans_open(), [])
 
 
 class TheLettersAndPagesLeaveOutWhatDoesNotWaitAnyMore(unittest.TestCase):
     def test_the_letter_does_not_mention_a_finding_that_was_dropped_since_its_request_was_made(self):
-        console = held_console("automation")
-        console.store.case_put(replace(console.store.case_get("k-automation"), status="dropped"))
+        console = held_console("unchecked")
+        console.store.case_put(replace(console.store.case_get("k-unchecked"), status="dropped"))
         self.assertEqual(desk(console).sent, [])
-        self.assertNotIn("/why/k-automation", console.get("/").links())
+        self.assertNotIn("/why/k-unchecked", console.get("/").links())
 
 
 class TheWordsAreWrittenOnce(unittest.TestCase):
     def test_one_heading_one_sentence_and_one_need_for_each_reason_in_plain_words(self):
-        self.assertEqual(tuple(brief.HOLD_WORDS), (*REASONS, "waiting"))
+        self.assertEqual(tuple(brief.HOLD_WORDS), ("automation", *REASONS, "waiting"), "the words of the old reason stay for the held requests that were made before")
         for reason, (heading, why, needs) in brief.HOLD_WORDS.items():
             with self.subTest(reason=reason):
                 self.assertTrue(heading and why and needs)
@@ -545,14 +542,14 @@ def held_console(*reasons, now=NOW):
 
 class ThePageOfAHeldFinding(unittest.TestCase):
     def test_it_says_why_no_request_was_made_what_is_needed_and_who_may_know_and_offers_no_approve(self):
-        console = held_console("automation")
-        reply = console.get("/why/k-automation")
+        console = held_console("unchecked")
+        reply = console.get("/why/k-unchecked")
         self.assertEqual((reply.status, reply.problems), (200, []))
-        why = "Something that runs by itself changed it 2 days ago and would change it back, so a change by hand would not last."
-        self.assertIn("Something that runs by itself changes it", reply.content)
+        why = brief.HOLD_WORDS["unchecked"][1]
+        self.assertIn(brief.HOLD_WORDS["unchecked"][0], reply.content)
         self.assertIn(why, reply.main.text())
-        self.assertIn(brief.HOLD_WORDS["automation"][2], reply.main.text())
-        self.assertIn("Tag owner: platform-team.", reply.main.text())
+        self.assertIn(brief.HOLD_WORDS["unchecked"][2], reply.main.text())
+        self.assertIn("Meternaut has not looked up who owns this resource yet.", reply.main.text())
         self.assertIn("Held back from a request", reply.main.find("p", class_="chips").text())
         for label in ("Worth acting on", "Approve", "Confirm this request"):
             self.assertFalse(reply.has_button(label), label)
@@ -574,23 +571,23 @@ class ThePageOfAHeldFinding(unittest.TestCase):
                 self.assertFalse(reply.has_button("Worth acting on"))
 
     def test_a_person_answers_it_on_its_page_with_the_form_that_exists(self):
-        console = held_console("automation")
-        form = console.get("/why/k-automation").form(has_button="Not worth it")
+        console = held_console("unchecked")
+        form = console.get("/why/k-unchecked").form(has_button="Not worth it")
         reply = console.submit(form, "Not worth it", reason="handled")
         self.assertEqual(reply.status, 200)
-        plan = next(p for p in console.store.plans_recent(10) if p.case_id == "k-automation")
-        self.assertEqual((plan.state, console.store.case_get("k-automation").status), ("declined", "declined"))
+        plan = next(p for p in console.store.plans_recent(10) if p.case_id == "k-unchecked")
+        self.assertEqual((plan.state, console.store.case_get("k-unchecked").status), ("declined", "declined"))
 
     def test_an_approval_posted_for_it_is_refused_and_records_nothing(self):
-        console = held_console("automation")
+        console = held_console("unchecked")
         plan = console.store.plans_held()[0]
         reply = console.post(f"/ok/{plan.plan_id}", {"decision": "approve", "code": plan.code, "nonce": console.store.nonce_new(TINO, plan.plan_id), "note": ""})
         self.assertEqual(reply.status, 409)
-        self.assertEqual((console.store.decisions_of_plan(plan.plan_id), console.store.plan_get(plan.plan_id).state, console.store.case_get("k-automation").status), ([], HELD, "needs_human"))
+        self.assertEqual((console.store.decisions_of_plan(plan.plan_id), console.store.plan_get(plan.plan_id).state, console.store.case_get("k-unchecked").status), ([], HELD, "proposed"))
 
     def test_a_person_who_is_not_named_reads_it_and_cannot_answer(self):
-        console = held_console("automation")
-        reply = console.get("/why/k-automation", oid=MAYA)
+        console = held_console("unchecked")
+        reply = console.get("/why/k-unchecked", oid=MAYA)
         self.assertEqual(reply.status, 200)
         self.assertFalse(any(reply.has_button(label) for label in ("Not worth it", "Ask or tell", "Decide later", "This is not mine")))
         self.assertEqual(reply.forms(), [])
@@ -600,8 +597,8 @@ class ThePageOfAHeldFinding(unittest.TestCase):
         for button, fields, said in (("Ask or tell", {"note": "who owns it?"}, "Recorded with your name."), ("Decide later", {}, "Noted."),
                                      ("This is not mine", {}, "The finding is not brought up again for a month.")):
             with self.subTest(button=button):
-                console = held_console("automation")
-                reply = console.submit(console.get("/why/k-automation").form(has_button=button), button, **fields)
+                console = held_console("unchecked")
+                reply = console.submit(console.get("/why/k-unchecked").form(has_button=button), button, **fields)
                 self.assertEqual((reply.status, reply.problems), (200, []))
                 text = reply.main.text()
                 self.assertIn(said, text)
@@ -624,17 +621,16 @@ class ThePageOfAHeldFinding(unittest.TestCase):
 
 class TheDecisionsPageListsWhatIsHeldForThePerson(unittest.TestCase):
     def test_the_held_back_block_lists_each_finding_of_the_person_with_a_link_and_asks_for_nothing(self):
-        console = held_console("automation", "unchecked")
+        console = held_console("unchecked", "impact")
         reply = console.get("/")
         self.assertIn("Held back: 2 findings", reply.content)
         self.assertEqual(reply.headings(1), ["Decisions"])
         self.assertIn("These are held back, and nothing is asked of you to approve:", reply.content)
         links = [href for href in reply.links() if "/why/k-" in href]
-        self.assertEqual(sorted(links), ["/why/k-automation", "/why/k-unchecked"])
-        self.assertIn("Something that runs by itself changes it", reply.content)
+        self.assertEqual(sorted(links), ["/why/k-impact", "/why/k-unchecked"])
         self.assertIn("Nobody has looked up who changed it", reply.content)
         self.assertNotIn("decision waits", reply.content)
-        self.assertFalse(console.get("/", oid=MAYA).links().count("/why/k-automation"), "a person who is not named for it is not shown it")
+        self.assertFalse(console.get("/", oid=MAYA).links().count("/why/k-unchecked"), "a person who is not named for it is not shown it")
         self.assertIn("Held back: 2 findings", console.get("/", oid=MAYA).content, "the count is everybody's, as it was")
 
     def test_a_held_finding_of_another_detector_is_listed_too_because_the_weekly_letter_links_to_this_page(self):
@@ -645,7 +641,7 @@ class TheDecisionsPageListsWhatIsHeldForThePerson(unittest.TestCase):
         self.assertIn("Meternaut has nothing to say about it yet", reply.content)
 
     def test_a_held_finding_is_no_decision_and_no_row_of_the_page(self):
-        console = held_console("automation")
+        console = held_console("unchecked")
         reply = console.get("/")
         self.assertNotIn("Ready to decide", reply.content)
         self.assertNotIn("Worth a closer look", reply.content)
@@ -653,7 +649,7 @@ class TheDecisionsPageListsWhatIsHeldForThePerson(unittest.TestCase):
 
 class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
     def setUp(self):
-        self.console = held_console("automation", "unchecked", "impact", "nothing", "rules")
+        self.console = held_console("unchecked", "impact", "nothing", "rules")
         self.console.store.case_put(finding("proposed"))
         self.console.store.case_put(finding("needs_human", case_id="c-advisor"))
         self.reply = self.console.get(SAVINGS)
@@ -670,12 +666,12 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
             self.assertEqual(len(table.rows), 1, reason)
 
     def test_each_has_the_figure_the_level_the_basis_the_evidence_and_the_guards_sentence(self):
-        row = self.reply.table("held-automation").rows[0]
+        row = self.reply.table("held-unchecked").rows[0]
         self.assertEqual(row["Saving a year"], "$1,440 a year Saves, Expected. $120.00 a month. Based on the cost lines of the last 30 days.")
-        self.assertTrue(row["How sure"].startswith("Low confidence."))
-        self.assertTrue(row["Why no request was made"].startswith("Something that runs by itself changed it 2 days ago"))
-        self.assertEqual(row["Who may know"], "Tag owner: platform-team. Last changed by alice@example.com on 2026-11-04.")
-        self.assertIn("/why/k-automation", self.reply.links())
+        self.assertIn("confidence.", row["How sure"])
+        self.assertEqual(row["Why no request was made"], brief.HOLD_WORDS["unchecked"][1])
+        self.assertEqual(row["Who may know"], "Meternaut has not looked up who owns this resource yet.")
+        self.assertIn("/why/k-unchecked", self.reply.links())
         text = self.reply.main.text()
         for reason in REASONS:
             self.assertIn(brief.HOLD_WORDS[reason][2], text, reason)
@@ -684,14 +680,14 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
         table = self.reply.table("savings")
         held = next(row for row in table.rows if row["What became of it"].startswith("Found, and held back"))
         waiting = next(row for row in table.rows if row["What became of it"].startswith("Waiting"))
-        self.assertEqual((held["Findings"], waiting["Findings"]), ("5", "2"), "the five held findings are not in the row of what waits, which keeps the two ordinary ones")
-        self.assertEqual(sum(int(row["Findings"]) for row in table.rows), 7)
+        self.assertEqual((held["Findings"], waiting["Findings"]), ("4", "2"), "the four held findings are not in the row of what waits, which keeps the two ordinary ones")
+        self.assertEqual(sum(int(row["Findings"]) for row in table.rows), 6)
 
     def test_the_tile_counts_the_held_findings_and_says_how_many_of_them_there_are(self):
         tiles = tiles_of(self.reply)
         found = tiles["Found in all"]
-        self.assertEqual(found[:2], ("$4,680 a year", "5 of 7 findings have a saving figure · Scenario, Expected. Of which held back: 3. The basis is in the table."))
-        self.assertEqual(found[0], "$4,680 a year", "three held findings of 120 a month, and 10 and 20 a month of the two others: each counted once")
+        self.assertEqual(found[:2], ("$3,240 a year", "4 of 6 findings have a saving figure · Scenario, Expected. Of which held back: 2. The basis is in the table."))
+        self.assertEqual(found[0], "$3,240 a year", "two held findings of 120 a month, and 10 and 20 a month of the two others: each counted once")
         waiting = tiles["Waiting for a person"]
         self.assertEqual(waiting[0], "$360 a year", "what waits for a person leaves out what is held")
         self.assertEqual(list(tiles), ["Found in all", "Waiting for a person", "Saving measured"])
@@ -707,24 +703,23 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
     def test_the_level_of_a_held_finding_is_its_own_scenario_for_advisors_figure_and_expected_for_the_bill(self):
         console = Console()
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
-        owner = {"lookedUp": True, "automatedAt": days_ago(2)}
-        console.store.case_put(finding("needs_human", case_id="c-bill", owner=owner, detector="orphan-managed-disk", recommendation="investigate"))
-        console.store.case_put(finding("needs_human", case_id="c-advisor", owner=owner, resource_id=f"{BASE}/Microsoft.Compute/disks/disk-advisor", resource_name="disk-advisor",
-                                       resource_group="rg-advisor"))
+        for case in (finding("needs_human", case_id="c-bill", owner={}, detector="orphan-managed-disk", recommendation="delete", facts=MEASURED),
+                     finding("needs_human", case_id="c-advisor", owner={}, recommendation="delete", facts=MEASURED, resource_id=f"{BASE}/Microsoft.Compute/disks/disk-advisor",
+                             resource_name="disk-advisor", resource_group="rg-advisor")):
+            console.store.case_put(case)
         approvals.settle((TINO,))
-        table = console.get(SAVINGS).table("held-automation")
+        table = console.get(SAVINGS).table("held-unchecked")
         levels = sorted(re.findall(r"Saves, (\w+)\.", " ".join(row["Saving a year"] for row in table.rows)))
         self.assertEqual(levels, ["Expected", "Scenario"])
 
     def test_within_a_reason_what_is_at_stake_comes_first(self):
         console = Console()
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
-        owner = {"lookedUp": True, "automatedAt": days_ago(2)}
         for case_id, name, amount in (("c-small", "small-one", 15.0), ("c-large", "large-one", 300.0), ("c-middle", "middle-one", 90.0)):
             console.store.case_put(make_advice_case(case_id=case_id, resource_id=f"{BASE}/Microsoft.Foo/bars/{name}", resource_name=name, resource_type="microsoft.foo/bars",
-                                                    resource_group=GROUP, plan_id=None, owner=owner, recommendation="investigate", saving_usd_month=amount, cost_usd_30d=amount))
+                                                    resource_group=GROUP, plan_id=None, owner={}, recommendation="delete", saving_usd_month=amount, cost_usd_30d=amount, facts=MEASURED))
         approvals.settle((TINO,))
-        table = console.get(SAVINGS).table("held-automation")
+        table = console.get(SAVINGS).table("held-unchecked")
         order = [name for row in table.rows for name in ("large-one", "middle-one", "small-one") if name in row["Finding"]]
         self.assertEqual(order, ["large-one", "middle-one", "small-one"])
 
@@ -739,15 +734,15 @@ class TheSavingsPageShowsThemInTheirOwnSection(unittest.TestCase):
 
 class TheWeeklyLetterMentionsThem(unittest.TestCase):
     def test_a_person_who_is_named_gets_one_short_block_with_the_figure_the_reason_and_what_is_needed(self):
-        console = held_console("automation", "unchecked")
+        console = held_console("unchecked", "impact")
         graph = desk(console)
         (subject,) = graph.subjects()
         self.assertEqual(subject, "[Meternaut] 2 findings are held back from a request")
         content = graph.sent[0][1]["body"]["content"]
         lines = listed(content)
         self.assertEqual(len(lines), 2)
-        self.assertTrue(any(line.startswith("Review the virtual machine oversized-vm-1: $1,440 a year, Expected. Something that runs by itself changed it 2 days ago") for line in lines), lines)
-        self.assertTrue(all(brief.HOLD_WORDS[r][2] in " ".join(lines) for r in ("automation", "unchecked")))
+        self.assertTrue(any(line.startswith("Consider deleting the disk disk-u: $1,440 a year, Expected. Nobody has looked up who changed it") for line in lines), lines)
+        self.assertTrue(all(brief.HOLD_WORDS[r][2] in " ".join(lines) for r in ("unchecked", "impact")))
         self.assertIn("Found, and held back from a request. Nothing is asked of you to approve, and nothing changes in Azure.", content)
         self.assertEqual(content.count("https://"), 1, "one link, as every letter has")
         self.assertIn("See the held findings", content)
@@ -755,7 +750,7 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
             self.assertNotIn(word, content)
 
     def test_a_person_who_is_not_named_gets_none_and_one_who_answered_it_does_not_get_it_again(self):
-        console = held_console("automation")
+        console = held_console("unchecked")
         plan = console.store.plans_held()[0]
         console.store.plan_put(replace(plan, approvers=(ENV_OPS,)))
         self.assertEqual(desk(console).sent, [], "nobody else is named")
@@ -765,17 +760,17 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         self.assertEqual(desk(console).sent, [], "they have seen it")
 
     def test_the_block_follows_the_decisions_and_the_letter_keeps_its_number_of_lines_and_its_one_link(self):
-        console = held_console("automation", "unchecked", "impact", "nothing", "rules")
+        console = held_console("unchecked", "impact", "nothing", "rules")
         console.store.case_put(make_advice_case())
         console.store.plan_put(make_advice())
         graph = desk(console)
         self.assertEqual(graph.subjects(), ["[Meternaut] 1 decision waits for you"])
         content = graph.sent[0][1]["body"]["content"]
         lines = listed(content)
-        self.assertEqual(len(lines), 1 + letters.MAX_HELD, "the decision and three of the five that are held, the largest first")
+        self.assertEqual(len(lines), 1 + letters.MAX_HELD, "the decision and three of the four that are held, the largest first")
         self.assertEqual(lines[0], "Consider changing the virtual machine oversized-vm-1: $1,440 a year, Scenario.")
         self.assertTrue(lines[1].startswith("Check whether the private endpoint pe-1 is still used: costs $2,880 a year, saving not measured. Meternaut's rules changed"), lines[1])
-        self.assertIn("2 more are held back. They are on the page.", content)
+        self.assertIn("1 more are held back. They are on the page.", content)
         self.assertEqual(content.count("https://"), 1)
 
     def test_the_letter_is_sent_for_a_held_finding_alone_and_never_when_nothing_is_held_or_waits(self):
@@ -783,17 +778,17 @@ class TheWeeklyLetterMentionsThem(unittest.TestCase):
         self.assertEqual(desk(Console()).sent, [])
 
     def test_a_resource_that_was_marked_do_not_touch_since_its_request_was_made_is_listed_and_written_about_no_more(self):
-        console = held_console("automation", "unchecked")
-        console.store.note_put(NoteRecord(note_id="n1", oid=TINO, kind="do_not_touch", text="leave it", scope_resource_id=automation().resource_id, created_at=stamp(NOW)))
+        console = held_console("unchecked", "impact")
+        console.store.note_put(NoteRecord(note_id="n1", oid=TINO, kind="do_not_touch", text="leave it", scope_resource_id=unchecked().resource_id, created_at=stamp(NOW)))
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
         approvals.settle((TINO,))  # the end of the next Watch
         console.use(approvals)
-        self.assertEqual([plan.case_id for plan in console.store.plans_held()], ["k-unchecked"])
-        self.assertNotIn("/why/k-automation", console.get("/").links())
-        self.assertNotIn("oversized-vm-1", console.get(SAVINGS).main.text())
+        self.assertEqual([plan.case_id for plan in console.store.plans_held()], ["k-impact"])
+        self.assertNotIn("/why/k-unchecked", console.get("/").links())
+        self.assertNotIn("disk-u", console.get(SAVINGS).main.text())
         content = desk(console).sent[0][1]["body"]["content"]
         self.assertEqual(len(listed(content)), 1)
-        self.assertNotIn("oversized-vm-1", content)
+        self.assertNotIn("disk-u", content)
 
 
 class NoImmediateCardIsMadeForThem(unittest.TestCase):
@@ -801,7 +796,7 @@ class NoImmediateCardIsMadeForThem(unittest.TestCase):
         world = CardWorld()
         world.introduce(CARD_MAYA)
         world.channel(CARD_MAYA)
-        plan = advice_plan(state=HELD, preconditions={"family": "advise", "caseStatus": "needs_human", "held": "automation"})
+        plan = advice_plan(state=HELD, preconditions={"family": "advise", "caseStatus": "needs_human", "held": "unchecked"})
         world.open_plan(plan, make_case(case_id=plan.case_id, status="needs_human", plan_id=plan.plan_id))
         self.assertEqual(world.run(), 0)
         self.assertEqual((world.queue_fake.calls, world.tries(CARD_MAYA)), ([], []))
@@ -816,7 +811,7 @@ class NoImmediateCardIsMadeForThem(unittest.TestCase):
 
 class TheFindingIsStillAnOpenQuestionForTheInvestigator(Base):
     def test_a_held_request_does_not_hide_the_finding_from_the_next_investigation_and_an_answer_does(self):
-        case = self.put("automation")
+        case = self.put("unchecked")
         self.settle()
         questions = learning.OpenQuestions(self.store, NOW)
         self.assertTrue(questions.is_open(case), "no request waits for it: the AIs look at it again, and the normal path judges it")
@@ -825,7 +820,7 @@ class TheFindingIsStillAnOpenQuestionForTheInvestigator(Base):
         self.assertFalse(learning.OpenQuestions(self.store, NOW).is_open(case), "a person said that it is not worth it: nobody is to be asked again for a month")
 
     def test_a_note_that_was_closed_because_nothing_holds_the_finding_any_more_teaches_nothing(self):
-        case = self.put("automation")
+        case = self.put("unchecked")
         self.settle()
         plan = self.held_of(case.case_id)
         self.judged_again(case, owner={"lookedUp": True})
@@ -840,14 +835,14 @@ class TheFindingIsStillAnOpenQuestionForTheInvestigator(Base):
 
 class AFindingThatIsPricedAgainShowsOneFigure(unittest.TestCase):
     def test_the_letter_the_start_page_and_savings_found_say_what_the_case_says_after_a_new_price(self):
-        console = held_console("automation")
-        console.store.case_put(replace(console.store.case_get("k-automation"), saving_usd_month=400.0, cost_usd_30d=400.0))  # 120 a month when the request was made, 400 now
+        console = held_console("unchecked")
+        console.store.case_put(replace(console.store.case_get("k-unchecked"), saving_usd_month=400.0, cost_usd_30d=400.0))  # 120 a month when the request was made, 400 now
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
         approvals.settle((TINO,))
         console.use(approvals)
         (plan,) = console.store.plans_held()
         self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), (400.0, 13.33))
-        savings = console.get(SAVINGS).table("held-automation").rows[0]["Saving a year"]
+        savings = console.get(SAVINGS).table("held-unchecked").rows[0]["Saving a year"]
         start = console.get("/").content
         letter = desk(console).sent[0][1]["body"]["content"]
         for where, text in (("Savings found", savings), ("the start page", start), ("the letter", letter)):
@@ -896,7 +891,7 @@ class PastAThousandPlansNoHeldRequestIsLost(Base):
                                             state="declined", created_at=days_ago(100), expires_at=days_ago(99)))
 
     def test_settle_finds_the_held_request_and_makes_no_second_one_at_each_watch(self):
-        case = self.put("automation")
+        case = self.put("unchecked")
         self.settle()
         (first,) = self.store.plans_held()
         for _ in range(3):
@@ -907,11 +902,11 @@ class PastAThousandPlansNoHeldRequestIsLost(Base):
     def test_the_savings_page_the_start_page_and_the_letter_still_list_it(self):
         console = Console(store=self.store)
         approvals = Approvals(self.store, ApprovalSettings(change_scopes=()), lambda: NOW)
-        self.store.case_put(automation())
+        self.store.case_put(unchecked())
         approvals.settle((TINO,))
         console.use(approvals)
-        self.assertEqual(len(console.get(SAVINGS).table("held-automation").rows), 1)
-        self.assertEqual([href for href in console.get("/").links() if "/why/k-" in href], ["/why/k-automation"])
+        self.assertEqual(len(console.get(SAVINGS).table("held-unchecked").rows), 1)
+        self.assertEqual([href for href in console.get("/").links() if "/why/k-" in href], ["/why/k-unchecked"])
         sent = desk(console).sent
         self.assertEqual(len(sent), 1, "the letter is written")
         self.assertEqual(len(listed(sent[0][1]["body"]["content"])), 1)
@@ -921,13 +916,13 @@ class TwoCasesOfOneResourceGetOneHeldRequest(unittest.TestCase):
     def test_one_request_one_row_on_the_page_and_one_line_in_the_letter_also_when_both_are_found_in_one_pass(self):
         console = Console()
         approvals = Approvals(console.store, ApprovalSettings(change_scopes=()), lambda: NOW)
-        console.store.case_put(automation())
-        console.store.case_put(automation(case_id="k-twin", detector="orphan-managed-disk"))  # the same resource, found by another detector
+        console.store.case_put(unchecked())
+        console.store.case_put(unchecked(case_id="k-twin", detector="orphan-managed-disk"))  # the same resource, found by another detector
         approvals.settle((TINO,))
         approvals.settle((TINO,))
         console.use(approvals)
         self.assertEqual(len(console.store.plans_held()), 1)
-        self.assertEqual(len(console.get(SAVINGS).table("held-automation").rows), 1)
+        self.assertEqual(len(console.get(SAVINGS).table("held-unchecked").rows), 1)
         self.assertEqual(len([href for href in console.get("/").links() if "/why/k-" in href]), 1)
         self.assertEqual(len(listed(desk(console).sent[0][1]["body"]["content"])), 1)
 
@@ -935,11 +930,11 @@ class TwoCasesOfOneResourceGetOneHeldRequest(unittest.TestCase):
 class AFindingThatWaitsForAPlaceIsShownLikeTheOthers(unittest.TestCase):
     def test_its_page_the_savings_page_and_the_letter_say_that_a_place_is_awaited_and_ask_for_nothing(self):
         console = Console()
-        console.store.case_put(automation(owner={"lookedUp": True}, plan_id="p-wait"))
-        console.store.plan_put(replace(make_advice(plan_id="p-wait", case_id="k-automation", resource_id=automation().resource_id), state=HELD,
+        console.store.case_put(unchecked(owner={"lookedUp": True}, plan_id="p-wait"))
+        console.store.plan_put(replace(make_advice(plan_id="p-wait", case_id="k-unchecked", resource_id=unchecked().resource_id), state=HELD,
                                        preconditions={"family": "advise", "caseStatus": "needs_human", "held": "waiting"}))
         heading, why, needs = brief.HOLD_WORDS["waiting"]
-        reply = console.get("/why/k-automation")
+        reply = console.get("/why/k-unchecked")
         self.assertEqual((reply.status, reply.problems), (200, []))
         self.assertIn(heading, reply.content)
         self.assertIn(why, reply.main.text())
@@ -987,7 +982,7 @@ class TheHistoryPageDoesNotCountThemAsUnanswered(unittest.TestCase):
         case = make_advice_case(status="needs_human")
         console.store.case_put(case)
         console.store.plan_put(make_advice(state="expired", expires_at=stamp(NOW - dt.timedelta(days=1)), created_at=stamp(NOW - dt.timedelta(days=4)),
-                                           preconditions={"family": "advise", "held": "automation", "takenBack": "released"}))
+                                           preconditions={"family": "advise", "held": "unchecked", "takenBack": "released"}))
         self.assertNotIn("request to look at a finding", console.get("/history").content)
         console.store.plan_put(make_advice(plan_id="p-quiet", state="expired", expires_at=stamp(NOW - dt.timedelta(days=1)), created_at=stamp(NOW - dt.timedelta(days=4))))
         self.assertIn("1 request to look at a finding", console.get("/history").content, "an ordinary request that Meternaut took back is still said")

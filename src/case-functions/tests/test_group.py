@@ -981,7 +981,7 @@ class TheWordsOfTheCode(unittest.TestCase):
         self.assertEqual(investigate.MAX_CASES, 60)
 
     def test_a_request_is_asked_for_a_group_under_the_same_worth_as_for_one_resource(self):
-        self.assertEqual((approvals.ADVICE_MIN_USD, approvals.ADVICE_OPEN_MAX), (50.0, 10))
+        self.assertEqual((approvals.ADVICE_MIN_USD, approvals.ADVICE_OPEN_MAX), (50.0, 30))
 
 
 if __name__ == "__main__":
