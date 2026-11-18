@@ -8,6 +8,7 @@ import json
 import re
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import cardsupport as cs
@@ -676,6 +677,11 @@ class InAWatch(unittest.TestCase):
 
     def plan(self):
         return self.store.plan_get("plan0002")
+
+    def test_the_step_runs_once_after_the_daily_cost_is_read_and_before_the_use_of_the_open_requests_is_read(self):
+        source = Path(verify.__file__).with_name("run.py").read_text(encoding="utf-8")
+        self.assertRegex(source, r"\n    read_cost_series\(s, contexts, say\)\n    verify\.step\(s, there, say\)\n    read_use_series\(s, say\)\n")
+        self.assertEqual(source.count("verify.step("), 1)
 
     def test_the_first_watch_keeps_what_it_cost_the_next_ones_change_nothing_and_a_fall_of_two_weeks_closes_the_request_once(self):
         self.watch(self.estate())
