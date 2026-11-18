@@ -5,7 +5,9 @@ the place, the time at which it expires and the people who may approve it. The d
 except the three that change or follow from it: its state (an open plan becomes an approved one and then a used one), the digest itself, and the code that is made from it. So a
 change of any other field, by anybody and at any time after the plan was made, gives another digest.
 
-It is kept in the plan, and the eight characters that a person sees as the plan's code are the first eight of it. The sign-in to Azure binds it into the state of its round trip
+It is kept in the plan, and the plan's code, the eight characters that a person sees, is the first eight of it when the plan is sealed. The code is a reference and nothing compares it with the digest:
+a request of advice that is sealed again because its approvers changed (cases/approvals.py keep_approvers) keeps its old code, so a card or a letter that was sent before keeps working, and then its
+code is not the first eight of its digest; the code of a change is always the new one. The sign-in to Azure binds the digest into the state of its round trip
 (delegated.py), and the runner compares it again right before it acts (runner.execute): a plan whose digest is not the one that was approved is refused, and nothing is changed.
 """
 from __future__ import annotations
@@ -35,7 +37,7 @@ def digest_of(plan: PlanRecord) -> str:
 
 
 def code_of(digest: str) -> str:
-    """The code that a person sees: the first eight characters of the digest, in capitals. A reference, not a proof: the proof is the whole digest."""
+    """The code that a person sees: the first eight characters of the digest, in capitals, when a plan is sealed. A reference, not a proof: the proof is the whole digest, and nothing compares the code with it."""
     return digest[:8].upper()
 
 

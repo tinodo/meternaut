@@ -107,6 +107,8 @@ def _events(ctx: Ctx, since: str) -> Feed:
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
+    if ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
+        failed.add("plans")
     if len(mine) > PLANS_READ:
         cut.add("plans")
     mine = mine[:PLANS_READ]

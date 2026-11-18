@@ -88,6 +88,7 @@ class FakeTables:
         self.calls: list[tuple[str, str]] = []
         self.headers: list[dict] = []
         self.counter = 0
+        self.empty_pages = 0  # how many listings answer with an empty page and a continuation before they answer with rows
 
     def transport(self, method, url, headers, data, timeout):
         self.calls.append((method, url))
@@ -148,6 +149,9 @@ class FakeTables:
                 rows = [(key, row) for key, row in rows if key >= (query["NextPartitionKey"], query.get("NextRowKey", ""))]
             if "$filter" in query:
                 rows = [(key, row) for key, row in rows if evaluate(query["$filter"], row)]
+            if self.empty_pages and rows:  # the service may answer a page with no row and a continuation, when the scan of it ran out of time: the read goes on from the key that it gives
+                self.empty_pages -= 1
+                return 200, {"x-ms-continuation-nextpartitionkey": rows[0][0][0], "x-ms-continuation-nextrowkey": rows[0][0][1]}, json.dumps({"value": []}).encode()
             top = min(int(query.get("$top", "1000")), 1000)  # a page is 1,000 rows at most, whatever is asked
             page, rest = rows[:top], rows[top:]
             continuation = {"x-ms-continuation-nextpartitionkey": rest[0][0][0], "x-ms-continuation-nextrowkey": rest[0][0][1]} if rest else {}
@@ -230,6 +234,32 @@ class StoreContract:
             self.store.plan_put(plan(f"h{n:04d}", state="held"))
         self.assertEqual([len(self.store.plans_open()), len(self.store.plans_held()), len(self.store.plans_recent(5000))], [2500, 1200, 2500])
         self.assertEqual(self.store.truncated, {})
+
+    def test_the_index_of_who_a_step_was_delivered_to_is_a_row_for_each_person_and_request_and_one_person_never_sees_the_rows_of_another(self):
+        self.assertEqual(self.store.told_get(OID), {})
+        self.store.told_put(OID, "p1", "2026-11-05T08:00:00Z")
+        self.store.told_put(OID, "p2", "2026-11-05T09:00:00Z")
+        self.store.told_put(OID, "p1", "2026-11-06T08:00:00Z")  # a later delivery for the same request is the same row
+        self.store.told_put(OTHER, "p1", "2026-11-07T08:00:00Z")
+        self.assertEqual(self.store.told_get(OID), {"p1": "2026-11-06T08:00:00Z", "p2": "2026-11-05T09:00:00Z"})
+        self.store.told_delete(OID, "p1")
+        self.store.told_delete(OID, "p1")  # gone already: nothing happens
+        self.assertEqual((self.store.told_get(OID), self.store.told_get(OTHER)), ({"p2": "2026-11-05T09:00:00Z"}, {"p1": "2026-11-07T08:00:00Z"}))
+
+    def test_the_plan_lists_that_are_read_once_in_a_block_are_kept_right_by_the_writes_and_are_the_lists_that_a_fresh_read_gives(self):
+        for number, state in enumerate(("open", "approved", "declined", "held", "expired")):
+            self.store.plan_put(plan(f"p{number}", state, f"2026-11-05T0{number}:00:00Z"))
+        lists = lambda: ([p.plan_id for p in self.store.plans_open()], [p.plan_id for p in self.store.plans_held()], [p.plan_id for p in self.store.plans_recent(10)],
+                         [p.plan_id for p in self.store.plans_expired()])
+        fresh = lists()
+        with self.store.reading():
+            self.assertEqual(lists(), fresh)
+            self.store.plan_put(plan("p5", "open", "2026-11-05T09:00:00Z"))  # a new request
+            self.store.plan_put(plan("p0", "declined", "2026-11-05T00:00:00Z"))  # an answer
+            self.store.plan_put(plan("p3", "open", "2026-11-05T03:00:00Z"))  # a held finding that was asked about as any other
+            inside = lists()
+        self.assertEqual(inside, lists(), "what a block keeps is what a fresh read gives after the same writes")
+        self.assertEqual(inside[0], ["p5", "p3", "p1"])
 
     def test_plans_open_holds_the_open_and_approved_ones(self):
         self.store.plan_put(plan("p1", "open", "2026-11-05T08:00:00Z"))
@@ -513,6 +543,38 @@ class TableStoreOnItsOwn(unittest.TestCase):
             self.assertEqual(len(self.store.plans_held()), 0)
         self.assertEqual(len(self.store.plans_open()), 2500)
         self.assertEqual(self.store.truncated, {}, "a list that is whole again is not said to be cut")
+
+    def test_the_index_of_a_person_is_one_small_query_whatever_the_number_of_its_rows(self):
+        for n in range(40):
+            self.store.told_put(OID, f"p{n:03d}", "2026-11-05T08:00:00Z")
+        self.service.calls.clear()
+        self.assertEqual(len(self.store.told_get(OID)), 40)
+        self.assertEqual([method for method, _ in self.service.calls], ["GET"])
+
+    def test_a_page_that_is_empty_and_carries_a_continuation_does_not_end_the_read(self):
+        for n in range(5):
+            self.store.plan_put(plan(f"p{n}"))
+        self.service.empty_pages = 2  # the real service can answer so, and the rows come on the next page
+        self.assertEqual(sorted(p.plan_id for p in self.store.plans_open()), [f"p{n}" for n in range(5)])
+        self.assertEqual((self.service.empty_pages, self.store.truncated), (0, {}))
+
+    def test_a_block_that_reads_the_plan_lists_once_asks_the_service_once_for_all_the_reads_in_it(self):
+        for n in range(2500):
+            self.store.plan_put(plan(f"p{n:04d}", "declined"))
+        self.service.calls.clear()
+        with self.store.reading():
+            for _ in range(11):
+                self.store.plans_open()
+                self.store.plans_recent(200)
+            self.store.plan_put(plan("p9999"))
+            self.assertEqual([p.plan_id for p in self.store.plans_open()], ["p9999"])
+        listing = [call for call in self.service.calls if call[0] == "GET" and "mnplans()" in call[1]]
+        self.assertEqual(len(listing), 4, "the open list in one page and the recent list in three of a thousand rows, once")
+        self.service.calls.clear()
+        for _ in range(11):
+            self.store.plans_open()
+            self.store.plans_recent(200)
+        self.assertEqual(len([call for call in self.service.calls if "mnplans()" in call[1]]), 11 * 4, "outside a block every read asks")
 
     def test_the_cursor_of_the_ladder_is_one_row_that_a_later_put_replaces(self):
         self.assertEqual(self.store.cursor_get(), "")

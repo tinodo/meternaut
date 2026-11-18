@@ -22,7 +22,7 @@ from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord,
-                     EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, may_answer, started)
+                     EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -201,7 +201,7 @@ class Approvals:
             return None, DecideResult(False, "refused_state", "This request does not exist. Nothing is approved.")
         advice = plan.family == ADVISE
         # A change is approved by a named approver. An advise plan only records an opinion, so the owner may answer it too, and so may a person that a step of its ladder was delivered to (models.may_answer).
-        if not may_answer(principal, plan, lambda: self.store.escalations_of(plan.plan_id)):
+        if not may_answer(principal, plan, lambda: escalated_to(self.store.escalations_of(plan.plan_id), principal.oid)):
             return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
         if plan.state == "expired":  # the stored word for a request that Meternaut took back: no clock ends a request (AGENTS.md rule 38)
             return None, DecideResult(False, "expired", "Meternaut took this request back, so it cannot be answered. Nothing has changed.", plan)
