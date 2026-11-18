@@ -335,7 +335,7 @@ class WhichCasesAreRead(unittest.TestCase):
         read(self.store, FakeMonitor(series_of_vm(1, every_day())))
         got = kept(self.store, case.case_id)
         self.assertEqual((got.cost_series, got.cost_series_end), ([1.0] * 30, "2026-11-03"))
-        costs = SimpleNamespace(cost_days=lambda subscription, first, last, where=None: [(last, where[1][0], 2.0, "USD")])  # one day with a cost line, the day that closed
+        costs = SimpleNamespace(cost_days=lambda subscription, first, last, amortized=False, where=None: [(last, where[1][0], 2.0, "USD")])  # one day with a cost line, the day that closed
         run.read_cost_series(SimpleNamespace(extras=SimpleNamespace(store=self.store), arm=costs, clock=lambda: NOW + DAY, redact=Redactor()), {}, lambda text: None)
         again = kept(self.store, case.case_id)
         self.assertEqual((again.use_series, again.use_series_end, again.use_kind), (got.use_series, "2026-11-03", "vm-cpu"))
@@ -351,7 +351,7 @@ class WhichCasesAreRead(unittest.TestCase):
 
     def test_the_step_is_the_one_after_the_daily_cost_at_the_end_of_the_watch(self):
         source = (APP_ROOT / "cases" / "run.py").read_text(encoding="utf-8")
-        self.assertRegex(source, r"\n    read_cost_series\(s, contexts, say\)\n    verify\.step\(s, there, say\)\n    read_use_series\(s, say\)\n    summary\.tokens = tokens\n")
+        self.assertRegex(source, r"\n    read_cost_series\(s, contexts, say\)\n    verify\.step\(s, there, say, _amortized\)\n    read_use_series\(s, say\)\n    summary\.tokens = tokens\n")
         self.assertEqual(source.count("read_use_series(s, say)"), 1)
 
     def test_without_the_loop_there_is_nothing_to_read(self):

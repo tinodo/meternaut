@@ -68,12 +68,20 @@ class World:
         self.lines = Lines()
         self.services = SimpleNamespace(extras=SimpleNamespace(store=self.store, approvals=self.approvals), clock=self.clock, redact=str,
                                         history=events.History("run1", None, self.clock, str, logger=self.lines))
+        self.covered = None  # the four weeks that the amortized cost shows when a commitment covers the resources; None: it shows what the actual cost shows
+        self.unread = False  # the amortized cost cannot be read
+        self.asked: list[list[str]] = []  # the requests that the amortized cost was read for
 
     def clock(self):
         return self.now
 
     def yesterday(self) -> str:
         return (self.now - DAY).date().isoformat()
+
+    def amortized(self, services, cases, last):
+        """What the Watch reads as the amortized cost of the requests that the step asks about."""
+        self.asked.append(sorted(cases))
+        return {} if self.unread else {key: bill(self.covered) if self.covered else case.cost_series for key, case in cases.items()}
 
     def ask(self, plan_id="p1", weeks=FLAT, saving=120.0, newest=None, sealed=False, own=True, facts=None, **case_changes):
         """An open request of advice for a finding with a saving of its own (`own`: code priced it from the bill, else it is Advisor's estimate), as it stands when this Watch has read its daily cost."""
@@ -99,7 +107,7 @@ class World:
     def watch(self, there="there") -> list[str]:
         """The step of a Watch, with what it said. `there` is the word of the check of the resources for every open request."""
         said: list[str] = []
-        verify.step(self.services, {plan.plan_id: there for plan in self.store.plans_open()}, said.append)
+        verify.step(self.services, {plan.plan_id: there for plan in self.store.plans_open()}, said.append, self.amortized)
         return said
 
     def plan(self, plan_id="p1"):
@@ -458,16 +466,73 @@ class WhatTheStepDoesNotClose(unittest.TestCase):
             raise RuntimeError("the store is down")
         world.store.plans_open = refuse
         said: list[str] = []
-        verify.step(world.services, {}, said.append)
+        verify.step(world.services, {}, said.append, world.amortized)
         self.assertEqual(said, ["whether the cost of the open requests has gone down could not be checked (RuntimeError: the store is down)"])
         world.services.extras = None
-        verify.step(world.services, {}, said.append)
+        verify.step(world.services, {}, said.append, world.amortized)
         self.assertEqual(len(said), 1, "a Watch without the loop has nothing to close")
 
     def test_the_history_knows_the_line(self):
         self.assertIn("case.verified", events.LOOP_KINDS)
         line = events.History("run1", None, lambda: TODAY, str, logger=Lines()).emit("case.verified", caseId="c1", reason=verify.SAID)
         self.assertEqual(line["type"], "case.verified")
+
+
+class WhenACommitmentCoversTheResource(unittest.TestCase):
+    """The actual cost of a resource that a reservation or a savings plan covers falls to nothing, and the finding is as true as it was: the amortized cost spreads the purchase over its term
+    (Learn, "Understand Cost Management data"), so a fall has to show there as well."""
+
+    def setUp(self):
+        self.world = World()
+        self.world.ask()  # it costs 300 a month, and the request states a saving of 120
+        self.world.watch()
+
+    def test_an_actual_cost_that_fell_to_nothing_while_the_amortized_cost_did_not_is_no_fall_and_nothing_is_said(self):
+        self.world.covered = FLAT
+        self.world.read((300.0, 300.0, 0.0, 0.0))
+        self.assertEqual(self.world.watch(), [])
+        self.assertEqual((self.world.plan().state, self.world.plan().preconditions[COST_AT_ASK], self.world.lines.found, self.world.asked), ("open", 300.0, [], [["p1"]]))
+
+    def test_a_fall_in_both_closes_the_request_and_it_keeps_the_dearer_of_the_two_weeks_the_smaller_fall(self):
+        self.world.covered = (300.0, 300.0, 220.0, 220.0)  # the commitment's discount is a fall of 80 a month, and half of the saving is 60
+        self.world.read((300.0, 300.0, 0.0, 0.0))
+        self.world.watch()
+        self.assertEqual((self.world.plan().state, self.world.plan().preconditions[COST_SEEN]), ("expired", 220.0))
+
+    def test_a_fall_that_the_amortized_cost_shows_by_less_than_half_of_the_saving_is_no_fall(self):
+        self.world.covered = (300.0, 300.0, 245.0, 245.0)
+        self.world.read((300.0, 300.0, 100.0, 100.0))
+        self.world.watch()
+        self.assertEqual(self.world.plan().state, "open")
+
+    def test_the_amortized_cost_is_read_once_for_the_requests_that_show_a_fall_and_for_no_other(self):
+        for name in ("p2", "p3"):
+            self.world.ask(name)
+        self.world.ask("p4")
+        self.world.watch()
+        self.world.store.case_put(replace(self.world.store.case_get("c-p4"), saving_usd_month=None))
+        self.world.read(FLAT)
+        self.world.watch()
+        self.assertEqual(self.world.asked, [], "no fall in the actual cost: nothing more is read")
+        self.world.read(FELL)
+        self.world.watch()
+        self.assertEqual(self.world.asked, [["p1", "p2", "p3"]], "one read for the three that show a fall: the one that has no saving of its own is not one of them")
+
+    def test_an_amortized_cost_that_was_not_read_verifies_nothing_changes_nothing_else_says_why_once_and_is_tried_again(self):
+        self.world.ask("p2")
+        self.world.watch()
+        self.world.unread = True
+        self.world.read(FELL)
+        self.assertEqual(self.world.watch(), ["2 requests: whether the cost has gone down was not checked (the amortized cost could not be read)"])
+        self.assertEqual(([plan.state for plan in self.world.store.plans_open()], [plan.preconditions[COST_AT_ASK] for plan in self.world.store.plans_open()], self.world.lines.found), (["open"] * 2, [300.0] * 2, []))
+        self.world.unread = False
+        self.world.read(FELL)
+        self.assertEqual((self.world.watch(), [plan.state for plan in (self.world.plan("p1"), self.world.plan("p2"))]), ([], ["expired"] * 2))
+
+    def test_an_amortized_cost_that_has_no_line_for_a_request_confirms_nothing(self):
+        self.world.amortized = lambda services, cases, last: {key: None for key in cases}
+        self.world.read(FELL)
+        self.assertEqual((self.world.watch(), self.world.plan().state), ([], "open"))
 
 
 class TheRequestThatWasClosed(unittest.TestCase):
@@ -496,7 +561,7 @@ class TheRequestThatWasClosed(unittest.TestCase):
             ladder.clock.advance(days=1)
             case = ladder.store.case_get("c1")
             ladder.store.case_put(replace(case, cost_series=bill(weeks), cost_series_end=(ladder.clock.now - DAY).date().isoformat()))
-            verify.step(services, {"p1": "there"}, lambda text: None)
+            verify.step(services, {"p1": "there"}, lambda text: None, lambda s, cases, last: {key: case.cost_series for key, case in cases.items()})
         read(FLAT)
         ladder.clock.advance(days=3)
         ladder.mail.status = 500  # the step of the third day cannot be delivered
@@ -638,11 +703,24 @@ class InAWatch(unittest.TestCase):
     GROUP = "team-apps-rg"
 
     class Estate(FakeEstate):
-        """The fake estate, and the two queries by which a Watch asks Resource Graph whether a resource is still there (cases/escalation.py existence)."""
+        """The fake estate, and the two queries by which a Watch asks Resource Graph whether a resource is still there (cases/escalation.py existence). The amortized cost is the actual cost unless
+        `covered` gives other days."""
 
-        def __init__(self, here=()):
+        def __init__(self, here=(), covered=None):
             super().__init__()
             self.here = {i.lower() for i in here}
+            self.covered = covered
+            self.kinds: list[str] = []  # the kind of cost that each daily query asked for
+
+        def _by_day(self, body):
+            self.kinds.append(body["type"])
+            if body["type"] != "AmortizedCost" or self.covered is None:
+                return super()._by_day(body)
+            actual, self.days = self.days, self.covered
+            try:
+                return super()._by_day(body)
+            finally:
+                self.days = actual
 
         def __call__(self, method, url, headers, data, timeout):
             body = json.loads(data.decode("utf-8")) if data else None
@@ -664,12 +742,16 @@ class InAWatch(unittest.TestCase):
         self.store.plan_put(make_advice(resource_id=self.vm, resource_name="vm-one", subscription_id=SUBSCRIPTION, resource_group=self.GROUP, created_at=stamp(WATCH_NOW), expires_at="",
                                         approvers=(OID,)))
 
-    def estate(self, down=0, here=True):
-        """An estate whose machine cost 10 a day, and 4 a day on the newest `down` of the 30 closed days that end the day before the clock."""
+    def estate(self, down=0, here=True, amortized_down=None):
+        """An estate whose machine cost 10 a day, and 4 a day on the newest `down` of the 30 closed days that end the day before the clock. Its amortized cost is the same, or falls on the newest
+        `amortized_down` days only."""
         known = [f"/subscriptions/{SUBSCRIPTION}", f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{self.GROUP}", self.vm] if here else [f"/subscriptions/{SUBSCRIPTION}"]
-        estate = self.Estate(known)
         last = (self.clock.now - DAY).date()
-        estate.days = [(last - dt.timedelta(days=n), self.vm, 4.0 if n < down else 10.0) for n in range(30)]
+
+        def days(fell):
+            return [(last - dt.timedelta(days=n), self.vm, 4.0 if n < fell else 10.0) for n in range(30)]
+        estate = self.Estate(known, None if amortized_down is None else days(amortized_down))
+        estate.days = days(down)
         return estate
 
     def watch(self, estate):
@@ -680,8 +762,32 @@ class InAWatch(unittest.TestCase):
 
     def test_the_step_runs_once_after_the_daily_cost_is_read_and_before_the_use_of_the_open_requests_is_read(self):
         source = Path(verify.__file__).with_name("run.py").read_text(encoding="utf-8")
-        self.assertRegex(source, r"\n    read_cost_series\(s, contexts, say\)\n    verify\.step\(s, there, say\)\n    read_use_series\(s, say\)\n")
+        self.assertRegex(source, r"\n    read_cost_series\(s, contexts, say\)\n    verify\.step\(s, there, say, _amortized\)\n    read_use_series\(s, say\)\n")
         self.assertEqual(source.count("verify.step("), 1)
+
+    def test_a_commitment_that_makes_the_actual_cost_fall_closes_nothing_while_the_amortized_cost_is_what_it_was(self):
+        first = self.estate()
+        self.watch(first)
+        self.assertNotIn("AmortizedCost", first.kinds, "no fall: the amortized cost is not read")
+        self.clock.advance(days=20)
+        covered = self.estate(down=25, amortized_down=0)
+        self.watch(covered)
+        self.assertEqual((self.plan().state, covered.kinds), ("open", ["ActualCost", "AmortizedCost"]))
+        self.clock.advance(days=1)
+        self.watch(self.estate(down=26, amortized_down=26))
+        self.assertEqual(self.plan().state, "expired", "the fall is in both once the commitment's discount is more than half of the saving")
+
+    def test_an_amortized_cost_that_could_not_be_read_closes_nothing_says_so_and_is_read_again_the_next_day(self):
+        self.watch(self.estate())
+        self.clock.advance(days=20)
+        estate = self.estate(down=25)
+        estate.failures["daily"] = [None, 403]  # the actual cost is read, the amortized cost is refused (a refusal is not asked again, as a failure of the service is)
+        _, found, _ = self.watch(estate)
+        notes = [e["note"] for e in found if e["type"] == "run.note" and "whether the cost has gone down" in e["note"]]
+        self.assertEqual((self.plan().state, notes), ("open", ["1 request: whether the cost has gone down was not checked (the amortized cost could not be read)"]))
+        self.clock.advance(days=1)
+        self.watch(self.estate(down=26))
+        self.assertEqual(self.plan().state, "expired")
 
     def test_the_first_watch_keeps_what_it_cost_the_next_ones_change_nothing_and_a_fall_of_two_weeks_closes_the_request_once(self):
         self.watch(self.estate())

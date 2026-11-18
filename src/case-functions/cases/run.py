@@ -306,6 +306,44 @@ def _with_series(kept: CaseRecord, series: list[float] | None, last: dt.date, co
     return replace(kept, **changes)
 
 
+def _daily(s: Services, due: Mapping[str, list[str]], last: dt.date, amortized: bool = False) -> tuple[dict[str, list[float] | None], str, bool]:
+    """The daily cost of each key of `due` (a case or a request, with the resources that its cost is the sum of) on the COST_DAYS closed days that end on `last`, in US dollars, one query for each
+    subscription and COST_IDS resources: the actual cost, or the amortized one (a purchase spread over its term). A key whose resources were not all read has no entry, and None is no cost line on any
+    of the days. Then the first reason that a read failed, and whether Azure asked to slow down: that ends the reading."""
+    first = last - dt.timedelta(days=COST_DAYS - 1)
+    by_sub: dict[str, list[str]] = {}
+    for resource in sorted({i for ids in due.values() for i in ids}):
+        by_sub.setdefault(_subscription(resource), []).append(resource)
+    daily: dict[str, list[float]] = {}
+    read: set[str] = set()
+    why = ""
+    stopped = False
+    for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
+        try:
+            rows = s.arm.cost_days(sub, first, last, amortized=amortized, where=("ResourceId", tuple(chunk)))
+        except HttpError as error:
+            why = why or clean_text(s.redact(error), 200)
+            if error.status == 429:
+                stopped = True
+                break
+            continue
+        if any(code != "USD" for _, _, _, code in rows):
+            why = why or "the cost lines are not in US dollars"
+            continue
+        for day, resource, amount, _ in rows:
+            if 0 <= (day - first).days < COST_DAYS:
+                daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
+        read.update(chunk)
+    found = {key: [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)] if any(i in daily for i in ids) else None for key, ids in due.items() if read.issuperset(ids)}
+    return found, why, stopped
+
+
+def _amortized(s: Services, cases: Mapping[str, CaseRecord], last: dt.date) -> dict[str, list[float] | None]:
+    """The amortized daily cost of the cases that cases/verify.py asks about, by the key that it gave: a commitment (a reservation, a savings plan) is spread over its term there, so that it does not
+    make the cost of a resource that it covers fall to nothing, as the actual cost does. A case that was not read in whole has no entry."""
+    return _daily(s, {key: _members(case) for key, case in cases.items()}, last, True)[0]
+
+
 def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable[[str], None]) -> None:
     """A step of a Watch: reads the daily cost (CaseRecord.cost_series) of each case with an open plan whose series does not end yesterday, in US dollars only, one query for each
     subscription and COST_IDS resources, and one query for a case about a whole subscription or resource group (the cost of every line in it: Arm.scope_days). A case that Azure has no cost line
@@ -333,29 +371,7 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
             subs = {_subscription(i) for i in ids}
             if ids and "" not in subs and subs.isdisjoint(other):
                 due[case.case_id] = ids
-        by_sub: dict[str, list[str]] = {}
-        for resource in sorted({i for ids in due.values() for i in ids}):
-            by_sub.setdefault(_subscription(resource), []).append(resource)
-        daily: dict[str, list[float]] = {}
-        read: set[str] = set()
-        why = ""
-        stopped = False
-        for sub, chunk in [(sub, ids[n:n + COST_IDS]) for sub, ids in by_sub.items() for n in range(0, len(ids), COST_IDS)]:
-            try:
-                rows = s.arm.cost_days(sub, first, last, where=("ResourceId", tuple(chunk)))
-            except HttpError as error:
-                why = why or clean_text(s.redact(error), 200)
-                if error.status == 429:
-                    stopped = True
-                    break
-                continue
-            if any(code != "USD" for _, _, _, code in rows):
-                why = why or "the cost lines are not in US dollars"
-                continue
-            for day, resource, amount, _ in rows:
-                if 0 <= (day - first).days < COST_DAYS:
-                    daily.setdefault(resource, [0.0] * COST_DAYS)[(day - first).days] += amount
-            read.update(chunk)
+        series_of, why, stopped = _daily(s, due, last)
         whole_series: dict[tuple[str, str], list[float] | None] = {}
         for sub, group in sorted(set(wholes.values())):
             if stopped:
@@ -379,14 +395,10 @@ def read_cost_series(s: Services, contexts: Mapping[str, Context], say: Callable
                     seen = True
             whole_series[(sub, group)] = [round(value, 4) or 0.0 for value in found] if seen else None
         done = 0
-        left_over: list[str] = []
-        for case_id, ids in due.items():
-            if not read.issuperset(ids):
-                left_over.append(case_id)
-                continue
-            series = [round(sum(daily[i][n] for i in ids if i in daily), 4) or 0.0 for n in range(COST_DAYS)] if any(i in daily for i in ids) else None
+        left_over: list[str] = [case_id for case_id in due if case_id not in series_of]
+        for case_id, series in series_of.items():
             try:
-                ex.store.case_update(case_id, lambda kept: _with_series(kept, series, last, False))  # only these fields, on the case as it is stored now
+                ex.store.case_update(case_id, lambda kept, series=series: _with_series(kept, series, last, False))  # only these fields, on the case as it is stored now
                 done += 1
             except StoreError as error:
                 why = why or clean_text(s.redact(error), 200)
@@ -741,7 +753,7 @@ def execute(s: Services, trigger: str) -> Summary:
         if count:
             say(f"{count} finding{'s' if count != 1 else ''} {reason}")
     read_cost_series(s, contexts, say)
-    verify.step(s, there, say)
+    verify.step(s, there, say, _amortized)
     read_use_series(s, say)
     summary.tokens = tokens
     summary.seconds = int(s.monotonic() - started)

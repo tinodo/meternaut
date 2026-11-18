@@ -14,6 +14,8 @@ It judges only what it can hold the bill against, and says why when it could not
 * a finding with a saving of its own, a figure that code worked out from the bill (an estimate of Azure Advisor's, which no cost line backs, has nothing to be held against: brief.advisor_estimate,
   and a whole subscription or resource group moves for too many reasons);
 * a daily cost that was read whole up to yesterday and in US dollars: a read that failed, was partial or was not in dollars leaves the series as it was, which ends earlier and is never used (`stale`);
+* the amortized cost of a request that the actual cost shows to be down: a commitment (a reservation, a savings plan) that covers a resource makes its actual cost fall to nothing while the finding
+  is still true, so the fall has to be there in the amortized cost too (which spreads a purchase over its term), and a request whose amortized cost was not read is left for the next Watch;
 * the resources that the kept cost is the cost of: a request of a group whose resources are not the ones that it had when the cost was kept is not judged (`subject`);
 * a resource that Resource Graph shows to be still there: one that is gone ends the request as `gone` in the step before this one, and one whose existence was not checked is left alone.
 
@@ -36,7 +38,7 @@ from .roles import clean_text
 
 LAG = 2  # the newest closed days that are left out: the bill is one to two days behind
 SAID = "closed: the cost has gone down as the request suggested"  # what the History says when a request is closed
-WHY = {"stale": "the daily cost was not read in full up to yesterday", "currency": "the cost lines are not in US dollars"}  # the reasons that the History says; every other one says nothing
+WHY = {"stale": "the daily cost was not read in full up to yesterday", "currency": "the cost lines are not in US dollars", "amortized": "the amortized cost could not be read"}  # the reasons that the History says; every other one says nothing
 
 
 def _dollars(value: object) -> float | None:
@@ -68,16 +70,17 @@ def fall(series: Sequence[float], before: float, saving: float) -> float | None:
     return max(older, newer) if max(older, newer) <= before - min(saving, before) / 2 else None
 
 
-def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) -> tuple[str, float]:
+def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str, amortized: Sequence[float] | None = None) -> tuple[str, float]:
     """What the bill says about an open request of advice: (`verified`, what a month costs now), (`baseline`, the cost to keep as the cost at the request: it has none yet), or a word that says why it
     cannot be said: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `changed` (the resources of the finding are
     not the ones that the kept cost is of), `unchecked` (whether the resource is still there was not checked: `there` is the word of cases/escalation.py existence), or `still` (the cost has not gone
-    down, or not for long enough). The second number is 0 for those. `last` is yesterday."""
+    down, or not for long enough). The second number is 0 for those. `last` is yesterday. `amortized` is the amortized daily cost of the same days, which a request that the actual cost
+    shows to be down is held against again: a commitment makes the actual cost of what it covers fall to nothing, and that is no reason to close a request."""
     if case is None or brief.advisor_estimate(case) or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):
         return "unpriced", 0.0
     if case.cost_state == cost_words.CURRENCY:
         return "currency", 0.0
-    series = case.cost_series
+    series = case.cost_series if amortized is None else amortized
     if not isinstance(series, list) or len(series) != MONTH or any(_dollars(day) is None for day in series):
         return "unread", 0.0
     if case.cost_series_end != last.isoformat():
@@ -94,10 +97,12 @@ def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str) 
     return ("still", 0.0) if after is None else ("verified", after)
 
 
-def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
+def step(s, there: Mapping[str, str], say: Callable[[str], None], amortized: Callable[[object, Mapping[str, CaseRecord], dt.date], Mapping[str, Sequence[float] | None]]) -> None:
     """A step of a Watch, after read_cost_series: closes the open requests of advice whose cost has gone down as they suggested (`judge`), says each in the History (`case.verified`: no amount of money),
     and keeps, for a request that has none, the cost to hold the bill against (Approvals.keep_cost: it is judged from the next Watch on, never in the one that keeps it). `there` is what
-    escalation.existence said of each open request in this Watch. A request that could not be judged for a reason that is said (`WHY`) is counted, once for each reason. It never fails the run."""
+    escalation.existence said of each open request in this Watch. A request that shows a fall is held against the amortized cost as well (`amortized` reads it, for these requests only, by the
+    key that it is given): the fall has to be there in both, and what the request keeps is the dearer of the two. A request that could not be judged for a reason that is said (`WHY`) is counted,
+    once for each reason. It never fails the run."""
     ex = s.extras
     if ex is None:
         return
@@ -105,7 +110,7 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
         last = s.clock().astimezone(dt.timezone.utc).date() - dt.timedelta(days=1)
         keep: dict[str, tuple[float, str]] = {}
         seen: dict[str, float] = {}
-        cases: dict[str, CaseRecord] = {}
+        shown: dict[str, tuple[PlanRecord, CaseRecord]] = {}
         why: Counter[str] = Counter()
         for plan in ex.store.plans_open():
             if plan.state != "open" or plan.family != ADVISE or (plan.preconditions or {}).get("source") == ADVISOR:
@@ -113,14 +118,23 @@ def step(s, there: Mapping[str, str], say: Callable[[str], None]) -> None:
             case = ex.store.case_get(plan.case_id)
             word, figure = judge(plan, case, last, there.get(plan.plan_id, ""))
             if word == "verified":
-                seen[plan.plan_id], cases[plan.plan_id] = figure, case  # type: ignore[assignment]
+                seen[plan.plan_id], shown[plan.plan_id] = figure, (plan, case)  # type: ignore[assignment]
             elif word == "baseline":
                 keep[plan.plan_id] = (figure, subject(case))  # type: ignore[arg-type]
             elif word in WHY:
                 why[word] += 1
+        series = amortized(s, {plan_id: case for plan_id, (_, case) in shown.items()}, last) if shown else {}
+        for plan_id, (plan, case) in shown.items():
+            if plan_id not in series:
+                why["amortized"] += 1
+            word, figure = judge(plan, case, last, there.get(plan_id, ""), series[plan_id]) if series.get(plan_id) else ("still", 0.0)
+            if word == "verified":
+                seen[plan_id] = max(seen[plan_id], figure)
+            else:
+                del seen[plan_id]
         ex.approvals.keep_cost(keep)
         for plan in ex.approvals.take_back_verified(seen):
-            case = cases[plan.plan_id]
+            case = shown[plan.plan_id][1]
             s.history.emit("case.verified", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120), reason=SAID)
         for word, count in why.items():
             say(f"{count} request{'s' if count != 1 else ''}: whether the cost has gone down was not checked ({WHY[word]})")
