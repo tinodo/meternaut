@@ -24,8 +24,7 @@ BEAT_KINDS = 2  # the most kinds of one beat: the dearest one that no beat has, 
 CATCH_ALL_KINDS = 8  # the kinds that the last beat names when it holds what the others did not
 SEED_RESOURCES = 5  # the resources whose picture code reads for a beat before the Investigator starts (cases/dossier.py takes five at most)
 SEED_HOURLY = 3  # of those, the dearest few have their picture at the grain of the hour, which adds the peak and the 95th percentile of the finer buckets (what a thing must carry decides what it needs); the others, at the day
-SEED_ALTERNATIVES = 1  # the dearest resources of a beat whose dearest meter has its list prices read (the tool for alternatives): the Investigator is given what a change to another product of the service would cost, and need not ask
-SEED_CALLS = SEED_RESOURCES + 2 + 2 * SEED_ALTERNATIVES  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and for each resource that gets list prices one read of the service of its meter and one of its product
+SEED_CALLS = SEED_RESOURCES + 2 + 2  # the reads that this takes at most: a listing for each kind that is seeded, a picture at the hour and one at the day, and the list prices of the dearest meter of the dearest resource, which are read twice when the product of the meter shows none
 MIN_SECONDS = 90  # a beat does not start with less time than this (its reads and a step of the model), and not with fewer tokens than MIN_TOKENS
 SOFT_SHARE = 0.5  # the share of the seconds of a beat after which its tool calls are refused and the agent is told to write its answer (it was 0.7 for the whole run): the model and its tools have this much, and the rest is for the answer
 ANSWER_SECONDS = 60  # what the agent has after that to write its answer: the hard time of a beat is its soft time and this (never more than the seconds of the beat), so that the rounds of an answer always fit
@@ -142,6 +141,14 @@ def _dearest_meter(found: Seed, handle: str) -> str | None:
     return None
 
 
+def _cost(listing: dict, row: list) -> float:
+    """What a listing says that a resource costs: its cell of the column `usd30d`, or the value that every row shares (the listing then gives it once, in `same`); -1 when it says nothing."""
+    cols, same = listing.get("cols"), listing.get("same")
+    at = cols.index("usd30d") if isinstance(cols, list) and "usd30d" in cols else None
+    cost = row[at] if at is not None and len(row) > at else same.get("usd30d") if isinstance(same, dict) else None
+    return cost if isinstance(cost, (int, float)) and not isinstance(cost, bool) else -1.0
+
+
 def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
     """The answer of the tool for alternatives for a meter that shows every product of its service, or, when the service has more lines than one answer holds or its list was not read to its end (the
     table would show its cheapest lines and not the siblings of the meter), the answer that shows the lines of the product of the meter. {} when there is none: a refusal of the service is a refusal of
@@ -155,11 +162,13 @@ def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
     """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
     and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
-    dearest SEED_ALTERNATIVES of them, the list prices of the dearest meter of its picture (`price_alternatives`, see `_prices`): what a change to another product of its service would cost. It costs no
-    model tokens, and what it shows is registered as evidence like any answer of a tool. A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves
-    `alternatives` empty and is no read that failed: the Investigator may ask for them itself. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the
-    listings find them in its caches; a read ahead that fails leaves the listings to make their own."""
-    found, lists = Seed(), []
+    dearest resource of the beat (the one that costs most of the first resources that the listings of its kinds give, which are in the order of cost; the first kind when they cost the same or the listings give no
+    cost), the list prices of the dearest meter of its picture (`price_alternatives`, see `_prices`): what a change to another size or tier of it would cost. It costs no model tokens, and what it shows is
+    registered as evidence like any answer of a tool.
+    A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves `alternatives` empty and is no read that failed: the Investigator may ask for them
+    itself. `warm` reads the resources of the kinds at the same time first (the toolbox's `preload`), so that the listings find them in its caches; a read ahead that fails leaves the listings to make
+    their own."""
+    found, lists, firsts = Seed(), [], []
     if warm is not None and len(beat.kinds) > 1:
         try:
             warm(beat.kinds[:SEED_RESOURCES])
@@ -175,8 +184,10 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
         total = listing.get("total")
         if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             found.counts[kind] = total
-        rows = listing.get("rows") if isinstance(listing.get("rows"), list) else []
-        lists.append([row[0] for row in rows if isinstance(row, list) and row and isinstance(row[0], str)])
+        rows = [row for row in listing.get("rows", []) if isinstance(row, list) and row and isinstance(row[0], str)] if isinstance(listing.get("rows"), list) else []
+        lists.append([row[0] for row in rows])
+        if rows:
+            firsts.append((_cost(listing, rows[0]), rows[0][0]))
     found.handles = [handle for rank in zip_longest(*lists) for handle in rank if handle][:SEED_RESOURCES]
     for grain, handles in (("hour", found.handles[:SEED_HOURLY]), ("day", found.handles[SEED_HOURLY:])):
         if not handles:
@@ -186,11 +197,10 @@ def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[
             found.pictures = [*(found.pictures or []), picture]
         else:
             found.failed += 1
-    for handle in found.handles[:SEED_ALTERNATIVES]:
-        meter = _dearest_meter(found, handle)
-        prices = _prices(call, meter) if meter else {}
-        if prices.get("rows"):
-            found.alternatives.append(prices)
+    meter = _dearest_meter(found, max(firsts, key=lambda first: first[0])[1]) if firsts else None  # max keeps the first of equals: the first kind
+    prices = _prices(call, meter) if meter else {}
+    if prices.get("rows"):
+        found.alternatives.append(prices)
     return found
 
 
