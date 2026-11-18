@@ -32,7 +32,7 @@ LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$
 # went from 163 to 169 words when the risk of advice became the risk of acting on it and answering said so in its own words ("Medium risk if you act on it, Low confidence, Answering changes
 # nothing in Azure" against "Low risk, Low confidence, Changes nothing in Azure"). The limits are the measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to
 # 56) keep the limits that they had.
-MOST_WORDS = {"first contact": 110, "approval": 170, "digest": 150, "done": 105}
+MOST_WORDS = {"first contact": 110, "approval": 180, "digest": 150, "done": 105}  # the approval letter of advice says in one sentence what an answer does and who acts, in words that a person reads once
 
 
 def make_plan(**changes) -> PlanRecord:
@@ -173,7 +173,7 @@ class WhatEveryLetterHas(unittest.TestCase):
                 footers = [line for line in letter.text.splitlines() if line.startswith("Written by an AI")]
                 self.assertEqual(len(footers), 1)
                 self.assertEqual(letter.text.rstrip().splitlines()[-1], footers[0], "the footer is the last line")
-                for words in ("a person approves every change.", "You got this because", "Responsible for Meternaut: Ops (ops@example.com)."):
+                for words in ("A person approves every change.", "You got this because", "Responsible for Meternaut: Ops (ops@example.com)."):
                     self.assertIn(words, footers[0])
                 self.assertTrue(footers[0].endswith("Responsible for Meternaut: Ops (ops@example.com)."))
                 self.assertNotIn("Talk to a person", letter.text, "the page's words under About this page: nobody is told to talk to a person")
@@ -194,8 +194,8 @@ class WhatEveryLetterHas(unittest.TestCase):
 
     def test_a_letter_names_the_models_that_took_part_in_the_case_when_the_case_says_which(self):
         for kind in ("approval", "done"):
-            self.assertIn("Written by an AI (models: model-d, model-s); a person approves every change.", everything()[kind].text)
-        self.assertIn("Written by an AI; a person approves every change.", everything(case=make_case(models={}))["approval"].text)
+            self.assertIn("Written by an AI (models: model-d, model-s). A person approves every change.", everything()[kind].text)
+        self.assertIn("Written by an AI. A person approves every change.", everything(case=make_case(models={}))["approval"].text)
 
     def test_the_ceremony_of_the_old_letters_is_gone(self):
         for kind, letter in everything().items():
@@ -362,14 +362,14 @@ class Approval(unittest.TestCase):
         self.assertEqual(text.splitlines()[0], "Delete the unattached disk disk-zq7-name")  # what am I asked to decide: the title of the page, with the place under it
         self.assertIn("Managed disk, resource group rg-zq7-group", text)
         self.assertIn("Medium risk, High confidence, Cannot be undone", text)  # how sure, whether it can be undone: the chips of the page as words
-        self.assertIn("$494 a year\nSaves, Expected. $41.20 a month. Based on the cost lines of the last 30 days.\nMoney is in US dollars, and a year is twelve times the month.", text)  # what do I get
+        self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is based on your bill for the last 30 days.", text)  # what do I get
         self.assertIn("Cost, last 30 days: $41.20", text)  # on what evidence
         self.assertIn("State: Not attached to any virtual machine", text)
-        self.assertIn("Owner: Meternaut has not looked up who owns this resource yet.", text)  # whose is it
-        self.assertIn("If you approve: Deletes the disk disk-zq7-name in resource group rg-zq7-group. Nothing else changes. "
+        self.assertIn("Whose is it: Meternaut has not looked up who owns this resource yet.", text)  # whose is it
+        self.assertIn("If you approve: Azure deletes the disk disk-zq7-name in resource group rg-zq7-group. Nothing else changes. "
                       "It runs with your own permissions.", text)  # what happens, who does it, with whose rights
         self.assertIn("Undo: This cannot be undone.", text)
-        self.assertIn("Risk, medium: If something still uses the disk, that use stops, and the data on it is lost for good.", text)
+        self.assertIn("What could go wrong: If something still uses the disk, that use stops, and the data on it is lost for good.", text)
         self.assertIn("Review and decide: https://meternaut.example/ok/p1a2b3c4d5", text)  # what are my choices: the page
         for part in (text, self.letter().html):  # the link is a link to the page, and nothing in the letter, its link included, says that the person signs in
             self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", part), [])
@@ -377,7 +377,7 @@ class Approval(unittest.TestCase):
 
     def test_a_change_that_needs_two_people_says_so_in_words_that_stay_true_and_one_for_one_person_does_not(self):
         two = self.letter(plan=make_plan(approval_class="R3", approvers=("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"))).text
-        self.assertIn("It runs with your own permissions. Two people approve this: one confirms the request, then another approves it.", two)
+        self.assertIn("It runs with your own permissions. Two people approve this. One confirms the request, and then another approves it.", two)
         self.assertEqual(re.findall(r"(?i)\bsign(?:s|ed|ing)?[ -]in\b", two), [], "no sign-in in the letter, whatever the number of people")
         self.assertEqual(two.count("own permissions"), 1)
         self.assertNotIn("Two people", self.letter().text)
@@ -387,15 +387,15 @@ class Approval(unittest.TestCase):
 
     def test_the_order_is_the_title_the_place_the_chips_the_figure_the_facts_the_button_and_the_footer(self):
         text = self.letter().text
-        order = ["Delete the unattached disk disk-zq7-name\n", "Managed disk, resource group", "Medium risk, High confidence", "$494 a year", "Saves, Expected.", "Money is in US dollars",
-                 "Cost, last 30 days", "Owner:", "If you approve:", "Undo:", "Risk, medium:", "Review and decide: https", "Written by an AI"]
+        order = ["Delete the unattached disk disk-zq7-name\n", "Managed disk, resource group", "Medium risk, High confidence", "Meternaut worked out that this could save", "It is based on your bill",
+                 "Cost, last 30 days", "Whose is it:", "If you approve:", "Undo:", "What could go wrong:", "Review and decide: https", "Written by an AI"]
         places = [text.index(part) for part in order]
         self.assertEqual(places, sorted(places))
 
     def test_the_owner_is_said_in_the_words_of_the_facts_that_code_read(self):
         case = make_case(owner={"tagOwner": "alice@example.com", "tagName": "owner", "createdBy": "bob@example.com", "createdAt": "2026-03-01T08:00:00Z", "lookedUp": True})
-        self.assertIn("Owner: Tag owner: alice@example.com. Created by bob@example.com on 2026-03-01.", self.letter(case=case).text)
-        self.assertIn("Owner: No owner is recorded on the resource.", self.letter(case=make_case(owner={"lookedUp": True})).text)
+        self.assertIn("Whose is it: The tag names alice@example.com as the owner. It was created by bob@example.com on 1 March.", self.letter(case=case).text)
+        self.assertIn("Whose is it: Nobody is named as the owner in its tags.", self.letter(case=make_case(owner={"lookedUp": True})).text)
 
     def test_opening_the_link_records_nothing_and_the_letter_has_no_button_that_decides(self):
         letter = self.letter()
@@ -403,40 +403,41 @@ class Approval(unittest.TestCase):
         self.assertEqual(hrefs(letter), [f"{BASE}/ok/p1a2b3c4d5"])
         self.assertNotIn("approve=", letter.html)
 
-    def test_the_saving_is_an_estimate_with_its_level_and_basis_and_says_once_that_money_is_in_us_dollars(self):
+    def test_the_saving_is_an_estimate_that_says_what_it_rests_on_and_does_not_say_what_money_is_in(self):
         text = self.letter().text
-        self.assertIn("Saves, Expected. $41.20 a month. Based on the cost lines of the last 30 days.", text)
-        self.assertEqual(text.count("US dollars, and a year is twelve times the month."), 1, "the line that says what the money is in is said once")
+        self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is based on your bill for the last 30 days.", text)
+        self.assertNotIn("US dollars", text)
         advisor = self.letter(case=make_case(detector="advisor-cost")).text
-        self.assertIn("Saves, Scenario. $41.20 a month. Based on Azure Advisor's own estimate: no cost line of this resource backs it.", advisor)
+        self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is Azure Advisor's own estimate, and the bill of this resource does not back it.", advisor)
 
     def test_a_year_is_twelve_times_the_month_in_whole_dollars_and_a_month_has_its_cents(self):
         for monthly, year in ((41.2, "$494"), (7.17, "$86"), (140.16, "$1,682"), (358.11, "$4,297"), (0.03, "under $1")):
             with self.subTest(monthly=monthly):
                 text = self.letter(plan=make_plan(saving_usd_month=monthly), case=make_case(saving_usd_month=monthly)).text
-                self.assertIn(f"{year} a year\nSaves, Expected. ${monthly:,.2f} a month.", text)
+                shown = f"${monthly:,.2f}" if monthly < 100 else f"${round(monthly):,}"
+                self.assertIn(f"could save {'about ' if year != 'under $1' else ''}{year} a year ({shown} a month).", text)
 
     def test_the_figure_is_a_saving_a_cost_or_nothing_that_can_be_shown_and_each_says_what_it_is_and_why(self):
         saves = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=80.0, detector="orphan-managed-disk")).text
-        self.assertIn("$960 a year\nCosts, saving not measured. $80.00 a month. The most that a change could save: what it would save was not worked out.\nMoney is in US dollars,", saves)
+        self.assertIn("It costs $80.00 a month, about $960 a year.\nNobody has worked out how much of that could be saved.", saves)
         none = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=0.0)).text
-        self.assertIn("Cost not visible. Azure has no cost line for this yet.", none)
+        self.assertIn("Azure shows no cost for this yet.", none)
         unread = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=None)).text
-        self.assertIn("Cost not visible. No cost line was read yet.", unread)
+        self.assertIn("Meternaut could not read what this costs.", unread)
         for text in (none, unread):
             self.assertNotIn("a year", text, "no figure is shown, so no year and no month")
             self.assertNotIn("a month", text)
-            self.assertNotIn("Money is in US dollars", text, "the line that says what the money is in is said where a figure is shown")
+            self.assertNotIn("US dollars", text)
 
     def test_a_figure_that_is_not_known_is_not_shown_as_a_number(self):
         letter = self.letter(plan=make_plan(saving_usd_month=None, waiting_costs_usd_day=None), case=make_case(saving_usd_month=None, cost_usd_30d=None))
-        self.assertIn("Cost not visible. No cost line was read yet.", letter.text)
+        self.assertIn("Meternaut could not read what this costs.", letter.text)
         self.assertNotIn("a month", letter.text)
         self.assertNotIn("No figure", letter.text)
 
     def test_it_says_plainly_that_a_delete_cannot_be_undone_and_what_could_go_wrong(self):
         self.assertIn("Undo: This cannot be undone.", self.letter().text)
-        self.assertIn("Risk, medium:", self.letter().text)
+        self.assertIn("What could go wrong:", self.letter().text)
 
     def test_the_plan_code_and_the_time_it_ends_are_for_the_page_and_not_for_the_letter(self):
         letter = self.letter()
@@ -444,7 +445,7 @@ class Approval(unittest.TestCase):
             self.assertNotIn(left_out, letter.text)
 
     def test_the_models_that_took_part_are_named_in_the_footer(self):
-        self.assertIn("Written by an AI (models: model-d, model-s); a person approves every change.", self.letter().text)
+        self.assertIn("Written by an AI (models: model-d, model-s). A person approves every change.", self.letter().text)
         investigated = self.letter(case=make_case(detector="investigation", models={"investigator": "model-i", "skeptic": "model-s"}))
         self.assertIn("models: model-i, model-s", investigated.text)
 
@@ -456,7 +457,7 @@ class Approval(unittest.TestCase):
         for state in ("declined", "approved", "consumed", "withdrawn", "failed", "expired"):
             letter = self.letter(plan=make_plan(state=state))
             with self.subTest(state=state):
-                self.assertIn("This request is closed:", letter.text)
+                self.assertIn("This request is closed (", letter.text)
                 self.assertIn("Nothing can be answered now.", letter.text)
                 self.assertIn("See the request", letter.html)
                 self.assertNotIn(">Review and decide<", letter.html)
@@ -482,14 +483,14 @@ class Approval(unittest.TestCase):
         advice = make_plan(family="advise", approval_class="R1", title="Look at the disk disk-zq7-name in group rg-zq7-group", preconditions={"family": "advise", "caseStatus": "needs_human"})
         letter = self.letter(plan=advice, case=make_case(status="needs_human"))
         self.assertEqual(letter.subject, "[Meternaut] A decision waits for you")
-        self.assertEqual(letter.text.splitlines()[0], "Review the disk disk-zq7-name", "the title of the page, not the headline with its place")
+        self.assertEqual(letter.text.splitlines()[0], "Look at the disk disk-zq7-name", "the title of the page, not the headline with its place")
         self.assertIn("Managed disk, resource group rg-zq7-group", letter.text)
-        self.assertIn("Medium risk if you act on it, Low confidence, Answering changes nothing in Azure", letter.text)
-        self.assertIn("Risk, medium: If you act on it: What depends on it can slow down or stop.", letter.text, "the risk is that of doing what the title suggests, said apart from the answer")
-        self.assertIn("If you answer: Nothing changes in Azure. Your answer is recorded with your name.", letter.text)
+        self.assertIn("Medium risk if you act, Low confidence, Answering changes nothing in Azure", letter.text)
+        self.assertIn("If you act: What depends on it can slow down or stop.", letter.text, "the risk is that of doing what the title suggests, said apart from the answer")
+        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
         self.assertNotIn("sign in to Azure", letter.text)
-        self.assertNotIn("Undo: This cannot be undone.", letter.text)
-        self.assertIn("Undo: Nothing is changed, so there is nothing to undo.", letter.text)
+        self.assertNotIn("Undo:", letter.text, "an answer to advice changes nothing, so there is nothing to say about an undo")
+        self.assertNotIn("nothing to undo", letter.text)
         self.assertIn("Review and decide: https://meternaut.example/ok/p1a2b3c4d5", letter.text)
 
 
@@ -507,21 +508,21 @@ class Digest(unittest.TestCase):
             old = [(dataclasses.replace(plan, expires_at=old_end), case) for plan, case in waiting(2)]
             self.assertIsNotNone(letters.digest_letter(PERSON, BASE, NOW, old), "an old end time closes nothing: the request waits")
 
-    def test_it_lists_the_requests_that_wait_one_line_each_with_the_title_and_the_figure_a_year_and_its_level_the_largest_first(self):
+    def test_it_lists_the_requests_that_wait_one_line_each_with_the_title_and_the_figure_a_year_the_largest_first(self):
         letter = self.digest(3)
         lines = [line for line in letter.text.splitlines() if line.startswith("- ")]
-        self.assertEqual(lines, ["- Delete the unattached disk disk-3: $360 a year, Expected.",
-                                 "- Delete the unattached disk disk-2: $240 a year, Expected.",
-                                 "- Delete the unattached disk disk-1: $120 a year, Expected."])
+        self.assertEqual(lines, ["- Delete the unattached disk disk-3. It could save about $360 a year.",
+                                 "- Delete the unattached disk disk-2. It could save about $240 a year.",
+                                 "- Delete the unattached disk disk-1. It could save about $120 a year."])
         self.assertEqual(Parsed(letter.html).tags.count("li"), 3)
 
     def test_it_has_no_total_and_no_sum_of_the_lines_because_a_total_belongs_to_the_decisions_page(self):
         text = self.digest(3).text
         for total in ("$720", "$840", "$960", "$1,200", "in all", "Total", "total", "together"):
             self.assertNotIn(total, text)
-        self.assertNotIn("Money is in US dollars", text, "the lines say a year and a level, and the page says the rest")
+        self.assertNotIn("US dollars", text, "the lines say a year, and the page says the rest")
 
-    def test_the_figure_of_a_line_is_a_saving_with_its_level_or_a_cost_or_nothing_that_can_be_shown(self):
+    def test_the_figure_of_a_line_is_a_saving_or_a_cost_or_nothing_that_can_be_shown(self):
         (plan, case), = waiting(1)
         cost_only = (dataclasses.replace(plan, plan_id="pc", saving_usd_month=None), dataclasses.replace(case, case_id="cc", saving_usd_month=None, cost_usd_30d=358.11, resource_name="disk-c"))
         nothing = (dataclasses.replace(plan, plan_id="pn", saving_usd_month=None), dataclasses.replace(case, case_id="cn", saving_usd_month=None, cost_usd_30d=None, resource_name="disk-n"))
@@ -529,11 +530,11 @@ class Digest(unittest.TestCase):
         letter = self.digest(waiting=[(plan, case), cost_only, nothing, scenario])
         lines = [line for line in letter.text.splitlines() if line.startswith("- ")]
         self.assertEqual(len(lines), 4)
-        self.assertEqual(sorted(re.sub(r"^- .*?: ", "", line) for line in lines),
-                         sorted(["$120 a year, Expected.", "$120 a year, Scenario.", "costs $4,297 a year, saving not measured.", "cost not visible."]))
-        order = [re.sub(r"^- .*?: ", "", line) for line in lines]
-        self.assertEqual(order[0], "costs $4,297 a year, saving not measured.", "what is at stake first, as the page ranks its rows: a cost of $4,297 outranks a saving of $120")
-        self.assertEqual(order[-1], "cost not visible.", "what has no figure is last")
+        self.assertEqual(sorted(re.sub(r"^- [^.]*\. ", "", line) for line in lines),
+                         sorted(["It could save about $120 a year.", "It could save about $120 a year.", "It costs $4,297 a year; nobody has worked out the saving.", "Meternaut could not read what this costs."]))
+        order = [re.sub(r"^- [^.]*\. ", "", line) for line in lines]
+        self.assertEqual(order[0], "It costs $4,297 a year; nobody has worked out the saving.", "what is at stake first, as the page ranks its rows: a cost of $4,297 outranks a saving of $120")
+        self.assertEqual(order[-1], "Meternaut could not read what this costs.", "what has no figure is last")
 
     def test_the_subject_counts_what_waits_and_never_an_amount(self):
         self.assertEqual(self.digest(1).subject, "[Meternaut] 1 decision waits for you")
@@ -560,7 +561,7 @@ class Digest(unittest.TestCase):
     def test_a_request_without_a_figure_is_listed_with_what_is_known_and_never_as_no_figure(self):
         plan, case = waiting(1)[0]
         letter = self.digest(waiting=[(dataclasses.replace(plan, saving_usd_month=None), dataclasses.replace(case, saving_usd_month=None, cost_usd_30d=None))])
-        self.assertIn("- Delete the unattached disk disk-1: cost not visible.\n", letter.text)
+        self.assertIn("- Delete the unattached disk disk-1. Meternaut could not read what this costs.\n", letter.text)
         self.assertNotIn("No figure", letter.text)
 
     def test_a_request_without_a_case_is_still_listed(self):
@@ -578,13 +579,13 @@ class Done(unittest.TestCase):
                                    changes.pop("contacts", CONTACTS))
 
     def test_a_change_that_ran_says_what_ran_the_result_what_it_saves_in_the_words_of_the_pages_and_that_it_cannot_be_undone(self):
-        text = self.letter().text
+        text = self.letter(plan=make_plan(state="consumed")).text
         self.assertIn("Done: Delete the unattached disk disk-zq7-name.", text)
         self.assertIn("Managed disk, resource group rg-zq7-group", text)
         self.assertIn("Result: Deleted. Azure no longer lists the resource.", text)
         self.assertEqual(text.count("Azure no longer lists the resource."), 1, "a line that the result holds is not said twice")
-        self.assertIn("$494 a year\nSaves, Expected. $41.20 a month. Based on the cost lines of the last 30 days. Cost lines confirm it after a few days.\n"
-                      "Money is in US dollars, and a year is twelve times the month.", text)
+        self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is based on your bill for the last 30 days. Cost Management confirms it 8 to 72 hours after the change.", text)
+        self.assertNotIn("US dollars", text)
         self.assertIn("This cannot be undone.", text)
         self.assertIn("See what happened: https://meternaut.example/ok/p1a2b3c4d5", text)
 
@@ -607,24 +608,24 @@ class Done(unittest.TestCase):
     def test_a_verified_saving_is_said_as_verified_and_nothing_more_is_awaited(self):
         action = make_action(state="verified", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "currency": "USD"})
         text = self.letter(action=action).text
-        self.assertIn("$494 a year\nSaves, Verified. $41.20 a month. Based on the cost lines after the change, which show no cost for this resource.\nMoney is in US dollars,", text)
-        self.assertNotIn("after a few days", text)
-        self.assertIn("Cost lines since the change: $0.00.", text)
+        self.assertIn("The change saves about $494 a year ($41.20 a month).\nThe bill since the change shows no cost for this resource.", text)
+        self.assertNotIn("8 to 72 hours", text)
+        self.assertIn("The bill since the change shows $0.00.", text)
 
     def test_the_word_verified_is_said_only_when_the_cost_lines_after_the_change_confirm_the_saving(self):
         for action in (make_action(), make_action(state="done", verification={"gone": True}), make_action(state="failed", error="Refused.", verification={}),
                        make_action(state="unknown", verification={})):
             with self.subTest(state=action.state):
-                self.assertNotIn("Verified", self.letter(action=action).text)
-        self.assertEqual(self.letter(action=make_action(state="verified", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "currency": "USD"})).text.count("Verified"), 1)
+                self.assertNotIn("The change saves", self.letter(action=action).text)
+        self.assertEqual(self.letter(action=make_action(state="verified", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "currency": "USD"})).text.count("The change saves"), 1)
 
     def test_a_result_without_a_figure_for_the_saving_does_not_invent_one(self):
         text = self.letter(plan=make_plan(saving_usd_month=None), case=make_case(saving_usd_month=None, cost_usd_30d=None)).text
-        self.assertIn("Cost not visible. No cost line was read yet.", text)
+        self.assertIn("Meternaut could not read what this costs.", text)
         self.assertNotIn("a month", text)
         self.assertNotIn("a year", text)
         self.assertNotIn("No figure", text)
-        self.assertNotIn("after a few days", text, "there is no saving that cost lines could confirm")
+        self.assertNotIn("8 to 72 hours", text, "there is no saving that cost lines could confirm")
 
 
 class WhatComesFromAzureIsData(unittest.TestCase):
