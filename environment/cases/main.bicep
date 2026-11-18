@@ -187,7 +187,7 @@ param foundryModelSkeptic string = 'gpt-6.1-sol'
 @maxValue(40)
 param investigateMaxCalls int = 40
 
-@description('Most seconds that one investigation may take: its beats, the checks of code and the Skeptic. The code accepts no more than 1500 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py). The default is six beats of 220 seconds (a beat has the reads that code makes for it, then at most half of its 220 seconds for tool calls and a minute more to write its answer) and 120 for the checks and the Skeptic, 1440 in all, so that the Watch ends inside the 38 minutes that the Hub waits for (its container group has 45) at the usual reading time and not at the slowest (docs/proposals/25-beats.md).')
+@description('Most seconds that one investigation may take: its beats, the checks of code and the Skeptic. The code accepts no more than 1500 (LIMIT_INVESTIGATE_SECONDS in src/case-functions/cases/config.py). The default is eight beats of at most 220 seconds (a beat has the reads that code makes for it, then at most half of its 220 seconds for tool calls and a minute more to write its answer; the real ones took about 140; a beat that does not fit is named as not looked at) and 120 for the checks and the Skeptic, 1440 in all, so that the Watch ends inside the 38 minutes that the Hub waits for (its container group has 45) at the usual reading time and not at the slowest (docs/proposals/25-beats.md).')
 @minValue(30)
 @maxValue(1500)
 param investigateMaxSeconds int = 1440

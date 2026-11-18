@@ -22,7 +22,7 @@ One record for each investigation that was tried (not one that was switched off,
 |---|---|
 | When it began, what started it (`timer`, or `request` for a person or a tool), the two models | The run |
 | Calls made and allowed, tokens, seconds made and allowed (the time that it took, also when it failed before its end) | The run and the harness's budget |
-| Why it ended: `answered`, `time`, `calls`, `tokens`, `refused` or `failed` | The answer's refused calls and its out-of-time and out-of-tokens flags, and whether the harness held the run; for beats, the first of time, tokens and calls that one of them ran out of |
+| Why it ended: `answered`, `time`, `calls`, `tokens`, `refused`, `empty` (a beat that code did not give to the Investigator, because no resource of its kinds was listed) or `failed` | The answer's refused calls and its out-of-time and out-of-tokens flags, and whether the harness held the run; for beats, the first of time, tokens and calls that one of them ran out of (an `empty` beat changes none of them) |
 | The Investigator's own phrases about what it examined (at most 12, each at most 100 characters) | The answer, cleaned |
 | Each finding: its basis, proposal, how sure, how many resources, its sentence (at most 300 characters), the second AI's verdict and at most two objections (120 characters each), what code left out and why, and what became of its resources | The answer, the checks of code and the cases |
 | The kinds of resource that the estate is known to have, how many the tools read, and the first 20 of the kinds that they read (with what they did: listed, measured, described, split) and the first 20 of the kinds that they did not read | The toolbox's log and handles, and the cost lines that the Watch read |

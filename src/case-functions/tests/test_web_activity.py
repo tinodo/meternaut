@@ -166,11 +166,19 @@ class HowTheRunEnded(unittest.TestCase):
     def tile(self, **more) -> tuple[str, str]:
         return tiles_of(page_of(record(**more)))["Stopped because"]
 
+    def test_the_small_label_of_what_left_a_finding_is_on_the_page_for_a_kept_finding_and_for_a_dropped_one(self):
+        small = "in a finding that together costs too little to open a case"
+        reply = page_of(record(findings=(finding(1, left={"small": 3}), finding(2, kept=False, resources=2, left={"small": 2}))))
+        kept, dropped = reply.table("findings").rows
+        self.assertEqual(kept["What became of it"], f"Left out: 3 resources {small}")
+        self.assertEqual(dropped["What became of it"], f"Dropped: no resource of it was left (2 resources {small})")
+
     def test_each_word_of_the_list_says_what_it_stands_for_with_the_calls_and_the_seconds_that_were_used_of_the_allowed(self):
         said = {"answered": ("It gave its answer", "It gave its answer within its limits."), "time": ("Its time ran out", "Its time for tool calls ran out, so it was told to answer with what it had."),
                 "calls": ("Its calls ran out", "It used all its tool calls, so it was told to answer with what it had."),
                 "tokens": ("Its tokens ran out", "The tokens that it was allowed ran out, so it was told to answer with what it had."),
-                "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."), "failed": ("It failed", "It gave no answer that could be read.")}
+                "refused": ("It was not allowed to run", "A safeguard around the agents did not let it run, or stopped it."),
+                "empty": ("It had nothing to look at", "No resource of its kinds was listed, so it was not asked."), "failed": ("It failed", "It gave no answer that could be read.")}
         self.assertEqual(set(said), set(INVESTIGATION_ENDS), "every word that the record can hold has its words on the page")
         for end, (word, meaning) in said.items():
             with self.subTest(end=end):

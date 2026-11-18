@@ -28,6 +28,7 @@ import logging
 import math
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
@@ -62,6 +63,7 @@ MAX_GROUP_IDS = 200  # the resource ids that the case of a group keeps, for its 
 MEMBER = re.compile(r"[0-9a-f]{12}")  # the short id of a resource that the case of a group keeps (Lead.lead_id)
 MAX_ENTRIES = 720  # the entries of metric_evidence that are read: a handful for each of the handles that a finding may hold
 MAX_FACT_METRICS = 12  # the measurements that a case keeps
+NEAR_TOTAL = 0.05  # how close to a total of the tools, as a fraction of it, a cited number is counted as near (only a count: no number is accepted for it)
 MAX_TOTALS = 20  # the totals of one measurement that are read: the toolbox records at most as many
 SKEPTIC_METRICS = 6  # the measurements of one resource that the Skeptic sees, at most
 SKEPTIC_PROPERTIES = 8  # the properties of one resource that the Skeptic sees
@@ -130,7 +132,7 @@ class Finding:
     no_entry: int = 0
     not_measured: int = 0
     metric_unknown: int = 0
-    total_differs: int = 0
+    differs: Counter = field(default_factory=Counter)  # the cited totals that equal none of the totals of the tools, by what the cited number is (_differs); `total_differs` is their sum
     shows_use: int = 0
     too_brief: int = 0
     recent: int = 0
@@ -147,6 +149,10 @@ class Finding:
     priced: pricing.Priced | None = None  # what code made of it for the resources that are left: the figure of each, or why it has none
     fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
     beat: int = 1  # the beat of the investigation whose session wrote it (cases/beats.py)
+
+    @property
+    def total_differs(self) -> int:
+        return sum(self.differs.values())
 
 
 @dataclass
@@ -419,6 +425,18 @@ def _outranks(finding: Finding, earlier: "Finding | None") -> bool:
     return earlier is not None and earlier is not finding and finding.confidence > earlier.confidence
 
 
+def _differs(said: float | int | None, shown: dict) -> str:
+    """What a cited total is that equals none of the totals of the tools, for the diagnosis of a run: `none` (not a number), `zero`, `stat` (the maximum, the average or the days with data that the
+    tools recorded for the measurement), `near` (within NEAR_TOTAL of a total) or `far`, in that order. It decides nothing: the entry is thrown away whichever it is."""
+    if said is None:
+        return "none"
+    if said == 0:
+        return "zero"
+    if any(stat is not None and math.isclose(said, stat, rel_tol=1e-6, abs_tol=0.0) for stat in (shown["max"], shown["average"], shown["daysWithData"])):
+        return "stat"
+    return "near" if any(t is not None and abs(said - t) <= NEAR_TOTAL * abs(t) for t in shown["totals"]) else "far"
+
+
 def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Toolbox, taken: set[str], holders: "dict[str, Finding] | None" = None) -> None:
     """Keeps of a finding what the tools showed. `taken` holds the handles of the findings before it: a resource belongs to one finding only, the surer one of two (`holders` says which
     finding has each handle; the earlier keeps it when they are as sure).
@@ -452,12 +470,9 @@ def _verify(finding: Finding, handles: list[str], entries: object, toolbox: Tool
             else:
                 finding.not_measured += 1  # no tool measured the resource at all
             continue
-        if said is None:
-            finding.total_differs += 1
-            continue
-        total = next((t for t in shown["totals"] if t is not None and math.isclose(said, t, rel_tol=1e-6, abs_tol=0.0)), None)
+        total = None if said is None else next((t for t in shown["totals"] if t is not None and math.isclose(said, t, rel_tol=1e-6, abs_tol=0.0)), None)
         if total is None:
-            finding.total_differs += 1  # a number that none of the totals that the tools returned for the metric equals
+            finding.differs[_differs(said, shown)] += 1  # not a number, or one that none of the totals that the tools returned for the metric equals
             continue  # an entry that is not a number of the tools is thrown away, and an absent measurement proves nothing
         if finding.basis == "no-usage":
             numbers = [t for t in shown["totals"] if t is not None]
@@ -986,9 +1001,16 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         if seeded is not None:
             result.seeded = len(seeded.handles)
             if seeded.failed:
-                note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start gave no answer")
+                note(f"beat {beat.number}: {seeded.failed} of the reads that code makes for its start could not be read in full")
         if focused:
             seeds.append(s.monotonic() - at)
+        if beats.empty(beat, seeded):
+            # What code listed holds no resource of the kinds of this beat: there is nothing to look at, so no session is run and no token is spent. The next beats are told that its kinds were not judged.
+            result.end, result.note = beats.EMPTY, "no resource of its kinds was listed, so the Investigator was not asked"
+            last_note = last_note or result.note
+            note(f"beat {beat.number}: {result.note}")
+            close(result, True, at, log_before)
+            continue
         # The model and its tool calls have the seconds of the setting, whatever the reads of the beat took, inside what is left of the time of the investigation: its tool calls are refused after half of them
         # and it has a minute more to write its answer (beats.times).
         allowed = max(1.0, min(st.investigate_beat_seconds, beats_deadline - s.monotonic())) if focused else 0.0
@@ -1218,7 +1240,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         saved = [point for item in finding.items if (point := pricing.point(item.lead.facts, item.lead.cost_usd_30d)) is not None]
         h.emit("investigation.finding", finding=finding.number, basis=finding.basis or None, proposal=finding.proposal or None, confidence=finding.confidence,
                claimed=finding.claimed, handles=len(finding.items), unknown=finding.unknown, unproven=finding.unproven, repeated=finding.repeated,
-               noEntry=finding.no_entry, totalDiffers=finding.total_differs, metricUnknown=finding.metric_unknown, notMeasured=finding.not_measured, showsUse=finding.shows_use, tooBrief=finding.too_brief,
+               noEntry=finding.no_entry, totalDiffers=finding.total_differs, diffNone=finding.differs["none"], diffNear=finding.differs["near"], diffStat=finding.differs["stat"],
+               diffZero=finding.differs["zero"], diffFar=finding.differs["far"], metricUnknown=finding.metric_unknown, notMeasured=finding.not_measured, showsUse=finding.shows_use,
+               tooBrief=finding.too_brief,
                judgedLately=finding.recent, guarded=finding.guarded, capped=finding.capped, tooSmall=finding.small, unmeasured=sum(1 for item in finding.items if not item.metrics),
                shown=sum(1 for item in finding.items if item.shown), coveredCostUsd30d=finding.covered_usd, change=finding.change.action if finding.change else None,
                pricedHandles=len(saved), savingUsdMonth=_figure(sum(saved)) if saved else None,

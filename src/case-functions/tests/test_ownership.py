@@ -1,8 +1,10 @@
 """Owner hints: tags of a closed set and the Activity Log, as data for the human brief. Every name, id and address in it is INVENTED."""
 import datetime as dt
+import threading
 import unittest
 
 import support  # noqa: F401  (it puts the app on the path)
+from cases import events
 from cases import ownership as ow
 from cases.http import HttpError
 from cases.identity import IdentityError
@@ -138,6 +140,32 @@ class Arm:
         return self.answer
 
 
+class SlowArm(Arm):
+    """A read of the Activity Log that takes `took` seconds of the clock that the reader is given."""
+
+    def __init__(self, clock, took):
+        super().__init__(([], True))
+        self.clock, self.took = clock, took
+
+    def activity_events(self, *args, **kwargs):
+        self.clock[0] += self.took
+        return super().activity_events(*args, **kwargs)
+
+
+class Together(Arm):
+    """Reads that run at the same time: `width` of them are inside the call together, and the clock goes on by `took` seconds for all of them, as the wall clock does."""
+
+    def __init__(self, clock, lock, width, took):
+        super().__init__(([], True))
+        self.clock, self.lock, self.took, self.barrier = clock, lock, took, threading.Barrier(width)
+
+    def activity_events(self, *args, **kwargs):
+        self.barrier.wait(timeout=5)
+        with self.lock:
+            self.clock[0] = self.took
+        return super().activity_events(*args, **kwargs)
+
+
 class TheReader(unittest.TestCase):
     def test_a_hint_is_read_once_for_each_resource_over_the_last_90_days(self):
         arm = Arm(([event("2026-11-06T08:00:00Z", WRITE)], True))
@@ -181,12 +209,58 @@ class TheReader(unittest.TestCase):
 
     def test_the_time_of_one_run_is_shared_too(self):
         clock = [0.0]
-        arm = Arm(([], True))
+        arm = SlowArm(clock, 6.0)
         reader = ow.OwnerReader(arm, NOW, seconds=10.0, monotonic=lambda: clock[0])
         self.assertEqual(reader.hints(f"{VM}-a")["lastChangedBy"], ow.NOT_IN_WINDOW)
-        clock[0] = 11.0
-        self.assertEqual(reader.hints(f"{VM}-b")["lastChangedBy"], ow.UNAVAILABLE)
-        self.assertEqual(len(arm.calls), 1)
+        self.assertEqual(reader.hints(f"{VM}-b")["lastChangedBy"], ow.NOT_IN_WINDOW, "6 of the 10 seconds were spent: another read may start")
+        self.assertEqual(reader.hints(f"{VM}-c")["lastChangedBy"], ow.UNAVAILABLE, "12 seconds were spent reading")
+        self.assertEqual(len(arm.calls), 2)
+
+    def test_the_seconds_are_those_that_the_reads_took_and_not_the_wall_time_since_the_first_one(self):
+        clock = [0.0]
+        arm = SlowArm(clock, 0.5)
+        reader = ow.OwnerReader(arm, NOW, seconds=10.0, monotonic=lambda: clock[0])
+        words = []
+        for name in "abcde":
+            words.append(reader.hints(f"{VM}-{name}")["lastChangedBy"])
+            clock[0] += 100.0  # a Watch does other things between two reads, and the investigation lasts many times what its reads need
+        self.assertEqual(words, [ow.NOT_IN_WINDOW] * 5)
+        self.assertEqual((len(arm.calls), reader.spent, reader.notes), (5, 2.5, []))
+
+    def test_reads_that_run_at_the_same_time_add_up_their_seconds(self):
+        clock, lock = [0.0], threading.Lock()
+        arm = Together(clock, lock, 3, 4.0)
+        reader = ow.OwnerReader(arm, NOW, seconds=10.0, monotonic=lambda: clock[0])
+        threads = [threading.Thread(target=reader.hints, args=(f"{VM}-{name}",)) for name in "abc"]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual((clock[0], reader.spent, reader.reads), (4.0, 12.0, 3), "4 seconds went by and the three reads together took 12")
+        self.assertEqual(reader.hints(f"{VM}-d")["lastChangedBy"], ow.UNAVAILABLE, "12 seconds of reading are over the 10 that the run has")
+        self.assertEqual(len(arm.calls), 3)
+
+    def test_a_refusal_has_one_text_for_each_reason_and_a_run_that_repeats_it_writes_it_once_with_its_count(self):
+        counted = ow.OwnerReader(Arm(([], True)), NOW, max_reads=1)
+        clock = [0.0]
+        timed = ow.OwnerReader(SlowArm(clock, 5.0), NOW, seconds=5.0, monotonic=lambda: clock[0])
+        for reader in (counted, timed):
+            for name in "abcd":
+                reader.hints(f"{VM}-{name}")
+        self.assertEqual(events.collapse(counted.notes), ["the Activity Log of some resources was not read: the reads of one run for owner hints were used up x 3"])
+        self.assertEqual(events.collapse(timed.notes), ["the Activity Log of some resources was not read: the time for the reads of one run for owner hints was used up x 3"])
+
+    def test_a_reader_that_shares_its_cache_keeps_what_it_read_and_never_a_refusal_for_its_own_time(self):
+        clock = [0.0]
+        arm = SlowArm(clock, 5.0)
+        reader = ow.OwnerReader(arm, NOW, monotonic=lambda: clock[0])
+        sibling = reader.sharing(max_reads=10, seconds=3.0)
+        self.assertEqual(sibling.hints(f"{VM}-a")["lastChangedBy"], ow.NOT_IN_WINDOW)
+        self.assertEqual(sibling.hints(f"{VM}-b")["lastChangedBy"], ow.UNAVAILABLE, "5 seconds were spent against the 3 of its budget")
+        self.assertEqual(reader.hints(f"{VM}-a")["lastChangedBy"], ow.NOT_IN_WINDOW)
+        self.assertEqual(len(arm.calls), 1, "what the sibling read is kept for the reader")
+        self.assertEqual(reader.hints(f"{VM}-b")["lastChangedBy"], ow.NOT_IN_WINDOW, "the refusal of the sibling was not kept: the reader reads it with its own budget")
+        self.assertEqual(len(arm.calls), 2)
 
     def test_the_window_is_at_most_what_the_log_keeps(self):
         arm = Arm()

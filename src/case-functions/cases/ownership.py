@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import threading
 import time
 import unicodedata
 from typing import Callable, Mapping
@@ -42,6 +43,8 @@ KINDS = ("person", "application", "managed-identity", "unknown")  # the kinds of
 STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 RESOURCE = re.compile(r"/subscriptions/([0-9a-fA-F-]{36})/resourceGroups/[^/]+/providers/(.+)", re.I)
 READ_ERRORS = (HttpError, Refused, IdentityError)
+COUNT_USED_UP = "the Activity Log of some resources was not read: the reads of one run for owner hints were used up"
+TIME_USED_UP = "the Activity Log of some resources was not read: the time for the reads of one run for owner hints was used up"
 
 
 def clean(value: object, limit: int) -> str | None:
@@ -208,21 +211,29 @@ def owner_hints(tags: Mapping | None, events: list[dict] | None, complete: bool,
 
 
 class OwnerReader:
-    """Reads the hints of the resources of one run: the Activity Log of each resource, once, within a count of reads and a time that the whole run shares."""
+    """Reads the hints of the resources of one run: the Activity Log of each resource, once, within a count of reads and the seconds that the reads take, which the whole run shares. The seconds are
+    those that the reads spent, added up over the threads that made them, and not the time that has gone by since the first one: a run that lasts long does not use them up by waiting."""
 
     def __init__(self, arm: Arm, now: dt.datetime, *, days: int = WINDOW_DAYS, max_pages: int = 3, max_reads: int = 30, seconds: float = 40.0,
                  monotonic: Callable[[], float] = time.monotonic) -> None:
         self.arm, self.now, self.days, self.max_pages, self.max_reads, self.seconds, self.monotonic = arm, now, min(days, WINDOW_DAYS), max_pages, max_reads, seconds, monotonic
-        self.began: float | None = None
         self.reads = 0
+        self.spent = 0.0  # the seconds that the reads took so far; added under the lock, because the reads of a picture run in several threads
         self.notes: list[str] = []
         self.shared = False  # a reader that shares what it keeps with another does not keep the answer of a read that its own budget did not allow
         self._kept: dict[str, tuple[list[dict] | None, bool, str | None]] = {}
+        self._lock = threading.Lock()
+
+    def _used_up(self) -> str | None:
+        """The note that says why no read may start, or None when one may: the count of reads or the seconds that they took have reached the budget."""
+        if self.reads >= self.max_reads:
+            return COUNT_USED_UP
+        return TIME_USED_UP if self.spent >= self.seconds else None
 
     def _events(self, resource_id: str) -> tuple[list[dict] | None, bool, str | None]:
         key = resource_id.lower()
         if key not in self._kept:
-            spent = self.shared and (self.reads >= self.max_reads or (self.began is not None and self.monotonic() - self.began >= self.seconds))
+            spent = self.shared and self._used_up() is not None
             found = self._read(resource_id)
             if spent:
                 return found
@@ -254,18 +265,23 @@ class OwnerReader:
         found = RESOURCE.fullmatch(resource_id)
         if found is None:
             return None, False, UNAVAILABLE
-        if self.began is None:
-            self.began = self.monotonic()
-        if self.reads >= self.max_reads or self.monotonic() - self.began >= self.seconds:
-            self.notes.append("the Activity Log of some resources was not read: the reads of one run for owner hints were used up")
+        with self._lock:
+            why = self._used_up()
+            if why is None:
+                self.reads += 1
+        if why is not None:
+            self.notes.append(why)
             return None, False, UNAVAILABLE
-        self.reads += 1
         moment_now = self.now if self.now.tzinfo else self.now.replace(tzinfo=dt.timezone.utc)
+        began = self.monotonic()
         try:
             events, complete = self.arm.activity_events(found.group(1).lower(), moment_now - dt.timedelta(days=self.days), moment_now, resource_id=resource_id, max_pages=self.max_pages)
         except READ_ERRORS as error:
             self.notes.append(f"the Activity Log of a resource could not be read ({str(error)[:160]})")
             return None, False, NOT_VISIBLE if getattr(error, "status", None) in (401, 403) else UNAVAILABLE
+        finally:
+            with self._lock:
+                self.spent += max(0.0, self.monotonic() - began)
         return events, complete, None
 
     def hints(self, resource_id: str, tags: Mapping | None = None) -> dict:
