@@ -374,7 +374,7 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         h.arm.activity_events = lambda subscription, since, until, **kwargs: ([Held.written(2, Held.GUID)], True)
         h.go()
         (found,) = self.record(h).findings
-        self.assertEqual(found["fates"], {"automation": 1})
+        self.assertEqual(found["fates"], {"managed": 1}, "the new fate has a key of its own: the old key `automation` is what earlier runs wrote when they held such a resource back")
 
     def test_a_finding_that_nobody_is_asked_about_is_left_for_a_person_and_a_group_counts_every_resource_that_it_stands_for(self):
         resources = [resource(n, name=f"pe-{n:02d}", cost_usd_30d=0.5) for n in range(1, 11)]

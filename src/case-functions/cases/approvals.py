@@ -21,8 +21,8 @@ from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
-from .models import (ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord,
-                     Principal, Store, StoreError, TwoPeopleRule, may_answer, started)
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord,
+                     EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -58,8 +58,9 @@ HELD_ANSWERS = 200  # the latest plans that settle looks at for the answers that
 HELD_NEW = 50  # the most held requests that one Watch makes: a Watch that finds more makes the rest at the next one
 PROMOTE_NEW = 5  # the most held requests of findings that an automation manages that one Watch turns into ordinary requests (Approvals.settle): the rest wait, and no person gets a burst of them
 HELD_NO_APPROVAL = "This finding is held back, so there is no request to approve. Nothing is approved."
-# And no more than ADVICE_OPEN_MAX (cases/models.py) requests wait at the same time for a finding that the AIs did not settle (a finding that both AIs agree on and that code re-checked is not held by
-# it, and neither is a finding that is worth more than the least of them: places_full). The rest wait, shown as held (`waiting`), and a request is made for them when a place is free.
+# And no more than ADVICE_OPEN_MAX (cases/models.py) requests wait at the same time for a finding that the AIs did not settle, unless a finding is worth more than the smallest of them, which is then asked
+# about all the same, up to ADVICE_OPEN_HARD: nothing is asked about beyond that, whatever it is worth (a finding that both AIs agree on and that code re-checked is not held by either: places_full). What
+# is not asked about waits, shown as held (`waiting`), and a request is made for it when a place is free, the dearest first.
 GROUP_CASES_READ = 200  # the latest cases that are read to find the groups whose requests are open
 # The recommendations that may lead to a plan of a change (the family that matches picks among them: cases/families).
 CHANGE_RECOMMENDATIONS = ("delete", "change")
@@ -585,10 +586,11 @@ class Approvals:
 
         An automation that manages the resource is no guard (brief.automation_note is a warning on a request of advice). The held requests that were made for it before (the reason `automation`), and the
         ones that wait for a place (`waiting`), become ordinary open requests, in place: the same request and case, the held mark gone, the warning kept (`automated`) and the start of the wait the time
-        that it was made (`waiting_since`), so that the ladder of cases/escalation.py counts from there. In the order of the pages (the largest figure first, then who has waited longest), at most
-        PROMOTE_NEW in one Watch, and none while the places for requests are full (places_full: the rest wait, held with the reason `waiting`, and the next Watch goes on). A finding that the cap holds
-        back, because ADVICE_OPEN_MAX requests are open and it is worth no more than the least of them, is shown as such a held request. `promoted` lists them. A finding that nobody is to be asked
-        about (little is at stake, or a person answered it lately) is closed as released."""
+        that it was made (`waiting_since`), so that the ladder of cases/escalation.py counts from there. In the order of the pages (the largest figure first, then the finding that has waited longest), at
+        most PROMOTE_NEW in one Watch: the others stay exactly as they were, with their reason and their words, and the next Watch goes on. None becomes an open request while the places for requests are
+        full (places_full): it then waits for a place, held with the reason `waiting`, and the dearest of what waits takes a place when an answer, or a request that Meternaut took back, frees one. A finding
+        that places_full holds back is shown as such a held request. Every held request that is kept stays linked to its case, whatever a judgment wrote. `promoted` lists them. A finding that nobody is to
+        be asked about (little is at stake, or a person answered it lately) is closed as released."""
         self.promoted = []
         try:
             now = self.clock()
@@ -617,6 +619,7 @@ class Approvals:
                         if why_not_ask(case) is not None or any(about_the_same(p, case) for p in answered):
                             how = "released"  # nobody is to be asked: little is at stake, or a person answered it lately
                         else:
+                            self._link(case, plan.plan_id)  # a judgment writes the case again with no link to a request: it keeps this one, whether it is made an open request now or later
                             managed.append((plan, case))
                             continue
                     elif not why and case.updated_at > plan.created_at:
@@ -626,19 +629,21 @@ class Approvals:
                         how = "" if why else "released"
                     if not how:
                         self._refresh(plan.plan_id, case, why)
-                        if case.plan_id != plan.plan_id:
-                            self.store.case_update(case.case_id, lambda kept, plan_id=plan.plan_id: _with(kept, plan_id=plan_id))
+                        self._link(case, plan.plan_id)
                 if how:
                     fresh = self._release(plan, now, how)
                     if fresh is not None:
                         released.append((fresh, case))
             for plan, case in sorted(managed, key=lambda item: (-_figure(item[1]), item[1].first_seen_at or item[0].created_at, item[0].plan_id)) if approvers else ():  # the order of the pages: the largest figure first, then the finding that has waited longest
-                opened = None if len(self.promoted) >= PROMOTE_NEW or places_full(case, open_plans) else self._promote(plan, case, approvers, now)
-                if opened is None:
-                    self._refresh(plan.plan_id, case, "waiting")
+                if places_full(case, open_plans):
+                    self._refresh(plan.plan_id, case, "waiting")  # it waits for a place, and says so
+                elif len(self.promoted) >= PROMOTE_NEW:
+                    self._refresh(plan.plan_id, case, "")  # it waits for the next Watch and nothing else: its reason and its words stay as they were
                 else:
-                    open_plans = [*open_plans, opened]
-                    self.promoted.append((opened, case))
+                    opened = self._promote(plan, case, approvers, now)
+                    if opened is not None:
+                        open_plans = [*open_plans, opened]
+                        self.promoted.append((opened, case))
             if not approvers:
                 return released
             made = 0
@@ -687,9 +692,13 @@ class Approvals:
         sealed = plan_digest.sealed(replace(made, created_at=fresh.created_at, waiting_since=fresh.waiting_since or fresh.created_at, waited_usd=fresh.waited_usd))
         opened = replace(sealed, code=fresh.code)  # advice changes nothing in Azure, so its code stays, as when its people change (keep_approvers): a page that was open keeps working
         self.store.plan_put(opened)
-        if case.plan_id != opened.plan_id:
-            self.store.case_update(case.case_id, lambda kept: _with(kept, plan_id=opened.plan_id))
+        self._link(case, opened.plan_id)
         return opened
+
+    def _link(self, case: CaseRecord, plan_id: str) -> None:
+        """Links a case to its request when it is not linked to it: every judgment of the investigation writes the case again with no link, and the page of the finding finds its request through the link."""
+        if case.plan_id != plan_id:
+            self.store.case_update(case.case_id, lambda kept: _with(kept, plan_id=plan_id))
 
     def _refresh(self, plan_id: str, case: CaseRecord, why: str) -> None:
         """Gives a held request that is still held what the case says now: the reason when it changed, and the figure (the page and the letter read the figure of the request, which the Watch
@@ -747,8 +756,8 @@ class Approvals:
         None when the case is not a finding for a person (its status is not proposed or needs_human), when nobody can answer, when a person marked the resource do-not-touch,
         when a plan for the resource is open already (the case is linked to it when it is the case's own), or when a person answered an advise plan for the resource lately.
         None also when the finding is not worth a request (why_not_ask), when it cannot say what to look at (brief.says_nothing: NOTHING_TO_SAY, which the caller says in the History and counts),
-        or when it needs a person only because the AIs did not settle it and ADVICE_OPEN_MAX requests wait already:
-        the case is then an open question, and nothing is made for it until a place is free.
+        or when it needs a person only because the AIs did not settle it and the places are full (places_full: ADVICE_OPEN_MAX requests wait already and the finding is worth no more than the least of
+        them, or ADVICE_OPEN_HARD wait): the case is then an open question, and nothing is made for it until a place is free.
         The status of the case is left as it is while the plan is open: it still says what the AIs came to."""
         if case.status not in ADVICE_STATUSES or not approvers:
             return None
@@ -787,14 +796,15 @@ class Approvals:
 
 
 def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:
-    """Whether no place is free for a request about this finding: ADVICE_OPEN_MAX requests wait already for findings that the AIs did not settle, and this finding is worth no more than the least of
-    them (its stated saving; a finding with none is worth nothing, so a finding that nobody priced never takes the place of one that somebody did). Azure Advisor's own recommendations are neither held
-    by the cap nor counted by it: they are claims with a figure, and the cap is for the findings that the AIs did not settle."""
+    """Whether no place is free for a request about this finding. ADVICE_OPEN_HARD requests wait already for findings that the AIs did not settle: no finding is asked about then, whatever it is worth.
+    Or ADVICE_OPEN_MAX wait already, and this finding is worth no more than the least of them (its stated saving; a finding with none is worth nothing, so a finding that nobody priced never takes the place
+    of one that somebody did). Nothing that is open is displaced or closed by it. Azure Advisor's own recommendations are neither held by the cap nor counted by it: they are claims with a figure, and the
+    cap is for the findings that the AIs did not settle."""
     if case.status != "needs_human" or case.detector == ADVISOR:
         return False
     worth = [plan.saving_usd_month or 0.0 for plan in open_plans if plan.family == ADVISE and plan.state == "open" and (plan.preconditions or {}).get("caseStatus") == "needs_human"
              and (plan.preconditions or {}).get("source") != ADVISOR]
-    return len(worth) >= ADVICE_OPEN_MAX and (_saving(case) or 0.0) <= min(worth)
+    return len(worth) >= ADVICE_OPEN_HARD or (len(worth) >= ADVICE_OPEN_MAX and (_saving(case) or 0.0) <= min(worth))
 
 
 def _saving(case: CaseRecord) -> float | None:

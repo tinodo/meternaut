@@ -89,9 +89,14 @@ MAX_SIGNIN_PATH = 2000
 ADVISE = "advise"
 # A finding that a person has answered is not put to them again for this many days (cases/approvals.py, cases/learning.py, and the start page, which counts what is held back).
 ADVICE_QUIET_DAYS = 30
-# And no more than this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed
-# only by an answer, and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. A finding worth more than the least of them is not held by it.
+# Up to this many requests wait at the same time for a finding that the AIs did not settle (cases/approvals.py places_full): a request never times out (AGENTS.md rule 38), so a place is freed only by an
+# answer (or by Meternaut taking a request back and saying why), and the pages and the letters rank what waits by its figure, the largest first, so a larger set does not flood a person. While fewer are
+# open every such finding is asked about. From this many on, only a finding that is worth more than the smallest open request is, so that a finding worth much never waits for ever behind requests that
+# nobody answers, and the set may grow up to ADVICE_OPEN_HARD.
 ADVICE_OPEN_MAX = 30
+# The most requests for findings that the AIs did not settle that are open at once, whatever a finding is worth. Nothing that is open is ever displaced, closed or hidden: what is beyond waits, shown
+# as held back (`waiting`), and the dearest of it takes a place when an answer frees one. Without a ceiling a stream of dearer findings would grow the set without end.
+ADVICE_OPEN_HARD = 45
 # What may start a drift check, and how far apart two checks are when a person starts one: a person's check is refused when any check, the timer's too, began less than this many minutes ago.
 CHECK_TRIGGERS = ("timer", "console")
 CHECK_GAP_MINUTES = 15

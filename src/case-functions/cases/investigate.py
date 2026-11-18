@@ -1484,7 +1484,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
             fate = "person"
             plan = ex.approvals.plan_for(record, lead, ex.approvers())  # a plan of a change is made for none of these cases: the advise plan asks a person whether it is worth acting on
             if plan is not None:
-                fate = "automation" if (plan.preconditions or {}).get(AUTOMATED) else "request"  # a request, with the warning when an automation manages the resource
+                fate = "managed" if (plan.preconditions or {}).get(AUTOMATED) else "request"  # a request, with the warning when an automation manages the resource
                 record = learning.remember(ex.store, record, plan)  # how past requests like this were answered: the one line of the brief
                 h.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
                 ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
