@@ -2,11 +2,13 @@ import datetime as dt
 import json
 import re
 import unittest
+import unittest.mock
 from dataclasses import replace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 
+from cases import store as store_module
 from cases.http import Client
 from cases.memory_store import MemoryStore, stamp
 from cases.models import (ActionRecord, CaseRecord, CheckRecord, DecisionRecord, MailRecord, NoteRecord, PlanRecord, RunRecord, SettingsRecord, StoreError, SwitchRecord)
@@ -141,11 +143,15 @@ class FakeTables:
             table = self.tables.get(listing.group(1))
             if table is None:
                 return 404, {}, b'{"odata.error":{"code":"TableNotFound"}}'
-            rows = [row for _, (row, _) in sorted(table.items())]
+            rows = [(key, row) for key, (row, _) in sorted(table.items())]
+            if "NextPartitionKey" in query:  # the continuation that the service gave: the rows from that key on, in key order
+                rows = [(key, row) for key, row in rows if key >= (query["NextPartitionKey"], query.get("NextRowKey", ""))]
             if "$filter" in query:
-                rows = [r for r in rows if evaluate(query["$filter"], r)]
-            rows = rows[: int(query.get("$top", "1000"))]
-            return 200, {}, json.dumps({"value": rows}).encode()
+                rows = [(key, row) for key, row in rows if evaluate(query["$filter"], row)]
+            top = min(int(query.get("$top", "1000")), 1000)  # a page is 1,000 rows at most, whatever is asked
+            page, rest = rows[:top], rows[top:]
+            continuation = {"x-ms-continuation-nextpartitionkey": rest[0][0][0], "x-ms-continuation-nextrowkey": rest[0][0][1]} if rest else {}
+            return 200, continuation, json.dumps({"value": [row for _, row in page]}).encode()
         return 400, {}, b"{}"
 
 
@@ -216,6 +222,14 @@ class StoreContract:
         self.assertEqual(self.store.case_get("k1"), got)
         self.assertFalse(self.store.case_update("missing", lambda kept: replace(kept, status="done")), "a case that is gone is not made again")
         self.assertIsNone(self.store.case_get("missing"))
+
+    def test_every_open_held_and_recent_plan_is_read_however_many_there_are_and_no_list_is_said_to_be_cut(self):
+        for n in range(2500):
+            self.store.plan_put(plan(f"p{n:04d}"))  # open, in key order: the table service answers the first thousand of them in a page
+        for n in range(1200):
+            self.store.plan_put(plan(f"h{n:04d}", state="held"))
+        self.assertEqual([len(self.store.plans_open()), len(self.store.plans_held()), len(self.store.plans_recent(5000))], [2500, 1200, 2500])
+        self.assertEqual(self.store.truncated, {})
 
     def test_plans_open_holds_the_open_and_approved_ones(self):
         self.store.plan_put(plan("p1", "open", "2026-11-05T08:00:00Z"))
@@ -487,6 +501,24 @@ class TableStoreOnItsOwn(unittest.TestCase):
         self.minted = []
         client = Client(table_calls(ACCOUNT), lambda text: text, transport=self.service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
         self.store = TableStore(client, lambda r: (self.minted.append(r), "token-value")[1], ACCOUNT, clock=self.clock)
+
+    def test_the_service_gives_a_page_of_a_thousand_rows_and_the_store_follows_its_continuation_to_the_cap_and_says_when_it_cut(self):
+        for n in range(2500):
+            self.store.plan_put(plan(f"p{n:04d}"))
+        self.service.calls.clear()
+        self.assertEqual(len(self.store.plans_open()), 2500)
+        self.assertEqual(len([call for call in self.service.calls if "mnplans()" in call[1]]), 3, "three pages of a thousand rows at most, joined by the continuation of the service")
+        with unittest.mock.patch.object(store_module, "MAX_PAGES", 2):  # the cap is 2,000 rows: the real one is 10,000
+            self.assertEqual((len(self.store.plans_open()), self.store.truncated), (2000, {"open": 2000}))
+            self.assertEqual(len(self.store.plans_held()), 0)
+        self.assertEqual(len(self.store.plans_open()), 2500)
+        self.assertEqual(self.store.truncated, {}, "a list that is whole again is not said to be cut")
+
+    def test_the_cursor_of_the_ladder_is_one_row_that_a_later_put_replaces(self):
+        self.assertEqual(self.store.cursor_get(), "")
+        self.store.cursor_put("2026-11-05T08:00:00Z/p1")
+        self.store.cursor_put("2026-11-05T09:00:00Z/p2")
+        self.assertEqual(self.store.cursor_get(), "2026-11-05T09:00:00Z/p2")
 
     def test_every_call_goes_to_the_accounts_table_service_with_a_token_for_storage_and_nothing_else(self):
         self.store.case_put(case("k1"))

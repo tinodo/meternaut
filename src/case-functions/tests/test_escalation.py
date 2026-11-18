@@ -178,6 +178,20 @@ class TheLadder(unittest.TestCase):
         world.tick()
         self.assertEqual(len(world.mail.sent_to("ada@example.com")), 2, "it goes the day after")
 
+    def test_two_steps_of_one_request_that_wait_for_one_person_are_one_decision_in_one_letter_and_both_are_marked_told(self):
+        world = World()
+        world.store.settings_put(SettingsRecord(oid=CONTACT, quiet_from="00:00", quiet_to="23:59"))
+        for _ in range(29 * 24):
+            world.tick()
+            world.clock.advance(hours=1)
+        waiting = [r.number for r in world.steps() if CONTACT in r.who and CONTACT not in r.delivered]
+        self.assertGreaterEqual(len(waiting), 2, "steps 3, 4 and 5 all came to the contact, and all were held")
+        world.store.settings_put(SettingsRecord(oid=CONTACT))
+        world.tick()
+        (letter,) = world.mail.sent_to("cora@example.com")
+        self.assertTrue(letter[1].startswith("[Meternaut] A decision has waited"), letter[1])
+        self.assertEqual([r.number for r in world.steps() if CONTACT in r.who and CONTACT not in r.delivered], [])
+
     def test_a_lookup_that_fails_goes_on_to_the_contacts_and_the_message_says_so_in_plain_words(self):
         world = World(graph=Graph(managers={A: 403}))
         world.clock.advance(days=7)
@@ -709,6 +723,58 @@ class TheWorkOfARound(unittest.TestCase):
             world.clock.advance(minutes=1)
         self.assertEqual(len(reads), 60)
 
+    def test_every_request_is_looked_at_within_ceil_n_over_the_cap_rounds_whatever_the_spacing_of_the_rounds(self):
+        for plans in (60, 130):
+            for minutes in range(1, 7):
+                with self.subTest(requests=plans, minutes_between_rounds=minutes):
+                    world = World(plans=plans)
+                    reads = self.counting(world)
+                    for _ in range(-(-plans // escalation.ROUND_PLANS)):
+                        world.tick()
+                        world.clock.advance(minutes=minutes)
+                    self.assertEqual(len(reads), plans, "a round of the timer may be skipped when another runs long, so the spacing is not ours to choose")
+
+    def test_the_cursor_is_kept_in_the_store_so_a_restart_goes_on_where_the_round_stopped(self):
+        world = World(plans=60, store=Writes)
+        reads = self.counting(world)
+        world.tick()
+        self.assertEqual(len(reads), escalation.ROUND_PLANS)
+        again = Ladder(world.store, world.people, world.mailer, directory_of(world.graph, world.people, True), world.settings, BASE, world.clock, ("Olga (olga@example.com)",), emit=world.say)
+        escalation.tick(again)  # a new process: nothing in it but the store
+        self.assertEqual(len(reads), 2 * escalation.ROUND_PLANS, "the second round took the next requests, not the first ones again")
+        self.assertTrue(world.store.cursor_get())
+
+    def test_the_cursor_is_kept_by_the_table_store_too(self):
+        service = FakeTables()
+        client = http.Client(table_calls(ACCOUNT), str, transport=service.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
+        make = lambda clock: TableStore(client, lambda resource: "token", ACCOUNT, clock=clock)
+        world = World(plans=60, store=make)
+        reads = self.counting(world)
+        world.tick()
+        self.assertEqual(make(world.clock).cursor_get(), world.store.cursor_get())
+        self.assertNotEqual(world.store.cursor_get(), "")
+        world.tick()
+        self.assertEqual(len(reads), 2 * escalation.ROUND_PLANS)
+
+    def test_an_empty_list_and_a_cursor_whose_request_has_gone_are_handled(self):
+        empty = World(plans=0)
+        empty.tick(2)
+        self.assertEqual((empty.store.cursor_get(), empty.events), ("", []))
+        world = World(plans=60)
+        reads = self.counting(world)
+        world.store.cursor_put("2026-11-02T10:00:00Z/p30-that-is-gone")  # the request that the last round ended with was answered since
+        world.tick()
+        ordered = sorted(world.store.plans_open(), key=escalation._key)
+        wanted = [plan.plan_id for plan in ordered if escalation._key(plan) > "2026-11-02T10:00:00Z/p30-that-is-gone"][:escalation.ROUND_PLANS]
+        self.assertEqual(sorted(reads), sorted(wanted), "the round goes on with the next request after the key, whether or not that request is still there")
+
+    def test_a_round_that_has_reached_the_last_request_goes_on_with_the_oldest(self):
+        plans = [advice(f"p{n:03d}", f"c{n}", created=START + dt.timedelta(minutes=n)) for n in range(30)]
+        chosen, cursor = escalation._window(plans, escalation._key(plans[27]))
+        self.assertEqual([p.plan_id for p in chosen], [f"p{n:03d}" for n in (28, 29, *range(0, 23))])
+        self.assertEqual(cursor, escalation._key(plans[22]))
+        self.assertEqual(escalation._window(plans[:10], "x"), (sorted(plans[:10], key=escalation._key), "x"), "while all fit in one round the cursor is not moved")
+
     def test_a_weekly_letter_that_fails_is_tried_every_15_minutes_12_times_and_then_once_a_day(self):
         world = World()
         world.add("p9", "c9", created=START - 20 * DAY)
@@ -800,6 +866,7 @@ class TheApproversOfARequest(unittest.TestCase):
         watch.store.plan_put(sealed("p1"))
         watch.store.plan_put(sealed("p2", "change"))
         before, nina = watch.store.plan_get("p2"), Principal(NINA, "Nina", ("approver",))
+        advice_code = watch.store.plan_get("p1").code
         approvals = watch.services.extras.approvals
         self.assertEqual(approvals.check_approve(nina, "p2", before.code)[1].kind, "refused_role")
         watch.run(WITH_NINA)
@@ -807,9 +874,10 @@ class TheApproversOfARequest(unittest.TestCase):
             plan = watch.store.plan_get(plan_id)
             self.assertEqual((plan.approvers, plan_digest.problem(plan, plan.digest)), ((A, NINA), ""), "the people are in the digest: the request is sealed again")
         after = watch.store.plan_get("p2")
-        self.assertNotEqual(after.code, before.code)
+        self.assertNotEqual(after.code, before.code, "a change is bound to its digest, so its code is the new one")
+        self.assertEqual(watch.store.plan_get("p1").code, advice_code, "advice changes nothing in Azure: its code stays, so a card or a letter sent before keeps working")
         self.assertEqual(approvals.check_approve(nina, "p2", after.code), (after, None), "the digest holds, so the approval can go on to the sign-in")
-        asked = approvals.decide(nina, "p1", "ask", watch.store.plan_get("p1").code, watch.store.nonce_new(NINA, "p1"))
+        asked = approvals.decide(nina, "p1", "ask", advice_code, watch.store.nonce_new(NINA, "p1"))  # the code of the old card
         self.assertEqual((asked.ok, asked.kind), (True, "asked"))
 
     def test_a_person_who_is_not_on_the_list_any_more_cannot_answer_and_the_others_still_can(self):
@@ -902,6 +970,17 @@ class TheApproversOfARequest(unittest.TestCase):
         notes = watch.run(WITH_NINA)
         self.assertEqual([n.split(" (")[0] for n in notes], ["the open requests could not be brought up to date"])
         self.assertEqual(watch.store.plan_get("p1").approvers, (A,), "nothing was half written")
+
+
+class TheCapOfTheTable(unittest.TestCase):
+    def test_a_watch_says_in_one_line_of_counts_which_lists_the_store_cut_and_says_nothing_when_it_cut_none(self):
+        watch = Watch()
+        watch.run()
+        self.assertEqual([line for line in watch.lines.found if line["type"] == "plans.truncated"], [])
+        watch.store.truncated = {"open": 10000}
+        watch.run()
+        (line,) = [line for line in watch.lines.found if line["type"] == "plans.truncated"]
+        self.assertEqual({key: value for key, value in line.items() if key not in ("v", "ts", "runId", "requestId")}, {"type": "plans.truncated", "open": 10000})
 
 
 class TheAddedPersonIsToldByTheNextStep(unittest.TestCase):

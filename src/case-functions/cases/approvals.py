@@ -22,7 +22,7 @@ from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, DECLINE_REASONS, GROUP_FACT, HELD, ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord,
-                     Principal, Store, StoreError, TwoPeopleRule, escalated_to, started)
+                     Principal, Store, StoreError, TwoPeopleRule, may_answer, started)
 from .roles import clean_text
 
 # The answers that a person can give (a request that changes nothing in Azure takes all of them on the page; a change takes the sign-in for its approval). `confirm` is the first of two
@@ -199,10 +199,8 @@ class Approvals:
         if plan is None:
             return None, DecideResult(False, "refused_state", "This request does not exist. Nothing is approved.")
         advice = plan.family == ADVISE
-        # A change is approved by an approver. An advise plan only records an opinion, so the owner may answer it too; either way the person has to be named on the plan. The one other person who may answer
-        # advice is an escalation contact that the ladder has come to with this request (cases/escalation.py): the last link, who is told when nobody answers.
-        if not ((principal.has("approver") or (advice and principal.has("owner"))) and principal.oid.lower() in {a.lower() for a in plan.approvers}) and not (
-                advice and principal.has("escalation") and escalated_to(self.store.escalations_of(plan.plan_id), principal.oid)):
+        # A change is approved by a named approver. An advise plan only records an opinion, so the owner may answer it too, and so may a person that a step of its ladder was delivered to (models.may_answer).
+        if not may_answer(principal, plan, lambda: self.store.escalations_of(plan.plan_id)):
             return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
         if plan.state == "expired":  # the stored word for a request that Meternaut took back: no clock ends a request (AGENTS.md rule 38)
             return None, DecideResult(False, "expired", "Meternaut took this request back, so it cannot be answered. Nothing has changed.", plan)
@@ -495,7 +493,11 @@ class Approvals:
                 if new:
                     self.store.escalation_claim(EscalationRecord(fresh.plan_id, "added", 1 + sum(1 for r in self.store.escalations_of(fresh.plan_id) if r.kind == "added"), stamp(self.clock()), who=new))
                 changed = replace(fresh, approvers=wanted)
-                self.store.plan_put(plan_digest.sealed(changed) if fresh.digest else changed)
+                if fresh.digest:
+                    changed = plan_digest.sealed(changed)
+                    if fresh.family == ADVISE:
+                        changed = replace(changed, code=fresh.code)  # advice changes nothing in Azure, so its code stays: a card or a letter that was sent before keeps working
+                self.store.plan_put(changed)
                 plans, added, dropped = plans + 1, added + len(new), dropped + len(kept - set(wanted))
         except StoreError:
             pass
@@ -675,14 +677,15 @@ class Approvals:
         return fresh
 
     def _promote(self, plan: PlanRecord, case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime) -> PlanRecord | None:
-        """Turns the held request of a finding that an automation manages into an ordinary open request of advice, in place: the plan of a request that is made now for the case (the figure, the words and
-        the warning of today, the people of the list), with the id of the held one, its time and the start of its wait. It is read again first: an answer that came in since is never undone. Returns the
-        open request, or None when the request is not held any more."""
+        """Turns a held request that nothing holds back any more (the reason `automation`, which holds nothing now, or `waiting` for a place) into an ordinary open request of advice, in place: the plan of
+        a request that is made now for the case (the figure, the words and the warning of today, the people of the list), with the id of the held one, its code, its time and the start of its wait. It is
+        read again first: an answer that came in since is never undone. Returns the open request, or None when the request is not held any more."""
         fresh = self.store.plan_get(plan.plan_id)
         if fresh is None or fresh.state != HELD:
             return None
         made = build_advice(case, approvers, now, self.settings, new_id=lambda: fresh.plan_id)
-        opened = plan_digest.sealed(replace(made, created_at=fresh.created_at, waiting_since=fresh.waiting_since or fresh.created_at, waited_usd=fresh.waited_usd))
+        sealed = plan_digest.sealed(replace(made, created_at=fresh.created_at, waiting_since=fresh.waiting_since or fresh.created_at, waited_usd=fresh.waited_usd))
+        opened = replace(sealed, code=fresh.code)  # advice changes nothing in Azure, so its code stays, as when its people change (keep_approvers): a page that was open keeps working
         self.store.plan_put(opened)
         if case.plan_id != opened.plan_id:
             self.store.case_update(case.case_id, lambda kept: _with(kept, plan_id=opened.plan_id))

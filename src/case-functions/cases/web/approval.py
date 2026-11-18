@@ -66,11 +66,9 @@ def _not_found(ctx: Ctx) -> Response:
 
 
 def _gate(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, Response | None]:
-    """Who may see and answer a plan: a person named in it, with the role approver (for advice, the owner too), or a contact with the role escalation whom the ladder has come to with this advice.
-    Nobody else sees its details, and a person who may not approve a change learns nothing about which ids exist."""
+    """Who may see and answer a plan: the people that `answerable` says (a person named in it, with the role approver, or the owner for advice, or a person that a step of the ladder of this advice
+    was delivered to). Nobody else sees its details, and a person who may not approve a change learns nothing about which ids exist."""
     principal = ctx.principal
-    if not (principal.has("approver") or principal.has("owner") or principal.has("escalation")):  # type: ignore[union-attr]
-        return None, _refused_role(ctx)
     plan = ctx.store.plan_get(plan_id)
     if plan is None:
         return None, (_not_found(ctx) if principal.has("approver") else _refused_role(ctx))  # type: ignore[union-attr]
@@ -93,7 +91,7 @@ def render_plan(ctx: Ctx, plan: PlanRecord, *, values: dict[str, str] | None = N
     answer = brief_page.answer_form(ctx, plan, brief, values, errors) if brief.answers else None
     named = ctx.principal.oid.lower() in {a.lower() for a in plan.approvers}  # type: ignore[union-attr]
     return brief_page.render(ctx, brief, case=case, plan=plan, action=action, decisions=decisions, answer=answer, errors=errors, status=status,
-                             why="you are named as an approver of this request, and you have the role approver" if named else "the ladder of this request came to you, and you have the role escalation",
+                             why="you are named as an approver of this request, and you have the role approver" if named else "the ladder of this request came to you",
                              banner=_walking(ctx, plan))
 
 

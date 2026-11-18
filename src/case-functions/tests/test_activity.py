@@ -368,8 +368,8 @@ class TheRecordThatTheInvestigationKeeps(unittest.TestCase):
         kept, dropped = self.record(h).findings
         self.assertEqual((kept["kept"], dropped["kept"], dropped["resources"], dropped["left"], dropped.get("fates")), (True, False, 3, {"unknown": 3}, None))
 
-    def test_a_request_that_was_held_back_is_counted_with_the_reason_that_held_it(self):
-        from test_missing_data import AnAutomationsResourceIsHeldBack as Held
+    def test_a_request_for_a_resource_that_an_automation_manages_is_counted_with_its_own_fate(self):
+        from test_missing_data import AnAutomationsResourceIsAskedAboutWithAWarning as Held
         h = Harness(FakeFoundry(answer(finding(handles=["r1"]))), FakeToolbox([resource(1, cost_usd_30d=70.0)], {"r1": metrics(MetricA=0)}), with_store=True)
         h.arm.activity_events = lambda subscription, since, until, **kwargs: ([Held.written(2, Held.GUID)], True)
         h.go()

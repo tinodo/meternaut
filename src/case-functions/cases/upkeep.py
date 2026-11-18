@@ -74,6 +74,8 @@ def keep_approvers(ex, history: History) -> None:
     plans, added, dropped = ex.approvals.keep_approvers(ex.approvers(), tuple(p.oid for p in ex.people.with_role("owner")))
     if plans:
         history.emit("plan.approvers", plans=plans, added=added, dropped=dropped)
+    if getattr(ex.store, "truncated", None):
+        history.emit("plans.truncated", **ex.store.truncated)  # the lists of requests that the store cut at its cap, with how many rows it kept: counts only, one line for a Watch
 
 
 def held(history: History, case: CaseRecord, why: str = "") -> str:
