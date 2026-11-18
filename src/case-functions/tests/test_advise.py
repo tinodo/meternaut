@@ -294,11 +294,8 @@ class TheWorthOfARequest(unittest.TestCase):
                 case = self.priced(**changes)
                 self.assertIsNone(why_not_ask(case))
                 self.assertIsNotNone(self.approvals.advise(case, NAMED))
-                self.assertEqual(self.priced_plan_figure(), 10.0)
-
-    def priced_plan_figure(self):
-        (plan,) = self.open_advice()
-        return plan.saving_usd_month
+                (plan,) = self.open_advice()
+                self.assertEqual(plan.saving_usd_month, 10.0, "the request states the saving that code priced")
 
     def test_a_case_of_azure_advisor_or_of_a_rule_based_detector_with_no_saving_is_asked_about_as_before(self):
         advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
