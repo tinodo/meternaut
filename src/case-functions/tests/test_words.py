@@ -398,7 +398,8 @@ SENTENCE_START = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
 ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
-OLD_MONEY = re.compile(r"\b(?:Saves|Could save|Costs),\s+(?:Scenario|Expected|Verified)\b|\bBased on the \d+ (?:bill )?lines?\b")  # the money line of the old pages: a level as a label, and "Based on the 2 bill lines"
+OLD_MONEY = re.compile(r"\b(?:saves|could save|costs),\s+(?:scenario|expected|verified)\b|\bbased on the \d+ (?:bill )?lines?\b|\ba year is twelve times the month\b", re.IGNORECASE)  # the money line of the old pages: a level as a label, "Based on the 2 bill lines" and the note that a year is twelve months
+OLD_RISK = re.compile(r"(?:^|[.!?]\s+)risk[:,]\s+(?:low|medium|high)\b", re.IGNORECASE)  # the risk of the old pages said as a label that starts a sentence ("Risk: high.", "Risk, medium:"); the chip says "Medium risk, High confidence"
 DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
 LABEL_COLON = re.compile(r"^([^:.?!]{3,60}): (?=[A-Z][a-z])")  # "Impact not analysed: Meternaut did not look ...": a sentence after a colon starts with a capital letter
 RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source", "Responsible for Meternaut")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart; the footer is the last (phase 2 says it as a sentence)
@@ -425,6 +426,8 @@ def problems(shown: Rendered) -> list[str]:
             found.append(f"{where}: an ISO date outside the Details")
         if OLD_MONEY.search(text):
             found.append(f"{where}: an old money label")
+        if OLD_RISK.search(text):
+            found.append(f"{where}: an old risk label")
         if DOUBLED.search(text):
             found.append(f"{where}: a doubled word")
         if block.kind == "chart" or not re.search(r"[A-Za-z]", text):
@@ -507,7 +510,9 @@ class TheWordsReadAsSentences(unittest.TestCase):
             "an id outside the Details": _made("paragraph", f"It was changed by {GUID_OF_AN_APP}."),
             "an ISO date outside the Details": _made("paragraph", "It has waited since 2026-11-02."),
             "an old money label": [_made("paragraph", "Saves, Scenario. $144.00 a month. Based on the 2 bill lines."), _made("paragraph", "Costs, Expected. It is based on the 2 bill lines."),
-                                   _made("paragraph", "Based on the 2 bill lines of this resource.")],
+                                   _made("paragraph", "Based on the 2 bill lines of this resource."), _made("paragraph", "A year is twelve times the month."),
+                                   _made("paragraph", "SAVES, SCENARIO. A YEAR IS TWELVE TIMES THE MONTH.")],
+            "an old risk label": [_made("paragraph", "Risk: medium."), _made("paragraph", "Risk, high: it could break traffic."), _made("item", "RISK: LOW.")],
             "a doubled word": [_made("paragraph", "The Watch's own investigation investigation found it."), _made("value", "Found by the Watch's own investigation investigation", details=True)],
             "a capital letter after the colon": [_made("paragraph", "Impact not analysed: Meternaut did not look at what depends on it."), _made("item", "If you act: What depends on it can slow down or stop.")],
         }
@@ -520,6 +525,7 @@ class TheWordsReadAsSentences(unittest.TestCase):
         allowed = [_made("label", "Medium risk if you act"), _made("heading", "What it costs"), _made("button", "Open in the Azure portal"), _made("cell", "Could save about $1,682 a year ($140 a month)"),
                    _made("term", "Resource id"), _made("value", "case0102"), _made("value", "$848", details=True), _made("paragraph", "It costs $848 a month, about $10,180 a year."),
                    _made("value", "Mon 2 Nov 2026 08:00 UTC (09:00 CET), run 2026-11-02", details=True), _made("paragraph", "Look at the disk x, because it may be larger than its use needs."),
+                   _made("label", "Medium risk, High confidence, Cannot be undone"), _made("paragraph", "A high risk, low confidence request is still a question."),
                    _made("paragraph", f"The id {GUID_OF_AN_APP} is in the Details.", details=True), _made("quote", "it  costs, ,nothing . and the AI wrote this lower case"),
                    _made("paragraph", "Nobody has worked out what a change would save. (It is an estimate.)"), _made("item", "Heads-up: An automation changed this 2 days ago.")]
         for one in allowed:
@@ -540,16 +546,19 @@ class TheWordsReadAsSentences(unittest.TestCase):
                     self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}'")
 
     def test_what_is_put_back_by_hand_makes_the_lint_fail_on_the_page_the_letter_and_the_card(self):
-        # The four shapes that came back by hand after the review of the words: a date in the form of a record in the body of a page, the money line of the old pages, a label with a colon before a
-        # sentence, and a word twice. Each is said where a sentence of the real code is said, and each of the three surfaces must fail for it.
-        put_back = {
-            "an ISO date outside the Details": "It has waited since 2026-11-02.",
-            "an old money label": "Saves, Scenario. $144.00 a month. Based on the 2 bill lines.",
-            "a capital letter after the colon of 'Impact not analysed'": "Impact not analysed: Meternaut did not look at what depends on it.",
-            "a doubled word": "The Watch's own investigation investigation found it.",
-        }
-        for fault, said in put_back.items():
-            with self.subTest(fault), mock.patch.object(brief_mod, "ADVICE_WHO", said):
+        # The shapes that came back by hand after the reviews of the words: a date in the form of a record in the body of a page, the money line of the old pages (in any case of letters), the risk
+        # of the old pages said as a label, a label with a colon before a sentence, and a word twice. Each is said where a sentence of the real code is said, and each of the three surfaces must fail.
+        put_back = (
+            ("an ISO date outside the Details", "It has waited since 2026-11-02."),
+            ("an old money label", "Saves, Scenario. $144.00 a month. Based on the 2 bill lines."),
+            ("an old money label", "saves, scenario. based on the 2 bill lines."),
+            ("an old money label", "A year is twelve times the month."),
+            ("an old risk label", "Risk: medium."),
+            ("a capital letter after the colon of 'Impact not analysed'", "Impact not analysed: Meternaut did not look at what depends on it."),
+            ("a doubled word", "The Watch's own investigation investigation found it."),
+        )
+        for fault, said in put_back:
+            with self.subTest(fault, said=said), mock.patch.object(brief_mod, "ADVICE_WHO", said):
                 account, plan = _ai_account(), _ai_plan()
                 brief = brief_mod.build_brief(account, plan, None, (), now=NOW, may_answer=True)
                 on = {"page": _page("page", account, plan),
