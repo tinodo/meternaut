@@ -299,7 +299,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
     brief = brief_mod.build_brief(case, plan, None, (), now=now)
-    about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its rows say how many, what they cost together and which, and the letter keeps to them
+    about_group = brief.group is not None and brief.kind == "advice"  # a finding about many resources: its title says how many, its figure what they cost or save, and the letter adds only what a run left out
     doc = _Doc("A change to Azure waits for your OK" if brief.kind == "change" else "A decision waits for you")
     doc.heading(_data(title_text(brief), 200))
     if brief.state != "open":
@@ -314,10 +314,10 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         if line:
             doc.paragraph(_data(line, 240))
     if about_group:
-        rows = _fact_rows(brief)
-        doc.facts(*(rows[:2] if brief.group.capped else rows))  # a group that the limit of a run cut says so in its first row, and then a letter has no room for the examples as well
+        if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out
+            doc.facts(("Left out", _data(f"{brief_mod.number_text(brief.group.capped)} more {brief_mod.group_things(brief.group)}, because of the limit of one run", 120)))
         said = _decision_rows(brief)
-        doc.facts(*said)  # whose it is, that the answer changes nothing in Azure, and the risk of acting on it: a letter for many resources has no room for more
+        doc.facts(*(said if brief.owner.known else said[1:]))  # that the answer changes nothing in Azure and the risk of acting on it; whose it is only when it is known (of the first resource, and a letter for many has no room for "nobody is named")
     else:
         doc.facts(*_fact_rows(brief))
         doc.facts(*_decision_rows(brief))

@@ -731,8 +731,9 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         card = json.dumps(cards.decision_card(self.b, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}")))
         self.assertIn("and 10 more that the limit of one run left out", card)
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        self.assertIn("Covers: 20 private endpoints in 14 resource groups, and 10 more that the limit of one run left out", letter.text)
-        self.assertIn("Together they cost: ", letter.text)
+        self.assertIn("Left out: 10 more private endpoints, because of the limit of one run", letter.text)
+        self.assertNotIn("Covers", letter.text, "the title says how many, and the row of what the limit of a run left out is all that a letter adds")
+        self.assertNotIn("Together they cost", letter.text)
         self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
         self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
@@ -928,11 +929,11 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertNotIn("$65,880", three.text, "no total: a total belongs to the Decisions page")
         self.assertLessEqual(word_count(three), MOST_WORDS["digest"])
 
-    def test_the_decision_letter_has_the_three_rows_and_stays_within_the_words_of_a_letter(self):
+    def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        for row in ("Covers: 60 private endpoints in 14 resource groups", "Together they cost: $1,830 in the last 30 days", "Bill lines it would shrink: 60 lines, $1,830 a month",
-                    "If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights."):
-            self.assertIn(row, letter.text)
+        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
+        for repeated in ("Covers", "Together they cost", "Bill lines it would shrink", "Whose is it"):
+            self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
         self.assertIn("Meternaut worked out that this could save about $21,960 a year ($1,830 a month).", letter.text)
         self.assertNotIn("No figure", letter.text)
