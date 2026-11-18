@@ -320,7 +320,7 @@ class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
         self.assertEqual((case.cost_usd_30d, case.saving_usd_month, case.status, case.facts[GROUP_FACT]["count"]), (1830.0, None, "needs_human", 60))
         self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNPRICED, [], None))
         self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
-        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them, for no saving was priced from the bill"), h.notes[-1])
+        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them because no saving was priced from the bill"), h.notes[-1])
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):

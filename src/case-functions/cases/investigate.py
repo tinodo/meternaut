@@ -1281,7 +1281,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     finished(True, examined=out.examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
     note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {raw_total} finding"
          f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}"
-         + (f"; no request was made for {out.unpriced} of them, for no saving was priced from the bill" if out.unpriced else ""))
+         + (f"; no request was made for {out.unpriced} of them because no saving was priced from the bill" if out.unpriced else ""))
     return out
 
 

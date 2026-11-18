@@ -1354,7 +1354,7 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         self.assertEqual([c.facts["metrics"] for c in cases], [{}, {}], "the digest says that the finding cites no measurement")
         self.assertEqual((h.store.plans_open(), {c.plan_id for c in cases}), ([], {None}), "nobody is asked: no saving was priced from the bill, so the cases stay open questions")
         self.assertEqual(h.of("plan.created"), [])
-        self.assertTrue(h.notes[-1].endswith("opened 2 cases; no request was made for 2 of them, for no saving was priced from the bill"), h.notes[-1])
+        self.assertTrue(h.notes[-1].endswith("opened 2 cases; no request was made for 2 of them because no saving was priced from the bill"), h.notes[-1])
 
     def test_a_finding_whose_change_code_priced_from_the_bill_gets_an_advise_plan_that_states_the_saving(self):
         change, meters = priced("r1", "r2", usd=40.0)
@@ -1429,7 +1429,7 @@ class WhenSomeResourcesOfATypeHaveNoMeasurementAndTheirPeersHaveData(unittest.Te
         h = self.run_with(cost=848.0)
         self.assertEqual({c.status for c in h.store.cases_recent()}, {"needs_human"})
         self.assertEqual((h.store.plans_open(), {c.plan_id for c in h.store.cases_recent()}), ([], {None}), "an expensive hunch with no saving behind it is the AI's unfinished work, and no decision for a person")
-        self.assertTrue(h.notes[-1].endswith("opened 4 cases; no request was made for 4 of them, for no saving was priced from the bill"), h.notes[-1])
+        self.assertTrue(h.notes[-1].endswith("opened 4 cases; no request was made for 4 of them because no saving was priced from the bill"), h.notes[-1])
 
     def test_the_same_finding_with_the_basis_no_usage_is_dropped_because_nothing_was_measured(self):
         for label, evidence in (("no entry", []), ("an entry with no total", [entry(handle, "MetricA", None) for handle in self.HANDLES]),
