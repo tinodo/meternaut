@@ -451,7 +451,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
              **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
     if alike and "ratio" in prices[0] and len({str(item.get("ratio")) for item in prices}) == 1:
         price["ratio"] = prices[0]["ratio"]
-    if not alike and (switched := sum(_switched(item) for item in prices)):
+    if price["form"] == "mixed" and (switched := sum(_switched(item) for item in prices)):
         price["switched"] = switched
     skipped = sum(price.get("skipped") or 0 for price in prices)
     return {**out, "price": {**price, **({"skipped": skipped} if skipped else {})}}

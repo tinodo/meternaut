@@ -939,6 +939,20 @@ class TheAlternative(unittest.TestCase):
                 self.assertEqual("the alternative has not been checked for features" in basis, switched is not None, basis)
                 self.assertIn("each by its own rule", basis)
 
+    def test_a_group_of_resources_that_are_each_a_mix_still_counts_the_bill_lines_that_rest_on_an_alternative(self):
+        second = ("Example Compute", "Standard Tier", "Other Hours", "OnDemand", "Usage", "1 Hour")
+        meters = {"m1": billed_units(usd=60.0, quantity=600.0, scope="r1", words=COMPUTE), "m2": billed_units(usd=60.0, quantity=600.0, scope="r1", words=second),
+                  "m3": billed_units(usd=60.0, quantity=600.0, scope="r2", words=COMPUTE), "m4": billed_units(usd=60.0, quantity=600.0, scope="r2", words=second)}
+        box = shown(meters=meters, prices=LISTED, retail={"m1": 0.125, "m3": 0.125}, offers={"m1": {"p1"}, "m3": {"p1"}})
+        assumed = {"form": "assumed", "low": 0.2, "high": 0.9}
+        change = pricing.parse(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p1"}), effect("r1", ("m2",), assumed),
+                                     effect("r2", ("m3",), {"form": "alternative", "price": "p1"}), effect("r2", ("m4",), assumed)))
+        found = pricing.price(change, ("r1", "r2"), box, {"r1": 120.0, "r2": 120.0}, None, lambda text: text)
+        self.assertEqual([found.rows[handle].form for handle in ("r1", "r2")], ["mixed", "mixed"])
+        joined = pricing.combine([pricing.digest(change, found, handle) for handle in ("r1", "r2")], 2)["price"]
+        self.assertEqual((joined["form"], joined.get("switched"), joined["lines"]), ("mixed", 2, 4))
+        self.assertIn("the alternative has not been checked for features", pricing.saved({pricing.KEY: {"action": "switch", "price": joined}}).basis)
+
     def test_one_resource_with_two_switched_meters_keeps_the_rule_when_they_go_to_the_same_alternative_and_has_the_sentence_when_they_do_not(self):
         second = ("Example Compute", "Standard Tier", "Other Hours", "OnDemand", "Usage", "1 Hour")
         box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE), "m2": billed_units(usd=60.24, quantity=600.0, words=second)}, prices=LISTED,
