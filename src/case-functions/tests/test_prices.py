@@ -572,6 +572,71 @@ class TheTime(unittest.TestCase):
         self.assertEqual(len(estate.price_calls), 1, "a try that leaves no time for a second one is the only one")
 
 
+class TheReadsThatCodeMakes(unittest.TestCase):
+    """The reads of the list prices that code makes for a beat are trials of the toolbox (`trial`, which cases/investigate.py sets for the calls of code only): they leave nothing behind that could cost
+    the call of the Investigator for the same prices its own try, or fill the bound of what a run holds."""
+
+    @staticmethod
+    def tried(box, **arguments):
+        box.trial = True
+        try:
+            return ask(box, "price_alternatives", **arguments)
+        finally:
+            box.trial = False
+
+    def clocked(self, **kinds):
+        estate, box = priced(**kinds)
+        clock = Clock()
+        box.monotonic, box.arm.client.sleep = clock, clock.advance
+        return estate, box, clock
+
+    def test_a_trial_that_fails_leaves_no_failure_behind_and_the_call_of_the_investigator_has_its_own_try(self):
+        estate, box = priced()
+        estate.failure = 503
+        self.assertEqual(self.tried(box, meter="m1"), {"error": "unavailable", "code": "Failed"})
+        estate.failure = None
+        before = len(estate.price_calls)
+        self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found")
+        self.assertGreater(len(estate.price_calls), before, "the call of the Investigator read for itself: the failure of the trial was not kept")
+
+    def test_a_trial_that_gets_no_answer_does_not_mark_the_host_as_down_for_the_calls_of_the_investigator_and_two_in_a_row_end_the_trials_of_the_run(self):
+        estate, box, clock = self.clocked(also=(meter(category="Example Storage", name="Fixed Hours"),))
+        estate.hook = swallowing(clock)
+        for arguments, calls in (({"meter": "m1"}, 1), ({"meter": "m1", "within": "service"}, 2), ({"meter": "m2"}, 2)):
+            self.assertEqual(self.tried(box, **arguments), {"error": "unavailable"}, arguments)
+            self.assertEqual(len(estate.price_calls), calls, f"{arguments}: a second trial is made, and the third is not")
+        estate.hook = None
+        self.assertEqual(ask(box, "price_alternatives", meter="m1")["match"], "found", "the host that code could not reach answers the Investigator, which has its own try")
+        self.assertEqual(len(estate.price_calls), 3)
+
+    def test_a_host_that_the_call_of_the_investigator_found_down_is_not_asked_by_a_trial(self):
+        estate, box, clock = self.clocked()
+        estate.hook = swallowing(clock)
+        self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable"})
+        self.assertEqual(self.tried(box, meter="m1", within="service"), {"error": "unavailable"})
+        self.assertEqual(len(estate.price_calls), 1, "what the Investigator's own call learned is the run's")
+
+    def test_a_list_that_a_trial_did_not_finish_is_not_kept_and_is_read_again_for_the_investigator(self):
+        estate, box = priced()
+        estate.page_size = 1
+        estate.lines = [line("Basic", "Fixed Hours", 0.5)] + [line("Basic", f"Other Hours {n}", 1 + n / 100) for n in range(4)]
+        with mock.patch.object(prices, "MAX_PAGES", 2):
+            cut = self.tried(box, meter="m1")
+        self.assertEqual((cut["complete"], len(estate.price_calls)), (False, 2))
+        whole = ask(box, "price_alternatives", meter="m1")
+        self.assertEqual((whole["complete"], whole["lines"], len(estate.price_calls)), (True, 5, 2 + 5), "five pages, read again")
+
+    def test_a_whole_list_of_the_size_of_a_product_that_a_trial_read_answers_the_call_of_the_investigator_and_a_larger_one_is_not_kept(self):
+        estate, box = priced()
+        first = self.tried(box, meter="m1")
+        self.assertEqual((ask(box, "price_alternatives", meter="m1"), len(estate.price_calls)), (first, 1), "the call of the Investigator is answered from what code read")
+        estate, box = priced()
+        estate.lines = [line("Basic", "Fixed Hours", 0.5)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100) for n in range(tb.TRIAL_LINES)]
+        self.assertEqual(self.tried(box, meter="m1")["lines"], tb.TRIAL_LINES + 1)
+        ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(len(estate.price_calls), 2, "a list of more lines than a product is not kept from a trial, so it holds nothing against the bound of the run")
+
+
 class ThePartialReads(unittest.TestCase):
     @staticmethod
     def busy_after_the_first_page(found, url, timeout):

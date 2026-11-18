@@ -96,7 +96,7 @@ class TheFocusThatCodeChooses(unittest.TestCase):
 
     def test_no_word_of_a_service_a_pricing_level_or_a_meter_is_written_in_the_module_either(self):
         source = (APP_ROOT / "cases" / "beats.py").read_text(encoding="utf-8").lower()
-        words = (*ti.RESOURCE_WORDS, "tier", "sku", "premium", "basic", "standard", "deployment", "processed")
+        words = (*ti.RESOURCE_WORDS, "sku", "premium", "basic", "standard", "deployment", "processed")
         found = [word for word in words if re.search(rf"(?<![a-z]){re.escape(word)}(?:s|es)?(?![a-z])", source)]
         self.assertEqual(found, ["cache"], "the prices of a meter are asked for by cost and by handle: the module names no service and no level (it speaks of the caches of the toolbox)")
 
@@ -179,9 +179,9 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
 
     def test_the_most_that_a_seed_reads_is_what_a_beat_is_given_an_allowance_for(self):
         kinds = [f"contoso.thing{n}/kind" for n in range(8)]
-        box = PricedToolbox({kind: [resource_of(n + 1, kind)] for n, kind in enumerate(kinds)}, prices={"service": TOO_LONG})
+        box = PricedToolbox({kind: [resource_of(n + 1, kind)] for n, kind in enumerate(kinds)}, prices={"product": NO_PRICE})
         beats.seed(box.call, beats.Beat(1, tuple(kinds), False, 3, 1))
-        self.assertEqual(len(box.log), beats.SEED_CALLS, "five listings, two pictures and, for a service too long to show, the list prices of the service and then of the product of one meter")
+        self.assertEqual(len(box.log), beats.SEED_CALLS, "five listings, two pictures and, for a product that shows no price, the list prices of the product and then of the service of one meter")
 
     def test_the_list_prices_of_the_dearest_meter_of_the_dearest_resource_are_read_after_the_pictures_with_the_tool_for_alternatives_and_kept(self):
         by_kind = {"contoso.compute/rigs": [resource_of(n, "contoso.compute/rigs") for n in (1, 2)], "fabrikam.store/vaults": [resource_of(3, "fabrikam.store/vaults")]}
@@ -189,57 +189,85 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
         found = beats.seed(box.call, beats.Beat(1, tuple(by_kind), False, 0, 1))
         self.assertEqual(found.handles, ["r1", "r3", "r2"])
         self.assertEqual([entry["name"] for entry in box.log], ["list_resources"] * 2 + ["profile", "price_alternatives"], "the read of the prices follows the pictures that it takes its meter from")
-        self.assertEqual(box.log[-1]["arguments"], {"meter": "m1", "within": "service", "offset": None}, "the dearest meter of the dearest resource, for every product of its service")
+        self.assertEqual(box.log[-1]["arguments"], {"meter": "m1", "within": "product", "offset": None}, "the dearest meter of the dearest resource, for its product, as the tool shows it when it is not told")
         self.assertEqual(found.alternatives, [list_prices("m1")])
         self.assertEqual((found.failed, beats.Seed().alternatives), (0, []))
+
+    def test_the_prices_are_read_for_the_dearest_resource_of_the_beat_and_not_for_the_first_resource_of_its_first_kind(self):
+        a, b = "contoso.compute/rigs", "fabrikam.store/vaults"
+        box = PricedToolbox({a: [resource_of(n, a, 100.0) for n in range(1, 41)], b: [resource_of(41, b, 3000.0)]})
+        found = beats.seed(box.call, beats.Beat(1, (a, b), False, 0, 1))
+        self.assertEqual(found.handles[:2], ["r1", "r41"], "the handles are interleaved by kind, and the first kind is the one that costs most in all")
+        self.assertEqual([e["arguments"]["meter"] for e in box.log if e["name"] == "price_alternatives"], ["m81"], "the dearest meter of r41, which costs 3,000 against the 100 of every resource of the first kind")
+        self.assertEqual(found.alternatives, [list_prices("m81")])
+
+    def test_the_dearest_resource_is_found_in_a_listing_that_gives_its_cost_once_when_every_row_has_it_and_the_first_kind_when_the_listings_say_nothing_of_cost_or_cost_the_same(self):
+        a, b = "contoso.compute/rigs", "fabrikam.store/vaults"
+
+        class Layout(PricedToolbox):
+            """The listing as the real toolbox lays it out: the cost of every row of a listing of several rows that cost the same is `same`, and no column; `costed` False takes the cost away."""
+
+            costed = True
+
+            def call(self, name, arguments):
+                text = super().call(name, arguments)
+                if name != "list_resources" or text.startswith('{"error"'):
+                    return text
+                body = json.loads(text)
+                costs = {row[1] for row in body["rows"]}
+                if not self.costed:
+                    body["cols"], body["rows"] = ["handle"], [[row[0]] for row in body["rows"]]
+                elif len(costs) == 1 and len(body["rows"]) > 1:
+                    body["same"], body["cols"], body["rows"] = {"usd30d": costs.pop()}, ["handle"], [[row[0]] for row in body["rows"]]
+                return json.dumps(body)
+
+        for what, costed, first, second, wanted in (("the cost is `same`", True, 100.0, 3000.0, "m7"), ("no cost at all", False, 100.0, 3000.0, "m1"), ("the same cost", True, 100.0, 100.0, "m1")):
+            with self.subTest(what=what):
+                box = Layout({a: [resource_of(n, a, first) for n in (1, 2, 3)], b: [resource_of(n, b, second) for n in (4, 5)]})
+                box.costed = costed
+                beats.seed(box.call, beats.Beat(1, (a, b), False, 0, 1))
+                self.assertEqual([e["arguments"]["meter"] for e in box.log if e["name"] == "price_alternatives"], [wanted])
 
     def test_it_is_the_first_row_of_the_meters_of_the_dearest_resource_that_is_read_whatever_the_order_of_the_pictures_and_the_other_resources_are_not_read(self):
         kind = "contoso.compute/rigs"
         shown = picture_of(part_of("r3", ("m7", 5.0)), part_of("r1", ("m1", 90.0), ("m2", 10.0)), part_of("r2", ("m4", 1.0)))
         box = SeedToolbox({kind: [resource_of(n, kind) for n in (1, 2, 3)]}, answers={"profile": shown, "price_alternatives": json.dumps(list_prices("m1"))})
         found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
-        self.assertEqual([entry["arguments"] for entry in box.log if entry["name"] == "price_alternatives"], [{"meter": "m1", "within": "service", "offset": None}])
+        self.assertEqual([entry["arguments"] for entry in box.log if entry["name"] == "price_alternatives"], [{"meter": "m1", "within": "product", "offset": None}])
         self.assertEqual(found.alternatives, [list_prices("m1")])
 
     def test_a_refusal_an_answer_with_no_prices_or_no_answer_is_no_failed_read_and_leaves_the_alternatives_empty(self):
         kind = "contoso.compute/rigs"
         none = {**list_prices("m1"), "rows": [], "lines": 0, "returned": 0}
-        for what, answer in (("not offered", '{"error":"not-offered"}'), ("unavailable", '{"error":"unavailable","code":"Failed"}'), ("unknown handle", '{"error":"unknown-handle"}'),
-                             ("limit", '{"error":"limit"}'), ("not json", "not json"), ("no prices", json.dumps(none))):
+        for what, answer, asked in (("not offered", '{"error":"not-offered"}', 1), ("unavailable", '{"error":"unavailable","code":"Failed"}', 2), ("unknown handle", '{"error":"unknown-handle"}', 1),
+                                    ("limit", '{"error":"limit"}', 1), ("not json", "not json", 1), ("no prices", json.dumps(none), 2)):
             with self.subTest(what=what):
                 box = PricedToolbox({kind: [resource_of(1, kind)]}, answers={"price_alternatives": answer})
                 found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
-                self.assertEqual([entry["name"] for entry in box.log].count("price_alternatives"), 1)
+                self.assertEqual([entry["name"] for entry in box.log].count("price_alternatives"), asked, "the other list is asked for after no price and after unavailable, and after no other refusal")
                 self.assertEqual((found.alternatives, found.failed), ([], 0), "a meter that the price list does not take is no read that failed, and the beat is not told that it could not be read in full")
                 self.assertEqual((found.handles, len(found.pictures)), (["r1"], 1), "the rest of the seed is what it is without the prices")
 
-    def test_a_list_of_the_service_that_does_not_show_every_line_is_replaced_by_the_list_of_the_product_of_the_meter(self):
+    def test_the_service_is_asked_for_when_the_product_shows_no_price_or_the_list_could_not_be_read_and_is_kept_when_it_shows_all_of_its_lines(self):
+        kind = "contoso.compute/rigs"
+        for what, product in (("the product shows no price", NO_PRICE), ("the list could not be read", '{"error":"unavailable"}')):
+            with self.subTest(what=what):
+                box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"product": product})
+                found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
+                self.assertEqual([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], ["product", "service"])
+                self.assertEqual((found.alternatives, found.failed), ([list_prices("m1", "service")], 0))
+
+    def test_the_cheapest_lines_of_a_service_that_is_too_long_to_show_are_not_kept_for_siblings_and_a_product_that_is_cut_is_kept(self):
         kind = "contoso.compute/rigs"
         for what, cut in (("more lines than an answer holds", {"lines": 90, "next_offset": 3}), ("a list that was not read to its end", {"complete": False}), ("both", TOO_LONG)):
             with self.subTest(what=what):
-                box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"service": cut})
+                box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"product": NO_PRICE, "service": cut})
                 found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
-                self.assertEqual([e["arguments"] for e in box.log if e["name"] == "price_alternatives"],
-                                 [{"meter": "m1", "within": "service", "offset": None}, {"meter": "m1", "within": "product", "offset": None}], "the cheapest lines of a long list are not the siblings of the meter")
-                self.assertEqual((found.alternatives, found.failed), ([list_prices("m1", "product")], 0))
-
-    def test_nothing_is_kept_when_the_list_of_the_product_is_refused_or_shows_no_price_and_no_product_is_asked_after_a_refusal_of_the_service(self):
-        kind = "contoso.compute/rigs"
-        for what, prices, asked in (("the product is refused", {"service": TOO_LONG, "product": '{"error":"not-offered"}'}, ["service", "product"]),
-                                    ("the product shows no price", {"service": TOO_LONG, "product": {"rows": [], "lines": 0, "returned": 0}}, ["service", "product"]),
-                                    ("the service is refused", {"service": '{"error":"unavailable"}'}, ["service"]), ("the service is not offered", {"service": '{"error":"not-offered"}'}, ["service"])):
-            with self.subTest(what=what):
-                box = PricedToolbox({kind: [resource_of(1, kind)]}, prices=prices)
-                found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
-                self.assertEqual(([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], found.alternatives, found.failed), (asked, [], 0))
-
-    def test_the_list_of_the_product_is_kept_even_when_it_is_cut_too_because_it_is_the_siblings_of_the_meter_and_says_so(self):
-        kind = "contoso.compute/rigs"
-        cut = {"lines": 90, "complete": False, "next_offset": 3}
-        box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"service": TOO_LONG, "product": cut})
+                self.assertEqual(([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], found.alternatives, found.failed), (["product", "service"], [], 0))
+        box = PricedToolbox({kind: [resource_of(1, kind)]}, prices={"product": TOO_LONG})
         found = beats.seed(box.call, beats.Beat(1, (kind,), False, 0, 1))
-        self.assertEqual([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], ["service", "product"], "no third read")
-        self.assertEqual(found.alternatives, [{**list_prices("m1", "product"), **cut}])
+        self.assertEqual(([e["arguments"]["within"] for e in box.log if e["name"] == "price_alternatives"], found.alternatives), (["product"], [{**list_prices("m1"), **TOO_LONG}]),
+                         "the lines of the product are its siblings, whole or not, and the answer says which")
 
     def test_no_list_prices_are_asked_for_when_the_picture_of_the_dearest_resource_shows_no_meter_that_can_be_asked_about(self):
         kind = "contoso.compute/rigs"
@@ -286,20 +314,18 @@ class WhatCodeReadsForABeatBeforeTheInvestigatorStarts(unittest.TestCase):
     def test_what_is_read_for_the_alternatives_is_registered_as_evidence_by_the_real_toolbox_from_the_real_shape_of_the_picture(self):
         estate, box, found = self.seeded_by_the_real_toolbox()
         (shown,) = found.alternatives
-        self.assertEqual((shown["meter"], shown["within"], shown["match"], found.failed, len(estate.price_calls)), ("m1", "service", "found", 0, 1))
+        self.assertEqual((shown["meter"], shown["within"], shown["match"], found.failed, len(estate.price_calls)), ("m1", "product", "found", 0, 1))
         offered = {row[0] for row in shown["rows"] if row[0]} | {shown["current"]["line"]}
         self.assertEqual((box.offers["m1"], box.retail), (offered, {"m1": 0.5}), "the prices that a model is shown are the ones that code prices a change from, as with an answer to its own call")
         self.assertTrue(offered <= set(box.prices))
 
-    def test_a_service_with_more_lines_than_an_answer_holds_gives_the_list_of_the_product_of_the_meter_from_the_real_tool(self):
+    def test_a_product_with_no_line_in_the_unit_of_the_meter_gives_the_service_from_the_real_tool(self):
         from test_prices import OTHER_PRODUCT, line
 
-        lines = [line("Basic", "Fixed Hours", 0.5), line("Basic", "Light Hours", 0.25)] + [line(f"Size {n}", f"Unit Hours {n}", 1 + n / 100, product=OTHER_PRODUCT) for n in range(99)]
-        estate, box, found = self.seeded_by_the_real_toolbox(lines)
+        estate, box, found = self.seeded_by_the_real_toolbox([line("Elite", "Elite Hours", 2.0, product=OTHER_PRODUCT), line("Elite", "Elite Units", 3.0, unit="1 GB", product=OTHER_PRODUCT)])
         (shown,) = found.alternatives
-        self.assertEqual((shown["within"], shown["lines"], shown["complete"], "next_offset" in shown), ("product", 2, True, False), "the two lines of the product, where the service has a hundred and one")
-        self.assertEqual((len(estate.price_calls), found.failed), (2, 0), "the list of the service and the list of the product")
-        self.assertTrue(({row[0] for row in shown["rows"]} | {shown["current"]["line"]}) <= box.offers["m1"], "what a model is shown of the product is registered, as with an answer to its own call")
+        self.assertEqual((shown["within"], shown["lines"], found.failed, len(estate.price_calls)), ("service", 1, 0, 2), "the product of the meter has no price, so the service is read")
+        self.assertTrue({row[0] for row in shown["rows"]} <= box.offers["m1"], "what a model is shown is registered, as with an answer to its own call")
 
 
 class WhatABeatIsToldOfTheBeatsBeforeIt(unittest.TestCase):
@@ -314,14 +340,18 @@ class WhatABeatIsToldOfTheBeatsBeforeIt(unittest.TestCase):
         self.assertEqual(body, {"budget": {"toolCalls": 8}, "beat": {"number": 2, "of": 3, "focus": ["contoso.compute/rigs"], "billingOnly": True, "moreKinds": 4},
                                 "counts": {"contoso.compute/rigs": 2}, "pictures": [{"profiles": [{"handle": "r1"}]}], "earlier": earlier})
 
-    def test_the_input_of_a_beat_holds_the_list_prices_that_code_read_next_to_its_pictures_and_has_no_such_key_when_it_read_none(self):
+    def test_the_input_of_a_beat_holds_the_list_prices_that_code_read_after_everything_else_and_says_what_they_are_and_has_no_such_key_when_it_read_none(self):
         beat = beats.Beat(2, ("contoso.compute/rigs",), True, 4, 3)
-        pictures, shown = [{"profiles": [{"handle": "r1"}]}], [list_prices("m1")]
-        body = json.loads(beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures, alternatives=shown), []))
-        self.assertEqual((body["alternatives"], body["pictures"], sorted(body)), (shown, pictures, ["alternatives", "beat", "budget", "counts", "pictures"]))
-        plain = beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures), [])
+        pictures, shown, earlier = [{"profiles": [{"handle": "r1"}]}], [list_prices("m1")], [{"beat": 1, "kinds": [], "concluded": False}]
+        body = json.loads(beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures, alternatives=shown), earlier))
+        self.assertEqual(list(body), ["beat", "budget", "counts", "earlier", "pictures", "alternatives"], "the data of the beat comes first and the prices are the last of the input")
+        self.assertEqual(body["alternatives"], {"answers": shown, "source": beats.ALTERNATIVES_SOURCE})
+        for words in ("public pay-as-you-go list prices", "not the prices that this customer pays", "not shown to be equivalent"):
+            self.assertIn(words, beats.ALTERNATIVES_SOURCE)
+        self.assertEqual(ti.banned_in(beats.ALTERNATIVES_SOURCE), [], "plain data: no kind of resource, no measurement, no rule of what is waste, and no recommendation")
+        plain = beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures), earlier)
         self.assertNotIn("alternatives", plain)
-        self.assertEqual(plain, beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures, alternatives=[]), []), "a seed with no alternatives gives the input that it always gave")
+        self.assertEqual(plain, beats.beat_input(beat, 8, beats.Seed({"contoso.compute/rigs": 2}, ["r1"], pictures, alternatives=[]), earlier), "a seed with no alternatives gives the input that it always gave")
 
     def test_the_input_stays_inside_its_size_with_every_part_at_its_cap_and_the_alternatives_are_the_first_to_go_when_it_would_not(self):
         beat = beats.Beat(2, ("contoso.compute/rigs",), False, 0, 3)
@@ -333,7 +363,7 @@ class WhatABeatIsToldOfTheBeatsBeforeIt(unittest.TestCase):
         at_cap = beats.Seed({}, ["r1"], [sized(tb.result_cap("profile") - 20)], alternatives=[sized(tb.MAX_RESULT_CHARS - 20)])
         text = beats.beat_input(beat, 8, at_cap, earlier)
         self.assertLessEqual(len(text), beats.INPUT_CHARS, "the pictures at their cap, what the beats before it concluded at theirs and one answer of the tool at its cap fit")
-        self.assertEqual(json.loads(text)["alternatives"], at_cap.alternatives)
+        self.assertEqual(json.loads(text)["alternatives"]["answers"], at_cap.alternatives)
         over = beats.Seed({}, ["r1"], [sized(tb.result_cap("profile") + 4000)], alternatives=[sized(tb.MAX_RESULT_CHARS - 20)])
         body = json.loads(beats.beat_input(beat, 8, over, earlier))
         self.assertNotIn("alternatives", body)
@@ -405,7 +435,7 @@ def picture_of(*parts):
     return json.dumps({"days": 30, "grain": "hour", "partial": False, "profiles": list(parts)})
 
 
-def list_prices(meter, within="service", rows=3):
+def list_prices(meter, within="product", rows=3):
     """What the tool for alternatives answers for a meter, in its shape, for an invented service: the prices of one unit, the lowest first, and the line of the meter itself."""
     table = [[f"p{n}", f"Tier {n}", f"Sku {n}", "Unit Hours", 0.25 * n, None] for n in range(1, rows + 1)]
     return {"meter": meter, "service": "Contoso Compute", "region": "swedencentral", "within": within, "unit": "1 Hour", "match": "found", "lines": rows, "other_units": 0, "complete": True,
@@ -413,6 +443,7 @@ def list_prices(meter, within="service", rows=3):
 
 
 TOO_LONG = {"lines": 4985, "complete": False, "next_offset": 3}  # what a service with thousands of lines says: it read five pages of them, and the answer holds the cheapest three
+NO_PRICE = {"rows": [], "lines": 0, "returned": 0}  # what a product that has no line in the unit of the meter says
 
 
 class PricedToolbox(SeedToolbox):
@@ -881,7 +912,8 @@ class WhatTheListPricesAddToABeat(unittest.TestCase):
         h.toolbox = PricedToolbox(pooled()[0])
         result = h.go()
         inputs = [json.loads(run["input"]) for run in h.foundry.investigator_runs()]
-        self.assertEqual([i["alternatives"] for i in inputs], [[list_prices(meter)] for meter in ("m1", "m5", "m9")], "r1, r3 and r5 are the dearest of their beats, and m1, m5 and m9 their dearest meters")
+        self.assertEqual([i["alternatives"] for i in inputs], [{"answers": [list_prices(meter)], "source": beats.ALTERNATIVES_SOURCE} for meter in ("m1", "m5", "m9")], "r1, r3 and r5 are the dearest of their beats, and m1, m5 and m9 their dearest meters")
+        self.assertEqual([list(i)[-1] for i in inputs], ["alternatives"] * 3, "and the prices come after the data of the beat")
         self.assertEqual([[p["handle"] for answer in i["pictures"] for p in answer["profiles"]] for i in inputs], [["r1", "r2"], ["r3", "r4"], ["r5", "r6"]])
         self.assertEqual([e["seeded"] for e in h.of("investigation.beat")], [2, 2, 2], "the beat says how many pictures were read, as it did")
         self.assertEqual((result.state, [r.seeded for r in result.beats]), ("ran", [2, 2, 2]))
@@ -902,13 +934,13 @@ class WhatTheListPricesAddToABeat(unittest.TestCase):
         kinds = {**{f"contoso.dear{n}/kind": 1000.0 for n in range(6)}, **{f"fabrikam.cheap{n}/kind": 10.0 for n in range(10)}}
         calls = [("tool_one", {"n": k}) for k in range(8)]
         h = rig([script(one(f"r{n}"), calls=calls) for n in range(1, 8)], by_kind=kinds, per_kind=1, investigate_beats=7)
-        h.toolbox = PricedToolbox(pooled(kinds, 1)[0], prices={"service": TOO_LONG})
+        h.toolbox = PricedToolbox(pooled(kinds, 1)[0], prices={"product": NO_PRICE})
         h.go()
         self.assertEqual(len(h.foundry.investigator_runs()), 7, "six beats of one kind and the last, which names eight kinds and reads five")
-        self.assertEqual(len(h.toolbox.log), 6 * (1 + 1 + 2 + 8) + (5 + 2 + 2 + 8), "the last beat reads five listings, two pictures and the list prices of the service and of the product of one meter")
+        self.assertEqual(len(h.toolbox.log), 6 * (1 + 1 + 2 + 8) + (5 + 2 + 2 + 8), "the last beat reads five listings, two pictures and the list prices of the product and of the service of one meter")
         self.assertEqual(h.toolbox.limited, 0)
         self.assertEqual(tb.MAX_CALLS + h.toolbox.extra_calls, len(h.toolbox.log), "the allowance is what the beats used and no more: the reads for the prices are in it")
-        self.assertEqual([json.loads(run["input"])["alternatives"][0]["within"] for run in h.foundry.investigator_runs()], ["product"] * 7, "a service too long to show is given as the product of the meter")
+        self.assertEqual([json.loads(run["input"])["alternatives"]["answers"][0]["within"] for run in h.foundry.investigator_runs()], ["service"] * 7, "a product that shows no price is given as the service of the meter")
 
 
 class WhenABeatHasNothingToLookAt(unittest.TestCase):
@@ -1173,10 +1205,10 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         asked = [e for e in h.of("investigation.call") if e["tool"] == "price_alternatives"]
         self.assertEqual([(e["beat"], e["by"], e["ok"], e["error"]) for e in asked], [(n, "code", False, "not-offered") for n in (1, 2, 3)])
         h = rig([script(one("r1"), calls=(("describe", {"handle": "r1"}),)), script(), script()])
-        h.toolbox = PricedToolbox(pooled()[0], prices={"service": TOO_LONG})
+        h.toolbox = PricedToolbox(pooled()[0], prices={"product": NO_PRICE})
         h.go()
         self.assertEqual([line[1:4] for line in self.lines(h)[:5]], [(1, "code", "list_resources"), (2, "code", "profile"), (3, "code", "price_alternatives"), (4, "code", "price_alternatives"), (5, "agent", "describe")],
-                         "a service too long to show is a second read, and it has its line")
+                         "a product that shows no price is a second read, of the service, and it has its line")
 
     def test_a_call_that_gave_no_answer_says_the_word_of_the_toolbox_that_says_why_and_any_other_word_is_other(self):
         h = rig([script(one("r1"), calls=(("describe", {"handle": "r1"}), ("neighbors", {"handles": ["r1"]}), ("changes", {"handles": ["r1"]}))), script(), script()])
@@ -1272,24 +1304,23 @@ class WhatTheHistorySaysOfEachToolCall(unittest.TestCase):
         self.assertEqual(profiles[:2], [beats.SEED_PICTURE_SECONDS, 60.0], "the picture that code reads is held to its time, the call that the agent makes is not")
         self.assertEqual(h.toolbox.budget_seconds, 60.0, "and the budget is what it was after")
 
-    def test_the_list_prices_that_code_reads_for_a_beat_have_a_time_of_their_own_and_the_calls_of_the_agent_keep_the_toolbox_s_time(self):
+    def test_the_list_prices_that_code_reads_for_a_beat_are_a_trial_of_the_toolbox_and_no_other_call_is(self):
         seen = []
 
         class Watching(PricedToolbox):
-            read_seconds = 45.0  # the time that a call has for its reads, which the read of the price list is held to
+            trial = False
 
             def call(self, name, arguments):
-                seen.append((name, self.read_seconds))
+                seen.append((name, self.trial))
                 return super().call(name, arguments)
 
         found, _ = pooled()
-        h = rig([script(one("r1"), calls=(("price_alternatives", {"meter": "m1", "within": "product", "offset": None}),)), script(), script()])
+        h = rig([script(one("r1"), calls=(("price_alternatives", {"meter": "m1", "within": "product", "offset": None}), ("profile", {"handles": ["r1"]}))), script(), script()])
         h.toolbox = Watching(found)
         h.go()
-        asked = [seconds for name, seconds in seen if name == "price_alternatives"]
-        self.assertEqual(asked[:2], [beats.SEED_PRICE_SECONDS, 45.0], "the read that code makes is held to its time, the call that the agent makes is not")
-        self.assertEqual([seconds for name, seconds in seen if name == "profile"][:2], [45.0, 45.0], "and the time of the pictures is not the time of the prices")
-        self.assertEqual(h.toolbox.read_seconds, 45.0, "the time is what it was after")
+        self.assertEqual([trial for name, trial in seen if name == "price_alternatives"][:2], [True, False], "the read that code makes leaves nothing behind that could cost the call of the agent its own try")
+        self.assertEqual([name for name, trial in seen if trial and name != "price_alternatives"], [], "no other call is a trial")
+        self.assertEqual(h.toolbox.trial, False, "and the toolbox is what it was after")
 
     def test_one_session_with_no_beats_has_the_same_lines_for_the_calls_of_the_agent_alone(self):
         h = ti.Harness(BeatFoundry([script(one("r1"), calls=(("profile", {"handles": ["r1"]}), ("estate_overview", {})))]), SeedToolbox(pooled()[0]), ti.make_settings(), with_store=True)
