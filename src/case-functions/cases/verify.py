@@ -7,8 +7,9 @@ take_back_verified). Meternaut changed nothing and does not know why the cost we
 
 The 30 closed days are cut into the four weeks that end LAG days before the newest day (the bill is one to two days late), each scaled to a month. A week with a day of nothing among days that cost something
 is not whole: a day that is late or missing cannot be told from a fall, so that week says nothing. The first time that the step sees an open request with a whole daily cost it keeps what the cheapest of the
-whole weeks that cost anything came to (`COST_AT_ASK`) and how far apart those weeks were (`COST_SPREAD`; it takes two weeks): not the cost of the 30 days, which a spike of a few days or a cost that fell
-before the request would make wrong. The request is judged from the next Watch on: it is verified when each of the two newest whole weeks costs at most that, less what it stated that it would save (half of
+four weeks came to (`COST_AT_ASK`) and how far apart the weeks were (`COST_SPREAD`), and keeps nothing until all four are whole and cost something: not the cost of the 30 days, which a spike of a few days or
+a cost that fell before the request would make wrong, and not from fewer weeks, which measure badly how far a cost moves by itself. The request is judged from the next Watch on: it is verified when each of
+the two newest whole weeks costs at most that, less what it stated that it would save (half of
 it for a resource, all of it for a group, whose request stands for each of its resources; never more than the cost) and less the spread, for a cost that moves by itself by more than the saving would
 fall by chance (`fall`, the one place that says).
 
@@ -60,10 +61,12 @@ def weeks(series: Sequence[float]) -> list[float | None]:
 
 
 def baseline(series: Sequence[float]) -> tuple[float, float] | None:
-    """What the cost had been: what a month costs by the cheapest of the whole weeks that cost anything, and how far apart those weeks were (the dearest less the cheapest), or None when fewer than two
-    weeks can say. The cheapest, so that a spike does not raise it and a cost that already fell does not hide; the spread, so that a cost that moves by itself by more than the saving is no fall."""
-    found = [week for week in weeks(series) if week]
-    return (min(found), max(found) - min(found)) if len(found) > 1 else None
+    """What the cost had been: what a month costs by the cheapest of the weeks, and how far apart the weeks were (the dearest less the cheapest), or None unless every one of the four weeks is whole and cost
+    something: fewer weeks measure badly how far a cost moves by itself (two weeks let a flat noisy cost pass for a fall twice as often as four). The cheapest, so that a spike does not raise it and a cost
+    that already fell does not hide; the spread, so that a cost that moves by itself by more than the saving is no fall."""
+    every = weeks(series)
+    found = [week for week in every if week]
+    return (min(found), max(found) - min(found)) if found and len(found) == len(every) else None
 
 
 def subject(case: CaseRecord) -> str:
@@ -89,9 +92,9 @@ def fall(series: Sequence[float], plan: PlanRecord, case: CaseRecord) -> float |
 
 def judge(plan: PlanRecord, case: CaseRecord | None, last: dt.date, there: str, amortized: Sequence[float] | None = None) -> tuple[str, tuple[float, ...]]:
     """What the bill says about an open request of advice: (`verified`, (what a month costs now,)), (`baseline`, (the cost, and its spread) to keep as the cost at the request: it has none yet), or a
-    word that says why it cannot be said, with no figures: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `short` (fewer
-    than two whole weeks of cost to keep), `changed` (the resources of the finding are not the ones that the kept cost is of), `unchecked` (whether the resource is still there was not checked: `there`
-    is the word of cases/escalation.py existence) or `still` (the cost has not gone down, or not for long enough).
+    word that says why it cannot be said, with no figures: `unpriced` (nothing to hold the bill against), `currency`, `unread` (no whole series), `stale` (the series does not end yesterday), `short` (the
+    four weeks are not all whole and costing something yet: there is no cost to keep, and the next Watch looks again), `changed` (the resources of the finding are not the ones that the kept cost is
+    of), `unchecked` (whether the resource is still there was not checked: `there` is the word of cases/escalation.py existence) or `still` (the cost has not gone down, or not for long enough).
     `last` is yesterday. `amortized` is the amortized daily cost of the same days, which a request that the actual cost shows to be down is held against again: a commitment makes the actual cost of what
     it covers fall to nothing, and that is no reason to close a request."""
     if case is None or brief.advisor_estimate(case) or not (case.saving_usd_month or 0) > 0 or cost_words.is_container(case.resource_id):

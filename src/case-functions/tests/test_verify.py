@@ -142,13 +142,18 @@ class TheWeeks(unittest.TestCase):
         self.assertEqual(verify.weeks(bill(FLAT, newest=(9999.0, 9999.0))), verify.weeks(bill(FLAT)))
         self.assertEqual(verify.weeks(bill(FLAT, newest=(0.0, 0.0))), verify.weeks(bill(FLAT)))
 
-    def test_the_baseline_is_the_cheapest_whole_week_that_cost_anything_with_how_far_apart_the_weeks_were_and_a_spike_or_a_week_of_nothing_is_no_level(self):
-        self.assertEqual(verify.baseline(bill((300.0, 900.0, 300.0, 300.0))), (300.0, 600.0))
-        cheapest, spread = verify.baseline(bill((0.0, 310.0, 290.0, 300.0)))
-        self.assertAlmostEqual(cheapest, 290.0, places=2, msg="a week that cost nothing is no level")
-        self.assertAlmostEqual(spread, 20.0, places=2)
-        self.assertIsNone(verify.baseline(bill((0.0, 0.0, 0.0, 0.0))))
-        self.assertIsNone(verify.baseline(bill((0.0, 0.0, 0.0, 300.0))), "one week cannot say how far apart weeks are")
+    def test_the_baseline_is_the_cheapest_of_four_whole_weeks_that_cost_something_with_how_far_apart_they_were_and_fewer_cannot_say(self):
+        self.assertEqual(verify.baseline(bill((300.0, 900.0, 300.0, 300.0))), (300.0, 600.0), "a spike is no level, and it is in the spread")
+        cheapest, spread = verify.baseline(bill((310.0, 290.0, 300.0, 330.0)))
+        self.assertAlmostEqual(cheapest, 290.0, places=2)
+        self.assertAlmostEqual(spread, 40.0, places=2)
+        for weeks in ((0.0, 310.0, 290.0, 300.0), (310.0, 290.0, 300.0, 0.0), (0.0, 0.0, 300.0, 310.0), (0.0, 0.0, 0.0, 300.0), (0.0, 0.0, 0.0, 0.0)):
+            with self.subTest(weeks=weeks):
+                self.assertIsNone(verify.baseline(bill(weeks)), "a week that cost nothing leaves fewer than four weeks, which cannot say how far apart weeks are")
+        days = bill(FLAT)
+        days[10] = 0.0
+        self.assertIsNone(verify.baseline(days), "a week with a day of nothing is not whole")
+        self.assertIsNone(verify.baseline([]), "a series with no week at all")
 
     def test_a_week_with_a_day_of_nothing_among_days_that_cost_something_is_not_whole_and_a_week_of_nothing_at_all_is_a_week_that_cost_nothing(self):
         days = bill(FLAT)
@@ -280,13 +285,18 @@ class WhatTheStepCloses(unittest.TestCase):
         world.watch()
         self.assertEqual(world.plan().state, "expired")
 
-    def test_the_cost_to_hold_the_bill_against_needs_two_whole_weeks_and_is_kept_when_there_are_two(self):
+    def test_the_cost_to_hold_the_bill_against_needs_four_whole_weeks_and_is_kept_when_there_are_four(self):
         world = World()
         world.ask()
         days = bill(FLAT)
         for day in (3, 10, 17):
             days[day] = 0.0  # three of the four weeks have a day that is late or missing
         world.store.case_put(replace(world.store.case_get("c-p1"), cost_series=days))
+        self.assertEqual((world.watch(), COST_AT_ASK in world.plan().preconditions), ([], False))
+        days = bill(FLAT)
+        days[17] = 0.0  # three whole weeks are too few: they say too little of how far a cost moves by itself
+        world.now += DAY
+        world.store.case_put(replace(world.store.case_get("c-p1"), cost_series=days, cost_series_end=world.yesterday()))
         self.assertEqual((world.watch(), COST_AT_ASK in world.plan().preconditions), ([], False))
         world.read(FLAT)
         world.watch()
