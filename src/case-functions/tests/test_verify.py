@@ -300,6 +300,13 @@ class WhatTheStepCloses(unittest.TestCase):
         world.watch()
         self.assertEqual((world.plan().state, world.plan().preconditions[COST_SEEN]), ("expired", 0.0))
 
+    def test_a_cost_that_was_kept_without_how_far_apart_the_weeks_were_is_kept_again_and_not_judged_in_the_watch_that_does(self):
+        world = World()
+        plan = world.ask()
+        world.store.plan_put(replace(plan, preconditions={**plan.preconditions, COST_AT_ASK: 999.0, COST_OF: verify.subject(world.store.case_get("c-p1"))}))
+        world.read(FELL)
+        self.assertEqual((world.watch(), world.plan().state, world.plan().preconditions[COST_AT_ASK], world.plan().preconditions[COST_SPREAD]), ([], "open", 100.0, 200.0))
+
     def test_a_request_is_kept_the_cost_and_judged_in_two_different_watches_whatever_the_first_reading_shows(self):
         for weeks in (FLAT, FELL):
             with self.subTest(weeks=weeks):
