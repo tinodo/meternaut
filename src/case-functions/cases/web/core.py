@@ -251,6 +251,7 @@ class Ctx:
     _zone_read: bool = field(default=False, init=False, repr=False)
     _ladders: "dict[str, list] | None" = field(default=None, init=False, repr=False)
     _told: "set[str] | None" = field(default=None, init=False, repr=False)
+    told_failed: bool = field(default=False, init=False, repr=False)  # the index could not be read, so the lists that depend on it are incomplete: a page says so, as it does for a list that it cannot read
 
     @property
     def store(self) -> Store:
@@ -258,12 +259,13 @@ class Ctx:
 
     def told(self) -> set[str]:
         """The ids of the requests that a step of the ladder was delivered to the person of this page for, from the one small read of their index (Store.told_get), kept for this request of the page. It
-        decides which requests a page lists for a person who is not named on them, never who may answer one: the page of a request asks that request's own ladder (`ladder`). Empty when the store cannot say."""
+        decides which requests a page lists for a person who is not named on them, never who may answer one: the page of a request asks that request's own ladder (`ladder`). Empty when the store cannot
+        say, and `told_failed` says so."""
         if self._told is None:
             try:
                 self._told = set(self.store.told_get(self.principal.oid))  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001 (the lists are shown without them)
-                self._told = set()
+            except Exception:  # noqa: BLE001 (the lists are shown without them, and say that they cannot be read)
+                self._told, self.told_failed = set(), True
         return self._told
 
     def ladder(self, plan_id: str) -> list:

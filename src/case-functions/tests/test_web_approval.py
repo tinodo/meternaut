@@ -1536,6 +1536,27 @@ class TheListsOfAPersonTheLadderCameToReadOneIndex(unittest.TestCase):
         self.assertEqual([console.get(f"/ok/plan000{n}", oid=STRANGER).status for n in (0, 1)], [403, 403])
         self.assertEqual(console.get("/", oid=STRANGER).status, 403)
 
+    def test_a_person_whose_index_cannot_be_read_is_told_that_the_requests_cannot_be_read_and_not_that_nothing_waits_for_them(self):
+        for label, who in self.WHO:
+            with self.subTest(label):
+                console = Console(store=FailingStore(fail=("told_get",)))
+                self.fill(console, who, 3)
+                start, history = console.get("/", oid=who), console.get("/history", oid=who)
+                self.assertEqual((start.status, history.status), (200, 200))
+                for page, sentence in ((start, "I cannot read the open requests now. Nothing has changed."), (start, "I cannot read the recent decisions now. Nothing has changed."),
+                                       (history, "I cannot read the requests now. Nothing has changed.")):
+                    self.assertIn(sentence, page.content)
+                self.assertNotIn("Nothing waits for you", start.content)
+                self.assertNotIn("Nothing has happened", history.content)
+
+    def test_a_person_who_is_named_on_the_requests_is_not_told_so_because_the_index_is_not_read_for_them(self):
+        console = Console(store=FailingStore(fail=("told_get",)))
+        self.fill(console, TINO, 3)
+        start, history = console.get("/", oid=TINO), console.get("/history", oid=TINO)
+        self.assertEqual((start.status, history.status), (200, 200))
+        self.assertIn("Go through the 3 requests one by one", start.content)
+        self.assertEqual(["cannot be read" in page.content for page in (start, history)], [False, False])
+
 
 class TheStartPageReadsTheStepsOfFewRequests(unittest.TestCase):
     def test_the_steps_are_read_only_for_the_requests_that_it_shows_with_them_not_for_every_request_of_the_person(self):
