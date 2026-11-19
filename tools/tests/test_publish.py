@@ -126,7 +126,10 @@ STUB_CURL = """#!/bin/bash
 # stand-in for curl, which the publish of the cases runs: what it was given on the command line, on standard input (the bearer of the request) and as the file to post (its size and its hash, and a copy of it in
 # FAKE_POSTED). FAKE_CURL_CODES
 # is the status of each call in turn, and the last one goes on for the calls after those. The status is what --write-out prints, and the body goes to the file that --output names.
+# It is GitHub too, for the fetch of the sources: a request to api.github.com or codeload.github.com gets the status that FAKE_GITHUB_API or FAKE_GITHUB_CODELOAD gives that host for that call in turn (200, 000 for
+# no answer at all, or a failure status), and 200 gives the file FAKE_GITHUB_ARCHIVE to the file that --output names. A call that finds the token of the run in its environment says so.
 { echo "curl $*"; echo "curl-stdin $(cat)"; } >> "$FAKE_LOG"
+if [ -n "${GITHUB_TOKEN:-}" ]; then echo "curl-env SAW THE GITHUB TOKEN IN ITS ENVIRONMENT" >> "$FAKE_LOG"; fi
 output=""
 previous=""
 for argument in "$@"; do
@@ -138,8 +141,24 @@ for argument in "$@"; do
   fi
   previous=$argument
 done
+case "${!#}" in
+  https://api.github.com/* | https://codeload.github.com/*)
+    host=${!#}
+    host=${host#https://}
+    host=${host%%/*}
+    variable=FAKE_GITHUB_API
+    if [ "$host" = codeload.github.com ]; then variable=FAKE_GITHUB_CODELOAD; fi
+    codes=(${!variable:-200})
+    number=$(grep -c "^curl .*https://$host/" "$FAKE_LOG")
+    code=${codes[$((number - 1))]:-${codes[$((${#codes[@]} - 1))]}}
+    if [ "$code" = 200 ]; then cp "$FAKE_GITHUB_ARCHIVE" "$output"; printf '200'; exit 0; fi
+    printf '%s' "$code"
+    if [ "$code" = 000 ]; then echo "curl: (6) Could not resolve host: $host" >&2; exit 6; fi
+    echo "curl: (22) The requested URL returned error: $code" >&2
+    exit 22 ;;
+esac
 codes=(${FAKE_CURL_CODES:-200})
-number=$(grep -c '^curl ' "$FAKE_LOG")
+number=$(grep -c '^curl .*zipdeploy' "$FAKE_LOG")
 code=${codes[$((number - 1))]:-${codes[$((${#codes[@]} - 1))]}}
 if [ -n "$output" ]; then echo "the site said ${FAKE_TOKEN_IN_ERROR:-nothing} with HTTP $code" > "$output"; fi
 printf '%s' "$code"
@@ -273,8 +292,9 @@ class PublishScript(unittest.TestCase):
             env["PUBLISH_PLAN"] = "Flex"
         return env
 
-    def run_publish(self, env=None, kind="flex", package=None, files=None, stubs=None, sent=None):
-        """Runs the script. `package` is the main file that the secret volume carries (None: the usual one), `files` the other files, `sent` the size that the workflow sent it with."""
+    def run_publish(self, env=None, kind="flex", package=None, files=None, stubs=None, sent=None, github=None):
+        """Runs the script. `package` is the main file that the secret volume carries (None: the usual one), `files` the other files, `sent` the size that the workflow sent it with. `github` is what the stand-in
+        of curl serves when the sources are fetched: {"archive": the bytes of the archive, "api": the statuses of the calls to the API host in turn, "codeload": the same for the other host}."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -302,8 +322,12 @@ class PublishScript(unittest.TestCase):
             script = tmp / "publish.sh"
             script.write_text(text("operator/publish.sh"), encoding="utf-8", newline="\n")
             size = len(content) if content is not False else 0
+            served = {}
+            if github is not None:
+                (tmp / "github.zip").write_bytes(github["archive"])
+                served = {"FAKE_GITHUB_ARCHIVE": posix(tmp / "github.zip"), "FAKE_GITHUB_API": github.get("api", "200"), "FAKE_GITHUB_CODELOAD": github.get("codeload", "200")}
             environment = {**os.environ, "STUBS": posix(bin_dir), "PUBLISH_VOLUME": posix(volume), "PUBLISH_TMP": posix(work_root), "FAKE_LOG": posix(log), "FAKE_POSTED": posix(posted),
-                           "REAL_PYTHON": posix(sys.executable), "PUBLISH_FILE_BYTES": str(sent if sent is not None else size), **self.good_env(kind), **(env or {})}
+                           "REAL_PYTHON": posix(sys.executable), "PUBLISH_FILE_BYTES": str(sent if sent is not None else size), **served, **self.good_env(kind), **(env or {})}
             for name in [name for name, value in environment.items() if value is None]:
                 del environment[name]
             done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment, cwd=tmp)
@@ -762,7 +786,7 @@ class PublishScript(unittest.TestCase):
         source = text("operator/publish.sh")
         used = set(re.findall(r"\$\{?(AZURE_FEDERATED_\w+|PUBLISH_\w+|FUNCTION_APP_\w+|FAKE_\w+|GITHUB_\w+|OPERATOR_\w+)", source))
         self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES",
-                                "PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP"})
+                                "PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP", "PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST", "GITHUB_TOKEN"})
         self.assertEqual(set(re.findall(r"\b(FUNCTION_APP_[A-Z_]+)=", re.sub(r"(?m)^\s*#.*$", "", source))), {"FUNCTION_APP_SOURCE_DIR", "FUNCTION_APP_BUILD_IN_OPERATOR"},
                          "the two switches that the build script has for the Operator, and not the third")
 
@@ -1112,3 +1136,255 @@ class TheCompressionOfTheArchivesIsChosenWhereTheyAreMade(unittest.TestCase):
         self.assertLess(code.index("python3 -c 'import lzma'"), code.index("az login --service-principal"), "before the token of the run is used")
         self.assertIn('zipfile.ZipFile(io.BytesIO(outer.read("sources.zip")))', code)
         self.assertEqual(code.count("extractall"), 1, "the sources are unpacked in one place, with the check that no file leaves the folder before it")
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SOURCE_DIGEST = load_module("source_digest_of_the_publish_tests", ROOT / "tools" / "source-digest.py")
+RELEASE = load_module("release_of_the_publish_tests", ROOT / "src" / "case-functions" / "cases" / "release.py")
+THE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+THE_REPOSITORY = "some-owner/some-repo"
+THE_TOP = "some-owner-some-repo-0123456"
+THE_TOKEN_OF_THE_RUN = "fake-github-token-of-the-run-4kP8sD2mQ7zX"
+# What a repository holds besides the app, and what the app holds besides the code that runs: none of it is taken from the archive
+THE_REST_OF_THE_REPOSITORY = {"README.md": b"# a repository\n", "tools/strip-sources.py": b"# a tool\n", "src/case-functions/tests/test_loop.py": b"# a test\n", "src/case-functions/.funcignore": b"tests\n",
+                              "src/case-functions/requirements.in": b"azure-functions\n", "docs/notes.md": b"notes\n"}
+
+
+def github_zip(files=None, rest=None, also=None):
+    """The archive that GitHub makes of a commit (git archive, as a zip): one folder that holds the repository's files, the app in src/case-functions, an entry for each folder, every file deflated. `also` is
+    raw entries by their whole name, for the archives that a person who wants to hurt would make."""
+    entries = {f"{THE_TOP}/src/case-functions/{name}": content for name, content in (CASES_SOURCE_FILES if files is None else files).items()}
+    entries.update({f"{THE_TOP}/{name}": content for name, content in (THE_REST_OF_THE_REPOSITORY if rest is None else rest).items()})
+    folders = {f"{THE_TOP}/"} | {"/".join(name.split("/")[:depth]) + "/" for name in entries for depth in range(2, name.count("/") + 1)}
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for folder in sorted(folders):
+            info = zipfile.ZipInfo(folder, FIXED_TIME)
+            info.external_attr = 0o40755 << 16
+            archive.writestr(info, b"")
+        for name, content in sorted({**entries, **(also or {})}.items()):
+            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_DEFLATED)
+    return out.getvalue()
+
+
+def held_digest(files):
+    """What the workflow works out over its own checkout: the digest of the files as they are held (tools/source-digest.py --as-held)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, content in files.items():
+            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmp) / name).write_bytes(content)
+        return SOURCE_DIGEST.digest(Path(tmp), as_held=True)
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
+    """operator/publish.sh with PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY and PUBLISH_SOURCES_DIGEST: the Hub's `sources: fetch` (docs/proposals/07-private-by-default.md). The container downloads the archive
+    of the commit, takes the files of the app out of it, holds their digest against the one that the workflow made over its own checkout, and stops before the sign-in when anything is wrong; the lock and the host
+    file come in the request. The harness is the one of PublishScript, with a stand-in of curl that is GitHub too."""
+
+    run_publish = PublishScript.run_publish
+    good_env = PublishScript.good_env
+    members_of_bytes = PublishScript.members_of_bytes
+    FAKE_LIBRARIES = PublishScript.FAKE_LIBRARIES
+
+    def fetch(self, env=None, archive=None, volume=None, kind="flex", statuses=None, token=None, digest=None, package=False):
+        """A run the way of the fetch: no archive of sources in the volume (unless `package` says so), the three variables, and in the volume the tool that makes the digest, the lock and the host file."""
+        archive = github_zip() if archive is None else archive
+        variables = {"PUBLISH_SOURCES_COMMIT": THE_COMMIT, "PUBLISH_SOURCES_REPOSITORY": THE_REPOSITORY, "PUBLISH_SOURCES_DIGEST": held_digest(CASES_SOURCE_FILES) if digest is None else digest,
+                     "PUBLISH_FILE_BYTES": None, "GITHUB_TOKEN": token, **(env or {})}
+        files = {"source-digest.py": (ROOT / "tools" / "source-digest.py").read_bytes(), "requirements.txt": CASES_SOURCE_FILES["requirements.txt"], "host.json": CASES_SOURCE_FILES["host.json"], **(volume or {})}
+        return self.run_publish(variables, kind=kind, package=package, files=files, github={"archive": archive, **(statuses or {})})
+
+    def stopped_before_the_sign_in(self, ran, said, code=3):
+        fails = [line for line in ran.lines if line.startswith("FAIL: ")]
+        self.assertEqual(ran.done.returncode, code, ran.lines)
+        self.assertTrue([line for line in fails if said in line], (said, ran.lines))
+        self.assertEqual(ran.lines[-1], f"publish-done: exit code {code}")
+        self.assertEqual([call for call in ran.calls if call.startswith(("az ", "getent", "python3 -m", "curl-file")) or "zipdeploy" in call], [], "no sign-in, no name, no build and nothing published")
+        self.assertIsNone(ran.posted)
+        self.assertEqual(ran.leftover, [], "the work folder is gone")
+        self.assertFalse(ran.canary)
+
+    def refused(self, env, **kwargs):
+        ran = self.fetch(env, **kwargs)
+        self.assertEqual(ran.done.returncode, 2, (env, ran.lines))
+        self.assertEqual((len(ran.lines), ran.lines[0][:6], ran.lines[1]), (2, "FAIL: ", "publish-done: exit code 2"), ran.lines)
+        self.assertEqual(ran.calls, [], "nothing runs after a refusal: no download, no sign-in, no sleep")
+        self.assertFalse(ran.canary)
+        self.assertEqual(ran.leftover, [])
+        for value in (env or {}).values():
+            if value and len(value) > 8:
+                self.assertNotIn(value, ran.done.stdout + ran.done.stderr, "a value is never printed back: it may be anything")
+        return ran
+
+    # --- a good run -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_a_good_fetch_takes_only_the_files_of_the_app_checks_their_digest_before_the_sign_in_and_publishes_the_package_built_from_them_as_they_are_held(self):
+        archive, digest = github_zip(), held_digest(CASES_SOURCE_FILES)
+        ran = self.fetch()
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
+        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
+            "ok: python3 3.12.7",
+            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes",
+            "ok: the app's files are taken from the archive: 5 files",
+            f"ok: the files are the ones of the commit that the workflow started from (digest {digest[:12]})",
+            "ok: az login as the deploy identity with the OpenID Connect token",
+            "ok: az account set",
+            "ok: az token for the App Service resource, fetched while the OpenID Connect token is fresh",
+            f"ok: {APP}.scm.azurewebsites.net resolves to a private address",
+            f"ok: {APP}.azurewebsites.net resolves to a private address",
+            "ok: az 2.92.0",
+            "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
+            f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
+            "ok: the cases package that is published has the SHA-256 HASH",
+            f"ok: the cases package is published to {APP} (attempt 1 of 3)",
+            "publish-done: exit code 0",
+        ])
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the app and the libraries: nothing of the tests, the docs or the rest of the repository")
+        with zipfile.ZipFile(io.BytesIO(ran.posted)) as package:
+            for name, content in CASES_SOURCE_FILES.items():
+                self.assertEqual(package.read(name), content, f"{name}: as the repository holds it, with its comments")
+        self.assertEqual(ran.leftover, [])
+        self.assertLess(max(i for i, call in enumerate(ran.calls) if call.startswith("curl ")), min(i for i, call in enumerate(ran.calls) if call.startswith("az ")), "the download comes before the sign-in")
+        ran = self.fetch(kind="cases")
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
+        self.assertEqual(ran.lines[:4], ["ok: python3 3.12.7", f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes", "ok: the app's files are taken from the archive: 5 files",
+                                         f"ok: the files are the ones of the commit that the workflow started from (digest {digest[:12]})"])
+        (post,) = [call for call in ran.calls_of("curl ") if "zipdeploy" in call]
+        self.assertRegex(post, rf"https://{CASES_APP}\.scm\.azurewebsites\.net/api/zipdeploy$")
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES))
+
+    def test_the_real_app_is_fetched_as_it_is_held_and_the_package_has_the_digest_that_the_running_app_works_out_over_its_own_files(self):
+        app = ROOT / "src" / "case-functions"
+        files = {path.relative_to(app).as_posix(): path.read_bytes().replace(b"\r\n", b"\n") for path in sorted(app.rglob("*"))
+                 if path.is_file() and "__pycache__" not in path.parts and path.relative_to(app).parts[0] != "tests"}
+        digest = SOURCE_DIGEST.digest(app, as_held=True)
+        ran = self.fetch(archive=github_zip(files), digest=digest, volume={"requirements.txt": files["requirements.txt"], "host.json": files["host.json"]})
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
+        with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(io.BytesIO(ran.posted)) as package:
+            package.extractall(tmp)
+            self.assertEqual(RELEASE.digest(Path(tmp))[0], digest, "the app works out over the files that it runs from the digest that the workflow worked out over the checkout: the control A-RELEASE passes")
+            self.assertEqual(sorted(name for name in package.namelist() if not name.startswith(".python_packages/")), sorted(name for name in files if name not in (".funcignore", "requirements.in")))
+            self.assertTrue([name for name in package.namelist() if name.endswith(".py") and b"\n# " in package.read(name)], "the comments of the repository are in the package: it is not stripped")
+
+    # --- the download -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_the_archive_is_asked_for_at_the_api_with_the_flags_of_a_quiet_download_that_follows_the_redirect_and_the_token_is_on_standard_input_only(self):
+        ran = self.fetch(token=THE_TOKEN_OF_THE_RUN)
+        self.assertEqual(ran.done.returncode, 0, ran.lines)
+        (request,) = ran.calls_of("curl ")
+        self.assertRegex(request, rf"^curl --config - --fail --silent --show-error --location --max-time 30 --output /.+/publish-[^/]+/sources\.zip --write-out %\{{http_code\}} "
+                                  rf"https://api\.github\.com/repos/{THE_REPOSITORY}/zipball/{THE_COMMIT}$")
+        self.assertEqual(ran.calls_of("curl-stdin"), [f'curl-stdin header = "Authorization: Bearer {THE_TOKEN_OF_THE_RUN}"'], "the bearer comes on standard input")
+        self.assertEqual([call for call in ran.calls if THE_TOKEN_OF_THE_RUN in call], ran.calls_of("curl-stdin"), "on no command line and in no other call")
+        self.assertEqual([call for call in ran.calls if "SAW THE" in call], [], "taken out of the environment before any program runs")
+        self.assertNotIn(THE_TOKEN_OF_THE_RUN, ran.done.stdout + ran.done.stderr)
+        ran = self.fetch()
+        self.assertEqual([call for call in ran.calls if "Authorization" in call or "Bearer" in call], [], "without a token the request is anonymous, which is enough for a public repository")
+
+    def test_a_host_that_fails_is_tried_twice_and_then_the_other_one_and_a_refusal_that_is_not_the_token_goes_to_the_other_host_at_once(self):
+        ran = self.fetch(statuses={"api": "503 000", "codeload": "200"})
+        self.assertEqual(ran.done.returncode, 0, ran.lines)
+        urls = [call.split()[-1] for call in ran.calls_of("curl ")]
+        self.assertEqual(urls, [f"https://api.github.com/repos/{THE_REPOSITORY}/zipball/{THE_COMMIT}"] * 2 + [f"https://codeload.github.com/{THE_REPOSITORY}/zip/{THE_COMMIT}"])
+        self.assertEqual(ran.calls_of("sleep")[0], "sleep 3", "a pause between the two tries at a host")
+        self.assertIn(f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: codeload, {len(github_zip())} bytes", ran.lines)
+        for status in ("403", "404", "429"):
+            ran = self.fetch(statuses={"api": status, "codeload": "200"})
+            self.assertEqual(ran.done.returncode, 0, (status, ran.lines))
+            self.assertEqual(len(ran.calls_of("curl ")), 2, f"{status} is no reason to try the same host again: the anonymous limit of the API, or a commit that it does not know")
+            self.assertNotIn("sleep 3", ran.calls)
+
+    def test_a_token_that_github_refuses_stops_the_run_and_the_other_host_is_not_asked_but_the_same_status_without_a_token_goes_on(self):
+        for status in ("401", "403"):
+            ran = self.fetch(token=THE_TOKEN_OF_THE_RUN, statuses={"api": status})
+            self.stopped_before_the_sign_in(ran, f"GitHub refused the token of this run (HTTP {status})")
+            self.assertEqual(len(ran.calls_of("curl ")), 1, "one try: the other host would refuse the same token")
+            self.assertNotIn(THE_TOKEN_OF_THE_RUN, ran.done.stdout + ran.done.stderr)
+            ran = self.fetch(statuses={"api": status})
+            self.assertEqual(ran.done.returncode, 0, f"without a token {status} is the limit of the anonymous API, and the other host answers")
+
+    def test_a_download_that_never_works_stops_the_run_and_says_what_each_host_answered_and_what_curl_said_last(self):
+        ran = self.fetch(token=THE_TOKEN_OF_THE_RUN, statuses={"api": "000", "codeload": "500"})
+        self.stopped_before_the_sign_in(ran, f"the sources of commit {THE_COMMIT[:12]} could not be fetched from GitHub: api HTTP 000, codeload HTTP 500")
+        self.assertEqual([call.split()[-1].split("/")[2] for call in ran.calls_of("curl ")], ["api.github.com"] * 2 + ["codeload.github.com"] * 2, "two tries at each host")
+        self.assertIn("  curl: (22) The requested URL returned error: 500", ran.lines)
+        self.assertNotIn(THE_TOKEN_OF_THE_RUN, ran.done.stdout + ran.done.stderr)
+        ran = self.fetch(kind="cases", statuses={"api": "000", "codeload": "000"})
+        self.stopped_before_the_sign_in(ran, "api HTTP 000, codeload HTTP 000")
+
+    # --- the archive ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_an_archive_that_cannot_be_opened_stops_the_run_before_the_sign_in(self):
+        for body in (b"<html>an error page that came with a 200</html>", b"", github_zip()[:300]):
+            ran = self.fetch(archive=body)
+            self.stopped_before_the_sign_in(ran, "the archive that GitHub sent cannot be used: it cannot be read: ")
+
+    def test_a_path_that_would_leave_the_folder_is_refused_and_nothing_is_written_outside_it(self):
+        for name in (f"{THE_TOP}/src/case-functions/cases/../../../escape.txt", f"{THE_TOP}/../escape.txt", "/absolute/escape.txt", f"{THE_TOP}/src/case-functions/cases/..\\..\\escape.py"):
+            ran = self.fetch(archive=github_zip(also={name: b"x"}))
+            self.stopped_before_the_sign_in(ran, "a path of the archive would leave the folder")
+
+    def test_an_archive_that_is_not_one_commit_or_lacks_what_the_app_needs_stops_the_run_in_plain_words(self):
+        without = {name: content for name, content in CASES_SOURCE_FILES.items() if name != "function_app.py"}
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip(without)), "function_app.py is not in the archive")
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip({"function_app.py": b"#\n", "host.json": b"{}\n"})), "the package cases/ is not in the archive")
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip(also={"another-folder/README.md": b"x"})), "it is not the archive of one commit")
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip({}, rest={})), "function_app.py is not in the archive")
+
+    def test_a_file_of_the_package_that_the_digest_does_not_cover_stops_the_run_because_it_would_ride_unchecked(self):
+        for name in ("cases/notes.txt", "cases/__pycache__/loop.cpython-313.pyc", "cases/web/logo.svg"):
+            ran = self.fetch(archive=github_zip({**CASES_SOURCE_FILES, name: b"x"}))
+            self.stopped_before_the_sign_in(ran, "a file of cases/ is not .py or .json, so the digest does not cover it")
+
+    def test_files_that_are_not_those_of_the_checkout_stop_the_run_before_the_sign_in_whatever_was_changed(self):
+        original = held_digest(CASES_SOURCE_FILES)
+        renamed = {("cases/go.py" if name == "cases/loop.py" else name): content for name, content in CASES_SOURCE_FILES.items()}
+        for label, files in (("a byte", {**CASES_SOURCE_FILES, "cases/loop.py": b"# loop!\n"}), ("a comment", {**CASES_SOURCE_FILES, "cases/loop.py": b"# the loop\n"}),
+                             ("a file added", {**CASES_SOURCE_FILES, "cases/extra.py": b"x = 1\n"}), ("a file missing", {k: v for k, v in CASES_SOURCE_FILES.items() if k != "cases/web/home.py"}),
+                             ("the entry file", {**CASES_SOURCE_FILES, "function_app.py": b"import evil\n"}), ("a file renamed", renamed)):
+            ran = self.fetch(archive=github_zip(files), digest=original)
+            self.stopped_before_the_sign_in(ran, f"the files that GitHub sent are not the files of the commit that the workflow started from (digest {held_digest(files)[:12]}, expected {original[:12]})")
+        self.assertNotEqual(held_digest({**CASES_SOURCE_FILES, "cases/loop.py": b"# the loop\n"}), original, "a comment is part of a file that runs, so it is part of the digest")
+
+    def test_the_lock_and_the_host_file_are_those_of_the_request_and_never_those_of_the_archive(self):
+        poisoned = {**CASES_SOURCE_FILES, "requirements.txt": b"evil==1.0 \\\n    --hash=sha256:" + b"00" * 32 + b"\n", "host.json": b'{"version": "evil"}\n'}
+        ran = self.fetch(archive=github_zip(poisoned))
+        self.assertEqual(ran.done.returncode, 0, ran.lines)
+        with zipfile.ZipFile(io.BytesIO(ran.posted)) as package:
+            self.assertEqual(package.read("requirements.txt"), CASES_SOURCE_FILES["requirements.txt"], "the lock is what anchors the libraries: it never rides on GitHub's word")
+            self.assertEqual(package.read("host.json"), CASES_SOURCE_FILES["host.json"])
+
+    # --- the input -------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    def test_the_three_variables_are_set_together_and_checked_before_anything_runs(self):
+        for name, bad in (("PUBLISH_SOURCES_COMMIT", (None, "", "abc", THE_COMMIT[:39], THE_COMMIT.upper(), THE_COMMIT + "0", f"{THE_COMMIT}; touch canary", "$(touch canary)")),
+                          ("PUBLISH_SOURCES_REPOSITORY", (None, "", "owner", "owner/", "/name", "owner/name/extra", "owner/..", "owner/.", "ow ner/name", "-owner/name", "owner/name; touch canary",
+                                                          "$(touch canary)/x", "a" * 40 + "/name", "owner/" + "n" * 101)),
+                          ("PUBLISH_SOURCES_DIGEST", (None, "", "abc", "0" * 63, "0" * 65, "G" * 64, "0" * 63 + "F", "$(touch canary)"))):
+            for value in bad:
+                self.refused({name: value})
+            self.assertIn(name, self.refused({name: "not valid"}).lines[0])
+        self.assertEqual(self.fetch({"PUBLISH_SOURCES_REPOSITORY": "some-owner/.github"}).done.returncode, 0, "a repository may be named like that")
+
+    def test_a_volume_that_holds_the_archive_of_sources_as_well_or_lacks_a_file_of_the_fetch_is_refused(self):
+        ran = self.refused(None, package=source_zip(CASES_SOURCE_FILES))
+        self.assertIn("the sources come in the secret volume or by fetch, not both", ran.lines[0])
+        for name in ("source-digest.py", "requirements.txt", "host.json"):
+            self.assertIn(f"{name} is not in the secret volume", self.refused(None, volume={name: None}).lines[0])
+        self.assertIn("build-function-app.sh is not in the secret volume", self.refused(None, volume={"build-function-app.sh": None}).lines[0])
+
+    def test_the_size_of_a_file_that_was_sent_is_not_needed_when_nothing_was_sent_and_the_request_way_is_what_it_was_without_the_variables(self):
+        ran = self.fetch({"PUBLISH_FILE_BYTES": None})
+        self.assertEqual(ran.done.returncode, 0, ran.lines)
+        ran = self.run_publish({"GITHUB_TOKEN": THE_TOKEN_OF_THE_RUN}, kind="cases")
+        self.assertEqual(ran.done.returncode, 0, ran.lines)
+        self.assertEqual([call for call in ran.calls_of("curl ") if "github.com" in call], [], "with no variable for the sources nothing is fetched, and a token in the environment is not used")
+        self.assertIn("ok: the sources are unpacked: 7 files", ran.lines)
+        self.assertEqual([call for call in ran.calls if THE_TOKEN_OF_THE_RUN in call], [])
