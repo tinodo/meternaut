@@ -251,7 +251,7 @@ class TheTokenClient(unittest.TestCase):
         client = Client(token_calls(SETTINGS), lambda t: t, transport=self.entra.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
         with self.assertRaises(SigninError) as raised:
             TokenClient(SETTINGS, broken, client).redeem(CODE, VERIFIER)
-        self.assertIn("fault on my side", raised.exception.plain)
+        self.assertIn("fault in Meternaut", raised.exception.plain)
         self.assertNotIn("identity endpoint", raised.exception.plain)
         self.assertEqual(self.entra.calls, [], "no call is made without an assertion")
 
@@ -283,7 +283,7 @@ class TheTokenClient(unittest.TestCase):
         client = Client((), lambda t: t, transport=self.entra.transport, sleep=lambda s: None, monotonic=lambda: 0.0)
         with self.assertRaises(SigninError) as raised:
             TokenClient(SETTINGS, lambda r: "a", client).redeem(CODE, VERIFIER)
-        self.assertIn("fault on my side", raised.exception.plain)
+        self.assertIn("fault in Meternaut", raised.exception.plain)
 
 
 class TheWordsOfTheErrors(unittest.TestCase):

@@ -203,7 +203,7 @@ class TokenClient:
         try:
             proof = self.assertion(ASSERTION_RESOURCE)
         except Exception as error:  # noqa: BLE001 (the platform gave no token: the text says that and no more)
-            raise SigninError("Meternaut could not get its own proof of identity from the platform. This is a fault on my side. Nothing is approved.") from error
+            raise SigninError("Meternaut could not get its own proof of identity from the platform. This is a fault in Meternaut. Nothing is approved.") from error
         form = {"client_id": self.settings.client_id, "scope": SCOPES, "code": code, "redirect_uri": self.settings.redirect_uri, "grant_type": "authorization_code",
                 "code_verifier": verifier, "client_assertion_type": ASSERTION_TYPE, "client_assertion": proof}
         if claims:
@@ -215,7 +215,7 @@ class TokenClient:
                 raise SigninError("Microsoft Entra did not answer. Nothing is approved. Try again in a few minutes.") from error
             raise SigninError(explain(*oauth_error(error))) from error
         except Refused as error:
-            raise SigninError("This app may not call that address. This is a fault on my side. Nothing is approved.") from error
+            raise SigninError("This app may not call that address. This is a fault in Meternaut. Nothing is approved.") from error
         access, ident = (answer.get("access_token"), answer.get("id_token")) if isinstance(answer, dict) else (None, None)
         if not (isinstance(access, str) and 20 <= len(access) <= MAX_TOKEN and isinstance(ident, str)):
             raise SigninError("Microsoft Entra gave an answer without the tokens that were asked for. Nothing is approved.")

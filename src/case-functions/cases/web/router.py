@@ -80,7 +80,7 @@ def handle(request: Request, services: Services) -> Response:
         return secured(_fault(request, services, 503, "Meternaut cannot reach its records", "Try again in a few minutes."))
     except Exception as error:  # noqa: BLE001 (a page must never show a trace)
         LOG.warning("web: %s", type(error).__name__)
-        return secured(_fault(request, services, 500, "Something went wrong on my side", "Try again in a few minutes."))
+        return secured(_fault(request, services, 500, "Something went wrong in Meternaut", "Try again in a few minutes."))
 
 
 def _fault(request: Request, services: Services, status: int, title: str, advice: str) -> Response:

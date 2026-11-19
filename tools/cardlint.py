@@ -5,7 +5,7 @@ Cards live in docs/experience/cards/<name>.json, with sample data in cards/data/
 manifest, cards/manifest.json, that says per card which elements must exist and, for every verb, which input ids it accepts,
 whether it needs the plan code and what a tap returns. The checks encode the rules of the experience design
 (docs/experience/04-messages-and-cards.md) and of the decision brief that every page, letter and card renders: a card says that an AI
-wrote it, and ends with ONE footer line that says that, why the person got the card and whom to talk to as plain text (a name and an
+wrote it, and ends with ONE footer line that says that, why the person got the card and who answers for Meternaut as plain text (a name and an
 address: never a button, never a link); it offers ONE way to ask or tell something ("Ask or tell": a text box and a button), in place of
 the three buttons that explained, challenged and taught; every saving figure carries its price basis; a link is the page of the
 request (${pageUrl}) or, on a card whose manifest entry lists "answers", the link of a button that answers (${approveUrl}, ${confirmUrl},
@@ -40,8 +40,8 @@ ASK_TITLE = "Ask or tell"
 BASE_VERBS = (ASK_VERB,)  # the one verb that every card has: a question, or something the AI should know. It approves nothing
 RETURNS = {"receipt", "card", "answer", "handoff"}
 DECISION_VERBS = {"ok", "cancel", "undo", "not-me"}
-FOOTER_START = "Written by an AI"
-FOOTER_PARTS = ("${whyYouGetThis}", "Talk to a person", "${contact}")  # the footer says why the person got the card and whom to talk to, as plain text
+FOOTER_START = "An AI wrote this"
+FOOTER_PARTS = ("${whyYouGetThis}", "answers for Meternaut", "${contact}")  # the footer says why the person got the card and who answers for Meternaut, as plain text
 GONE_IDS = ("talk-to-a-person", "why-you-get-this")  # they were a button and a line of their own: both are in the one footer line now
 TEXT_ONLY_KEYS = ("contact",)  # sample data that holds a name and an address as plain text: no link, but an address is what it is for
 PAGE_URL = "${pageUrl}"
@@ -369,7 +369,7 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
             add("the ai-footer is one line: no line break")
         for part in FOOTER_PARTS:
             if part not in footer_text:
-                add(f"ai-footer must say {part!r}: why the person got the card, and whom to talk to as a name and an address in plain text")
+                add(f"ai-footer must say {part!r}: why the person got the card, and who answers for Meternaut as a name and an address in plain text")
         body = card.get("body", [])
         if not body or body[-1].get("id") != "ai-footer":
             add("the ai-footer is the last element of the card, in the same place on every card")
@@ -566,7 +566,7 @@ def _sample() -> tuple[dict, dict, dict, dict]:
     btn = _button
     card = {
         "type": "AdaptiveCard", "$schema": SCHEMA, "version": "1.5",
-        "fallbackText": "A recommendation from Meternaut (AI). Open it on the page: ${pageUrl} Written by an AI.",
+        "fallbackText": "A recommendation from Meternaut (AI). Open it on the page: ${pageUrl} An AI wrote this.",
         "body": [
             {"type": "TextBlock", "id": "ai-label", "text": "${senderName}", "wrap": True},
             {"type": "TextBlock", "id": "headline", "text": "${headline}", "wrap": True},
@@ -575,7 +575,7 @@ def _sample() -> tuple[dict, dict, dict, dict]:
             {"type": "TextBlock", "id": "range", "text": "${range}", "wrap": True},
             {"type": "ActionSet", "id": "conversation", "actions": [btn(ASK_VERB, ASK_TITLE)]},
             {"type": "TextBlock", "id": "ai-footer", "wrap": True,
-             "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}."},
+             "text": "An AI wrote this, and a person approves every change. You got this because ${whyYouGetThis} ${contact} answers for Meternaut."},
         ],
     }
     contract = {ASK_VERB: {"inputs": [], "plan": False, "returns": "receipt"}}
@@ -630,9 +630,9 @@ def self_test() -> int:
     broken(lambda c, d, s: c["body"].insert(6, {"type": "ActionSet", "actions": [button("human", "Talk to a person")]}), "verb 'human' is not used")
     broken(lambda c, d, s: c["body"].insert(6, {"type": "TextBlock", "id": "why-you-get-this", "text": "Why you are getting this", "wrap": True}), "'why-you-get-this' is not used")
     broken(lambda c, d, s: c["body"].append({"type": "TextBlock", "text": "after the footer", "wrap": True}), "last element of the card")
-    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI; a person approves every change. Talk to a person: ${contact}."}), "ai-footer must say '${whyYouGetThis}'")
-    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis}"}), "ai-footer must say 'Talk to a person'")
-    broken(lambda c, d, s: c["body"][-1].update({"text": "Written by an AI. You got this because ${whyYouGetThis} Talk to a person: ${contact}.\nMore."}), "one line")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "An AI wrote this, and a person approves every change. ${contact} answers for Meternaut."}), "ai-footer must say '${whyYouGetThis}'")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "An AI wrote this, and a person approves every change. You got this because ${whyYouGetThis}"}), "ai-footer must say 'answers for Meternaut'")
+    broken(lambda c, d, s: c["body"][-1].update({"text": "An AI wrote this. You got this because ${whyYouGetThis} ${contact} answers for Meternaut.\nMore."}), "one line")
     broken(lambda c, d, s: d.pop("contact"), "needs contact")
     broken(lambda c, d, s: d.update({"contact": "maya@example.com"}), "needs contact")
     broken(lambda c, d, s: d.update({"contact": "Maya (https://x.example)"}), "needs contact")

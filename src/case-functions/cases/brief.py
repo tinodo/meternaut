@@ -133,7 +133,7 @@ TAKEN_BACK = {"rules": "Meternaut took this request back because its rules chang
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
-TIMER_CLOSED = "An old timer closed this request, before requests were kept open until somebody answered."  # a request that the clock of before rule 38 closed: the page and the History say it the same way
+TIMER_CLOSED = "A timer closed this request. Meternaut no longer closes requests by time."  # a request that the clock of before rule 38 closed: the page and the History say it the same way
 LOOK_IN_AZURE = "Look at the resource in Azure before anything else is done with it."  # what a change that did not complete asks of a person: the page, the card and the letter say it the same way
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
 WITH_WHOM = {"same": "the people who were asked first", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
@@ -1672,10 +1672,10 @@ def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[F
 
 
 def shown_facts(facts: Sequence[Fact], most: int = 3) -> tuple[Fact, ...]:
-    """The facts that a card and a letter have room for: the ones that say why the finding is a lead first (what the investigation found, what a check of Meternaut read, what a tool measured, what
-    Azure Advisor says), then the others in their order."""
+    """The facts that a card and a letter have room for: the check that held the finding back first (it is part of why it is held), then the ones that say why the finding is a lead (what the
+    investigation found, what a check of Meternaut read, what a tool measured, what Azure Advisor says), then the others in their order."""
     why = {"What the investigation found", "What to look at", *(state[0] for state in DETECTOR_STATE.values())}
-    return tuple(sorted(facts, key=lambda fact: not (fact.label in why or fact.source.startswith(MONITOR))))[:most]
+    return tuple(sorted(facts, key=lambda fact: (fact.label != "Held back by", not (fact.label in why or fact.source.startswith(MONITOR)))))[:most]
 
 
 OWNER_ROLES = {"owner": "owner", "contact": "contact", "team": "team", "manager": "manager", "createdby": "creator"}  # the tags that name an owner (cases/ownership.py), as the one who it names

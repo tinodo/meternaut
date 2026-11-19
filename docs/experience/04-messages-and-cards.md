@@ -41,7 +41,7 @@ flowchart LR
 | Where | What |
 |---|---|
 | Sender name | "Meternaut (AI)"; the adopting organisation may rename the product, never the suffix |
-| Footer line | One line: "Written by an AI; a person approves every change.", why this person got the card, whom to talk to |
+| Footer line | One line: "An AI wrote this, and a person approves every change.", why this person got the card, who answers for Meternaut |
 | Teams label | The AI-generated entity (`addAiGenerated()`) makes Teams show its "AI Generated" label; documented per message, so the device test checks it on a card ([Learn](https://learn.microsoft.com/microsoftteams/platform/agents-in-teams/integrate-ai/ai-content-labels)) |
 | Machine-readable mark | The same entity in the message; in e-mail, the header `x-ai-generated: true` |
 
@@ -214,7 +214,7 @@ A button on a card that the flow posts sends nothing: it opens an address that n
 
 ### The fallback and the inputs
 
-Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.4 shows only `fallbackText`, which ends with the page link and "Written by an AI."
+Cards use schema 1.4, the highest that Power Automate posts, ([cards reference](https://learn.microsoft.com/microsoftteams/platform/task-modules-and-cards/cards/cards-reference#adaptive-card), [agent design](https://learn.microsoft.com/agents/design-guidelines/adaptive-cards-for-agent-design#schema-and-host-compatibility)), and the [client matrix](12-testing-the-experience.md#the-client-matrix-layer-5) lists the clients that meet it. A client below 1.4 shows only `fallbackText`, which ends with the page link and "An AI wrote this."
 
 `Action.Execute`, the inputs of "Ask or tell" in a `Action.ShowCard` and `associatedInputs` are not used: a card that the flow posts has none of them. Its actions are `Action.OpenUrl` and `Action.ToggleVisibility`, which is from schema 1.2.
 

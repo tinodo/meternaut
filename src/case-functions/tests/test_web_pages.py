@@ -1079,7 +1079,7 @@ class TheHistory(unittest.TestCase):
             ("Declined", TITLE, "Declined by Tino because it is already handled."),
             ("Search", "1 new finding", ""),
             ("Checked", TITLE, "Cost lines show no cost.")])
-        self.assertEqual(feed["Tuesday 3 November"], [("Taken back", TITLE, "An old timer closed this request, before requests were kept open until somebody answered."),
+        self.assertEqual(feed["Tuesday 3 November"], [("Taken back", TITLE, "A timer closed this request. Meternaut no longer closes requests by time."),
                                               ("Worth acting on", "Consider changing the virtual machine oversized-vm-1", "Tino said this is worth acting on.")])
         self.assertIn(("Change made", TITLE, "Deleted. Azure no longer lists the resource."), feed["Monday 2 November"])
         self.assertIn(("Approved", TITLE, "Approved by Tino."), feed["Monday 2 November"])
@@ -1171,7 +1171,7 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", resource_name=f"endpoint-h{n}", plan_id=f"plan5{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-n)))
         feed = self.feed(self.console.get("/history"))
-        self.assertEqual(feed["Tuesday 3 November"][0], ("Taken back", TITLE, "An old timer closed this request, before requests were kept open until somebody answered."), "the change that was taken back is a line of its own")
+        self.assertEqual(feed["Tuesday 3 November"][0], ("Taken back", TITLE, "A timer closed this request. Meternaut no longer closes requests by time."), "the change that was taken back is a line of its own")
         self.assertIn(("Taken back", "3 requests to look at a finding", "Meternaut took them back, and each says why."), feed["Wednesday 4 November"])
         self.assertFalse([line for lines in feed.values() for line in lines if line[0] == "Taken back" and line[1].startswith("Consider")], feed)
 

@@ -551,7 +551,9 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
         lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  _heads_up(brief)) if part))
     if lines:
-        doc.paragraph("These requests have waited more than a week without an answer. The oldest is first.")
+        many, over = len(lines) > 1, sum(waited_days(plan, now) > 7 for plan, _ in rows[:WEEKLY_LISTED])
+        lead = ("These requests have" if many else "This request has") if over == len(lines) else "At least one of these has" if over else ""
+        doc.paragraph((f"{lead} waited more than a week without an answer." if lead else f"{'These requests are' if many else 'This request is'} waiting for an answer.") + (" The oldest is first." if many else ""))
         doc.items(*lines)
     if count > WEEKLY_LISTED:
         doc.paragraph(_more(count - WEEKLY_LISTED))

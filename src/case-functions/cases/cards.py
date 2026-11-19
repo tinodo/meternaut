@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, plain, shown_facts
+from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, day_text, footer_line, parse_time, plain,
+                    shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -306,8 +307,9 @@ def closed_card(brief: Brief, ctx: CardContext) -> dict:
     if outcome.state in ("", "approved", "running"):
         raise CardError("only a request that has ended has a closing card")
     lines = outcome.lines
+    when = day_text(outcome.at, parse_time(outcome.at))
     kept = {"expired": lines[:2], "failed": (f"{outcome.by} approved this, but the change was not made.", *lines[:2]),
-            "unchanged": (lines[0], "Nothing was changed.", *lines[-1:])}.get(outcome.state, (*lines[:1], NOTHING_MORE))
+            "unchanged": (lines[0], "Nothing was changed.", *lines[-1:])}.get(outcome.state, (*lines[:1], *([f"It was decided on {when}."] if when else []), NOTHING_MORE))
     said = " ".join(md(line, 300) for line in dict.fromkeys(kept))
     return _card(brief, ctx, "closed", [_block("closed", said, weight="Bolder")], said)
 

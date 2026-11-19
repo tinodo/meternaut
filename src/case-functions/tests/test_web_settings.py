@@ -25,7 +25,7 @@ class TheSettingsPage(unittest.TestCase):
 
     def test_every_setting_has_a_control_with_a_label_and_the_old_ones_are_not_offered(self):
         root = self.page.root
-        self.assertEqual([l.text() for l in root.find_all("legend")], ["Where I write to you first", "Quiet hours"])
+        self.assertEqual([l.text() for l in root.find_all("legend")], ["Where Meternaut writes to you first", "Quiet hours"])
         labels = {l.attrs["for"]: l.text() for l in root.find_all("label")}
         for field_id, text in (("quiet_from", "No messages from"), ("quiet_to", "No messages until"), ("timezone", "Time zone of these hours"),
                                ("weekly_budget", "Other letters a week, at most"), ("paused_until", "Pause my letters until"), ("channel-email", "E-mail"),
@@ -43,7 +43,7 @@ class TheSettingsPage(unittest.TestCase):
         self.assertEqual(self.page.content.count(QUIET_HINT), 1)
         for old in ("not applied", "Not applied", "saved and not applied yet", "a letter can arrive at any time"):
             self.assertNotIn(old, self.page.content)
-        self.assertIn("nothing I send is urgent", QUIET_HINT)
+        self.assertIn("nothing Meternaut sends is urgent", QUIET_HINT)
         self.assertIn("no way around them", QUIET_HINT)
 
     def test_the_hint_is_also_on_the_page_that_shows_a_refusal(self):

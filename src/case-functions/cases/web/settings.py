@@ -1,6 +1,6 @@
 """Settings of the signed-in person: the page, the strict check of what is posted, the export and the deletion.
 
-The page offers four things and nothing else: where I write to the person first, the quiet hours (two times and the time zone they are read in), how many other letters a week, and a pause.
+The page offers four things and nothing else: where Meternaut writes to the person first, the quiet hours (two times and the time zone they are read in), how many other letters a week, and a pause.
 What the form does not carry (language, working days, the day of the weekly summary, mutes) keeps the value that is stored, and is checked as strictly as before when a form does send it.
 The settings are stored with the directory object id and nothing else about the person. Deleting them deletes the person's notes too, and keeps the approval records,
 which hold only an object id and follow the retention of the organisation that runs Meternaut.
@@ -17,8 +17,8 @@ from .common import read
 from .core import Ctx, Response, Safe, canonical_zone, fmt, join, stamp
 from .layout import (JSON, block, button, choices, details, error_summary, field, form, head, hidden, link, message_page, notice, page, panel, paragraph, respond)
 
-QUIET_HINT = ("Leave both times empty for no quiet hours. Inside them I send you nothing, no letter and no Teams card: what is due waits and is sent when they end, and nothing is lost. "
-              "There is no way around them, because nothing I send is urgent.")
+QUIET_HINT = ("Leave both times empty for no quiet hours. Inside them Meternaut sends you nothing, no letter and no Teams card: what is due waits and is sent when they end, and nothing is lost. "
+              "There is no way around them, because nothing Meternaut sends is urgent.")
 ZONE_HINT = "The clock that the two times follow: a name such as Europe/Amsterdam, or UTC."
 CHANNEL_HINT = "With only the weekly summary, no other letter is sent. A request that waits for your answer is on the Decisions page whatever you choose."
 WEEKLY_BUDGET_HINT = "How many other letters a week. 0 means only the weekly summary. A request that waits for your answer and the first letter to you are never counted."
@@ -124,7 +124,7 @@ def _form(ctx: Ctx, values: dict[str, str], errors: dict[str, str]) -> Safe:
     first = ctx.now.date() + dt.timedelta(days=1)
     last = ctx.now.date() + dt.timedelta(days=MAX_PAUSE_DAYS)
     fields = join([
-        choices("channel", "Where I write to you first", "channel", CHANNEL_WORDS, values.get("channel", ""), hint=CHANNEL_HINT, error=errors.get("channel", "")),
+        choices("channel", "Where Meternaut writes to you first", "channel", CHANNEL_WORDS, values.get("channel", ""), hint=CHANNEL_HINT, error=errors.get("channel", "")),
         fmt('<fieldset id="quiet-hours"><legend>Quiet hours</legend><p class="hint" id="quiet-hours-hint">{hint}</p>{start}{end}{zone}</fieldset>', hint=QUIET_HINT,
             start=field("quiet_from", "quiet_from", "No messages from", values.get("quiet_from", ""), kind="time", error=errors.get("quiet_from", "")),
             end=field("quiet_to", "quiet_to", "No messages until", values.get("quiet_to", ""), kind="time", error=errors.get("quiet_to", "")),
@@ -151,7 +151,7 @@ def settings_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dic
     record, ok = read(lambda: ctx.store.settings_get(ctx.principal.oid), SettingsRecord(oid=ctx.principal.oid))  # type: ignore[union-attr]
     values = values if values is not None else _values(record, ctx.now)
     errors = errors or {}
-    parts: list[object] = [head("Settings", "How and when I write to you. They are stored with your directory object id and nothing else about you.")]
+    parts: list[object] = [head("Settings", "How and when Meternaut writes to you. They are stored with your directory object id and nothing else about you.")]
     if banner is not None:
         parts.append(banner)
     if not ok:

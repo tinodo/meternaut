@@ -181,7 +181,7 @@ class Headers(unittest.TestCase):
         self.check(reply)
         self.assertNotIn("division", reply.text)
         self.assertNotIn("Traceback", reply.text)
-        self.assertIn("Something went wrong on my side", reply.content)
+        self.assertIn("Something went wrong in Meternaut", reply.content)
 
 
 def directives(policy: str) -> dict[str, list[str]]:

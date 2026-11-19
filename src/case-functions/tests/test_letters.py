@@ -717,6 +717,28 @@ class WhatTheModuleIs(unittest.TestCase):
             self.assertIsNone(re.search(pattern, self.source), pattern)
 
 
+class TheLeadOfTheWeeklyLetterIsTrueOfEveryRequestItLists(unittest.TestCase):
+    """The weekly letter lists every open request once one of them has waited more than a week, so it says "more than a week" of all of them only when that is so."""
+
+    @staticmethod
+    def lead(*days: int) -> str:
+        rows = [(make_plan(plan_id=f"p{n}", case_id=f"c{n}", code=f"CODE000{n}", resource_name=f"disk-{n}", saving_usd_month=10.0, waiting_costs_usd_day=None,
+                           waiting_since=(NOW - dt.timedelta(days=waited)).strftime("%Y-%m-%dT%H:%M:%SZ")), make_case(case_id=f"c{n}", resource_name=f"disk-{n}", status="proposed", saving_usd_month=10.0))
+                for n, waited in enumerate(days, 1)]
+        return next(line for line in letters.escalation_weekly_letter(PERSON, BASE, NOW, rows, CONTACTS).text.splitlines() if line.startswith(("These requests", "This request", "At least one")))
+
+    def test_a_week_is_said_of_all_of_them_only_when_all_of_them_waited_that_long(self):
+        self.assertEqual(self.lead(12, 9), "These requests have waited more than a week without an answer. The oldest is first.")
+        self.assertEqual(self.lead(12), "This request has waited more than a week without an answer.")
+
+    def test_a_mix_of_a_request_of_12_days_and_one_of_2_days_says_that_at_least_one_waited_that_long(self):
+        self.assertEqual(self.lead(12, 2), "At least one of these has waited more than a week without an answer. The oldest is first.")
+
+    def test_requests_that_have_not_waited_a_week_are_not_said_to_have_waited_one(self):
+        self.assertEqual(self.lead(3, 2), "These requests are waiting for an answer. The oldest is first.")
+        self.assertEqual(self.lead(3), "This request is waiting for an answer.")
+
+
 class TheLinesOfARequestThatReplacedOthers(unittest.TestCase):
     def test_the_digest_and_the_weekly_lines_say_how_long_it_waited_in_the_sentence_of_what_waiting_cost(self):
         since = (NOW - dt.timedelta(days=12)).strftime("%Y-%m-%dT%H:%M:%SZ")

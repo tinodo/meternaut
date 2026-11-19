@@ -350,6 +350,43 @@ class NobodyIsAskedWithoutAFigure(unittest.TestCase):
                     self.assertEqual(what_it_saves(shown, kind), ["it states no saving: a request without a figure is a defect, and nobody is asked without one"])
 
 
+# -- a check that held the finding back -------------------------------------------------------------------------------------------------------------
+
+class AFindingThatACheckHeldBackSaysWhichCheck(unittest.TestCase):
+    """A management lock, a tag that asks to keep the resource and a resource that is less than 7 days old are part of why a finding is held: the card and the letter say which, as a row of their own,
+    and not only in the line about how sure Meternaut is."""
+
+    GUARDS = {"locked": "A management lock covers the resource.", "keep-tag": "A tag asks to keep the resource.", "too-new": "The resource is less than 7 days old."}
+
+    @staticmethod
+    def shown(guard: str) -> tuple[list[dict], str]:
+        kind = _deleting()
+        case = dataclasses.replace(kind.case, guards=(guard,))
+        brief = brief_mod.build_brief(case, kind.plan, None, (), now=kind.now, may_answer=True)
+        card = cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{kind.plan.plan_id}", contacts=CONTACTS))
+        rows = next(block for block in card["body"] if block.get("id") == "facts")["facts"]
+        return rows, letters.approval_letter(kind.plan, case, PERSON, BASE, kind.now, CONTACTS).text
+
+    def test_the_card_and_the_letter_have_a_row_that_says_which_check_held_the_finding_back(self):
+        for guard, said in self.GUARDS.items():
+            with self.subTest(guard):
+                rows, letter = self.shown(guard)
+                self.assertEqual([row["value"].split(". Source")[0] for row in rows if row["title"] == "Held back by"], [said.rstrip(".")])
+                self.assertIn(said, letter)
+
+    def test_the_old_choice_of_three_rows_leaves_the_row_out_of_both(self):
+        def old(facts, most=3):  # what the choice was before: the facts that say why the finding is a lead first, in their order, and the check that held it back fourth
+            why = {"What the investigation found", "What to look at", *(state[0] for state in brief_mod.DETECTOR_STATE.values())}
+            return tuple(sorted(facts, key=lambda fact: not (fact.label in why or fact.source.startswith("Azure Monitor"))))[:most]
+
+        with mock.patch.object(brief_mod, "shown_facts", old), mock.patch.object(cards, "shown_facts", old):
+            for guard, said in self.GUARDS.items():
+                with self.subTest(guard):
+                    rows, letter = self.shown(guard)
+                    self.assertEqual([row for row in rows if row["title"] == "Held back by"], [])
+                    self.assertNotIn(said, letter)
+
+
 # -- the mutations --------------------------------------------------------------------------------------------------------------------------------
 
 SENTENCE = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")

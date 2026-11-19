@@ -7,10 +7,12 @@ words and the link to the page of the request only. The card with its buttons (`
 """
 import dataclasses
 import datetime as dt
+import importlib.util
 import json
 import re
 import unicodedata
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
@@ -450,6 +452,21 @@ class TheFirstContactCard(unittest.TestCase):
         self.assertNotIn("](", json.dumps(card))
         with self.assertRaises(CardError):
             cards.first_contact_card("Maya", "http://meternaut.example")
+
+
+class TheFooterThatTheLintAsksOfTheTemplatesIsTheFooterOfTheCards(unittest.TestCase):
+    """tools/cardlint.py checks the card templates of the design for the footer and the fallback text that the real cards have."""
+
+    def test_the_real_cards_start_their_footer_and_their_fallback_text_as_the_lint_asks_and_name_who_answers(self):
+        spec = importlib.util.spec_from_file_location("cardlint_of_the_cards_test", Path(__file__).resolve().parents[3] / "tools" / "cardlint.py")
+        lint = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lint)
+        brief = brief_of()
+        for card in (cards.decision_card(brief, ctx_for(brief)), cards.minimal_card(brief, ctx_for(brief)), cards.first_contact_card("Maya", BASE, CONTACTS), cards.probe_card(contacts=CONTACTS)):
+            footer = by_id(card)["ai-footer"]["text"]
+            self.assertTrue(footer.startswith(lint.FOOTER_START), footer)
+            self.assertIn(lint.FOOTER_START, card["fallbackText"])
+            self.assertIn(lint.FOOTER_PARTS[1], footer)
 
 
 class WhatComesFromTheEstateIsData(unittest.TestCase):
