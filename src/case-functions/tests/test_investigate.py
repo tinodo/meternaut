@@ -15,7 +15,7 @@ from unittest import mock
 from support import APP_ROOT, ENV, NOW, RG, SUBSCRIPTION, LogCapture, Ticker, fixed_clock
 
 from cases import agents, approvals, brief, config as cfg, decide, investigate, loop_config, people as people_mod, pricing, roles, wiring
-from cases.approvals import Approvals, build_advice
+from cases.approvals import ASKED_UNDER, Approvals, build_advice
 from cases.brief import HELD_UNPROVEN
 from cases.detectors import Context
 from cases.events import History
@@ -89,10 +89,11 @@ def priced(*handles, usd=10.0) -> tuple[dict, dict]:
 
 
 def made_before(h, case):
-    """The request that a Watch made before a finding of the investigation needed a saving that code priced. A Watch makes none now (approvals.UNPRICED) for a finding that has none, and the words of the
-    requests that are open stay as they were: a test of those words builds the request as the older Watch did."""
+    """The request that a Watch made before a finding of the investigation needed a saving that code priced (and a measurement, and the second AI for a switch). A Watch makes none now (approvals.why_not_ask)
+    for a finding that lacks them, and the words of the requests that are open stay as they were: a test of those words builds the request as the older Watch did, with no ASKED_UNDER."""
     assert not [p for p in h.store.plans_open() if p.case_id == case.case_id], "no request is made for a finding that no saving backs"
-    return build_advice(case, h.extras.approvers(), h.clock(), h.extras.approvals.settings)
+    made = build_advice(case, h.extras.approvers(), h.clock(), h.extras.approvals.settings)
+    return replace(made, preconditions={key: value for key, value in made.preconditions.items() if key != ASKED_UNDER})
 
 
 def answer(*findings, examined=("the biggest costs", "a group of look-alike resources")) -> str:
@@ -1356,15 +1357,24 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         self.assertEqual(h.of("plan.created"), [])
         self.assertTrue(h.notes[-1].endswith("opened 2 cases; no request was made for 2 of them because no saving was priced from the bill"), h.notes[-1])
 
-    def test_a_finding_whose_change_code_priced_from_the_bill_gets_an_advise_plan_that_states_the_saving(self):
+    def test_a_finding_whose_change_code_priced_from_the_bill_is_no_request_when_nothing_was_measured_and_the_end_note_counts_it(self):
         change, meters = priced("r1", "r2", usd=40.0)
         h = Harness(FakeFoundry(answer(finding(basis="low-usage", proposal="change", evidence=[], change=change))), FakeToolbox([resource(n, cost_usd_30d=40.0) for n in (1, 2)], meters=meters), with_store=True)
         h.go()
         cases = h.store.cases_recent()
         self.assertEqual({(c.status, c.saving_usd_month, c.objections) for c in cases}, {("needs_human", 40.0, (self.SAYS,))}, "no measurement backs it, and code priced it all the same")
+        self.assertEqual((h.store.plans_open(), {c.plan_id for c in cases}, h.of("plan.created")), ([], {None}, []), "nobody is asked: nothing was measured of the resources")
+        self.assertTrue(h.notes[-1].endswith("opened 2 cases; no request was made for 2 of them because nothing was measured of its use"), h.notes[-1])
+
+    def test_a_finding_whose_change_code_priced_from_the_bill_and_that_a_measurement_backs_gets_an_advise_plan_that_states_the_saving(self):
+        change, meters = priced("r1", "r2", usd=40.0)
+        h = Harness(FakeFoundry(answer(finding(basis="low-usage", proposal="change", change=change))), FakeToolbox([resource(n, cost_usd_30d=40.0) for n in (1, 2)], meters=meters), with_store=True)
+        h.go()
+        cases = h.store.cases_recent()
+        self.assertEqual({(c.status, c.saving_usd_month, c.objections) for c in cases}, {("proposed", 40.0, ())})
         self.assertEqual({(p.family, p.state, p.saving_usd_month) for p in h.store.plans_open()}, {("advise", "open", 40.0)}, "a person is asked whether it is worth acting on; nothing can be changed")
         self.assertEqual(sorted(p.case_id for p in h.store.plans_open()), sorted(c.case_id for c in cases))
-        self.assertFalse([note for note in h.notes if "no saving was priced" in note])
+        self.assertFalse([note for note in h.notes if "no request was made" in note])
 
     def test_one_note_of_the_run_says_how_many_resources_need_a_person_for_it_and_none_is_said_when_all_are_backed(self):
         _, h = self.run_with(finding(basis="low-usage", evidence=[entry("r1", "MetricA", 0)]))

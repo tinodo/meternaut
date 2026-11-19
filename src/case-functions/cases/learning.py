@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Mapping, Sequence
 
 from . import ownership
-from .approvals import ADVICE_QUIET_DAYS
+from .approvals import ADVICE_QUIET_DAYS, why_not_ask
 from .brief import past_line, says_nothing, taken_back  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
 from .decide import PROPOSE_CONFIDENCE, Decision
 from .memory_store import parse, stamp
@@ -587,8 +587,8 @@ OPEN_POOL = 45  # the open questions that one answer starts from: some of their 
 @dataclass(frozen=True)
 class OpenQuestion:
     """One earlier finding that is still an open question, as typed values: the resource (an id of an estate, which only code reads: the tool gives the Investigator a handle for it), its type
-    as Azure names it, in how many Watches it was seen, for how many days, how sure the last judgement was, and whether a request to a person waits. No text of the case, no reason and no name
-    of a person."""
+    as Azure names it, in how many Watches it was seen, for how many days, how sure the last judgement was, whether a request to a person waits, and why the rules of asking hold the finding back, if
+    they do (a word of code's). No text of the case and no name of a person."""
 
     resource_id: str
     resource_type: str
@@ -596,6 +596,7 @@ class OpenQuestion:
     days_open: int
     confidence: float | None
     request: str  # "open" when a request to a person waits for an answer, else "none"
+    why: str  # why the rules of asking hold the finding back, as it is judged now: a key of approvals.NOT_ASKED, else "none". A code's word, never a text of the case
 
 
 def _sure(confidence: object) -> bool:
@@ -657,5 +658,5 @@ class OpenQuestions:
             except (ValueError, TypeError):
                 days = 0
             found.append(OpenQuestion(case.resource_id, type_word(case.resource_type), max(0, case.runs_seen), days, round(confidence, 2) if confidence is not None and 0 <= confidence <= 1 else None,
-                                      "open" if case.resource_id.lower() in waiting else "none"))
+                                      "open" if case.resource_id.lower() in waiting else "none", why_not_ask(case) or "none"))
         return found

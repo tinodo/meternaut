@@ -13,7 +13,7 @@ from unittest import mock
 from support import NOW, RG, SUBSCRIPTION
 
 from cases import agents, approvals, investigate, learning, models, toolbox as tb
-from cases.decide import PROPOSE_CONFIDENCE
+from cases.decide import NO_MEASUREMENT, PROPOSE_CONFIDENCE
 from cases.memory_store import MemoryStore, stamp
 from cases.models import CaseRecord, NoteRecord, PlanRecord, StoreError
 from cases.web import home
@@ -21,13 +21,14 @@ from cases.web import home
 from test_investigate import FakeFoundry, Harness, Moving, answer, finding, key_of, loop_for, resource
 from test_toolbox import (DISK, HOSTILE, MARKERS, SUB, SUB2, VM, VM1_METRIC, agent_facing_text, ask, big_estate, forbidden_in, hostile_estate, point, row, standard,
                           toolbox)
+from test_web_support import priced_facts
 
 THINGS = "microsoft.example/things"
 APP = f"{RG}/rg-app/providers/Microsoft.Example/things"
 OID = "aaaaaaaa-1111-4222-8333-444444444444"
 SENTENCE = "A sentence of the first AI that no row may carry."
 OBJECTION = "An objection of the second AI that no row may carry."
-COLUMNS = ["handle", "type", "seen", "days_open", "confidence", "request"]
+COLUMNS = ["handle", "type", "seen", "days_open", "confidence", "request", "why"]
 
 
 def case(n, resource_id=None, status="needs_human", confidence=0.35, runs=3, days=10, updated=None, **changes) -> CaseRecord:
@@ -74,9 +75,9 @@ class WhichFindingsAreOpenQuestions(unittest.TestCase):
 
     def test_a_case_that_needs_a_person_and_has_no_request_is_one_and_its_row_holds_typed_values_only(self):
         (found,) = self.rows(stored(case(1, runs=4, days=12)))
-        self.assertEqual(found, learning.OpenQuestion(f"{APP}/thing-1", THINGS, 4, 12, 0.35, "none"))
+        self.assertEqual(found, learning.OpenQuestion(f"{APP}/thing-1", THINGS, 4, 12, 0.35, "none", "unpriced"))
         values = asdict(found)
-        self.assertEqual(sorted(values), ["confidence", "days_open", "request", "resource_id", "resource_type", "runs_seen"])
+        self.assertEqual(sorted(values), ["confidence", "days_open", "request", "resource_id", "resource_type", "runs_seen", "why"])
         del values["resource_id"]
         for text in ("thing-1", "rg-app", "sentence of the first AI", "objection of the second AI"):
             self.assertNotIn(text, json.dumps(values))
@@ -244,9 +245,22 @@ class TheAnswer(unittest.TestCase):
                             plan(2, self.estate.id_of("vm-1")))
         self.box = recalling(self.estate, self.store)
 
-    def test_each_open_question_is_a_row_with_a_handle_and_four_typed_values(self):
+    def test_a_finding_that_the_rules_of_asking_hold_back_says_why_in_one_word_of_the_rules_and_one_that_they_do_not_says_none(self):
+        estate = standard()
+        facts = priced_facts("alternative")
+        cases = (("vm-1", dict(saving_usd_month=None), "unpriced"), ("vm-2", dict(saving_usd_month=10.0, objections=(NO_MEASUREMENT,)), "unmeasured"),
+                 ("disk-a", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "disagree"}), "unconfirmed"), ("disk-b", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "agree"}), "none"))
+        box = recalling(estate, stored(*[case(n, estate.id_of(name), **changes) for n, (name, changes, _) in enumerate(cases, 1)]))
+        text = box.call("recall_open_questions", {})
+        found = json.loads(text)
+        self.assertEqual(found["cols"][-1], "why")
+        self.assertEqual({box.handles[values[0]].name: values[-1] for values in found["rows"]}, {name: why for name, _, why in cases})
+        for sentence in (*approvals.NOT_ASKED.values(), NO_MEASUREMENT, OBJECTION, SENTENCE):
+            self.assertNotIn(sentence, text, "the rows say why in a word and never say what to find")
+
+    def test_each_open_question_is_a_row_with_a_handle_and_five_typed_values(self):
         text = self.box.call("recall_open_questions", {})
-        self.assertEqual(json.loads(text), {"source": tb.OPEN_SOURCE, "total": 2, "cols": COLUMNS, "rows": [["r1", VM, 3, 10, 0.35, "none"], ["r2", VM, 2, 4, 0.6, "open"]]},
+        self.assertEqual(json.loads(text), {"source": tb.OPEN_SOURCE, "total": 2, "cols": COLUMNS, "rows": [["r1", VM, 3, 10, 0.35, "none", "unpriced"], ["r2", VM, 2, 4, 0.6, "open", "unpriced"]]},
                          "the type is the one of the live resource, and the least lately seen comes first")
         self.assertEqual(self.box.log[-1], {"name": "recall_open_questions", "arguments": {}, "ok": True, "chars": len(text)})
 
@@ -287,7 +301,7 @@ class TheAnswer(unittest.TestCase):
         gone = f"/subscriptions/{SUB}/resourceGroups/rg-gone/providers/Microsoft.Compute/virtualMachines/vm-gone"
         store = stored(case(1, gone, updated=stamp(NOW - dt.timedelta(days=20))), case(2, self.estate.id_of("vm-1"), updated=stamp(NOW - dt.timedelta(days=2))))
         found = ask(recalling(self.estate, store), "recall_open_questions")
-        self.assertEqual((found["total"], found["gone"], [values[1:] for values in found["rows"]]), (2, 1, [[VM, 3, 10, 0.35, "none"]]))
+        self.assertEqual((found["total"], found["gone"], [values[1:] for values in found["rows"]]), (2, 1, [[VM, 3, 10, 0.35, "none", "unpriced"]]))
         self.assertNotIn("unread", found)
 
     def test_a_read_that_fails_leaves_the_resources_unread_and_a_note_says_so(self):
