@@ -18,7 +18,7 @@
 # (The usage app, the other one published here, was removed on 2026-11-07.)
 #
 # The sources come in the secret volume (cases-source.zip) or, with the three PUBLISH_SOURCES_* variables and no such file, by fetch: the container downloads the archive of that commit from GitHub and stops before the
-# sign-in unless the digest of the app's files in it (source-digest.py --as-held) is the workflow's; the lock and the host file come in the volume (docs/proposals/07-private-by-default.md).
+# sign-in unless the digest of the app's files in it is the workflow's (docs/proposals/07-private-by-default.md).
 #
 # What it reads, all from the environment (none of it is a secret, except the ones that say so):
 #   PUBLISH_KIND            cases (the only app that is published here now)
@@ -53,7 +53,6 @@ tmp_root=${PUBLISH_TMP:-/tmp}
 federated_token=${AZURE_FEDERATED_TOKEN:-}
 unset AZURE_FEDERATED_TOKEN
 arm_token=""
-# The token of the run for GitHub (a private repository) is taken out of the environment too: it goes to curl on standard input only.
 github_token=${GITHUB_TOKEN:-}
 unset GITHUB_TOKEN
 
@@ -205,9 +204,10 @@ if ! work=$(mktemp -d "$tmp_root/publish-XXXXXX" 2> /dev/null); then
 fi
 export AZURE_CONFIG_DIR="$work/azure"
 
-# Nothing fetched is believed before its digest matches the workflow's; a failure stops the run before the sign-in (a try is 30 seconds: the sign-in's token lasts five minutes).
+# A failure stops the run before the sign-in, whose token lasts five minutes: a try is 30 seconds.
 fetch_sources() {
   local archive="$work/sources.zip" host url attempt status code got="" said=""
+  SECONDS=0
   for host in api codeload; do
     url="https://api.github.com/repos/$sources_repository/zipball/$sources_commit"
     [ "$host" = api ] || url="https://codeload.github.com/$sources_repository/zip/$sources_commit"
@@ -238,10 +238,12 @@ fetch_sources() {
     quote "$(cat "$work/curl.err" 2> /dev/null)" 2
     exit 3
   fi
-  say ok "the sources of commit ${sources_commit:0:12} are fetched from GitHub: $got"
+  say ok "the sources of commit ${sources_commit:0:12} are fetched from GitHub: $got, $(wc -c < "$archive" | tr -d ' ') bytes in $SECONDS s"
   if ! message=$(python3 -c '
 import os, sys, zipfile
 app, target, leave = "src/case-functions/", os.path.realpath(sys.argv[2]), "a path of the archive would leave the folder"
+if os.path.getsize(sys.argv[1]) > 64 << 20:
+    sys.exit("it is more than 64 MB")
 try:
     with zipfile.ZipFile(sys.argv[1]) as archive:
         members = archive.infolist()
@@ -259,8 +261,10 @@ try:
             relative = member.filename[len(prefix):]
             if relative != "function_app.py" and not relative.startswith("cases/"):
                 continue
-            if relative != "function_app.py" and not relative.endswith((".py", ".json")):
+            if relative != "function_app.py" and os.path.splitext(relative)[1] not in (".py", ".json"):
                 sys.exit("cases/ holds a file that the digest does not cover")
+            if member.file_size > 2 << 20:
+                sys.exit("an app file is more than 2 MB")
             path = os.path.realpath(os.path.join(target, relative))
             if "\\" in relative or not path.startswith(target + os.sep):
                 sys.exit(leave)
@@ -406,7 +410,7 @@ megabytes() {
   printf '%s.%s' "$(($1 / 1048576))" "$((($1 % 1048576) * 10 / 1048576))"
 }
 
-# The sources that came in the secret volume are unpacked (not those that were fetched), and the package is built from them by the script of the repository in the Operator's mode: one pip command and one layout for both apps
+# The sources that came in the secret volume are unpacked, and the package is built from them by the script of the repository in the Operator's mode: one pip command and one layout for both apps
 # (tools/build-function-app.sh). $1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here (cases). The built zip is $package_zip. A build is
 # tried twice, because the first minute of a group can be noisy and what it fetches comes from the network; a lock that does not match its hashes fails twice, and says so.
 build_package() {
