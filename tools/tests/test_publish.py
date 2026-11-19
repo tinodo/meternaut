@@ -881,13 +881,14 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources measured on 2026-11-19, after the words of phase 2 and the fixes of its review (the branch words3, with main at f84596a merged in): 319,220 bytes, the median of three runs of the real build
-    # script (the real strip and zip) on an LF copy (git archive with core.eol=lf and one time on every file; the three runs gave 319,202 to 319,241, a spread that comes from the times that the copy gives the files); the request
-    # sent is 349,545 bytes and 130,455 stay free, which is within about 450 bytes of the floor of 130,000 that the test after this one keeps. The same method gave 278,913 bytes on 2026-11-17, 255,610 bytes for the first measure of
+    # What the archive of the sources measured on 2026-11-19, after the four changes of that night were merged (the words of phase 2 with the test that every request can be decided, the rule that nobody is asked about an Azure
+    # Advisor recommendation that counts no saving, the memory of what a run looked at, and the fetch of the sources by commit in the container script): 320,300 bytes, from one run of the real build script (the real strip and zip)
+    # on an LF copy (git archive with core.eol=lf; a run varies by about 80 bytes with the times that the copy gives the files); the request sent is 356,728 bytes (that archive, the build script of 9,431 bytes and the container
+    # script of 27,003, which grew by 6,109 with the fetch) and 123,272 stay free, which is 3,272 above the floor of 120,000 that the test after this one keeps. The same method gave 278,913 bytes on 2026-11-17, 255,610 bytes for the first measure of
     # the sources with the comments and the text of the docstrings taken out (tools/strip-sources.py, docs/proposals/27-package-without-comments.md), and 388,401 the day before without that strip. The cap of the request is 480,000
     # bytes (tools/operator-run.py), and the largest request that is known to work is 466,104. The margin below is the room for the code of the next days: an archive that is not stripped (about 133,000 bytes more) is far above it,
     # and the floor of the test after it is what keeps the cap away: with the room that near to that floor, code that is added makes room first. Set the measure again, on purpose, when the margin is used up.
-    SOURCES_ARCHIVE_MEASURED = 319_220
+    SOURCES_ARCHIVE_MEASURED = 320_300
     SOURCES_ARCHIVE_MARGIN = 40_000
 
     def sources_archive(self, fresh=False):
@@ -949,10 +950,11 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left, or the comments are not taken out any more: look at which, "
                                                                                                     "and raise the ceiling on purpose, with the new measure, only for the first")
 
-    def test_the_archive_and_the_two_scripts_leave_at_least_130000_bytes_below_the_cap_of_the_request(self):
+    def test_the_archive_and_the_two_scripts_leave_at_least_120000_bytes_below_the_cap_of_the_request(self):
         sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 130_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 130,000 that stay free are the room for the code that the app grows by, which the stripped "
-                                                      "sources (tools/strip-sources.py) make (the floor was 150,000, then 135,000, and is 130,000 since the request grew to about 345,000 bytes: docs/proposals/27-package-without-comments.md): "
+        self.assertLessEqual(sent, 480_000 - 120_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 120,000 that stay free are the room for the code that the app grows by, which the stripped "
+                                                      "sources (tools/strip-sources.py) make (the floor was 150,000, then 135,000, then 130,000, and is 120,000 since the container script grew by 6,109 bytes with the fetch of the sources and the request grew "
+                                                      "to about 357,000 bytes: docs/proposals/27-package-without-comments.md). The floor belongs to the request way, and goes with it when the fetch is the way: "
                                                       "when this fails, no word is shortened to make room: look at what grew, at whether the strip still runs, and at what can leave the package, before the floor moves again")
 
     @staticmethod
