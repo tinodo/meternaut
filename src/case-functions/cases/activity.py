@@ -125,16 +125,16 @@ def stop_of(harness: object) -> str:
     return next((record.reason for record in getattr(harness, "records", []) if record.outcome in ("refused", "stopped")), "")
 
 
-def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str]]:
-    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, and the kinds that their tools touched. Nothing when the store
-    cannot be read: the seeds are then the dearest first, as they always were."""
+def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str]] | None:
+    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, and the kinds that their tools touched. None when the store
+    cannot be read: the seeds are then the dearest first, as they always were, and the run says so (cases/investigate.py)."""
     since = stamp(now - dt.timedelta(days=LOOKED_DAYS))
     try:
         found = [record for record in store.investigations_recent(KEPT_INVESTIGATIONS) if record.at >= since]  # type: ignore[attr-defined]
         return frozenset(word for record in found for word in record.profiled), frozenset(kind for record in found for kind, _ in record.kinds)
     except Exception as error:  # noqa: BLE001 (a store that cannot be read changes the order of the seeds and nothing else)
         LOG.warning("the earlier investigations could not be read (%s)", type(error).__name__)
-        return frozenset(), frozenset()
+        return None
 
 
 def coverage(toolbox: object) -> tuple[int, int, int]:

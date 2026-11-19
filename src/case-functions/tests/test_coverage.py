@@ -12,7 +12,7 @@ from unittest import mock
 import support  # noqa: F401  (puts the app on the path)
 import test_beats as tbeats
 import test_investigate as ti
-from test_toolbox import SUB, ask, toolbox
+from test_toolbox import SUB, ask, row, toolbox
 from test_toolbox_depth import profiled
 from test_toolbox_meters import WIDGET, widgets
 
@@ -56,6 +56,7 @@ class TheListingThatCodeMakesForASeed(unittest.TestCase):
 
     def test_a_tie_in_the_cost_goes_by_the_key_in_each_group(self):
         estate = widgets(4)
+        estate.rows.reverse()  # the rows come in the reverse order of their keys, so that the order of the listing cannot be the order in which they were read
         estate.cost_rows = [(SUB, 10.0, found["id"].lower(), "Example Service") for found in estate.rows]
         _, box = self.box(looked=(1, 3), estate=estate)
         self.assertEqual(named(box, self.listing(box, True)), ["w2", "w4", "w1", "w3"])
@@ -106,6 +107,14 @@ class WhatTheToolboxKeepsOfWhatItLookedAt(unittest.TestCase):
         _, box = self.opened()
         ask(box, "describe", handle="r2")
         self.assertEqual(box.looked_at(), frozenset())
+
+    def test_a_resource_that_another_tool_wrote_a_read_for_was_not_looked_at_either(self):
+        estate, box = self.opened()
+        estate.ages[estate.id_of("w1").lower()] = {"sd": {"createdAt": "2025-01-02T10:00:00Z", "createdByType": "User", "lastModifiedAt": "2025-02-01T00:00:00Z", "lastModifiedByType": "User"}}
+        ask(box, "changes", handles=["r1"])
+        ask(box, "neighbors", handles=["r1"])
+        self.assertEqual(box.log[-2]["read"], {"r1": "d"}, "the tool for the age of a resource says that it read something of it, as the tool for a picture does")
+        self.assertEqual(box.looked_at(), frozenset(), "and it is no picture")
 
     def test_a_picture_that_could_read_nothing_is_no_look_and_one_that_read_a_part_is(self):
         _, late = self.opened()
@@ -226,7 +235,7 @@ class WhatTheEarlierRunsLookedAt(unittest.TestCase):
             def investigations_recent(self, limit=KEPT_INVESTIGATIONS):
                 raise StoreError("the table service is down")
 
-        self.assertEqual(activity.earlier(Down(), self.NOW), (frozenset(), frozenset()))
+        self.assertIsNone(activity.earlier(Down(), self.NOW), "None says that the memory could not be read: an empty memory is another thing")
         self.assertEqual(activity.earlier(MemoryStore(), self.NOW), (frozenset(), frozenset()))
 
     def test_the_store_keeps_the_runs_of_the_window_at_the_default_pace_of_the_timer_and_the_window_is_the_one_of_the_proposal(self):
@@ -391,14 +400,24 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         self.assertEqual(self.seeded(second, box)[0], ["w6", "w7", "w8", "w9", "w10"])
         self.assertEqual([n for n in h.notes if n.startswith("This run")], ["This run looked at 5 resources, all of them for the first time in 21 days."])
 
-    def test_a_store_that_cannot_be_read_gives_the_order_that_it_always_was(self):
+    def test_a_store_that_cannot_be_read_gives_the_order_that_it_always_was_and_the_run_says_so_and_claims_nothing_of_what_is_new(self):
         class Down(MemoryStore):
             def investigations_recent(self, limit=KEPT_INVESTIGATIONS):
                 raise StoreError("the table service is down")
 
         h, _, box = self.go(1, store=Down(clock=self.clock))
         self.assertEqual(self.seeded(h, box)[0], ["w1", "w2", "w3", "w4", "w5"])
-        self.assertTrue(h.of("investigation.finished")[0]["ok"])
+        (finished,) = h.of("investigation.finished")
+        self.assertTrue(finished["ok"])
+        self.assertIn("The earlier investigations could not be read, so this run took the dearest resources first.", h.notes)
+        self.assertIn("The earlier investigations could not be read, so this run took the dearest resources first.", [e.get("note") for e in h.of("run.note")], "the History has it too")
+        self.assertEqual([n for n in h.notes if n.startswith("This run looked at")], [], "no claim of what is new against a memory that was not read")
+        self.assertEqual({key: finished.get(key) for key in ("profiled", "firstTime", "inWindow")}, {"profiled": 5, "firstTime": None, "inWindow": None}, "what the run looked at is a fact, what is new is not")
+
+    def test_a_memory_that_was_read_and_is_empty_says_nothing_of_a_failure(self):
+        h, _, _ = self.go(1)
+        self.assertFalse([n for n in h.notes if "could not be read" in n])
+        self.assertEqual(h.of("investigation.finished")[0].get("firstTime"), 5)
 
     def test_an_older_record_without_the_field_changes_nothing(self):
         self.store.investigation_put(InvestigationRecord.from_json(json.dumps({"run_id": "old", "at": stamp(self.clock() - dt.timedelta(days=2)), "end": "answered", "known": 3})))
@@ -428,6 +447,32 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         quiet.go()
         self.assertEqual([n for n in quiet.notes if n.startswith("This run")], ["This run looked at no resources. In 21 days Meternaut has looked at 2 resources."])
         self.assertEqual({key: quiet.of("investigation.finished")[0].get(key) for key in ("profiled", "firstTime", "inWindow")}, {"profiled": 0, "firstTime": 0, "inWindow": 2})
+
+
+class WhatALaterBeatOfTheSameRunSeeds(unittest.TestCase):
+    """The seeds of a beat start from what neither the earlier runs nor this run looked at (the term of the run in the order of the listing is intended): a resource whose picture the Investigator of
+    the first beat asked for is not seeded again by a later beat, also in a first run with an empty memory. The first beat of such a run is in the order that it always was."""
+
+    VAULT = "fabrikam.store/vaults"
+
+    def test_a_second_beat_does_not_seed_what_the_first_beat_profiled_and_the_first_beat_of_a_first_run_is_in_the_old_order(self):
+        estate = profiled(6)
+        estate.rows += [row(self.VAULT, f"v{n}") for n in range(1, 7)]
+        estate.cost_rows += [(SUB, 50.0 - n, estate.id_of(f"v{n}").lower(), "Example Service") for n in range(1, 7)]
+        estate.definitions[self.VAULT] = estate.definitions[WIDGET]
+        box = toolbox(estate)
+        listing = ("list_resources", {"type": self.VAULT, "order_by": "cost", "limit": 12, "offset": None})
+        pictured = ("profile", {"handles": ["r6"], "days": None, "grain": None})  # the seed of the first beat showed r1 to r5, so the vaults that it lists are r6 to r11, the dearest first
+        h = ti.Harness(tbeats.BeatFoundry([tbeats.script(calls=(listing, pictured)), tbeats.script()]), box,
+                       ti.make_settings(investigate_beats=3, investigate_max_seconds=1080, investigate_beat_calls=8, investigate_beat_seconds=100), with_store=True)
+        h.contexts = {SUB: Context(locks=[], recent=set(), managed_groups=set(), costs={line[2]: line[1] for line in estate.cost_rows}, currency="USD")}
+        h.go()
+        first, second = [json.loads(run["input"]) for run in h.foundry.investigator_runs()]
+        names = lambda body: [box.handles[p["handle"]].name for answer in body["pictures"] for p in answer["profiles"]]  # noqa: E731
+        self.assertEqual((first["beat"]["focus"], second["beat"]["focus"]), ([WIDGET], [self.VAULT]))
+        self.assertEqual(names(first), ["w1", "w2", "w3", "w4", "w5"], "the first beat of a first run: the dearest five")
+        self.assertIn(digest(estate.id_of("v1")), box.looked_at(), "the Investigator of the first beat read the picture of the dearest vault")
+        self.assertEqual(names(second), ["v2", "v3", "v4", "v5", "v6"], "and the second beat leaves it for the last")
 
 
 class TheLastBeatOfARunNamesTheKindsThatNoRunTouched(unittest.TestCase):
