@@ -566,7 +566,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
         text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
         text += " Meternaut did not check whether the resources can be switched to the alternatives, or whether those have what the resources need." if (_whole(found.get("switched")) or 0) > 0 else ""
     else:
-        text = paid + " That comes from your bill." + ("" if _firm(found) or uneven else " Its cost has changed over the days that the figure counts, so the figure is less certain.")
+        text = paid + " That comes from your bill." + ("" if _firm(found) or uneven else f" The cost of {who} has changed over the days that the figure counts, so the figure is less certain.")
     if high > low:
         text += f" The saving could be anywhere from {money(low)} to {money(high)} a month, and Meternaut counts the low end."
     if uneven:
@@ -609,10 +609,10 @@ def ends(facts: object) -> tuple[str, str]:
     return (_read(found.get("now")), _read(found.get("to"))) if isinstance(found, Mapping) and found.get("form") == "alternative" else ("", "")
 
 
-def several(facts: object) -> bool:
-    """Whether the figure of a switch rests on more than one price (its form is a mix), so that no one name is its target."""
+def one_price(facts: object) -> bool:
+    """Whether the figure of a switch that a case keeps is one alternative (named or not), and not a mix of rules: only then is it a switch to one other price."""
     found = _change(facts).get("price")
-    return isinstance(found, Mapping) and found.get("form") == "mixed"
+    return isinstance(found, Mapping) and found.get("form") == "alternative"
 
 
 def point(facts: object, cost: float | None = None) -> float | None:

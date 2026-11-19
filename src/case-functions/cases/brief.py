@@ -190,7 +190,7 @@ DETECTOR_STATE = {
     "orphan-public-ip": ("State", "Not assigned to anything", "which is not assigned to anything"),
     "load-balancer-without-backends": ("Backends", "None in any pool", "which has nothing behind it to send traffic to"),
     "empty-app-service-plan": ("Apps", "None run on this plan", "which has no app running on it"),
-    "stopped-vm": ("State", "Stopped", "which is stopped, but Azure still bills for it"),  # a stopped machine that is not deallocated is billed: Learn, States and billing status of Azure virtual machines
+    "stopped-vm": ("State", "Stopped", "which is stopped but still billed"),  # a stopped machine that is not deallocated is billed: Learn, States and billing status of Azure virtual machines
     "orphan-private-endpoint": ("Connection", "No approved connection", "which has no approved connection"),
 }
 BASIS_WORDS = {"no-usage": "No recorded usage", "low-usage": "Little recorded usage", "oversized": "Larger than its use needs", "duplicate": "Duplicated",
@@ -222,8 +222,7 @@ ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the pla
 ASKED = "You are asked whether it is worth {what}."
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
-OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
-OTHER_PRICES = " to other prices of the same service"  # and when its figure rests on more than one price
+OTHER_PRICE = " to another price of the same service"  # what a switch is to, when its figure is one alternative and the digest holds no name for the target (one made before the names)
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
@@ -985,7 +984,7 @@ def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str
         return ASKED.format(what="acting on this recommendation of Azure Advisor")
     if still_used(case):
         return f"You are asked to find out whether {thing} is still used."
-    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICES if case is not None and pricing.several(case.facts) else OTHER_PRICE))
+    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE if case is not None and pricing.one_price(case.facts) else ""))
     found = DETECTOR_STATE.get(case.detector) if case is not None and together is None else None
     return ASKED.format(what=f"{what}, {found[2]}" if found else what)
 

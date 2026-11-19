@@ -75,7 +75,8 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         case, plan = _firewall()
         self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment.")
         self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
-        self.assertEqual(brief_of(with_words(case, form="mixed"), plan).asked, "You are asked whether it is worth switching the firewall to other prices of the same service.", "when the figure rests on several prices")
+        for mixed in (dict(form="mixed"), dict(form="mixed", switched=1)):  # a mix of rules, or one price beside an assumed share of the AI: no one price is the target, and no price is counted
+            self.assertEqual(brief_of(with_words(case, **mixed), plan).asked, "You are asked whether it is worth switching the firewall.", mixed)
         for action, said in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
             with self.subTest(action=action):
                 self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether it is worth {said}.")
@@ -152,7 +153,7 @@ class TheFindingOfACheckOfMeternaut(unittest.TestCase):
              ("orphan-public-ip", "microsoft.network/publicipaddresses", "public IP address", "which is not assigned to anything"),
              ("load-balancer-without-backends", "microsoft.network/loadbalancers", "load balancer", "which has nothing behind it to send traffic to"),
              ("empty-app-service-plan", "microsoft.web/serverfarms", "App Service plan", "which has no app running on it"),
-             ("stopped-vm", "microsoft.compute/virtualmachines", "virtual machine", "which is stopped, but Azure still bills for it"),
+             ("stopped-vm", "microsoft.compute/virtualmachines", "virtual machine", "which is stopped but still billed"),
              ("orphan-private-endpoint", "microsoft.network/privateendpoints", "private endpoint", "which has no approved connection"))
 
     @staticmethod
