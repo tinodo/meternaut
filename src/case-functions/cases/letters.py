@@ -251,8 +251,16 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
+COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
+
+
+def _read(value: str) -> str:
+    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
+    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+
+
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    return tuple((_data(f.label, 60), _data(f.value.partition(", with a value")[0], 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))  # a letter has no room for on how many days there was a value
+    return tuple((_data(f.label, 60), _data(_read(f.value), 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -317,7 +325,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         if line:
             doc.paragraph(_data(line, 240))
     if brief.by_code:
-        doc.paragraph("Meternaut did not check this estimate.")  # Azure Advisor's own recommendation: the page and the card say the whole of it (confidence.because), a letter has room for the one thing that was not done
+        doc.paragraph("Meternaut did not check Advisor's estimate.")  # Azure Advisor's own recommendation: the page and the card say the whole of it (confidence.because), a letter has room for the one thing that was not done
     if about_group:
         doc.facts(*_fact_rows(brief)[:1])  # why it is a lead: the first fact that says so
         if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out
