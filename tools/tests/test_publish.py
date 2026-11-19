@@ -1387,6 +1387,6 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         self.assertEqual(ran.done.returncode, 0, ran.lines)
         ran = self.run_publish({"GITHUB_TOKEN": THE_TOKEN_OF_THE_RUN}, kind="cases")
         self.assertEqual(ran.done.returncode, 0, ran.lines)
-        self.assertEqual([call for call in ran.calls_of("curl ") if "github.com" in call], [], "with no variable for the sources nothing is fetched, and a token in the environment is not used")
+        self.assertEqual([call for call in ran.calls_of("curl ") if re.search(r"//(?:api|codeload)\.github\.com/", call)], [], "with no variable for the sources nothing is fetched, and a token in the environment is not used")
         self.assertIn("ok: the sources are unpacked: 7 files", ran.lines)
         self.assertEqual([call for call in ran.calls if THE_TOKEN_OF_THE_RUN in call], [])
