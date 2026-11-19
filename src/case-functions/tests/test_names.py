@@ -191,8 +191,8 @@ def _page_html(case, plan) -> str:
 
 
 class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
-    BASIS = ("Over the last 7 days this resource paid about $864 a month for Standard Deployment. At list prices, Basic Deployment costs about $252 a month for the same use, "
-             "so a switch would save about $612 a month. Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
+    BASIS = ("Over the last 7 days this resource paid about $864 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $252 a month for the same use, "
+             "so it would save about $612 a month. Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
 
     def test_the_three_say_the_same_basis_in_plain_words(self):
         case, plan = _firewall()

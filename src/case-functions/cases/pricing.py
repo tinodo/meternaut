@@ -101,6 +101,7 @@ class Row(NamedTuple):
     uneven: int
     steady: float | None
     alts: tuple = ()  # for a switch, what the Skeptic is shown of the alternative: the meter, the words of the price, its list price, the rate that the bill pays against list and the shares that remain
+    after: float | None = None  # for a switch, what the same use costs a month on the alternative at the rate of `low`: the lowest rate of each meter times the larger share that remains
 
     @property
     def level(self) -> str:
@@ -115,7 +116,7 @@ class Row(NamedTuple):
         if self.away is not None and self.form == "assumed":
             out["away"] = list(self.away)
         for key, value in (("sinceUsd", self.since), ("steadyUsd", self.steady), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None),
-                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("advisorUsd", advisor)):
+                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("afterUsd", self.after), ("advisorUsd", advisor)):
             if value is not None:
                 out[key] = value
         return out
@@ -366,7 +367,8 @@ def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: t
     away = (round(1 - max(part.most for part in parts), 4), round(1 - min(part.least for part in parts), 4)) if alike else None
     return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, said, away,
                failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
-               sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts))
+               sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts),
+               round(math.fsum(part.low * part.most for part in parts), 2) if alike and form == "alternative" else None)
 
 
 def _held(toolbox: object, name: str) -> Mapping:
@@ -459,6 +461,8 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
         total["sinceUsd"] = round(math.fsum(price.get("sinceUsd", price["weekUsd"]) for price in prices), 2)
     if rated and any("steadyUsd" in price for price in prices):
         total["steadyUsd"] = round(math.fsum(price.get("steadyUsd", min(price["weekUsd"], price.get("sinceUsd", price["weekUsd"]))) for price in prices), 2)
+    if alike and all("afterUsd" in price for price in prices):  # a digest made before it has none, and a sum with one of those has none either
+        total["afterUsd"] = round(math.fsum(price["afterUsd"] for price in prices), 2)
     lives, uneven = [price["life"] for price in prices if "life" in price], sum(price.get("uneven") or 0 for price in prices)
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
              **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
@@ -513,12 +517,6 @@ def _read(value: object) -> str:
     return value if isinstance(value, str) and len(value) <= 40 and PLAIN.fullmatch(value) else ""
 
 
-def _shown(value: float) -> float:
-    """A figure as `money` shows it, so that a sentence that subtracts two of them adds up on the page."""
-    amount = round(value, 2)
-    return float(math.floor(amount + 0.5)) if amount >= 100 else amount
-
-
 def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> str:
     """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what a form that is not the bill alone assumes and whose assumption it is
     (the AI's, which Meternaut did not check), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
@@ -544,14 +542,15 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
         said = f"{pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent" if pair else "a share"
         text = paid + f" The AI assumes that {said} of that would go away. That is the AI's own assumption, and Meternaut did not check it."
     elif form == "alternative":
-        gap, kept, pct = f"{money(max(0.0, _shown(base) - _shown(low)))} a month for the same use", f"save about {money(low)} a month", round(ratio * 100) if ratio is not None and ratio > 0 else 0
-        goal = to or "another price of the same service"
-        if pct and abs(ratio - 1) < 0.005:
-            text = paid + f" At list prices, {goal} costs about {gap}, so a switch would {kept}."
-        else:
-            text = paid + f" A switch to {goal} would cost about {gap}, so it would {kept}. " + (
-                f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
-                if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays.")
+        after, goal = _number(found.get("afterUsd")), to or "another price of the same service"
+        pct = round(ratio * 100) if ratio is not None and 0 < ratio < 1e9 else 0
+        listed = bool(pct) and abs(ratio - 1) < 0.005
+        # What remains is said only when it adds up: a credit on the resource, or resources whose rates differ, make the saving something other than what is paid less what remains.
+        cost = f"would cost about {money(after)} a month for the same use, so it " if after is not None and 0 <= after and abs(base - after - low) < 0.02 else ""
+        text = paid + f" {'At list prices, a' if listed else 'A'} switch to {goal} {cost}would save about {money(low)} a month."
+        if not listed:
+            text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
+                           if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays.")
         text += " Meternaut did not check whether " + ("this resource can be switched to it, or whether it has what this resource needs." if many == 1
                                                       else "these resources can be switched to it, or whether it has what they need.")
     elif form == "mixed":

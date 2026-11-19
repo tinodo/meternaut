@@ -854,7 +854,7 @@ class TheAlternative(unittest.TestCase):
     def test_the_digest_holds_numbers_and_closed_words_only_and_the_figure_is_a_scenario_that_counts_its_low_end(self):
         facts = self.facts()
         self.assertEqual(facts[pricing.KEY]["price"], {"lowUsd": 22.5, "highUsd": 30.0, "billUsd": 60.0, "weekUsd": 60.0, "sinceUsd": 60.0, "lines": 1, "resources": 1, "form": "alternative",
-                                                      "offer": "p1", "list": 0.0625, "ratio": 0.8, "to": "Small", "now": "Fixed Hours"})
+                                                      "offer": "p1", "list": 0.0625, "ratio": 0.8, "to": "Small", "now": "Fixed Hours", "afterUsd": 37.5})
         found = pricing.saved(facts)
         self.assertEqual((found.low, found.high, found.level), (22.5, 30.0, pricing.SCENARIO))
         self.assertEqual(pricing.point(facts), 22.5)
@@ -862,7 +862,7 @@ class TheAlternative(unittest.TestCase):
 
     def test_the_basis_of_a_switch_says_what_the_bill_pays_now_what_the_alternative_would_cost_for_the_same_use_and_that_nobody_checked_that_it_fits(self):
         self.assertEqual(pricing.saved(self.facts(retail=0.1)).basis,
-                         "Over the last 7 days this resource paid about $60.00 a month for Fixed Hours. At list prices, Small costs about $37.50 a month for the same use, so a switch would save about $22.50 a month. "
+                         "Over the last 7 days this resource paid about $60.00 a month for Fixed Hours. At list prices, a switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. "
                          "Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.", "the bill pays list prices: one figure")
         self.assertEqual(pricing.saved(self.facts()).basis,
                          "Over the last 7 days this resource paid about $60.00 a month for Fixed Hours. A switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. "
@@ -877,14 +877,18 @@ class TheAlternative(unittest.TestCase):
                          "Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs. "
                          "The saving could be anywhere from $22.50 to $30.00 a month, and Meternaut counts the low end.", "a digest that holds no ratio says no one share")
 
-    def test_a_digest_made_before_the_names_says_another_price_of_the_same_service_and_never_invents_a_name(self):
+    def test_a_digest_made_before_the_names_says_another_price_of_the_same_service_and_never_invents_a_name_or_a_cost(self):
         good = self.facts(retail=0.1)[pricing.KEY]
-        old = {**good, "price": {key: value for key, value in good["price"].items() if key not in ("to", "now")}}
+        old = {**good, "price": {key: value for key, value in good["price"].items() if key not in ("to", "now", "afterUsd")}}
         self.assertEqual(pricing.saved({pricing.KEY: old}).basis,
-                         "Over the last 7 days this resource paid about $60.00 a month for what would be switched. At list prices, another price of the same service costs about $37.50 a month for the same use, "
-                         "so a switch would save about $22.50 a month. Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
+                         "Over the last 7 days this resource paid about $60.00 a month for what would be switched. At list prices, a switch to another price of the same service would save about $22.50 a month. "
+                         "Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
         self.assertEqual(pricing.ends({pricing.KEY: old}), ("", ""))
         self.assertEqual(pricing.ends(self.facts(retail=0.1)), ("Fixed Hours", "Small"))
+        for bad in (-1.0, float("nan"), float("inf"), "37.5", None, True):
+            with self.subTest(after=bad):
+                said = {**good, "price": {**good["price"], "afterUsd": bad}}
+                self.assertNotIn("would cost", pricing.saved({pricing.KEY: said}).basis, "what is not a cost is not said")
         for hostile in ("<b>x</b>", "x" * 41, "Basic\nTier", "Basic-Tier", 5, None, ["Small"]):
             with self.subTest(hostile=hostile):
                 said = {**good, "price": {**good["price"], "to": hostile, "now": hostile}}
@@ -951,6 +955,41 @@ class TheAlternative(unittest.TestCase):
                          "Meternaut prices Small both at list prices and at the same share of the list prices that your bill pays. "
                          "Meternaut did not check whether these resources can be switched to it, or whether it has what they need. "
                          "The saving could be anywhere from $75.24 to $93.87 a month, and Meternaut counts the low end.")
+
+    def test_what_a_switch_would_cost_is_said_only_when_it_adds_up_so_a_credit_on_the_resource_says_the_saving_alone_and_a_resource_without_one_says_both(self):
+        plain = billed_units(usd=60.0, quantity=600.0, words=COMPUTE)
+        credit = Meter("r1", None, (*COMPUTE[:2], "Credit", *COMPUTE[3:]), 1.0, -45.0, {START + dt.timedelta(days=n): -1.5 for n in range(30)}, None, START, 30)
+        for meters, saved, middle in (({"m1": plain}, 22.5, "would cost about $37.50 a month for the same use, so it would save about $22.50 a month."),
+                                      ({"m1": plain, "m9": credit}, 15.0, "would save about $15.00 a month.")):
+            with self.subTest(saved=saved):  # the credit of 45 leaves 15 of the 60 to save, whatever the list price gives
+                change = pricing.parse(switch())
+                found = pricing.price(change, ("r1",), self.box(retail=0.1, meters=meters), {"r1": 60.0}, None, lambda text: text)
+                facts = {pricing.KEY: pricing.digest(change, found, "r1")}
+                self.assertEqual((facts[pricing.KEY]["price"]["lowUsd"], facts[pricing.KEY]["price"]["afterUsd"]), (saved, 37.5), "600 hours at 0.0625 are 37.50, with or without the credit")
+                self.assertEqual(pricing.saved(facts).basis, "Over the last 7 days this resource paid about $60.00 a month for Fixed Hours. At list prices, a switch to Small " + middle +
+                                 " Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
+
+    def test_resources_with_opposite_trends_say_the_saving_alone_because_each_has_its_own_lowest_rate_and_what_is_paid_less_what_remains_is_not_the_saving(self):
+        up, down = shaped("r1", [float(n) for n in range(1, 21)]), shaped("r2", [float(n) for n in range(20, 0, -1)])
+        prices = {"p1": Listed("Example Compute", "Basic Tier", "Small", "Light Hours", "1 Hour", 0.175, "swedencentral", 1)}
+        box = shown(meters={"m1": up, "m2": down}, prices=prices, retail={"m1": 0.4375, "m2": 0.4375}, offers={"m1": {"p1"}, "m2": {"p1"}})
+        change = pricing.parse(block("switch", self.switched(1), self.switched(2)))
+        found = pricing.price(change, ("r1", "r2"), box, {"r1": 210.0, "r2": 210.0}, None, lambda text: text)
+        # 17 and 4 a day over the last 7 days, 10.50 a day since they began: the first is at its lowest since it began (315 a month), the second over the last 7 days (120 a month). 60 per cent of each is saved.
+        self.assertEqual([(found.rows[handle].low, found.rows[handle].after) for handle in ("r1", "r2")], [(189.0, 126.0), (72.0, 48.0)])
+        joined = pricing.combine([pricing.digest(change, found, handle) for handle in ("r1", "r2")], 2)
+        self.assertEqual((joined["price"]["weekUsd"], joined["price"]["sinceUsd"], joined["price"]["lowUsd"], joined["price"]["afterUsd"]), (630.0, 630.0, 261.0, 174.0))
+        self.assertEqual(pricing.saved({pricing.KEY: joined}).basis,
+                         "Over the last 7 days these 2 resources paid about $630 a month for Fixed Hours. At list prices, a switch to Light Hours would save about $261 a month. "
+                         "Meternaut did not check whether these resources can be switched to it, or whether it has what they need. The saving could be anywhere from $261 to $495 a month, and Meternaut counts the low end.")
+
+    def test_what_remains_is_carried_into_the_group_only_when_every_resource_has_it_and_a_digest_made_before_it_says_the_saving_alone(self):
+        found, joined = self.together([self.switched(n) for n in (1, 2)], (60.0, 60.0))
+        digests = [pricing.digest(pricing.parse(block("switch", self.switched(n))), found, f"r{n}") for n in (1, 2)]
+        self.assertEqual((joined["afterUsd"], [item["price"]["afterUsd"] for item in digests]), (75.0, [37.5, 37.5]))
+        old = {**digests[1], "price": {key: value for key, value in digests[1]["price"].items() if key != "afterUsd"}}
+        self.assertNotIn("afterUsd", pricing.combine([digests[0], old], 2)["price"])
+        self.assertNotIn("would cost", pricing.saved({pricing.KEY: pricing.combine([digests[0], old], 2)}).basis)
 
     def test_the_sentence_that_the_alternative_has_not_been_checked_for_features_is_on_the_basis_of_every_figure_that_rests_on_one_whatever_the_form_of_the_group(self):
         def assumed(number, low):
