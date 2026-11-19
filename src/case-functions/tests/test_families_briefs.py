@@ -223,7 +223,10 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertIn(brief.plain(b.change, 200), letter.text)
                 self.assertIn("It runs with your own permissions.", letter.text)
                 self.assertNotIn("sign in", letter.text.lower())
-                self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 160), letter.text)
+                if REVERSIBLE[name]:
+                    self.assertIn(brief.plain(b.undo.how, 160), letter.text)
+                else:
+                    self.assertNotIn("Undo:", letter.text, "the chips say it once, and a letter does not say it twice")
                 self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
                 self.assertIn("What could go wrong: ", letter.text)
                 self.assertIn(brief.plain(b.risk.text, 200), letter.text)
