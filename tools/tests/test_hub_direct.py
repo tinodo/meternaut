@@ -91,7 +91,7 @@ class TheShapeOfTheHub(unittest.TestCase):
     def test_a_value_that_a_dispatch_input_of_the_type_choice_takes_is_held_by_github_so_no_step_checks_it_again(self):
         self.assertNotIn("Refuse a value that the Hub does not know", HUB)
         dispatch = section(section(HUB, "on", 0), "workflow_dispatch", 2)
-        for name in ("action", "evals_command", "evals_judge", "redteam_mode"):
+        for name in ("action", "evals_command", "evals_judge", "redteam_mode", "sources"):
             body = section(section(dispatch, "inputs", 4), name, 6)
             self.assertRegex(body, r"(?m)^        type: choice$", name)
             self.assertTrue(re.findall(r"(?m)^          - \S+$", body), f"{name} has options, and GitHub holds a run that is started by hand to them")
