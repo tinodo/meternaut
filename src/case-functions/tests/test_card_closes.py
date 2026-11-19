@@ -11,6 +11,7 @@ from unittest import mock
 
 import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
+from cases import brief as brief_mod
 from cases import cardcheck, cards, loop, mail, offers, teamsqueue
 from cases.approvals import ApprovalSettings, Approvals
 from cases.brief import LOOK_IN_AZURE
@@ -19,8 +20,8 @@ from test_cards import actions_of, brief_of, by_id, ctx_for, make_advice_plan, m
 
 MESSAGE, CONVERSATION = "1731331200000", "19:abc-def@unq.gbl.spaces"
 GOOD = {"v": 1, "request": cs.PLAN_ID, "to": "maya@example.com", "message": MESSAGE, "conversation": CONVERSATION}
-CLOSED_LINE = "Declined by Anna. It was decided on 5 November. Nothing more is asked of you."
-MADE_LINE = "Approved by Anna, and made with their own Azure rights. It was decided on 5 November. Nothing more is asked of you."
+CLOSED_LINE = "Declined by Anna. It was decided on 5 November, 10:30 UTC. Nothing more is asked of you."
+MADE_LINE = "Approved by Anna, and made with their own Azure rights. It was decided on 5 November, 10:30 UTC. Nothing more is asked of you."
 
 
 def written(**changes) -> str:
@@ -92,6 +93,21 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         self.assertIn("Anna said this is worth acting on.", self.closing(make_advice_plan(state="consumed"), case=make_case(status="acknowledged"), decisions=[self.APPROVED])["closed"]["text"])
         not_mine = dataclasses.replace(self.ANNA, decision="not_mine")
         self.assertIn("Anna said that this is not theirs.", self.closing(make_plan(state="withdrawn"), decisions=[not_mine])["closed"]["text"])
+
+    def test_the_day_is_the_day_of_the_answer_and_not_the_day_that_the_change_ended(self):
+        approved = dataclasses.replace(self.APPROVED, at="2026-11-02T09:00:00Z")
+        made = dataclasses.replace(self.MADE, finished_at="2026-11-05T10:31:00Z")  # the extra check was completed three days after the answer
+
+        def said() -> str:
+            return self.closing(make_plan(state="consumed"), action=made, decisions=[approved])["closed"]["text"]
+
+        self.assertEqual(said(), "Approved by Anna, and made with their own Azure rights. It was decided on 2 November, 09:00 UTC. Nothing more is asked of you.")
+        with mock.patch.object(brief_mod, "_decided", lambda outcome, decisions: dataclasses.replace(outcome, decided=outcome.at)):  # the time that the change ended, which is what it said before
+            self.assertIn("It was decided on 5 November, 10:31 UTC.", said())
+
+    def test_an_answer_at_23_40_utc_says_that_time_and_that_it_is_utc(self):
+        late = dataclasses.replace(self.ANNA, at="2026-11-04T23:40:00Z")
+        self.assertEqual(self.closing(make_plan(state="declined"), decisions=[late])["closed"]["text"], "Declined by Anna. It was decided on 4 November, 23:40 UTC. Nothing more is asked of you.")
 
     def test_a_request_that_meternaut_took_back_says_so_on_its_closing_card(self):
         said = self.closing(make_plan(state="expired", preconditions={"takenBack": "group"}))["closed"]["text"]
@@ -322,7 +338,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
 
     def test_a_change_that_is_made_is_closed_as_approved_and_done(self):
         self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
-        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. It was decided on 5 November. Nothing more is asked of you."])
+        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. It was decided on 5 November, 10:30 UTC. Nothing more is asked of you."])
 
     def test_the_card_stays_while_the_change_waits_for_the_extra_check_and_closes_with_what_came_of_the_wait(self):
         waiting = self.move("approved", "queued", step_up=True, result="The change waits until the approver has completed the check.")
@@ -337,7 +353,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
                 self.move("consumed", state)
                 self.assertEqual(self.closing(), [])
         self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
-        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. It was decided on 5 November. Nothing more is asked of you."])
+        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. It was decided on 5 November, 10:30 UTC. Nothing more is asked of you."])
 
     def test_a_request_that_a_check_opened_again_has_not_lost_its_card(self):
         waiting = self.move("approved", "queued", step_up=True)

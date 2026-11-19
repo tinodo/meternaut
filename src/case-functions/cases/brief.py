@@ -14,7 +14,7 @@ import datetime as dt
 import math
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from . import costs as cost_words
@@ -226,6 +226,7 @@ ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the pla
 # by the chip and by ADVICE_CHANGE and ADVICE_WHO, which every channel shows.
 ASKED = "You are asked whether it is worth {what}."
 ASKED_CHANGE = "You are asked whether to approve this change."  # what a person who may approve a change that Meternaut would make is asked: the page, the card and the letter say it as it is
+ASKED_CONFIRM = "You are asked whether to confirm this change; a second person has to approve it."  # what the first of two people is asked: that person can only confirm
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when its figure is one alternative and the digest holds no name for the target (one made before the names)
@@ -317,7 +318,8 @@ class Where:
 
 @dataclass(frozen=True)
 class Outcome:
-    """What became of a request that is no longer open, in plain lines without a time; `at` is the time of the answer (or of the expiry)."""
+    """What became of a request that is no longer open, in plain lines without a time; `at` is the time of the answer (or of the expiry), or when a change was made the time that it ended, and `decided` is
+    the time of the person's own answer, which a change that waited for an extra check ends days after."""
 
     state: str  # expired, declined, withdrawn, answered, approved, running, done, unchanged (approved, and nothing had to be changed), verified, failed or empty while the request is open
     title: str
@@ -325,6 +327,7 @@ class Outcome:
     result: str  # one short phrase for a list
     by: str
     at: str
+    decided: str = ""
 
 
 @dataclass(frozen=True)
@@ -1916,6 +1919,12 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
     return Outcome("failed", "Not made", (detail, LOOK_IN_AZURE), "Not made", who, action.finished_at or at)
 
 
+def _decided(outcome: Outcome, decisions: Sequence[DecisionRecord]) -> Outcome:
+    """The time of the person's own answer (not the time that a change ended: one that waited for an extra check ends days after it)."""
+    found = _decisive(decisions, {"declined": "decline", "withdrawn": "not_mine"}.get(outcome.state, "approve"))
+    return replace(outcome, decided=found.at) if found else outcome
+
+
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
 
 def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: ActionRecord | None = None, decisions: Sequence[DecisionRecord] = (), *, now: dt.datetime,
@@ -1962,7 +1971,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
         age_days=age,
-        models=models_of(case), outcome=_outcome(plan, state, action, decisions, case, saving.basis), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
+        models=models_of(case), outcome=_decided(_outcome(plan, state, action, decisions, case, saving.basis), decisions), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         options=advisor_options(case) if kind == "advice" else (), group=together, how=how_of(case),
@@ -1972,7 +1981,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
-        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else ASKED_CHANGE if kind == "change" and state == "open" else "")
+        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else (ASKED_CONFIRM if second is not None and second.stage in ("first", "stale") else ASKED_CHANGE) if kind == "change" and state == "open" else "")
 
 
 def order_key(brief: Brief) -> tuple:
