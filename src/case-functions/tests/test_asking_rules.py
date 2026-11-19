@@ -7,7 +7,7 @@ import unittest
 from dataclasses import replace
 
 import support  # noqa: F401  (it puts the app on the path)
-from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, loop_for, meter_line, metrics, priced, resource, verdicts
+from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, meter_line, metrics, priced, resource, verdicts
 from test_pricing import COMPUTE, LISTED, billed_units, block, effect
 
 from cases import learning
