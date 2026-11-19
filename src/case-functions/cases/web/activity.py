@@ -185,7 +185,7 @@ def activity_page(ctx: Ctx) -> Response:
     if newer:
         parts.append(notice("warning", "The newest investigation was not recorded", fmt("It began {when}. What follows is from the latest one that is recorded.", when=ctx.when(newer[0].started_at))))
     if not runs_ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now, so a run with no record is not listed. Nothing has changed."))
+        parts.append(notice("error", "The runs cannot be read", "Meternaut cannot read the runs now, so a run with no record is not listed. Nothing has changed."))
     if latest is not None:
         if latest.end in ("failed", "refused") and latest.note:
             parts.append(notice("warning", "It did not finish", _text(latest.note, 200)))

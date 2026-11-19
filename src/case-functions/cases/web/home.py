@@ -407,7 +407,7 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
     have = {p.plan_id for p in decided}
     mine = [*decided, *[p for p in closed if p.plan_id not in have and answerable(ctx, p)][:DECIDED_SHOWN]]
     if not ok or not closed_ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
-        return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
+        return join([heading, notice("error", "The decisions cannot be read", "Meternaut cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
     for plan in mine:
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]).outcome
@@ -443,7 +443,7 @@ def home(ctx: Ctx) -> Response:
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(RECENT_ACTIONS), [])[0]}
     units = _ranked(_units(rows), sort)
     if not ok or ctx.told_failed:  # the open requests, or the index of the requests that the person was told about, could not be read
-        top = join([Safe("<h1>Decisions</h1>"), notice("error", "The requests cannot be read", "I cannot read the open requests now. Nothing has changed.")])
+        top = join([Safe("<h1>Decisions</h1>"), notice("error", "The requests cannot be read", "Meternaut cannot read the open requests now. Nothing has changed.")])
     else:
         ready = [u for u in units if u.first.brief.kind == "change"]
         look = [u for u in units if u.first.brief.kind != "change"]

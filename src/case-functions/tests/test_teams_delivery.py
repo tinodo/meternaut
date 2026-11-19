@@ -648,7 +648,7 @@ class TheBlockOfTheOperationsPage(unittest.TestCase):
         def broken():
             raise OSError("down")
         console.services = dataclasses.replace(console.services, teams=broken)
-        self.assertIn("I cannot tell now which way the Teams cards go.", console.get("/ops").content)
+        self.assertIn("Meternaut cannot tell now which way the Teams cards go.", console.get("/ops").content)
 
 
 class TheTestCard(unittest.TestCase):

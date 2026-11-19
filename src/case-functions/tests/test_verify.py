@@ -804,8 +804,8 @@ class ThePagesSayIt(unittest.TestCase):
         def refuse():
             raise RuntimeError("the store is down")
         self.world.store.plans_expired = refuse
-        self.assertIn("I cannot read the recent decisions now", self.console.get("/").content)
-        self.assertIn("Cannot be read now", self.console.get("/history").content)
+        self.assertIn("Meternaut cannot read the recent decisions now", self.console.get("/").content)
+        self.assertIn("Meternaut cannot read this now", self.console.get("/history").content)
 
     def test_the_history_still_counts_the_other_requests_that_were_taken_back_in_one_line_for_a_day(self):
         self.world.ask("q1")

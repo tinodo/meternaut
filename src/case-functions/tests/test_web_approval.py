@@ -1542,8 +1542,8 @@ class TheListsOfAPersonTheLadderCameToReadOneIndex(unittest.TestCase):
                 self.fill(console, who, 3)
                 start, history = console.get("/", oid=who), console.get("/history", oid=who)
                 self.assertEqual((start.status, history.status), (200, 200))
-                for page, sentence in ((start, "I cannot read the open requests now. Nothing has changed."), (start, "I cannot read the recent decisions now. Nothing has changed."),
-                                       (history, "I cannot read the requests now. Nothing has changed.")):
+                for page, sentence in ((start, "Meternaut cannot read the open requests now. Nothing has changed."), (start, "Meternaut cannot read the recent decisions now. Nothing has changed."),
+                                       (history, "Meternaut cannot read the requests now. Nothing has changed.")):
                     self.assertIn(sentence, page.content)
                 self.assertNotIn("Nothing waits for you", start.content)
                 self.assertNotIn("Nothing has happened", history.content)

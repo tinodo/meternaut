@@ -211,7 +211,7 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual(rows(plan_page)["Result"], "Deleted. Azure no longer lists the resource.")
         history = self.console.get("/history")
         lines = feed_lines(history)
-        self.assertIn(("Approved", "Delete the unattached disk planted-disk-1", "Tino"), lines)
+        self.assertIn(("Approved", "Delete the unattached disk planted-disk-1", "Approved by Tino."), lines)
         self.assertIn(("Change made", "Delete the unattached disk planted-disk-1", "Deleted. Azure no longer lists the resource."), lines)
         for old in ("/me/decisions", "/me/activity"):
             self.assertEqual(feed_lines(self.console.get(old)), lines, "the old addresses answer with the same page")
@@ -346,7 +346,7 @@ class WithTheRealLoop(unittest.TestCase):
         (record,) = self.console.store.decisions_of_plan(self.plan.plan_id)
         self.assertEqual((record.decision, record.note, record.reason), ("decline", "Not now", "handled"))
         lines = feed_lines(self.console.get("/history"))
-        self.assertIn(("Declined", "Delete the unattached disk planted-disk-1", "Tino · reason: it is already handled"), lines)
+        self.assertIn(("Declined", "Delete the unattached disk planted-disk-1", "Declined by Tino because it is already handled."), lines)
 
     def test_a_person_who_is_not_named_is_refused_by_the_page_before_the_loop(self):
         self.assertEqual(self.console.get(self.path, oid=MAYA).status, 403)

@@ -26,7 +26,7 @@ COUNTED = ("proposed", "needs_human", "awaiting_ok", "approved", "running", "don
 KINDS = {"approved": ("Approved", "info", "square"), "confirmed": ("Confirmed", "info", "square"), "worth": ("Worth acting on", "info", "square"),
          "declined": ("Declined", "", "square"), "not-worth": ("Not worth it", "", "square"),
          "not-mine": ("Not theirs", "", "square"), "made": ("Change made", "low", "circle"), "unchanged": ("Nothing changed", "", "square"), "failed": ("Change not made", "high", "diamond"),
-         "checked": ("Checked", "low", "circle"), "expired": ("Taken back", "", "square"), "closed": ("Closed", "", "square"), "search": ("Search", "info", "square")}
+         "checked": ("Checked", "low", "circle"), "expired": ("Taken back", "", "square"), "closed": ("Cost went down", "low", "circle"), "search": ("Search", "info", "square")}
 DECISIONS = ("approved", "confirmed", "worth", "declined", "not-worth", "not-mine")
 
 
@@ -85,7 +85,7 @@ def _action_events(ctx: Ctx, plan: PlanRecord, action: ActionRecord) -> list[Eve
         events.append(Event(action.finished_at, "failed", _headline(ctx, plan), action.error or action.result))
     if action.verified_at:
         note = action.verification.get("note", "") if isinstance(action.verification, dict) else ""
-        events.append(Event(action.verified_at, "checked", _headline(ctx, plan), note or "Cost lines confirm it."))
+        events.append(Event(action.verified_at, "checked", _headline(ctx, plan), note or "The bill confirms the change."))
     return events
 
 
@@ -135,9 +135,9 @@ def _events(ctx: Ctx, since: str) -> Feed:
             events += _action_events(ctx, plan, actions[plan.plan_id])
         if plan.state == "expired":
             why = taken_back(plan)
-            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else "A timer closed it before requests were kept open."))
+            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan),             TAKEN_BACK[why] if why else "An old timer closed this request, before requests were kept open until somebody answered."))
     for found in quiet.values():
-        events.append(Event(max(found), "closed", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding",
+                    events.append(Event(max(found), "expired", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding",
                             "Meternaut took it back, and it says why." if len(found) == 1 else "Meternaut took them back, and each says why."))
     cases, ok = read(lambda: ctx.store.cases_recent(CASES_ASKED), [])
     if not ok:
@@ -181,7 +181,7 @@ def _tiles(feed: Feed) -> Safe:
 def history(ctx: Ctx) -> Response:
     since = stamp(ctx.now - dt.timedelta(days=DAYS))
     feed = _events(ctx, since)
-    parts: list[object] = [head("What happened", f"Here is what happened in the last {DAYS} days. It shows what people decided, what was changed and checked, and how many new findings there were each day.")]
+    parts: list[object] = [head("What happened", f"Here is what people decided, what Meternaut changed and checked, and how many new findings there were each day in the last {DAYS} days.")]
     if "plans" in feed.failed:
         parts.append(notice("error", "The history cannot be read", "Meternaut cannot read the requests now. Nothing has changed."))
     elif feed.failed:

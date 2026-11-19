@@ -33,6 +33,7 @@ AI = f"/subscriptions/{SUB}/resourceGroups/{AI_GROUP}/providers/Microsoft.Cognit
 BATCH = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-batch/providers/Microsoft.Compute/virtualMachines/fabrikam-batch-01"
 PE = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-net/providers/Microsoft.Network/privateEndpoints/pe-fabrikam-1"
 SUBSCRIPTION_NAME = "fabrikam-prod"
+ADVICE_TITLE = "Look at the virtual machine oversized-vm-1 in group team-apps-rg, because it may be larger than its use needs"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -369,10 +370,10 @@ def _history(console: Console | None = None) -> Rendered:
                                  result="Deleted. Azure no longer lists the resource.", verification={"gone": True, "note": "Cost lines show no cost."}))
     store.plan_put(make_plan(plan_id="plan0005", case_id="case0005", state="expired", created_at=at(days=-6), expires_at=at(days=-2)))
     store.case_put(make_advice_case())
-    store.plan_put(make_advice(state="consumed", created_at=at(days=-2)))
+    store.plan_put(make_advice(state="consumed", created_at=at(days=-2), title=ADVICE_TITLE))
     store.decision_put(make_decision(plan_id="plan0002", decision="approve", at=at(days=-2, hours=-1)))
     store.plan_put(make_advice(plan_id="plan0006", case_id="case0006", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-3), preconditions={"family": "advise", "takenBack": "rules"}))
-    store.plan_put(make_advice(plan_id="plan0007", case_id="case0007", state="expired", created_at=at(days=-14), expires_at=at(days=-1, hours=-5),
+    store.plan_put(make_advice(plan_id="plan0007", case_id="case0007", state="expired", created_at=at(days=-14), expires_at=at(days=-1, hours=-5), title=ADVICE_TITLE,
                                preconditions={"family": "advise", "caseStatus": "needs_human", "takenBack": "verified", COST_AT_ASK: 300.0, COST_SEEN: 120.0}))
     store.plan_put(make_plan(plan_id="plan0008", case_id="case0008", resource_name="fabrikam-disk-8", state="consumed", created_at=at(days=-3), expires_at=at(days=-1)))
     store.decision_put(make_decision(plan_id="plan0008", at=at(days=-2, hours=-3)))

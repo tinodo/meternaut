@@ -94,7 +94,7 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
         parts.append(error_summary(list(errors.items())))
     parts.append(Safe("<h2>Your notes</h2>"))
     if not ok:
-        parts.append(notice("error", "Your notes cannot be read", "I cannot read your notes now. Nothing has changed."))
+        parts.append(notice("error", "Your notes cannot be read", "Meternaut cannot read your notes now. Nothing has changed."))
     elif not notes:
         parts.append(paragraph("You have no note and no do-not-touch mark."))
     else:

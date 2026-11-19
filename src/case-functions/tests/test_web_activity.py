@@ -308,7 +308,7 @@ class WhenSomethingCannotBeRead(unittest.TestCase):
     def test_when_the_runs_cannot_be_read_the_page_says_that_a_run_with_no_record_is_not_listed(self):
         reply = seeded(Console(store=FailingStore(fail={"runs_recent"}, clock=lambda: NOW))).get(PATH)
         self.assertEqual(reply.status, 200)
-        self.assertIn("I cannot read the runs now, so a run with no record is not listed. Nothing has changed.", reply.content)
+        self.assertIn("Meternaut cannot read the runs now, so a run with no record is not listed. Nothing has changed.", reply.content)
         self.assertEqual([row["Tool calls"] for row in reply.table("earlier").rows], ["12 of 30"])
 
     def test_the_page_reads_the_records_and_the_runs_and_nothing_else(self):
