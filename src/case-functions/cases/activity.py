@@ -30,6 +30,7 @@ MAX_KIND = 80  # a kind of resource that is longer than this is left out
 MAX_KINDS = 20  # the kinds of each list that a record keeps
 MAX_FINDINGS = 16  # the findings that a record keeps when it has beats: those of all of them can be more than a row of the store takes, and `more` counts the rest
 LOOKED_DAYS = 21  # a resource whose picture a run of these days read, and a kind that its tools touched, count as looked at: the seeds of a beat and the last beat go to what no run of these days looked at first
+UNREADABLE = "The earlier investigations could not be read, so this run took the dearest resources first."  # the note of a run whose memory (the records of the last days) could not be read
 MAX_PROFILED = 300  # the hashes of the pictures that a record keeps: a run at the budgets of today reads about 160, and 300 are about 4,500 characters of a row of 30,000
 BEAT_PHRASES = 3  # what a beat said that it examined, at most as many phrases as this
 NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word that may be a resource's name: a full stop or a dash ends it unless a letter follows
@@ -125,16 +126,18 @@ def stop_of(harness: object) -> str:
     return next((record.reason for record in getattr(harness, "records", []) if record.outcome in ("refused", "stopped")), "")
 
 
-def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str]]:
-    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, and the kinds that their tools touched. Nothing when the store
-    cannot be read: the seeds are then the dearest first, as they always were."""
+def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str], bool] | None:
+    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, the kinds that their tools touched, and whether a record of the window
+    holds no hash. Such a record is one from before the hashes, which seeded the dearest resources of each kind, or one of a run that looked at nothing, which cannot be told from it and counts the
+    same: while one is in the window the toolbox takes the dearest of each kind as looked at, beside the hashes of the other records. None when the store cannot be read: the seeds are then the
+    dearest first, as they always were, and the run says so (cases/investigate.py)."""
     since = stamp(now - dt.timedelta(days=LOOKED_DAYS))
     try:
         found = [record for record in store.investigations_recent(KEPT_INVESTIGATIONS) if record.at >= since]  # type: ignore[attr-defined]
-        return frozenset(word for record in found for word in record.profiled), frozenset(kind for record in found for kind, _ in record.kinds)
+        return frozenset(word for record in found for word in record.profiled), frozenset(kind for record in found for kind, _ in record.kinds), any(not record.profiled for record in found)
     except Exception as error:  # noqa: BLE001 (a store that cannot be read changes the order of the seeds and nothing else)
         LOG.warning("the earlier investigations could not be read (%s)", type(error).__name__)
-        return frozenset(), frozenset()
+        return None
 
 
 def coverage(toolbox: object) -> tuple[int, int, int]:
@@ -144,13 +147,15 @@ def coverage(toolbox: object) -> tuple[int, int, int]:
     return len(now), len(now - before), len(now | before)
 
 
-def looked_note(now: int, new: int, total: int) -> str:
+def looked_note(now: int, new: int, total: int, assumed: int = 0) -> str:
     """The note of a run (counts of `coverage`): how many resources it looked at, how many of them for the first time in LOOKED_DAYS days and, when the runs before it looked at others, how many
-    those runs and this one looked at in all."""
+    those runs and this one looked at in all. With `assumed` (the dearest resources of each kind that were taken as looked at, because a record of the window holds no hash) it counts none as new and says so."""
     days = f"{LOOKED_DAYS} days"
-    first = ("This run looked at no resources" if not now else f"This run looked at 1 resource, {'for' if new else 'not for'} the first time in {days}" if now == 1
-             else f"This run looked at {now:,} resources, {'all' if new == now else 'none' if not new else format(new, ',')} of them for the first time in {days}")
-    return f"{first}." + (f" In {days} Meternaut has looked at {total:,} resource{'' if total == 1 else 's'}." if total > now else "")
+    count = "no resources" if not now else f"{now:,} resource{'' if now == 1 else 's'}"
+    if assumed:
+        return f"This run looked at {count}. The earlier runs were not recorded by resource, so the dearest {assumed} of each kind were counted as seen."
+    how = "" if not now else f", {'for' if new else 'not for'} the first time in {days}" if now == 1 else f", {'all' if new == now else 'none' if not new else format(new, ',')} of them for the first time in {days}"
+    return f"This run looked at {count}{how}." + (f" In {days} Meternaut has looked at {total:,} resource{'' if total == 1 else 's'}." if total > now else "")
 
 
 def entry_of(finding: "Finding", names: frozenset[str]) -> dict:
