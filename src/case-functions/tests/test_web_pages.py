@@ -467,6 +467,24 @@ class TheDecisionsPage(unittest.TestCase):
                       "AI did not agree that the change can be made, or the first AI was not sure. For 1, the places for requests are full, or nobody is named as an approver. The AI looks at them again "
                       "at its next search.", content)
 
+    def test_a_finding_that_cannot_say_what_to_look_at_is_counted_for_that_and_not_for_the_places_or_the_approvers(self):
+        from cases import brief
+
+        group_id = VM.split("/providers/")[0]
+        console = Console()
+        self.held(console, 1, case_id="case3800", resource_id=group_id, resource_name="team-apps-rg", resource_type="microsoft.resources/resourcegroups")  # priced (120 a month) and measured
+        (case,) = console.store.cases_recent()
+        self.assertEqual((brief.why_not_ask(case), brief.says_nothing(case)), (None, True), "the rules of asking let it through, and nobody can say what to look at in it")
+        self.says(console, "Meternaut cannot say what to look at in it.")
+        self.held(console, 1, case_id="case3801", resource_id=f"{group_id}/providers/x/y/z", resource_name="endpoint-z")  # priced and measured, and nothing holds it
+        self.held(console, 1, case_id="case3803", resource_id=f"{group_id}-b", resource_name="team-apps-rg-b", resource_type="microsoft.resources/resourcegroups")
+        self.held_for(console, "unpriced", 2)
+        self.held(console, 1, case_id="case3802", resource_id=group_id.split("/resourceGroups/")[0], resource_name="the subscription", resource_type="microsoft.subscriptions/subscriptions",
+                  saving_usd_month=None)  # it says nothing and no saving was priced: the reason of the rules of asking is the one that is said
+        content = console.get("/").content
+        self.assertIn("Nobody is asked about 6 findings yet. For 3 of them, Meternaut could not work out from the bill what a change would save. For 2, Meternaut cannot say what to look at in them. "
+                      "For 1, the places for requests are full, or nobody is named as an approver. The AI looks at them again at its next search.", content)
+
     def test_all_of_one_cause_are_said_as_both_or_all_and_a_finding_that_a_rule_holds_back_keeps_its_own_words_and_the_others_say_another_reason(self):
         console = Console()
         self.held_for(console, "unpriced", 2)

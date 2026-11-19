@@ -195,7 +195,7 @@ DETECTOR_STATE = {
     "orphan-public-ip": ("State", "Not assigned to anything", "which is not assigned to anything"),
     "load-balancer-without-backends": ("Backends", "None in any pool", "which has nothing behind it to send traffic to"),
     "empty-app-service-plan": ("Apps", "None run on this plan", "which has no app running on it"),
-    "stopped-vm": ("State", "Stopped", "which is stopped, but Azure still bills for it"),  # a stopped machine that is not deallocated is billed: Learn, States and billing status of Azure virtual machines
+    "stopped-vm": ("State", "Stopped", "which is stopped but still billed"),  # a stopped machine that is not deallocated is billed: Learn, States and billing status of Azure virtual machines
     "orphan-private-endpoint": ("Connection", "No approved connection", "which has no approved connection"),
 }
 BASIS_WORDS = {"no-usage": "No recorded usage", "low-usage": "Little recorded usage", "oversized": "Larger than its use needs", "duplicate": "Duplicated",
@@ -228,8 +228,7 @@ ASKED = "You are asked whether it is worth {what}."
 ASKED_CHANGE = "You are asked whether to approve this change."  # what a person who may approve a change that Meternaut would make is asked: the page, the card and the letter say it as it is
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
-OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
-OTHER_PRICES = " to other prices of the same service"  # and when its figure rests on more than one price
+OTHER_PRICE = " to another price of the same service"  # what a switch is to, when its figure is one alternative and the digest holds no name for the target (one made before the names)
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
@@ -782,8 +781,8 @@ def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
 # Why no request is made for a finding of the investigation (why_not_ask), in the order that it is judged: their keys, and their words in the History and in the end note of the investigation. The first
 # that holds is the one that is said. The pages read it too (the start page counts the findings that nobody is asked about by reason), so it is here, with the other rules of what is asked.
 UNPRICED, UNMEASURED, UNCONFIRMED = "unpriced", "unmeasured", "unconfirmed"
-NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of its use",
-             UNCONFIRMED: "the second AI did not agree that it can be switched, or the first was not sure"}
+NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of {their} use",
+             UNCONFIRMED: "the second AI did not agree that the switch can be made, or the first was not sure"}  # {their}: "its" for one case and "their" for more, so that the words agree with the number
 NO_MEASUREMENT = "no measurement backs this finding; a person has to judge it"  # what a case says when no measurement that code confirmed backs it (cases/decide.py): it is never proposed
 
 
@@ -794,8 +793,8 @@ def stated_saving(case: CaseRecord) -> float | None:
 
 def why_not_ask(case: CaseRecord) -> str | None:
     """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. Only a finding of the investigation is held back: when code priced no saving
-    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when its saving is a switch to another price of
-    the price list, unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
+    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of
+    the price list (pricing.is_switch), unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
     be sure. The older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
     if case.detector != INVESTIGATION:
         return None
@@ -803,14 +802,7 @@ def why_not_ask(case: CaseRecord) -> str | None:
         return UNPRICED
     if NO_MEASUREMENT in case.objections:
         return UNMEASURED
-    return UNCONFIRMED if _switch(case) and ((case.learned or {}).get("skeptic") != "agree" or (case.confidence or 0) < SURE_ENOUGH) else None
-
-
-def _switch(case: CaseRecord) -> bool:
-    """Whether the saving of a finding rests on a switch to another price of the list: the form `alternative`, or a sum of rules that holds one (cases/pricing.py)."""
-    found = case.facts.get(CHANGE) if isinstance(case.facts, dict) else None
-    price = found.get("price") if isinstance(found, dict) else None
-    return isinstance(price, dict) and pricing._switched(price) > 0
+    return UNCONFIRMED if pricing.is_switch(case.facts) and ((case.learned or {}).get("skeptic") != "agree" or (case.confidence or 0) < SURE_ENOUGH) else None
 
 
 def held_of(plan: PlanRecord | None) -> str:
@@ -1028,7 +1020,7 @@ def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str
         return ASKED.format(what="acting on this recommendation of Azure Advisor")
     if still_used(case):
         return f"You are asked to find out whether {thing} is still used."
-    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICES if case is not None and pricing.several(case.facts) else OTHER_PRICE))
+    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE if case is not None and pricing.one_price(case.facts) else ""))
     found = DETECTOR_STATE.get(case.detector) if case is not None and together is None else None
     return ASKED.format(what=f"{what}, {found[2]}" if found else what)
 

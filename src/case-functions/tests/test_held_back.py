@@ -335,6 +335,7 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
                 self.store.plan_put(plan)
                 summary, events, _ = self.watch()
                 self.assertEqual((self.store.plan_get(plan.plan_id).state, [e for e in events if e["type"] == "case.held" and e["caseId"] == case.case_id]), (plan.state, []))
+                self.assertNotIn(ASKED_UNDER, self.store.plan_get(plan.plan_id).preconditions, "only a request of the investigation is marked as asked under its rules")
 
     def test_a_request_for_a_finding_that_code_priced_stays_open(self):
         self.store.case_put(replace(self.case, saving_usd_month=120.0))

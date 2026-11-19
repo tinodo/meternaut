@@ -75,7 +75,8 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         case, plan = _firewall()
         self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment.")
         self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
-        self.assertEqual(brief_of(with_words(case, form="mixed"), plan).asked, "You are asked whether it is worth switching the firewall to other prices of the same service.", "when the figure rests on several prices")
+        for mixed in (dict(form="mixed"), dict(form="mixed", switched=1)):  # a mix of rules, or one price beside an assumed share of the AI: no one price is the target, and no price is counted
+            self.assertEqual(brief_of(with_words(case, **mixed), plan).asked, "You are asked whether it is worth switching the firewall.", mixed)
         for action, said in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
             with self.subTest(action=action):
                 self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether it is worth {said}.")
@@ -152,7 +153,7 @@ class TheFindingOfACheckOfMeternaut(unittest.TestCase):
              ("orphan-public-ip", "microsoft.network/publicipaddresses", "public IP address", "which is not assigned to anything"),
              ("load-balancer-without-backends", "microsoft.network/loadbalancers", "load balancer", "which has nothing behind it to send traffic to"),
              ("empty-app-service-plan", "microsoft.web/serverfarms", "App Service plan", "which has no app running on it"),
-             ("stopped-vm", "microsoft.compute/virtualmachines", "virtual machine", "which is stopped, but Azure still bills for it"),
+             ("stopped-vm", "microsoft.compute/virtualmachines", "virtual machine", "which is stopped but still billed"),
              ("orphan-private-endpoint", "microsoft.network/privateendpoints", "private endpoint", "which has no approved connection"))
 
     @staticmethod
@@ -249,6 +250,15 @@ class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
         self.assertIn(self.BASIS, letter)
         page = [block.text for block in _page("switch", case, plan).blocks]
         self.assertTrue(any(text.startswith(self.BASIS) for text in page))
+
+    def test_the_amounts_of_the_sentence_add_up_to_the_dollar_and_its_saving_is_the_one_above_it_on_the_page_the_card_and_the_letter(self):
+        case, plan = _firewall(usd=864.6)  # 864.60 are paid, 252.18 would remain and 612.42 would be saved: $865, $252 and $612 are what the money shows, and 865 less 612 is 253
+        said = ("paid about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
+        for label, texts in (("page", [block.text for block in _page("switch", case, plan).blocks]), ("card", [block.text for block in blocks_of_card(_card_of(case, plan))]),
+                             ("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text.splitlines())):
+            with self.subTest(label):
+                self.assertTrue(any(said in text for text in texts), texts)
+                self.assertTrue(any(text.endswith("($612 a month).") for text in texts), "the figure above the sentence is the same saving")
 
     def test_a_request_that_nobody_can_name_is_not_priced_and_says_why_in_plain_words(self):
         case, plan = _firewall(target="Basic_Deployment", sku="Basic_Tier")

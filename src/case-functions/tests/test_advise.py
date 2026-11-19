@@ -315,8 +315,9 @@ class TheWorthOfARequest(unittest.TestCase):
                 self.assertTrue(OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again by recall_open_questions")
 
     def test_a_switch_to_another_price_of_the_list_is_asked_about_only_when_the_second_ai_agreed(self):
-        for forms, switch in ((("alternative",), True), (("alternative", "alternative"), True), (("alternative", "none"), True), (("none", "quantity"), False), (("none",), False),
-                              (("quantity",), False), (("ratio",), False), (("share_of_days",), False), (("assumed",), False)):
+        for forms, switch in ((("alternative",), True), (("alternative", "alternative"), True), (("alternative", "none"), True), (("none", "alternative"), True), (("assumed switch",), True),
+                              (("assumed switch", "none"), True), (("none", "quantity"), False), (("none",), False), (("quantity",), False), (("ratio",), False), (("share_of_days",), False),
+                              (("assumed",), False)):
             for verdict in ("agree", "disagree", "unsure", "none", None):
                 with self.subTest(forms=forms, verdict=verdict):
                     self.setUp()
@@ -329,12 +330,13 @@ class TheWorthOfARequest(unittest.TestCase):
                         self.assertTrue(OpenQuestions(self.store, NOW).is_open(case), "what is not asked about is an open question")
 
     def test_a_switch_that_the_second_ai_agreed_to_is_asked_about_only_when_the_first_ai_was_sure_enough_too(self):
-        for confidence, asked in ((0.45, False), (0.69, False), (0.7, True), (0.95, True), (None, False)):
-            with self.subTest(confidence=confidence):
-                self.setUp()
-                case = self.priced(facts=priced_facts("alternative"), learned={"skeptic": "agree"}, confidence=confidence)
-                self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
-                self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
+        for forms in (("alternative",), ("assumed switch",)):  # a switch priced from an alternative that the tool showed, and one priced from a share that the AI assumes
+            for confidence, asked in ((0.45, False), (0.69, False), (0.7, True), (0.95, True), (None, False)):
+                with self.subTest(forms=forms, confidence=confidence):
+                    self.setUp()
+                    case = self.priced(facts=priced_facts(*forms), learned={"skeptic": "agree"}, confidence=confidence)
+                    self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
+                    self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
         for forms in (("none",), ("quantity",), ("none", "quantity")):
             with self.subTest(forms=forms):
                 self.assertIsNone(why_not_ask(self.priced(facts=priced_facts(*forms), learned={"skeptic": "agree"}, confidence=0.45)), "only a switch needs both AIs to be sure: the rest is checked by the bill")
