@@ -252,7 +252,7 @@ def _page(subject: str, blocks: list[object]) -> str:
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
+    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -316,7 +316,10 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
+    if brief.by_code:
+        doc.paragraph(_data(brief.confidence.because, 240))  # Azure Advisor's own recommendation: the page and the card say that no AI looked at it and what Meternaut did not check
     if about_group:
+        doc.facts(*_fact_rows(brief)[:1])  # why it is a lead: the first fact that says so
         if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out
             doc.facts(("Left out", _data(f"{brief_mod.number_text(brief.group.capped)} more {brief_mod.group_things(brief.group)}, because of the limit of one run", 120)))
         said = _decision_rows(brief)

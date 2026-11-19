@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, plain
+from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, plain, shown_facts
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -137,7 +137,7 @@ def _heads_up(brief: Brief) -> list[dict]:
 
 
 def _facts(brief: Brief) -> list[dict]:
-    rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in brief.facts[:3]]
+    rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in shown_facts(brief.facts)]
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
 
 

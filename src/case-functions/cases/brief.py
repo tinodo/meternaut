@@ -225,6 +225,7 @@ ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the pla
 # a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin). That an answer changes nothing in Azure, and that a person who says yes acts alone, are said once
 # by the chip and by ADVICE_CHANGE and ADVICE_WHO, which every channel shows.
 ASKED = "You are asked whether it is worth {what}."
+ASKED_CHANGE = "You are asked whether to approve this change."  # what a person who may approve a change that Meternaut would make is asked: the page, the card and the letter say it as it is
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
@@ -1678,6 +1679,13 @@ def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[F
     return tuple((head + typed[:2] + tail + typed[2:])[:MAX_FACTS])
 
 
+def shown_facts(facts: Sequence[Fact], most: int = 3) -> tuple[Fact, ...]:
+    """The facts that a card and a letter have room for: the ones that say why the finding is a lead first (what the investigation found, what a check of Meternaut read, what a tool measured, what
+    Azure Advisor says), then the others in their order."""
+    why = {"What the investigation found", "What to look at", *(state[0] for state in DETECTOR_STATE.values())}
+    return tuple(sorted(facts, key=lambda fact: not (fact.label in why or fact.source.startswith(MONITOR))))[:most]
+
+
 OWNER_ROLES = {"owner": "owner", "contact": "contact", "team": "team", "manager": "manager", "createdby": "creator"}  # the tags that name an owner (cases/ownership.py), as the one who it names
 
 
@@ -1972,7 +1980,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
-        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else "")
+        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else ASKED_CHANGE if kind == "change" and state == "open" else "")
 
 
 def order_key(brief: Brief) -> tuple:

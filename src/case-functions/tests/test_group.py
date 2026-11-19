@@ -758,7 +758,7 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         self.assertNotIn("Covers", letter.text, "the title says how many, and the row of what the limit of a run left out is all that a letter adds")
         self.assertNotIn("Together they cost", letter.text)
         self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
-        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
+        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"] + 8, "the 175 words and the one row that says why the finding is a lead (a letter that says only that a closer look is worth it, and not why, is a defect: tests/test_decidable.py)")
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertLessEqual(word_count(weekly), MOST_WORDS["digest"])
 
@@ -975,7 +975,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(found["headline"], "Look at 60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
         self.assertEqual(found["value"], "Meternaut worked out that this could save about $21,960 a year \\($1,830 a month\\).")
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Charges it would shrink", "60 charges, $1,830 a month"):
+        for row in ("Traffic", "40 in 30 days", "Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 

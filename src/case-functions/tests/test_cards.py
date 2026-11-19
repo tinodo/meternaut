@@ -123,10 +123,11 @@ class TheDecisionCardOfAChange(unittest.TestCase):
 
     def test_it_holds_what_a_person_needs_to_decide_and_nothing_else(self):
         self.assertEqual([n["id"] for n in self.card["body"] if "id" in n],
-                         ["header", "headline", "place", "chips", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "ai-footer"])
+                         ["header", "headline", "place", "chips", "asked", "value-tile", "confidence", "facts", "change", "undo", "risk", "owner", "decisions", "ai-footer"])
         self.assertEqual(self.ids["headline"]["text"], "Delete the unattached disk disk-zq7-name", "the title of the page: the place is on the line under it")
         self.assertEqual(self.ids["place"]["text"], "Managed disk, resource group rg-zq7-group")
         self.assertEqual(self.ids["chips"]["text"], "Medium risk, High confidence, Cannot be undone", "the chips of the page as words")
+        self.assertEqual(self.ids["asked"]["text"], "You are asked whether to approve this change.", "what is asked of the person, in one sentence")
         self.assertEqual([n["id"] for n in self.ids["value-tile"]["items"]], ["value", "price-basis"])
         self.assertEqual(self.ids["value"]["text"].replace("\\", ""), "Meternaut worked out that this could save about $494 a year ($41.20 a month).")
         self.assertEqual(self.ids["price-basis"]["text"], "It is based on your bill for the last 30 days.", "every figure carries its basis")
