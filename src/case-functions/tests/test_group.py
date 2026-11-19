@@ -300,7 +300,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, 4)]}
         case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
         self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
-        self.assertIn("3 of 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
+        self.assertIn("3 of the 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
 
 
 class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
@@ -788,7 +788,7 @@ class TheBriefOfAGroup(unittest.TestCase):
         self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:4]],
                          [("Covers", "60 private endpoints in 14 resource groups", "Azure Resource Graph"),
                           ("Together they cost", "$1,830 in the last 30 days", "Azure cost lines"),
-                          ("Bill lines it would shrink", "60 lines, $1,830 a month", "Azure cost lines"),
+                          ("Charges it would shrink", "60 charges, $1,830 a month", "Azure cost lines"),
                           ("Examples", "pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "Azure Resource Graph")])
         self.assertNotIn("Cost, last 30 days", [f.label for f in self.b.facts])
         self.assertLessEqual(len(self.b.facts), brief.MAX_FACTS)
@@ -898,7 +898,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(self.reply.headings(1), ["Look at 60 private endpoints in 14 resource groups"])
         self.assertEqual(self.reply.main.find("p", class_="say save").text(), "Meternaut worked out that this could save about $21,960 a year ($1,830 a month).")
         self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830 in the last 30 days Azure cost lines "
-                      "Bill lines it would shrink 60 lines, $1,830 a month Azure cost lines "
+                      "Charges it would shrink 60 charges, $1,830 a month Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
@@ -955,7 +955,7 @@ class WhatAPersonSees(unittest.TestCase):
     def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
-        for repeated in ("Covers", "Together they cost", "Bill lines it would shrink", "Whose is it"):
+        for repeated in ("Covers", "Together they cost", "Charges it would shrink", "Whose is it"):
             self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
         self.assertIn("Meternaut worked out that this could save about $21,960 a year ($1,830 a month).", letter.text)
@@ -975,7 +975,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(found["headline"], "Look at 60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
         self.assertEqual(found["value"], "Meternaut worked out that this could save about $21,960 a year \\($1,830 a month\\).")
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Bill lines it would shrink", "60 lines, $1,830 a month"):
+        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Charges it would shrink", "60 charges, $1,830 a month"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 

@@ -70,6 +70,12 @@ def _chips(brief: Brief) -> Safe:
     return fmt('<p class="chips">{chips}</p>', chips=join(chips))
 
 
+def _asked(brief: Brief) -> Safe:
+    """What the person is asked, in the words that the card and the letters say (brief.asked), right after the chips: for advice that waits and that this person may answer. A person who may not answer
+    is asked nothing, and the page says who may."""
+    return paragraph(brief.asked) if brief.asked and brief.answers else Safe("")
+
+
 def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     """What became of a request that is not open any more: said once, at the top, in plain lines."""
     outcome = brief.outcome
@@ -382,7 +388,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _happens(brief), _waiting(ctx, brief)]
+    parts += [_asked(brief), _look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _happens(brief), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

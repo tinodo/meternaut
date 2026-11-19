@@ -12,7 +12,8 @@ forms that code can check against what the tools showed in the same run:
   share_of_days  the resource is needed on some days of every so many, which the AI states (Scenario)
   assumed        a share that the AI assumes, as a low and a high, always said to be the AI's own (Scenario)
   alternative    a switch of one billed meter to a price of the same service that the tool for alternatives showed for it, in the same unit: what remains is the alternative's list price over what the bill
-                 pays for a unit now, with the rate that the bill pays against list carried over and, for the other end of a range, at list prices alone (Scenario)
+                 pays for a unit now, with the rate that the bill pays against list carried over and, for the other end of a range, at list prices alone (Scenario). The digest keeps the plain name of
+                 each end (`now`, `to`), and a switch whose alternative cannot be named in plain words is not priced
 
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
@@ -51,17 +52,17 @@ NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 PLAIN = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+){0,5}")  # a word of an alternative that the Skeptic is shown, beside the check of the tools: letters, digits and single spaces, at most 6 words and 40 characters
 WHY = {
-    "none": "No saving was worked out, because the AI did not name the bill lines that a change would shrink.",
-    "lines": f"No saving was worked out. The bill lines that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to give a rate.",
-    "remains": "No saving was worked out, because the AI did not say what would remain of the bill lines in a form that Meternaut can check.",
+    "none": "No saving was worked out, because the AI did not say which charges on the bill the change would shrink.",
+    "lines": f"No saving was worked out. The charges that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to work from.",
+    "remains": "No saving was worked out, because the AI did not say what would remain of those charges in a form that Meternaut can check.",
     "currency": "No saving was worked out, because the cost is not in US dollars.",
-    "nothing": f"No saving was worked out, because the bill lines that the AI named cost nothing in the last {WEEK} days.",
-    "credit": "No saving was worked out, because what the resource gets back on its bill is as much as the bill lines that the AI named cost.",
-    "alternative": "No saving was worked out. The alternative that the AI named is not a price that the tool for alternatives showed for this bill line in this run, or its price changes with the quantity.",
-    "units": "No saving was worked out, because the units differ, so the alternative cannot be priced against the bill line.",
+    "nothing": f"No saving was worked out, because the charges that the AI named cost nothing in the last {WEEK} days.",
+    "credit": "No saving was worked out, because what the resource gets back on its bill is as much as the charges that the AI named cost.",
+    "alternative": "No saving was worked out. Meternaut did not find the alternative that the AI named as a price for this charge in this run, or its price changes with the quantity, or Meternaut cannot name it in plain words.",
+    "units": "No saving was worked out, because the units differ, so the alternative cannot be priced against this charge.",
     "listed": "No saving was worked out, because Meternaut does not know the list price of the current meter, so it cannot compare the alternative with it like for like.",
-    "dearer": "No saving was worked out, because the alternative costs as much as the bill line or more, at the rate of the bill and at list prices.",
-    "quantity": "No saving was worked out, because the bill line has no cost per unit to price the alternative by (no quantity, or no cost over its window).",
+    "dearer": "No saving was worked out, because the alternative costs as much as this charge or more, both at what the bill pays and at list prices.",
+    "quantity": "No saving was worked out, because this charge has no cost per unit to price the alternative by.",
 }
 
 
@@ -100,6 +101,7 @@ class Row(NamedTuple):
     uneven: int
     steady: float | None
     alts: tuple = ()  # for a switch, what the Skeptic is shown of the alternative: the meter, the words of the price, its list price, the rate that the bill pays against list and the shares that remain
+    after: float | None = None  # for a switch, what the same use costs a month on the alternative at the rate of `low`: the lowest rate of each meter times the larger share that remains
 
     @property
     def level(self) -> str:
@@ -114,7 +116,7 @@ class Row(NamedTuple):
         if self.away is not None and self.form == "assumed":
             out["away"] = list(self.away)
         for key, value in (("sinceUsd", self.since), ("steadyUsd", self.steady), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None),
-                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("advisorUsd", advisor)):
+                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("afterUsd", self.after), ("advisorUsd", advisor)):
             if value is not None:
                 out[key] = value
         return out
@@ -234,11 +236,18 @@ class Market(NamedTuple):
     offers: Mapping
 
 
-def _switch(effect: Effect, offer: str, used: Sequence[tuple[str, Rates, Meter]], market: Market) -> tuple[float, float, dict, tuple] | str:
-    """The smallest and the largest share of what the meter costs that remains after a switch to the price `offer`, the numbers that go into the digest and what the Skeptic is shown, or the word of
-    WHY. The same quantity at the same monthly rate as the cost that it replaces is the cost per unit that the bill paid over the window (`paid`) against the alternative's price: the share is one number
-    for every rate. Like for like, the alternative costs its list price over the list price of the meter's own line (`retail`: the rate that the bill pays against list is carried over, whether it is
-    above 1 or below); at list prices alone it costs its list price over `paid`. Both ends must save: a share of 1 or more at either is no saving, and a meter whose own list price is not known is not priced."""
+def _name(text: object, word: Callable[[object], str | None] | None) -> str:
+    """A word of a price as a person reads it: the text when it is plain (_plain) and passes the check of the tools, else nothing. Without that check no word is kept."""
+    return text if word is not None and _plain(text, word) == text else ""
+
+
+def _switch(effect: Effect, offer: str, used: Sequence[tuple[str, Rates, Meter]], market: Market, word: Callable[[object], str | None] | None) -> tuple[float, float, dict, tuple] | str:
+    """The smallest and the largest share of what the meter costs that remains after a switch to the price `offer`, the numbers and the plain names of both ends that go into the digest and what the
+    Skeptic is shown, or the word of WHY. The same quantity at the same monthly rate as the cost that it replaces is the cost per unit that the bill paid over the window (`paid`) against the alternative's
+    price: the share is one number for every rate. Like for like, the alternative costs its list price over the list price of the meter's own line (`retail`: the rate that the bill pays against list is
+    carried over, whether it is above 1 or below); at list prices alone it costs its list price over `paid`. Both ends must save: a share of 1 or more at either is no saving, and a meter whose own list
+    price is not known is not priced. A request must name its target: the meter name of the alternative's line, or else its SKU, that is plain and is not the name that the bill already has; a switch
+    whose alternative cannot be named is not priced."""
     if len(effect.meters) != 1:
         return "remains"
     name, _, meter = used[0]
@@ -260,8 +269,12 @@ def _switch(effect: Effect, offer: str, used: Sequence[tuple[str, Rates, Meter]]
     if most >= 1:
         return "dearer"
     words = tuple(getattr(line, key, "") for key in ("product", "sku", "meter"))
+    target = next((text for text in (words[2], words[1]) if _name(text, word) and text != meter.words[2]), "")
+    if not target:
+        return "alternative"
     ratio = round(paid / retail, 4)
-    return least, most, {"offer": offer, "list": usd, "ratio": ratio}, ({"meter": name, "words": words, "list": usd, "ratio": ratio, "remains": (least, most)},)
+    named = {"to": target, **({"now": meter.words[2]} if _name(meter.words[2], word) else {})}
+    return least, most, {"offer": offer, "list": usd, "ratio": ratio, **named}, ({"meter": name, "words": words, "list": usd, "ratio": ratio, "remains": (least, most)},)
 
 
 def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: set, word: Callable[[object], str | None] | None, market: Market) -> Part | str:
@@ -289,7 +302,7 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
     form, least, most, said = found
     alts: tuple = ()
     if form == "alternative":  # a switch is priced for one meter, from a price that the tool showed for it
-        switched = _switch(effect, said["offer"], used, market)
+        switched = _switch(effect, said["offer"], used, market, word)
         if isinstance(switched, str):
             return switched
         least, most, said, alts = switched
@@ -350,11 +363,12 @@ def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: t
             return "nothing"
     alike = len({_rule(part) for part in parts}) == 1
     form = parts[0].form if alike else "mixed"
-    said = {key: value for key, value in parts[0].said.items() if not (form == "alternative" and key == "ratio" and len({part.said.get("ratio") for part in parts}) > 1)} if alike else {}
+    said = {key: value for key, value in parts[0].said.items() if not (form == "alternative" and key in ("ratio", "now", "to") and len({part.said.get(key) for part in parts}) > 1)} if alike else {}
     away = (round(1 - max(part.most for part in parts), 4), round(1 - min(part.least for part in parts), 4)) if alike else None
     return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, said, away,
                failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
-               sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts))
+               sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts),
+               round(math.fsum(part.low * part.most for part in parts), 2) if alike and form == "alternative" else None)
 
 
 def _held(toolbox: object, name: str) -> Mapping:
@@ -372,7 +386,7 @@ def price(change: Change | None, handles: Collection[str], toolbox: object, cost
           word: Callable[[object], str | None] | None = None) -> Priced:
     """The rows of a change for the resources `handles` of a finding. `toolbox` holds the meters (`meters`) and the evidence of the run, and the prices of the list that the tool for alternatives showed
     (`prices`, `retail`, `offers`), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources that have no figure from outside, by the word of WHY (a cost that is not
-    in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept)."""
+    in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept, and no switch is priced, because its alternative cannot be named)."""
     out = Priced(change.action if change is not None else "")
     if change is None:
         return out
@@ -439,7 +453,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "to", "on", "unit", "days", "span", "away", "offer", "list")
+    keys = ("form", "from", "on", "unit", "days", "span", "away", "offer", "list") + (() if prices[0].get("form") == "alternative" else ("to",))  # the `to` of a switch is a name, which one price can have twice
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
@@ -447,11 +461,14 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
         total["sinceUsd"] = round(math.fsum(price.get("sinceUsd", price["weekUsd"]) for price in prices), 2)
     if rated and any("steadyUsd" in price for price in prices):
         total["steadyUsd"] = round(math.fsum(price.get("steadyUsd", min(price["weekUsd"], price.get("sinceUsd", price["weekUsd"]))) for price in prices), 2)
+    if alike and all("afterUsd" in price for price in prices):  # a digest made before it has none, and a sum with one of those has none either
+        total["afterUsd"] = round(math.fsum(price["afterUsd"] for price in prices), 2)
     lives, uneven = [price["life"] for price in prices if "life" in price], sum(price.get("uneven") or 0 for price in prices)
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
              **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
-    if alike and "ratio" in prices[0] and len({str(item.get("ratio")) for item in prices}) == 1:
-        price["ratio"] = prices[0]["ratio"]
+    for key in ("ratio", "now", "to"):  # what each resource carries of its own is kept only when it is the same for all
+        if alike and key in prices[0] and len({str(item.get(key)) for item in prices}) == 1:
+            price[key] = prices[0][key]
     if price["form"] == "mixed" and (switched := sum(_switched(item) for item in prices)):
         price["switched"] = switched
     skipped = sum(price.get("skipped") or 0 for price in prices)
@@ -483,58 +500,72 @@ def _firm(found: Mapping) -> bool:
     return not _whole(found.get("uneven")) and (not held or min(held) >= (1 - DIFFER) * max(held))
 
 
-def _rate(found: Mapping) -> str:
-    """Which rate the figure rests on, in words, from the numbers of the digest. A digest made before the rates rests on the last 30 days."""
+def _when(found: Mapping) -> str:
+    """Which days the figure counts, as the start of a sentence, from the numbers of the digest. A digest made before the rates counts the last 30 days."""
     week, since, steady, life = _number(found.get("weekUsd")), _number(found.get("sinceUsd")), _number(found.get("steadyUsd")), _whole(found.get("life"))
     if week is None:
-        return f"over the last {MONTH} days"
+        return f"Over the last {MONTH} days"
     if steady is not None and steady < (1 - ALIKE) * (week if since is None else min(week, since)):
-        return f"at a typical day's cost times {MONTH}, the lowest of the rates"
+        return "Counting a typical day,"
     if since is not None and abs(week - since) > ALIKE * max(week, since):
-        return f"at the lower of the {WEEK}-day rate and the " + ("rate since it began" if life else f"{MONTH}-day total")
-    return f"at the rate since it began {life} days ago" if life and life < WEEK and (_whole(found.get("resources")) or 1) == 1 else f"at the rate of the last {WEEK} days"
+        return f"Counting the lower of the last {WEEK} days and " + ("the time since it began," if life else f"the last {MONTH} days,")
+    return f"Since it began {life} days ago," if life and life < WEEK and (_whole(found.get("resources")) or 1) == 1 else f"Over the last {WEEK} days"
 
 
-def _basis(found: Mapping, form: str, low: float, high: float) -> str:
-    """What a figure rests on, as whole sentences: the bill lines that it starts from and the rate that it counts them at, what a form that is not the bill alone assumes and whose assumption it is
-    (the AI's, which Meternaut did not check), and what the figure leaves out."""
-    lines, many, members = _whole(found.get("lines")) or 1, _whole(found.get("resources")) or 1, _whole(found.get("members"))
-    whose = f"{many} of {members} resources" if members and members > many else ("this resource" if many == 1 else f"{many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
-    bill = f"the {_count(lines, 'bill line')} of {whose}"
-    counted = f"counted {_rate(found)}"
+def _read(value: object) -> str:
+    """A name of a digest as it is read again: plain letters, digits and single spaces, in at most 40 characters, else nothing."""
+    return value if isinstance(value, str) and len(value) <= 40 and PLAIN.fullmatch(value) else ""
+
+
+def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> str:
+    """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what a form that is not the bill alone assumes and whose assumption it is
+    (the AI's, which Meternaut did not check), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
+    many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
+    uneven = _whole(found.get("uneven"))
+    who = f"{many} of the {members} resources" if members and members > many else ("this resource" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
+    when = _when(found)
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
     numbers = _number(start) is not None and _number(target) is not None
+    to, now, ratio = _read(target) if form == "alternative" else "", _read(found.get("now")), _number(found.get("ratio"))
+    of_the_ai = "That is the AI's own proposal, and Meternaut did not check it."
+    paid = f"{when}{',' if who[0].isdigit() and not when.endswith(',') else ''} {who} paid about {money(base)}{' a month' if _number(found.get('weekUsd')) is not None else ''} for " + (
+        "what the change would remove" if form == "none" else now or "what would be switched" if form == "alternative" else "what the change would shrink") + "."
     if form == "quantity":
-        said = (f"a fall from {start:,.10g} to {target:,.10g}" if numbers else "the share of the window that the AI proposed") + (f" in the unit {unit}" if isinstance(unit, str) and UNIT.fullmatch(unit) else "")
-        text = f"It assumes the AI's target of {said}, applied to {bill} that the change would shrink, {counted}."
+        text = paid + (f" The AI proposes to lower the quantity from {start:,.10g} to {target:,.10g}" + (f" in units of {unit}" if isinstance(unit, str) and UNIT.fullmatch(unit) else "") + "."
+                       if numbers else " The AI proposes a lower quantity.") + f" {of_the_ai}"
     elif form == "ratio":
         name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
-        said = f"a change{name} from {start:g} to {target:g}" if numbers else "the change that the AI proposed"
-        text = f"It assumes the AI's target of {said}, applied to {bill} that the change would shrink, {counted}."
+        text = paid + (f" The AI proposes a change{name} from {start:g} to {target:g}." if numbers else " The AI proposes a change.") + f" {of_the_ai}"
     elif form == "share_of_days":
-        said = f"needed {days} days of every {span}" if _whole(days) and _whole(span) else "needed only on the days that the AI named"
-        text = f"It assumes the AI's proposal that it is {said}, applied to {bill} that the change would shrink, {counted}."
+        text = paid + (f" The AI says it is needed {days} days of every {span}." if _whole(days) and _whole(span) else " The AI says it is needed only on some days.") + f" {of_the_ai}"
     elif form == "assumed":
         pair = [round(share * 100) for share in away] if isinstance(away, list) and len(away) == 2 and all(_number(share) is not None for share in away) else []
         said = f"{pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent" if pair else "a share"
-        text = f"It assumes that {said} of {bill} would go away, {counted}. That is the AI's own assumption, and Meternaut did not check it."
+        text = paid + f" The AI assumes that {said} of that would go away. That is the AI's own assumption, and Meternaut did not check it."
     elif form == "alternative":
-        ratio = _number(found.get("ratio"))
-        scaled = f"your bill's rate, which is {ratio:g} of list," if ratio is not None and ratio > 0 else "the rate of each bill line"
-        text = f"It assumes a switch of {bill} to the alternative's list price, scaled by {scaled} or taken at list prices, {counted}. Meternaut did not check the alternative for features."
+        after, goal = _number(found.get("afterUsd")), to or "another price of the same service"
+        pct = round(ratio * 100) if ratio is not None and 0 < ratio < 1e9 else 0
+        listed = bool(pct) and abs(ratio - 1) < 0.005
+        # What remains is said only when it adds up: a credit on the resource, or resources whose rates differ, make the saving something other than what is paid less what remains.
+        cost = f"would cost about {money(after)} a month for the same use, so it " if after is not None and 0 <= after and abs(base - after - low) < 0.02 else ""
+        text = paid + f" {'At list prices, a' if listed else 'A'} switch to {goal} {cost}would save about {money(low)} a month."
+        if not listed:
+            text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
+                           if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays.")
+        text += " Meternaut did not check whether " + ("this resource can be switched to it, or whether it has what this resource needs." if many == 1
+                                                      else "these resources can be switched to it, or whether it has what they need.")
     elif form == "mixed":
-        text = f"It applies a rule of its own to each of {bill}, {counted}. Part of it rests on the AI's own proposals."
-        text += " Meternaut did not check the alternatives for features." if (_whole(found.get("switched")) or 0) > 0 else ""
+        text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
+        text += " Meternaut did not check whether the resources can be switched to the alternatives, or whether those have what the resources need." if (_whole(found.get("switched")) or 0) > 0 else ""
     else:
-        text = f"It is based on {bill} that the change would remove, {counted}." + ("" if _firm(found) else " Their cost is uneven or has changed, so the figure is less certain.")
+        text = paid + " That comes from your bill." + ("" if _firm(found) or uneven else " Its cost has changed over the days that the figure counts, so the figure is less certain.")
     if high > low:
-        text += f" The saving could be anywhere from {money(low)} to {money(high)} a month. Meternaut counts the low end."
-    uneven = _whole(found.get("uneven"))
+        text += f" The saving could be anywhere from {money(low)} to {money(high)} a month, and Meternaut counts the low end."
     if uneven:
-        text += f" {_count(uneven, 'bill line')} {'is' if uneven == 1 else 'are'} uneven from day to day."
+        text += f" {_count(uneven, 'charge')} {'is' if uneven == 1 else 'are'} uneven from day to day{', so the figure is less certain' if form == 'none' else ''}."
     skipped = _whole(found.get("skipped"))
     if skipped:
-        text += f" {_count(skipped, 'named thing')} {'was' if skipped == 1 else 'were'} not counted."
+        text += f" Meternaut could not count {_count(skipped, 'more thing')} that the AI named."
     advisor = _number(found.get("advisorUsd"))
     if advisor is not None and advisor > 0:
         text += f" Azure Advisor's {money(advisor)} is not added."
@@ -558,8 +589,22 @@ def saved(facts: object, cost: float | None = None) -> Saved | None:
         return None
     if cost is not None and high > (cost * MONTH / min(WEEK, life or WEEK) if rated else cost) + 0.005:
         return None
-    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" and _firm(found) else SCENARIO, _basis(found, str(form), low, high), round(min(bases) if rated else bill, 2),
-                 _whole(found.get("lines")) or 0, "a month" if rated else f"in the last {MONTH} days")
+    base = round(min(bases) if rated else bill, 2)
+    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" and _firm(found) else SCENARIO, _basis(found, str(form), low, high, base), base, _whole(found.get("lines")) or 0,
+                 "a month" if rated else f"in the last {MONTH} days")
+
+
+def ends(facts: object) -> tuple[str, str]:
+    """The plain names of the two ends of a switch that a case keeps, read again: what the bill pays now and what it would switch to, each "" when the digest holds no such name (a digest made before the
+    names, a figure that is not a switch, or a word that is not plain). Never text of the estate: the platform's words, which passed the check of the tools when the figure was made."""
+    found = _change(facts).get("price")
+    return (_read(found.get("now")), _read(found.get("to"))) if isinstance(found, Mapping) and found.get("form") == "alternative" else ("", "")
+
+
+def several(facts: object) -> bool:
+    """Whether the figure of a switch rests on more than one price (its form is a mix), so that no one name is its target."""
+    found = _change(facts).get("price")
+    return isinstance(found, Mapping) and found.get("form") == "mixed"
 
 
 def point(facts: object, cost: float | None = None) -> float | None:

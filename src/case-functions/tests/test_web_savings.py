@@ -251,9 +251,9 @@ class TheSavingsPage(unittest.TestCase):
         console.store.case_put(finding("proposed", case_id="c-assumption", saving_usd_month=30.0, cost_usd_30d=100.0, facts={"change": assumption}))
         row = rows_of(console.get(PATH))["Waiting for a person"]
         self.assertEqual(row["Findings"], "2")
-        self.assertIn("Could save about $360 a year ($30.00 a month) It assumes that 30 to 60 percent of the 2 bill lines of this resource would go away", row["Saving a year"])
+        self.assertIn("Could save about $360 a year ($30.00 a month) Over the last 30 days this resource paid about $100 for what the change would shrink. The AI assumes that 30 to 60 percent of that would go away.", row["Saving a year"])
         self.assertIn("That is the AI's own assumption, and Meternaut did not check it.", row["Saving a year"])
-        self.assertIn("Could save about $1,200 a year ($100 a month) It is based on the 2 bill lines of this resource that the change would remove, counted over the last 30 days.", row["Saving a year"])
+        self.assertIn("Could save about $1,200 a year ($100 a month) Over the last 30 days this resource paid about $100 for what the change would remove. That comes from your bill.", row["Saving a year"])
         self.assertEqual(row["Findings with no saving figure"], "None.")
 
     def test_two_confirmed_changes_of_one_finding_show_the_newest_in_its_row_and_are_two_changes_in_the_tile_which_the_note_says(self):
@@ -537,7 +537,7 @@ class TheBasisOfACell(unittest.TestCase):
         from cases import brief
         from cases.web import savings
 
-        note = "It assumes that 30 to 60 percent of the 2 bill lines of this resource would go away. The saving could be anywhere from $144 to $288 a month. Meternaut counts the low end."
+        note = "Over the last 7 days this resource paid about $288 a month for what the change would shrink. The AI assumes that 30 to 60 percent of that would go away. The saving could be anywhere from $144 to $288 a month, and Meternaut counts the low end."
         self.assertEqual(savings._basis_of([144.0, {note}, 1]), note)
         self.assertEqual(savings._basis_of([288.0, {note}, 2]), "It adds up the figure of each finding.")
         self.assertEqual(savings._basis_of([240.0, {brief.BILL_BASIS}, 2]), "It is based on your bill for the last 30 days.")
