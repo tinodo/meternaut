@@ -775,8 +775,8 @@ def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
 # Why no request is made for a finding of the investigation (why_not_ask), in the order that it is judged: their keys, and their words in the History and in the end note of the investigation. The first
 # that holds is the one that is said. The pages read it too (the start page counts the findings that nobody is asked about by reason), so it is here, with the other rules of what is asked.
 UNPRICED, UNMEASURED, UNCONFIRMED = "unpriced", "unmeasured", "unconfirmed"
-NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of its use",
-             UNCONFIRMED: "the second AI did not agree that it can be switched, or the first was not sure"}
+NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of {their} use",
+             UNCONFIRMED: "the second AI did not agree that the switch can be made, or the first was not sure"}  # {their}: "its" for one case and "their" for more, so that the words agree with the number
 NO_MEASUREMENT = "no measurement backs this finding; a person has to judge it"  # what a case says when no measurement that code confirmed backs it (cases/decide.py): it is never proposed
 
 
@@ -787,8 +787,8 @@ def stated_saving(case: CaseRecord) -> float | None:
 
 def why_not_ask(case: CaseRecord) -> str | None:
     """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. Only a finding of the investigation is held back: when code priced no saving
-    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when its saving is a switch to another price of
-    the price list, unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
+    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of
+    the price list (_switch), unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
     be sure. The older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
     if case.detector != INVESTIGATION:
         return None
@@ -800,10 +800,11 @@ def why_not_ask(case: CaseRecord) -> str | None:
 
 
 def _switch(case: CaseRecord) -> bool:
-    """Whether the saving of a finding rests on a switch to another price of the list: the form `alternative`, or a sum of rules that holds one (cases/pricing.py)."""
+    """Whether a finding is a switch to another price of the list: the action of the change that it states is `switch` (cases/pricing.py prices it from an alternative that the tool showed, or from a share
+    that the AI assumes: nothing in the bill checks either), or its figure is a sum of rules that holds an alternative (the group of a mixed change)."""
     found = case.facts.get(CHANGE) if isinstance(case.facts, dict) else None
     price = found.get("price") if isinstance(found, dict) else None
-    return isinstance(price, dict) and pricing._switched(price) > 0
+    return pricing.action_of(case.facts) == "switch" or (isinstance(price, dict) and pricing._switched(price) > 0)
 
 
 def held_of(plan: PlanRecord | None) -> str:

@@ -117,10 +117,13 @@ def make_advice_case(**changes) -> CaseRecord:
     return make_case(**base)
 
 
+ACTION_OF = {"none": "remove", "quantity": "reduce", "ratio": "reduce", "share_of_days": "schedule", "assumed": "reduce", "alternative": "switch", "assumed switch": "switch"}  # the action that states each form
+
+
 def priced_facts(*forms: str, **more) -> dict:
     """The facts of a finding that states a change for one resource of each form (cases/pricing.py FORMS), with the digest that code makes of it: that of the resource when there is one, and the sum of
-    them for a group, as production makes them. A form `alternative` is a switch to another price of the price list."""
-    digests = [{"action": "switch", "price": pricing.Row(f"r{n}", 10.0, 12.0, 20.0, 1, form, {"offer": "p1"} if form == "alternative" else {}, None, 0, (f"m{n}",), 20.0, 20.0, None, 0, None).digest()}
+    them for a group, as production makes them. A form `alternative` is a switch to another price of the price list, and `assumed switch` is a switch priced from a share that the AI assumes."""
+    digests = [{"action": ACTION_OF[form], "price": pricing.Row(f"r{n}", 10.0, 12.0, 20.0, 1, form.split()[0], {"offer": "p1"} if form == "alternative" else {}, None, 0, (f"m{n}",), 20.0, 20.0, None, 0, None).digest()}
                for n, form in enumerate(forms, 1)]
     return {"basis": "oversized", "proposal": "change", "change": digests[0] if len(digests) == 1 else pricing.combine(digests, len(digests)), **more}
 
