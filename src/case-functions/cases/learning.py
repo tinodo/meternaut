@@ -22,7 +22,7 @@ What is made of the lessons, all of it by code and all of it explainable:
   person or a resource.
 * `OpenQuestions` says which earlier findings are still open questions: the case of the investigation is `needs_human` or `proposed`, and either no request to a person is open for the resource
   or the first AI was not sure enough, and no person answered lately or marked the resource do-not-touch. The Investigator gets them through the tool `recall_open_questions`, as a typed row
-  for each (the resource, how often it was seen, for how long, how sure the last judgement was), and the Watch takes such a resource up again at once when the Investigator cites it again
+  for each (the resource, how often it was seen, for how long, how sure the last judgement was, and why the rules of asking hold it back, if they do), and the Watch takes such a resource up again at once when the Investigator cites it again
   (investigate._judged_lately), so that an open question comes back with the tools until it is decision-ready or dropped.
 
 The starting values below were written before anything was measured, and tools/learning-check.py holds them against evaluation/learning-thresholds.json: on its first run, on the invented replay set,
