@@ -89,7 +89,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 
 **The Details** of a decision (`/why/<id>` opens the same page) are the full record behind a message: the reasoning, receipts a person can re-run, the tools' numbers with their as-of time, the evidence level in words and the system's objections. Quoted text is escaped and set in a labelled quote, never as a link or control.
 
-**History** (`/history`; `/me/decisions` and `/me/activity` answer with it) is a plain feed of the last 30 days, newest day first: what people decided, with the reason of a decline; each change made or tried for a plan that names the person as approver, with its result and what the check afterwards found; and one line a day with the number of new findings. An approval made in the person's name is listed, so one they did not make is seen, and the Done card's "I did not approve this" reports it.
+**History** (`/history`; `/me/decisions` and `/me/activity` answer with it) is a plain feed of the last 30 days, newest day first, under one sentence that says what the page is, with days headed like "Wednesday 4 November": what people decided, with the reason of a decline; each change made or tried for a plan that names the person as approver, with its result and what the check afterwards found; and one line a day with the number of new findings. An approval made in the person's name is listed, so one they did not make is seen, and the Done card's "I did not approve this" reports it.
 
 **The notes page** shows everything the system has kept about the owner's resources.
 

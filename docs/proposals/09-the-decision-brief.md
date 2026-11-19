@@ -21,6 +21,8 @@ Every screen and message must let a stranger, who does not know the resource, an
 
 Anything that helps none of the eight leaves the default view: it sits under one Details disclosure, or on a page for the platform team.
 
+A test fails when a request cannot be decided (`tests/test_decidable.py`). For 23 kinds of request (a switch, a reduction, a removal, a schedule, a commitment, a deletion, a group, the two kinds of Azure Advisor, the six older checks and the seven families of change) it makes the page, the Teams card and the approval letter, and asks of each in words: what is it about, what is the finding, what is asked of the reader, what would it save and what does that rest on, what did Meternaut not check, and what changes in Azure. It also takes out, one at a time, the sentence that answers each question and requires the test to fail. A finding with no figure is not asked about (`why_not_ask`), and the test says that too. One gap is known and left: the family `change-disk-tier` states no saving, because it reads no price list.
+
 ## The decision brief
 
 One object, made by code from a case, its plan and its action, in `src/case-functions/cases/brief.py`: pure functions, no input or output, no clock. The page, the letter and, later, the Teams card are renders of it, so the three say the same thing, and an answer is recorded once.
