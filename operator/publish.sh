@@ -17,8 +17,8 @@
 #   Basic   the built package is posted to the deployment site's zip deployment, with curl, as the runner did
 # (The usage app, the other one published here, was removed on 2026-11-07.)
 #
-# The sources come in the secret volume (cases-source.zip) or, with the three PUBLISH_SOURCES_* variables and no such file, by fetch: the container downloads the archive of that commit from GitHub, and stops before
-# the sign-in unless the digest of the app's files in it (source-digest.py --as-held) is the workflow's own; the lock and the host file come in the volume (docs/proposals/07-private-by-default.md).
+# The sources come in the secret volume (cases-source.zip) or, with the three PUBLISH_SOURCES_* variables and no such file, by fetch: the container downloads the archive of that commit from GitHub and stops before the
+# sign-in unless the digest of the app's files in it (source-digest.py --as-held) is the workflow's; the lock and the host file come in the volume (docs/proposals/07-private-by-default.md).
 #
 # What it reads, all from the environment (none of it is a secret, except the ones that say so):
 #   PUBLISH_KIND            cases (the only app that is published here now)
@@ -34,7 +34,7 @@
 #   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published
 #   PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY, PUBLISH_SOURCES_DIGEST
 #                           a commit (40 hex digits), owner/name and the digest of the app's files at it (64): all three or none; the volume then holds source-digest.py, requirements.txt, host.json
-#   GITHUB_TOKEN            OPTIONAL SECRET: the token of the run, for a private repository; handed to curl on standard input and to nothing else
+#   GITHUB_TOKEN            OPTIONAL SECRET: the token of the run, for a private repository; it goes to curl on standard input only
 #   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the log can be read whole
 #   PUBLISH_VOLUME          where the secret volume is mounted (default /mnt/op); PUBLISH_TMP where the work folder is made (default /tmp): both only for the tests
 #
@@ -53,7 +53,7 @@ tmp_root=${PUBLISH_TMP:-/tmp}
 federated_token=${AZURE_FEDERATED_TOKEN:-}
 unset AZURE_FEDERATED_TOKEN
 arm_token=""
-# The token of the run for GitHub (a private repository) is read once and taken out of the environment too: it goes to curl on standard input and nowhere else.
+# The token of the run for GitHub (a private repository) is taken out of the environment too: it goes to curl on standard input only.
 github_token=${GITHUB_TOKEN:-}
 unset GITHUB_TOKEN
 
@@ -116,7 +116,7 @@ group_name='^[A-Za-z0-9._()-]{1,90}$'
 number='^[0-9]{1,9}$'
 seconds='^[0-9]{1,2}$'
 token_characters='^[A-Za-z0-9._~+/=-]+$'
-repository_name='^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$'
+repository_name='^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$'
 
 # A token is 20 to 8,000 of those characters (a repetition count of that size is not one that every regular expression library of bash takes, so the length is counted apart).
 looks_like_a_token() {
@@ -154,9 +154,9 @@ sources_digest=${PUBLISH_SOURCES_DIGEST:-}
 fetch=0
 if [ -n "$sources_repository$sources_commit$sources_digest" ]; then
   fetch=1
-  [[ $sources_repository =~ $repository_name && ${sources_repository#*/} != . && ${sources_repository#*/} != .. ]] || refuse "PUBLISH_SOURCES_REPOSITORY is not owner/name"
-  [[ $sources_commit =~ ^[0-9a-f]{40}$ ]] || refuse "PUBLISH_SOURCES_COMMIT is not 40 hexadecimal digits"
-  [[ $sources_digest =~ ^[0-9a-f]{64}$ ]] || refuse "PUBLISH_SOURCES_DIGEST is not 64 hexadecimal digits"
+  [[ $sources_repository =~ $repository_name ]] || refuse "PUBLISH_SOURCES_REPOSITORY is not owner/name"
+  [[ $sources_commit =~ ^[0-9a-f]{40}$ ]] || refuse "PUBLISH_SOURCES_COMMIT is not a commit"
+  [[ $sources_digest =~ ^[0-9a-f]{64}$ ]] || refuse "PUBLISH_SOURCES_DIGEST is not a digest"
 else
   [[ $sent_bytes =~ $number ]] || refuse "PUBLISH_FILE_BYTES is not the size of the file that was sent"
 fi
@@ -165,7 +165,7 @@ hold=${PUBLISH_HOLD_SECONDS:-20}
 main_file="$volume/cases-source.zip"
 [ -f "$volume/build-function-app.sh" ] || refuse "build-function-app.sh is not in the secret volume"
 if [ "$fetch" = 1 ]; then
-  [ ! -e "$main_file" ] || refuse "the sources come in the volume or by fetch, not both"
+  [ ! -e "$main_file" ] || refuse "the sources come in the volume and by fetch"
   for file in source-digest.py requirements.txt host.json; do
     [ -f "$volume/$file" ] || refuse "$file is not in the secret volume"
   done
@@ -205,7 +205,7 @@ if ! work=$(mktemp -d "$tmp_root/publish-XXXXXX" 2> /dev/null); then
 fi
 export AZURE_CONFIG_DIR="$work/azure"
 
-# The sources are fetched, and nothing of them is believed before their digest matches the workflow's: every failure stops the run, in plain words, before the sign-in (30 seconds a try: the sign-in's token lasts five minutes).
+# Nothing fetched is believed before its digest matches the workflow's; a failure stops the run before the sign-in (a try is 30 seconds: the sign-in's token lasts five minutes).
 fetch_sources() {
   local archive="$work/sources.zip" host url attempt status code got="" said=""
   for host in api codeload; do
@@ -223,7 +223,6 @@ fetch_sources() {
         got=$host
         break 2
       fi
-      rm -f "$archive"
       if [ -n "$github_token" ] && { [ "$code" = 401 ] || [ "$code" = 403 ]; }; then
         say FAIL "GitHub refused the token of this run (HTTP $code)"
         exit 3
@@ -283,11 +282,10 @@ print(taken)
   say ok "the app's files are taken from it: $message files"
   cp "$volume/requirements.txt" "$volume/host.json" "$work/source/"
   if ! held=$(python3 "$volume/source-digest.py" "$work/source" --as-held 2>&1) || [ "$held" != "$sources_digest" ]; then
-    say FAIL "the files that GitHub sent are not those of the commit that the workflow started from (digest ${held:0:12}, expected ${sources_digest:0:12})"
+    say FAIL "the files from GitHub are not those of the workflow's commit (digest ${held:0:12}, expected ${sources_digest:0:12})"
     exit 3
   fi
   say ok "the files match the digest of the workflow's checkout (${held:0:12})"
-  rm -f "$archive"
 }
 
 if [ "$fetch" = 1 ]; then

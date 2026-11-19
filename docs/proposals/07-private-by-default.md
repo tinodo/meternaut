@@ -274,7 +274,7 @@ On a new estate: `recording`, `cases`, `operator`, and then `recording` and `cas
 
 **What is not proved.** All of it was proved on one machine against fakes: a curl that serves a fixture archive and the status that a test names, an Azure CLI that answers as the tests say, a pip that unpacks three fake libraries. What only a real run can show, and what the first run of `cases` with `sources: fetch` has to show:
 - that the container's Python 3.12 opens the archive that GitHub really sends, and that its layout is the one that was assumed (one folder, the repository inside it);
-- that `api.github.com` answers the request with 200 from the subnet of the Operator (the probe counted an answer of any status as reachable), and how often the address of the Operator meets the anonymous limit, which decides how often the second host is used;
+- that `api.github.com` answers the request with 200 from the subnet of the Operator (the probe counted an answer of any status as reachable), that the archive of 9.5 MB arrives within the 30 seconds of a try (that needs about 0.3 MB a second), and how often the address of the Operator meets the anonymous limit, which decides how often the second host is used;
 - that the digest that the container works out on its own Python equals the one that the runner works out;
 - that the deployment site takes the package built from files that keep their comments (the same build as before with longer files), that the app starts from it and that the control A-RELEASE passes on it;
 - the route for a private repository, which cannot be tried while this repository is public: it follows GitHub's documentation (the API with the token of the run), and the tests prove only that the token is passed by name and never shown.

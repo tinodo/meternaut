@@ -1340,7 +1340,7 @@ jobs:
             # Nothing is built or packed here, and the cap of the request does not apply: the request carries the two scripts, the digest tool, the lock and the host file. What is worked out here, over this run's own checkout, is
             # the digest of the files as the repository holds them (they are published as they are held, with their comments, since the request does not carry them), which the Operator holds the fetched files against
             # before it signs in. It is the digest that the step that works out the release recorded for PACKAGE_SHA256 (the app works out the same over the files that it runs from), and the two are held to each other here.
-            if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA" || ! grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$' <<< "$GITHUB_REPOSITORY"; then
+            if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA" || ! grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$' <<< "$GITHUB_REPOSITORY"; then
               echo "::error::The commit or the repository of this run is not one that the Operator can fetch the sources of (a commit id of 40 hexadecimal digits and a name of the form owner/name). Nothing was changed."
               exit 1
             fi

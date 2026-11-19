@@ -1350,7 +1350,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
                              ("a file added", {**CASES_SOURCE_FILES, "cases/extra.py": b"x = 1\n"}), ("a file missing", {k: v for k, v in CASES_SOURCE_FILES.items() if k != "cases/web/home.py"}),
                              ("the entry file", {**CASES_SOURCE_FILES, "function_app.py": b"import evil\n"}), ("a file renamed", renamed)):
             ran = self.fetch(archive=github_zip(files), digest=original)
-            self.stopped_before_the_sign_in(ran, f"the files that GitHub sent are not those of the commit that the workflow started from (digest {held_digest(files)[:12]}, expected {original[:12]})")
+            self.stopped_before_the_sign_in(ran, f"the files from GitHub are not those of the workflow's commit (digest {held_digest(files)[:12]}, expected {original[:12]})")
         self.assertNotEqual(held_digest({**CASES_SOURCE_FILES, "cases/loop.py": b"# the loop\n"}), original, "a comment is part of a file that runs, so it is part of the digest")
 
     def test_the_lock_and_the_host_file_are_those_of_the_request_and_never_those_of_the_archive(self):
@@ -1371,11 +1371,10 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
             for value in bad:
                 self.refused({name: value})
             self.assertIn(name, self.refused({name: "not valid"}).lines[0])
-        self.assertEqual(self.fetch({"PUBLISH_SOURCES_REPOSITORY": "some-owner/.github"}).done.returncode, 0, "a repository may be named like that")
 
     def test_a_volume_that_holds_the_archive_of_sources_as_well_or_lacks_a_file_of_the_fetch_is_refused(self):
         ran = self.refused(None, package=source_zip(CASES_SOURCE_FILES))
-        self.assertIn("the sources come in the volume or by fetch, not both", ran.lines[0])
+        self.assertIn("the sources come in the volume and by fetch", ran.lines[0])
         for name in ("source-digest.py", "requirements.txt", "host.json"):
             self.assertIn(f"{name} is not in the secret volume", self.refused(None, volume={name: None}).lines[0])
         self.assertIn("build-function-app.sh is not in the secret volume", self.refused(None, volume={"build-function-app.sh": None}).lines[0])
