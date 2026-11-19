@@ -73,10 +73,11 @@ def _service(kind: str) -> str:
     return kind.partition("/")[0]
 
 
-def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
+def plan(costs: Mapping[str, float], unowned: float, limit: int, touched: frozenset[str] = frozenset()) -> list[Beat]:
     """The beats, at most `limit`, from the dearest kinds down to FLOOR_PERCENT of the cost. A beat opens with the dearest kind that no beat has and takes the dearer-first kinds of the same
     service after it, BEAT_KINDS at most; the lines that no resource owns are ranked like a kind and make a beat of their own. What is left, the kinds below the floor and those that do not
-    fit in `limit` beats, is the last beat, which names the dearest CATCH_ALL_KINDS of them. Nothing is known to cost anything: no beat, and the caller makes one open beat."""
+    fit in `limit` beats, is the last beat, which names CATCH_ALL_KINDS of them, the kinds that no run of the last days touched (`touched`) first and then the dearest, so that over the runs every
+    kind gets its turn. Nothing is known to cost anything: no beat, and the caller makes one open beat."""
     ranked = sorted([(usd, kind) for kind, usd in costs.items() if usd > 0] + ([(unowned, BILLING)] if unowned > 0 else []), key=lambda entry: (-entry[0], entry[1]))
     total = sum(usd for usd, _ in ranked)
     if limit < 1 or total <= 0:
@@ -103,7 +104,7 @@ def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
     rest = [] if fits else [kind for kind in order if kind not in placed]
     beats = [Beat(number, tuple(k for k in group if k != BILLING), BILLING in group) for number, group in enumerate(chosen, 1)]
     if rest:
-        kinds = [k for k in rest if k != BILLING]
+        kinds = sorted((k for k in rest if k != BILLING), key=touched.__contains__)  # the sort is stable: the untouched first, and the dearest first in each group
         beats.append(Beat(len(beats) + 1, tuple(kinds[:CATCH_ALL_KINDS]), BILLING in rest, max(0, len(kinds) - CATCH_ALL_KINDS)))
     return [replace(beat, of=len(beats)) for beat in beats]
 
@@ -119,6 +120,7 @@ class Seed:
     pictures: list[dict] | None = None
     failed: int = 0
     alternatives: list[dict] = field(default_factory=list)
+    seen: int = 0  # how many of the resources of the beat's kinds the runs of the last days and this one looked at (Toolbox.seen_in)
 
 
 def _said(text: object) -> dict:
@@ -284,6 +286,8 @@ def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[di
         body["beat"] = where
     if seeded is not None and seeded.counts:
         body["counts"] = seeded.counts
+    if seeded is not None and seeded.seen:
+        body["lookedAt"] = {"days": activity.LOOKED_DAYS, "resources": seeded.seen}
     if seeded is not None and seeded.pictures:
         body["pictures"] = seeded.pictures
     if earlier:
