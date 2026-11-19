@@ -228,6 +228,16 @@ class AdvisorsOwnWords(unittest.TestCase):
 class TheRun(unittest.TestCase):
     """What the Watch says once more about a finding that was taken up."""
 
+    def test_the_watch_makes_the_request_about_a_subscription_when_advisor_counts_a_saving_for_it(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        estate = a_subscription_with_a_bill()
+        estate.advisor = [advisor_item(extendedProperties={"annualSavingsAmount": "240", "savingsCurrency": "USD"})]
+        summary, events, _ = watch(estate, extras, clock)
+        case = the_case(extras, "advisor-cost")
+        (plan,) = extras.store.plans_open()
+        self.assertEqual((plan.case_id, plan.saving_usd_month, summary.held, [e for e in events if e["type"] == "case.held"]), (case.case_id, 20.0, 0, []), "the rules allow it, so it is asked")
+        self.assertEqual((case.subscription_name, case.cost_usd_30d, build_brief(case, plan, now=NOW, may_answer=True).headline), (DEV, 148.95, f"{PROBLEM} (subscription {DEV})"))
     def test_the_run_says_that_the_finding_was_held_back_because_no_saving_is_counted_for_it(self):
         clock = Moving()
         extras = loop_for(clock)
