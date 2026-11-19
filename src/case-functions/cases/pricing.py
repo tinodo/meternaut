@@ -632,6 +632,13 @@ def action_of(facts: object) -> str:
     return word if isinstance(word, str) and word in ACTIONS else ""
 
 
+def is_switch(facts: object) -> bool:
+    """Whether the change that a finding states is a switch to another price of the list: its action is `switch` (priced from an alternative that the tool showed, or from a share that the AI assumes:
+    nothing in the bill checks either), or its figure is a sum of rules that holds an alternative (the group of a mixed change)."""
+    price = _change(facts).get("price")
+    return action_of(facts) == "switch" or (isinstance(price, Mapping) and _switched(price) > 0)
+
+
 def missing(facts: object) -> str:
     """The plain sentence that says why a finding that states a change has no figure, or "" when it has none to explain."""
     word = _change(facts).get("missing")

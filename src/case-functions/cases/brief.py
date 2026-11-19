@@ -788,7 +788,7 @@ def stated_saving(case: CaseRecord) -> float | None:
 def why_not_ask(case: CaseRecord) -> str | None:
     """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. Only a finding of the investigation is held back: when code priced no saving
     for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of
-    the price list (_switch), unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
+    the price list (pricing.is_switch), unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
     be sure. The older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
     if case.detector != INVESTIGATION:
         return None
@@ -796,15 +796,7 @@ def why_not_ask(case: CaseRecord) -> str | None:
         return UNPRICED
     if NO_MEASUREMENT in case.objections:
         return UNMEASURED
-    return UNCONFIRMED if _switch(case) and ((case.learned or {}).get("skeptic") != "agree" or (case.confidence or 0) < SURE_ENOUGH) else None
-
-
-def _switch(case: CaseRecord) -> bool:
-    """Whether a finding is a switch to another price of the list: the action of the change that it states is `switch` (cases/pricing.py prices it from an alternative that the tool showed, or from a share
-    that the AI assumes: nothing in the bill checks either), or its figure is a sum of rules that holds an alternative (the group of a mixed change)."""
-    found = case.facts.get(CHANGE) if isinstance(case.facts, dict) else None
-    price = found.get("price") if isinstance(found, dict) else None
-    return pricing.action_of(case.facts) == "switch" or (isinstance(price, dict) and pricing._switched(price) > 0)
+    return UNCONFIRMED if pricing.is_switch(case.facts) and ((case.learned or {}).get("skeptic") != "agree" or (case.confidence or 0) < SURE_ENOUGH) else None
 
 
 def held_of(plan: PlanRecord | None) -> str:
