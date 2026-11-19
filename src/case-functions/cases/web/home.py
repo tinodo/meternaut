@@ -287,7 +287,8 @@ def held_by_rules(ctx: Ctx) -> int:
 
 
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: no saving was priced for them, the places for requests are full (approvals.py), or a rule holds them back because nobody looked up who changed the
+    """The findings that no request waits for: no saving was priced for them, nothing was measured of their use, the second AI did not agree that the change can be made, the places for requests are
+    full (approvals.py), or a rule holds them back because nobody looked up who changed the
     resource or what depends on it was not checked. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
     nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is
     listed also when it is not a finding of the investigation (the weekly letter links to this page)."""
@@ -303,7 +304,8 @@ def _held(ctx: Ctx) -> Safe:
         many = rest != 1
         lead = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. " if ruled else ""
         lines.append(paragraph(f"{lead}Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
-                               f"the places for requests are full, or nobody is named as an approver. The AI looks at {'them' if many else 'it'} again at its next search."))
+                               "nothing was measured of its use, the second AI did not agree that the change can be made, the places for requests are full, or nobody is named as an approver. "
+                               f"The AI looks at {'them' if many else 'it'} again at its next search."))
     if listed:
         lines.append(fmt('<p>These findings are held back, so nothing is asked of you.</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count

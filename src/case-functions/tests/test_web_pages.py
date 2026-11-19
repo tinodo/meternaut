@@ -397,8 +397,8 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 3)
         reply = console.get("/")
         self.assertIn("Held back: 3 findings", reply.content)
-        self.assertIn("Nobody is asked about these yet. For each, Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named as an approver. "
-                      "The AI looks at them again at its next search.", reply.content)
+        self.assertIn("Nobody is asked about these yet. For each, Meternaut could not work out from the bill what a change would save, nothing was measured of its use, the second AI did not agree "
+                      "that the change can be made, the places for requests are full, or nobody is named as an approver. The AI looks at them again at its next search.", reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
         self.assertIn("Held back: 4 findings", console.get("/").content)
@@ -408,8 +408,8 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("Held back: 1 finding Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named "
-                      "as an approver. The AI looks at it again at its next search.", content)
+        self.assertIn("Held back: 1 finding Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, nothing was measured of its use, the second AI did "
+                      "not agree that the change can be made, the places for requests are full, or nobody is named as an approver. The AI looks at it again at its next search.", content)
 
     def test_a_finding_of_the_investigation_that_no_saving_backs_is_not_asked_about_and_is_counted_here_whatever_the_resource_costs(self):
         from cases.approvals import ApprovalSettings, Approvals
@@ -421,6 +421,22 @@ class TheDecisionsPage(unittest.TestCase):
         reply = console.get("/")
         self.assertIn("Held back: 1 finding", reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
+
+    def test_a_finding_that_nothing_measured_or_that_nobody_confirmed_is_not_asked_about_and_is_counted_here_whatever_it_saves(self):
+        from cases.approvals import ApprovalSettings, Approvals
+        from cases.decide import NO_MEASUREMENT
+        from test_web_support import priced_facts
+
+        for label, changes in (("nothing was measured", dict(objections=(NO_MEASUREMENT,))), ("the second AI did not agree to a switch", dict(facts=priced_facts("alternative"), learned={"skeptic": "unsure"}))):
+            with self.subTest(label):
+                console = seeded()
+                case = make_advice_case(case_id="case3600", resource_id=f"{VM_ID}-sw", resource_name="endpoint-sw", plan_id=None, saving_usd_month=480.0, cost_usd_30d=848.0, **{"objections": (), **changes})
+                console.store.case_put(case)
+                self.assertIsNone(Approvals(console.store, ApprovalSettings(change_scopes=())).advise(case, (TINO,)), "a saving is priced, and nobody is asked all the same")
+                reply = console.get("/")
+                self.assertIn("Held back: 1 finding", reply.content)
+                self.assertIn("nothing was measured of its use, the second AI did not agree that the change can be made", reply.content)
+                self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()

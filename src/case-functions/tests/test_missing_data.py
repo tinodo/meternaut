@@ -23,8 +23,8 @@ from cases.memory_store import stamp
 
 ABSENT = {"metrics": {"MetricA": {"total": None, "days": 30, "days_with_data": 0, "totals": [None]}}}  # what the real toolbox records for a measurement that has no data
 ENDPOINTS = "microsoft.network/privateendpoints"
-NOT_PRICED_ONE = ("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named as an approver. "
-                  "The AI looks at it again at its next search.")
+NOT_PRICED_ONE = ("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, nothing was measured of its use, the second AI did not agree that the "
+                  "change can be made, the places for requests are full, or nobody is named as an approver. The AI looks at it again at its next search.")
 UNPROVEN_AND_SHARED = ("Nothing proves that it is unused, so acting on it could break something that still uses it. Traffic that you cannot see from here may depend on it.")
 
 
