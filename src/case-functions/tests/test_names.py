@@ -14,7 +14,7 @@ from test_web_support import NOW, TINO, XSS, XSS_ESCAPED, Console, make_advice, 
 import support  # noqa: F401  (puts the app on the path)
 from cases import brief as brief_mod
 from cases import letters, pricing
-from cases.models import EscalationRecord
+from cases.models import GROUP_FACT, EscalationRecord
 from cases.web.figures import title_of
 from test_words import BASE, CONTACTS, FIREWALL_GROUP, PERSON, Rendered, _ai_account, _ai_plan, _card_of, _firewall, _group_finding, _held_finding, _letter, _page, blocks_of_card
 
@@ -141,6 +141,50 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
                 self.assertIn(asked, [block.text for block in _page(case.case_id, case, plan).blocks])
                 self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
                 self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
+
+
+class TheFindingOfACheckOfMeternaut(unittest.TestCase):
+    """A request about what one of the checks of Meternaut found says what it found, in a sentence that code fixed for the check, and not only that a closer look is worth it."""
+
+    FOUND = (("orphan-managed-disk", "microsoft.compute/disks", "disk", "which is not attached to any virtual machine"),
+             ("orphan-public-ip", "microsoft.network/publicipaddresses", "public IP address", "which is not assigned to anything"),
+             ("load-balancer-without-backends", "microsoft.network/loadbalancers", "load balancer", "which has nothing behind it to send traffic to"),
+             ("empty-app-service-plan", "microsoft.web/serverfarms", "App Service plan", "which has no app running on it"),
+             ("stopped-vm", "microsoft.compute/virtualmachines", "virtual machine", "which is stopped, but Azure still bills for it"),
+             ("orphan-private-endpoint", "microsoft.network/privateendpoints", "private endpoint", "which has no approved connection"))
+
+    @staticmethod
+    def request(detector, rtype, recommendation="investigate", name="fabrikam-1"):
+        case = make_advice_case(detector=detector, resource_type=rtype, resource_name=name, recommendation=recommendation, facts={})
+        return case, make_advice(case_id=case.case_id, resource_name=name)
+
+    def test_every_check_says_what_it_found_whether_a_look_or_a_deletion_is_asked(self):
+        for detector, rtype, thing, why in self.FOUND:
+            for recommendation, what in (("investigate", "a closer look at"), ("delete", "deleting")):
+                with self.subTest(detector=detector, recommendation=recommendation):
+                    case, plan = self.request(detector, rtype, recommendation)
+                    self.assertEqual(brief_of(case, plan).asked, f"You are asked whether it is worth {what} the {thing}, {why}.")
+
+    def test_the_page_the_card_and_the_letter_say_it_and_the_name_of_the_resource_is_not_in_it(self):
+        for detector, rtype, _, _ in self.FOUND:
+            case, plan = self.request(detector, rtype, name=XSS)
+            asked = brief_of(case, plan).asked
+            with self.subTest(detector=detector):
+                self.assertNotIn(XSS, asked)
+                self.assertIn(asked, [block.text for block in _page(detector, case, plan).blocks])
+                self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
+                self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
+
+    def test_what_the_investigation_asked_and_what_advisor_said_are_not_a_finding_of_a_check(self):
+        case, plan = self.request("investigation", "microsoft.compute/disks")
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth a closer look at the disk.")
+        case, plan = self.request("advisor-cost", "microsoft.compute/disks")
+        self.assertNotIn("which", brief_of(case, plan).asked)
+
+    def test_many_resources_have_no_one_finding_to_say(self):
+        group = {"count": 5, "groups": 2, "type": "microsoft.compute/disks", "names": ["d-1", "d-2"], "costUsd30d": 50.0}
+        case = make_advice_case(detector="orphan-managed-disk", resource_type="microsoft.compute/disks", recommendation="investigate", facts={GROUP_FACT: group})
+        self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, "You are asked whether it is worth a closer look at these 5 disks.")
 
 
 class TheWordsOfAPriceThatAnAiOrTheEstateCouldInfluence(unittest.TestCase):

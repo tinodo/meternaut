@@ -183,14 +183,15 @@ GUARD_WORDS = {
     "unverified": "A guard could not be read, so it counts as on.",
 }
 REASON_WORDS = {"still-needed": "it is still needed", "figure-wrong": "the figure is wrong", "handled": "it is already handled", "other": "another reason"}
-# What the query of each detector asserts, which code read from Azure: the one fact that says why the resource is a lead.
+# What the query of each detector asserts, which code read from Azure: the one fact that says why the resource is a lead (its label and its value in the table of facts), and the same fact as the end of a
+# sentence about the resource, which is what a person who is asked about it reads first (asked_of).
 DETECTOR_STATE = {
-    "orphan-managed-disk": ("State", "Not attached to any virtual machine"),
-    "orphan-public-ip": ("State", "Not assigned to anything"),
-    "load-balancer-without-backends": ("Backends", "None in any pool"),
-    "empty-app-service-plan": ("Apps", "None run on this plan"),
-    "stopped-vm": ("State", "Stopped"),
-    "orphan-private-endpoint": ("Connection", "No approved connection"),
+    "orphan-managed-disk": ("State", "Not attached to any virtual machine", "which is not attached to any virtual machine"),
+    "orphan-public-ip": ("State", "Not assigned to anything", "which is not assigned to anything"),
+    "load-balancer-without-backends": ("Backends", "None in any pool", "which has nothing behind it to send traffic to"),
+    "empty-app-service-plan": ("Apps", "None run on this plan", "which has no app running on it"),
+    "stopped-vm": ("State", "Stopped", "which is stopped, but Azure still bills for it"),  # a stopped machine that is not deallocated is billed: Learn, States and billing status of Azure virtual machines
+    "orphan-private-endpoint": ("Connection", "No approved connection", "which has no approved connection"),
 }
 BASIS_WORDS = {"no-usage": "No recorded usage", "low-usage": "Little recorded usage", "oversized": "Larger than its use needs", "duplicate": "Duplicated",
                "unused-feature": "A paid feature that is unused", "commitment-misfit": "A commitment that does not fit the use"}
@@ -976,13 +977,16 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
 
 def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str:
     """What a person is asked about a request of advice that waits, in the words of its verb (ASKED): whether it is worth switching, reducing, removing, deleting, scheduling or committing, or looking
-    closer. A switch names both ends when its figure keeps them, and says "another price of the same service" when it keeps none. Code's words: no name of the estate is in it, only the kind of the resource."""
+    closer. A switch names both ends when its figure keeps them, and says "another price of the same service" when it keeps none. A finding of one of the checks of Meternaut says what the check found
+    ("a closer look at the disk, which is not attached to any virtual machine"), because that is what a person asks first. Code's words: no name of the estate is in it, only the kind of the resource."""
     thing = f"these {number_text(together.count)} {group_things(together)}" if together is not None else f"the {kind_words(rtype)[1]}"
     if advice_of(case) is not None:
         return ASKED.format(what="acting on this recommendation of Azure Advisor")
     if still_used(case):
         return ASKED.format(what=f"checking whether {thing} is still used")
-    return ASKED.format(what=ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE)))
+    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE))
+    found = DETECTOR_STATE.get(case.detector) if case is not None and together is None else None
+    return ASKED.format(what=f"{what}, {found[2]}" if found else what)
 
 
 def plan_headline(plan: PlanRecord) -> str:
