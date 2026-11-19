@@ -250,6 +250,15 @@ class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
         page = [block.text for block in _page("switch", case, plan).blocks]
         self.assertTrue(any(text.startswith(self.BASIS) for text in page))
 
+    def test_the_amounts_of_the_sentence_add_up_to_the_dollar_and_its_saving_is_the_one_above_it_on_the_page_the_card_and_the_letter(self):
+        case, plan = _firewall(usd=864.6)  # 864.60 are paid, 252.18 would remain and 612.42 would be saved: $865, $252 and $612 are what the money shows, and 865 less 612 is 253
+        said = ("paid about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
+        for label, texts in (("page", [block.text for block in _page("switch", case, plan).blocks]), ("card", [block.text for block in blocks_of_card(_card_of(case, plan))]),
+                             ("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text.splitlines())):
+            with self.subTest(label):
+                self.assertTrue(any(said in text for text in texts), texts)
+                self.assertTrue(any(text.endswith("($612 a month).") for text in texts), "the figure above the sentence is the same saving")
+
     def test_a_request_that_nobody_can_name_is_not_priced_and_says_why_in_plain_words(self):
         case, plan = _firewall(target="Basic_Deployment", sku="Basic_Tier")
         found = brief_of(case, plan)

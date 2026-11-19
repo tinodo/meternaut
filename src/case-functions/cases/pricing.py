@@ -517,6 +517,12 @@ def _read(value: object) -> str:
     return value if isinstance(value, str) and len(value) <= 40 and PLAIN.fullmatch(value) else ""
 
 
+def _shown(value: float) -> float:
+    """A figure as `money` shows it: whole dollars from 100 up, cents below."""
+    amount = round(value, 2)
+    return float(math.floor(amount + 0.5)) if amount >= 100 else amount
+
+
 def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> str:
     """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what a form that is not the bill alone assumes and whose assumption it is
     (the AI's, which Meternaut did not check), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
@@ -546,8 +552,10 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
         after, goal = _number(found.get("afterUsd")), to or "another price of the same service"
         pct = round(ratio * 100) if ratio is not None and 0 < ratio < 1e9 else 0
         listed = bool(pct) and abs(ratio - 1) < 0.005
-        # What remains is said only when it adds up: a credit on the resource, or resources whose rates differ, make the saving something other than what is paid less what remains.
-        cost = f"would cost about {money(after)} a month for the same use, so it " if after is not None and 0 <= after and abs(base - after - low) < 0.02 else ""
+        # What remains is said only when it adds up: a credit on the resource, or resources whose rates differ, make the saving something other than what is paid less what remains. It is then the
+        # difference of the two amounts that the sentence shows, so that its three amounts add up to the dollar (or the cent) as printed, and the saving is the figure that the page states above it.
+        left = round(_shown(base) - _shown(low), 2)
+        cost = f"would cost about {money(left)} a month for the same use, so it " if after is not None and abs(base - after - low) < 0.02 and 0 < left == _shown(left) else ""
         text = paid + f" {'At list prices, a' if listed else 'A'} switch to {goal} {cost}would save about {money(low)} a month."
         if not listed:
             text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
