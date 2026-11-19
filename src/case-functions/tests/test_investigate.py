@@ -1369,7 +1369,7 @@ class WhenNoMeasurementBacksAFinding(unittest.TestCase):
         cases = h.store.cases_recent()
         self.assertEqual({(c.status, c.saving_usd_month, c.objections) for c in cases}, {("needs_human", 40.0, (self.SAYS,))}, "no measurement backs it, and code priced it all the same")
         self.assertEqual((h.store.plans_open(), {c.plan_id for c in cases}, h.of("plan.created")), ([], {None}, []), "nobody is asked: nothing was measured of the resources")
-        self.assertEqual(unasked(h), ["no request was made for 2 cases because nothing was measured of its use"])
+        self.assertEqual(unasked(h), ["no request was made for 2 cases because nothing was measured of their use"])
 
     def test_a_finding_whose_change_code_priced_from_the_bill_and_that_a_measurement_backs_gets_an_advise_plan_that_states_the_saving(self):
         change, meters = priced("r1", "r2", usd=40.0)

@@ -1288,8 +1288,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {raw_total} finding"
          f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
     for why, words in NOT_ASKED.items():  # one sentence for each reason, so that none is cut: a note keeps 300 characters
-        if why in out.not_asked:
-            note(f"no request was made for {out.not_asked[why]} case{'' if out.not_asked[why] == 1 else 's'} because {words}")
+        if (count := out.not_asked.get(why)):
+            note(f"no request was made for {count} case{'' if count == 1 else 's'} because {words.format(their='its' if count == 1 else 'their')}")
     return out
 
 
@@ -1512,7 +1512,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
                         out.held_back[why] = out.held_back.get(why, 0) + 1
                     else:
                         out.said_nothing += 1
-                elif (reason := why_not_ask(record)):
+                elif (reason := why_not_ask(record)) and not ex.approvals.has_request(record):  # a request that is open for it stays, and nobody is asked about no case
                     out.not_asked[reason] = out.not_asked.get(reason, 0) + 1
         finding.fates[fate] = finding.fates.get(fate, 0) + len(group or [item])
     except (StoreError, ValueError) as error:

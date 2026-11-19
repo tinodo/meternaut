@@ -808,6 +808,14 @@ class Approvals:
         except StoreError:
             return None
 
+    def has_request(self, case: CaseRecord) -> bool:
+        """Whether a request is open for what the case is about. A finding that the rules of asking would not ask about today, and that has one (it was asked under them, or before them and is taken back
+        at the Watch), is no case that nobody is asked about: the end note of the investigation does not count it."""
+        try:
+            return any(plan.state == "open" and about_the_same(plan, case) for plan in self.store.plans_open())
+        except StoreError:
+            return False
+
     def advise(self, case: CaseRecord, approvers: tuple[str, ...]) -> PlanRecord | None:
         """The advise plan for a finding that a person has to look at and that Meternaut may not change: it makes no change in Azure, and the person's answer is recorded.
 

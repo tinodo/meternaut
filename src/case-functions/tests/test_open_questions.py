@@ -257,7 +257,7 @@ class TheAnswer(unittest.TestCase):
         found = json.loads(text)
         self.assertEqual(found["cols"][-1], "why")
         self.assertEqual({box.handles[values[0]].name: values[-1] for values in found["rows"]}, {name: why for name, _, why in cases})
-        for sentence in (*approvals.NOT_ASKED.values(), NO_MEASUREMENT, OBJECTION, SENTENCE):
+        for sentence in (*[words.format(their=their) for words in approvals.NOT_ASKED.values() for their in ("its", "their")], NO_MEASUREMENT, OBJECTION, SENTENCE):
             self.assertNotIn(sentence, text, "the rows say why in a word and never say what to find")
 
     def test_each_open_question_is_a_row_with_a_handle_and_five_typed_values(self):

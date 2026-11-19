@@ -18,7 +18,7 @@ from cases.families import digest as plan_digest
 from test_web_support import make_decision
 
 CHEAPER = "Take the cheaper plan."
-SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that it can be switched, or the first was not sure"
+SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that the switch can be made, or the first was not sure"
 
 
 def toolbox(count: int = 1, **more) -> FakeToolbox:
@@ -117,7 +117,7 @@ class WhenAFindingIsNotAskedAbout(unittest.TestCase):
         h = go(raw, box, verdicts(("agree", (), "Fine."), ("agree", (), "Fine."), ("unsure", (), "Not sure.")))
         self.assertEqual((h.store.plans_open(), h.result.cases), ([], 3))
         self.assertEqual(h.result.not_asked, {UNPRICED: 1, UNMEASURED: 1, UNCONFIRMED: 1})
-        self.assertEqual(unasked(h), [f"no request was made for 1 case because {NOT_ASKED[UNPRICED]}", f"no request was made for 1 case because {NOT_ASKED[UNMEASURED]}",
+        self.assertEqual(unasked(h), [f"no request was made for 1 case because {NOT_ASKED[UNPRICED]}", f"no request was made for 1 case because {NOT_ASKED[UNMEASURED].format(their='its')}",
                                       f"no request was made for 1 case because {NOT_ASKED[UNCONFIRMED]}"], "one sentence for each reason: a note keeps 300 characters, and none of them is cut")
         rows = {row.resource_id.rsplit("-", 1)[1]: row.why for row in learning.OpenQuestions(h.store, h.clock()).rows()}
         self.assertEqual(rows, {"1": UNCONFIRMED, "2": UNMEASURED, "3": UNPRICED})
@@ -127,11 +127,24 @@ class WhenAFindingIsNotAskedAbout(unittest.TestCase):
         self.assertEqual((h.result.not_asked, len(h.store.plans_open())), ({}, 1))
         self.assertFalse(unasked(h))
 
+    def test_a_case_is_counted_only_when_no_request_is_open_for_its_own_resource(self):
+        h = go([switch("r1"), switch("r2")], toolbox(2), verdicts(("agree", (), "Fine."), ("unsure", (), "Not sure.")))
+        self.assertEqual([plan.resource_id.rsplit("-", 1)[1] for plan in h.store.plans_open()], ["1"], "the first is asked about")
+        self.assertEqual((h.result.not_asked, unasked(h)), ({UNCONFIRMED: 1}, [f"no request was made for 1 case because {SECOND_AI_DID_NOT_AGREE}"]), "the second is not, and a request for another resource does not hide it")
+
     def test_the_reasons_are_the_keys_of_the_words_and_the_words_say_why_in_plain_terms(self):
         self.assertEqual(tuple(NOT_ASKED), (UNPRICED, UNMEASURED, UNCONFIRMED))
-        self.assertEqual(NOT_ASKED[UNMEASURED], "nothing was measured of its use")
+        self.assertEqual(NOT_ASKED[UNMEASURED], "nothing was measured of {their} use")
         self.assertEqual(NOT_ASKED[UNCONFIRMED], SECOND_AI_DID_NOT_AGREE)
         self.assertEqual(NO_MEASUREMENT, "no measurement backs this finding; a person has to judge it", "the one flag that the rule reads")
+
+    def test_the_words_of_each_reason_are_right_for_one_case_and_for_more_than_one(self):
+        for count, their, wrong in ((1, "its", r"\b(they|them|their)\b"), (2, "their", r"\b(it|its)\b")):
+            for why, words in NOT_ASKED.items():
+                with self.subTest(count=count, why=why):
+                    self.assertNotRegex(words.format(their=their), wrong)
+        h = go([switch("r1"), switch("r2")], toolbox(2), verdicts(("unsure", (), "Not sure."), ("unsure", (), "Not sure.")))
+        self.assertEqual(unasked(h), [f"no request was made for 2 cases because {SECOND_AI_DID_NOT_AGREE}"])
 
 
 class WhenTheFindingIsJudgedAgain(unittest.TestCase):
@@ -164,7 +177,8 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
                     self.first(switch("r1"), toolbox(), agreed, old=old)
                     if old:
                         self.assertEqual(self.extras.approvals.hold_back_empty(), [], "the first Watch: the finding meets the rules, so nothing is taken back, and the request is marked")
-                    self.judged_again(second, toolbox(), skeptic)
+                    again = self.judged_again(second, toolbox(), skeptic)
+                    self.assertEqual((again.result.not_asked, unasked(again)), ({}, []), "a request is open for it, so it is no case that nobody is asked about: the end note does not count it")
                     case = self.extras.store.case_get(self.h.store.cases_recent()[0].case_id)
                     self.assertEqual(why_not_ask(case), reason, "the finding as it is judged now would not be asked about")
                     self.assertEqual(self.extras.approvals.hold_back_empty(), [], "but nobody takes back a request that was asked under these rules, and says that the rules changed")
