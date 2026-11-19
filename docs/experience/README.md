@@ -32,8 +32,8 @@ People never see the system's internal names. The table is the bridge between th
 | Recommendation, Question | **Recommendation**, **Question** |
 | Lesson | **Note**: "what I know about your resources", with a scope, an expiry, and edit and delete |
 | Evidence levels | **From Microsoft's documentation**, **Price confirmed**, **Seen on your bills**, **Proven by a change here** |
-| Price basis | **At your agreement's rates**, **At the rates on your bill**, **At list prices. I cannot see your rates.**, **At retail rates. Your partner's rates are not visible.**: beside every saving figure |
-| Scenario, expected, verified saving | **Scenario saving** (no rate or bill line behind it, said as an assumption), **Expected saving** (a bill line confirms the meter, said as based on your bill), **Verified saving** (measured after the change, said as confirmed by Cost Management) |
+| Price basis | One plain sentence beside every saving figure, such as "It is based on your bill for the last 30 days." |
+| Scenario, expected, verified saving | Kept in the records. A screen says each in that sentence and never as a label: an assumption nobody checked, what code worked out from the bill, or what Cost Management confirmed |
 | Stored quote | **Price check**; "quote" means only an offer from a partner or a billing owner |
 | Credential | **Standing permission**: an optional mode, not built; a customer grants it with its own role to an identity of its own choosing, and Meternaut holds none by default |
 | Approval, Action | **Your OK**, **Change** |

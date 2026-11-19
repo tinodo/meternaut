@@ -156,7 +156,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
 def _line(event: Event) -> Safe:
     label, kind, shape = KINDS[event.kind]
     note = fmt('<span class="quiet">{note}</span>', note=event.note) if event.note else Safe("")
-    return fmt('<li class="event">{chip}<span>{what}</span>{note}</li>', chip=chip(label, kind, shape), what=event.what, note=note)
+    return fmt("<li>{chip}<span>{what}</span>{note}</li>", chip=chip(label, kind, shape), what=event.what, note=note)
 
 
 def _tile(feed: Feed, label: str, count: int, note: str, rests_on: set[str]) -> Safe:

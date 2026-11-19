@@ -417,7 +417,7 @@ def check_card(name: str, card: dict, spec: dict, limits: dict, data: dict | Non
     if shown is not None and spec.get("displayTitle") and shown.get("text") != spec["displayTitle"]:
         add(f"manifest displayTitle {spec['displayTitle']!r} must equal the title shown on the card ({shown.get('text')!r})")
     if spec.get("money"):
-        for required in ("value", "price-basis", "saving-word"):
+        for required in ("value", "price-basis"):
             if required not in ids:
                 add(f"a card with a money figure needs element id {required!r}")
 
@@ -572,7 +572,7 @@ def _sample() -> tuple[dict, dict, dict, dict]:
             {"type": "TextBlock", "id": "headline", "text": "${headline}", "wrap": True},
             {"type": "TextBlock", "id": "value", "text": "${value}", "wrap": True},
             {"type": "TextBlock", "id": "price-basis", "text": "${priceBasis}", "wrap": True},
-            {"type": "TextBlock", "id": "saving-word", "text": "${savingWord}", "wrap": True},
+            {"type": "TextBlock", "id": "range", "text": "${range}", "wrap": True},
             {"type": "ActionSet", "id": "conversation", "actions": [btn(ASK_VERB, ASK_TITLE)]},
             {"type": "TextBlock", "id": "ai-footer", "wrap": True,
              "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}."},
@@ -641,7 +641,7 @@ def self_test() -> int:
     broken(lambda c, d, s: c["body"][1].update({"text": "see https://x.example"}), "a link in the text")
     broken(lambda c, d, s: c["body"][1].update({"text": "see [this](x)"}), "markdown link syntax")
     broken(lambda c, d, s: c["body"][1].update({"text": "write to a@b.example"}), "e-mail address")
-    broken(lambda c, d, s: c["body"].pop(4), "'saving-word'")
+    broken(lambda c, d, s: c["body"].pop(3), "'price-basis'")
     broken(lambda c, d, s: c["body"][-1].update({"text": "no label"}), "ai-footer must start")
     broken(lambda c, d, s: c.update({"version": "1.6"}), "must be set and at most")
     broken(lambda c, d, s: c.pop("fallbackText"), "fallbackText")

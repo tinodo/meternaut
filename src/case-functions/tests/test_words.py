@@ -59,7 +59,7 @@ class Rendered:
 INLINE = {"a", "span", "strong", "em", "b", "i", "small", "code", "time", "abbr", "mark", "q", "sup", "sub"}
 TEXT_TAGS = {"p": "paragraph", "li": "item", "dt": "term", "dd": "value", "th": "cell", "td": "cell", "h1": "heading", "h2": "heading", "h3": "heading", "h4": "heading",
              "figcaption": "label", "summary": "label", "caption": "label", "label": "label", "button": "button", "legend": "label", "blockquote": "quote", "option": "label"}
-LABEL_CLASSES = {"chips", "notice-title", "eyebrow", "brand", "who", "skip", "k", "v", "mn-label", "meta", "event"}  # a label is a short noun phrase: it needs no full stop; a line of the History is a chip and a title, and its one sentence is the quiet part under it
+LABEL_CLASSES = {"chips", "notice-title", "eyebrow", "brand", "who", "skip", "k", "v", "mn-label", "meta"}  # a label is a short noun phrase: it needs no full stop
 SPAN_BLOCKS = {"t": "label", "m": "paragraph", "quiet": "paragraph", "lab": "label", "y": "label", "mo": "label", "chips": "label"}  # the parts of a row of a list, which are lines of their own
 BUTTON_CLASSES = {"btn", "mn-button"}
 SKIPPED = {"style", "script", "title"}
@@ -105,6 +105,8 @@ class Reader(HTMLParser):
         if tag == "br" and self.open:
             self.open[-1]["parts"].append(GAP)
         span = next((SPAN_BLOCKS[name] for name in classes if name in SPAN_BLOCKS), "") if tag == "span" else ""
+        if tag == "span" and "chip" in classes and self.open:
+            self.open[-1]["chipped"] = True  # a line that starts with a chip is a chip and a title, and its one sentence is the quiet part under it
         if tag in TEXT_TAGS or (tag == "a" and classes & BUTTON_CLASSES) or span:
             self.open.append({"tag": tag, "kind": span or self._kind_of(tag, classes), "parts": [], "details": self.details > 0, "region": self.region[-1], "inside": {"a": 0, "time": 0},
                               "loose": False, "linked": False, "timed": False, "inner": 0, "row": self.row if tag in ("th", "td") else 0})
@@ -142,6 +144,8 @@ class Reader(HTMLParser):
             elif not found["loose"] and found["timed"]:
                 kind = "label"
             elif " · " in text:
+                kind = "label"
+            elif found.get("chipped") and kind == "item":
                 kind = "label"
         if found["tag"] == "span" and self.open:
             self.open[-1]["parts"].append(GAP)

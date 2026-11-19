@@ -113,35 +113,10 @@
           "spacing": "None"
         },
         {
-          "type": "ColumnSet",
-          "columns": [
-            {
-              "type": "Column",
-              "width": "auto",
-              "items": [
-                {
-                  "type": "TextBlock",
-                  "text": "${priceBasis}",
-                  "wrap": true,
-                  "id": "price-basis",
-                  "weight": "Bolder"
-                }
-              ]
-            },
-            {
-              "type": "Column",
-              "width": "auto",
-              "items": [
-                {
-                  "type": "TextBlock",
-                  "text": "${savingWord}",
-                  "wrap": true,
-                  "id": "saving-word",
-                  "weight": "Bolder"
-                }
-              ]
-            }
-          ]
+          "type": "TextBlock",
+          "text": "${priceBasis}",
+          "wrap": true,
+          "id": "price-basis"
         }
       ]
     },

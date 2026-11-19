@@ -32,7 +32,7 @@ This document tests the **experience layer**: the cards, pages, letters and repo
 | Inputs | A root-level input where the manifest does not allow one; no label; a required input without an error message |
 | Accessibility | A TextBlock without `wrap`, an image without alt text, a toggle without a tooltip; a dash between two numbers or a middot in card text or sample data |
 | AI, reason and person | No `ai-label` showing "(AI)"; a footer not starting "Written by an AI", or a `fallbackText` without it; a footer that is not the last element, breaks across lines or lacks the reason or "Talk to a person" with its contact; a `talk-to-a-person` or `why-you-get-this` element; no "Ask or tell" (verb `ask`), or an Explain, Challenge or human verb |
-| Money cards | A card showing money without `value`, `price-basis` and `saving-word` (a plain sentence) |
+| Money cards | A card showing money without `value` and `price-basis` (one plain sentence that says what the figure rests on) |
 | One link | A URL, markdown link or e-mail address in a template; an `Action.OpenUrl` that is not `${pageUrl}`; a `fallbackText` without `${pageUrl}` |
 | No urgency | Wording such as "act now", "last chance" or "!!" |
 | Sample data | No `"_invented": true`; a sender name not ending "(AI)"; no `contact` (a name and an address in brackets, as plain text); a recipient, address or link key; a link, markdown link or e-mail address in a value other than the contact; no `notificationText`, or one over 120 characters; two scenarios sharing a request id |
