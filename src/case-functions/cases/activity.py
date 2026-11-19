@@ -149,8 +149,8 @@ def looked_note(now: int, new: int, total: int) -> str:
     those runs and this one looked at in all."""
     days = f"{LOOKED_DAYS} days"
     first = ("This run looked at no resources" if not now else f"This run looked at 1 resource, {'for' if new else 'not for'} the first time in {days}" if now == 1
-             else f"This run looked at {now} resources, {'all' if new == now else 'none' if not new else new} of them for the first time in {days}")
-    return f"{first}." + (f" In {days} Meternaut has looked at {total} resource{'' if total == 1 else 's'}." if total > now else "")
+             else f"This run looked at {now:,} resources, {'all' if new == now else 'none' if not new else format(new, ',')} of them for the first time in {days}")
+    return f"{first}." + (f" In {days} Meternaut has looked at {total:,} resource{'' if total == 1 else 's'}." if total > now else "")
 
 
 def entry_of(finding: "Finding", names: frozenset[str]) -> dict:

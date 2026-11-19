@@ -188,6 +188,7 @@ class TheNoteOfARun(unittest.TestCase):
         self.assertEqual(words(2, 1, 9), "This run looked at 2 resources, 1 of them for the first time in 21 days. In 21 days Meternaut has looked at 9 resources.")
         self.assertEqual(words(19, 19, 19), "This run looked at 19 resources, all of them for the first time in 21 days.")
         self.assertEqual(words(19, 0, 30), "This run looked at 19 resources, none of them for the first time in 21 days. In 21 days Meternaut has looked at 30 resources.")
+        self.assertEqual(words(1234, 1000, 5678), "This run looked at 1,234 resources, 1,000 of them for the first time in 21 days. In 21 days Meternaut has looked at 5,678 resources.", "thousands are written with a separator")
 
     def test_every_sentence_is_whole_and_short_with_no_id_and_no_stray_space(self):
         for numbers in ((0, 0, 52), (1, 1, 1), (1, 0, 5), (19, 14, 52), (19, 19, 19), (19, 0, 30), (2, 1, 3)):
