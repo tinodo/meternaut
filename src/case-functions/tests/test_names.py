@@ -75,6 +75,7 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         case, plan = _firewall()
         self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment.")
         self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
+        self.assertEqual(brief_of(with_words(case, form="mixed"), plan).asked, "You are asked whether it is worth switching the firewall to other prices of the same service.", "when the figure rests on several prices")
         for action, said in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
             with self.subTest(action=action):
                 self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether it is worth {said}.")
@@ -84,10 +85,11 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         zero = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 0.0}, "metricDaysWithData": {"M": 28}})
         used = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 4.0}, "metricDaysWithData": {"M": 28}})
         advisor = make_advice_case(advice={"problem": "Buy a reservation", "solution": "Buy it"}, detector="advisor-cost")
-        for label, case, said in (("a deletion that a measured zero backs", zero, "deleting the disk"), ("a question of use", used, "checking whether the disk is still used"),
-                                  ("a look", _ai_account(), "a closer look at the AI services account"), ("a recommendation of Advisor", advisor, "acting on this recommendation of Azure Advisor")):
+        for label, case, said in (("a deletion that a measured zero backs", zero, "You are asked whether it is worth deleting the disk."), ("a question of use", used, "You are asked to find out whether the disk is still used."),
+                                  ("a look", _ai_account(), "You are asked whether it is worth a closer look at the AI services account."),
+                                  ("a recommendation of Advisor", advisor, "You are asked whether it is worth acting on this recommendation of Azure Advisor.")):
             with self.subTest(label):
-                self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, f"You are asked whether it is worth {said}.")
+                self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, said)
         group, plan = _group_finding()
         self.assertEqual(brief_of(group, plan).asked, "You are asked whether it is worth a closer look at these 50 private endpoints.")
 

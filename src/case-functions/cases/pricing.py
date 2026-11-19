@@ -453,7 +453,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "to", "on", "unit", "days", "span", "away", "offer", "list")
+    keys = ("form", "from", "on", "unit", "days", "span", "away", "offer", "list") + (() if prices[0].get("form") == "alternative" else ("to",))  # the `to` of a switch is a name, which one price can have twice
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
@@ -466,7 +466,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     lives, uneven = [price["life"] for price in prices if "life" in price], sum(price.get("uneven") or 0 for price in prices)
     price = {**total, "lines": sum(price.get("lines") or 0 for price in prices), "resources": len(prices), "members": members,
              **({key: prices[0][key] for key in keys if key in prices[0]} if alike else {"form": "mixed"}), **({"life": min(lives)} if rated and lives else {}), **({"uneven": uneven} if uneven else {})}
-    for key in ("ratio", "now"):  # what each resource carries of its own is kept only when it is the same for all
+    for key in ("ratio", "now", "to"):  # what each resource carries of its own is kept only when it is the same for all
         if alike and key in prices[0] and len({str(item.get(key)) for item in prices}) == 1:
             price[key] = prices[0][key]
     if price["form"] == "mixed" and (switched := sum(_switched(item) for item in prices)):
@@ -521,6 +521,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
     """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what a form that is not the bill alone assumes and whose assumption it is
     (the AI's, which Meternaut did not check), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
     many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
+    uneven = _whole(found.get("uneven"))
     who = f"{many} of the {members} resources" if members and members > many else ("this resource" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
     when = _when(found)
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
@@ -554,15 +555,14 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
         text += " Meternaut did not check whether " + ("this resource can be switched to it, or whether it has what this resource needs." if many == 1
                                                       else "these resources can be switched to it, or whether it has what they need.")
     elif form == "mixed":
-        text = paid + " Each of them has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
+        text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
         text += " Meternaut did not check whether the resources can be switched to the alternatives, or whether those have what the resources need." if (_whole(found.get("switched")) or 0) > 0 else ""
     else:
-        text = paid + " That comes from your bill." + ("" if _firm(found) else " Its cost is uneven or has changed, so the figure is less certain.")
+        text = paid + " That comes from your bill." + ("" if _firm(found) or uneven else " Its cost has changed over the days that the figure counts, so the figure is less certain.")
     if high > low:
         text += f" The saving could be anywhere from {money(low)} to {money(high)} a month, and Meternaut counts the low end."
-    uneven = _whole(found.get("uneven"))
     if uneven:
-        text += f" {_count(uneven, 'charge')} {'is' if uneven == 1 else 'are'} uneven from day to day."
+        text += f" {_count(uneven, 'charge')} {'is' if uneven == 1 else 'are'} uneven from day to day{', so the figure is less certain' if form == 'none' else ''}."
     skipped = _whole(found.get("skipped"))
     if skipped:
         text += f" Meternaut could not count {_count(skipped, 'more thing')} that the AI named."
@@ -599,6 +599,12 @@ def ends(facts: object) -> tuple[str, str]:
     names, a figure that is not a switch, or a word that is not plain). Never text of the estate: the platform's words, which passed the check of the tools when the figure was made."""
     found = _change(facts).get("price")
     return (_read(found.get("now")), _read(found.get("to"))) if isinstance(found, Mapping) and found.get("form") == "alternative" else ("", "")
+
+
+def several(facts: object) -> bool:
+    """Whether the figure of a switch rests on more than one price (its form is a mix), so that no one name is its target."""
+    found = _change(facts).get("price")
+    return isinstance(found, Mapping) and found.get("form") == "mixed"
 
 
 def point(facts: object, cost: float | None = None) -> float | None:

@@ -223,6 +223,7 @@ ASKED = "You are asked whether it is worth {what}."
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
+OTHER_PRICES = " to other prices of the same service"  # and when its figure rests on more than one price
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
@@ -983,8 +984,8 @@ def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str
     if advice_of(case) is not None:
         return ASKED.format(what="acting on this recommendation of Azure Advisor")
     if still_used(case):
-        return ASKED.format(what=f"checking whether {thing} is still used")
-    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE))
+        return f"You are asked to find out whether {thing} is still used."
+    what = ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICES if case is not None and pricing.several(case.facts) else OTHER_PRICE))
     found = DETECTOR_STATE.get(case.detector) if case is not None and together is None else None
     return ASKED.format(what=f"{what}, {found[2]}" if found else what)
 

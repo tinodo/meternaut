@@ -524,7 +524,7 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         found = pricing.saved(facts)
         self.assertEqual((pricing.point(facts), found.high, found.level), (30.0, 60.0, pricing.SCENARIO))
         self.assertEqual(found.basis, "Counting a typical day, this resource paid about $30.00 a month for what the change would remove. That comes from your bill. "
-                                      "Its cost is uneven or has changed, so the figure is less certain. The saving could be anywhere from $30.00 to $60.00 a month, and Meternaut counts the low end.")
+                                      "Its cost has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $30.00 to $60.00 a month, and Meternaut counts the low end.")
 
     def test_the_digest_of_a_group_is_the_sum_of_the_rates_of_its_resources_and_the_youngest_life(self):
         change = pricing.parse(block("remove", effect("r1", ("m1",)), effect("r2", ("m2",))))
@@ -575,7 +575,7 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         facts, found = self.figure(row)
         self.assertEqual((pricing.point(facts), found.level), (315.0, pricing.SCENARIO), "315 is under three quarters of 510")
         self.assertEqual(found.basis, "Counting the lower of the last 7 days and the time since it began, this resource paid about $315 a month for what the change would remove. That comes from your bill. "
-                                      "Its cost is uneven or has changed, so the figure is less certain. The saving could be anywhere from $315 to $510 a month, and Meternaut counts the low end.")
+                                      "Its cost has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $315 to $510 a month, and Meternaut counts the low end.")
 
     def test_a_figure_is_expected_only_when_it_follows_from_the_bill_alone(self):
         def found(**more):
@@ -906,7 +906,7 @@ class TheAlternative(unittest.TestCase):
 
     def test_a_digest_that_holds_a_number_that_is_no_number_or_a_handle_that_is_no_handle_is_read_as_if_it_held_none_and_never_puts_it_into_a_sentence(self):
         good = self.facts()[pricing.KEY]
-        for key, value in (("list", "<b>x</b>"), ("list", float("nan")), ("list", -1.0), ("ratio", "0.8"), ("ratio", 0.0), ("ratio", float("inf")), ("offer", "p1; drop"), ("offer", 5)):
+        for key, value in (("list", "<b>x</b>"), ("list", float("nan")), ("list", -1.0), ("ratio", "0.8"), ("ratio", 0.0), ("ratio", float("inf")), ("ratio", 1e307), ("offer", "p1; drop"), ("offer", 5)):
             with self.subTest(key=key, value=value):
                 without = {name: item for name, item in good["price"].items() if name != key}
                 basis = pricing.saved({pricing.KEY: {**good, "price": {**good["price"], key: value}}}).basis
@@ -991,6 +991,22 @@ class TheAlternative(unittest.TestCase):
         self.assertNotIn("afterUsd", pricing.combine([digests[0], old], 2)["price"])
         self.assertNotIn("would cost", pricing.saved({pricing.KEY: pricing.combine([digests[0], old], 2)}).basis)
 
+    def test_one_price_that_carries_two_names_because_the_bills_differ_is_one_alternative_and_so_is_an_old_digest_beside_a_new_one_and_no_name_is_kept_that_is_not_the_same_for_all(self):
+        other = (*COMPUTE[:2], "Other Hours", *COMPUTE[3:])
+        meters = {"m1": billed_units(usd=60.0, quantity=600.0, scope="r1", words=COMPUTE), "m2": billed_units(usd=60.0, quantity=600.0, scope="r2", words=other)}
+        box = shown(meters=meters, prices=LISTED, retail={"m1": 0.125, "m2": 0.125}, offers={"m1": {"p1"}, "m2": {"p1"}})
+        change = pricing.parse(block("switch", self.switched(1), self.switched(2)))
+        found = pricing.price(change, ("r1", "r2"), box, {"r1": 60.0, "r2": 60.0}, None, lambda text: text)
+        digests = [pricing.digest(change, found, handle) for handle in ("r1", "r2")]
+        self.assertEqual([item["price"]["to"] for item in digests], ["Small", "Fixed Hours"], "the same price, named by its SKU for the bill that says Fixed Hours and by its meter for the other")
+        old = {**digests[1], "price": {key: value for key, value in digests[1]["price"].items() if key not in ("to", "now")}}
+        for second in (digests[1], old):
+            joined = pricing.combine([digests[0], second], 2)["price"]
+            self.assertEqual((joined["form"], joined["offer"], "to" in joined, "now" in joined), ("alternative", "p1", False, False))
+            self.assertIn("A switch to another price of the same service", pricing.saved({pricing.KEY: pricing.combine([digests[0], second], 2)}).basis)
+        same = pricing.combine([digests[0], digests[0]], 2)["price"]
+        self.assertEqual((same["to"], same["now"]), ("Small", "Fixed Hours"), "a name that is the same for all is kept")
+
     def test_the_sentence_that_the_alternative_has_not_been_checked_for_features_is_on_the_basis_of_every_figure_that_rests_on_one_whatever_the_form_of_the_group(self):
         def assumed(number, low):
             return effect(f"r{number}", (f"m{number}",), {"form": "assumed", "low": low, "high": 0.9})
@@ -1002,7 +1018,7 @@ class TheAlternative(unittest.TestCase):
                 self.assertEqual((joined["form"], joined.get("switched")), ("mixed", switched))
                 basis = pricing.saved({pricing.KEY: {"action": "switch", "price": joined}}).basis
                 self.assertEqual("Meternaut did not check whether the resources can be switched to the alternatives" in basis, switched is not None, basis)
-                self.assertIn("Each of them has its own rule for what would remain.", basis)
+                self.assertIn("Each part of it has its own rule for what would remain.", basis)
 
     def test_a_group_of_resources_that_are_each_a_mix_still_counts_the_bill_lines_that_rest_on_an_alternative(self):
         second = ("Example Compute", "Standard Tier", "Other Hours", "OnDemand", "Usage", "1 Hour")
@@ -1052,12 +1068,15 @@ class TheAlternative(unittest.TestCase):
         change = pricing.parse(switch())
         for text, kept in ((phrase, False), (forty, True), (forty_one, False), ("One Two Three Four Five Six", True), ("One Two Three Four Five Six Seven", False), ("Standard_D2", False),
                            ("Basic  Tier", False), ("Basic Tier ", False), (" Basic", False), ("Basic-Tier", False), ("Basic\nTier", False), ("Tier 2", True), ("D2", True), ("", False), (5, False), (None, False)):
-            with self.subTest(text=text):  # the meter of the line has a plain name of its own, so the switch is priced and only the other words are in question
-                box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, prices={"p1": dataclasses.replace(LISTED["p1"], product=text, sku=text, meter="Light Hours")},
-                            retail={"m1": 0.125}, offers={"m1": {"p1"}})
-                found = pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda word: word)
-                (one,) = pricing.view(change, found, box.meters, lambda word: word, 6, ())["effects"]
-                self.assertEqual(one["alternatives"][0]["words"], [text if kept else "other", text if kept else "other", "Light Hours"])
+            for field, place in (("product", 0), ("sku", 1), ("meter", 2)):
+                with self.subTest(text=text, field=field):  # the other two words are plain, so the switch is priced and only this word is in question
+                    box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, prices={"p1": dataclasses.replace(LISTED["p1"], **{"product": "Basic Tier", "sku": "Small", "meter": "Light Hours", field: text})},
+                                retail={"m1": 0.125}, offers={"m1": {"p1"}})
+                    found = pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda word: word)
+                    (one,) = pricing.view(change, found, box.meters, lambda word: word, 6, ())["effects"]
+                    words = ["Basic Tier", "Small", "Light Hours"]
+                    words[place] = text if kept else "other"
+                    self.assertEqual(one["alternatives"][0]["words"], words)
 
     def test_a_switch_whose_alternative_cannot_be_named_in_plain_words_is_not_priced_because_a_request_that_cannot_name_its_target_is_no_request(self):
         change = pricing.parse(switch())
@@ -1229,11 +1248,14 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         self.assertEqual(days(weekUsd=60.0, steadyUsd=20.0), "Counting a typical day,")
         self.assertTrue(basis().startswith("Over the last 30 days this resource paid about $60.00 for what the change would remove."), "a figure made before the rates counts the 30 days, as it said")
 
-    def test_a_case_that_rests_on_uneven_charges_says_so(self):
-        found = pricing.saved({pricing.KEY: {"action": "remove", "price": {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "weekUsd": 60.0, "lines": 3, "resources": 1, "form": "none", "uneven": 1}}})
-        self.assertTrue(found.basis.endswith(" 1 charge is uneven from day to day."), found.basis)
-        found = pricing.saved({pricing.KEY: {"action": "remove", "price": {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "weekUsd": 60.0, "lines": 3, "resources": 1, "form": "none", "uneven": 2}}})
-        self.assertTrue(found.basis.endswith(" 2 charges are uneven from day to day."), found.basis)
+    def test_a_case_that_rests_on_uneven_charges_says_so_once_and_says_that_the_figure_is_less_certain_when_it_rests_on_the_bill_alone(self):
+        price = {"lowUsd": 60.0, "highUsd": 60.0, "billUsd": 60.0, "weekUsd": 60.0, "lines": 3, "resources": 1, "form": "none"}
+        for uneven, said in ((1, " 1 charge is uneven from day to day, so the figure is less certain."), (2, " 2 charges are uneven from day to day, so the figure is less certain.")):
+            found = pricing.saved({pricing.KEY: {"action": "remove", "price": {**price, "uneven": uneven}}})
+            self.assertTrue(found.basis.endswith(said), found.basis)
+            self.assertNotIn("Its cost has changed", found.basis, "the uneven charge is said once")
+        found = pricing.saved({pricing.KEY: {"action": "reduce", "price": {**price, "form": "assumed", "away": [0.4, 0.7], "uneven": 1}}})
+        self.assertTrue(found.basis.endswith(" 1 charge is uneven from day to day."), "the form that the AI assumed is a scenario anyway: " + found.basis)
 
     def test_a_range_is_said_to_be_one_and_the_point_is_the_low_end(self):
         found = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7}))))
@@ -1257,7 +1279,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         joined = pricing.combine([pricing.digest(change, found, handle, None) for handle in ("r1", "r2", "r3")], 3)
         saved = pricing.saved({pricing.KEY: joined})
         self.assertEqual((saved.low, saved.level), (52.5, pricing.SCENARIO))
-        self.assertEqual(saved.basis, "Over the last 7 days, 2 of the 3 resources paid about $90.00 a month for what the change would shrink. Each of them has its own rule for what would remain. "
+        self.assertEqual(saved.basis, "Over the last 7 days, 2 of the 3 resources paid about $90.00 a month for what the change would shrink. Each part of it has its own rule for what would remain. "
                                       "Part of it rests on the AI's own proposals, and Meternaut did not check them.")
 
     def test_a_group_of_the_same_rule_with_the_same_numbers_keeps_the_rule(self):

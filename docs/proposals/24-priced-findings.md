@@ -124,7 +124,7 @@ The low end of a saving is worked out on the lowest of the three rates, the high
 
 ### The level follows from the bill alone
 
-A removal is Expected only when it follows from the bill alone: no line of the figure is uneven (`UNEVEN`), and the lowest of the rates that the digest holds is at least three quarters of the highest (`DIFFER`). When a line is uneven or the rates differ by more, a removal is a Scenario, like every other form, and the sentence says why in plain words: "a Scenario and not Expected, because the rate is uneven or has changed". A figure made before the rates holds none to differ and stays as it was.
+A removal is Expected only when it follows from the bill alone: no line of the figure is uneven (`UNEVEN`), and the lowest of the rates that the digest holds is at least three quarters of the highest (`DIFFER`). When a line is uneven or the rates differ by more, a removal is a Scenario, like every other form, and the sentence says why in plain words: "Its cost has changed over the days that the figure counts, so the figure is less certain", or "1 charge is uneven from day to day, so the figure is less certain". A figure made before the rates holds none to differ and stays as it was.
 
 ### The cap, on the same basis
 
