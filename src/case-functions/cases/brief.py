@@ -802,8 +802,8 @@ def stated_saving(case: CaseRecord) -> float | None:
 def why_not_ask(case: CaseRecord) -> str | None:
     """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. A recommendation of Azure Advisor (its own case, made by code) that states
     no saving is held back (NO_FIGURE): none in dollars, or an alternative of a purchase that saves more, whose figure is not counted; one that cannot say what to look at keeps its own words
-    (says_nothing), and one that carries the finding of an older check about the same resource (`also` in its digest: the check's lead is left to this case) is asked about as ever, as the check's own
-    rules decide. A finding of the investigation is held back when code priced no saving for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read
+    (says_nothing), and one that carries the finding of an older check about the same resource (`also` in its digest: the check's lead is left to this case) is asked about as before, because nothing else
+    would ask about the resource. A finding of the investigation is held back when code priced no saving for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read
     (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of the price list (pricing.is_switch), unless the second AI agreed and the first was sure enough
     (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must be sure. The older detectors state their own figure or none, and a person is
     asked about them as ever."""

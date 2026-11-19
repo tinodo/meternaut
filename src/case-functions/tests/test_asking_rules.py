@@ -338,7 +338,7 @@ class WhenAnAdvisorRecommendationCountsNoSaving(unittest.TestCase):
                 watched = fx.Watched(tenant).run()
                 (case,) = [c for c in watched.store.cases_recent() if c.resource_id.lower().endswith("/disks/disk-0")]
                 self.assertEqual((case.detector, case.facts["advisor"]["also"], case.facts["advisor"]["usd"], why_not_ask(case)), (ADVISOR, ["orphan-managed-disk"], 0.0, None),
-                                 "the lead of the older check is left to this case, so the check's own rules decide: nothing holds it back")
+                                 "the lead of the older check is left to this case, and nothing else would ask about the resource: nothing holds it back")
                 (plan,) = [p for p in watched.store.plans_open() if p.case_id == case.case_id]
                 self.assertIsNone(plan.saving_usd_month, "it states no saving, as a request of an older check may")
                 self.assertEqual(watched.extras.approvals.hold_back_empty(), [])
