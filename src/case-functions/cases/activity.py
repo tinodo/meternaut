@@ -30,6 +30,7 @@ MAX_KIND = 80  # a kind of resource that is longer than this is left out
 MAX_KINDS = 20  # the kinds of each list that a record keeps
 MAX_FINDINGS = 16  # the findings that a record keeps when it has beats: those of all of them can be more than a row of the store takes, and `more` counts the rest
 LOOKED_DAYS = 21  # a resource whose picture a run of these days read, and a kind that its tools touched, count as looked at: the seeds of a beat and the last beat go to what no run of these days looked at first
+UNREADABLE = "The earlier investigations could not be read, so this run took the dearest resources first."  # the note of a run whose memory (the records of the last days) could not be read
 MAX_PROFILED = 300  # the hashes of the pictures that a record keeps: a run at the budgets of today reads about 160, and 300 are about 4,500 characters of a row of 30,000
 BEAT_PHRASES = 3  # what a beat said that it examined, at most as many phrases as this
 NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word that may be a resource's name: a full stop or a dash ends it unless a letter follows

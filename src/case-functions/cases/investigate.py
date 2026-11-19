@@ -879,7 +879,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
            modelSkeptic=st.foundry_model_skeptic, maxCalls=len(plan) * st.investigate_beat_calls if focused else st.investigate_max_calls, maxSeconds=int(budget),
            **({"beats": len(plan)} if focused else {}))
     if remembered is None:
-        note("The earlier investigations could not be read, so this run took the dearest resources first.")
+        note(activity.UNREADABLE)
 
     def finished(ok: bool, **fields: object) -> None:
         out.seconds = int(s.monotonic() - began)

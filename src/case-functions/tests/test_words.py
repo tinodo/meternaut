@@ -15,7 +15,7 @@ import unittest
 from html.parser import HTMLParser
 from unittest import mock
 
-from test_web_support import NOW, SUB, TINO, VM, Console, at, make_advice, make_advice_case, make_case, make_plan
+from test_web_support import NOW, SUB, TINO, VM, Console, at, make_advice, make_advice_case, make_case, make_plan, make_run
 
 import support  # noqa: F401  (puts the app on the path)
 from cases import brief as brief_mod
@@ -355,6 +355,23 @@ def _savings() -> Rendered:
     return Rendered("Savings page", "page", blocks_of_html(reply.text))
 
 
+def _run_notes() -> Rendered:
+    """The notes of a run that say what it looked at, as the page of the runs shows them (/ops/runs): none, one and many resources looked at, the backfill of the first run after the records from
+    before the hashes, and a memory that could not be read. The blocks are the items of the notes of the page, so that the words that a person reads are the ones that are held to the style."""
+    from cases import activity
+
+    notes = (activity.looked_note(0, 0, 52), activity.looked_note(1, 1, 1), activity.looked_note(19, 14, 52), activity.looked_note(5, 5, 5, 5), activity.UNREADABLE)
+    console = Console()
+    console.store.run_put(make_run(run_id="run00001", started_at=at(minutes=-5), notes=notes))
+    reply = console.get("/ops/runs")
+    if reply.status != 200:
+        raise AssertionError(f"the page of the runs answered {reply.status}")
+    shown = tuple(block for block in blocks_of_html(reply.text) if block.text in notes)
+    if [block.text for block in shown] != list(notes):
+        raise AssertionError("the page of the runs does not show the notes of the run as they are")
+    return Rendered("Run notes, what a run looked at", "page", shown)
+
+
 @functools.lru_cache(maxsize=1)
 def cases() -> dict[str, Rendered]:
     """The typical pages and messages, by name, rendered with the test fakes. The order is the order of the gallery."""
@@ -387,6 +404,7 @@ def cases() -> dict[str, Rendered]:
     found["Teams card, change"] = Rendered("Teams card, change", "card", blocks_of_card(_card_of(make_case(plan_id="plan0001"), make_plan())))
     found["Decisions page"] = _decisions()
     found["Savings page"] = _savings()
+    found["Run notes, what a run looked at"] = _run_notes()
     return found
 
 
