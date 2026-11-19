@@ -17,13 +17,8 @@
 #   Basic   the built package is posted to the deployment site's zip deployment, with curl, as the runner did
 # (The usage app, the other one published here, was removed on 2026-11-07.)
 #
-# The sources reach the container in one of two ways, and the workflow chooses (the input `sources` of the Hub). By request (the default): the file cases-source.zip is in the secret volume, as above. By fetch
-# (PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY and PUBLISH_SOURCES_DIGEST are set and there is no cases-source.zip): the container downloads the archive of that commit from GitHub, with curl, takes only
-# function_app.py and the package cases/ of src/case-functions out of it (never the tests, never anything else), and holds their digest (source-digest.py in the secret volume, --as-held) against the digest that the
-# workflow made over its own checkout. Integrity does not rest on GitHub: a digest that differs, an archive that cannot be opened, a path that leaves the folder or a missing file stops the run BEFORE the sign-in,
-# and nothing is published. requirements.txt, the lock with the hash of every library, and host.json are not covered by that digest, so they never come from the archive: they ride in the secret volume, from the
-# workflow's checkout. The files are not stripped of their comments here (the strip only made the request small enough, docs/proposals/27-package-without-comments.md): they are published as the repository holds them,
-# and that is the digest that the app works out over the files that it runs from (cases/release.py), so the digest that the workflow records for this way is the as-held one.
+# The sources come in the secret volume (cases-source.zip) or, with the three PUBLISH_SOURCES_* variables and no such file, by fetch: the container downloads the archive of that commit from GitHub, and stops before
+# the sign-in unless the digest of the app's files in it (source-digest.py --as-held) is the workflow's own; the lock and the host file come in the volume (docs/proposals/07-private-by-default.md).
 #
 # What it reads, all from the environment (none of it is a secret, except the ones that say so):
 #   PUBLISH_KIND            cases (the only app that is published here now)
@@ -36,13 +31,10 @@
 #   AZURE_FEDERATED_TOKEN   THE ONE SECRET: the OpenID Connect token that GitHub issued to the run (audience api://AzureADTokenExchange, valid for five minutes), sent as a secure environment
 #                           variable. It is read once at the start and taken out of the environment, so that nothing that runs below inherits it, and it is never printed: it is handed to the
 #                           az login of the deploy identity and to nothing else
-#   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published. Not read when the sources are fetched
+#   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published
 #   PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY, PUBLISH_SOURCES_DIGEST
-#                           the fetch: a commit (40 hexadecimal digits), the repository that holds it (owner/name) and the digest of the app's files at that commit (64 hexadecimal digits, as
-#                           `python3 tools/source-digest.py src/case-functions --as-held` works it out). All three or none of them; with them there is no cases-source.zip, and the volume holds
-#                           source-digest.py, requirements.txt and host.json instead
-#   GITHUB_TOKEN            OPTIONAL, A SECRET: the token of the run, for a repository that is private. It is read once and taken out of the environment, goes to curl on standard input and nowhere else, and
-#                           is never printed. Without it the request is anonymous, which a public repository allows
+#                           a commit (40 hex digits), owner/name and the digest of the app's files at it (64): all three or none; the volume then holds source-digest.py, requirements.txt, host.json
+#   GITHUB_TOKEN            OPTIONAL SECRET: the token of the run, for a private repository; handed to curl on standard input and to nothing else
 #   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the log can be read whole
 #   PUBLISH_VOLUME          where the secret volume is mounted (default /mnt/op); PUBLISH_TMP where the work folder is made (default /tmp): both only for the tests
 #
@@ -61,7 +53,7 @@ tmp_root=${PUBLISH_TMP:-/tmp}
 federated_token=${AZURE_FEDERATED_TOKEN:-}
 unset AZURE_FEDERATED_TOKEN
 arm_token=""
-# The token of the run for GitHub, when the repository is private, is treated the same way: it is used for one thing, the download of the sources, and goes to curl on standard input.
+# The token of the run for GitHub (a private repository) is read once and taken out of the environment too: it goes to curl on standard input and nowhere else.
 github_token=${GITHUB_TOKEN:-}
 unset GITHUB_TOKEN
 
@@ -103,9 +95,7 @@ quote() {
   if [ -n "$arm_token" ]; then
     text=${text//"$arm_token"/<token>}
   fi
-  if [ -n "$github_token" ]; then
-    text=${text//"$github_token"/<token>}
-  fi
+  text=${text//"${github_token:-<no token>}"/<token>}
   printf '%s\n' "$text" | tr -c '[:print:]\n' ' ' \
     | sed -E 's|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*|<token hidden>|g; s|([Bb]earer +)[A-Za-z0-9._~+/=-]{20,}|\1<token hidden>|g' \
     | cut -c1-160 | head -n "$2" | sed -E 's|^|  |'
@@ -126,8 +116,6 @@ group_name='^[A-Za-z0-9._()-]{1,90}$'
 number='^[0-9]{1,9}$'
 seconds='^[0-9]{1,2}$'
 token_characters='^[A-Za-z0-9._~+/=-]+$'
-commit_id='^[0-9a-f]{40}$'
-digest_id='^[0-9a-f]{64}$'
 repository_name='^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$'
 
 # A token is 20 to 8,000 of those characters (a repetition count of that size is not one that every regular expression library of bash takes, so the length is counted apart).
@@ -159,7 +147,6 @@ client_id=${PUBLISH_CLIENT_ID:-}
 tenant_id=${PUBLISH_TENANT_ID:-}
 [[ $tenant_id =~ $guid ]] || refuse "PUBLISH_TENANT_ID is not a tenant id"
 looks_like_a_token "$federated_token" || refuse "AZURE_FEDERATED_TOKEN is not set, or is not made of the characters of a token"
-# The sources come by request (cases-source.zip in the volume) or by fetch (the three variables, and no such file): all three variables or none.
 sent_bytes=${PUBLISH_FILE_BYTES:-}
 sources_repository=${PUBLISH_SOURCES_REPOSITORY:-}
 sources_commit=${PUBLISH_SOURCES_COMMIT:-}
@@ -167,9 +154,9 @@ sources_digest=${PUBLISH_SOURCES_DIGEST:-}
 fetch=0
 if [ -n "$sources_repository$sources_commit$sources_digest" ]; then
   fetch=1
-  [[ $sources_repository =~ $repository_name && ${sources_repository#*/} != . && ${sources_repository#*/} != .. ]] || refuse "PUBLISH_SOURCES_REPOSITORY is not the name of a repository (owner/name)"
-  [[ $sources_commit =~ $commit_id ]] || refuse "PUBLISH_SOURCES_COMMIT is not a commit (40 hexadecimal digits)"
-  [[ $sources_digest =~ $digest_id ]] || refuse "PUBLISH_SOURCES_DIGEST is not a SHA-256 digest (64 hexadecimal digits)"
+  [[ $sources_repository =~ $repository_name && ${sources_repository#*/} != . && ${sources_repository#*/} != .. ]] || refuse "PUBLISH_SOURCES_REPOSITORY is not owner/name"
+  [[ $sources_commit =~ ^[0-9a-f]{40}$ ]] || refuse "PUBLISH_SOURCES_COMMIT is not 40 hexadecimal digits"
+  [[ $sources_digest =~ ^[0-9a-f]{64}$ ]] || refuse "PUBLISH_SOURCES_DIGEST is not 64 hexadecimal digits"
 else
   [[ $sent_bytes =~ $number ]] || refuse "PUBLISH_FILE_BYTES is not the size of the file that was sent"
 fi
@@ -178,7 +165,7 @@ hold=${PUBLISH_HOLD_SECONDS:-20}
 main_file="$volume/cases-source.zip"
 [ -f "$volume/build-function-app.sh" ] || refuse "build-function-app.sh is not in the secret volume"
 if [ "$fetch" = 1 ]; then
-  [ ! -e "$main_file" ] || refuse "the sources come in the secret volume or by fetch, not both"
+  [ ! -e "$main_file" ] || refuse "the sources come in the volume or by fetch, not both"
   for file in source-digest.py requirements.txt host.json; do
     [ -f "$volume/$file" ] || refuse "$file is not in the secret volume"
   done
@@ -206,7 +193,7 @@ else
   say FAIL "python3 does not run"
   exit 3
 fi
-# The sources that come in the request are LZMA-compressed: stop before the sign-in when Python cannot open them. The archive of GitHub is deflate.
+# The sources of the request are LZMA-compressed: stop before the sign-in when Python cannot open them.
 if [ "$fetch" = 0 ] && ! python3 -c 'import lzma' 2> /dev/null; then
   say FAIL "python3 has no lzma module: the sources cannot be unpacked"
   exit 3
@@ -218,70 +205,53 @@ if ! work=$(mktemp -d "$tmp_root/publish-XXXXXX" 2> /dev/null); then
 fi
 export AZURE_CONFIG_DIR="$work/azure"
 
-# The sources are fetched, and nothing of them is believed before their digest is held against the digest that the workflow made over its own checkout; every failure here stops the run, in plain words, before the
-# sign-in. GitHub answers the API address with a redirect to its archive host, which curl follows (a bearer that curl sends to the first host it does not send to the second). Two tries at each host, 30 seconds each and
-# three seconds apart, so that a host that does not answer costs about two minutes at the most: the token of the sign-in lasts five minutes, and the group took some of them to start. A status that says no for a reason
-# that another try cannot change (the limit of the anonymous API, a commit that it does not know) goes to the other host at once; a refusal of the token goes nowhere, because the other host would refuse it too.
+# The sources are fetched, and nothing of them is believed before their digest matches the workflow's: every failure stops the run, in plain words, before the sign-in (30 seconds a try: the sign-in's token lasts five minutes).
 fetch_sources() {
-  local archive="$work/sources.zip" host url attempt status code got="" api_code="" codeload_code=""
+  local archive="$work/sources.zip" host url attempt status code got="" said=""
   for host in api codeload; do
-    if [ "$host" = api ]; then
-      url="https://api.github.com/repos/$sources_repository/zipball/$sources_commit"
-    else
-      url="https://codeload.github.com/$sources_repository/zip/$sources_commit"
-    fi
+    url="https://api.github.com/repos/$sources_repository/zipball/$sources_commit"
+    [ "$host" = api ] || url="https://codeload.github.com/$sources_repository/zip/$sources_commit"
     for attempt in 1 2; do
       status=0
       code=$({ [ -z "$github_token" ] || printf 'header = "Authorization: Bearer %s"\n' "$github_token"; } \
         | curl --config - --fail --silent --show-error --location --max-time 30 --output "$archive" --write-out '%{http_code}' "$url" 2> "$work/curl.err") || status=$?
       code=${code:0:3}
-      if [ -z "$code" ] || { [ "$code" = 200 ] && [ "$status" != 0 ]; }; then
-        code=000
-      fi
-      if [ "$host" = api ]; then
-        api_code=$code
-      else
-        codeload_code=$code
-      fi
+      code=${code:-000}
+      [ "$code" != 200 ] || [ "$status" = 0 ] || code=000
+      said="${said:+$said, }$host HTTP $code"
       if [ "$code" = 200 ]; then
         got=$host
         break 2
       fi
       rm -f "$archive"
       if [ -n "$github_token" ] && { [ "$code" = 401 ] || [ "$code" = 403 ]; }; then
-        say FAIL "GitHub refused the token of this run (HTTP $code): it needs the right to read the contents of the repository"
+        say FAIL "GitHub refused the token of this run (HTTP $code)"
         exit 3
       fi
       case "$code" in
-        000 | 408 | 5[0-9][0-9])
-          if [ "$attempt" = 1 ]; then
-            sleep 3
-          fi
-          ;;
+        000 | 408 | 5??) [ "$attempt" = 2 ] || sleep 3 ;;
         *) break ;;
       esac
     done
   done
   if [ -z "$got" ]; then
-    say FAIL "the sources of commit ${sources_commit:0:12} could not be fetched from GitHub: api HTTP $api_code, codeload HTTP $codeload_code"
+    say FAIL "the sources of commit ${sources_commit:0:12} could not be fetched from GitHub: $said"
     quote "$(cat "$work/curl.err" 2> /dev/null)" 2
     exit 3
   fi
-  say ok "the sources of commit ${sources_commit:0:12} are fetched from GitHub: $got, $(wc -c < "$archive" | tr -d ' ') bytes"
-  # Only function_app.py and the package cases/ of the app are taken, each to its place in the build folder. A name that leaves the folder, a second commit in the archive, a file of the package that the digest
-  # does not cover and a missing file are refused; the tests, the docs and the rest of the repository are never read.
+  say ok "the sources of commit ${sources_commit:0:12} are fetched from GitHub: $got"
   if ! message=$(python3 -c '
 import os, sys, zipfile
-app, target = "src/case-functions/", os.path.realpath(sys.argv[2])
+app, target, leave = "src/case-functions/", os.path.realpath(sys.argv[2]), "a path of the archive would leave the folder"
 try:
     with zipfile.ZipFile(sys.argv[1]) as archive:
         members = archive.infolist()
         for member in members:
             if member.filename.startswith("/") or ".." in member.filename.split("/"):
-                sys.exit("a path of the archive would leave the folder")
+                sys.exit(leave)
         tops = {member.filename.split("/")[0] for member in members}
         if len(tops) != 1:
-            sys.exit("it is not the archive of one commit")
+            sys.exit("it is not one commit")
         prefix = tops.pop() + "/" + app
         taken = 0
         for member in members:
@@ -291,10 +261,10 @@ try:
             if relative != "function_app.py" and not relative.startswith("cases/"):
                 continue
             if relative != "function_app.py" and not relative.endswith((".py", ".json")):
-                sys.exit("a file of cases/ is not .py or .json, so the digest does not cover it")
+                sys.exit("cases/ holds a file that the digest does not cover")
             path = os.path.realpath(os.path.join(target, relative))
             if "\\" in relative or not path.startswith(target + os.sep):
-                sys.exit("a path of the archive would leave the folder")
+                sys.exit(leave)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as handle:
                 handle.write(archive.read(member))
@@ -304,24 +274,19 @@ except Exception as error:
 if not os.path.isfile(os.path.join(target, "function_app.py")):
     sys.exit("function_app.py is not in the archive")
 if not os.path.isfile(os.path.join(target, "cases", "__init__.py")):
-    sys.exit("the package cases/ is not in the archive")
+    sys.exit("cases/ is not in the archive")
 print(taken)
 ' "$archive" "$work/source" 2>&1); then
-    say FAIL "the archive that GitHub sent cannot be used: $(clean "$message")"
+    say FAIL "the archive cannot be used: $(clean "$message")"
     exit 3
   fi
-  say ok "the app's files are taken from the archive: $message files"
-  # The lock and the host file ride in the request, from the workflow's checkout: the digest does not cover them, and the lock is what anchors every library.
+  say ok "the app's files are taken from it: $message files"
   cp "$volume/requirements.txt" "$volume/host.json" "$work/source/"
-  if ! held=$(python3 "$volume/source-digest.py" "$work/source" --as-held 2>&1); then
-    say FAIL "the digest of the files could not be worked out: $(clean "$held")"
+  if ! held=$(python3 "$volume/source-digest.py" "$work/source" --as-held 2>&1) || [ "$held" != "$sources_digest" ]; then
+    say FAIL "the files that GitHub sent are not those of the commit that the workflow started from (digest ${held:0:12}, expected ${sources_digest:0:12})"
     exit 3
   fi
-  if [ "$held" != "$sources_digest" ]; then
-    say FAIL "the files that GitHub sent are not the files of the commit that the workflow started from (digest ${held:0:12}, expected ${sources_digest:0:12})"
-    exit 3
-  fi
-  say ok "the files are the ones of the commit that the workflow started from (digest ${held:0:12})"
+  say ok "the files match the digest of the workflow's checkout (${held:0:12})"
   rm -f "$archive"
 }
 
@@ -443,9 +408,9 @@ megabytes() {
   printf '%s.%s' "$(($1 / 1048576))" "$((($1 % 1048576) * 10 / 1048576))"
 }
 
-# The sources are in the work folder (by request, unpacked from the secret volume here; by fetch, taken from the archive above), and the package is built from them by the script of the repository in the Operator's mode:
-# one pip command and one layout for both apps (tools/build-function-app.sh). $1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here (cases). The built zip is
-# $package_zip. A build is tried twice, because the first minute of a group can be noisy and what it fetches comes from the network; a lock that does not match its hashes fails twice, and says so.
+# The sources that came in the secret volume are unpacked (not those that were fetched), and the package is built from them by the script of the repository in the Operator's mode: one pip command and one layout for both apps
+# (tools/build-function-app.sh). $1 is the app's directory under src, $2 the name of its code package, $3 what the package is called here (cases). The built zip is $package_zip. A build is
+# tried twice, because the first minute of a group can be noisy and what it fetches comes from the network; a lock that does not match its hashes fails twice, and says so.
 build_package() {
   local app_directory=$1 package_name=$2 label=$3 attempt built=0 zip_bytes
   make_pip || return 3

@@ -1231,9 +1231,9 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
         self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
             "ok: python3 3.12.7",
-            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes",
-            "ok: the app's files are taken from the archive: 5 files",
-            f"ok: the files are the ones of the commit that the workflow started from (digest {digest[:12]})",
+            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api",
+            "ok: the app's files are taken from it: 5 files",
+            f"ok: the files match the digest of the workflow's checkout ({digest[:12]})",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az account set",
             "ok: az token for the App Service resource, fetched while the OpenID Connect token is fresh",
@@ -1254,8 +1254,8 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         self.assertLess(max(i for i, call in enumerate(ran.calls) if call.startswith("curl ")), min(i for i, call in enumerate(ran.calls) if call.startswith("az ")), "the download comes before the sign-in")
         ran = self.fetch(kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        self.assertEqual(ran.lines[:4], ["ok: python3 3.12.7", f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes", "ok: the app's files are taken from the archive: 5 files",
-                                         f"ok: the files are the ones of the commit that the workflow started from (digest {digest[:12]})"])
+        self.assertEqual(ran.lines[:4], ["ok: python3 3.12.7", f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api", "ok: the app's files are taken from it: 5 files",
+                                         f"ok: the files match the digest of the workflow's checkout ({digest[:12]})"])
         (post,) = [call for call in ran.calls_of("curl ") if "zipdeploy" in call]
         self.assertRegex(post, rf"https://{CASES_APP}\.scm\.azurewebsites\.net/api/zipdeploy$")
         self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES))
@@ -1294,7 +1294,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         urls = [call.split()[-1] for call in ran.calls_of("curl ")]
         self.assertEqual(urls, [f"https://api.github.com/repos/{THE_REPOSITORY}/zipball/{THE_COMMIT}"] * 2 + [f"https://codeload.github.com/{THE_REPOSITORY}/zip/{THE_COMMIT}"])
         self.assertEqual(ran.calls_of("sleep")[0], "sleep 3", "a pause between the two tries at a host")
-        self.assertIn(f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: codeload, {len(github_zip())} bytes", ran.lines)
+        self.assertIn(f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: codeload", ran.lines)
         for status in ("403", "404", "429"):
             ran = self.fetch(statuses={"api": status, "codeload": "200"})
             self.assertEqual(ran.done.returncode, 0, (status, ran.lines))
@@ -1312,19 +1312,19 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
 
     def test_a_download_that_never_works_stops_the_run_and_says_what_each_host_answered_and_what_curl_said_last(self):
         ran = self.fetch(token=THE_TOKEN_OF_THE_RUN, statuses={"api": "000", "codeload": "500"})
-        self.stopped_before_the_sign_in(ran, f"the sources of commit {THE_COMMIT[:12]} could not be fetched from GitHub: api HTTP 000, codeload HTTP 500")
+        self.stopped_before_the_sign_in(ran, f"the sources of commit {THE_COMMIT[:12]} could not be fetched from GitHub: api HTTP 000, api HTTP 000, codeload HTTP 500, codeload HTTP 500")
         self.assertEqual([call.split()[-1].split("/")[2] for call in ran.calls_of("curl ")], ["api.github.com"] * 2 + ["codeload.github.com"] * 2, "two tries at each host")
         self.assertIn("  curl: (22) The requested URL returned error: 500", ran.lines)
         self.assertNotIn(THE_TOKEN_OF_THE_RUN, ran.done.stdout + ran.done.stderr)
         ran = self.fetch(kind="cases", statuses={"api": "000", "codeload": "000"})
-        self.stopped_before_the_sign_in(ran, "api HTTP 000, codeload HTTP 000")
+        self.stopped_before_the_sign_in(ran, "api HTTP 000, api HTTP 000, codeload HTTP 000, codeload HTTP 000")
 
     # --- the archive ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     def test_an_archive_that_cannot_be_opened_stops_the_run_before_the_sign_in(self):
         for body in (b"<html>an error page that came with a 200</html>", b"", github_zip()[:300]):
             ran = self.fetch(archive=body)
-            self.stopped_before_the_sign_in(ran, "the archive that GitHub sent cannot be used: it cannot be read: ")
+            self.stopped_before_the_sign_in(ran, "the archive cannot be used: it cannot be read: ")
 
     def test_a_path_that_would_leave_the_folder_is_refused_and_nothing_is_written_outside_it(self):
         for name in (f"{THE_TOP}/src/case-functions/cases/../../../escape.txt", f"{THE_TOP}/../escape.txt", "/absolute/escape.txt", f"{THE_TOP}/src/case-functions/cases/..\\..\\escape.py"):
@@ -1334,14 +1334,14 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
     def test_an_archive_that_is_not_one_commit_or_lacks_what_the_app_needs_stops_the_run_in_plain_words(self):
         without = {name: content for name, content in CASES_SOURCE_FILES.items() if name != "function_app.py"}
         self.stopped_before_the_sign_in(self.fetch(archive=github_zip(without)), "function_app.py is not in the archive")
-        self.stopped_before_the_sign_in(self.fetch(archive=github_zip({"function_app.py": b"#\n", "host.json": b"{}\n"})), "the package cases/ is not in the archive")
-        self.stopped_before_the_sign_in(self.fetch(archive=github_zip(also={"another-folder/README.md": b"x"})), "it is not the archive of one commit")
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip({"function_app.py": b"#\n", "host.json": b"{}\n"})), "cases/ is not in the archive")
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip(also={"another-folder/README.md": b"x"})), "it is not one commit")
         self.stopped_before_the_sign_in(self.fetch(archive=github_zip({}, rest={})), "function_app.py is not in the archive")
 
     def test_a_file_of_the_package_that_the_digest_does_not_cover_stops_the_run_because_it_would_ride_unchecked(self):
         for name in ("cases/notes.txt", "cases/__pycache__/loop.cpython-313.pyc", "cases/web/logo.svg"):
             ran = self.fetch(archive=github_zip({**CASES_SOURCE_FILES, name: b"x"}))
-            self.stopped_before_the_sign_in(ran, "a file of cases/ is not .py or .json, so the digest does not cover it")
+            self.stopped_before_the_sign_in(ran, "cases/ holds a file that the digest does not cover")
 
     def test_files_that_are_not_those_of_the_checkout_stop_the_run_before_the_sign_in_whatever_was_changed(self):
         original = held_digest(CASES_SOURCE_FILES)
@@ -1350,7 +1350,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
                              ("a file added", {**CASES_SOURCE_FILES, "cases/extra.py": b"x = 1\n"}), ("a file missing", {k: v for k, v in CASES_SOURCE_FILES.items() if k != "cases/web/home.py"}),
                              ("the entry file", {**CASES_SOURCE_FILES, "function_app.py": b"import evil\n"}), ("a file renamed", renamed)):
             ran = self.fetch(archive=github_zip(files), digest=original)
-            self.stopped_before_the_sign_in(ran, f"the files that GitHub sent are not the files of the commit that the workflow started from (digest {held_digest(files)[:12]}, expected {original[:12]})")
+            self.stopped_before_the_sign_in(ran, f"the files that GitHub sent are not those of the commit that the workflow started from (digest {held_digest(files)[:12]}, expected {original[:12]})")
         self.assertNotEqual(held_digest({**CASES_SOURCE_FILES, "cases/loop.py": b"# the loop\n"}), original, "a comment is part of a file that runs, so it is part of the digest")
 
     def test_the_lock_and_the_host_file_are_those_of_the_request_and_never_those_of_the_archive(self):
@@ -1375,7 +1375,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
 
     def test_a_volume_that_holds_the_archive_of_sources_as_well_or_lacks_a_file_of_the_fetch_is_refused(self):
         ran = self.refused(None, package=source_zip(CASES_SOURCE_FILES))
-        self.assertIn("the sources come in the secret volume or by fetch, not both", ran.lines[0])
+        self.assertIn("the sources come in the volume or by fetch, not both", ran.lines[0])
         for name in ("source-digest.py", "requirements.txt", "host.json"):
             self.assertIn(f"{name} is not in the secret volume", self.refused(None, volume={name: None}).lines[0])
         self.assertIn("build-function-app.sh is not in the secret volume", self.refused(None, volume={"build-function-app.sh": None}).lines[0])
