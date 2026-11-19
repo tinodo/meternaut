@@ -38,6 +38,11 @@ def switch(*handles: str, **more) -> dict:
     return finding(**{**values, **more})
 
 
+def assumed_switch(*handles: str, **more) -> dict:
+    """The same switch, but its saving is a share of the bill that the AI assumes (a low and a high), not the price that the tool showed: nothing in the bill checks it either."""
+    return switch(*handles, change=block("switch", *[effect(handle, (f"m{handle[1:]}",), {"form": "assumed", "low": 0.4, "high": 0.7}) for handle in handles], how=CHEAPER), **more)
+
+
 def go(raw, box, skeptic=None, clock=None, extras=None) -> Harness:
     h = Harness(FakeFoundry(answer(*(raw if isinstance(raw, list) else [raw])), skeptic), box, clock=clock, extras=extras, with_store=extras is None)
     h.go()
@@ -72,6 +77,16 @@ class WhenTheSecondAiMustAgreeToASwitch(unittest.TestCase):
                 (case,) = h.store.cases_recent()
                 self.assertEqual((case.learned["skeptic"], case.confidence, len(h.store.plans_open())), ("agree", confidence, int(asked)))
                 self.assertEqual(bool(unasked(h)), not asked, unasked(h))
+
+    def test_a_switch_whose_saving_is_a_share_that_the_ai_assumed_needs_both_ais_to_be_sure_like_one_priced_from_the_list(self):
+        for label, raw, skeptic, asked in (("both are sure", assumed_switch("r1"), verdicts(("agree", (), "Fine.")), True),
+                                           ("the second AI is unsure", assumed_switch("r1"), verdicts(("unsure", (), "The window is short.")), False),
+                                           ("the first AI is not sure", assumed_switch("r1", confidence=0.45), verdicts(("agree", (), "Fine.")), False)):
+            with self.subTest(label):
+                h = go(raw, toolbox(), skeptic)
+                (case,) = h.store.cases_recent()
+                self.assertEqual((case.facts["change"]["action"], case.facts["change"]["price"]["form"], len(h.store.plans_open())), ("switch", "assumed", int(asked)))
+                self.assertEqual((why_not_ask(case), bool(unasked(h))), (None if asked else UNCONFIRMED, not asked))
 
     def test_a_change_that_is_no_switch_is_asked_about_whatever_the_second_ai_said(self):
         change, meters = priced("r1", usd=40.0)
