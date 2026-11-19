@@ -14,6 +14,8 @@ from cases import learning
 from cases.approvals import ASKED_UNDER, ASKING_RULES, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, why_not_ask
 from cases.brief import taken_back
 from cases.decide import NO_MEASUREMENT
+from cases.families import digest as plan_digest
+from test_web_support import make_decision
 
 CHEAPER = "Take the cheaper plan."
 SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that it can be switched, or the first was not sure"
@@ -126,8 +128,8 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
         self.extras = self.h.extras
         (self.plan,) = self.extras.store.plans_open()
         self.assertEqual(self.plan.preconditions[ASKED_UNDER], ASKING_RULES)
-        if old:
-            self.plan = replace(self.plan, preconditions={key: value for key, value in self.plan.preconditions.items() if key != ASKED_UNDER})
+        if old:  # a request as an earlier version made it: sealed without the marker
+            self.plan = plan_digest.sealed(replace(self.plan, preconditions={key: value for key, value in self.plan.preconditions.items() if key != ASKED_UNDER}))
             self.extras.store.plan_put(self.plan)
         self.clock.advance(days=8)
 
@@ -138,20 +140,45 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
 
     def test_a_request_made_under_the_rules_stays_when_its_finding_is_judged_again_with_no_measurement_or_with_another_verdict(self):
         agreed = verdicts(("agree", (), "Fine."))
-        for label, second, skeptic, reason in (("no measurement", switch("r1", evidence=[]), agreed, UNMEASURED),
-                                               ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No.")), UNCONFIRMED),
-                                               ("the first AI is less sure", switch("r1", confidence=0.45), agreed, UNCONFIRMED),
-                                               ("the second AI gives no verdict", switch("r1"), json.dumps({"verdicts": []}), UNCONFIRMED)):
-            with self.subTest(label):
-                self.first(switch("r1"), toolbox(), agreed)
-                self.judged_again(second, toolbox(), skeptic)
-                case = self.extras.store.case_get(self.h.store.cases_recent()[0].case_id)
-                self.assertEqual(why_not_ask(case), reason, "the finding as it is judged now would not be asked about")
-                self.assertEqual(self.extras.approvals.hold_back_empty(), [], "but nobody takes back a request that was asked under these rules, and says that the rules changed")
-                kept = self.extras.store.plan_get(self.plan.plan_id)
-                self.assertEqual((kept.state, taken_back(kept), case.plan_id), ("open", "", self.plan.plan_id), "the request stays open and is chased, and the case stays linked to it")
+        for old in (False, True):  # old: made before the marker, and marked by the first Watch, when its finding met the rules
+            for label, second, skeptic, reason in (("no measurement", switch("r1", evidence=[]), agreed, UNMEASURED),
+                                                   ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No.")), UNCONFIRMED),
+                                                   ("the first AI is less sure", switch("r1", confidence=0.45), agreed, UNCONFIRMED),
+                                                   ("the second AI gives no verdict", switch("r1"), json.dumps({"verdicts": []}), UNCONFIRMED)):
+                with self.subTest(label, old=old):
+                    self.first(switch("r1"), toolbox(), agreed, old=old)
+                    if old:
+                        self.assertEqual(self.extras.approvals.hold_back_empty(), [], "the first Watch: the finding meets the rules, so nothing is taken back, and the request is marked")
+                    self.judged_again(second, toolbox(), skeptic)
+                    case = self.extras.store.case_get(self.h.store.cases_recent()[0].case_id)
+                    self.assertEqual(why_not_ask(case), reason, "the finding as it is judged now would not be asked about")
+                    self.assertEqual(self.extras.approvals.hold_back_empty(), [], "but nobody takes back a request that was asked under these rules, and says that the rules changed")
+                    kept = self.extras.store.plan_get(self.plan.plan_id)
+                    self.assertEqual((kept.state, taken_back(kept), case.plan_id), ("open", "", self.plan.plan_id), "the request stays open and is chased, and the case stays linked to it")
 
-    def test_a_request_made_before_the_rules_is_taken_back_once_with_the_reason_rules_when_its_finding_is_judged_again_with_no_measurement_or_another_verdict(self):
+    def test_a_request_made_before_the_marker_gets_it_once_when_it_meets_the_rules_sealed_again_with_its_code_and_one_that_a_person_answered_is_left_alone(self):
+        agreed = verdicts(("agree", (), "Fine."))
+        self.first(switch("r1"), toolbox(), agreed, old=True)
+        old = self.extras.store.plan_get(self.plan.plan_id)
+        self.assertEqual((ASKED_UNDER in old.preconditions, plan_digest.digest_of(old) == old.digest), (False, True))
+        self.assertEqual(self.extras.approvals.hold_back_empty(), [])
+        marked = self.extras.store.plan_get(self.plan.plan_id)
+        self.assertEqual((marked.preconditions[ASKED_UNDER], marked.state, marked.code, marked.approvers), (ASKING_RULES, "open", old.code, old.approvers))
+        self.assertEqual((plan_digest.digest_of(marked) == marked.digest, marked.digest != old.digest), (True, True), "sealed again, and the code that a card or a letter carries stays")
+        self.assertEqual(self.extras.approvals.hold_back_empty(), [])
+        self.assertEqual(self.extras.store.plan_get(self.plan.plan_id), marked, "once: a second Watch writes nothing")
+        self.first(switch("r1"), toolbox(), agreed, old=True)
+        self.extras.store.decision_put(make_decision(plan_id=self.plan.plan_id, approver_oid="oid-ann", decision="later"))
+        self.assertEqual(self.extras.approvals.hold_back_empty(), [])
+        self.assertNotIn(ASKED_UNDER, self.extras.store.plan_get(self.plan.plan_id).preconditions, "a request that a person put off is theirs: nothing is written to it")
+        self.first(switch("r1"), toolbox(), agreed, old=True)
+        case = self.h.store.cases_recent()[0]
+        self.extras.store.case_put(replace(case, saving_usd_month=0.0))
+        self.assertEqual(why_not_ask(self.extras.store.case_get(case.case_id)), UNPRICED)
+        self.assertEqual(self.extras.approvals.hold_back_empty(), [], "a request that was asked with a saving stays")
+        self.assertNotIn(ASKED_UNDER, self.extras.store.plan_get(self.plan.plan_id).preconditions, "but its finding does not meet the rules today, so it is not marked as asked under them")
+
+    def test_a_request_made_before_the_rules_is_taken_back_once_with_the_reason_rules_when_its_finding_does_not_meet_them_at_the_first_watch(self):
         agreed = verdicts(("agree", (), "Fine."))
         for label, second, skeptic in (("no measurement", switch("r1", evidence=[]), agreed),
                                        ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No."))),

@@ -35,7 +35,7 @@ ADVICE_STATUSES = ("proposed", "needs_human")
 # that tier): a person is not handed the AI's unfinished work. It stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py). The reasons, one for each
 # rule, are in cases/brief.py (why_not_ask), and every path to a request asks it.
 # A request of the investigation that was made under these rules keeps ASKING_RULES under ASKED_UNDER in its preconditions: a finding that is judged again later without a measurement, or with another
-# verdict, does not take it back for them (hold_back_empty). One that was made before has no such key.
+# verdict, does not take it back for them (hold_back_empty). One that was made before gets it at the first Watch that finds it meets the rules, and one that does not meet them then is taken back.
 ASKED_UNDER, ASKING_RULES = "askedUnder", 2
 # What the History says about a finding that is not made into a request because it cannot say what to look at (brief.says_nothing): it stays a case, and the run counts it.
 NOTHING_TO_SAY = "held back: nothing to say"
@@ -535,13 +535,16 @@ class Approvals:
         today's rules, whatever a later judgment finds), when nobody has answered them: no request is made for such a finding, and one that was made before is closed, as
         expired and ending now, like the requests that supersede() takes back, and the plan keeps why (`preconditions["takenBack"]`, written with its end: the page, the letter and the card say so in
         words, and a case that is judged again cannot lose it). The case is not touched: it keeps its status (a finding that no person has seen). A request that a person put off or asked about is
-        theirs and stays, and so is a change that is running or done. Returns the plans that it closed, each with its case."""
+        theirs and stays, and so is a change that is running or done. A request of the investigation that has no ASKED_UNDER and meets the rules of asking today gets it here (_keep_asked), before a later
+        judgment can fail it. Returns the plans that it closed, each with its case."""
         try:
             closed: list[tuple[PlanRecord, CaseRecord]] = []
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
                 why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or _asked_on_less(case, plan)) else "")
                 if case is None or not (why or brief.says_nothing(case)):
+                    if case is not None and case.detector == INVESTIGATION and ASKED_UNDER not in (plan.preconditions or {}) and not why_not_ask(case):
+                        self._keep_asked(plan.plan_id)
                     continue
                 fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
                 if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(fresh.plan_id):
@@ -552,6 +555,16 @@ class Approvals:
             return closed
         except StoreError:
             return []
+
+    def _keep_asked(self, plan_id: str) -> None:
+        """Marks an open request of the investigation that was made before the marker as asked under the rules of asking (ASKED_UNDER), when nobody has answered it: it meets them today, and a later judgment
+        of its finding must not say that Meternaut's rules changed. Read again first; sealed again, with its code (_resealed)."""
+        try:
+            fresh = self.store.plan_get(plan_id)  # read again: a person may have answered it since the list was read
+            if fresh is not None and fresh.state == "open" and not self.store.decisions_of_plan(plan_id):
+                self.store.plan_put(_resealed(fresh, {ASKED_UNDER: ASKING_RULES}))
+        except StoreError:
+            pass
 
     def take_back_gone(self, plan_ids: Collection[str]) -> list[PlanRecord]:
         """Takes back, as expired and ending now with the reason `gone`, the open requests whose resource is not in Azure any more (cases/escalation.py existence says which): there is nothing left
@@ -580,8 +593,7 @@ class Approvals:
                 fresh = self.store.plan_get(plan_id)
                 if fresh is None or fresh.state != "open" or COST_SPREAD in (fresh.preconditions or {}):
                     continue
-                changed = _plan_with(fresh, preconditions={**(fresh.preconditions or {}), COST_AT_ASK: round(usd, 2), COST_SPREAD: round(spread, 2), COST_OF: subject})
-                self.store.plan_put(replace(plan_digest.sealed(changed), code=fresh.code) if fresh.digest else changed)
+                self.store.plan_put(_resealed(fresh, {COST_AT_ASK: round(usd, 2), COST_SPREAD: round(spread, 2), COST_OF: subject}))
         except StoreError:
             pass
 
@@ -888,3 +900,9 @@ def _with(case: CaseRecord, **changes) -> CaseRecord:
 
 def _plan_with(plan: PlanRecord, **changes) -> PlanRecord:
     return replace(plan, **changes)
+
+
+def _resealed(plan: PlanRecord, more: Mapping[str, object]) -> PlanRecord:
+    """The plan with more in its preconditions, sealed again when it was sealed and with the code that it had: advice changes nothing in Azure, and a card or a letter that was sent before keeps working."""
+    changed = _plan_with(plan, preconditions={**(plan.preconditions or {}), **more})
+    return replace(plan_digest.sealed(changed), code=plan.code) if plan.digest else changed
