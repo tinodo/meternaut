@@ -835,8 +835,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     s.client.deadline = deadline
     # The parts of the estate that the Investigator looks at one after the other, dearest first (cases/beats.py). When no cost is known to rank by, or INVESTIGATE_BEATS is 1 (the way back), one open
     # beat is the whole estate, as one session always looked at it. What the runs of the last days looked at (their records) decides which resources the seeds start from and which kinds the last beat names.
-    remembered = activity.earlier(s.extras.store, s.clock()) if s.extras is not None else (frozenset(), frozenset())  # None: the records could not be read
-    looked, touched = remembered or (frozenset(), frozenset())
+    remembered = activity.earlier(s.extras.store, s.clock()) if s.extras is not None else (frozenset(), frozenset(), False)  # None: the records could not be read
+    looked, touched, legacy = remembered or (frozenset(), frozenset(), False)
+    assumed = beats.SEED_RESOURCES * legacy  # the runs from before the hashes seeded the dearest SEED_RESOURCES of each kind: code's reads take them as looked at until a record holds a hash
     plan = (beats.plan(*beats.spend(contexts), st.investigate_beats, touched) if st.investigate_beats > 1 else []) or [beats.Beat()]
     focused = not plan[0].open
     built_here = toolbox is None
@@ -850,7 +851,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         # that an agent that asks for many cannot use up the reads that the cases need for who changed a resource. The budget is that of one beat for each beat.
         out.owners = out.owners or OwnerReader(s.arm, s.clock())
         toolbox.owners = out.owners.sharing(max_reads=OWNER_READS * len(plan), seconds=OWNER_SECONDS * len(plan))
-    toolbox.window = looked
+    toolbox.window, toolbox.backfill = looked, assumed
     out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
@@ -885,9 +886,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         counts = activity.coverage(toolbox)
         if any(counts):
             if remembered is not None:  # what is new is only said against a memory that was read
-                note(activity.looked_note(*counts))
+                note(activity.looked_note(*counts, assumed))
                 notes.insert(0, notes.pop())  # first, so that the cap on the notes that a run keeps never takes it
-            fields.update(zip(("profiled", "firstTime", "inWindow"), counts[:1] if remembered is None else counts))
+            fields.update(zip(("profiled", "firstTime", "inWindow"), counts[:1] if remembered is None or assumed else counts))
         h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **({"beats": len(out.beats)} if focused else {}), **fields)
 
     def step(name: str, model: str, started: float, ok: bool, tokens: tuple[int, int] | None, text: str | None) -> dict:
