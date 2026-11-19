@@ -488,7 +488,7 @@ class WhatAPersonReads(unittest.TestCase):
                 self.assertEqual((texts["impact"], "check-first" in texts), (b.impact.line, False))
                 letter = letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS)
                 self.assertIn(b.impact.line, letter.text)
-                self.assertLessEqual(len(b.impact.line.split()), 40, "a letter has little room: the line holds the verdict, the first sentence of the first reason and the day")
+                self.assertLessEqual(len(b.impact.line.split()), 30, "a letter has little room: the line holds the verdict, the first sentence of the first reason and the day")
                 self.assertNotIn("console", letter.text.lower())
 
     def test_every_line_says_when_it_was_checked_and_a_digest_with_no_date_says_that_it_is_not_known(self):

@@ -758,7 +758,7 @@ class WhenTheCapCutAGroup(unittest.TestCase):
         self.assertNotIn("Covers", letter.text, "the title says how many, and the row of what the limit of a run left out is all that a letter adds")
         self.assertNotIn("Together they cost", letter.text)
         self.assertNotIn("Examples", letter.text, "the words of a letter went to the row that says what the case leaves out")
-        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"] + 8, "the 175 words and the one row that says why the finding is a lead (a letter that says only that a closer look is worth it, and not why, is a defect: tests/test_decidable.py)")
+        self.assertLessEqual(word_count(letter), MOST_WORDS["approval"])
         weekly = letters.digest_letter(PERSON, BASE, WEB_NOW, [(self.plan, self.case)], CONTACTS)
         self.assertLessEqual(word_count(weekly), MOST_WORDS["digest"])
 

@@ -252,7 +252,7 @@ def _page(subject: str, blocks: list[object]) -> str:
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
+    return tuple((_data(f.label, 60), _data(f.value.partition(", with a value")[0], 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))  # a letter has no room for on how many days there was a value
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -264,8 +264,8 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         risk = brief.risk.text
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
-            ("What could go wrong", _data(brief.risk.text, 200)))
+    undo = (("Undo", _data(brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips
+    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), *undo, ("What could go wrong", _data(brief.risk.text, 200)))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
@@ -317,7 +317,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         if line:
             doc.paragraph(_data(line, 240))
     if brief.by_code:
-        doc.paragraph(_data(brief.confidence.because, 240))  # Azure Advisor's own recommendation: the page and the card say that no AI looked at it and what Meternaut did not check
+        doc.paragraph("Meternaut did not check this estimate.")  # Azure Advisor's own recommendation: the page and the card say the whole of it (confidence.because), a letter has room for the one thing that was not done
     if about_group:
         doc.facts(*_fact_rows(brief)[:1])  # why it is a lead: the first fact that says so
         if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out

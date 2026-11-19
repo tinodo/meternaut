@@ -26,6 +26,7 @@ from unittest import mock
 import familysupport as fs
 import support  # noqa: F401  (puts the app on the path)
 from test_families_briefs import MAKERS, console_of, made
+from test_letters import word_count
 from test_web_support import NOW, SUB, VM, Console, at, make_advice, make_advice_case, make_case, make_plan, priced_facts
 
 from cases import brief as brief_mod
@@ -119,32 +120,37 @@ def _group() -> Kind:
 PE_IDS = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-net/providers/Microsoft.Network/privateEndpoints/pe-fabrikam-{{}}"
 
 
-def _advisor(commitment: bool) -> Kind:
-    """Azure Advisor's own recommendation, made into a request by code (no AI looked at it): a commitment, or a recommendation about one machine."""
-    rows = [["Standard_D2s_v6", 1, "swedencentral", "P1Y" if commitment else "", 400.0, "USD", 60, "Single" if commitment else ""]] * 3
-    digest = {"type": "84b1a508-0000-4000-8000-000000000001", "sub": "Reservations", "n": 3, "added": 3, "skipped": 0, "currencies": [], "usd": 1200.0, "rows": rows, "more": 0, "moreUsd": 0.0}
+def _advisor(commitment: bool, figure: str = "usd") -> Kind:
+    """Azure Advisor's own recommendation, made into a request by code (no AI looked at it): a commitment, or a recommendation about one machine. `figure` is what it says it saves: dollars, euros
+    (which Meternaut does not turn into dollars) or nothing."""
+    currency = "EUR" if figure == "eur" else "USD"
+    rows = [["Standard_D2s_v6", 1, "swedencentral", "P1Y" if commitment else "", 400.0, currency, 60, "Single" if commitment else ""]] * 3
+    digest = {"type": "84b1a508-0000-4000-8000-000000000001", "sub": "Reservations", "n": 3, "added": 3, "skipped": 0, "currencies": ["EUR"] if figure == "eur" else [],
+              "usd": {"usd": 1200.0, "eur": 0.0, "none": None}[figure], "rows": rows, "more": 0, "moreUsd": 0.0}
     rid = f"/subscriptions/{SUB}" if commitment else VM
     problem = "Buy reservations" if commitment else "Right-size or shut down virtual machines that are barely used"
-    case = make_case(case_id="case0241" if commitment else "case0242", detector="advisor-cost", status="needs_human", saving_usd_month=None, cost_usd_30d=None if commitment else 240.0,
+    number = (241 if commitment else 242) + {"usd": 0, "eur": 10, "none": 20}[figure]
+    case = make_case(case_id=f"case0{number}", detector="advisor-cost", status="needs_human", saving_usd_month=None, cost_usd_30d=None if commitment else 240.0,
                      models={}, steps=(), recommendation="change", summary="", objections=(), resource_id=rid,
                      resource_type="microsoft.subscriptions/subscriptions" if commitment else "microsoft.compute/virtualmachines", resource_name="" if commitment else "oversized-vm-1",
-                     resource_group="" if commitment else "team-apps-rg", facts={"category": "cost", "advisor": digest}, advice={"problem": problem, "solution": problem}, plan_id="plan0241")
-    plan = make_advice(plan_id="plan0241", case_id=case.case_id, resource_id=rid, resource_name=case.resource_name, resource_group=case.resource_group, saving_usd_month=100.0,
-                       created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "needs_human"})
-    return Kind("Azure Advisor, a commitment" if commitment else "Azure Advisor, one machine", case, plan, "Azure Advisor" if commitment else "oversized-vm-1",
-                "subscription" if commitment else "virtual machine")
+                     resource_group="" if commitment else "team-apps-rg", facts={"category": "cost", "advisor": digest}, advice={"problem": problem, "solution": problem}, plan_id=f"plan0{number}")
+    plan = make_advice(plan_id=f"plan0{number}", case_id=case.case_id, resource_id=rid, resource_name=case.resource_name, resource_group=case.resource_group,
+                       saving_usd_month=100.0 if figure == "usd" else None, created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "needs_human"})
+    name = ("Azure Advisor, a commitment" if commitment else "Azure Advisor, one machine") + {"usd": "", "eur": " that it prices in euros", "none": " with no figure"}[figure]
+    return Kind(name, case, plan, "Azure Advisor" if commitment else "oversized-vm-1", "subscription" if commitment else "virtual machine")
 
 
-def _older(detector: str, n: int) -> Kind:
-    """Advice from one of the six older checks (the waste that Meternaut plants itself): the one fact that the check read, and the figure from the bill lines."""
+def _older(detector: str, n: int, cost_read: bool = True) -> Kind:
+    """Advice from one of the six older checks (the waste that Meternaut plants itself): the one fact that the check read, and the figure from the bill lines, or, when the bill could not be read,
+    none (an older check states its own figure or none, and is asked about either way)."""
     rtype, provider, name, group, noun = THE_SIX[detector]
     rid = f"/subscriptions/{SUB}/resourceGroups/{group}/providers/{provider.split('/')[0]}/{provider.split('/')[1]}/{name}"
+    money = dict(saving_usd_month=21.6, cost_usd_30d=21.6, cost_state="lines") if cost_read else dict(saving_usd_month=None, cost_usd_30d=None, cost_state="failed")
     case = make_case(case_id=f"case03{n}", plan_id=f"plan03{n}", detector=detector, resource_id=rid, resource_name=name, resource_type=rtype, resource_group=group, status="proposed",
-                     recommendation="delete", saving_usd_month=21.6, cost_usd_30d=21.6, cost_state="lines", facts={"diskState": "unattached"}, subscription_name="fabrikam-prod",
-                     owner={"lookedUp": True, "tagOwner": "platform-team", "tagName": "owner"})
-    plan = make_advice(plan_id=f"plan03{n}", case_id=f"case03{n}", resource_id=rid, resource_name=name, resource_group=group, saving_usd_month=21.6, waiting_costs_usd_day=0.7,
-                       created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "proposed"})
-    return Kind(f"older check, {detector}", case, plan, name, noun)
+                     recommendation="delete", facts={"diskState": "unattached"}, subscription_name="fabrikam-prod", owner={"lookedUp": True, "tagOwner": "platform-team", "tagName": "owner"}, **money)
+    plan = make_advice(plan_id=f"plan03{n}", case_id=f"case03{n}", resource_id=rid, resource_name=name, resource_group=group, saving_usd_month=money["saving_usd_month"],
+                       waiting_costs_usd_day=0.7 if cost_read else None, created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "proposed"})
+    return Kind(f"older check, {detector}" + ("" if cost_read else ", cost not read"), case, plan, name, noun)
 
 
 METRICS = {"metrics": {"Percentage CPU": 3.2}, "metricUnits": {"Percentage CPU": "Percent"}, "metricDays": {"Percentage CPU": 30}, "metricDaysWithData": {"Percentage CPU": 30}, "citedMetrics": 1}
@@ -184,6 +190,7 @@ def kinds() -> list[Kind]:
                      "Microsoft.Compute/virtualMachines", n=24),
              _deleting(), _group(), _advisor(True), _advisor(False)]
     found += [_older(detector, n) for n, detector in enumerate(THE_SIX, 1)]
+    found += [_older(detector, n + 10, cost_read=False) for n, detector in enumerate(THE_SIX, 1)] + [_advisor(True, "eur"), _advisor(True, "none")]
     found += [_family(name) for name in MAKERS]
     return found
 
@@ -225,12 +232,12 @@ FIXED = tuple({phrase for phrase in (*brief_mod.BASIS_TITLES.values(), *brief_mo
                if len(phrase.split()) >= 3})  # the reasons that code can say, as phrases and not as single words (a word such as "Stopped" is in sentences that give no reason)
 DETECTOR_FACTS = {state[1] for state in brief_mod.DETECTOR_STATE.values()}  # what one of the older checks read, as the value of a row of facts ("Stopped")
 MEASURED = re.compile(r"\d[\d,.]*(?:%|\s\w+)? in \d+ days?")  # "2,929 in 30 days", "3.2% in 30 days", "3.2 percent in 30 days": a value that a tool measured, over a period
-ADVISOR = re.compile(r"Azure Advisor (?:says|recommends|estimates)|recommendation of Azure Advisor|What to look at")
+ADVISOR = re.compile(r"What to look at|Azure Advisor says")  # what Azure Advisor says is the finding: not "a recommendation of Azure Advisor", which is how the sentence of what is asked names it
 ASKED = re.compile(r"You are asked (?:whether|to) [^.?!]+[.?!]")
 SAVES = re.compile(r"(?:could save|saves) about \$[\d,]+ a year")
 RESTS_ON = re.compile(r"bill|assum|estimate|list price|Advisor|Cost Management|proposal|proposes|paid|AI says", re.I)
 ASSUMES = re.compile(r"assum|estimate|list price|Advisor|proposal|proposes|AI says", re.I)
-CHECKED = re.compile(r"did not check|did not read|has not checked|have not checked|not checked|nobody checked|could not check|cannot check", re.I)
+CHECKED = re.compile(r"did not check(?! the wording)|did not read|has not checked|have not checked|not checked|nobody checked|could not check|cannot check", re.I)  # "did not check the wording" is said of every quote of an AI and answers no question of the figure
 NOTHING = re.compile(r"changes? nothing in Azure", re.I)
 
 
@@ -241,7 +248,7 @@ def what_it_is_about(shown: Rendered, kind: Kind) -> list[str]:
 
 
 def the_finding(shown: Rendered, kind: Kind) -> list[str]:
-    for block in seen(shown):
+    for block in seen(without(shown, ASKED)):  # the sentence of what is asked names the thing and says "a closer look", and is not the finding
         low = block.text.lower()
         if (any(phrase.lower() in low for phrase in FIXED) or MEASURED.search(block.text) or ADVISOR.search(block.text)
                 or (block.kind == "cell" and block.text.split(". Source:")[0] in DETECTOR_FACTS)):
@@ -278,9 +285,8 @@ def what_was_not_checked(shown: Rendered, kind: Kind) -> list[str]:
 
 def what_changes(shown: Rendered, kind: Kind) -> list[str]:
     text = text_of(shown)
-    if kind.change:
-        first = kind.brief().change.split(". ")[0]
-        return [] if first in text else ["it does not say what exactly changes in Azure"]
+    if kind.change:  # a change says what Azure does to the thing, in a sentence of its own ("Azure deletes the disk planted-disk-1 in resource group ...")
+        return [] if re.search(rf"Azure (?:stops|deletes|changes|resizes|lowers|moves) [^.]*{re.escape(kind.thing)}", text) else ["it does not say what exactly changes in Azure"]
     return [] if NOTHING.search(text) else ["it does not say that nothing changes in Azure"]
 
 
@@ -288,8 +294,14 @@ QUESTIONS = {"about": what_it_is_about, "finding": the_finding, "asked": what_is
 
 # What a kind cannot say yet, and why: (kind, surface, question) -> the reason. A request without a figure is a defect (the kinds in WITHOUT_A_FIGURE are not asked at all).
 GAPS: dict[tuple[str, str, str], str] = {
-    (f"change, change-disk-tier", surface, "saves"): "the family cannot price a change of tier: it reads no price list, so the request asks for an approval and states no saving, which is a defect of the family (a person is told what it costs, and that nothing is claimed)"
-    for surface in SURFACES}
+    (name, surface, "saves"): reason for name, reason in {
+        "change, change-disk-tier": "the family cannot price a change of tier: it reads no price list, so the request asks for an approval and states no saving, which is a defect of the family (a person is told what it costs, and that nothing is claimed)",
+        **{f"older check, {detector}, cost not read": "the bill could not be read, and an older check states its own figure or none: the request is still asked, says that Meternaut could not read what the resource costs and states no saving, "
+                                                      "because the rule that a request which states no saving is not asked is not applied to the older checks yet" for detector in THE_SIX},
+        "Azure Advisor, a commitment that it prices in euros": "Azure Advisor gave its figure in euros, which Meternaut does not turn into dollars: the request is still asked and states no saving, because the rule that a request which states no saving "
+                                                               "is not asked is not applied to Azure Advisor's own claims yet",
+        "Azure Advisor, a commitment with no figure": "Azure Advisor gave no figure: the request is still asked and states no saving, because the rule that a request which states no saving is not asked is not applied to Azure Advisor's own claims yet",
+    }.items() for surface in SURFACES}
 
 
 def problems_of(kind: Kind) -> dict[tuple[str, str, str], list[str]]:
@@ -307,7 +319,7 @@ class EveryRequestCanBeDecided(unittest.TestCase):
 
     def test_every_kind_is_built_and_there_are_many(self):
         found = kinds()
-        self.assertGreaterEqual(len(found), 23)
+        self.assertGreaterEqual(len(found), 31)
         self.assertEqual(len({kind.name for kind in found}), len(found), "a name for each kind")
         self.assertEqual({kind.plan.family for kind in found if kind.change}, set(MAKERS), "every family of change is a kind")
 
@@ -387,6 +399,48 @@ class AFindingThatACheckHeldBackSaysWhichCheck(unittest.TestCase):
                     self.assertNotIn(said, letter)
 
 
+# -- the words of the letter --------------------------------------------------------------------------------------------------------------------------
+
+MAIN_WORDS = {  # what the approval letter of each kind measured on main (f84596a, 2026-11-19), counted as tests/test_letters.py counts: the budget of 175 words is for the one kind that that file builds
+    "advice, a switch with names": 232, "advice, reduce (an assumed share)": 220, "advice, reduce (a number that a tool read)": 201, "advice, remove": 183, "advice, schedule": 201,
+    "advice, commit": 220, "advice, delete": 191, "advice, a group of many resources": 170, "Azure Advisor, a commitment": 213, "Azure Advisor, one machine": 196,
+    "older check, orphan-managed-disk": 175, "older check, orphan-public-ip": 176, "older check, load-balancer-without-backends": 176, "older check, empty-app-service-plan": 178,
+    "older check, stopped-vm": 170, "older check, orphan-private-endpoint": 170, "change, stop-vm": 210, "change, resize-vm": 219, "change, change-disk-tier": 211, "change, delete-disk": 152,
+    "change, delete-public-ip": 156, "change, delete-idle-resource": 167, "change, scale-vpn-gateway": 242}
+GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
+    "advice, a group of many resources": (3, "the row that says why the finding is a lead: what the investigation found"),
+    "Azure Advisor, a commitment": (1, "the sentence that says that Meternaut did not check Azure Advisor's estimate"),
+    "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Azure Advisor's estimate"),
+    "change, stop-vm": (5, "the sentence that says what is asked of the person: whether to approve this change")}
+
+
+class TheApprovalLettersDoNotGrowWithoutSayingSo(unittest.TestCase):
+    """A letter is read once, in a minute: no kind of approval letter is longer than it was on main, except by the words that GREW names, each for the sentence that a person needs to decide. The other
+    kinds got shorter by the words of the footer, the days that a measurement had a value and the second line that said that a deletion cannot be undone."""
+
+    @staticmethod
+    def words(kind: Kind) -> int:
+        return word_count(letters.approval_letter(kind.plan, kind.case, PERSON, BASE, kind.now, CONTACTS))
+
+    @staticmethod
+    def base(name: str) -> str:
+        return name.removesuffix(", cost not read").removesuffix(" that it prices in euros").removesuffix(" with no figure")
+
+    def test_no_letter_is_longer_than_it_was_on_main_except_by_the_words_that_are_named(self):
+        for kind in kinds():
+            with self.subTest(kind.name):
+                base = self.base(kind.name)
+                self.assertLessEqual(self.words(kind), MAIN_WORDS[base] + GREW.get(base, (0, ""))[0])
+
+    def test_what_is_named_as_grown_has_grown_by_no_more_than_it_says_and_says_why(self):
+        for name, (extra, why) in GREW.items():
+            with self.subTest(name):
+                words = self.words(a_kind(name))
+                self.assertGreater(words, MAIN_WORDS[name], "it did not grow: remove it from GREW")
+                self.assertLessEqual(words, MAIN_WORDS[name] + extra)
+                self.assertGreater(len(why.split()), 5)
+
+
 # -- the mutations --------------------------------------------------------------------------------------------------------------------------------
 
 SENTENCE = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
@@ -430,7 +484,8 @@ class EachQuestionCatchesItsFault(unittest.TestCase):
         self.fails(self.MACHINE, "about", re.escape(kind.noun))
 
     def test_the_finding(self):
-        self.fails(self.MACHINE, "finding", "|".join([*map(re.escape, FIXED), MEASURED.pattern]))
+        self.fails(self.MACHINE, "finding", r"Larger than its use needs|3\.2% in 30 days")
+        self.fails("Azure Advisor, one machine", "finding", r"What to look at|Azure Advisor says")  # the sentence of what is asked names Azure Advisor too, and is not the finding
 
     def test_what_is_asked(self):
         self.fails(self.MACHINE, "asked", ASKED)
@@ -441,11 +496,12 @@ class EachQuestionCatchesItsFault(unittest.TestCase):
         self.fails(self.MACHINE, "saves", RESTS_ON)
 
     def test_what_was_not_checked(self):
-        self.fails(self.MACHINE, "not checked", CHECKED)
+        self.fails(self.MACHINE, "not checked", "That is the AI's own assumption, and Meternaut did not check it")  # the caption of a quote ("Meternaut did not check the wording.") is no answer
+        self.fails("Azure Advisor, one machine", "not checked", "did not check that what it covers will keep running|did not check this estimate")
 
     def test_what_changes(self):
         self.fails(self.MACHINE, "changes", NOTHING)
-        self.fails(self.DISK, "changes", re.escape(a_kind(self.DISK).brief().change.split(". ")[0]))
+        self.fails(self.DISK, "changes", "Azure deletes the disk planted-disk-1")
 
     def test_a_sentence_that_is_taken_out_of_the_code_is_taken_out_of_the_three_surfaces(self):
         # The sentence of what is asked is made in one place (brief.ASKED for advice, brief.ASKED_CHANGE for a change): empty it, and the page, the card and the letter all fail.

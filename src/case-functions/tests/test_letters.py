@@ -372,7 +372,7 @@ class Approval(unittest.TestCase):
         self.assertIn("Whose is it: Meternaut has not looked up who owns this resource yet.", text)  # whose is it
         self.assertIn("If you approve: Azure deletes the disk disk-zq7-name in resource group rg-zq7-group. Nothing else changes. "
                       "It runs with your own permissions.", text)  # what happens, who does it, with whose rights
-        self.assertIn("Undo: This cannot be undone.", text)
+        self.assertNotIn("Undo:", text, "the chips already say that it cannot be undone, and the letter does not say it twice")
         self.assertIn("What could go wrong: If something still uses the disk, that use stops, and the data on it is lost for good.", text)
         self.assertIn("Review and decide: https://meternaut.example/ok/p1a2b3c4d5", text)  # what are my choices: the page
         for part in (text, self.letter().html):  # the link is a link to the page, and nothing in the letter, its link included, says that the person signs in
@@ -392,7 +392,7 @@ class Approval(unittest.TestCase):
     def test_the_order_is_the_title_the_place_the_chips_the_figure_the_facts_the_button_and_the_footer(self):
         text = self.letter().text
         order = ["Delete the unattached disk disk-zq7-name\n", "Managed disk, resource group", "Medium risk, High confidence", "Meternaut worked out that this could save", "It is based on your bill",
-                 "Cost, last 30 days", "Whose is it:", "If you approve:", "Undo:", "What could go wrong:", "Review and decide: https", "An AI wrote this"]
+                 "Cost, last 30 days", "Whose is it:", "If you approve:", "What could go wrong:", "Review and decide: https", "An AI wrote this"]
         places = [text.index(part) for part in order]
         self.assertEqual(places, sorted(places))
 
@@ -440,7 +440,7 @@ class Approval(unittest.TestCase):
         self.assertNotIn("No figure", letter.text)
 
     def test_it_says_plainly_that_a_delete_cannot_be_undone_and_what_could_go_wrong(self):
-        self.assertIn("Undo: This cannot be undone.", self.letter().text)
+        self.assertEqual(self.letter().text.count("annot be undone"), 1, "in the chips, once")
         self.assertIn("What could go wrong:", self.letter().text)
 
     def test_the_plan_code_and_the_time_it_ends_are_for_the_page_and_not_for_the_letter(self):
