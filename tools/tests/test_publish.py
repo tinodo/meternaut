@@ -881,12 +881,13 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                                            "the libraries are made in the container")
         self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
 
-    # What the archive of the sources measured on 2026-11-17 after the tools neighbors, profile and changes were added (cases/neighbors.py, cases/dossier.py): 278,913 bytes with 113 files, on an LF copy (git archive with
-    # core.eol=lf and one time on every file, --mtime) with the real build script; the request sent is 309,238 bytes and 170,762 stay free. The same method gave 255,610 bytes for the first measure of the sources with the
-    # comments and the text of the docstrings taken out (tools/strip-sources.py, docs/proposals/27-package-without-comments.md), and 388,401 the day before without that strip, after five rounds of shorter words. The cap of
-    # the request is 480,000 bytes (tools/operator-run.py), and the largest request that is known to work is 466,104. The margin below is the room for the code of the next days: an archive that is not stripped (about
-    # 133,000 bytes more) is far above it, and the floor of the test after it is what keeps the cap away. Set the measure again, on purpose, when the margin is used up.
-    SOURCES_ARCHIVE_MEASURED = 278_913
+    # What the archive of the sources measured on 2026-11-19, after the words of phase 2 and the fixes of its review (the branch words3, with main at f84596a merged in): 319,220 bytes, the median of three runs of the real build
+    # script (the real strip and zip) on an LF copy (git archive with core.eol=lf and one time on every file; the three runs gave 319,202 to 319,241, a spread that comes from the times that the copy gives the files); the request
+    # sent is 349,545 bytes and 130,455 stay free, which is within about 450 bytes of the floor of 130,000 that the test after this one keeps. The same method gave 278,913 bytes on 2026-11-17, 255,610 bytes for the first measure of
+    # the sources with the comments and the text of the docstrings taken out (tools/strip-sources.py, docs/proposals/27-package-without-comments.md), and 388,401 the day before without that strip. The cap of the request is 480,000
+    # bytes (tools/operator-run.py), and the largest request that is known to work is 466,104. The margin below is the room for the code of the next days: an archive that is not stripped (about 133,000 bytes more) is far above it,
+    # and the floor of the test after it is what keeps the cap away: with the room that near to that floor, code that is added makes room first. Set the measure again, on purpose, when the margin is used up.
+    SOURCES_ARCHIVE_MEASURED = 319_220
     SOURCES_ARCHIVE_MARGIN = 40_000
 
     def sources_archive(self, fresh=False):

@@ -14,7 +14,7 @@ from .layout import message_page
 def notebook(ctx: Ctx, case_id: str) -> Response:
     case = ctx.store.case_get(case_id)
     if case is None:
-        return message_page(ctx, 404, "I cannot find this finding", "No finding has this address. Nothing has changed.", back=("/history", "Back to the history"), ai=True,
+        return message_page(ctx, 404, "Meternaut cannot find this finding", "No finding has this address. Nothing has changed.", back=("/history", "Back to the history"), ai=True,
                             why="you opened an address that holds no finding")
     plan, action, decisions = None, None, []
     if case.plan_id:

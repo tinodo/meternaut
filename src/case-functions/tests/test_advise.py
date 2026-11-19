@@ -12,7 +12,7 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief
-from cases.approvals import ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, ASKED_UNDER, ASKING_RULES, UNCONFIRMED, UNMEASURED, UNPRICED, Approvals, ApprovalSettings, why_not_ask
+from cases.approvals import ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, ASKED_UNDER, ASKING_RULES, NO_FIGURE, UNCONFIRMED, UNMEASURED, UNPRICED, Approvals, ApprovalSettings, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.delegated import Delegation, SigninSettings
 from cases.detectors import Lead
@@ -171,13 +171,13 @@ class MakingTheAdvice(Base):
     def test_a_case_without_a_figure_of_its_own_takes_the_one_that_azure_advisor_gave_and_a_figure_of_its_own_stays(self):
         digest = {"n": 1, "usd": 576.0, "low": 576.0, "high": 576.0, "rows": [["Standard_D2s_v5", 2, "swedencentral", "P1Y", 576.0, "USD", 30, "single"]]}
         for own, found, expected in ((None, digest, (48.0, 1.6)), (0, digest, (48.0, 1.6)), (-5.0, digest, (48.0, 1.6)), (120.0, digest, (120.0, 4.0)),
-                                     (None, {**digest, "usd": 0}, (None, None)), (None, {**digest, "usd": "576"}, (None, None)), (None, {**digest, "rows": []}, (None, None)),
-                                     (None, "text", (None, None))):
+                                     (None, {**digest, "usd": 0}, None), (None, {**digest, "usd": "576"}, None), (None, {**digest, "rows": []}, None),
+                                     (None, "text", None)):  # no figure in dollars that Advisor counted: nobody is asked (NO_FIGURE)
             with self.subTest(saving=own, digest=found):
                 store = MemoryStore(clock=self.clock)
                 case = replace(self.case, saving_usd_month=own, cost_usd_30d=80.0, facts={"advisor": found}, detector="advisor-cost")
                 plan = Approvals(store, SETTINGS, self.clock).advise(case, NAMED)
-                self.assertEqual((plan.saving_usd_month, plan.waiting_costs_usd_day), expected)
+                self.assertEqual(None if plan is None else (plan.saving_usd_month, plan.waiting_costs_usd_day), expected)
 
     def test_a_case_that_the_ais_agreed_on_says_so_and_one_that_needs_a_person_says_that(self):
         self.assertTrue(self.plan.evidence_level.startswith("Judged: the AI reviewers did not settle it"))
@@ -367,10 +367,8 @@ class TheWorthOfARequest(unittest.TestCase):
                 other = self.approvals.advise(self.priced(n, **changes), NAMED)
                 self.assertNotIn(ASKED_UNDER, other.preconditions)
 
-    def test_a_case_of_azure_advisor_or_of_a_rule_based_detector_with_no_saving_is_asked_about_whatever_it_costs_and_whatever_backs_it(self):
-        advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
-        for name, changes in (("Azure Advisor's own claim", dict(detector="advisor-cost", advice=advice, objections=(), cost_usd_30d=0.0)),
-                              ("a rule-based detector and a dear resource", dict(detector=OTHER, objections=(), cost_usd_30d=80.0)),
+    def test_a_case_of_a_rule_based_detector_with_no_saving_is_asked_about_whatever_it_costs_and_whatever_backs_it_and_one_of_azure_advisor_is_not(self):
+        for name, changes in (("a rule-based detector and a dear resource", dict(detector=OTHER, objections=(), cost_usd_30d=80.0)),
                               ("a rule-based detector, a cheap resource and nothing that measured it", dict(detector=OTHER, cost_usd_30d=3.0))):
             with self.subTest(name):
                 self.setUp()
@@ -378,6 +376,10 @@ class TheWorthOfARequest(unittest.TestCase):
                 self.assertEqual(case.saving_usd_month, None)
                 self.assertIsNone(why_not_ask(case))
                 self.assertIsNotNone(self.approvals.advise(case, NAMED))
+        advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
+        self.setUp()
+        case = self.finding(detector="advisor-cost", advice=advice, objections=(), cost_usd_30d=0.0)
+        self.assertEqual((case.saving_usd_month, why_not_ask(case), self.approvals.advise(case, NAMED)), (None, NO_FIGURE, None), "Azure Advisor's own claim with no saving in dollars is not")
 
     def test_a_figure_that_code_computed_from_the_bill_lines_or_that_azure_advisor_gave_is_something_to_decide_with_even_for_a_cheap_resource(self):
         self.assertIsNone(why_not_ask(self.priced(cost_usd_30d=20.0, saving_usd_month=12.0)), "the figure that code computed from the bill lines is the case's own saving")
@@ -883,9 +885,11 @@ class TheWholeWay(unittest.TestCase):
         again = self.console.get(self.path)
         self.assertEqual(again.status, 200)
         self.assertEqual([f for f in again.forms() if f.action == self.path], [])
+        self.assertNotIn("The change was made", again.main.text(), "advice changes nothing in Azure: the Details do not say that a change was made")
+        self.assertIn("Answered. A person said that it is worth acting on, and nothing was changed in Azure.", again.main.text())
         history = self.console.get("/history")
         lines = [tuple(c.text() for c in li.children if hasattr(c, "tag") and c.tag == "span") for ul in history.main.find_all("ul", class_="recent") for li in ul.find_all("li")]
-        self.assertTrue(any(line[:1] == ("Worth acting on",) and line[2:] == ("Tino",) for line in lines), lines)
+        self.assertTrue(any(line[:1] == ("Worth acting on",) and line[2:] == ("Tino said this is worth acting on.",) for line in lines), lines)
 
     def test_a_second_answer_with_the_old_form_changes_nothing(self):
         form = self.console.get(self.path).form(self.path)

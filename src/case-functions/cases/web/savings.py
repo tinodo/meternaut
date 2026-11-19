@@ -247,7 +247,7 @@ def savings_page(ctx: Ctx) -> Response:
     parts = [head("Savings found", LEAD), _tiles(groups, [brief.saving.monthly for _, brief in changes], failed, cut, counted_held)]
     if failed or any(group.failed for group in groups):
         title = "The findings cannot be read" if all(group.dead for group in groups) else "Part of the findings cannot be read"
-        parts.append(notice("error", title, "I cannot read all of them now, so some counts and figures are missing or are at least. Nothing has changed."))
+        parts.append(notice("error", title, "Meternaut cannot read all of the findings now. Some counts and figures are missing, and some may be higher than shown. Nothing has changed."))
     headers = ["What became of it", "Findings", "Saving a year", "Findings with no saving figure"]
     parts += [table("savings", "Savings found, by what became of each finding", headers, [_row(group) for group in groups], row_header=True), _longest_wait(ctx), paragraph(NOTE)]
     if held_group is not None:

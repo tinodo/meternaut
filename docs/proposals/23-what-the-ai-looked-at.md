@@ -65,7 +65,7 @@ A title and one sentence, three tiles and five blocks, in this order, from the p
 
 ## Who sees it, and what it says when it cannot read
 
-A person needs the role ops or owner and gets the refusal of the standing permissions page without one; a person who is not listed gets the denied page. The navigation shows it to those two roles beside Savings found, the Operations page links to it, and only the role ops gets the link to "Every run and every finding". It is a GET and changes nothing. It reads the records and the runs, and nothing else. A store that cannot give the records is the plain "I cannot reach my records" page, and runs that cannot be read are said in a notice, with the lines "not recorded" left out.
+A person needs the role ops or owner and gets the refusal of the standing permissions page without one; a person who is not listed gets the denied page. The navigation shows it to those two roles beside Savings found, the Operations page links to it, and only the role ops gets the link to "Every run and every finding". It is a GET and changes nothing. It reads the records and the runs, and nothing else. A store that cannot give the records is the plain "Meternaut cannot reach its records" page, and runs that cannot be read are said in a notice, with the lines "not recorded" left out.
 
 ## What is not proved
 

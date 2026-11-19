@@ -535,7 +535,7 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.decision_put(make_decision(plan_id=f"plan2{n:03d}", decision="decline", at=at(hours=-n - 1)))
         reply = console.get("/")
         listing = [spans(li) for li in reply.main.find("ul", class_="recent").find_all("li")]
-        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined", "Tino, Thu 5 Nov"] for n in range(5)])
+        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined", "Tino, 5 November"] for n in range(5)])
 
     def test_an_advice_that_nobody_answered_is_no_row_of_recently_decided_and_a_change_that_nobody_answered_is(self):
         console = seeded()
@@ -556,7 +556,7 @@ class TheDecisionsPage(unittest.TestCase):
             self.assertFalse(reply.has_table(table))
 
     def test_a_part_that_cannot_be_read_says_so_and_the_rest_of_the_page_is_there(self):
-        for failing, notice, kept in (("plans_open", "I cannot read the open requests now.", "Recently decided"), ("plans_recent", "I cannot read the recent decisions now.", "Ready to decide")):
+        for failing, notice, kept in (("plans_open", "Meternaut cannot read the open requests now.", "Recently decided"), ("plans_recent", "Meternaut cannot read the recent decisions now.", "Ready to decide")):
             with self.subTest(failing=failing):
                 console = Console(store=FailingStore(fail={failing}, clock=lambda: NOW))
                 console.seed()
@@ -711,12 +711,12 @@ class TheBriefOfACase(unittest.TestCase):
     def test_a_case_that_does_not_exist_is_a_404(self):
         reply = self.console.get("/why/nothing")
         self.assertEqual(reply.status, 404)
-        self.assertIn("I cannot find this finding", reply.content)
+        self.assertIn("Meternaut cannot find this finding", reply.content)
 
     def test_the_page_says_in_its_footer_that_an_ai_wrote_what_it_shows(self):
         footer = self.reply.root.find("footer")
-        self.assertIn("Recommendations written by AI. A person approves every change.", footer.text())
-        self.assertIn("Models: model-detective-x, model-skeptic-y.", footer.text())
+        self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", footer.text())
+        self.assertIn("The AIs that wrote this are model-detective-x and model-skeptic-y.", footer.text())
 
 
 INVESTIGATED = dict(
@@ -1070,19 +1070,19 @@ class TheHistory(unittest.TestCase):
 
     def test_it_is_a_feed_grouped_by_day_newest_first(self):
         self.assertEqual(self.reply.headings(1), ["What happened"])
-        self.assertEqual(self.reply.headings(2), ["Wed 4 Nov", "Tue 3 Nov", "Mon 2 Nov"])
+        self.assertEqual(self.reply.headings(2), ["Wednesday 4 November", "Tuesday 3 November", "Monday 2 November"])
         self.assertEqual(self.reply.root.find_all("table"), [], "no run table and no case table: they are on the Operations page")
 
     def test_each_line_is_a_chip_a_title_and_one_quiet_part_that_says_who_why_or_what_came_of_it(self):
         feed = self.feed(self.reply)
-        self.assertEqual(feed["Wed 4 Nov"], [
-            ("Declined", TITLE, "Tino · reason: it is already handled"),
+        self.assertEqual(feed["Wednesday 4 November"], [
+            ("Declined", TITLE, "Declined by Tino because it is already handled."),
             ("Search", "1 new finding", ""),
             ("Checked", TITLE, "Cost lines show no cost.")])
-        self.assertEqual(feed["Tue 3 Nov"], [("Taken back", TITLE, "A timer closed it before requests were kept open."),
-                                              ("Worth acting on", "Consider changing the virtual machine oversized-vm-1", "Tino")])
-        self.assertIn(("Change made", TITLE, "Deleted. Azure no longer lists the resource."), feed["Mon 2 Nov"])
-        self.assertIn(("Approved", TITLE, "Tino"), feed["Mon 2 Nov"])
+        self.assertEqual(feed["Tuesday 3 November"], [("Taken back", TITLE, "A timer closed this request. Meternaut no longer closes requests by time."),
+                                              ("Worth acting on", "Consider changing the virtual machine oversized-vm-1", "Tino said this is worth acting on.")])
+        self.assertIn(("Change made", TITLE, "Deleted. Azure no longer lists the resource."), feed["Monday 2 November"])
+        self.assertIn(("Approved", TITLE, "Approved by Tino."), feed["Monday 2 November"])
 
     def test_a_chip_is_a_word_and_a_shape_and_every_kind_of_line_has_one(self):
         for chip_ in self.reply.main.find_all("span", class_="chip") + self.reply.main.find_all("span", class_="chip low") + self.reply.main.find_all("span", class_="chip info"):
@@ -1095,9 +1095,9 @@ class TheHistory(unittest.TestCase):
         (tiles,) = self.reply.main.find_all("ul", class_="kpis")
         self.assertEqual(tiles.attrs["aria-label"], "The last 30 days")
         found = [(li.find("p", class_="k").text(), li.find("p", class_="v").text(), li.find("p", class_="n").text()) for li in tiles.find_all("li")]
-        self.assertEqual(found, [("Decisions", "3", "Answers on the requests that you may answer, in the last 30 days."),
-                                 ("Changes made", "1", "Made in Azure on those requests, with the approver's own rights."),
-                                 ("New findings", "3", "Found by the search in the last 30 days.")])
+        self.assertEqual(found, [("Decisions", "3", "It counts the answers to the requests that you may answer, in the last 30 days."),
+                                 ("Changes made", "1", "It counts the changes that Meternaut made in Azure on those requests, with the approver's own rights."),
+                                 ("New findings", "3", "It counts the findings that the search found for the first time in the last 30 days.")])
         self.assertNotIn("$", tiles.text(), "Meternaut is not a cost report (rule 25): the tiles count things and add up no money")
 
     def tiles_of(self, reply):
@@ -1111,7 +1111,7 @@ class TheHistory(unittest.TestCase):
         console.store.decision_put(make_decision(decision="approve", at=at(days=-1, hours=-1), plan_digest="d" * 64))
         reply = console.get("/history")
         (day,) = reply.headings(2)
-        self.assertEqual(self.feed(reply)[day], [("Approved", TITLE, "Tino · the second of two people"), ("Confirmed", TITLE, "Maya · the first of two people")])
+        self.assertEqual(self.feed(reply)[day], [("Approved", TITLE, "Approved by Tino, as the second of two people."), ("Confirmed", TITLE, "Confirmed by Maya, as the first of two people.")])
         self.assertEqual(self.tiles_of(reply)["Decisions"][0], "2")
 
     def test_a_count_that_rests_on_a_read_that_failed_is_a_dash_and_the_others_are_still_counted(self):
@@ -1123,7 +1123,7 @@ class TheHistory(unittest.TestCase):
                 self.assertEqual(reply.status, 200)
                 self.assertIn("cannot be read", reply.content)
                 for name, tile in self.tiles_of(reply).items():
-                    self.assertEqual(tile, ("—", "Cannot be read now.") if name in dashed else exact[name], name)
+                    self.assertEqual(tile, ("—", "Meternaut cannot read this now.") if name in dashed else exact[name], name)
 
     def test_a_count_that_the_page_reads_only_in_part_is_at_least_that_many_and_says_so(self):
         exact = self.tiles_of(self.reply)
@@ -1134,7 +1134,7 @@ class TheHistory(unittest.TestCase):
         tiles = self.tiles_of(self.console.get("/history"))
         for name in ("Decisions", "Changes made"):
             self.assertRegex(tiles[name][0], r"^\d+\+$", name)
-            self.assertEqual(tiles[name][1], "At least this many: the page reads only the latest records.")
+            self.assertEqual(tiles[name][1], "There are at least this many, because the page reads only the latest records.")
         self.assertEqual(tiles["New findings"], exact["New findings"], "the findings are read in full")
 
     def test_a_store_that_holds_more_plans_than_the_page_asks_for_makes_the_counts_at_least_and_so_do_more_findings(self):
@@ -1158,8 +1158,8 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", resource_name=f"endpoint-k{n}", plan_id=f"plan6{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan6{n:03d}", case_id=f"case6{n:03d}", resource_id=f"{VM_ID}-k{n}", state="expired", created_at=at(days=-1, hours=-1), expires_at=at(days=-1)))
         feed = self.feed(self.console.get("/history"))
-        self.assertIn(("Closed", "49 requests to look at a finding", "Taken back by Meternaut: each says why."), feed["Wed 4 Nov"])
-        self.assertIn(("Declined", TITLE, "Tino · reason: it is already handled"), feed["Wed 4 Nov"], "the decisions of the other plans are still there")
+        self.assertIn(("Taken back", "49 requests to look at a finding", "Meternaut took them back, and each says why."), feed["Wednesday 4 November"])
+        self.assertIn(("Declined", TITLE, "Declined by Tino because it is already handled."), feed["Wednesday 4 November"], "the decisions of the other plans are still there")
 
     def test_a_line_that_names_a_request_links_to_its_page(self):
         self.assertIn("/ok/plan0001", self.reply.links())
@@ -1171,8 +1171,8 @@ class TheHistory(unittest.TestCase):
             store.case_put(make_advice_case(case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", resource_name=f"endpoint-h{n}", plan_id=f"plan5{n:03d}"))
             store.plan_put(make_advice(plan_id=f"plan5{n:03d}", case_id=f"case5{n:03d}", resource_id=f"{VM_ID}-h{n}", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-n)))
         feed = self.feed(self.console.get("/history"))
-        self.assertEqual(feed["Tue 3 Nov"][0], ("Taken back", TITLE, "A timer closed it before requests were kept open."), "the change that was taken back is a line of its own")
-        self.assertIn(("Closed", "3 requests to look at a finding", "Taken back by Meternaut: each says why."), feed["Wed 4 Nov"])
+        self.assertEqual(feed["Tuesday 3 November"][0], ("Taken back", TITLE, "A timer closed this request. Meternaut no longer closes requests by time."), "the change that was taken back is a line of its own")
+        self.assertIn(("Taken back", "3 requests to look at a finding", "Meternaut took them back, and each says why."), feed["Wednesday 4 November"])
         self.assertFalse([line for lines in feed.values() for line in lines if line[0] == "Taken back" and line[1].startswith("Consider")], feed)
 
     def test_the_old_addresses_of_my_decisions_and_what_i_did_here_answer_with_the_same_page(self):

@@ -81,7 +81,7 @@ def hub(ctx: Ctx, *, banner: Safe | None = None) -> Response:
         Safe("<h2>Latest runs</h2>"),
     ]
     if not ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
+        parts.append(notice("error", "The runs cannot be read", "Meternaut cannot read the runs now. Nothing has changed."))
     elif not runs:
         parts.append(paragraph("No run is recorded yet."))
     else:
@@ -135,7 +135,7 @@ def _drift_section(ctx: Ctx) -> list[object]:
                                      "When a control that guards the agents fails, it pauses the investigation until a person resumes it.")]
     latest, ok = read(lambda: ctx.store.check_latest(), None)
     if not ok:
-        return parts + [notice("error", "The check cannot be read", "I cannot read the latest check now. Nothing has changed.")]
+        return parts + [notice("error", "The check cannot be read", "Meternaut cannot read the latest check now. Nothing has changed.")]
     parts += _drift_result(ctx, latest) if latest is not None else [paragraph("No check is recorded yet.")]
     due = _next_check(latest, ctx.now)
     if ctx.services.drift is None:
@@ -152,7 +152,7 @@ def _teams_section(ctx: Ctx) -> list[object]:
     if ctx.services.teams is None:
         return []
     said, ok = read(ctx.services.teams, None)
-    return [Safe("<h2>Teams cards</h2>"), *([paragraph(line) for line in said] if ok and said else [paragraph("I cannot tell now which way the Teams cards go.")])]
+    return [Safe("<h2>Teams cards</h2>"), *([paragraph(line) for line in said] if ok and said else [paragraph("Meternaut cannot tell now which way the Teams cards go.")])]
 
 
 def _too_soon(ctx: Ctx, latest: CheckRecord | None, due: dt.datetime | None) -> Response:
@@ -230,7 +230,7 @@ def runs_page(ctx: Ctx) -> Response:
         Safe("<h2>Runs</h2>"),
     ]
     if not runs_ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now. Nothing has changed."))
+        parts.append(notice("error", "The runs cannot be read", "Meternaut cannot read the runs now. Nothing has changed."))
     elif not runs:
         parts.append(paragraph("No run is recorded yet."))
     else:
@@ -243,7 +243,7 @@ def runs_page(ctx: Ctx) -> Response:
     else:
         parts.append(paragraph(f"The latest {CASES_SHOWN} findings, most recently updated first."))
     if not cases_ok:
-        parts.append(notice("error", "The findings cannot be read", "I cannot read the findings now. Nothing has changed."))
+        parts.append(notice("error", "The findings cannot be read", "Meternaut cannot read the findings now. Nothing has changed."))
     elif not cases:
         parts.append(paragraph("No finding is recorded for this run." if selected else "No finding is recorded yet."))
     else:
@@ -342,7 +342,7 @@ def two_people_page(ctx: Ctx, *, banner: Safe | None = None, errors: dict[str, s
     if errors:
         parts.append(error_summary(list(errors.items())))
     if not ok:
-        parts.append(notice("error", "The rule cannot be read", "I cannot read the rule now, so what is shown is the starting rule: off. Nothing has changed."))
+        parts.append(notice("error", "The rule cannot be read", "Meternaut cannot read the rule now, so it shows the starting rule, which is off. Nothing has changed."))
     who = fmt(" It was last changed by {by} on {when}.", by=rule.by, when=ctx.when(rule.at)) if rule.by and rule.at else Safe("")
     parts.append(panel("rule-now", "How it is now", paragraph(fmt("{rule}{who}", rule=rule_text(rule), who=who)),
                        paragraph(f"{people} {'person has' if people == 1 else 'people have'} the role approver. It applies to the requests that are made after it is saved: a request that is open keeps what it was made with.")))

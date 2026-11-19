@@ -15,8 +15,8 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import IF_ACTED, NOT_WORKED_OUT, UNCONFIRMED, UNMEASURED, UNPRICED, Brief, ago_text, held_reason, plain, plan_headline, says_nothing, taken_back, things, waited_text, why_not_ask
-from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
+from ..brief import IF_ACTED, NO_FIGURE, NOT_WORKED_OUT, UNCONFIRMED, UNMEASURED, UNPRICED, Brief, ago_text, held_reason, plain, plan_headline, says_nothing, taken_back, things, waited_text, why_not_ask
+from ..models import ADVICE_QUIET_DAYS, ADVISE, ADVISOR, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
 from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, spark, summed, title_of, under,
@@ -208,9 +208,9 @@ def _members(ctx: Ctx, unit: Unit, name: str) -> Safe:
 def _row(ctx: Ctx, unit: Unit, rank: int, top: float, primary: bool) -> Safe:
     markup, name = _title(unit)
     basis = fmt('<span class="m">{note}</span>', note=unit.figure.note) if unit.figure.state in ("save", "cost") else Safe("")
-    parts = fmt('<span class="rank">{rank}</span><span class="main"><span class="t">{title}</span><span class="m">{meta}</span>{basis}<span class="chips">{chips}</span></span>'
-                '{impact}<span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis, chips=_chips(unit), impact=_impact(unit, top),
-                spark=spark(unit.series, unit.reason))
+    parts = fmt('<span class="rank">{rank}</span><span class="main"><span class="t">{title}</span><span class="m">{meta}</span></span>{impact}'
+                '<span class="below">{basis}<span class="chips">{chips}</span></span><span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis,
+                chips=_chips(unit), impact=_impact(unit, top), spark=spark(unit.series, unit.reason))
     if len(unit.members) == 1 and unit.first.brief.group is None:
         button = fmt('<span class="act"><a class="btn sm{primary}" href="{href}">Review<span class="visually-hidden">: {name}</span></a></span>',
                      primary=" primary" if primary else "", href=ctx.url(f"/ok/{link_part(unit.first.brief.plan_id)}"), name=name)
@@ -267,18 +267,22 @@ def _head(ctx: Ctx, units: Sequence[Unit], sort: str) -> Safe:
 
 
 def held_cases(ctx: Ctx) -> list[CaseRecord]:
-    """The findings of the investigation that are held back: a case that needs a person or is proposed, with no request waiting for its resource, that nobody answered lately and that
-    nobody marked do-not-touch. It is the set that cases/learning.OpenQuestions gives the Investigator as the questions with no request (a test pins that the two agree); the pages know
-    the records and nothing of how they are read, so the set is made here from the records."""
-    waiting = {p.resource_id.lower() for p in ctx.store.plans_open() if p.state == "open"}
+    """The findings that are held back: a case that needs a person or is proposed, with no request waiting for it, that nobody answered lately and that nobody marked do-not-touch. They are the findings of
+    the investigation (the set that cases/learning.OpenQuestions gives the Investigator as the questions with no request: a test pins that the two agree) and the recommendations of Azure Advisor for which
+    no saving is counted (brief.NO_FIGURE), which are no question for the Investigator and are judged by their own case, since many of them are about one subscription. The pages know the records and nothing
+    of how they are read, so the set is made here from the records."""
+    waiting = [p for p in ctx.store.plans_open() if p.state == "open"]
     quiet = stamp(ctx.now - dt.timedelta(days=ADVICE_QUIET_DAYS))
-    answered = {p.resource_id.lower() for p in ctx.store.plans_recent(HELD_PLANS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and p.created_at >= quiet}
-    left = waiting | answered | {key.lower() for key in ctx.store.do_not_touch()}
-    return [case for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status) if case.detector == INVESTIGATION and case.resource_id.lower() not in left]
+    plans = waiting + [p for p in ctx.store.plans_recent(HELD_PLANS) if p.family == ADVISE and p.state in ("declined", "consumed", "withdrawn") and p.created_at >= quiet]
+    silenced = {key.lower() for key in ctx.store.do_not_touch()}
+    left, asked = {p.resource_id.lower() for p in plans} | silenced, {p.case_id for p in plans}
+    return [case for status in ("needs_human", "proposed") for case in ctx.store.cases_recent(HELD_CASES, status)
+            if (case.detector == INVESTIGATION and case.resource_id.lower() not in left)
+            or (case.detector == ADVISOR and case.case_id not in asked and case.resource_id.lower() not in silenced and why_not_ask(case) == NO_FIGURE)]
 
 
 def held_count(ctx: Ctx) -> int:
-    """How many findings of the investigation are held back (held_cases)."""
+    """How many findings are held back (held_cases)."""
     return len(held_cases(ctx))
 
 
@@ -289,8 +293,8 @@ def held_by_rules(ctx: Ctx) -> int:
 
 def _held(ctx: Ctx) -> Safe:
     """The findings that no request waits for, and why, counted: a rule holds some back because nobody looked up who changed the resource or what depends on it was not checked, and for the others
-    the rules of asking say why (brief.why_not_ask: no saving was priced, nothing was measured, the second AI did not agree or the first was not sure), or the finding cannot say what to look at
-    (brief.says_nothing), or the places for requests are full, or nobody
+    the rules of asking say why (brief.why_not_ask: no saving was priced, nothing was measured, the second AI did not agree or the first was not sure, or no saving of Azure Advisor is counted), or the
+    finding cannot say what to look at (brief.says_nothing), or the places for requests are full, or nobody
     is named as an approver. The AIs look at them again at every search, so a person is told that they exist, how many there are for each cause and that nothing is dropped. A store that cannot be read
     says nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is listed
     also when it is not a finding of the investigation (the weekly letter links to this page)."""
@@ -306,7 +310,8 @@ def _held(ctx: Ctx) -> Safe:
         many = rest != 1
         counts = Counter(why_not_ask(case) or ("nothing" if says_nothing(case) else "") for case in cases if not held_reason(case, ctx.now))
         first = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. Nobody is asked about {'them' if many else 'it'} yet." if ruled else f"Nobody is asked about {_count(rest, 'finding')} yet."
-        lines.append(paragraph(f"{first} {_why_held(counts, rest)} The AI looks at {'them' if many else 'it'} again at its next search."))
+        who = "Meternaut" if counts[NO_FIGURE] else "The AI"  # the AIs look at no recommendation of Azure Advisor: code reads it again
+        lines.append(paragraph(f"{first} {_why_held(counts, rest)} {who} looks at {'them' if many else 'it'} again at its next search."))
     if listed:
         lines.append(fmt('<p>These findings are held back, so nothing is asked of you.</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count
@@ -316,8 +321,8 @@ def _held(ctx: Ctx) -> Safe:
 # Why nobody is asked about a finding that no guard of held_reason holds back, in the words of the page: the key of brief.why_not_ask, "nothing" for a finding that cannot say what to look at (brief.says_nothing),
 # and the clause that says it. "" is no reason that the findings themselves carry.
 HELD_WHY = ((UNPRICED, "Meternaut could not work out from the bill what a change would save"), (UNMEASURED, "nothing was measured of {their} use"),
-            (UNCONFIRMED, "the second AI did not agree that the change can be made, or the first AI was not sure"), ("nothing", "Meternaut cannot say what to look at in {them}"),
-            ("", "the places for requests are full, or nobody is named as an approver"))
+            (UNCONFIRMED, "the second AI did not agree that the change can be made, or the first AI was not sure"), (NO_FIGURE, "Meternaut counts no saving in dollars from Azure Advisor"),
+            ("nothing", "Meternaut cannot say what to look at in {them}"), ("", "the places for requests are full, or nobody is named as an approver"))
 
 
 def _why_held(counts: Mapping[str, int], total: int) -> str:
@@ -410,7 +415,7 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
     have = {p.plan_id for p in decided}
     mine = [*decided, *[p for p in closed if p.plan_id not in have and answerable(ctx, p)][:DECIDED_SHOWN]]
     if not ok or not closed_ok or ctx.told_failed:  # the index of the person is read by `answerable`: without it the requests that they were told about are missing
-        return join([heading, notice("error", "The decisions cannot be read", "I cannot read the recent decisions now. Nothing has changed.")])
+        return join([heading, notice("error", "The decisions cannot be read", "Meternaut cannot read the recent decisions now. Nothing has changed.")])
     rows: list[tuple[str, Safe]] = []
     for plan in mine:
         outcome = brief_of(ctx, plan, None, action=actions.get(plan.plan_id), decisions=read(lambda plan=plan: ctx.store.decisions_of_plan(plan.plan_id), [])[0]).outcome
@@ -446,7 +451,7 @@ def home(ctx: Ctx) -> Response:
     actions = {a.plan_id: a for a in read(lambda: ctx.store.actions_recent(RECENT_ACTIONS), [])[0]}
     units = _ranked(_units(rows), sort)
     if not ok or ctx.told_failed:  # the open requests, or the index of the requests that the person was told about, could not be read
-        top = join([Safe("<h1>Decisions</h1>"), notice("error", "The requests cannot be read", "I cannot read the open requests now. Nothing has changed.")])
+        top = join([Safe("<h1>Decisions</h1>"), notice("error", "The requests cannot be read", "Meternaut cannot read the open requests now. Nothing has changed.")])
     else:
         ready = [u for u in units if u.first.brief.kind == "change"]
         look = [u for u in units if u.first.brief.kind != "change"]

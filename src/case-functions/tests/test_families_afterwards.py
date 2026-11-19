@@ -371,16 +371,16 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         world, plan, resource, action = self.nothing_to_do("stop-vm")
         b = shown(world, plan)
         self.assertEqual((b.outcome.state, b.outcome.title, b.outcome.result), ("unchanged", "Nothing was changed", "Nothing was changed"))
-        self.assertEqual(b.outcome.lines, ("Approved by Tino.", "Nothing was changed. The machine was already stopped and released when Meternaut looked."))
+        self.assertEqual(b.outcome.lines, ("Approved by Tino.", "The machine was already stopped and released when Meternaut looked."))
         for line in b.outcome.lines:
             self.assertNotIn("their own Azure rights", line)
             self.assertNotIn("Nothing to change", line)
         self.assertEqual(b.outcome.by, "Tino")
 
     def test_the_line_of_each_family_and_of_the_old_deletes(self):
-        said = {"stop-vm": "Nothing was changed. The machine was already stopped and released when Meternaut looked.",
-                "resize-vm": "Nothing was changed. The machine was already of size Standard_D2s_v5 when Meternaut looked.",
-                "change-disk-tier": "Nothing was changed. The disk was already a Standard SSD (StandardSSD_LRS) when Meternaut looked."}
+        said = {"stop-vm": "The machine was already stopped and released when Meternaut looked.",
+                "resize-vm": "The machine was already of size Standard_D2s_v5 when Meternaut looked.",
+                "change-disk-tier": "The disk was already a Standard SSD (StandardSSD_LRS) when Meternaut looked."}
         for name, line in said.items():
             with self.subTest(name):
                 world, plan, resource, action = self.nothing_to_do(name)
@@ -390,11 +390,11 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         plan, _ = world.approved(resource, "disk", "delete", 20.0, detector="orphan-managed-disk")
         del world.arm.resources[resource["id"].lower()]
         world.run(plan)
-        self.assertEqual(shown(world, plan).outcome.lines, ("Approved by Tino.", "Nothing was changed. The resource did not exist any more when Meternaut looked."))
+        self.assertEqual(shown(world, plan).outcome.lines, ("Approved by Tino.", "The resource did not exist any more when Meternaut looked."))
 
     def test_the_sentence_is_cut_the_same_way_for_any_result(self):
-        for result, expected in (("The machine was already stopped. Nothing to change.", "Nothing was changed. The machine was already stopped."),
-                                 ("VM is off. Nothing to delete.", "Nothing was changed. VM is off."),
+        for result, expected in (("The machine was already stopped. Nothing to change.", "The machine was already stopped."),
+                                 ("VM is off. Nothing to delete.", "VM is off."),
                                  ("", "Nothing was changed."), ("Nothing to change.", "Nothing was changed.")):
             self.assertEqual(brief._nothing_changed(result), expected)
 
@@ -422,9 +422,9 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
     def test_the_letter_says_that_nothing_had_to_change_and_never_that_it_ran_or_can_be_undone(self):
         world, plan, resource, action = self.nothing_to_do("stop-vm")
         case = world.store.case_get(plan.case_id)
-        letter = letters.done_letter(world.store.plan_get(plan.plan_id), action, case, PERSON, BASE, fs.NOW, CONTACTS)
+        letter = letters.done_letter(world.store.plan_get(plan.plan_id), action, case, PERSON, BASE, fs.NOW, CONTACTS, world.store.decisions_of_plan(plan.plan_id))
         self.assertEqual(letter.subject, "[Meternaut] Nothing had to change in Azure")
-        for wanted in ("You approved:", "Nothing was changed. The machine was already stopped and released when Meternaut looked.", "No saving is claimed for this approval."):
+        for wanted in ("Approved by Tino. Nothing had to be changed in Azure.", "The machine was already stopped and released when Meternaut looked.", "No saving is claimed for this approval."):
             self.assertIn(wanted, letter.text)
         for unwanted in ("Done:", "has run", "Start the machine again", "cannot be undone", "own Azure rights", "confirm it after a few days", "a month"):
             self.assertNotIn(unwanted, letter.text)
@@ -437,7 +437,7 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         self.assertEqual(cardcheck.check(card), [])
         self.assertEqual(found["outcome"], "Nothing was changed")
         self.assertEqual(found["outcome-line-1"], "Approved by Tino.")
-        self.assertTrue(found["outcome-line-2"].startswith("Nothing was changed. The machine was already stopped"))
+        self.assertTrue(found["outcome-line-2"].startswith("The machine was already stopped"))
         for absent in ("undo", "saving-word", "value"):
             self.assertNotIn(absent, found)
 
@@ -455,9 +455,9 @@ class AnApprovalThatChangedNothing(unittest.TestCase):
         b = shown(world, plan)
         self.assertEqual((b.outcome.state, b.outcome.title), ("done", "Done"))
         self.assertEqual(b.outcome.lines[0], "Approved by Tino, and made with their own Azure rights.")
-        letter = letters.done_letter(world.store.plan_get(plan.plan_id), world.action(plan), world.store.case_get(plan.case_id), PERSON, BASE, fs.NOW, CONTACTS)
+        letter = letters.done_letter(world.store.plan_get(plan.plan_id), world.action(plan), world.store.case_get(plan.case_id), PERSON, BASE, fs.NOW, CONTACTS, world.store.decisions_of_plan(plan.plan_id))
         self.assertEqual(letter.subject, "[Meternaut] A change to Azure has run")
-        self.assertIn("Done:", letter.text)
+        self.assertIn("Approved by Tino, and made with their own Azure rights.", letter.text)
 
 
 # -- 3. a plan whose app stopped ----------------------------------------------------------------------------------------------------------------------
@@ -507,7 +507,7 @@ class AnApprovedPlanWhoseAppStopped(unittest.TestCase):
         world.tick()
         b = shown(world, plan)
         self.assertEqual((b.state, b.outcome.state, b.outcome.title), ("failed", "failed", "Not made"))
-        self.assertEqual(b.outcome.lines, (NOT_MADE_APP_STOPPED,))
+        self.assertEqual(b.outcome.lines, (NOT_MADE_APP_STOPPED, brief.LOOK_IN_AZURE))
         case = world.store.case_get(plan.case_id)
         reply = console_of(world, plan, case).get(f"/ok/{plan.plan_id}")
         (title,) = reply.main.find_all("p", class_="notice-title")

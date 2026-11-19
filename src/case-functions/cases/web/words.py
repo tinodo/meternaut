@@ -27,12 +27,14 @@ PLAN_STATE = {
     "open": "Open. It waits for an answer, and goes on to the next person if nobody gives one.",
     "held": "Held back. No request was made for the finding, and nothing changes in Azure.",
     "approved": "Approved. The change is being made now.",
-    "consumed": "Used. The change was made with the approver's own permissions, and a request runs once.",
+    "consumed": "Done. The change was made with the approver's own permissions, and a request runs only once.",
     "declined": "Declined. Nothing changed.",
     "expired": "Taken back by Meternaut. Nothing changed.",
     "withdrawn": "Withdrawn. Nothing changed.",
     "failed": "Failed. The change could not be finished.",
 }
+# What the Details of an advice request say of a request that was answered: advice changes nothing in Azure, so the words of a change that was made are not true of it.
+ADVICE_STATE = {"consumed": "Answered. A person said that it is worth acting on, and nothing was changed in Azure."}
 # What the details of a request that the bill closed say in place of the words of a request that Meternaut took back for no reason of its own: the cost went down, and Meternaut changed nothing.
 CLOSED_BY_THE_BILL = ("Closed because the cost went down", "The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.")
 
@@ -97,6 +99,11 @@ SWITCH = {
     "messages": ("All messages", "No message is sent to anybody.", "all messages"),
     "investigation": ("The investigation", "The AI agents do not run and open no new finding. Waste that Meternaut planted itself, approvals, changes and messages go on.", "the investigation"),
 }
+
+
+def plan_state(state: str, advice: bool = False) -> str:
+    """The Details' words for the state of a request: a change that was made is not said of advice, which changes nothing."""
+    return (ADVICE_STATE if advice else PLAN_STATE).get(state) or PLAN_STATE.get(state, state)
 
 
 def case_status(status: str) -> str:

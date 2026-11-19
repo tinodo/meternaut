@@ -175,7 +175,7 @@ def _earlier(ctx: Ctx, records: list[InvestigationRecord], unrecorded: list) -> 
 
 
 def activity_page(ctx: Ctx) -> Response:
-    records = ctx.store.investigations_recent(KEPT_INVESTIGATIONS)  # a store that cannot be read is the fault page of the router: "I cannot reach my records"
+    records = ctx.store.investigations_recent(KEPT_INVESTIGATIONS)  # a store that cannot be read is the fault page of the router: "Meternaut cannot reach its records"
     runs, runs_ok = read(lambda: ctx.store.runs_recent(KEPT_INVESTIGATIONS * 2), [])
     latest = records[0] if records else None
     recorded = {record.run_id for record in records}
@@ -185,7 +185,7 @@ def activity_page(ctx: Ctx) -> Response:
     if newer:
         parts.append(notice("warning", "The newest investigation was not recorded", fmt("It began {when}. What follows is from the latest one that is recorded.", when=ctx.when(newer[0].started_at))))
     if not runs_ok:
-        parts.append(notice("error", "The runs cannot be read", "I cannot read the runs now, so a run with no record is not listed. Nothing has changed."))
+        parts.append(notice("error", "The runs cannot be read", "Meternaut cannot read the runs now, so a run with no record is not listed. Nothing has changed."))
     if latest is not None:
         if latest.end in ("failed", "refused") and latest.note:
             parts.append(notice("warning", "It did not finish", _text(latest.note, 200)))

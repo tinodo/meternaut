@@ -2,8 +2,8 @@
 
 The page, the letter and the card are renders of the same brief (AGENTS.md rule 34). A flow of Power Automate posts the card into the chat of a person (teamsqueue.py). It holds what a person needs to
 decide in a minute and nothing more: the title and the place under it, the risk, how sure and what a change leaves behind in one line, what it is worth (the words of the pages, cases/stake.py), the
-facts, what changes, whether it can be undone, what could go wrong, whose resource it is, the buttons, and ONE footer line (that an AI wrote it and which models, why this person got it, who is
-responsible for Meternaut). No reasoning box, no counters, no banner.
+facts, what changes, whether it can be undone, what could go wrong, whose resource it is, the buttons, and ONE footer line (that an AI wrote it, why this person got it, who answers for
+Meternaut). No reasoning box, no counters, no banner.
 
 The card carries the decision. The action that posts it cannot take an answer back, so each answer is an Action.OpenUrl to a page of the function app that sends it (cardlinks.py): "Approve", "Confirm" (the
 first of two people), "Decline", and for advice "Worth acting on" and "Not worth it". A change that cannot be undone asks on the card: "Approve" shows "This cannot be undone: ..." with "No, go back" and
@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, Brief, called_of, footer_line, parse_time, plain
+from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, parse_time, plain,
+                    shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -30,7 +31,7 @@ KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
              "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you", "closed": "[Meternaut] A request was closed", "test": "[Meternaut] A test of the Teams cards"}
-ENDED = {"done": "Approved and done", "verified": "Approved and done", "unchanged": "Approved, nothing to change", "withdrawn": "Withdrawn"}
+NOTHING_MORE = "Nothing more is asked of you."
 PAGE_BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # What a TextBlock reads as Markdown (the subset that Teams shows), a < that could open a mention or a tag, and the characters that start a list at the start of a text.
@@ -39,7 +40,6 @@ GENTLE = re.compile(r"([\\`*_\[\]#<>])")
 LIST_DASH = re.compile(r"^[-+](?=\s)")
 LIST_NUMBER = re.compile(r"^(\d+)\.(?=\s)")
 TEXT_FEATURE = re.compile(r"\{(?=\{)")
-WHY_APPROVER = "You got this because you are named as an approver of this request."
 SHORT_CARD = "The details did not fit on this card. They are all on the page."
 
 
@@ -53,7 +53,7 @@ class CardTooLarge(CardError):
 
 @dataclass(frozen=True)
 class CardContext:
-    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, who is responsible for Meternaut (as plain text with the address; the card
+    """What a card needs besides the brief: the address of the page of its request (page_url makes it), why the person got it, who answers for Meternaut (as plain text with the address; the card
     names the first) and the addresses of its answer buttons by answer (`links`, from cardlinks.answer_url). Without buttons a card has the link to the page only."""
 
     page_url: str
@@ -138,7 +138,7 @@ def _heads_up(brief: Brief) -> list[dict]:
 
 
 def _facts(brief: Brief) -> list[dict]:
-    rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in brief.facts[:3]]
+    rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in shown_facts(brief.facts)]
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
 
 
@@ -232,10 +232,10 @@ def _answer_parts(brief: Brief, ctx: CardContext, answers: Sequence[tuple[str, b
     return [{"type": "ActionSet", "id": "decisions", "actions": buttons}, *([_sure(brief, ctx.links[asks])] if asks else [])]
 
 
-def footer(models: Sequence[str], why: str, contacts: Sequence[str]) -> dict:
-    """The one footer line: that an AI wrote this and which models, why the person got it and who is responsible for Meternaut (the first of the contacts, as the page names one person), as
-    plain text."""
-    line = footer_line([gentle(m, 60) for m in models], gentle(why, 200), [gentle(c, 160) for c in contacts[:1]])
+def footer(why: str, contacts: Sequence[str]) -> dict:
+    """The one footer line: that an AI wrote this and a person approves every change, why the person got it and who answers for Meternaut (the first of the contacts, as the page names one person),
+    as plain text."""
+    line = footer_line(gentle(why, 200), [gentle(c, 160) for c in contacts[:1]])
     return _block("ai-footer", line, isSubtle=True, size="Small", separator=True)
 
 
@@ -263,8 +263,8 @@ def _card(brief: Brief, ctx: CardContext, kind: str, body: list[dict], what: str
     title = title_text(brief)
     return _finish({
         "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"},
-        "fallbackText": f"{SENDER}: {md(title, 200)}. {what} Open it on the page: {ctx.page_url} Written by an AI.",
-        "body": [_header(kind), _block("headline", md(title, 200), size="Large", weight="Bolder"), *body, footer(brief.models, ctx.why, ctx.contacts)],
+        "fallbackText": f"{SENDER}: {md(title, 200)}. {what} Open it on the page: {ctx.page_url} An AI wrote this.",
+        "body": [_header(kind), _block("headline", md(title, 200), size="Large", weight="Bolder"), *body, footer(ctx.why, ctx.contacts)],
     })
 
 
@@ -300,19 +300,18 @@ def result_card(brief: Brief, ctx: CardContext) -> dict:
 
 
 def closed_card(brief: Brief, ctx: CardContext) -> dict:
-    """The card that replaces one that cannot be answered any more: one line on what became of the request, in the words of its real end, and no button. An open request, or an approved change that
-    is not over, has none."""
+    """The card that replaces one that cannot be answered any more: what became of the request in whole sentences, in the words of its real end, and no button. An open request, or an approved
+    change that is not over, has none."""
     _check_context(ctx, brief)
-    outcome, moment = brief.outcome, parse_time(brief.outcome.at)
+    outcome = brief.outcome
     if outcome.state in ("", "approved", "running"):
         raise CardError("only a request that has ended has a closing card")
-    by = md(outcome.by, 80)
-    if outcome.state == "expired":
-        said = f"{md(outcome.title, 40)}. {md(outcome.lines[0], 200)} {md(outcome.lines[1], 80)}"
-    elif outcome.state == "failed":
-        said = f"Approved by {by}, not made: {md(outcome.lines[0], 200)}"
-    else:
-        said = f"Decided: {md(ENDED.get(outcome.state, outcome.title), 40)} by {by}" + (f", {moment.day} {moment:%b %H:%M} UTC" if moment else "") + ". Nothing more to do."
+    lines = outcome.lines
+    moment = parse_time(outcome.decided)  # the person's own answer, in UTC and said so: a card knows no time zone
+    when = f"{moment.day} {MONTH_NAMES[moment.month - 1]}, {moment:%H:%M} UTC" if moment else ""
+    kept = {"expired": lines[:2], "failed": (f"{outcome.by} approved this, but the change was not made.", *lines[:2]),
+            "unchanged": (lines[0], "Nothing was changed.", *lines[-1:])}.get(outcome.state, (*lines[:1], *([f"It was decided on {when}."] if when else []), NOTHING_MORE))
+    said = " ".join(md(line, 300) for line in dict.fromkeys(kept))
     return _card(brief, ctx, "closed", [_block("closed", said, weight="Bolder")], said)
 
 
@@ -332,28 +331,28 @@ def minimal_card(brief: Brief, ctx: CardContext) -> dict:
     return _card(brief, ctx, brief.kind if waiting else "result", body, "A decision waits for you." if waiting else "What became of a request.")
 
 
-def probe_card(closed: bool = False, why: str = "You got this because the owner of Meternaut started a test of the Teams cards.", contacts: Sequence[str] = ()) -> dict:
+def probe_card(closed: bool = False, why: str = "The owner of Meternaut started a test of the Teams cards.", contacts: Sequence[str] = ()) -> dict:
     """The card of the test of the way to Teams (offers.card_test): no request, no figure, no name of the estate and no button. `closed` is the card that replaces it."""
-    line = "Test card from Meternaut: nothing to do." if not closed else "Test card from Meternaut: closed, nothing to do."
+    line = "This is a test card from Meternaut. There is nothing to do." if not closed else "This test card from Meternaut is closed. There is nothing to do."
     return _finish({
-        "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"}, "fallbackText": f"{SENDER}: {line} Written by an AI.",
-        "body": [_header("test"), _block("headline", line, size="Large", weight="Bolder"), footer((), why, contacts)],
+        "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"}, "fallbackText": f"{SENDER}: {line} An AI wrote this.",
+        "body": [_header("test"), _block("headline", line, size="Large", weight="Bolder"), footer(why, contacts)],
     })
 
 
-def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You got this because you are on my list of people.") -> dict:
-    """What Meternaut says before its first card to a person, in three sentences, with the one link to the start page of the web page."""
+def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You are on my list of people.") -> dict:
+    """What Meternaut says before its first card to a person, in four sentences, with the one link to the start page of the web page."""
     base = (base_url or "").strip().rstrip("/")
     if not PAGE_BASE.fullmatch(base):
         raise CardError("the address of the web page is not like https://host")
     return _finish({
         "type": "AdaptiveCard", "$schema": cardcheck.SCHEMA, "version": cardcheck.VERSION, "msteams": {"width": "Full"},
-        "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ Written by an AI.",
+        "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ An AI wrote this.",
         "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
-                 _block("hello", f"Hello {md(name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a decision waits for you."),
-                 _block("rules", "I change nothing myself. You answer a request with the buttons on its card: an answer button opens a page of mine that sends your answer, "
+                 _block("hello", f"Hello {md(name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you."),
+                 _block("rules", "I change nothing myself. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
                                  "and a change to Azure runs with your own Azure rights."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
                  _page_set("Open the web page", CardContext(page_url=f"{base}/")),
-                 footer((), why, contacts)],
+                 footer(why, contacts)],
     })

@@ -15,7 +15,7 @@ from typing import Sequence
 from . import brief
 from . import costs as cost_words
 from . import learning
-from .approvals import HELD_BACK, HELD_WORDS, LEFT_ALONE, NOTHING_TO_SAY, RELEASED
+from .approvals import HELD_BACK, HELD_WORDS, LEFT_ALONE, NOT_ASKED, NOTHING_TO_SAY, RELEASED
 from .detectors import Lead
 from .events import History
 from .models import HELD, CaseRecord, PlanRecord, StoreError
@@ -79,9 +79,9 @@ def keep_approvers(ex, history: History) -> None:
 
 
 def held(history: History, case: CaseRecord, why: str = "") -> str:
-    """Says in the History that a finding was held back, because it cannot say what to look at (`why` empty) or by a rule of cases/brief.py held_reason (`why` is its reason): its case stays, no request
-    is made. Returns the words that it said."""
-    reason = HELD_BACK.get(why, NOTHING_TO_SAY)
+    """Says in the History that a finding was held back, because it cannot say what to look at (`why` empty), by a rule of cases/brief.py held_reason (`why` is its reason) or because the rules of asking
+    count no saving for it (`why` is a key of NOT_ASKED): its case stays, no request is made. Returns the words that it said."""
+    reason = HELD_BACK.get(why) or (f"held back: {NOT_ASKED[why]}" if why in NOT_ASKED else NOTHING_TO_SAY)
     history.emit("case.held", caseId=case.case_id, detector=case.detector, resourceType=clean_text(case.resource_type, 120), resourceName=clean_text(case.resource_name, 120), reason=reason)
     return reason
 
@@ -95,7 +95,7 @@ def ask(ex, history: History, record: CaseRecord, lead: Lead, holds: list[str] |
         history.emit("plan.created", planId=plan.plan_id, caseKey=record.case_id, family=plan.family, approvers=len(plan.approvers))
         ex.on_plan(plan, ex.store.case_get(record.case_id) or record)
         return
-    why = ex.approvals.held_why(record)
+    why = ex.approvals.held_why(record) or (brief.NO_FIGURE if brief.why_not_ask(record) == brief.NO_FIGURE and not ex.approvals.has_request(record) else "")
     if (why or brief.says_nothing(record)) and holds is not None:
         holds.append(held(history, record, why))
 

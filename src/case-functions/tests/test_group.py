@@ -975,7 +975,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(found["headline"], "Look at 60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
         self.assertEqual(found["value"], "Meternaut worked out that this could save about $21,960 a year \\($1,830 a month\\).")
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Charges it would shrink", "60 charges, $1,830 a month"):
+        for row in ("Traffic", "40 in 30 days", "Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 

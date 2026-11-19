@@ -204,8 +204,8 @@ class TheLadder(unittest.TestCase):
         world.tick()
         step = world.steps()[1]
         self.assertEqual((step.source, step.who, step.notes), ("contact", (CONTACT,), ("no_permission",)))
-        letter = next(call for call in world.mail.sent_to("cora@example.com") if "I could not look up" in call[2])
-        self.assertIn("I could not look up the manager (no permission yet).", letter[2])
+        letter = next(call for call in world.mail.sent_to("cora@example.com") if "Meternaut could not look up" in call[2])
+        self.assertIn("Meternaut could not look up the manager (no permission yet).", letter[2])
 
     def test_when_nothing_is_found_the_request_goes_to_all_owners_with_the_plain_note_and_is_never_dropped(self):
         world = World(people=NO_CONTACT, graph=Graph())
@@ -248,7 +248,7 @@ class TheLadder(unittest.TestCase):
         world.clock.advance(days=1)
         world.tick()
         (to_manager,) = world.mail.sent_to("mae@example.com")
-        self.assertIn("I am Meternaut, an AI that looks for Azure resources", to_manager[2])
+        self.assertIn("Meternaut is an AI that looks for Azure resources", to_manager[2])
         self.assertIn("you are the manager of Ada", to_manager[2])
         self.assertIn("Ada, asked first, was told on", to_manager[2])
         again = world.store.mails_since(MANAGER, "2000-01-01T00:00:00Z")

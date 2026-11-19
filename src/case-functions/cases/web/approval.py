@@ -24,7 +24,7 @@ from .figures import risk_chip, title_of
 from .home import walk
 from .layout import SEND_SCRIPT, SIGNIN_ORIGIN, button, form, head, hidden, link, message_page, notice, page, paragraph, summary
 
-REFUSED_ROLE = "I cannot take your OK on this request."
+REFUSED_ROLE = "Meternaut cannot take your OK on this request."
 PAUSED = brief_page.PAUSED
 CHANGED = "This request changed. Nothing is approved. A new message will bring the new request and its code."
 CARD_WHY = "you pressed a button on a card that Meternaut sent you"
@@ -61,6 +61,7 @@ def _refused_role(ctx: Ctx) -> Response:
 
 
 def _not_found(ctx: Ctx) -> Response:
+    # AGENTS.md rule 28 names this heading as the proof that a post reached the app: it changes only together with that rule.
     return message_page(ctx, 404, "I cannot find this request", "No request has this address. Nothing has changed.", back=("/", "Back to the decisions"), ai=True,
                         why="you opened an address that holds no request")
 
@@ -291,7 +292,7 @@ def outcome(ctx: Ctx, result: DecideResult, plan_id: str | None) -> Response:
         return show("This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed.")
     if kind == "duplicate":
         return show("Already answered", "You answered this request already. Your first answer stands, and nothing has changed.")
-    return show("I could not take your answer", text or "The approval service did not answer.", "Open the request again to see where it stands.")
+    return show("Meternaut could not take your answer", text or "The approval service did not answer.", "Open the request again to see where it stands.")
 
 
 def _post(ctx: Ctx, plan_id: str) -> tuple[PlanRecord | None, str, Response | None]:

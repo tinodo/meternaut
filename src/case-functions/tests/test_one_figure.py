@@ -327,20 +327,20 @@ class NoLetterAndNoCardSaysTheOldWords(unittest.TestCase):
                 for old in ("No figure", "No saving is shown", "Talk to a person", "saving_line", "usd_text"):
                     self.assertNotIn(old, source)
 
-    def test_every_letter_and_card_ends_in_one_footer_line_with_the_models_why_and_who_is_responsible(self):
+    def test_every_letter_and_card_ends_in_one_footer_line_with_why_and_who_answers_for_meternaut(self):
         for fixture in decision_cases() + done_cases():
             with self.subTest(fixture.label):
                 letter, card = fixture.letter(), fixture.card()
-                (footer,) = [line for line in letter.text.splitlines() if line.startswith("Written by an AI")]
+                (footer,) = [line for line in letter.text.splitlines() if line.startswith("An AI wrote this")]
                 self.assertEqual(letter.text.rstrip().splitlines()[-1], footer)
-                self.assertIn("A person approves every change.", footer)
-                self.assertIn("You got this because", footer)
-                self.assertTrue(footer.endswith("Responsible for Meternaut: Olga (olga@example.com)."), "the first of the contacts who is not the reader")
+                self.assertIn("a person approves every change.", footer)
+                self.assertIn(" You are ", footer)
+                self.assertTrue(footer.endswith(" Olga (olga@example.com) answers for Meternaut."), "the first of the contacts who is not the reader")
                 last = card["body"][-1]
                 self.assertEqual(last["id"], "ai-footer")
-                self.assertTrue(last["text"].startswith("Written by an AI"))
-                self.assertIn("A person approves every change.", last["text"])
-                self.assertTrue(last["text"].endswith("Responsible for Meternaut: Olga (olga@example.com)."), last["text"])
+                self.assertTrue(last["text"].startswith("An AI wrote this"))
+                self.assertIn("a person approves every change.", last["text"])
+                self.assertTrue(last["text"].endswith(" Olga (olga@example.com) answers for Meternaut."), last["text"])
                 self.assertEqual(cardcheck.check(card), [])
 
     def test_a_subject_and_a_notification_text_hold_no_resource_name_and_no_amount(self):
@@ -391,11 +391,11 @@ class TheCardNamesOnePersonWhoIsResponsible(unittest.TestCase):
         self.assertEqual(offers.contacts_of(alone, TINO), ("Tino (tino@example.com)",))
 
     def test_the_footer_of_a_card_names_one_person_and_leaves_the_sentence_out_when_there_is_none(self):
-        line = cards.footer(("m1",), "You got this because you are on my list of people.", ("Olga (olga@example.com)", "Otto"))["text"]
-        self.assertEqual(line, "Written by an AI (models: m1). A person approves every change. You got this because you are on my list of people. Responsible for Meternaut: Olga (olga@example.com).")
-        self.assertNotIn("Responsible", cards.footer((), "Why.", ())["text"])
+        line = cards.footer("You are on my list of people.", ("Olga (olga@example.com)", "Otto"))["text"]
+        self.assertEqual(line, "An AI wrote this, and a person approves every change. You are on my list of people. Olga (olga@example.com) answers for Meternaut.")
+        self.assertNotIn("answers for Meternaut", cards.footer("Why.", ())["text"])
         first = cards.first_contact_card("Maya", BASE, offers.contacts_of(self.PEOPLE, TINO))
-        self.assertTrue(by_id(first)["ai-footer"]["text"].endswith("Responsible for Meternaut: Olga (olga@example.com)."))
+        self.assertTrue(by_id(first)["ai-footer"]["text"].endswith("Olga (olga@example.com) answers for Meternaut."))
 
 
 if __name__ == "__main__":

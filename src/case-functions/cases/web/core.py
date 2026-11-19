@@ -315,14 +315,17 @@ class Ctx:
             return esc(clean_line(value) or empty)
         return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(found), text=plain_time(found, self.zone(), self.now))
 
-    def day(self, value: object, empty: str = "not set") -> Safe:
-        """A day as `<time>` text in the person's own time zone, where it is known (else in UTC): `Thu 5 Nov`."""
+    def day(self, value: object, empty: str = "not set", weekday: bool = False) -> Safe:
+        """A day as `<time>` text in the person's own time zone, where it is known (else in UTC), as a person says it: `5 November` (with the year when it is not this year), and with the day of the
+        week for the heading of a day (`Thursday 5 November`)."""
         moment = parse_time(value)
         if moment is None:
             return esc(clean_line(value) or empty)
         zone = self.zone()
         shown = moment.astimezone(zone) if zone is not None else moment
-        return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(moment), text=f"{DAYS[shown.weekday()][:3]} {shown.day} {MONTHS[shown.month - 1]}")
+        year = "" if shown.year == utc(self.now).year else f" {shown.year}"
+        named = f"{DAYS[shown.weekday()]} " if weekday else ""
+        return fmt('<time datetime="{iso}">{text}</time>', iso=stamp(moment), text=f"{named}{shown.day} {MONTH_NAMES[shown.month - 1]}{year}")
 
     def day_key(self, value: object) -> str:
         """The calendar day of a time in the person's own time zone, as YYYY-MM-DD, for grouping a list by day. Empty for a time that cannot be read."""

@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Collection, Mapping, Sequence
 
 from . import brief, switches, twopeople
-from .brief import NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
+from .brief import NO_FIGURE, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
 from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
 from .families import registry
@@ -114,9 +114,10 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
 
 
 def _asked_on_less(case: CaseRecord, plan: PlanRecord) -> bool:
-    """Whether an open request was made on less than the rules of asking ask for now (why_not_ask): it states no saving when none was priced, or it was made before the other rules (no ASKED_UNDER)."""
+    """Whether an open request was made on less than the rules of asking ask for now (why_not_ask): it states no saving when none was priced or counted (UNPRICED, NO_FIGURE: a request that was asked
+    with a saving stays), or it was made before the other rules (no ASKED_UNDER)."""
     why = why_not_ask(case)
-    return bool(why) and (not (plan.saving_usd_month or 0) > 0 if why == UNPRICED else ASKED_UNDER not in (plan.preconditions or {}))
+    return bool(why) and (not (plan.saving_usd_month or 0) > 0 if why in (UNPRICED, NO_FIGURE) else ASKED_UNDER not in (plan.preconditions or {}))
 
 
 def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings,
@@ -204,7 +205,7 @@ class Approvals:
         advice = plan.family == ADVISE
         # A change is approved by a named approver. An advise plan only records an opinion, so the owner may answer it too, and so may a person that a step of its ladder was delivered to (models.may_answer).
         if not may_answer(principal, plan, lambda: escalated_to(self.store.escalations_of(plan.plan_id), principal.oid)):
-            return None, DecideResult(False, "refused_role", "I cannot take your OK on this request.")
+            return None, DecideResult(False, "refused_role", "Meternaut cannot take your OK on this request.")
         if plan.state == "expired":  # the stored word for a request that Meternaut took back: no clock ends a request (AGENTS.md rule 38)
             return None, DecideResult(False, "expired", "Meternaut took this request back, so it cannot be answered. Nothing has changed.", plan)
         if plan.state not in ("open", HELD):
@@ -224,7 +225,7 @@ class Approvals:
         try:
             return self._decide(principal, plan_id, decision, code, nonce, clean_text(note, 300), now, reason)
         except StoreError:
-            return DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing is approved. Try again in a few minutes.")
 
     def _decide(self, principal: Principal, plan_id: str, decision: str, code: str, nonce: str, note: str, now: dt.datetime, reason: str = "") -> DecideResult:
         if decision == "approve":
@@ -302,7 +303,7 @@ class Approvals:
         try:
             return self._second(*self._no_advice(*self._gate(principal, plan_id, "approve", code, self.clock())), principal)
         except StoreError:
-            return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
+            return None, DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing is approved. Try again in a few minutes.")
 
     def check_form(self, principal: Principal, plan_id: str, code: str, nonce: str) -> tuple[PlanRecord | None, DecideResult | None]:
         """The checks of the approve form, in the order of every other answer: the person, the plan, the switches, the plan code, for a change that needs two people the confirmation
@@ -315,7 +316,7 @@ class Approvals:
                 return None, DecideResult(False, "error", "This form is no longer valid. Open the link in the message again. Nothing is approved.", plan)
             return plan, None
         except StoreError:
-            return None, DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes.")
+            return None, DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing is approved. Try again in a few minutes.")
 
     def _second(self, plan: PlanRecord | None, refusal: DecideResult | None, principal: Principal) -> tuple[PlanRecord | None, DecideResult | None]:
         """A change that needs two people is approved only by a person who did not confirm it, after a confirmation of this exact plan (cases/twopeople.py)."""
@@ -345,14 +346,14 @@ class Approvals:
         try:
             return self._stepup(principal, plan_id, code, resource_id)
         except StoreError:
-            return None, None, DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed.")
+            return None, None, DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing was changed.")
 
     def _stepup(self, principal: Principal, plan_id: str, code: str, resource_id: str) -> tuple[PlanRecord | None, ActionRecord | None, DecideResult | None]:
         plan = self.store.plan_get(plan_id)
         if plan is None:
             return _refused_stepup("refused_state", "This request does not exist. Nothing was changed.")
         if not principal.has("approver") or principal.oid.lower() not in {a.lower() for a in plan.approvers}:
-            return _refused_stepup("refused_role", "I cannot take your OK on this request.")
+            return _refused_stepup("refused_role", "Meternaut cannot take your OK on this request.")
         if plan.state != "approved":
             return _refused_stepup("refused_state", f"This request is {_words(plan.state)}. Nothing more can be recorded.", plan)
         if switches.pulled(self.store, "all", "changes"):
@@ -435,7 +436,7 @@ class Approvals:
                     self.store.action_release(plan.plan_id)  # a claim that no change follows must not block the next try
                 except StoreError:
                     pass
-            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. Try again in a few minutes.", plan), None
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing was changed. Try again in a few minutes.", plan), None
 
     def supersede(self) -> list[PlanRecord]:
         """Takes back, with the reason `group` (stored as expired, ending now), the open advice requests of the resources that an open group request stands for, other than the group's own, and the

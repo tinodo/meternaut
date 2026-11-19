@@ -50,7 +50,7 @@ def build_mailer(settings: LoopSettings, store: Store, people: People, token: Ca
 
 
 def contacts_of(people: People) -> tuple[str, ...]:
-    """The people who are responsible for Meternaut, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
+    """The people who answer for Meternaut, for the last line of a letter: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
     address, in plain text. A letter names the first of them who is not the person who reads it."""
     chosen = [p for p in people.persons if "ops" in p.roles or "owner" in p.roles] or list(people.persons)
     return tuple(contact_text(p.name, p.mail) for p in chosen[:3])
@@ -154,13 +154,20 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 kinds = ("unsure",)  # its own kind: the letter that says what happened when the result is known later is still due
             else:
                 kinds = ("notice", "verified") if action.state == "verified" else ("notice",)
+
+            def answers():
+                try:
+                    return store.decisions_of_plan(plan.plan_id)
+                except Exception:  # noqa: BLE001 (the letter is worth more than the name of the person who approved)
+                    return ()
+
             for oid in plan.approvers:
                 person = people.by_oid(oid)
                 if person is None or not person.mail or quiet_now(person):
                     continue
                 for kind in kinds:
                     if due(person, kind, plan.plan_id) and not card_goes_first(person, f"{kind}-card", since, plan.plan_id):
-                        mailer.send(person, letters.done_letter(plan, action, case, person, base, now, contacts()), kind, plan.plan_id)
+                        mailer.send(person, letters.done_letter(plan, action, case, person, base, now, contacts(), answers()), kind, plan.plan_id)
         safely("the letter about a change", work)
 
     def on_run(run: RunRecord) -> None:

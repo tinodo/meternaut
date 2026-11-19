@@ -11,7 +11,7 @@ import unittest
 from support import NOW, RG, SUBSCRIPTION, FakeEstate
 from test_run_loop import OID, Moving, loop_for, watch
 from test_web_support import NOW as WEB_NOW
-from test_web_support import Console, make_advice, make_case
+from test_web_support import Console, make_advice, make_case, make_decision
 
 from cases import cards, detectors, letters
 from cases.brief import build_brief
@@ -58,6 +58,12 @@ class TheFindingAboutASubscription(unittest.TestCase):
         cls.clock = Moving()
         cls.extras = loop_for(cls.clock)
         cls.estate = a_subscription_with_a_bill()
+        about = f"/subscriptions/{SUBSCRIPTION}"
+        lead = detectors.advisor_lead(advisor_item(), SUBSCRIPTION)
+        # A request that an earlier version made, and that a person put off: nobody is asked about a recommendation that counts no saving now, and a request that is theirs stays, so the Watch keeps it and reads its daily cost.
+        cls.extras.store.plan_put(make_advice(plan_id="plan-put-off", case_id=f"k{detectors.ident('advisor-cost', f'{SUBSCRIPTION}|{lead.lead_id}')}", resource_id=about, resource_name=DEV, resource_group="", subscription_id=SUBSCRIPTION,
+                                              title=f"{PROBLEM} (subscription {DEV})", saving_usd_month=None, waiting_costs_usd_day=None, approvers=(OID,)))
+        cls.extras.store.decision_put(make_decision(plan_id="plan-put-off", approver_oid=OID, decision="later"))
         cls.summary, cls.events, _ = watch(cls.estate, cls.extras, cls.clock)
         cls.case = the_case(cls.extras, "advisor-cost")
         (cls.plan,) = cls.extras.store.plans_open()
@@ -80,7 +86,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
 
     def test_the_title_and_what_to_look_at_are_advisors_own_words_and_never_the_id(self):
         self.assertEqual(self.case.advice, {"problem": PROBLEM, "solution": SOLUTION})
-        self.assertEqual(self.brief.headline, f"{PROBLEM}: subscription {DEV}")
+        self.assertEqual(self.brief.headline, f"{PROBLEM} (subscription {DEV})")
         look = next(fact for fact in self.brief.facts if fact.label == "What to look at")
         self.assertEqual((look.value, look.source, self.brief.facts[0]), (SOLUTION, "Azure Advisor", look))
         for text in (self.brief.headline, self.brief.where.name, self.plan.title, *(fact.value for fact in self.brief.facts)):
@@ -119,7 +125,7 @@ class TheFindingAboutASubscription(unittest.TestCase):
         (chart,) = [n for n in card.find_all("figure") if "chart" in n.classes()]
         self.assertEqual(len(chart.find_all("path")), 2, "a line and its tint: the daily cost of every line of the subscription")
         self.assertNotIn("Review the resource", reply.content)
-        self.assertEqual(reply.headings(1), [f"{PROBLEM}: subscription {DEV}"])
+        self.assertEqual(reply.headings(1), [f"{PROBLEM} (subscription {DEV})"])
         self.assertIn(f"subscription {DEV}", reply.main.text())
         outside = reply.main.text().replace(reply.main.find("details").text(), "")
         self.assertNotIn(SUBSCRIPTION, outside, "the id of the subscription is in the details and nowhere else")
@@ -193,12 +199,12 @@ class AdvisorsOwnWords(unittest.TestCase):
         lead = self.lead(impactedField="Microsoft.Compute/disks", impactedValue="idle-disk", resourceMetadata={"resourceId": f"{RG}/rg-app/providers/Microsoft.Compute/disks/idle-disk"})
         self.assertEqual((lead.name, lead.resource_group, lead.resource_type, lead.advice), ("idle-disk", "rg-app", "microsoft.compute/disks", {"problem": PROBLEM, "solution": SOLUTION}))
         brief = self.brief_of(lead)
-        self.assertEqual(brief.headline, f"{PROBLEM}: idle-disk in group rg-app")
+        self.assertEqual(brief.headline, f"{PROBLEM} (idle-disk in group rg-app)")
         self.assertEqual(next(f.value for f in brief.facts if f.label == "What to look at"), SOLUTION)
 
     def test_a_recommendation_about_a_resource_group_names_the_group_and_one_about_a_resource_that_has_only_an_id_names_the_group_only(self):
         group = self.lead(impactedField="Microsoft.Resources/resourceGroups", impactedValue="rg-demo", resourceMetadata={"resourceId": f"{RG}/rg-demo"})
-        self.assertEqual(self.brief_of(group).headline, f"{PROBLEM}: resource group rg-demo")
+        self.assertEqual(self.brief_of(group).headline, f"{PROBLEM} (resource group rg-demo)")
         only_an_id = self.lead(impactedField="Microsoft.Foo/bars", impactedValue="aaaaaaaa-1111-4222-8333-444444444444",
                                resourceMetadata={"resourceId": f"{RG}/rg-app/providers/Microsoft.Foo/bars/aaaaaaaa-1111-4222-8333-444444444444"})
         self.assertEqual(self.brief_of(only_an_id).headline, f"{PROBLEM} in group rg-app")
@@ -207,7 +213,7 @@ class AdvisorsOwnWords(unittest.TestCase):
         lead = self.lead()
         lead.name = SUBSCRIPTION  # the id that Advisor gives in impactedValue: no display name was read
         brief = self.brief_of(lead)
-        self.assertEqual(brief.headline, f"{PROBLEM}: subscription {SUBSCRIPTION[:8]}")
+        self.assertEqual(brief.headline, f"{PROBLEM} (subscription {SUBSCRIPTION[:8]})")
         self.assertNotIn(SUBSCRIPTION, brief.headline)
 
     def test_a_recommendation_without_words_is_titled_by_what_it_is_about_and_not_by_the_words_review_the_resource(self):
@@ -222,13 +228,13 @@ class AdvisorsOwnWords(unittest.TestCase):
 class TheRun(unittest.TestCase):
     """What the Watch says once more about a finding that was taken up."""
 
-    def test_the_run_says_nothing_was_held_back(self):
+    def test_the_run_says_that_the_finding_was_held_back_because_no_saving_is_counted_for_it(self):
         clock = Moving()
         extras = loop_for(clock)
         summary, events, _ = watch(a_subscription_with_a_bill(), extras, clock)
-        self.assertEqual((summary.held, extras.store.runs_recent()[0].held), (0, 0))
-        self.assertEqual([e for e in events if e["type"] == "case.held"], [])
-        self.assertEqual(events[-1]["heldBack"], 0)
+        self.assertEqual((summary.held, extras.store.runs_recent()[0].held), (1, 1))
+        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], ["held back: Meternaut counts no saving in dollars from Azure Advisor"])
+        self.assertEqual(events[-1]["heldBack"], 1)
 
 
 def _walk(node):
