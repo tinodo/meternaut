@@ -61,6 +61,7 @@ class Kind:
     decisions: tuple = ()
     viewer: str = ""
     verb: str = ""  # what Azure does, for a change, in the words of the sentence that says it: "deletes", "stops", "changes the size of"
+    nobody_asked: tuple[str, ...] = ()  # the surfaces on which nobody can act (a person who confirmed already, a request with no second approver), so that nothing is asked on them
 
     def brief(self):
         return brief_mod.build_brief(self.case, self.plan, None, self.decisions, now=self.now, may_answer=True, viewer=self.viewer)
@@ -186,18 +187,21 @@ def _family(name: str) -> Kind:
 
 
 def _two_people(stage: str) -> Kind:
-    """A change that needs two people (class R3), for the person who is asked first, who can only confirm it, or, after somebody else confirmed it, for the second, who approves it."""
+    """A change that needs two people (class R3), for a person at each stage of it (cases/twopeople.py): the first, who can only confirm it; the second, after somebody else confirmed it, who approves it;
+    one who confirmed it already ("mine"); one whose confirmation went stale because the plan changed after it; and the request that has no second approver ("alone"). Nobody can act in the last two of
+    these: a letter knows no reader, so it is the page and the card that ask nothing for a person who confirmed already, and the three for a request that nobody can approve."""
     world, plan, case = made("delete-disk")
-    plan = dataclasses.replace(plan, approval_class="R3", approvers=(TINO, OTHER_APPROVER), digest="d" * 64)
+    plan = dataclasses.replace(plan, approval_class="R3", approvers=(TINO,) if stage == "alone" else (TINO, OTHER_APPROVER), digest="d" * 64)
     world.store.plan_put(plan)
-    decisions = ()
-    if stage == "second":
-        decisions = (DecisionRecord(plan.plan_id, OTHER_APPROVER, "Olga", "confirm", at(hours=-2), plan.code, plan_digest=plan.digest),)
-        world.store.decision_put(decisions[0])
+    confirmed = {"second": (OTHER_APPROVER, "Olga", plan.digest), "mine": (TINO, "Tino", plan.digest), "stale": (OTHER_APPROVER, "Olga", "e" * 64)}.get(stage)
+    decisions = (DecisionRecord(plan.plan_id, confirmed[0], confirmed[1], "confirm", at(hours=-2), plan.code, plan_digest=confirmed[2]),) if confirmed else ()
+    for decision in decisions:
+        world.store.decision_put(decision)
     detector, facts = FINDINGS["delete-disk"]
     case = dataclasses.replace(case, detector=detector, facts=facts)
     return Kind(f"change, two people, {stage} stage", case, plan, plan.resource_name, brief_mod.kind_words(case.resource_type)[1], change=True, console=lambda: console_of(world, plan, case),
-                now=fs.NOW, decisions=decisions, viewer=TINO, verb=VERBS["delete-disk"])
+                now=fs.NOW, decisions=decisions, viewer=TINO, verb=VERBS["delete-disk"],
+                nobody_asked={"mine": ("page", "card"), "alone": ("page", "card", "letter")}.get(stage, ()))
 
 
 def kinds() -> list[Kind]:
@@ -217,7 +221,7 @@ def kinds() -> list[Kind]:
     found += [_older(detector, n + 10, cost_read=False) for n, detector in enumerate(THE_SIX, 1)]
     found += [_advisor(commitment, figure) for commitment in (True, False) for figure in ("eur", "none")]
     found += [_family(name) for name in MAKERS]
-    found += [_two_people("first"), _two_people("second")]
+    found += [_two_people(stage) for stage in ("first", "second", "mine", "stale", "alone")]
     return found
 
 
@@ -284,6 +288,8 @@ def the_finding(shown: Rendered, kind: Kind) -> list[str]:
 
 def what_is_asked(shown: Rendered, kind: Kind) -> list[str]:
     found = ASKED.findall(text_of(shown))
+    if shown.kind in kind.nobody_asked:  # nobody can act here, and a person who cannot act is asked nothing: the lines of the stage say what is true, and this question is not asked of them
+        return [] if not found else ["it asks a person who cannot act what to decide"]
     return [] if len(found) == 1 else [f"it asks {len(found)} times what is asked of the person ('You are asked whether ...')"]
 
 
@@ -345,7 +351,7 @@ class EveryRequestCanBeDecided(unittest.TestCase):
 
     def test_every_kind_is_built_and_there_are_many(self):
         found = kinds()
-        self.assertGreaterEqual(len(found), 35)
+        self.assertGreaterEqual(len(found), 38)
         self.assertEqual(len({kind.name for kind in found}), len(found), "a name for each kind")
         self.assertEqual({kind.plan.family for kind in found if kind.change}, set(MAKERS), "every family of change is a kind")
 
@@ -437,12 +443,18 @@ MAIN_WORDS = {  # what the approval letter of each kind measured on main (f84596
     "advice, commit": 220, "advice, delete": 191, "advice, a group of many resources": 170, "Azure Advisor, a commitment": 213, "Azure Advisor, one machine": 196,
     "older check, orphan-managed-disk": 175, "older check, orphan-public-ip": 176, "older check, load-balancer-without-backends": 176, "older check, empty-app-service-plan": 178,
     "older check, stopped-vm": 170, "older check, orphan-private-endpoint": 170, "change, stop-vm": 210, "change, resize-vm": 219, "change, change-disk-tier": 211, "change, delete-disk": 152,
-    "change, delete-public-ip": 156, "change, delete-idle-resource": 167, "change, scale-vpn-gateway": 242}
-OWN_WORDS = {"change, two people, first stage": 172, "change, two people, second stage": 172}  # kinds that nothing measured on main: what the letter of each is now, so that it does not grow
+    "change, delete-public-ip": 156, "change, delete-idle-resource": 167, "change, scale-vpn-gateway": 242,
+    "older check, orphan-managed-disk, cost not read": 164, "older check, orphan-public-ip, cost not read": 165, "older check, load-balancer-without-backends, cost not read": 165,
+    "older check, empty-app-service-plan, cost not read": 167, "older check, stopped-vm, cost not read": 159, "older check, orphan-private-endpoint, cost not read": 159,
+    "Azure Advisor, a commitment that it prices in euros": 180, "Azure Advisor, a commitment with no figure": 140, "Azure Advisor, one machine that it prices in euros": 173,
+    "Azure Advisor, one machine with no figure": 175, "change, two people, first stage": 165, "change, two people, second stage": 165, "change, two people, mine stage": 165,
+    "change, two people, stale stage": 165, "change, two people, alone stage": 165}
 GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
     "advice, a group of many resources": (3, "the row that says why the finding is a lead: what the investigation found"),
-    "Azure Advisor, a commitment": (1, "the sentence that says that Meternaut did not check Azure Advisor's estimate"),
-    "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Azure Advisor's estimate"),
+    "Azure Advisor, a commitment": (1, "the sentence that says that Meternaut did not check Advisor's estimate"),
+    "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Advisor's estimate"),
+    "Azure Advisor, a commitment that it prices in euros": (1, "the sentence that says that Meternaut did not check Advisor's estimate"),
+    "Azure Advisor, one machine that it prices in euros": (3, "the sentence that says that Meternaut did not check Advisor's estimate"),
     "change, stop-vm": (5, "the sentence that says what is asked of the person: whether to approve this change")}
 
 
@@ -466,17 +478,18 @@ class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.Te
 
 
 class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase):
-    """The first of the two people who approve a change can only confirm it: the page, the card and the letter do not ask whether to approve it."""
+    """The first of the two people who approve a change can only confirm it, and a person who confirmed already or a request that nobody can approve asks nothing: nobody can act there."""
 
-    CONFIRM = "You are asked whether to confirm this change; a second person has to approve it."
+    CONFIRM = "You are asked whether to confirm this change."
     APPROVE = "You are asked whether to approve this change."
 
-    def test_the_first_is_asked_to_confirm_on_the_page_the_card_and_the_letter(self):
-        kind = a_kind("change, two people, first stage")
-        for surface, shown in surfaces(kind).items():
-            with self.subTest(surface):
-                self.assertIn(self.CONFIRM, text_of(shown))
-                self.assertNotIn(self.APPROVE, text_of(shown))
+    def test_the_first_and_a_person_whose_confirmation_went_stale_are_asked_to_confirm_on_the_page_the_card_and_the_letter(self):
+        for stage in ("first", "stale"):
+            kind = a_kind(f"change, two people, {stage} stage")
+            for surface, shown in surfaces(kind).items():
+                with self.subTest(stage, surface=surface):
+                    self.assertIn(self.CONFIRM, text_of(shown))
+                    self.assertNotIn(self.APPROVE, text_of(shown))
 
     def test_the_second_is_asked_to_approve_on_the_page_and_the_card(self):
         kind = a_kind("change, two people, second stage")
@@ -486,11 +499,34 @@ class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase
                 self.assertIn(self.APPROVE, text)
                 self.assertNotIn("to confirm this change", text)
 
+    def test_a_person_who_cannot_act_is_asked_nothing_and_the_lines_of_the_stage_say_what_is_true(self):
+        for stage, says in (("mine", "You confirmed the request"), ("alone", "so nobody can approve it")):
+            kind = a_kind(f"change, two people, {stage} stage")
+            for surface in ("page", "card"):
+                with self.subTest(stage, surface=surface):
+                    self.assertIn(says, text_of(surfaces(kind)[surface]))
+            for surface in kind.nobody_asked:
+                with self.subTest(stage, nobody_asked=surface):
+                    self.assertEqual(ASKED.findall(text_of(surfaces(kind)[surface])), [])
+                    self.assertEqual(what_is_asked(surfaces(kind)[surface], kind), [], "the question of what is asked is not asked of a surface where nobody can act: it must ask nothing")
+
+    def test_the_sentence_of_each_stage_is_made_in_one_place_and_without_it_a_person_who_cannot_act_is_asked_to_approve(self):
+        for stage in ("mine", "alone"):
+            kind = a_kind(f"change, two people, {stage} stage")
+            _RENDERED.pop(kind.name, None)
+            try:
+                with mock.patch.object(brief_mod, "ASKED_BY_STAGE", {}):
+                    for surface in kind.nobody_asked:
+                        with self.subTest(stage, surface=surface):
+                            self.assertEqual(what_is_asked(surfaces(kind)[surface], kind), ["it asks a person who cannot act what to decide"])
+            finally:
+                _RENDERED.pop(kind.name, None)
+
     def test_the_sentence_is_made_in_one_place_and_without_it_the_three_surfaces_ask_nothing(self):
         kind = a_kind("change, two people, first stage")
         _RENDERED.pop(kind.name, None)
         try:
-            with mock.patch.object(brief_mod, "ASKED_CONFIRM", ""):
+            with mock.patch.object(brief_mod, "ASKED_BY_STAGE", {**brief_mod.ASKED_BY_STAGE, "first": ""}):
                 for surface, shown in surfaces(kind).items():
                     with self.subTest(surface):
                         self.assertTrue(what_is_asked(shown, kind))
@@ -506,15 +542,11 @@ class TheApprovalLettersDoNotGrowWithoutSayingSo(unittest.TestCase):
     def words(kind: Kind) -> int:
         return word_count(letters.approval_letter(kind.plan, kind.case, PERSON, BASE, kind.now, CONTACTS))
 
-    @staticmethod
-    def base(name: str) -> str:
-        return name.removesuffix(", cost not read").removesuffix(" that it prices in euros").removesuffix(" with no figure")
-
-    def test_no_letter_is_longer_than_it_was_on_main_except_by_the_words_that_are_named(self):
+    def test_every_kind_has_its_own_size_on_main_and_no_letter_is_longer_than_that_except_by_the_words_that_are_named(self):
+        self.assertEqual(set(MAIN_WORDS), {kind.name for kind in kinds()}, "a kind is measured on main when it is added, and is held to its own size and not to that of another kind")
         for kind in kinds():
             with self.subTest(kind.name):
-                base = self.base(kind.name)
-                self.assertLessEqual(self.words(kind), {**MAIN_WORDS, **OWN_WORDS}[base] + GREW.get(base, (0, ""))[0])
+                self.assertLessEqual(self.words(kind), MAIN_WORDS[kind.name] + GREW.get(kind.name, (0, ""))[0])
 
     def test_what_is_named_as_grown_has_grown_by_no_more_than_it_says_and_says_why(self):
         for name, (extra, why) in GREW.items():
