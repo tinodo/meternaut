@@ -698,7 +698,7 @@ class TheBriefOfACase(unittest.TestCase):
     def test_the_page_says_in_its_footer_that_an_ai_wrote_what_it_shows(self):
         footer = self.reply.root.find("footer")
         self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", footer.text())
-        self.assertIn("The models are model-detective-x and model-skeptic-y.", footer.text())
+        self.assertIn("The AIs that wrote this are model-detective-x and model-skeptic-y.", footer.text())
 
 
 INVESTIGATED = dict(

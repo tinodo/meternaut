@@ -172,7 +172,7 @@ class ThePage(unittest.TestCase):
         footer = self.reply.root.find("footer")
         self.assertEqual([p.text() for p in footer.find_all("p")], [
             "An AI wrote the recommendations on this page, and a person approves every change.",
-            "The models are model-detective-x and model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
+            "The AIs that wrote this are model-detective-x and model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
             "Olga (olga@example.com) answers for Meternaut."])
         self.assertEqual(footer.find("summary").text(), "About this page")
         self.assertEqual(footer.find_all("a"), [], "the person who answers for Meternaut is plain text with the address, not a link")
@@ -608,7 +608,7 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertIn(sentence, reply.content)
                     self.assertIn(" answers for Meternaut.", reply.content, "the same help on every page")
                     self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", reply.content)
-                    self.assertIn("The models are model-detective-x", reply.content)
+                    self.assertIn("The AIs that wrote this are model-detective-x", reply.content)
                     self.assertEqual(reply.problems, [])
                     self.assertEqual(reply.root.find_all("button"), [])
                     self.assertEqual(reply.forms(), [])

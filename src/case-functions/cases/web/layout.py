@@ -256,7 +256,7 @@ def footer_line(ctx: Ctx, ai: bool, why: str, models: Sequence[str] | None = Non
     """The foot of every page. A page that shows text that an AI wrote has one quiet line that says so and that a person approves every change. Every page has "About this page", which holds
     the models (for a page with AI text), why this person sees the page and who answers for Meternaut: rule 13 (b) to (d) of AGENTS.md, in plain text and with no link."""
     names = list(ctx.services.models if models is None else models)
-    written = fmt("The models are {names}. ", names=and_list(names)) if ai and names else Safe("")
+    written = fmt("The {ais} that wrote this {be} {names}. ", ais="AIs" if len(names) > 1 else "AI", be="are" if len(names) > 1 else "is", names=and_list(names)) if ai and names else Safe("")
     person = talk_to_a_person(ctx)
     owner = fmt(" {person} answers for Meternaut.", person=person) if person else Safe("")
     about = fmt("<details><summary>About this page</summary><p>{written}You see this because {why}.{owner}</p></details>", written=written,

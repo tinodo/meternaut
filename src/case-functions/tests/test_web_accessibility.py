@@ -481,7 +481,7 @@ class TheWords(unittest.TestCase):
                     self.assertTrue(about.startswith("You see this because "), about)
                 else:
                     self.assertEqual(paragraphs[0], line)
-                    self.assertTrue(about.startswith("The models are model-detective-x and model-skeptic-y. You see this because "), about)
+                    self.assertTrue(about.startswith("The AIs that wrote this are model-detective-x and model-skeptic-y. You see this because "), about)
 
     def test_a_page_that_refuses_says_that_nothing_changed(self):
         refusing = ("refused_code", "refused_state", "refused_paused", "expired", "duplicate", "stopped", "azure_refused", "signin_failed", "step_up_failed")

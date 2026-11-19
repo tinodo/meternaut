@@ -102,7 +102,7 @@ class TheSendingPage(unittest.TestCase):
         reply, _ = press(seeded(), "plan0001", "decline")
         self.assertIsNotNone(reply.root.find("nav"))
         self.assertIn("You see this because you pressed a button on a card that Meternaut sent you.", reply.root.find("footer").text())
-        self.assertIn("The models are model-detective-x and model-skeptic-y.", reply.root.find("footer").text())
+        self.assertIn("The AIs that wrote this are model-detective-x and model-skeptic-y.", reply.root.find("footer").text())
         self.assertNotRegex(reply.main.text(), r"(?i)\bsign(?:s|ed|ing)?[ -]in\b")
 
     def test_the_page_changes_nothing_and_makes_no_call_and_asks_nobody_and_the_token_is_still_good(self):

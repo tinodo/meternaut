@@ -881,6 +881,8 @@ class TheWholeWay(unittest.TestCase):
         again = self.console.get(self.path)
         self.assertEqual(again.status, 200)
         self.assertEqual([f for f in again.forms() if f.action == self.path], [])
+        self.assertNotIn("The change was made", again.main.text(), "advice changes nothing in Azure: the Details do not say that a change was made")
+        self.assertIn("Answered. A person said that it is worth acting on, and nothing was changed in Azure.", again.main.text())
         history = self.console.get("/history")
         lines = [tuple(c.text() for c in li.children if hasattr(c, "tag") and c.tag == "span") for ul in history.main.find_all("ul", class_="recent") for li in ul.find_all("li")]
         self.assertTrue(any(line[:1] == ("Worth acting on",) and line[2:] == ("Tino said this is worth acting on.",) for line in lines), lines)
