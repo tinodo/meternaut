@@ -127,14 +127,14 @@ def stop_of(harness: object) -> str:
 
 
 def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str], bool] | None:
-    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, the kinds that their tools touched, and whether there are records
-    and no hash in any of them (the runs from before the hashes: they seeded the dearest resources of each kind, which the toolbox then takes as looked at, until a record holds a hash). None when
-    the store cannot be read: the seeds are then the dearest first, as they always were, and the run says so (cases/investigate.py)."""
+    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, the kinds that their tools touched, and whether a record of the window
+    holds no hash. Such a record is one from before the hashes, which seeded the dearest resources of each kind, or one of a run that looked at nothing, which cannot be told from it and counts the
+    same: while one is in the window the toolbox takes the dearest of each kind as looked at, beside the hashes of the other records. None when the store cannot be read: the seeds are then the
+    dearest first, as they always were, and the run says so (cases/investigate.py)."""
     since = stamp(now - dt.timedelta(days=LOOKED_DAYS))
     try:
         found = [record for record in store.investigations_recent(KEPT_INVESTIGATIONS) if record.at >= since]  # type: ignore[attr-defined]
-        hashes = frozenset(word for record in found for word in record.profiled)
-        return hashes, frozenset(kind for record in found for kind, _ in record.kinds), bool(found) and not hashes
+        return frozenset(word for record in found for word in record.profiled), frozenset(kind for record in found for kind, _ in record.kinds), any(not record.profiled for record in found)
     except Exception as error:  # noqa: BLE001 (a store that cannot be read changes the order of the seeds and nothing else)
         LOG.warning("the earlier investigations could not be read (%s)", type(error).__name__)
         return None
@@ -149,7 +149,7 @@ def coverage(toolbox: object) -> tuple[int, int, int]:
 
 def looked_note(now: int, new: int, total: int, assumed: int = 0) -> str:
     """The note of a run (counts of `coverage`): how many resources it looked at, how many of them for the first time in LOOKED_DAYS days and, when the runs before it looked at others, how many
-    those runs and this one looked at in all. With `assumed` (the dearest resources of each kind that were taken as looked at, because the earlier runs left no hash) it counts none as new and says so."""
+    those runs and this one looked at in all. With `assumed` (the dearest resources of each kind that were taken as looked at, because a record of the window holds no hash) it counts none as new and says so."""
     days = f"{LOOKED_DAYS} days"
     count = "no resources" if not now else f"{now:,} resource{'' if now == 1 else 's'}"
     if assumed:
