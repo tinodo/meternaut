@@ -1156,9 +1156,9 @@ THE_REST_OF_THE_REPOSITORY = {"README.md": b"# a repository\n", "tools/strip-sou
                               "src/case-functions/requirements.in": b"azure-functions\n", "docs/notes.md": b"notes\n"}
 
 
-def github_zip(files=None, rest=None, also=None):
+def github_zip(files=None, rest=None, also=None, stored=None):
     """The archive that GitHub makes of a commit (git archive, as a zip): one folder that holds the repository's files, the app in src/case-functions, an entry for each folder, every file deflated. `also` is
-    raw entries by their whole name, for the archives that a person who wants to hurt would make."""
+    raw entries by their whole name, for the archives that a person who wants to hurt would make, and `stored` the same without compression (an archive that is too big)."""
     entries = {f"{THE_TOP}/src/case-functions/{name}": content for name, content in (CASES_SOURCE_FILES if files is None else files).items()}
     entries.update({f"{THE_TOP}/{name}": content for name, content in (THE_REST_OF_THE_REPOSITORY if rest is None else rest).items()})
     folders = {f"{THE_TOP}/"} | {"/".join(name.split("/")[:depth]) + "/" for name in entries for depth in range(2, name.count("/") + 1)}
@@ -1170,6 +1170,8 @@ def github_zip(files=None, rest=None, also=None):
             archive.writestr(info, b"")
         for name, content in sorted({**entries, **(also or {})}.items()):
             archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_DEFLATED)
+        for name, content in (stored or {}).items():
+            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_STORED)
     return out.getvalue()
 
 
@@ -1229,9 +1231,9 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         archive, digest = github_zip(), held_digest(CASES_SOURCE_FILES)
         ran = self.fetch()
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
+        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r" in \d+ s$", " in N s", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line))) for line in ran.lines], [
             "ok: python3 3.12.7",
-            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api",
+            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes in N s",
             "ok: the app's files are taken from it: 5 files",
             f"ok: the files match the digest of the workflow's checkout ({digest[:12]})",
             "ok: az login as the deploy identity with the OpenID Connect token",
@@ -1254,8 +1256,8 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         self.assertLess(max(i for i, call in enumerate(ran.calls) if call.startswith("curl ")), min(i for i, call in enumerate(ran.calls) if call.startswith("az ")), "the download comes before the sign-in")
         ran = self.fetch(kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        self.assertEqual(ran.lines[:4], ["ok: python3 3.12.7", f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api", "ok: the app's files are taken from it: 5 files",
-                                         f"ok: the files match the digest of the workflow's checkout ({digest[:12]})"])
+        self.assertEqual([re.sub(r" in \d+ s$", " in N s", line) for line in ran.lines[:4]], ["ok: python3 3.12.7", f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes in N s",
+                                                                                              "ok: the app's files are taken from it: 5 files", f"ok: the files match the digest of the workflow's checkout ({digest[:12]})"])
         (post,) = [call for call in ran.calls_of("curl ") if "zipdeploy" in call]
         self.assertRegex(post, rf"https://{CASES_APP}\.scm\.azurewebsites\.net/api/zipdeploy$")
         self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES))
@@ -1294,7 +1296,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         urls = [call.split()[-1] for call in ran.calls_of("curl ")]
         self.assertEqual(urls, [f"https://api.github.com/repos/{THE_REPOSITORY}/zipball/{THE_COMMIT}"] * 2 + [f"https://codeload.github.com/{THE_REPOSITORY}/zip/{THE_COMMIT}"])
         self.assertEqual(ran.calls_of("sleep")[0], "sleep 3", "a pause between the two tries at a host")
-        self.assertIn(f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: codeload", ran.lines)
+        self.assertRegex("\n".join(ran.lines), rf"(?m)^ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: codeload, \d+ bytes in \d+ s$")
         for status in ("403", "404", "429"):
             ran = self.fetch(statuses={"api": status, "codeload": "200"})
             self.assertEqual(ran.done.returncode, 0, (status, ran.lines))
@@ -1339,9 +1341,22 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         self.stopped_before_the_sign_in(self.fetch(archive=github_zip({}, rest={})), "function_app.py is not in the archive")
 
     def test_a_file_of_the_package_that_the_digest_does_not_cover_stops_the_run_because_it_would_ride_unchecked(self):
-        for name in ("cases/notes.txt", "cases/__pycache__/loop.cpython-313.pyc", "cases/web/logo.svg"):
+        for name in ("cases/notes.txt", "cases/__pycache__/loop.cpython-313.pyc", "cases/web/logo.svg", "cases/.py", "cases/web/.json"):  # the last two end in the text of a suffix but have none: the digest passes them over
             ran = self.fetch(archive=github_zip({**CASES_SOURCE_FILES, name: b"x"}))
             self.stopped_before_the_sign_in(ran, "cases/ holds a file that the digest does not cover")
+
+    def test_an_archive_of_more_than_64_MB_stops_the_run_before_the_sign_in_and_the_log_says_the_bytes_and_the_seconds_of_the_download(self):
+        archive = github_zip(stored={f"{THE_TOP}/docs/video.bin": b"\0" * (64 << 20)})
+        ran = self.fetch(archive=archive)
+        self.stopped_before_the_sign_in(ran, "the archive cannot be used: it is more than 64 MB")
+        self.assertRegex("\n".join(ran.lines), rf"(?m)^ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(archive)} bytes in \d+ s$")
+
+    def test_an_app_file_of_more_than_2_MB_stops_the_run_before_the_sign_in_and_one_of_exactly_2_MB_does_not(self):
+        files = {**CASES_SOURCE_FILES, "cases/big.py": b"#" * (2 << 20)}
+        ran = self.fetch({"FAKE_AZ_LOGIN": "fail"}, archive=github_zip(files), digest=held_digest(files))  # the run need not go on after the sign-in
+        self.assertIn("ok: the app's files are taken from it: 6 files", ran.lines)
+        files["cases/big.py"] += b"#"
+        self.stopped_before_the_sign_in(self.fetch(archive=github_zip(files), digest=held_digest(files)), "the archive cannot be used: an app file is more than 2 MB")
 
     def test_files_that_are_not_those_of_the_checkout_stop_the_run_before_the_sign_in_whatever_was_changed(self):
         original = held_digest(CASES_SOURCE_FILES)
