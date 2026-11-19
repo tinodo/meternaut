@@ -20,7 +20,7 @@ from .models import CaseRecord
 from .web.figures import RISKS, Figure, figure_for, says, short_of, title_of
 from .web.home import Row, unit_title, units_of
 
-NOTE_CHARS = 520  # the most of the sentences under the figure that a card shows, and with the first one, the most that a letter shows: the longest basis of a figure fits (a test in test_pricing.py: a switch with every number at its longest is 470 characters)
+NOTE_CHARS = 840  # the most of the sentences under the figure that a card shows, and with the first one, the most that a letter shows: the longest basis of a figure fits (a test in test_pricing.py: a switch with both names at 40 characters and every number at its longest is 810 characters)
 LINE_CHARS = NOTE_CHARS + 70
 
 

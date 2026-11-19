@@ -307,6 +307,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(f"This request is closed ({closed}). Nothing can be answered now.")
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
+    if brief.asked:
+        doc.paragraph(_data(brief.asked, 320))
     doc.figure(stake_of(brief))
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
@@ -482,6 +484,8 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
         doc.paragraph(_data(note, 200), muted=True)
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
+    if brief.asked:
+        doc.paragraph(_data(brief.asked, 320))
     doc.figure(stake)
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))

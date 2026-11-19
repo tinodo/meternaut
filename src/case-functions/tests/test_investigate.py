@@ -2234,8 +2234,8 @@ class WhenAFindingThatWasPricedIsJudgedAgainWithNoPrice(unittest.TestCase):
 
     def test_the_request_is_not_taken_back_and_its_page_keeps_the_figure_the_level_and_the_basis_that_the_person_was_shown(self):
         removal, unpriceable = priced("r1", usd=40.0), {"change": priced("r1", usd=40.0)[0]}
-        for label, first, proposal, again, level, basis in (("a priced removal, judged again as a change that nothing states", removal, "change", {}, "Expected", "that the change would remove"),
-                                                            ("a priced removal, judged again with a change that code cannot price", removal, "change", unpriceable, "Expected", "that the change would remove"),
+        for label, first, proposal, again, level, basis in (("a priced removal, judged again as a change that nothing states", removal, "change", {}, "Expected", "what the change would remove"),
+                                                            ("a priced removal, judged again with a change that code cannot price", removal, "change", unpriceable, "Expected", "what the change would remove"),
                                                             ("an assumed share, judged again as a question that states no change", self.assumed(), "investigate", {}, "Scenario", "the AI's own assumption")):
             with self.subTest(label):
                 extras, plan, clock, before = self.judged_twice(first, proposal, again)

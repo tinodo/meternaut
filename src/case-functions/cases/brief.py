@@ -215,6 +215,12 @@ SECOND_WORDS = {
 ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded with your name."
 ADVICE_WHO = "If you decide to act, you do it yourself in Azure with your own rights."
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
+# What a person who is asked about advice is asked, in one text that the page, the card and the letters all say as it is (asked_of): whether what the title names is worth it, that an answer changes nothing
+# in Azure, and what saying yes means. It says it as a statement: a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin).
+ASKED = "You are asked whether it is worth {what}. Answering changes nothing in Azure. If you say yes, you {do} yourself."
+ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
+              CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
+OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.
 WAITING_FOR_THE_CHECK = "Azure asked for an extra sign-in check before it would make the change. The change waits until the check is completed. Nothing was changed yet."
@@ -459,6 +465,8 @@ class Brief:
     heads_up: str = ""
     # The verb of its headline (verb_of): the title of a request for many resources is this verb and how many of what.
     verb: str = LOOK
+    # What a person is asked about this request of advice while it waits (asked_of): the same text on the page, the card and the letters; empty for every other request.
+    asked: str = ""
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -931,12 +939,19 @@ def verb_of(case: CaseRecord | None, recommendation: str | None = None) -> str:
     return VERBS.get(proposal or "", LOOK)
 
 
+def switch_ends(case: CaseRecord | None, otherwise: str = "") -> str:
+    """What a switch is from and to, as the end of a phrase (" from Standard Deployment to Basic Deployment"), from the names that the digest of its figure keeps (pricing.ends): only the target when the
+    bill's own name is not kept, and `otherwise` when no name is. Never a word that is not plain."""
+    now, to = pricing.ends(case.facts if case is not None else None)
+    return f" from {now} to {to}" if now and to else f" to {to}" if to else otherwise
+
+
 def headline_of(family: str, name: str, group: str, rtype: str, recommendation: str | None, plan_title: str = "", plan: PlanRecord | None = None, together: Group | None = None,
                 case: CaseRecord | None = None) -> str:
     """The request in one line: a verb, the thing and the place. Written by code from the kind of change, never by a model. `together` is the group that a case stands for (group_of), when it
     stands for many resources: the line then says how many, of what kind and in how many groups, and names the first. A case that is an Advisor recommendation (`case`) says it in Advisor's
     own words (advice_of), then what it is about. A finding that only asks for a look says why when its typed basis can say it in a fixed phrase that fits any resource (BASIS_TITLES): "Look at the
-    disk x, because nothing may be using it"."""
+    disk x, because nothing may be using it". A switch says from what to what when its figure keeps the names of both ends: "Consider switching the firewall x from Standard Deployment to Basic Deployment"."""
     place = f" in group {text_of(group, 90)}" if group else ""
     label = text_of(name, MAX_NAME) or "this resource"
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90))
@@ -955,7 +970,21 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
     verb = verb_of(case, recommendation)
     facts = case.facts if case is not None and isinstance(case.facts, dict) else {}
     why = BASIS_TITLES.get(str(facts.get("basis"))) if verb == LOOK else None
-    return f"{verb} the {noun} {label}{place}" + (f", because {why}" if why else "")
+    return f"{verb} the {noun} {label}{place}" + (switch_ends(case) if verb == CHANGE_VERBS["switch"] else "") + (f", because {why}" if why else "")
+
+
+def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str:
+    """What a person is asked about a request of advice that waits, in the words of its verb (ASKED): whether it is worth switching, reducing, removing, deleting, scheduling or committing, or looking
+    closer, then that an answer changes nothing in Azure, and that a person who says yes does it themselves. A switch names both ends when its figure keeps them, and says "another price of the same
+    service" when it keeps none. Code's words: no name of the estate is in it, only the kind of the resource."""
+    thing = f"these {number_text(together.count)} {group_things(together)}" if together is not None else f"the {kind_words(rtype)[1]}"
+    if advice_of(case) is not None:
+        return ASKED.format(what="acting on this recommendation of Azure Advisor", do="make the change")
+    if still_used(case):
+        return ASKED.format(what=f"checking whether {thing} is still used", do="look into it")
+    verb = verb_of(case)
+    what = ASKED_WHAT.get(verb, ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE))
+    return ASKED.format(what=what, do="look into it" if verb not in ASKED_WHAT or verb == LOOK else "make the change")
 
 
 def plan_headline(plan: PlanRecord) -> str:
@@ -1566,7 +1595,7 @@ def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[F
     head: list[Fact] = []
     group = group_of(case)
     priced = _priced(case)
-    rows = ([Fact("Bill lines it would shrink", f"{number_text(priced.lines)} line{'' if priced.lines == 1 else 's'}, {usd_text(priced.bill)} {priced.per}", "Azure cost lines")]
+    rows = ([Fact("Charges it would shrink", f"{number_text(priced.lines)} charge{'' if priced.lines == 1 else 's'}, {usd_text(priced.bill)} {priced.per}", "Azure cost lines")]
             if priced is not None else [])
     cost = _figure(case.cost_usd_30d)
     state = cost_state_of(case, group)
@@ -1888,7 +1917,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         cost_state=read, scope=scope, made_of=made_of_text(case), estimate=estimate_for(case, read, together), cost_url=cost_url, cost_scope=cost_scope,
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
-        hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation))
+        hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
+        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else "")
 
 
 def order_key(brief: Brief) -> tuple:

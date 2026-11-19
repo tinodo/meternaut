@@ -717,12 +717,12 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
     def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
-        self.assertTrue(sub.startswith("It assumes the AI's target of a change from 3 to 2, applied to the 2 bill lines of this resource that the change would shrink, counted over the last 30 days."), sub)
+        self.assertTrue(sub.startswith("Over the last 30 days this resource paid about $36.00 for what the change would shrink. The AI proposes a change from 3 to 2. That is the AI's own proposal"), sub)
         lead = next(p for p in card.find_all("p") if "say" in p.classes()).text()
         self.assertEqual(lead, "Meternaut worked out that this could save about $144 a year ($12.00 a month).")
 
-    def test_the_bill_lines_that_it_would_shrink_are_a_fact_that_code_read(self):
-        self.assertEqual(self.reply.measured()["Bill lines it would shrink"], ("2 lines, $36.00 in the last 30 days", "Azure cost lines"))
+    def test_the_charges_that_it_would_shrink_are_a_fact_that_code_read(self):
+        self.assertEqual(self.reply.measured()["Charges it would shrink"], ("2 charges, $36.00 in the last 30 days", "Azure cost lines"))
 
     def test_what_the_ai_says_a_person_would_do_is_a_box_of_its_own_marked_as_not_checked_by_code_and_the_block_is_no_typed_fact(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
