@@ -525,8 +525,8 @@ class TheWordsReadAsSentences(unittest.TestCase):
 
     def test_the_gallery_holds_the_pages_and_messages_that_the_owner_named(self):
         self.assertGreaterEqual(len(cases()), 15)
-        for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, one request for many resources", "change, delete a disk", "held finding",
-                       "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice"):
+        for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, a switch (the firewall)", "advice, one request for many resources", "change, delete a disk",
+                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch"):
             self.assertIn(wanted, cases())
 
     def test_every_rule_catches_its_fault(self):
@@ -576,6 +576,32 @@ class TheWordsReadAsSentences(unittest.TestCase):
                       "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
                 for surface, shown in on.items():
                     self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}'")
+
+    def test_the_old_sentences_of_the_basis_that_are_put_back_make_the_lint_fail_on_the_page_the_letter_and_the_card(self):
+        # The jargon of the sentences under a figure ("bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of") is put back where code writes them (pricing._basis).
+        from cases import pricing
+
+        old_switch = ("It assumes a switch of the 1 bill line of this resource to the alternative's list price, scaled by your bill's rate, which is 1 of list, or taken at list prices, counted at the rate of the last "
+                      "7 days. Meternaut did not check the alternative for features.")
+        old_target = "It assumes the AI's target of a change from 12 to 4, applied to the 2 bill lines of this resource that the change would shrink, counted at the rate of the last 7 days."
+        for label, (case, plan), old, fragments in (("a switch", _firewall(), old_switch, ("bill line", "scaled by", "of list", "the alternative's list price")),
+                                                     ("a change that the AI targets", (_priced_machine(), _machine_plan()), old_target, ("the AI's target of", "bill line"))):
+            with self.subTest(label), mock.patch.object(pricing, "_basis", lambda *found, old=old, **more: old):
+                brief = brief_mod.build_brief(case, plan, None, (), now=NOW, may_answer=True)
+                on = {"page": _page("page", case, plan), "letter": _letter("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)),
+                      "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
+                for surface, shown in on.items():
+                    for fragment in fragments:
+                        self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}' in {label}")
+
+    def test_the_basis_that_code_writes_now_passes_the_lint_on_every_surface_and_says_none_of_the_old_words(self):
+        for case, plan in (_firewall(), (_priced_machine(), _machine_plan())):
+            brief = brief_mod.build_brief(case, plan, None, (), now=NOW, may_answer=True)
+            on = {"page": _page("page", case, plan), "letter": _letter("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)),
+                  "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
+            for surface, shown in on.items():
+                with self.subTest(surface):
+                    self.assertEqual([], problems(shown))
 
     def test_what_is_put_back_by_hand_makes_the_lint_fail_on_the_page_the_letter_and_the_card(self):
         # The shapes that came back by hand after the reviews of the words: a date in the form of a record in the body of a page, the money line of the old pages (in any case of letters), the risk
