@@ -835,9 +835,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     s.client.deadline = deadline
     # The parts of the estate that the Investigator looks at one after the other, dearest first (cases/beats.py). When no cost is known to rank by, or INVESTIGATE_BEATS is 1 (the way back), one open
     # beat is the whole estate, as one session always looked at it. What the runs of the last days looked at (their records) decides which resources the seeds start from and which kinds the last beat names.
-    remembered = activity.earlier(s.extras.store, s.clock()) if s.extras is not None else (frozenset(), frozenset(), False)  # None: the records could not be read
-    looked, touched, legacy = remembered or (frozenset(), frozenset(), False)
-    assumed = beats.SEED_RESOURCES * legacy  # the runs from before the hashes seeded the dearest SEED_RESOURCES of each kind: code's reads take them as looked at, beside the hashes, while such a record is in the window
+    remembered = activity.earlier(s.extras.store, s.clock()) if s.extras is not None else (frozenset(), frozenset(), frozenset())  # None: the records could not be read
+    looked, touched, unrecorded = remembered or (frozenset(), frozenset(), frozenset())
+    assumed = dict.fromkeys(unrecorded, beats.SEED_RESOURCES)  # the runs from before the hashes seeded the dearest SEED_RESOURCES of the kinds of their beats: code's reads take them as looked at, in the kinds that the records without a hash touched, beside the hashes
     plan = (beats.plan(*beats.spend(contexts), st.investigate_beats, touched) if st.investigate_beats > 1 else []) or [beats.Beat()]
     focused = not plan[0].open
     built_here = toolbox is None

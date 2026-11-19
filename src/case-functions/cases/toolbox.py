@@ -1041,7 +1041,7 @@ class Toolbox:
         self.trial = False  # True while a call is a trial: a read that code makes for a beat, which leaves no failure and no list that is not whole or is larger than a product behind (cases/investigate.py sets it)
         self.window: frozenset[str] = frozenset()  # the hashes (seen_hash) of the resources that the runs of the last days looked at, from the records of the investigations (cases/investigate.py sets it)
         self.rotate = False  # True while a call is a read that code makes for a beat: `list_resources` by cost then puts what the window does not hold first (cases/investigate.py sets it, as it sets `trial`)
-        self.backfill = 0  # while it is not 0, the dearest resources of each kind, that many, count as looked at for that read, beside `window`, as the runs from before the hashes seeded them (cases/investigate.py sets it)
+        self.backfill: dict[str, int] = {}  # type -> how many of its dearest resources count as looked at for that read, beside `window`, as the runs from before the hashes seeded them (cases/investigate.py sets it)
         self._trials: list[Failed] = []  # the trial reads of the price list that failed one after the other: two end the trials of the run, and no call of the Investigator is held by them
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
@@ -1078,8 +1078,8 @@ class Toolbox:
 
     def seen_in(self, kinds: Iterable[str]) -> int:
         """For code (cases/beats.py): how many of the resources of these types that a read has listed were looked at by the runs of the last days, and not by this one: the resources that `window` holds
-        and the `backfill` dearest of each type, which may be some of the same, counted once."""
-        return sum(n < self.backfill or seen_hash(entry.key) in self.window for kind in kinds for n, entry in enumerate(sorted(self._entries_of(kind), key=lambda entry: (-(self._cost_total(entry) or 0.0), entry.key))))
+        and the `backfill` dearest of their type, which may be some of the same, counted once."""
+        return sum(n < self.backfill.get(kind, 0) or seen_hash(entry.key) in self.window for kind in kinds for n, entry in enumerate(sorted(self._entries_of(kind), key=lambda entry: (-(self._cost_total(entry) or 0.0), entry.key))))
 
     def call(self, name: str, arguments: dict) -> str:
         """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
@@ -1668,9 +1668,9 @@ class Toolbox:
             return 0.0 if total is None else total
 
         entries.sort(key=(lambda entry: (-entry.size, -cost(entry), entry.key)) if order == "count" else (lambda entry: (-cost(entry), entry.key)))
-        if self.rotate and order == "cost":  # code's read for a beat: what no run looked at lately comes first, each group by cost and then by key; the dearest `backfill` count as looked at
+        if self.rotate and order == "cost":  # code's read for a beat: what no run looked at lately comes first, each group by cost and then by key; the dearest `backfill` of the type count as looked at
             looked = self.window | self.looked_at()
-            flags = [n < self.backfill or seen_hash(entry.key) in looked for n, entry in enumerate(entries)]
+            flags = [n < self.backfill.get(kind, 0) or seen_hash(entry.key) in looked for n, entry in enumerate(entries)]
             entries = [entry for _, entry in sorted(zip(flags, entries), key=lambda pair: pair[0])]
         return entries, [sub for sub in self.subscriptions if sub in self._unlisted]
 

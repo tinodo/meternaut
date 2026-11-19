@@ -356,11 +356,12 @@ def _savings() -> Rendered:
 
 
 def _run_notes() -> Rendered:
-    """The notes of a run that say what it looked at, as the page of the runs shows them (/ops/runs): none, one and many resources looked at, the backfill of the first run after the records from
-    before the hashes, and a memory that could not be read. The blocks are the items of the notes of the page, so that the words that a person reads are the ones that are held to the style."""
+    """The notes of a run that say what it looked at, as the page of the runs shows them (/ops/runs): none, one and many resources looked at, the note of a run that counts the dearest resources of some
+    kinds as seen because some earlier runs were not recorded by resource, and a memory that could not be read. The blocks are the items of the notes of the page, so that the words that a person reads are
+    the ones that are held to the style."""
     from cases import activity
 
-    notes = (activity.looked_note(0, 0, 52), activity.looked_note(1, 1, 1), activity.looked_note(19, 14, 52), activity.looked_note(5, 5, 5, 5), activity.UNREADABLE)
+    notes = (activity.looked_note(0, 0, 52), activity.looked_note(1, 1, 1), activity.looked_note(19, 14, 52), activity.looked_note(5, 5, 5, True), activity.UNREADABLE)
     console = Console()
     console.store.run_put(make_run(run_id="run00001", started_at=at(minutes=-5), notes=notes))
     reply = console.get("/ops/runs")

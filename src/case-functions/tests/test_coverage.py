@@ -85,17 +85,28 @@ class TheListingThatCodeMakesForASeed(unittest.TestCase):
 
     def test_the_toolbox_starts_with_no_memory_and_the_switch_off(self):
         box = toolbox(widgets(2))
-        self.assertEqual((box.window, box.rotate, box.backfill, box.looked_at()), (frozenset(), False, 0, frozenset()))
+        self.assertEqual((box.window, box.rotate, box.backfill, box.looked_at()), (frozenset(), False, {}, frozenset()))
 
-    def test_while_the_dearest_five_of_each_kind_are_taken_as_looked_at_code_lists_the_next_ones_first_and_the_investigator_is_not_told(self):
+    def test_while_the_dearest_five_of_a_kind_are_taken_as_looked_at_code_lists_the_next_ones_first_and_the_investigator_is_not_told(self):
         _, box = self.box()
-        box.backfill = beats.SEED_RESOURCES
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
         self.assertEqual(named(box, self.listing(box, True)), [f"w{n}" for n in range(6, 13)] + [f"w{n}" for n in range(1, 6)], "each group is in the order of its cost, and nothing is left out")
         self.assertEqual(named(box, self.listing(box, False)), [f"w{n}" for n in range(1, 13)], "the listing of the Investigator is the dearest first, as it was")
 
+    def test_a_kind_that_the_backfill_does_not_name_is_listed_in_the_old_order_beside_one_that_it_names(self):
+        estate, box = self.box()
+        estate.rows += [row("fabrikam.store/vaults", f"v{n}") for n in range(1, 8)]
+        estate.cost_rows += [(SUB, 50.0 - n, estate.id_of(f"v{n}").lower(), "Example Service") for n in range(1, 8)]
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
+        box.rotate = True
+        vaults = ask(box, "list_resources", type="fabrikam.store/vaults", limit=12)
+        box.rotate = False
+        self.assertEqual(named(box, vaults), [f"v{n}" for n in range(1, 8)], "no record touched this kind, so none of its resources is taken as looked at")
+        self.assertEqual(named(box, self.listing(box, True))[:5], ["w6", "w7", "w8", "w9", "w10"], "and the kind that it names is still listed from the next one")
+
     def test_a_kind_with_no_more_resources_than_the_backfill_counts_is_listed_whole_in_the_old_order(self):
         _, box = self.box(count=4)
-        box.backfill = beats.SEED_RESOURCES
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
         self.assertEqual(named(box, self.listing(box, True)), ["w1", "w2", "w3", "w4"])
 
 
@@ -149,15 +160,17 @@ class WhatTheToolboxKeepsOfWhatItLookedAt(unittest.TestCase):
         ask(box, "profile", handles=["r2", "r4"])
         self.assertEqual((box.seen_in([WIDGET]), box.seen_in(["contoso.other/kind"]), box.seen_in([])), (2, 0, 0), "w1 and w2 from the window; w4 was looked at by this run, which the beat is not told of")
 
-    def test_while_the_dearest_of_each_kind_are_taken_as_looked_at_the_beat_is_told_so_for_each_kind_up_to_the_count_and_never_more_than_the_kind_has(self):
+    def test_while_the_dearest_of_a_kind_are_taken_as_looked_at_the_beat_is_told_so_for_that_kind_up_to_the_count_and_never_more_than_the_kind_has_and_for_no_other(self):
         estate, box = self.opened(12)
         estate.rows += [row("fabrikam.store/vaults", f"v{n}") for n in (1, 2, 3)]
         estate.cost_rows += [(SUB, 20.0 - n, estate.id_of(f"v{n}").lower(), "Example Service") for n in (1, 2, 3)]
         ask(box, "list_resources", type="fabrikam.store/vaults")
-        box.backfill = beats.SEED_RESOURCES
+        box.backfill = dict.fromkeys((WIDGET, "fabrikam.store/vaults", "contoso.other/kind"), beats.SEED_RESOURCES)
         self.assertEqual((box.seen_in([WIDGET]), box.seen_in(["fabrikam.store/vaults"]), box.seen_in([WIDGET, "fabrikam.store/vaults"]), box.seen_in(["contoso.other/kind"])), (5, 3, 8, 0),
                          "five of the twelve and the three that there are, and none of a kind that no read has listed")
-        box.backfill = 0
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
+        self.assertEqual((box.seen_in([WIDGET]), box.seen_in(["fabrikam.store/vaults"])), (5, 0), "a kind that no record touched has none taken as looked at")
+        box.backfill = {}
         self.assertEqual(box.seen_in([WIDGET, "fabrikam.store/vaults"]), 0)
 
     def test_a_resource_that_a_hash_holds_and_that_is_among_the_dearest_taken_as_looked_at_counts_once_and_the_dearest_are_by_cost_and_not_by_the_order_of_the_read(self):
@@ -165,7 +178,7 @@ class WhatTheToolboxKeepsOfWhatItLookedAt(unittest.TestCase):
         estate.rows.reverse()
         box = toolbox(estate)
         ask(box, "list_resources", type=WIDGET)
-        box.backfill = beats.SEED_RESOURCES
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
         box.window = frozenset(digest(estate.id_of(f"w{n}")) for n in (3, 8, 9))
         self.assertEqual(box.seen_in([WIDGET]), 7, "w1 to w5 are assumed, w8 and w9 are in a hash, and w3 is both")
 
@@ -175,7 +188,7 @@ class WhatTheToolboxKeepsOfWhatItLookedAt(unittest.TestCase):
         estate.cost_rows = [(SUB, 10.0, found["id"].lower(), "Example Service") for found in estate.rows]
         box = toolbox(estate)
         ask(box, "list_resources", type=WIDGET)
-        box.backfill = beats.SEED_RESOURCES
+        box.backfill = {WIDGET: beats.SEED_RESOURCES}
         box.window = frozenset(digest(estate.id_of(f"w{n}")) for n in (1, 2))
         self.assertEqual(box.seen_in([WIDGET]), 5, "w1 to w5 are the dearest by key, and the two of the window are among them")
 
@@ -241,20 +254,20 @@ class TheNoteOfARun(unittest.TestCase):
         self.assertEqual(words(1234, 1000, 5678), "This run looked at 1,234 resources, 1,000 of them for the first time in 21 days. In 21 days Meternaut has looked at 5,678 resources.", "thousands are written with a separator")
 
     def test_every_sentence_is_whole_and_short_with_no_id_and_no_stray_space(self):
-        for numbers in ((0, 0, 52), (1, 1, 1), (1, 0, 5), (19, 14, 52), (19, 19, 19), (19, 0, 30), (2, 1, 3), (0, 0, 0, 5), (1, 1, 1, 5), (5, 5, 5, 5)):
+        for numbers in ((0, 0, 52), (1, 1, 1), (1, 0, 5), (19, 14, 52), (19, 19, 19), (19, 0, 30), (2, 1, 3), (0, 0, 0, True), (1, 1, 1, True), (5, 5, 5, True)):
             text = activity.looked_note(*numbers)
             for sentence in re.split(r"(?<=\.) ", text):
                 self.assertRegex(sentence, r"^[A-Z][^.]*\.$", numbers)
                 self.assertLessEqual(len(sentence.split()), 25, numbers)
             self.assertNotRegex(text, r"\s{2}| \.|\.\.|,,|, \.")
 
-    def test_when_the_earlier_runs_were_not_recorded_by_resource_the_note_says_so_once_and_claims_no_first_time(self):
+    def test_when_some_of_the_earlier_runs_were_not_recorded_by_resource_the_note_says_so_once_and_claims_no_first_time(self):
         words = activity.looked_note
-        said = "The earlier runs were not recorded by resource, so the dearest 5 of each kind were counted as seen."
-        self.assertEqual(words(5, 5, 5, 5), f"This run looked at 5 resources. {said}")
-        self.assertEqual(words(1, 1, 1, 5), f"This run looked at 1 resource. {said}")
-        self.assertEqual(words(0, 0, 0, 5), f"This run looked at no resources. {said}")
-        self.assertNotIn("first time", words(5, 5, 5, 5), "a resource that no hash and no assumption covers is the only one that is new, and the note does not count them")
+        said = "Some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were counted as seen."
+        self.assertEqual(words(5, 5, 5, True), f"This run looked at 5 resources. {said}")
+        self.assertEqual(words(1, 1, 1, True), f"This run looked at 1 resource. {said}")
+        self.assertEqual(words(0, 0, 0, True), f"This run looked at no resources. {said}")
+        self.assertNotIn("first time", words(5, 5, 5, True), "a resource that no hash and no assumption covers is the only one that is new, and the note does not count them")
 
 
 class WhatTheEarlierRunsLookedAt(unittest.TestCase):
@@ -272,7 +285,7 @@ class WhatTheEarlierRunsLookedAt(unittest.TestCase):
     def test_the_hashes_and_the_kinds_of_the_runs_of_the_last_days_and_no_others(self):
         store = self.store(self.record(1, 22, profiled=("aaaaaaaaaaaa",), kinds=(["contoso.a/x", "l"],)), self.record(2, 20, profiled=("bbbbbbbbbbbb", "cccccccccccc"), kinds=(["contoso.b/y", "lm"],)),
                            self.record(3, 1, profiled=("cccccccccccc", "dddddddddddd"), kinds=(["contoso.c/z", "d"], ["contoso.b/y", "d"])))
-        self.assertEqual(activity.earlier(store, self.NOW), ({"bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd"}, {"contoso.b/y", "contoso.c/z"}, False), "a run of 22 days ago is outside the window of 21")
+        self.assertEqual(activity.earlier(store, self.NOW), ({"bbbbbbbbbbbb", "cccccccccccc", "dddddddddddd"}, {"contoso.b/y", "contoso.c/z"}, frozenset()), "a run of 22 days ago is outside the window of 21")
 
     def test_a_run_of_exactly_the_window_is_inside_it_and_one_second_older_is_not(self):
         edge = self.NOW - dt.timedelta(days=activity.LOOKED_DAYS)
@@ -285,17 +298,18 @@ class WhatTheEarlierRunsLookedAt(unittest.TestCase):
                 raise StoreError("the table service is down")
 
         self.assertIsNone(activity.earlier(Down(), self.NOW), "None says that the memory could not be read: an empty memory is another thing")
-        self.assertEqual(activity.earlier(MemoryStore(), self.NOW), (frozenset(), frozenset(), False))
+        self.assertEqual(activity.earlier(MemoryStore(), self.NOW), (frozenset(), frozenset(), frozenset()))
 
-    def test_the_earlier_runs_are_said_to_have_left_no_hash_while_any_record_of_the_window_holds_none_and_the_hashes_of_the_others_are_kept_beside_that(self):
-        before = self.record(1, 3, kinds=(["contoso.a/x", "l"],))  # no `profiled`: from before the hashes, or of a run that looked at nothing, and the two cannot be told apart
-        hashed = self.record(2, 1, profiled=("aaaaaaaaaaaa",))
-        self.assertEqual(activity.earlier(self.store(before), self.NOW), (frozenset(), {"contoso.a/x"}, True), "a record in the window and no hash in any")
-        self.assertEqual(activity.earlier(self.store(before, hashed), self.NOW), ({"aaaaaaaaaaaa"}, {"contoso.a/x"}, True), "a record with a hash does not end it: both are kept")
-        self.assertEqual(activity.earlier(self.store(hashed), self.NOW)[2], False, "every record holds a hash: the real memory alone")
-        self.assertEqual(activity.earlier(self.store(self.record(3, 22), hashed), self.NOW)[2], False, "the last record without a hash is older than the window")
-        self.assertEqual(activity.earlier(self.store(self.record(3, 22)), self.NOW)[2], False, "a record outside the window is no record of it")
-        self.assertEqual(activity.earlier(self.store(), self.NOW)[2], False, "and with no record at all the first run has seen nothing")
+    def test_the_kinds_that_the_records_without_a_hash_touched_are_the_ones_that_have_the_dearest_taken_as_looked_at_and_a_record_that_touched_no_kind_assumes_nothing(self):
+        before = self.record(1, 3, kinds=(["contoso.a/x", "l"],))  # no `profiled`: from before the hashes, or of a run that read no picture, and the two cannot be told apart
+        hashed = self.record(2, 1, profiled=("aaaaaaaaaaaa",), kinds=(["contoso.b/y", "lmd"],))
+        failed = self.record(3, 1)  # no hash and no kind: a run that failed early
+        self.assertEqual(activity.earlier(self.store(before), self.NOW), (frozenset(), {"contoso.a/x"}, {"contoso.a/x"}), "a record in the window and no hash in any")
+        self.assertEqual(activity.earlier(self.store(before, hashed), self.NOW), ({"aaaaaaaaaaaa"}, {"contoso.a/x", "contoso.b/y"}, {"contoso.a/x"}), "a record with a hash does not end it, and its own kinds are not assumed")
+        self.assertEqual(activity.earlier(self.store(failed, hashed), self.NOW)[2], frozenset(), "a record that touched no kind assumes nothing")
+        self.assertEqual(activity.earlier(self.store(hashed), self.NOW)[2], frozenset(), "every record holds a hash: the real memory alone")
+        self.assertEqual(activity.earlier(self.store(self.record(4, 22, kinds=(["contoso.a/x", "l"],)), hashed), self.NOW)[2], frozenset(), "the last record without a hash is older than the window")
+        self.assertEqual(activity.earlier(self.store(), self.NOW)[2], frozenset(), "and with no record at all the first run has seen nothing")
 
     def test_the_store_keeps_the_runs_of_the_window_at_the_default_pace_of_the_timer_and_the_window_is_the_one_of_the_proposal(self):
         self.assertEqual((activity.LOOKED_DAYS, KEPT_INVESTIGATIONS), (21, 20))
@@ -356,9 +370,18 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         self.clock = ti.Moving()
         self.store = MemoryStore(clock=self.clock)
 
-    def go(self, number, *, days=1, calls=(), script=None, store=None, error=None):
+    VAULT = "fabrikam.store/vaults"
+
+    def go(self, number, *, days=1, calls=(), script=None, store=None, error=None, vaults=0):
+        """One run on the estate of 12 resources of one kind, and with `vaults`, one more kind of another provider (a beat of its own, after the first), the cheaper of the two."""
         self.clock.advance(days=days)
         estate = profiled(12)
+        costs = costs_of(estate)
+        if vaults:
+            estate.rows += [row(self.VAULT, f"v{n}") for n in range(1, vaults + 1)]
+            estate.cost_rows += [(SUB, 50.0 - n, estate.id_of(f"v{n}").lower(), "Example Service") for n in range(1, vaults + 1)]
+            estate.definitions[self.VAULT] = estate.definitions[WIDGET]
+            costs.update({estate.id_of(f"v{n}").lower(): 50.0 - n for n in range(1, vaults + 1)})
         box = toolbox(estate)
         self.spied = []
         real = box.call
@@ -369,18 +392,18 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
             return text
 
         box.call = spy
-        found = [{"error": error}] if error else [script or tbeats.script(calls=calls)]
+        found = [{"error": error}] if error else [script or tbeats.script(calls=calls)] + ([tbeats.script()] if vaults else [])
         h = ti.Harness(tbeats.BeatFoundry(found), box, ti.make_settings(investigate_beats=3, investigate_max_seconds=1080, investigate_beat_calls=8, investigate_beat_seconds=100), clock=self.clock,
                        extras=ti.loop_for(self.clock, store or self.store))
         h.s.history.run_id = f"{number:032d}"
-        h.contexts = {SUB: Context(locks=[], recent=set(), managed_groups=set(), costs=costs_of(estate), currency="USD")}
+        h.contexts = {SUB: Context(locks=[], recent=set(), managed_groups=set(), costs=costs, currency="USD")}
         h.notes.append("a note of the Watch from before the investigation")
         h.go()
         return h, estate, box
 
     @staticmethod
-    def seeded(h, box):
-        body = json.loads(h.foundry.investigator_runs()[0]["input"])
+    def seeded(h, box, beat=0):
+        body = json.loads(h.foundry.investigator_runs()[beat]["input"])
         return [box.handles[p["handle"]].name for answer in body.get("pictures", []) for p in answer["profiles"]], body
 
     def test_three_runs_in_a_row_seed_the_dearest_five_then_the_next_five_then_the_last_two_and_the_dearest_again(self):
@@ -478,19 +501,19 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         self.assertFalse([n for n in h.notes if "could not be read" in n])
         self.assertEqual(h.of("investigation.finished")[0].get("firstTime"), 5)
 
-    def legacy(self, days_ago=2, run_id="old"):
-        """A record as the runs before the hashes wrote it: it has no `profiled`."""
-        self.store.investigation_put(InvestigationRecord.from_json(json.dumps({"run_id": run_id, "at": stamp(self.clock() - dt.timedelta(days=days_ago)), "end": "answered", "known": 3})))
+    def legacy(self, days_ago=2, run_id="old", kinds=((WIDGET, "lmd"),)):
+        """A record as the runs before the hashes wrote it: it has no `profiled`, and the kinds that the run touched."""
+        self.store.investigation_put(InvestigationRecord.from_json(json.dumps({"run_id": run_id, "at": stamp(self.clock() - dt.timedelta(days=days_ago)), "end": "answered", "known": 3, "kinds": [list(kind) for kind in kinds]})))
 
-    def test_the_first_run_after_records_from_before_the_hashes_takes_the_dearest_five_of_each_kind_as_seen_and_seeds_the_next_five(self):
+    def test_the_first_run_after_records_from_before_the_hashes_takes_the_dearest_five_of_the_kinds_that_they_touched_as_seen_and_seeds_the_next_five(self):
         self.legacy()
         h, estate, box = self.go(1)
         names, body = self.seeded(h, box)
         self.assertEqual(names, ["w6", "w7", "w8", "w9", "w10"], "rotation starts at once")
-        self.assertEqual(body["lookedAt"], {"days": 21, "resources": beats.SEED_RESOURCES}, "it says five: the dearest five of each kind of the beat, and the beat has one kind, were counted as looked at")
+        self.assertEqual(body["lookedAt"], {"days": 21, "resources": beats.SEED_RESOURCES}, "it says five: the dearest five of the kind that the old record touched, and the beat has that kind, were counted as looked at")
         (kept,) = [record for record in self.store.investigations_recent() if record.run_id == f"{1:032d}"]
         self.assertEqual(kept.profiled, tuple(sorted(digest(estate.id_of(f"w{n}")) for n in range(6, 11))), "the record holds what this run read and no hash of what was only assumed")
-        said = ["This run looked at 5 resources. The earlier runs were not recorded by resource, so the dearest 5 of each kind were counted as seen."]
+        said = ["This run looked at 5 resources. Some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were counted as seen."]
         self.assertEqual([n for n in h.notes if n.startswith("This run")], said)
         self.assertEqual(h.notes[0], said[0])
         finished = h.of("investigation.finished")[0]
@@ -499,8 +522,17 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
     def test_with_no_record_at_all_the_first_run_is_in_the_old_order_and_what_it_looked_at_is_new(self):
         h, _, box = self.go(1)
         names, body = self.seeded(h, box)
-        self.assertEqual((names, body.get("lookedAt"), box.backfill), (["w1", "w2", "w3", "w4", "w5"], None, 0))
+        self.assertEqual((names, body.get("lookedAt"), box.backfill), (["w1", "w2", "w3", "w4", "w5"], None, {}))
         self.assertEqual([n for n in h.notes if n.startswith("This run")], ["This run looked at 5 resources, all of them for the first time in 21 days."], "no earlier run: the claim is true")
+
+    def test_a_kind_that_no_record_touched_has_nothing_taken_as_looked_at_and_the_beat_of_it_is_told_of_none(self):
+        self.legacy()  # it touched the widgets and nothing else
+        h, _, box = self.go(1, vaults=6)
+        (first, first_body), (second, second_body) = self.seeded(h, box, 0), self.seeded(h, box, 1)
+        self.assertEqual((first_body["beat"]["focus"], second_body["beat"]["focus"]), ([WIDGET], [self.VAULT]))
+        self.assertEqual((first, first_body["lookedAt"]), (["w6", "w7", "w8", "w9", "w10"], {"days": 21, "resources": 5}))
+        self.assertEqual((second, second_body.get("lookedAt")), (["v1", "v2", "v3", "v4", "v5"], None), "the dearest five of a kind that nobody looked at, and nothing is said of looking")
+        self.assertEqual(box.backfill, {WIDGET: beats.SEED_RESOURCES})
 
     def test_a_record_with_hashes_beside_one_from_before_both_apply_and_the_beat_is_told_of_the_assumed_and_the_real_together_and_none_twice(self):
         self.legacy()
@@ -508,14 +540,23 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         self.store.investigation_put(InvestigationRecord(run_id="b" * 32, at=stamp(self.clock() - dt.timedelta(days=1)), profiled=tuple(sorted(digest(estate.id_of(f"w{n}")) for n in (4, 6, 7)))))
         h, _, box = self.go(1)
         names, body = self.seeded(h, box)
-        self.assertEqual((names, body["lookedAt"], box.backfill), (["w8", "w9", "w10", "w11", "w12"], {"days": 21, "resources": 7}, 5), "w1 to w5 are assumed and w6 and w7 are in a hash (w4 is both): seven, and the five that nobody saw")
-        self.assertEqual([n for n in h.notes if n.startswith("This run")], ["This run looked at 5 resources. The earlier runs were not recorded by resource, so the dearest 5 of each kind were counted as seen."])
+        self.assertEqual((names, body["lookedAt"], box.backfill), (["w8", "w9", "w10", "w11", "w12"], {"days": 21, "resources": 7}, {WIDGET: beats.SEED_RESOURCES}), "w1 to w5 are assumed and w6 and w7 are in a hash (w4 is both): seven, and the five that nobody saw")
+        self.assertEqual([n for n in h.notes if n.startswith("This run")], ["This run looked at 5 resources. Some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were counted as seen."])
+
+    def test_a_record_that_touched_no_kind_assumes_nothing_beside_real_hashes_and_the_seeds_are_the_dearest_that_nobody_saw(self):
+        self.legacy(kinds=())  # a run that failed early: no hash and no kind
+        estate = profiled(12)
+        self.store.investigation_put(InvestigationRecord(run_id="b" * 32, at=stamp(self.clock() - dt.timedelta(days=1)), kinds=([WIDGET, "lmd"],), profiled=tuple(sorted(digest(estate.id_of(f"w{n}")) for n in range(6, 11)))))
+        h, _, box = self.go(1)
+        names, body = self.seeded(h, box)
+        self.assertEqual((names, body["lookedAt"], box.backfill), (["w1", "w2", "w3", "w4", "w5"], {"days": 21, "resources": 5}, {}), "w1 to w5 are not in a hash, and nothing says that an older run looked at them")
+        self.assertEqual([n for n in h.notes if n.startswith("This run")], ["This run looked at 5 resources, all of them for the first time in 21 days. In 21 days Meternaut has looked at 10 resources."])
 
     def test_a_record_from_before_the_hashes_that_is_older_than_the_window_assumes_nothing(self):
         self.legacy(days_ago=22)
         h, _, box = self.go(1)
         names, body = self.seeded(h, box)
-        self.assertEqual((names, body.get("lookedAt"), box.backfill), (["w1", "w2", "w3", "w4", "w5"], None, 0))
+        self.assertEqual((names, body.get("lookedAt"), box.backfill), (["w1", "w2", "w3", "w4", "w5"], None, {}))
 
     def test_the_assumption_lasts_while_a_record_without_hashes_is_in_the_window_and_the_hashes_of_the_runs_after_it_count_on_top_of_it(self):
         self.legacy()
@@ -523,18 +564,21 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
         self.assertEqual(self.seeded(first, box)[0], ["w6", "w7", "w8", "w9", "w10"])
         second, _, box = self.go(2)
         names, body = self.seeded(second, box)
-        self.assertEqual((names, box.backfill), (["w11", "w12", "w1", "w2", "w3"], 5), "the five that were assumed and the five of the first run were looked at: the two that nobody saw come first, and not w1 to w5 again")
+        self.assertEqual((names, box.backfill), (["w11", "w12", "w1", "w2", "w3"], {WIDGET: beats.SEED_RESOURCES}), "the five that were assumed and the five of the first run were looked at: the two that nobody saw come first, and not w1 to w5 again")
         self.assertEqual(body["lookedAt"], {"days": 21, "resources": 10})
-        self.assertEqual([n for n in second.notes if n.startswith("This run")], ["This run looked at 5 resources. The earlier runs were not recorded by resource, so the dearest 5 of each kind were counted as seen."])
+        self.assertEqual([n for n in second.notes if n.startswith("This run")], ["This run looked at 5 resources. Some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were counted as seen."])
         finished = second.of("investigation.finished")[0]
         self.assertEqual({key: finished.get(key) for key in ("profiled", "firstTime", "inWindow")}, {"profiled": 5, "firstTime": None, "inWindow": None}, "no count of what is new while some of what is seen is assumed")
+        third, _, box = self.go(3)
+        names, body = self.seeded(third, box)
+        self.assertEqual((names, body["lookedAt"], [e["end"] for e in third.of("investigation.beat")]), (["w1", "w2", "w3", "w4", "w5"], {"days": 21, "resources": 12}, ["answered"]), "all twelve are looked at: the dearest first, and the beat is not empty")
 
     def test_the_assumption_ends_when_the_last_record_without_hashes_leaves_the_window_and_the_real_hashes_rule_alone(self):
         self.legacy()
         self.go(1)
         later, _, box = self.go(2, days=19)  # the record from before is 22 days old now, and the run before it 19
         names, body = self.seeded(later, box)
-        self.assertEqual((names, body["lookedAt"], box.backfill), (["w1", "w2", "w3", "w4", "w5"], {"days": 21, "resources": 5}, 0), "only the five of the first run are seen")
+        self.assertEqual((names, body["lookedAt"], box.backfill), (["w1", "w2", "w3", "w4", "w5"], {"days": 21, "resources": 5}, {}), "only the five of the first run are seen")
         self.assertEqual([n for n in later.notes if n.startswith("This run")], ["This run looked at 5 resources, all of them for the first time in 21 days. In 21 days Meternaut has looked at 10 resources."])
 
     def test_the_listing_of_the_investigator_is_the_dearest_first_while_the_dearest_five_are_assumed_to_be_looked_at(self):
