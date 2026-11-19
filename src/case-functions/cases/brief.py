@@ -226,7 +226,10 @@ ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the pla
 # by the chip and by ADVICE_CHANGE and ADVICE_WHO, which every channel shows.
 ASKED = "You are asked whether it is worth {what}."
 ASKED_CHANGE = "You are asked whether to approve this change."  # what a person who may approve a change that Meternaut would make is asked: the page, the card and the letter say it as it is
-ASKED_CONFIRM = "You are asked whether to confirm this change; a second person has to approve it."  # what the first of two people is asked: that person can only confirm
+ASKED_CONFIRM = "You are asked whether to confirm this change."  # what the first of two people is asked: that person can only confirm, and the lines under it say that a second person approves
+# What the person who reads a change that needs two people is asked, by where the request stands for that person (cases/twopeople.py): the first, and a person whose confirmation went stale, can only
+# confirm; the second approves (ASKED_CHANGE); and a person who confirmed already, or a request that has no second approver, asks nothing, because nobody can act: the lines of the stage say what is true.
+ASKED_BY_STAGE = {"first": ASKED_CONFIRM, "stale": ASKED_CONFIRM, "mine": "", "alone": ""}
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when its figure is one alternative and the digest holds no name for the target (one made before the names)
@@ -1986,7 +1989,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
-        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else (ASKED_CONFIRM if second is not None and second.stage in ("first", "stale") else ASKED_CHANGE) if kind == "change" and state == "open" else "")
+        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE) if kind == "change" and state == "open" else "")
 
 
 def order_key(brief: Brief) -> tuple:
