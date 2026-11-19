@@ -128,6 +128,23 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         for case, plan in (_firewall(), (_ai_account(), _ai_plan()), _group_finding()):
             self.assertNotIn("?", brief_of(case, plan).asked)
 
+    def test_every_verb_has_its_words_on_the_page_the_card_and_the_letter(self):
+        firewall, plan = _firewall()
+        for action in ("switch", "reduce", "remove", "schedule", "commit"):
+            case = with_action(firewall, action)
+            asked = brief_of(case, plan).asked
+            with self.subTest(action=action):
+                self.assertTrue(asked.startswith("You are asked whether it is worth ") and asked.endswith("yourself."), asked)
+                self.assertIn(asked, [block.text for block in _page(action, case, plan).blocks])
+                self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
+                self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
+        for case, plan in ((_ai_account(), _ai_plan()), _group_finding()):
+            asked = brief_of(case, plan).asked
+            with self.subTest(case.case_id):
+                self.assertIn(asked, [block.text for block in _page(case.case_id, case, plan).blocks])
+                self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
+                self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
+
 
 class TheWordsOfAPriceThatAnAiOrTheEstateCouldInfluence(unittest.TestCase):
     """The names of the two ends are the platform's words, which pass a check twice: when the figure is made, and when it is read again. A resource name is the estate's, and is escaped or cut."""

@@ -12,7 +12,8 @@ forms that code can check against what the tools showed in the same run:
   share_of_days  the resource is needed on some days of every so many, which the AI states (Scenario)
   assumed        a share that the AI assumes, as a low and a high, always said to be the AI's own (Scenario)
   alternative    a switch of one billed meter to a price of the same service that the tool for alternatives showed for it, in the same unit: what remains is the alternative's list price over what the bill
-                 pays for a unit now, with the rate that the bill pays against list carried over and, for the other end of a range, at list prices alone (Scenario)
+                 pays for a unit now, with the rate that the bill pays against list carried over and, for the other end of a range, at list prices alone (Scenario). The digest keeps the plain name of
+                 each end (`now`, `to`), and a switch whose alternative cannot be named in plain words is not priced
 
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
@@ -383,7 +384,7 @@ def price(change: Change | None, handles: Collection[str], toolbox: object, cost
           word: Callable[[object], str | None] | None = None) -> Priced:
     """The rows of a change for the resources `handles` of a finding. `toolbox` holds the meters (`meters`) and the evidence of the run, and the prices of the list that the tool for alternatives showed
     (`prices`, `retail`, `offers`), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources that have no figure from outside, by the word of WHY (a cost that is not
-    in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept)."""
+    in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept, and no switch is priced, because its alternative cannot be named)."""
     out = Priced(change.action if change is not None else "")
     if change is None:
         return out
