@@ -49,3 +49,12 @@ The floor is 130,000 since the list prices that code reads for every beat, the r
 - **Adding or changing a docstring, a comment or white space no longer moves a digest of the lock.** That is by design, and it means a docstring cannot be what makes a lock stale.
 - **The check runs on the sources of this repository.** A new construct of the language that the strip does not know would stop the pack with the plain message above, and not ship a wrong file.
 - **The time.** Stripping and checking the 103 files takes between 15 and 60 seconds on this machine, which is loaded; the Hub's runner is faster.
+
+## The cap in fetch mode (2026-11-19)
+
+The Hub input `sources` has a second value, `fetch` ([proposal 07](07-private-by-default.md#the-operator-fetches-the-sources-built-on-2026-11-19-not-run-yet)). With it the Operator fetches the files of the commit from GitHub, and the request carries only the two scripts, the digest tool, the lock and the host file: 58,537 bytes at this commit. The cap of 480,000 bytes does not limit the code on that path. What it means for this record:
+
+- **No strip by fetch.** The reason for the strip, the size of the request, is gone on that path, so the files are published as the repository holds them, with their comments and docstrings. A traceback names the same lines either way. The strip stays for `request`, which is still the default, and the decision above stands for it.
+- **The digest follows the files.** The app works out its digest over the files that it runs from ([item 2 above](#the-digests-do-not-notice)), so by fetch `PACKAGE_SHA256` is the digest of the files as they are held (`tools/source-digest.py --as-held`), and by request it is still the digest of the stripped files. `tools/drift-check.py` accepts either form of main's digest.
+- **The floor belongs to the request way.** The container script is part of every request, and it grew by 6,360 bytes with the fetch (20,894 to 27,254). Measured on this machine, the request of the request way went from 348,625 to 354,985 bytes and the free room from 131,375 to 125,015, so the floor of 130,000 in `tools/tests/test_publish.py` has to move to 125,000, which is one step of 5,000 as above. That pin was not changed here. When `fetch` has run on the real estate and is the way, the request way, the strip and this floor can go together.
+- **Not proved.** No run of `fetch` on the real estate yet. What it has to show is listed in proposal 07.
