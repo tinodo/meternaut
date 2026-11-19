@@ -494,7 +494,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
         doc.paragraph(_data(note, 200), muted=True)
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
-    if brief.asked:
+    if brief.asked and not brief.two_people:  # this brief is built without the decisions: it cannot tell whether the reader confirmed already, so a change of two people is not asked here
         doc.paragraph(_data(brief.asked, 320))
     doc.figure(stake)
     if brief.heads_up:
