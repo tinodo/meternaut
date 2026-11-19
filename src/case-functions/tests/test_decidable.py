@@ -538,6 +538,18 @@ class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase
         finally:
             _RENDERED.pop(kind.name, None)
 
+    def test_the_reminder_of_the_ladder_is_built_without_the_decisions_so_it_asks_nothing_of_a_change_of_two_people(self):
+        for stage in ("first", "second", "mine"):
+            kind = a_kind(f"change, two people, {stage} stage")
+            with self.subTest(stage):
+                text = letters.escalation_letter(kind.plan, kind.case, PERSON, BASE, kind.now, CONTACTS, source="same").text
+                self.assertNotIn("You are asked", text, "it cannot know whether its reader confirmed already: 'confirm' would be false for the second person and for the one who confirmed")
+
+    def test_the_reminder_of_a_change_for_one_person_still_says_what_is_asked(self):
+        kind = a_kind("change, delete-disk")
+        text = letters.escalation_letter(kind.plan, kind.case, PERSON, BASE, kind.now, CONTACTS, source="same").text
+        self.assertIn(self.APPROVE, text)
+
 
 class TheApprovalLettersDoNotGrowWithoutSayingSo(unittest.TestCase):
     """A letter is read once, in a minute: no kind of approval letter is longer than it was on main, except by the words that GREW names, each for the sentence that a person needs to decide. The other
