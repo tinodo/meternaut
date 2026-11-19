@@ -14,13 +14,15 @@ from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, 
 from test_pricing import COMPUTE, LISTED, billed_units, block, effect
 from test_run_loop import GROUP, PLANTED
 
+from cases import brief as brief_mod
 from cases import learning
 from cases.approvals import ASKED_UNDER, ASKING_RULES, NO_FIGURE, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, ApprovalSettings, Approvals, build_advice, why_not_ask
 from cases.brief import says_nothing, taken_back
 from cases.decide import NO_MEASUREMENT
 from cases.detectors import ADVISOR
 from cases.families import digest as plan_digest
-from cases.memory_store import MemoryStore
+from cases.memory_store import MemoryStore, stamp
+from cases.models import NoteRecord
 from test_estate_watch import of_type
 from test_web_support import TINO, Console, make_advice_case, make_case, make_decision
 
@@ -304,19 +306,57 @@ class WhenAnAdvisorRecommendationCountsNoSaving(unittest.TestCase):
         (plan,) = [p for p in watched.store.plans_open() if p.case_id == case.case_id]
         self.assertEqual((plan.family, plan.saving_usd_month or 0, case.facts["advisor"]["usd"], why_not_ask(case)), ("delete-disk", 0, 0.0, None))
 
-    def test_an_old_request_that_states_no_saving_is_taken_back_by_the_watch_with_the_reason_rules_and_its_case_stays(self):
+    def test_an_old_request_that_states_no_saving_is_taken_back_by_the_watch_with_its_own_words_and_its_case_stays(self):
         watched, alternative, plan = self.old_request()
         self.assertIsNone(plan.saving_usd_month)
         watched.clock.advance(days=1)
         watched.run()
         kept = watched.store.plan_get(plan.plan_id)
-        self.assertEqual((kept.state, taken_back(kept), watched.store.case_get(alternative.case_id).status), ("expired", "rules", "needs_human"))
-        self.assertEqual([e["reason"] for e in of_type(watched.events, "case.held") if e["caseId"] == alternative.case_id], ["held back: Meternaut's rules changed"])
-        self.assertTrue(any("held back: Meternaut's rules changed" in e["note"] for e in of_type(watched.events, "run.note")), "the Watch counts it")
+        self.assertEqual((kept.state, taken_back(kept), watched.store.case_get(alternative.case_id).status), ("expired", NO_FIGURE, "needs_human"))
+        self.assertEqual([e["reason"] for e in of_type(watched.events, "case.held") if e["caseId"] == alternative.case_id], [f"held back: {NO_FIGURE_WORDS}"])
+        self.assertIn(f"1 finding held back: {NO_FIGURE_WORDS}", [e["note"] for e in of_type(watched.events, "run.note")], "the Watch counts it")
+        page = Console(store=watched.store).get(f"/ok/{plan.plan_id}").content
+        said = "Meternaut took this request back because its rules changed. It asked about this recommendation although no saving was counted for it."
+        self.assertEqual(brief_mod.TAKEN_BACK[NO_FIGURE], said)
+        self.assertIn(said, page)
+        self.assertNotIn("less evidence", page, "the request was not asked on less evidence: no saving was counted")
         self.assertEqual(len(watched.store.plans_open()), 7, "every request of a counted purchase is as it was")
         watched.clock.advance(days=1)
         watched.run()
         self.assertEqual((len(watched.store.plans_open()), of_type(watched.events, "case.held")), (7, []), "once: no request is made again for it, and the History does not say it again")
+
+    def test_a_disk_that_an_older_check_found_and_advisor_lists_with_no_saving_in_dollars_is_asked_about_as_ever_and_the_request_is_not_taken_back(self):
+        fx = advisor_fixtures
+        for label, annual, currency in (("a figure of nothing", 0.0, "USD"), ("an estate whose cost lines are not in dollars", 18.42, "EUR")):
+            with self.subTest(label):
+                lists, _ = fx.the_list()
+                tenant = fx.estate(lists)
+                tenant.currency = currency
+                row = disk_row("disk-0", "rg-app", tags={"owner": "someone"}, timeCreated="2026-01-02T10:00:00+00:00")
+                lists[SUBSCRIPTION][-3] = fx.rec(fx.DISKS, SUBSCRIPTION, 0, annual=annual, resource=row["id"])
+                tenant.graph["orphan-managed-disk"] = [row]
+                watched = fx.Watched(tenant).run()
+                (case,) = [c for c in watched.store.cases_recent() if c.resource_id.lower().endswith("/disks/disk-0")]
+                self.assertEqual((case.detector, case.facts["advisor"]["also"], case.facts["advisor"]["usd"], why_not_ask(case)), (ADVISOR, ["orphan-managed-disk"], 0.0, None),
+                                 "the lead of the older check is left to this case, so the check's own rules decide: nothing holds it back")
+                (plan,) = [p for p in watched.store.plans_open() if p.case_id == case.case_id]
+                self.assertIsNone(plan.saving_usd_month, "it states no saving, as a request of an older check may")
+                self.assertEqual(watched.extras.approvals.hold_back_empty(), [])
+                watched.clock.advance(days=1)
+                watched.run()
+                self.assertEqual(watched.store.plan_get(plan.plan_id).state, "open", "a Watch later does not take it back")
+        lone = make_case(case_id="klone", detector=ADVISOR, status="needs_human", recommendation="change", saving_usd_month=None, cost_usd_30d=0.0, advice={"problem": "Delete the disk", "solution": "Delete the disk"},
+                         facts={"category": "cost", "advisor": {"n": 1, "usd": 0.0, "low": 0.0, "high": 0.0, "alt": "", "rows": [["", None, "", "", 0.0, "USD", None, ""]]}})
+        self.assertEqual(why_not_ask(lone), NO_FIGURE, "the same recommendation of Advisor, that no older check found, is held back")
+
+    def test_a_finding_of_a_resource_that_a_person_marked_do_not_touch_is_not_counted_by_cause(self):
+        watched = advisor_fixtures.Watched().run()
+        alternative = self.alternatives(watched)[0]
+        self.assertIn("Held back: 2 findings", Console(store=watched.store).get("/").content)
+        watched.store.note_put(NoteRecord(note_id="n1", oid=TINO, kind="do_not_touch", text="Leave it.", scope_resource_id=alternative.resource_id, created_at=stamp(watched.clock())))
+        content = Console(store=watched.store).get("/").content
+        self.assertIn("Held back: 1 finding", content)
+        self.assertNotIn("Held back: 2 findings", content)
 
     def test_a_request_that_was_asked_with_a_saving_stays_whatever_the_figure_of_its_case_is_now_and_so_does_one_that_a_person_put_off(self):
         for label, changes, decided in (("asked with a saving", {"saving_usd_month": 44.5}, False), ("put off", {}, True)):

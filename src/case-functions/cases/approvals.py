@@ -543,6 +543,8 @@ class Approvals:
             for plan in [p for p in self.store.plans_open() if p.family == ADVISE and p.state == "open"]:
                 case = self.store.case_get(plan.case_id)
                 why = "" if case is None else self.held_why(case) or ("rules" if not self._own_group(case) and (brief.made_under_old_rules(case, plan) or _asked_on_less(case, plan)) else "")
+                if why == "rules" and why_not_ask(case) == NO_FIGURE:
+                    why = NO_FIGURE  # its own words: it was asked about although no saving was counted, which is not "less evidence"
                 if case is None or not (why or brief.says_nothing(case)):
                     if case is not None and case.detector == INVESTIGATION and ASKED_UNDER not in (plan.preconditions or {}) and not why_not_ask(case):
                         self._keep_asked(plan.plan_id)

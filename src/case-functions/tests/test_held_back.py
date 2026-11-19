@@ -250,13 +250,13 @@ class AnOpenRequestThatSaysNothingIsTakenBack(unittest.TestCase):
         summary, _, _ = self.watch()
         self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held), ("open", 0))
 
-    def test_a_request_that_has_words_and_no_saving_is_taken_back_with_the_reason_rules_because_nobody_is_asked_without_a_saving(self):
+    def test_a_request_that_has_words_and_no_saving_is_taken_back_with_its_own_words_because_nobody_is_asked_without_a_saving(self):
         words = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
         self.store.case_put(words)
         summary, events, _ = self.watch()
         plan = self.store.plan_get(self.plan.plan_id)
-        self.assertEqual((plan.state, plan.preconditions["takenBack"], summary.held, why_not_ask(words)), ("expired", "rules", 1, NO_FIGURE))
-        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], ["held back: Meternaut's rules changed"])
+        self.assertEqual((plan.state, plan.preconditions["takenBack"], summary.held, why_not_ask(words)), ("expired", NO_FIGURE, 1, NO_FIGURE))
+        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], ["held back: Meternaut counts no saving in dollars from Azure Advisor"])
 
     def test_a_request_of_a_change_is_never_taken_back(self):
         self.store.plan_put(request_for(self.case, family="delete-disk", preconditions={"family": "delete-disk"}))
