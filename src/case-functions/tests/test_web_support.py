@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from support import APP_ROOT  # noqa: F401  (puts the app on the path)
 
+from cases import pricing
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ActionRecord, Begun, CaseRecord, DecideResult, DecisionRecord, PlanRecord, RunRecord, SettingsRecord, StoreError
 from cases.people import People, Person
@@ -114,6 +115,14 @@ def make_advice_case(**changes) -> CaseRecord:
                 plan_id="plan0002", first_seen_at=at(days=-3), updated_at=at(hours=-2), runs_seen=2)
     base.update(changes)
     return make_case(**base)
+
+
+def priced_facts(*forms: str, **more) -> dict:
+    """The facts of a finding that states a change for one resource of each form (cases/pricing.py FORMS), with the digest that code makes of it: that of the resource when there is one, and the sum of
+    them for a group, as production makes them. A form `alternative` is a switch to another price of the price list."""
+    digests = [{"action": "switch", "price": pricing.Row(f"r{n}", 10.0, 12.0, 20.0, 1, form, {"offer": "p1"} if form == "alternative" else {}, None, 0, (f"m{n}",), 20.0, 20.0, None, 0, None).digest()}
+               for n, form in enumerate(forms, 1)]
+    return {"basis": "oversized", "proposal": "change", "change": digests[0] if len(digests) == 1 else pricing.combine(digests, len(digests)), **more}
 
 
 def make_advice(**changes) -> PlanRecord:

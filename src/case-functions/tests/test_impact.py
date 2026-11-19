@@ -684,7 +684,7 @@ class NoAIIsGivenTheDigest(unittest.TestCase):
         # what the learning keeps and replays is buckets of typed values and the open questions that the Investigator may recall carry no text of a case
         signals = learning.signals_of(case)
         self.assertTrue(set(signals) <= set(learning.SIGNAL_KEYS) and not [item for item in said if item in str(signals)])
-        self.assertEqual([field.name for field in dataclasses.fields(learning.OpenQuestion)], ["resource_id", "resource_type", "runs_seen", "days_open", "confidence", "request"])
+        self.assertEqual([field.name for field in dataclasses.fields(learning.OpenQuestion)], ["resource_id", "resource_type", "runs_seen", "days_open", "confidence", "request", "why"])
 
 
 class AnOpenRequestToDeleteAResourceWhoseImpactNobodyCheckedIsTakenBack(unittest.TestCase):

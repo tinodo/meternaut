@@ -15,10 +15,11 @@ from test_directory import A
 from test_escalation import START, World as LadderWorld
 from test_held_findings import BASE, BOB, GROUP, MEASURED, Base, automation, days_ago
 from test_letters import BASE as LETTER_BASE, CONTACTS, PERSON, make_case as letter_case
-from test_web_support import NOW, SUB, TINO, Console, make_advice, make_advice_case, walk_blocks
+from test_web_support import NOW, SUB, TINO, Console, make_advice, make_advice_case, priced_facts, walk_blocks
 
 from cases import brief, cards, letters, upkeep
-from cases.approvals import ADVICE_OPEN_MAX, PROMOTE_NEW, ApprovalSettings, Approvals, build_advice
+from cases.approvals import ADVICE_OPEN_MAX, ASKED_UNDER, ASKING_RULES, PROMOTE_NEW, ApprovalSettings, Approvals, build_advice
+from cases.decide import NO_MEASUREMENT
 from cases.detectors import Lead
 from cases.families import digest as plan_digest
 from cases.families.gates import ChangeScope
@@ -324,6 +325,17 @@ class TheHeldRequestsOfTheOldReasonBecomeRequests(Base):
         self.assertEqual(sorted((plan.plan_id, plan.preconditions["takenBack"]) for plan, _ in closed), sorted([(unpriced.plan_id, "released"), (waiting.plan_id, "released")]))
         self.assertEqual([p.plan_id for p in self.store.plans_open()], [priced.plan_id], "only the finding that code priced is made a request")
         self.assertEqual(([p.plan_id for p, _ in self.approvals.promoted], self.store.plans_held()), ([priced.plan_id], []))
+        self.assertEqual((self.settle(), self.approvals.promoted), ([], []), "a second Watch changes nothing")
+
+    def test_a_held_request_of_a_finding_that_nothing_measured_or_nobody_confirmed_is_closed_and_not_promoted_and_one_that_is_promoted_keeps_the_rules_it_is_asked_under(self):
+        _, unmeasured = self.legacy(1, 120.0, objections=(NO_MEASUREMENT,))
+        _, unconfirmed = self.legacy(2, 120.0, facts=priced_facts("alternative"), learned={"skeptic": "unsure"})
+        _, asked = self.legacy(3, 120.0)
+        self.assertNotIn(ASKED_UNDER, self.store.plan_get(asked.plan_id).preconditions, "a held request is no request that was asked")
+        closed = self.settle()
+        self.assertEqual(sorted((plan.plan_id, plan.preconditions["takenBack"]) for plan, _ in closed), sorted([(unmeasured.plan_id, "released"), (unconfirmed.plan_id, "released")]))
+        (promoted,) = self.store.plans_open()
+        self.assertEqual((promoted.plan_id, promoted.preconditions[ASKED_UNDER], self.store.plans_held()), (asked.plan_id, ASKING_RULES, []))
         self.assertEqual((self.settle(), self.approvals.promoted), ([], []), "a second Watch changes nothing")
 
     def test_nothing_is_promoted_when_nobody_can_answer_and_a_reason_that_changed_is_kept(self):

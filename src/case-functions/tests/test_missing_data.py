@@ -23,8 +23,7 @@ from cases.memory_store import stamp
 
 ABSENT = {"metrics": {"MetricA": {"total": None, "days": 30, "days_with_data": 0, "totals": [None]}}}  # what the real toolbox records for a measurement that has no data
 ENDPOINTS = "microsoft.network/privateendpoints"
-NOT_PRICED_ONE = ("Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named as an approver. "
-                  "The AI looks at it again at its next search.")
+NO_PLACE_ONE = "The places for requests are full, or nobody is named as an approver. The AI looks at it again at its next search."  # why nobody is asked about a priced, measured finding that no rule holds back
 UNPROVEN_AND_SHARED = ("Nothing proves that it is unused, so acting on it could break something that still uses it. Traffic that you cannot see from here may depend on it.")
 
 
@@ -448,7 +447,7 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 2 findings", content)
         self.assertIn("1 finding is held back because nobody has looked up who changed the resource", content)
-        self.assertIn(f"1 finding is held back for another reason. {NOT_PRICED_ONE}", content)
+        self.assertIn(f"1 finding is held back for another reason. Nobody is asked about it yet. {NO_PLACE_ONE}", content)
 
     def test_a_finding_that_an_automation_manages_is_held_by_no_rule(self):
         from test_web_support import Console
@@ -460,7 +459,7 @@ class TheHomePageSaysWhyAFindingIsHeldBack(unittest.TestCase):
         content = console.get("/").content
         self.assertIn("Held back: 1 finding", content)
         self.assertNotIn("because an automation manages the resource", content)
-        self.assertIn(NOT_PRICED_ONE, content)
+        self.assertIn(f"Nobody is asked about 1 finding yet. {NO_PLACE_ONE}", content)
 
     def test_the_count_of_what_a_rule_holds_is_made_from_the_findings_that_are_held_and_never_exceeds_them(self):
         from cases.web import home

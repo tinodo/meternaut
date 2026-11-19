@@ -668,7 +668,7 @@ def _recall_knowledge(row: dict, arguments: dict) -> dict:
 
 def _recall_open_questions(row: dict, arguments: dict) -> dict:
     return {"source": "earlier findings that no person has decided: counts and words that Meternaut kept, not facts about this estate", "total": 0,
-            "cols": ["handle", "type", "seen", "days_open", "confidence", "request"], "rows": []}
+            "cols": ["handle", "type", "seen", "days_open", "confidence", "request", "why"], "rows": []}
 
 
 def answers_of(row: dict) -> dict:

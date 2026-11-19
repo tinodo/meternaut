@@ -6,9 +6,10 @@ from unittest import mock
 
 from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
-                              snapshot)
+                              priced_facts, snapshot)
 
 from cases.costs import analysis_url
+from cases.decide import NO_MEASUREMENT
 from cases.models import GROUP_FACT, SettingsRecord, StoreError
 from cases.web import core, figures, history
 
@@ -397,8 +398,8 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 3)
         reply = console.get("/")
         self.assertIn("Held back: 3 findings", reply.content)
-        self.assertIn("Nobody is asked about these yet. For each, Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named as an approver. "
-                      "The AI looks at them again at its next search.", reply.content)
+        self.assertIn("Nobody is asked about 3 findings yet. For all 3 of them, the places for requests are full, or nobody is named as an approver. The AI looks at them again at its next search.",
+                      reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "they are not rows: nobody has to decide them")
         self.held(console, 1, case_id="case3900", resource_id=f"{VM_ID}-x", resource_name="endpoint-x")
         self.assertIn("Held back: 4 findings", console.get("/").content)
@@ -408,8 +409,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.held(console, 1)
         content = console.get("/").content
         self.assertIn("Nothing waits for you. The next search is tomorrow at 06:30.", content)
-        self.assertIn("Held back: 1 finding Nobody is asked about this yet. Meternaut could not work out from the bill what a change would save, the places for requests are full, or nobody is named "
-                      "as an approver. The AI looks at it again at its next search.", content)
+        self.assertIn("Held back: 1 finding Nobody is asked about 1 finding yet. The places for requests are full, or nobody is named as an approver. The AI looks at it again at its next search.", content)
 
     def test_a_finding_of_the_investigation_that_no_saving_backs_is_not_asked_about_and_is_counted_here_whatever_the_resource_costs(self):
         from cases.approvals import ApprovalSettings, Approvals
@@ -421,6 +421,75 @@ class TheDecisionsPage(unittest.TestCase):
         reply = console.get("/")
         self.assertIn("Held back: 1 finding", reply.content)
         self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
+
+    CAUSES = {  # the finding that is held back for each cause that brief.why_not_ask names, as the Watch stores it
+        "unpriced": dict(saving_usd_month=None, cost_usd_30d=848.0, objections=()),
+        "unmeasured": dict(saving_usd_month=480.0, cost_usd_30d=848.0, objections=(NO_MEASUREMENT,)),
+        "unconfirmed": dict(saving_usd_month=22.5, cost_usd_30d=848.0, objections=(), facts=priced_facts("alternative"), learned={"skeptic": "agree"}, confidence=0.45)}
+
+    def held_for(self, console: Console, cause: str, count: int = 1, **more) -> None:
+        """`count` findings of the investigation that are held back for `cause`, each about a resource of its own."""
+        for n in range(count):
+            console.store.case_put(make_advice_case(case_id=f"case36{cause[:3]}{n}", resource_id=f"{VM_ID}-{cause}{n}", resource_name=f"endpoint-{cause}{n}", plan_id=None, **{**self.CAUSES[cause], **more}))
+
+    def says(self, console: Console, sentences: str, finding_words: str = "1 finding", looks: str = "it") -> None:
+        content = console.get("/").content
+        self.assertIn(f"Nobody is asked about {finding_words} yet. {sentences} The AI looks at {looks} again at its next search.", content)
+        self.assertNotIn("places for requests are full", content, "a cause that holds for none of them is left out")
+
+    def test_one_finding_that_no_saving_was_priced_for_says_that_meternaut_could_not_work_out_what_a_change_would_save(self):
+        console = Console()
+        self.held_for(console, "unpriced")
+        self.says(console, "Meternaut could not work out from the bill what a change would save.")
+
+    def test_one_finding_that_nothing_was_measured_of_says_so_whatever_it_saves(self):
+        console = Console()
+        self.held_for(console, "unmeasured")
+        self.says(console, "Nothing was measured of its use.")
+
+    def test_one_finding_that_the_second_ai_did_not_agree_to_or_the_first_was_not_sure_of_says_so(self):
+        for label, more in (("the first AI was not sure", {}), ("the second AI disagreed", dict(confidence=0.9, learned={"skeptic": "disagree"}))):
+            with self.subTest(label):
+                console = Console()
+                self.held_for(console, "unconfirmed", **more)
+                self.says(console, "The second AI did not agree that the change can be made, or the first AI was not sure.")
+
+    def test_the_causes_are_counted_each_in_a_sentence_of_its_own_and_a_cause_that_holds_for_none_is_left_out(self):
+        console = Console()
+        self.held_for(console, "unpriced", 2)
+        self.held_for(console, "unmeasured", 2)
+        self.held_for(console, "unconfirmed")
+        self.says(console, "For 2 of them, Meternaut could not work out from the bill what a change would save. For 2, nothing was measured of their use. For 1, the second AI did not agree that the "
+                           "change can be made, or the first AI was not sure.", "5 findings", "them")
+        self.held(console, 1)  # priced and measured: the places are full, or nobody is named
+        content = console.get("/").content
+        self.assertIn("Nobody is asked about 6 findings yet. For 2 of them, Meternaut could not work out from the bill what a change would save. For 2, nothing was measured of their use. For 1, the second "
+                      "AI did not agree that the change can be made, or the first AI was not sure. For 1, the places for requests are full, or nobody is named as an approver. The AI looks at them again "
+                      "at its next search.", content)
+
+    def test_all_of_one_cause_are_said_as_both_or_all_and_a_finding_that_a_rule_holds_back_keeps_its_own_words_and_the_others_say_another_reason(self):
+        console = Console()
+        self.held_for(console, "unpriced", 2)
+        self.assertIn("Nobody is asked about 2 findings yet. For both of them, Meternaut could not work out from the bill what a change would save.", console.get("/").content)
+        self.held_for(console, "unmeasured", 3)
+        console.store.case_put(make_advice_case(case_id="case3700", resource_id=f"{VM_ID}-rule", resource_name="endpoint-rule", plan_id=None, recommendation="delete", owner={}))
+        content = console.get("/").content
+        self.assertIn("1 finding is held back because nobody has looked up who changed the resource, or because what depends on it was not checked.", content)
+        self.assertIn("5 findings are held back for another reason. Nobody is asked about them yet. For 2 of them, Meternaut could not work out from the bill what a change would save. For 3, nothing "
+                      "was measured of their use. The AI looks at them again at its next search.", content)
+
+    def test_a_finding_that_nothing_measured_or_that_nobody_confirmed_is_not_asked_about_whatever_it_saves(self):
+        from cases.approvals import ApprovalSettings, Approvals
+
+        for cause in ("unmeasured", "unconfirmed"):
+            with self.subTest(cause):
+                console = seeded()
+                self.held_for(console, cause)
+                (case,) = [c for c in console.store.cases_recent() if c.case_id.startswith("case36")]
+                self.assertIsNone(Approvals(console.store, ApprovalSettings(change_scopes=())).advise(case, (TINO,)), "a saving is priced, and nobody is asked all the same")
+                reply = console.get("/")
+                self.assertIn("Held back: 1 finding", reply.content)
+                self.assertEqual(len(decisions(reply, "ready")), 1, "it is no row: nobody has to decide it")
 
     def test_a_finding_with_a_request_an_answered_one_a_finding_of_another_detector_and_one_that_is_over_are_not_held(self):
         console = seeded()
@@ -717,12 +786,12 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
     def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
-        self.assertTrue(sub.startswith("It assumes the AI's target of a change from 3 to 2, applied to the 2 bill lines of this resource that the change would shrink, counted over the last 30 days."), sub)
+        self.assertTrue(sub.startswith("Over the last 30 days this resource paid about $36.00 for what the change would shrink. The AI proposes a change from 3 to 2. That is the AI's own proposal"), sub)
         lead = next(p for p in card.find_all("p") if "say" in p.classes()).text()
         self.assertEqual(lead, "Meternaut worked out that this could save about $144 a year ($12.00 a month).")
 
-    def test_the_bill_lines_that_it_would_shrink_are_a_fact_that_code_read(self):
-        self.assertEqual(self.reply.measured()["Bill lines it would shrink"], ("2 lines, $36.00 in the last 30 days", "Azure cost lines"))
+    def test_the_charges_that_it_would_shrink_are_a_fact_that_code_read(self):
+        self.assertEqual(self.reply.measured()["Charges it would shrink"], ("2 charges, $36.00 in the last 30 days", "Azure cost lines"))
 
     def test_what_the_ai_says_a_person_would_do_is_a_box_of_its_own_marked_as_not_checked_by_code_and_the_block_is_no_typed_fact(self):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]

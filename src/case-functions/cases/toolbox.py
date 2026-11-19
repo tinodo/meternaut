@@ -146,7 +146,7 @@ MAX_CHILDREN = 40  # the parts of one resource that children shows
 MAX_RESOURCES = 10  # the resources of a type that cost_history shows with their totals
 MAX_LINES = 8  # the lines of one list of one subscription in the answer of commitments
 MAX_OPEN_QUESTIONS = 15  # the rows of the answer of recall_open_questions
-OPEN_COLUMNS = ("handle", "type", "seen", "days_open", "confidence", "request")
+OPEN_COLUMNS = ("handle", "type", "seen", "days_open", "confidence", "request", "why")
 OPEN_SOURCE = "earlier findings that no person has decided: counts and words that Meternaut kept, not facts about this estate"
 QUERY_SECONDS = 45.0  # what one read of a resource's own records may take
 NOT_VISIBLE = "not visible with this access"  # what an answer says of a part that the access of the run cannot read: never "none"
@@ -3110,7 +3110,7 @@ class Toolbox:
             handle = self._show(entry, {})
             if handle is None:
                 break
-            rows.append([handle, type_word(entry.resource.resource_type) or OTHER, question.runs_seen, question.days_open, question.confidence, question.request])
+            rows.append([handle, type_word(entry.resource.resource_type) or OTHER, question.runs_seen, question.days_open, question.confidence, question.request, question.why])
         answer: dict = {"source": OPEN_SOURCE, "total": len(pool), "cols": list(OPEN_COLUMNS), "rows": rows}  # type: ignore[arg-type]
         if len(found) > len(rows):
             answer["not_shown"] = len(found) - len(rows)

@@ -261,6 +261,35 @@ def _machine_plan(**changes):
     return make_advice(**values)
 
 
+FIREWALL_GROUP = "rg-fabrikam-hub"
+FIREWALL = f"/subscriptions/{SUB}/resourceGroups/{FIREWALL_GROUP}/providers/Microsoft.Network/azureFirewalls/fabrikam-hub-fw"
+
+
+def _firewall(name: str = "fabrikam-hub-fw", bill: str = "Standard Deployment", target: str = "Basic Deployment", sku: str = "Basic", check=lambda text: text):
+    """A firewall whose finding states a switch to another price of the same service, priced by code from invented lines: 720 hours cost $864 (the bill pays the list price, 1.20 an hour) and the other
+    price is listed at 0.35 an hour, so a switch costs $252 a month for the same use and saves $612. `bill` is the meter name that the bill has now, `target` and `sku` the words of the other price, and
+    `check` the check that the tools make of a word. Returns its finding and its request."""
+    from types import SimpleNamespace
+
+    from cases import pricing
+    from cases.meters import Meter
+    from cases.prices import Line
+
+    start = dt.date(2026, 10, 5)
+    meter = Meter("r1", None, ("Example Firewall", "Standard Tier", bill, "OnDemand", "Usage", "1 Hour"), 720.0, 864.0, {start + dt.timedelta(days=n): 28.8 for n in range(30)}, None, start, 30)
+    box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"f1": Line("Example Firewall", "Example Firewall Basic", sku, target, "1 Hour", 0.35, "swedencentral", 1)},
+                          retail={"m1": 1.2}, offers={"m1": {"f1"}})
+    change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "f1"}}], "how": "Move the firewall to the basic tier."})
+    facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 864.0}, None, check), "r1")}
+    case = make_advice_case(case_id="case0109", resource_id=FIREWALL, resource_name=name, resource_type="microsoft.network/azurefirewalls", resource_group=FIREWALL_GROUP,
+                            subscription_name=SUBSCRIPTION_NAME, recommendation="change", confidence=0.81, saving_usd_month=None, cost_usd_30d=864.0, cost_state="lines", plan_id="plan0109",
+                            summary="The firewall carries little traffic for the tier that it is billed at.", objections=(), status="proposed", facts=facts,
+                            owner={"lookedUp": True, "tagOwner": "network-team", "tagName": "team"})
+    plan = make_advice(plan_id="plan0109", case_id="case0109", resource_id=FIREWALL, resource_name=name, resource_group=FIREWALL_GROUP, saving_usd_month=612.0, waiting_costs_usd_day=20.4,
+                       created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "proposed"})
+    return case, plan
+
+
 def _stop_machine():
     """A request to stop a virtual machine (a change that Meternaut would make after an approval): its finding of the investigation and its plan."""
     case = make_case(case_id="case0108", plan_id="plan0108", resource_id=BATCH, resource_name="fabrikam-batch-01", resource_type="microsoft.compute/virtualmachines",
@@ -376,6 +405,7 @@ def cases() -> dict[str, Rendered]:
     found["advice, priced"] = _page("advice, priced", *machine)
     found["advice, nothing priced (the owner's example)"] = _page("advice, nothing priced (the owner's example)", _ai_account(), _ai_plan())
     found["advice, with the heads-up"] = _page("advice, with the heads-up", machine[0], _machine_plan(preconditions={"family": "advise", "caseStatus": "proposed", AUTOMATED: at(days=-2)}))
+    found["advice, a switch (the firewall)"] = _page("advice, a switch (the firewall)", *_firewall())
     found["advice, the cost is not visible"] = _page("advice, the cost is not visible", _ai_account(case_id="case0107", plan_id="plan0107", cost_usd_30d=None, cost_state="failed"),
                                                      _ai_plan(plan_id="plan0107", case_id="case0107"))
     found["advice, one request for many resources"] = _page("advice, one request for many resources", *_group_finding())
@@ -393,7 +423,9 @@ def cases() -> dict[str, Rendered]:
     found["escalation digest letter"] = _letter("escalation digest letter", letters.escalation_digest_letter(
         PERSON, BASE, NOW + dt.timedelta(days=9), [(plan, case, "same"), (_machine_plan(), _priced_machine(), "manager")], CONTACTS))
     found["approval letter"] = _letter("approval letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS))
+    found["approval letter, a switch"] = _letter("approval letter, a switch", letters.approval_letter(*reversed(_firewall()), PERSON, BASE, NOW, CONTACTS))
     found["Teams card, advice"] = Rendered("Teams card, advice", "card", blocks_of_card(_card_of(case, plan)))
+    found["Teams card, a switch"] = Rendered("Teams card, a switch", "card", blocks_of_card(_card_of(*_firewall())))
     found["Teams card, change"] = Rendered("Teams card, change", "card", blocks_of_card(_card_of(make_case(plan_id="plan0001"), make_plan())))
     found["Decisions page"] = _decisions()
     found["Savings page"] = _savings()
@@ -448,7 +480,7 @@ def gallery() -> str:
 GUID_FORM = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 # What the owner threw out (and the shapes that go with it): each makes the lint fail when it is put back, and a test below puts each back.
 BANNED = ("saving not measured", "The most that a change could save", "Money is in US dollars", "Unproven:", "code checked", "not checked by code", "Why you are told", "nothing to undo",
-          "Consider changing")
+          "Consider changing", "bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of")
 SENTENCE_START = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
@@ -551,8 +583,8 @@ class TheWordsReadAsSentences(unittest.TestCase):
 
     def test_the_gallery_holds_the_pages_and_messages_that_the_owner_named(self):
         self.assertGreaterEqual(len(cases()), 15)
-        for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, one request for many resources", "change, delete a disk", "held finding",
-                       "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice"):
+        for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, a switch (the firewall)", "advice, one request for many resources", "change, delete a disk",
+                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch"):
             self.assertIn(wanted, cases())
 
     def test_every_rule_catches_its_fault(self):
@@ -602,6 +634,32 @@ class TheWordsReadAsSentences(unittest.TestCase):
                       "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
                 for surface, shown in on.items():
                     self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}'")
+
+    def test_the_old_sentences_of_the_basis_that_are_put_back_make_the_lint_fail_on_the_page_the_letter_and_the_card(self):
+        # The jargon of the sentences under a figure ("bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of") is put back where code writes them (pricing._basis).
+        from cases import pricing
+
+        old_switch = ("It assumes a switch of the 1 bill line of this resource to the alternative's list price, scaled by your bill's rate, which is 1 of list, or taken at list prices, counted at the rate of the last "
+                      "7 days. Meternaut did not check the alternative for features.")
+        old_target = "It assumes the AI's target of a change from 12 to 4, applied to the 2 bill lines of this resource that the change would shrink, counted at the rate of the last 7 days."
+        for label, (case, plan), old, fragments in (("a switch", _firewall(), old_switch, ("bill line", "scaled by", "of list", "the alternative's list price")),
+                                                     ("a change that the AI targets", (_priced_machine(), _machine_plan()), old_target, ("the AI's target of", "bill line"))):
+            with self.subTest(label), mock.patch.object(pricing, "_basis", lambda *found, old=old, **more: old):
+                brief = brief_mod.build_brief(case, plan, None, (), now=NOW, may_answer=True)
+                on = {"page": _page("page", case, plan), "letter": _letter("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)),
+                      "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
+                for surface, shown in on.items():
+                    for fragment in fragments:
+                        self.assertTrue(any(f"says '{fragment}'" in line for line in problems(shown)), f"the {surface} does not fail for '{fragment}' in {label}")
+
+    def test_the_basis_that_code_writes_now_passes_the_lint_on_every_surface_and_says_none_of_the_old_words(self):
+        for case, plan in (_firewall(), (_priced_machine(), _machine_plan())):
+            brief = brief_mod.build_brief(case, plan, None, (), now=NOW, may_answer=True)
+            on = {"page": _page("page", case, plan), "letter": _letter("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)),
+                  "card": Rendered("card", "card", blocks_of_card(cards.decision_card(brief, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))}
+            for surface, shown in on.items():
+                with self.subTest(surface):
+                    self.assertEqual([], problems(shown))
 
     def test_what_is_put_back_by_hand_makes_the_lint_fail_on_the_page_the_letter_and_the_card(self):
         # The shapes that came back by hand after the reviews of the words: a date in the form of a record in the body of a page, the money line of the old pages (in any case of letters), the risk

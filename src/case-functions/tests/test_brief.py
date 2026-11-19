@@ -513,17 +513,17 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertIn("the AI's own assumption", b.saving.basis)
         self.assertEqual(b.saving.waiting_per_day, 1.0)
 
-    def test_a_switch_is_a_scenario_whose_low_end_counts_and_the_words_of_the_figure_say_that_the_alternative_has_not_been_checked_for_features(self):
+    def test_a_switch_is_a_scenario_whose_low_end_counts_and_the_words_of_the_figure_say_that_nobody_checked_that_the_alternative_fits(self):
         start = dt.date(2026, 10, 5)
         meter = Meter("r1", None, pricing_words(1), 600.0, 60.0, {start + dt.timedelta(days=n): 2.0 for n in range(30)}, None, start, 30)
         box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"p1": Listed("Example Compute", "Basic Tier", "Small", "Meter 1", "1 Hour", 0.0625, "swedencentral", 1)},
                               retail={"m1": 0.125}, offers={"m1": {"p1"}})
         change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "p1"}}], "how": "Take the basic tier."})
-        facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None), "r1")}
+        facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda text: text), "r1")}
         b = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
         self.assertEqual((b.saving.monthly, b.saving.level), (22.5, "Scenario"), "600 hours at 0.0625 are 37.50 at list prices, and 30 at the rate of the bill: 22.50 to 30 saved, and the low end counts")
-        self.assertIn("It assumes a switch of the 1 bill line of this resource to the alternative's list price, scaled by your bill's rate, which is 0.8 of list, or taken at list prices", b.saving.basis)
-        self.assertIn("Meternaut did not check the alternative for features.", b.saving.basis)
+        self.assertIn("A switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. Your bill pays about 80 percent of the list price of Meter 1.", b.saving.basis)
+        self.assertIn("Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.", b.saving.basis)
         self.assertEqual(b.how, "Take the basic tier.")
 
     def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):
@@ -556,10 +556,10 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
     def test_the_lines_that_the_figure_rests_on_are_a_row_of_the_evidence_and_the_measurements_are_still_shown(self):
         facts = priced_case().facts
         labels = [fact.label for fact in facts_of(priced_case(facts={**facts, "metrics": {"Used Units": 3.0}, "metricUnits": {"Used Units": "Count"}, "metricDays": {"Used Units": 30}}))]
-        self.assertIn("Bill lines it would shrink", labels)
+        self.assertIn("Charges it would shrink", labels)
         self.assertIn("Used Units", labels)
-        row = next(fact for fact in facts_of(priced_case()) if fact.label == "Bill lines it would shrink")
-        self.assertEqual((row.value, row.source), ("2 lines, $100 a month", "Azure cost lines"))
+        row = next(fact for fact in facts_of(priced_case()) if fact.label == "Charges it would shrink")
+        self.assertEqual((row.value, row.source), ("2 charges, $100 a month", "Azure cost lines"))
 
     def test_the_ai_s_words_for_a_person_are_shown_as_text_of_an_ai_and_cut_to_one_line(self):
         hostile = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "<script>alert(1)</script> " + "x" * 400}
