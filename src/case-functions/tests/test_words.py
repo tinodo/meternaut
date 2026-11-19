@@ -265,10 +265,10 @@ FIREWALL_GROUP = "rg-fabrikam-hub"
 FIREWALL = f"/subscriptions/{SUB}/resourceGroups/{FIREWALL_GROUP}/providers/Microsoft.Network/azureFirewalls/fabrikam-hub-fw"
 
 
-def _firewall(name: str = "fabrikam-hub-fw", bill: str = "Standard Deployment", target: str = "Basic Deployment", sku: str = "Basic", check=lambda text: text):
+def _firewall(name: str = "fabrikam-hub-fw", bill: str = "Standard Deployment", target: str = "Basic Deployment", sku: str = "Basic", check=lambda text: text, usd: float = 864.0):
     """A firewall whose finding states a switch to another price of the same service, priced by code from invented lines: 720 hours cost $864 (the bill pays the list price, 1.20 an hour) and the other
-    price is listed at 0.35 an hour, so a switch costs $252 a month for the same use and saves $612. `bill` is the meter name that the bill has now, `target` and `sku` the words of the other price, and
-    `check` the check that the tools make of a word. Returns its finding and its request."""
+    price is listed at 0.35 an hour, so a switch costs $252 a month for the same use and saves $612. `bill` is the meter name that the bill has now, `target` and `sku` the words of the other price,
+    `check` the check that the tools make of a word, and `usd` what the 720 hours cost. Returns its finding and its request."""
     from types import SimpleNamespace
 
     from cases import pricing
@@ -276,16 +276,16 @@ def _firewall(name: str = "fabrikam-hub-fw", bill: str = "Standard Deployment", 
     from cases.prices import Line
 
     start = dt.date(2026, 10, 5)
-    meter = Meter("r1", None, ("Example Firewall", "Standard Tier", bill, "OnDemand", "Usage", "1 Hour"), 720.0, 864.0, {start + dt.timedelta(days=n): 28.8 for n in range(30)}, None, start, 30)
+    meter = Meter("r1", None, ("Example Firewall", "Standard Tier", bill, "OnDemand", "Usage", "1 Hour"), 720.0, usd, {start + dt.timedelta(days=n): usd / 30 for n in range(30)}, None, start, 30)
     box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"f1": Line("Example Firewall", "Example Firewall Basic", sku, target, "1 Hour", 0.35, "swedencentral", 1)},
                           retail={"m1": 1.2}, offers={"m1": {"f1"}})
     change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "f1"}}], "how": "Move the firewall to the basic tier."})
-    facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 864.0}, None, check), "r1")}
+    facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": usd}, None, check), "r1")}
     case = make_advice_case(case_id="case0109", resource_id=FIREWALL, resource_name=name, resource_type="microsoft.network/azurefirewalls", resource_group=FIREWALL_GROUP,
-                            subscription_name=SUBSCRIPTION_NAME, recommendation="change", confidence=0.81, saving_usd_month=None, cost_usd_30d=864.0, cost_state="lines", plan_id="plan0109",
+                            subscription_name=SUBSCRIPTION_NAME, recommendation="change", confidence=0.81, saving_usd_month=None, cost_usd_30d=usd, cost_state="lines", plan_id="plan0109",
                             summary="The firewall carries little traffic for the tier that it is billed at.", objections=(), status="proposed", facts=facts,
                             owner={"lookedUp": True, "tagOwner": "network-team", "tagName": "team"})
-    plan = make_advice(plan_id="plan0109", case_id="case0109", resource_id=FIREWALL, resource_name=name, resource_group=FIREWALL_GROUP, saving_usd_month=612.0, waiting_costs_usd_day=20.4,
+    plan = make_advice(plan_id="plan0109", case_id="case0109", resource_id=FIREWALL, resource_name=name, resource_group=FIREWALL_GROUP, saving_usd_month=pricing.point(facts), waiting_costs_usd_day=20.4,
                        created_at=at(days=-3), preconditions={"family": "advise", "caseStatus": "proposed"})
     return case, plan
 

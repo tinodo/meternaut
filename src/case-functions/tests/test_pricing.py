@@ -9,6 +9,7 @@ import dataclasses
 import datetime as dt
 import json
 import math
+import random
 import re
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 from support import APP_ROOT, NOW, SUBSCRIPTION
 
 from cases import agents, brief, cards, decide, investigate, letters, pricing, stake
+from cases.costs import money
 from cases.detectors import Context
 from cases.foundry import AgentRun
 from cases.meters import Meter, rates
@@ -524,7 +526,7 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         found = pricing.saved(facts)
         self.assertEqual((pricing.point(facts), found.high, found.level), (30.0, 60.0, pricing.SCENARIO))
         self.assertEqual(found.basis, "Counting a typical day, this resource paid about $30.00 a month for what the change would remove. That comes from your bill. "
-                                      "Its cost has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $30.00 to $60.00 a month, and Meternaut counts the low end.")
+                                      "The cost of this resource has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $30.00 to $60.00 a month, and Meternaut counts the low end.")
 
     def test_the_digest_of_a_group_is_the_sum_of_the_rates_of_its_resources_and_the_youngest_life(self):
         change = pricing.parse(block("remove", effect("r1", ("m1",)), effect("r2", ("m2",))))
@@ -575,7 +577,7 @@ class WhenTheRateIsTheBase(unittest.TestCase):
         facts, found = self.figure(row)
         self.assertEqual((pricing.point(facts), found.level), (315.0, pricing.SCENARIO), "315 is under three quarters of 510")
         self.assertEqual(found.basis, "Counting the lower of the last 7 days and the time since it began, this resource paid about $315 a month for what the change would remove. That comes from your bill. "
-                                      "Its cost has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $315 to $510 a month, and Meternaut counts the low end.")
+                                      "The cost of this resource has changed over the days that the figure counts, so the figure is less certain. The saving could be anywhere from $315 to $510 a month, and Meternaut counts the low end.")
 
     def test_a_figure_is_expected_only_when_it_follows_from_the_bill_alone(self):
         def found(**more):
@@ -951,7 +953,7 @@ class TheAlternative(unittest.TestCase):
         self.assertEqual((joined["form"], joined["offer"], joined["list"], "ratio" in joined, joined["lowUsd"], joined["highUsd"], joined["resources"], joined["lines"]),
                          ("alternative", "p1", 0.0625, False, 75.24, 93.87, 3, 3))
         self.assertEqual(pricing.saved({pricing.KEY: {"action": "switch", "price": joined}}).basis,
-                         "Over the last 7 days these 3 resources paid about $188 a month for Fixed Hours. A switch to Small would cost about $113 a month for the same use, so it would save about $75.24 a month. "
+                         "Over the last 7 days these 3 resources paid about $188 a month for Fixed Hours. A switch to Small would save about $75.24 a month. "
                          "Meternaut prices Small both at list prices and at the same share of the list prices that your bill pays. "
                          "Meternaut did not check whether these resources can be switched to it, or whether it has what they need. "
                          "The saving could be anywhere from $75.24 to $93.87 a month, and Meternaut counts the low end.")
@@ -1006,6 +1008,29 @@ class TheAlternative(unittest.TestCase):
             self.assertIn("A switch to another price of the same service", pricing.saved({pricing.KEY: pricing.combine([digests[0], second], 2)}).basis)
         same = pricing.combine([digests[0], digests[0]], 2)["price"]
         self.assertEqual((same["to"], same["now"]), ("Small", "Fixed Hours"), "a name that is the same for all is kept")
+
+    def test_the_three_amounts_of_the_sentence_add_up_as_it_prints_them_and_the_saving_is_the_one_that_the_page_states(self):
+        def said(base, low, after):
+            price = {"lowUsd": low, "highUsd": low, "billUsd": base, "weekUsd": base, "sinceUsd": base, "lines": 1, "resources": 1, "form": "alternative", "offer": "p1", "list": 0.35, "ratio": 1.0,
+                     "to": "Basic Deployment", "now": "Standard Deployment", "afterUsd": after}
+            return pricing.saved({pricing.KEY: {"action": "switch", "price": price}}).basis
+
+        self.assertIn("paid about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.",
+                      said(864.6, 612.3, 252.3), "865 less 612, and not the $252 that 252.30 rounds to")
+        self.assertIn("paid about $380 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $185 a month for the same use, so it would save about $195 a month.",
+                      said(379.5, 195.18, 184.32), "380 less 195, and not the $184 that 184.32 rounds to")
+        self.assertNotIn("would cost", said(250.0, 80.4, 169.6), "$250 less $80.40 is not a whole $170: the saving is said alone")
+        rng, clauses = random.Random(11), 0
+        for _ in range(3000):  # an amount from a few dollars to thousands, and a saving of a twentieth to nineteen twentieths of it
+            base = round(rng.uniform(1, 3000), 2)
+            low = round(base * rng.uniform(0.05, 0.95), 2)
+            basis = said(base, low, round(base - low, 2))
+            self.assertIn(f"would save about {money(low)} a month.", basis, "the saving is the figure that the page states above the sentence")
+            if "would cost about" in basis:
+                paid, cost, saving = (float(re.search(rf"{word} about \$([\d,.]+) a month", basis).group(1).replace(",", "")) for word in ("paid", "would cost", "would save"))
+                self.assertAlmostEqual(paid - cost, saving, places=2, msg=basis)
+                clauses += 1
+        self.assertGreater(clauses, 2000, "what remains is said in most cases, and in none that does not add up as printed")
 
     def test_the_sentence_that_the_alternative_has_not_been_checked_for_features_is_on_the_basis_of_every_figure_that_rests_on_one_whatever_the_form_of_the_group(self):
         def assumed(number, low):
@@ -1253,7 +1278,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         for uneven, said in ((1, " 1 charge is uneven from day to day, so the figure is less certain."), (2, " 2 charges are uneven from day to day, so the figure is less certain.")):
             found = pricing.saved({pricing.KEY: {"action": "remove", "price": {**price, "uneven": uneven}}})
             self.assertTrue(found.basis.endswith(said), found.basis)
-            self.assertNotIn("Its cost has changed", found.basis, "the uneven charge is said once")
+            self.assertNotIn("has changed over the days", found.basis, "the uneven charge is said once")
         found = pricing.saved({pricing.KEY: {"action": "reduce", "price": {**price, "form": "assumed", "away": [0.4, 0.7], "uneven": 1}}})
         self.assertTrue(found.basis.endswith(" 1 charge is uneven from day to day."), "the form that the AI assumed is a scenario anyway: " + found.basis)
 
