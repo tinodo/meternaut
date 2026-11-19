@@ -10,11 +10,12 @@ one sentence says so and says when the Watch looks next. The switches, the runs 
 from __future__ import annotations
 
 import datetime as dt
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from .. import costs as cost_words
-from ..brief import IF_ACTED, NOT_WORKED_OUT, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text
+from ..brief import IF_ACTED, NOT_WORKED_OUT, UNCONFIRMED, UNMEASURED, UNPRICED, Brief, ago_text, held_reason, plain, plan_headline, taken_back, things, waited_text, why_not_ask
 from ..models import ADVICE_QUIET_DAYS, ADVISE, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
@@ -287,11 +288,11 @@ def held_by_rules(ctx: Ctx) -> int:
 
 
 def _held(ctx: Ctx) -> Safe:
-    """The findings that no request waits for: no saving was priced for them, nothing was measured of their use, the second AI did not agree that the change can be made, the places for requests are
-    full (approvals.py), or a rule holds them back because nobody looked up who changed the
-    resource or what depends on it was not checked. The AIs look at them again at every search, so a person is told that they exist and that nothing is dropped. A store that cannot be read says
-    nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is
-    listed also when it is not a finding of the investigation (the weekly letter links to this page)."""
+    """The findings that no request waits for, and why, counted: a rule holds some back because nobody looked up who changed the resource or what depends on it was not checked, and for the others
+    the rules of asking say why (brief.why_not_ask: no saving was priced, nothing was measured, the second AI did not agree or the first was not sure), or the places for requests are full, or nobody
+    is named as an approver. The AIs look at them again at every search, so a person is told that they exist, how many there are for each cause and that nothing is dropped. A store that cannot be read
+    says nothing here: the list above says so. The findings that a guard holds back and that this person is named for are listed, each with a link to its page: it asks for nothing, and it is listed
+    also when it is not a finding of the investigation (the weekly letter links to this page)."""
     cases, _ = read(lambda: held_cases(ctx), [])
     listed = _held_rows(ctx)
     if not cases and not listed:
@@ -302,14 +303,31 @@ def _held(ctx: Ctx) -> Safe:
     rest = held - ruled
     if rest:
         many = rest != 1
-        lead = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. " if ruled else ""
-        lines.append(paragraph(f"{lead}Nobody is asked about {'these' if many else 'this'} yet. {'For each, Meternaut' if many else 'Meternaut'} could not work out from the bill what a change would save, "
-                               "nothing was measured of its use, the second AI did not agree that the change can be made, the places for requests are full, or nobody is named as an approver. "
-                               f"The AI looks at {'them' if many else 'it'} again at its next search."))
+        counts = Counter(why_not_ask(case) or "" for case in cases if not held_reason(case, ctx.now))
+        first = f"{_count(rest, 'finding')} {'are' if many else 'is'} held back for another reason. Nobody is asked about {'them' if many else 'it'} yet." if ruled else f"Nobody is asked about {_count(rest, 'finding')} yet."
+        lines.append(paragraph(f"{first} {_why_held(counts, rest)} The AI looks at {'them' if many else 'it'} again at its next search."))
     if listed:
         lines.append(fmt('<p>These findings are held back, so nothing is asked of you.</p><ul class="recent">{rows}</ul>', rows=join(row for _, row in listed[:HELD_LISTED])))
     others = len({case_id for case_id, _ in listed} - {case.case_id for case in cases})  # held findings of the older detectors, which held_cases does not count
     return details(f"Held back: {_count(held + others, 'finding')}", *lines)
+
+
+# Why nobody is asked about a finding that no guard holds back, in the words of the page: the key of brief.why_not_ask, and the clause that says it. "" is no reason of the rules of asking.
+HELD_WHY = ((UNPRICED, "Meternaut could not work out from the bill what a change would save"), (UNMEASURED, "nothing was measured of {their} use"),
+            (UNCONFIRMED, "the second AI did not agree that the change can be made, or the first AI was not sure"), ("", "the places for requests are full, or nobody is named as an approver"))
+
+
+def _why_held(counts: Mapping[str, int], total: int) -> str:
+    """One whole sentence for each cause that holds for at least one of `total` findings, with how many: "For 2 of them, ..." first, then "For 1, ...", and no "For" for one finding. A cause that holds
+    for none is left out."""
+    said: list[str] = []
+    for key, words in HELD_WHY:
+        count = counts.get(key, 0)
+        if count:
+            words = words.format(their="their" if count != 1 else "its")
+            who = ("both" if count == 2 else f"all {count}") if count == total else str(count)
+            said.append(words[0].upper() + words[1:] + "." if total == 1 else f"For {who}{'' if said else ' of them'}, {words}.")
+    return " ".join(said)
 
 
 def _held_rows(ctx: Ctx) -> list[tuple[str, Safe]]:
