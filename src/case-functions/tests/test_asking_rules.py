@@ -7,7 +7,7 @@ import unittest
 from dataclasses import replace
 
 import support  # noqa: F401  (it puts the app on the path)
-from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, meter_line, metrics, priced, resource, verdicts
+from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, meter_line, metrics, priced, resource, unasked, verdicts
 from test_pricing import COMPUTE, LISTED, billed_units, block, effect
 
 from cases import learning
@@ -16,7 +16,7 @@ from cases.brief import taken_back
 from cases.decide import NO_MEASUREMENT
 
 CHEAPER = "Take the cheaper plan."
-SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that it can be switched"
+SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that it can be switched, or the first was not sure"
 
 
 def toolbox(count: int = 1, **more) -> FakeToolbox:
@@ -42,10 +42,6 @@ def go(raw, box, skeptic=None, clock=None, extras=None) -> Harness:
     return h
 
 
-def said(h: Harness) -> str:
-    return h.notes[-1]
-
-
 class WhenTheSecondAiMustAgreeToASwitch(unittest.TestCase):
     """Code cannot know whether a resource can move to another tier of its service, and the second AI, which is shown the alternative, is the check that exists."""
 
@@ -61,11 +57,19 @@ class WhenTheSecondAiMustAgreeToASwitch(unittest.TestCase):
                 if asked:
                     (plan,) = h.store.plans_open()
                     self.assertEqual((plan.saving_usd_month, plan.preconditions[ASKED_UNDER], case.plan_id), (22.5, ASKING_RULES, plan.plan_id))
-                    self.assertFalse([note for note in h.notes if "no request was made" in note])
+                    self.assertFalse(unasked(h))
                 else:
                     self.assertEqual((case.plan_id, h.of("plan.created")), (None, []))
-                    self.assertTrue(said(h).endswith(f"opened 1 case; no request was made for 1 of them because {SECOND_AI_DID_NOT_AGREE}"), said(h))
+                    self.assertEqual(unasked(h), [f"no request was made for 1 case because {SECOND_AI_DID_NOT_AGREE}"])
                     self.assertEqual([(row.why, row.request) for row in learning.OpenQuestions(h.store, h.clock()).rows()], [(UNCONFIRMED, "none")], "the Investigator gets it again, with the reason")
+
+    def test_a_switch_that_the_second_ai_agreed_to_is_asked_about_only_when_the_first_ai_was_sure_enough_too(self):
+        for confidence, asked in ((0.45, False), (0.69, False), (0.7, True), (0.9, True)):
+            with self.subTest(confidence=confidence):
+                h = go(switch("r1", confidence=confidence), toolbox(), verdicts(("agree", (), "Fine.")))
+                (case,) = h.store.cases_recent()
+                self.assertEqual((case.learned["skeptic"], case.confidence, len(h.store.plans_open())), ("agree", confidence, int(asked)))
+                self.assertEqual(bool(unasked(h)), not asked, unasked(h))
 
     def test_a_change_that_is_no_switch_is_asked_about_whatever_the_second_ai_said(self):
         change, meters = priced("r1", usd=40.0)
@@ -78,7 +82,7 @@ class WhenTheSecondAiMustAgreeToASwitch(unittest.TestCase):
     def test_a_group_that_is_a_switch_is_judged_by_the_verdict_of_the_group(self):
         for verdict, asked in (("agree", True), ("disagree", False)):
             with self.subTest(verdict):
-                h = go(switch(*[f"r{n}" for n in range(1, 7)], proposal="investigate", confidence=0.4), toolbox(6), verdicts((verdict, (), "Words.")))
+                h = go(switch(*[f"r{n}" for n in range(1, 7)], proposal="investigate", confidence=0.8), toolbox(6), verdicts((verdict, (), "Words.")))
                 (case,) = h.store.cases_recent()
                 self.assertEqual((case.facts["group"]["count"], case.facts["change"]["price"]["form"], case.facts["change"]["price"]["lines"], len(h.store.plans_open())), (6, "alternative", 6, int(asked)))
                 if not asked:
@@ -96,15 +100,15 @@ class WhenAFindingIsNotAskedAbout(unittest.TestCase):
         h = go(raw, box, verdicts(("agree", (), "Fine."), ("agree", (), "Fine."), ("unsure", (), "Not sure.")))
         self.assertEqual((h.store.plans_open(), h.result.cases), ([], 3))
         self.assertEqual(h.result.not_asked, {UNPRICED: 1, UNMEASURED: 1, UNCONFIRMED: 1})
-        self.assertTrue(said(h).endswith(f"opened 3 cases; no request was made for 1 of them because {NOT_ASKED[UNPRICED]}, for 1 of them because {NOT_ASKED[UNMEASURED]}, "
-                                         f"for 1 of them because {NOT_ASKED[UNCONFIRMED]}"), said(h))
+        self.assertEqual(unasked(h), [f"no request was made for 1 case because {NOT_ASKED[UNPRICED]}", f"no request was made for 1 case because {NOT_ASKED[UNMEASURED]}",
+                                      f"no request was made for 1 case because {NOT_ASKED[UNCONFIRMED]}"], "one sentence for each reason: a note keeps 300 characters, and none of them is cut")
         rows = {row.resource_id.rsplit("-", 1)[1]: row.why for row in learning.OpenQuestions(h.store, h.clock()).rows()}
         self.assertEqual(rows, {"1": UNCONFIRMED, "2": UNMEASURED, "3": UNPRICED})
 
     def test_a_finding_that_is_asked_about_is_not_counted_and_a_run_that_asks_about_all_says_nothing_of_it(self):
         h = go(switch("r1"), toolbox(), verdicts(("agree", (), "Fine.")))
         self.assertEqual((h.result.not_asked, len(h.store.plans_open())), ({}, 1))
-        self.assertFalse([note for note in h.notes if "no request was made" in note])
+        self.assertFalse(unasked(h))
 
     def test_the_reasons_are_the_keys_of_the_words_and_the_words_say_why_in_plain_terms(self):
         self.assertEqual(tuple(NOT_ASKED), (UNPRICED, UNMEASURED, UNCONFIRMED))
@@ -136,6 +140,7 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
         agreed = verdicts(("agree", (), "Fine."))
         for label, second, skeptic, reason in (("no measurement", switch("r1", evidence=[]), agreed, UNMEASURED),
                                                ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No.")), UNCONFIRMED),
+                                               ("the first AI is less sure", switch("r1", confidence=0.45), agreed, UNCONFIRMED),
                                                ("the second AI gives no verdict", switch("r1"), json.dumps({"verdicts": []}), UNCONFIRMED)):
             with self.subTest(label):
                 self.first(switch("r1"), toolbox(), agreed)
@@ -149,7 +154,8 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
     def test_a_request_made_before_the_rules_is_taken_back_once_with_the_reason_rules_when_its_finding_is_judged_again_with_no_measurement_or_another_verdict(self):
         agreed = verdicts(("agree", (), "Fine."))
         for label, second, skeptic in (("no measurement", switch("r1", evidence=[]), agreed),
-                                       ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No.")))):
+                                       ("the second AI disagrees", switch("r1"), verdicts(("disagree", ("It may not be possible.",), "No."))),
+                                       ("the first AI is less sure", switch("r1", confidence=0.45), agreed)):
             with self.subTest(label):
                 self.first(switch("r1"), toolbox(), agreed, old=True)
                 self.judged_again(second, toolbox(), skeptic)

@@ -12,7 +12,7 @@ from unittest import mock
 import support  # noqa: F401  (it puts the app on the path)
 from support import SUBSCRIPTION
 from test_cost_series import FIRST, LAST, FakeCosts, read as read_costs
-from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, meter_line, metrics, resource, verdicts
+from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, meter_line, metrics, resource, unasked, verdicts
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
@@ -327,7 +327,7 @@ class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
         self.assertEqual((case.cost_usd_30d, case.saving_usd_month, case.status, case.facts[GROUP_FACT]["count"]), (1830.0, None, "needs_human", 60))
         self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNPRICED, [], None))
         self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
-        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them because no saving was priced from the bill"), h.notes[-1])
+        self.assertEqual(unasked(h), ["no request was made for 1 case because no saving was priced from the bill"])
 
 
     def test_a_group_that_nothing_measured_is_no_request_however_much_it_saves_and_the_end_note_counts_it(self):
@@ -336,7 +336,7 @@ class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
         self.assertEqual((case.saving_usd_month, case.facts[GROUP_FACT]["count"], case.objections), (1830.0, 60, (NO_MEASUREMENT,)))
         self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNMEASURED, [], None))
         self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
-        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them because nothing was measured of its use"), h.notes[-1])
+        self.assertEqual(unasked(h), ["no request was made for 1 case because nothing was measured of its use"])
 
     def test_a_group_is_judged_by_the_fields_of_its_case_which_are_those_of_the_resource_that_it_belongs_to(self):
         resources = endpoints(60)

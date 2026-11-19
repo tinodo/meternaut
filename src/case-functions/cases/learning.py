@@ -39,8 +39,8 @@ from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Mapping, Sequence
 
 from . import ownership
-from .approvals import ADVICE_QUIET_DAYS, why_not_ask
-from .brief import past_line, says_nothing, taken_back  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
+from .approvals import ADVICE_QUIET_DAYS
+from .brief import past_line, says_nothing, taken_back, why_not_ask  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
 from .decide import PROPOSE_CONFIDENCE, Decision
 from .memory_store import parse, stamp
 from .models import ADVISE, DECLINE_REASONS, HELD, ActionRecord, CaseRecord, LessonRecord, PlanRecord, Store, StoreError

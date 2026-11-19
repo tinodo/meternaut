@@ -249,7 +249,9 @@ class TheAnswer(unittest.TestCase):
         estate = standard()
         facts = priced_facts("alternative")
         cases = (("vm-1", dict(saving_usd_month=None), "unpriced"), ("vm-2", dict(saving_usd_month=10.0, objections=(NO_MEASUREMENT,)), "unmeasured"),
-                 ("disk-a", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "disagree"}), "unconfirmed"), ("disk-b", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "agree"}), "none"))
+                 ("disk-a", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "disagree"}, confidence=0.9), "unconfirmed"),
+                 ("disk-b", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "agree"}, confidence=0.9), "none"),
+                 ("disk-c", dict(saving_usd_month=22.5, facts=facts, learned={"skeptic": "agree"}, confidence=0.45), "unconfirmed"))
         box = recalling(estate, stored(*[case(n, estate.id_of(name), **changes) for n, (name, changes, _) in enumerate(cases, 1)]))
         text = box.call("recall_open_questions", {})
         found = json.loads(text)

@@ -12,8 +12,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Callable, Collection, Mapping, Sequence
 
-from . import brief, pricing, switches, twopeople
-from .decide import NO_MEASUREMENT
+from . import brief, switches, twopeople
+from .brief import NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
 from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
 from .families import registry
@@ -31,10 +31,9 @@ ANSWERS = ("approve", "decline", "ask", "not_mine", "later", "confirm")
 ADVICE_STATUSES = ("proposed", "needs_human")
 # A person's time is the scarce thing: a request that gives nothing to decide with, or that comes in dozens, is noise. A finding of the investigation is asked about only when code priced a saving
 # for it from the bill (`case.saving_usd_month`, cases/pricing.py), whatever the resource costs (a figure of what a resource costs is not what a change saves), when something was measured of the
-# resource's use, whatever it saves, and, for a switch to another price of the price list, when the second AI agreed (code cannot know whether this resource can move to that tier): a person is not
-# handed the AI's unfinished work. It stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py). The reasons, one for each rule, for every path to a request (why_not_ask).
-UNPRICED, UNMEASURED, UNCONFIRMED = "unpriced", "unmeasured", "unconfirmed"
-NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of its use", UNCONFIRMED: "the second AI did not agree that it can be switched"}
+# resource's use, whatever it saves, and, for a switch to another price of the price list, when the second AI agreed and the first was sure enough (code cannot know whether this resource can move to
+# that tier): a person is not handed the AI's unfinished work. It stays a case and an open question that the AIs look at again at the next investigation (cases/learning.py). The reasons, one for each
+# rule, are in cases/brief.py (why_not_ask), and every path to a request asks it.
 # A request of the investigation that was made under these rules keeps ASKING_RULES under ASKED_UNDER in its preconditions: a finding that is judged again later without a measurement, or with another
 # verdict, does not take it back for them (hold_back_empty). One that was made before has no such key.
 ASKED_UNDER, ASKING_RULES = "askedUnder", 2
@@ -112,26 +111,6 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
     except StoreError:
         return "the store could not be read"
     return None
-
-
-def why_not_ask(case: CaseRecord) -> str | None:
-    """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. Only a finding of the investigation is held back: when code priced no saving
-    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (UNMEASURED: decide.NO_MEASUREMENT), whatever it saves; or, when its saving is a switch to another price
-    of the price list, when the second AI did not agree (UNCONFIRMED). The older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
-    if case.detector != INVESTIGATION:
-        return None
-    if not _saving(case):
-        return UNPRICED
-    if NO_MEASUREMENT in case.objections:
-        return UNMEASURED
-    return UNCONFIRMED if _switch(case) and (case.learned or {}).get("skeptic") != "agree" else None
-
-
-def _switch(case: CaseRecord) -> bool:
-    """Whether the saving of a finding rests on a switch to another price of the list: the form `alternative`, or a sum of rules that holds one (cases/pricing.py)."""
-    found = case.facts.get(pricing.KEY) if isinstance(case.facts, dict) else None
-    price = found.get("price") if isinstance(found, dict) else None
-    return isinstance(price, dict) and pricing._switched(price) > 0
 
 
 def _asked_on_less(case: CaseRecord, plan: PlanRecord) -> bool:
@@ -874,9 +853,7 @@ def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:
     return len(worth) >= ADVICE_OPEN_HARD or (len(worth) >= ADVICE_OPEN_MAX and (_saving(case) or 0.0) <= min(worth))
 
 
-def _saving(case: CaseRecord) -> float | None:
-    """The saving of a finding as its request states it: the case's own figure, else Azure Advisor's."""
-    return case.saving_usd_month if (case.saving_usd_month or 0) > 0 else brief.advisor_saving(case)
+_saving = stated_saving  # the saving of a finding as its request states it: the case's own figure, else Azure Advisor's (cases/brief.py)
 
 
 def _figure(case: CaseRecord) -> float:

@@ -320,13 +320,24 @@ class TheWorthOfARequest(unittest.TestCase):
             for verdict in ("agree", "disagree", "unsure", "none", None):
                 with self.subTest(forms=forms, verdict=verdict):
                     self.setUp()
-                    case = self.priced(facts=priced_facts(*forms), learned={} if verdict is None else {"skeptic": verdict})
+                    case = self.priced(facts=priced_facts(*forms), learned={} if verdict is None else {"skeptic": verdict}, confidence=0.9)
                     asked = not switch or verdict == "agree"
                     self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
                     self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
                     self.assertEqual(len(self.open_advice()), int(asked))
                     if not asked:
                         self.assertTrue(OpenQuestions(self.store, NOW).is_open(case), "what is not asked about is an open question")
+
+    def test_a_switch_that_the_second_ai_agreed_to_is_asked_about_only_when_the_first_ai_was_sure_enough_too(self):
+        for confidence, asked in ((0.45, False), (0.69, False), (0.7, True), (0.95, True), (None, False)):
+            with self.subTest(confidence=confidence):
+                self.setUp()
+                case = self.priced(facts=priced_facts("alternative"), learned={"skeptic": "agree"}, confidence=confidence)
+                self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
+                self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
+        for forms in (("none",), ("quantity",), ("none", "quantity")):
+            with self.subTest(forms=forms):
+                self.assertIsNone(why_not_ask(self.priced(facts=priced_facts(*forms), learned={"skeptic": "agree"}, confidence=0.45)), "only a switch needs both AIs to be sure: the rest is checked by the bill")
 
     def test_the_other_rules_come_first_and_a_case_that_names_no_change_is_no_switch(self):
         agreed, unsure = {"skeptic": "agree"}, {"skeptic": "unsure"}

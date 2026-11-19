@@ -471,11 +471,20 @@ class AnOpenRequestForAFindingThatNothingMeasuredOrThatNobodyConfirmedIsTakenBac
                     self.assertEqual((self.store.plan_get(request.plan_id).state, [e for e in events if e["type"] == "case.held" and e["caseId"] == other.case_id]), (request.state, []))
 
     def test_a_request_for_a_finding_that_was_measured_and_confirmed_stays_open_whenever_it_was_made(self):
-        measured = {UNMEASURED: dict(objections=()), UNCONFIRMED: dict(learned={"skeptic": "agree"})}
+        measured = {UNMEASURED: dict(objections=()), UNCONFIRMED: dict(learned={"skeptic": "agree"}, confidence=0.9)}
         for reason in self.each():
             _, plan = self.made(reason, **measured[reason])
             summary, events, _ = self.watch()
             self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
+
+    def test_a_switch_that_the_second_ai_agreed_to_is_taken_back_when_the_first_was_not_sure_and_stays_when_it_was(self):
+        for confidence, state in ((0.45, "expired"), (0.69, "expired"), (None, "expired"), (0.7, "open")):
+            with self.subTest(confidence=confidence):
+                self.setUp()
+                case, plan = self.made(UNCONFIRMED, learned={"skeptic": "agree"}, confidence=confidence)
+                self.assertEqual(why_not_ask(case), None if state == "open" else UNCONFIRMED)
+                summary, events, _ = self.watch()
+                self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held), (state, int(state == "expired")))
 
     def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
         for reason in self.each():

@@ -35,9 +35,9 @@ from typing import TYPE_CHECKING, Callable, Mapping
 from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
-from .approvals import NOT_ASKED, is_fixture, why_not_ask
+from .approvals import is_fixture
 from .arm import scopes_of
-from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, IMPACT_VERDICTS, about_use, says_nothing, shared
+from .brief import MEASURED_DAYS, HELD_SHARED, HELD_UNPROVEN, IMPACT_VERDICTS, NOT_ASKED, about_use, says_nothing, shared, why_not_ask
 from .detectors import Context, Lead
 from .foundry import SOFT_TIME_SHARE, FoundryError
 from .guards import Guards
@@ -1285,9 +1285,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         note(f"{out.unmeasured} resource{'' if out.unmeasured == 1 else 's'} of the findings {'has' if out.unmeasured == 1 else 'have'} no measurement that backs the "
              f"finding, so a person has to judge {'it' if out.unmeasured == 1 else 'them'}")
     finished(True, examined=out.examined, findingsKept=out.kept, findingsDropped=out.dropped_findings, cases=out.cases, guarded=out.guarded)
-    unasked = ", for ".join(f"{out.not_asked[why]} of them because {words}" for why, words in NOT_ASKED.items() if why in out.not_asked)
     note(f"the investigation made {out.tool_calls} tool call{'' if out.tool_calls == 1 else 's'}, kept {out.kept} of {raw_total} finding"
-         f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}" + (f"; no request was made for {unasked}" if unasked else ""))
+         f"{'' if raw_total == 1 else 's'} and opened {out.cases} case{'' if out.cases == 1 else 's'}")
+    for why, words in NOT_ASKED.items():  # one sentence for each reason, so that none is cut: a note keeps 300 characters
+        if why in out.not_asked:
+            note(f"no request was made for {out.not_asked[why]} case{'' if out.not_asked[why] == 1 else 's'} because {words}")
     return out
 
 

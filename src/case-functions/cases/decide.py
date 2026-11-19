@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from . import costs as cost_words
 from . import pricing
+from .brief import NO_MEASUREMENT
 from .detectors import ADVISOR, Lead
 from .guards import Guards
 from .roles import DetectiveAnswer, SkepticAnswer
@@ -13,8 +14,6 @@ PROPOSE_CONFIDENCE = 0.7
 STATUSES = ("proposed", "needs_human", "dropped", "error")
 # A case is proposed under the same conditions for a recommendation to delete the resource and for one to change it (a smaller size, another tier).
 PROPOSALS = ("delete", "change")
-# What a case says when no measurement that code confirmed backs it: it is never proposed, whatever the agents answered.
-NO_MEASUREMENT = "no measurement backs this finding; a person has to judge it"
 
 
 @dataclass(frozen=True)
