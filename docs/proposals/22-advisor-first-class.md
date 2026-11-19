@@ -39,7 +39,7 @@ Advisor's recommendations are claims with a figure, not findings that the AIs co
 
 | Guard | Decision |
 |---|---|
-| `UNPRICED` (`why_not_ask`) | Does not apply: it is about findings of the investigation, and an Advisor case has Advisor's own figure and no objection of an AI. A figure of a few cents still makes a request |
+| `UNPRICED`, `UNMEASURED`, `UNCONFIRMED` (`why_not_ask`) | Do not apply: they are about findings of the investigation, and an Advisor case has Advisor's own figure and no objection of an AI. A figure of a few cents still makes a request |
 | "Judged lately" | Does not apply: no AI judges an Advisor case. What a person answered is held for 30 days, as for every request |
 | `ADVICE_OPEN_MAX` | Advisor requests are not held by it and not counted by it |
 | `says_nothing` | A recommendation with a figure, a product or a term always says something: its rows, with words of code when Advisor wrote none. One with no words, no figure, no product and no term says nothing and is held back as before, and the History says it once |

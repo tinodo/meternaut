@@ -12,12 +12,12 @@ from unittest import mock
 import support  # noqa: F401  (it puts the app on the path)
 from support import SUBSCRIPTION
 from test_cost_series import FIRST, LAST, FakeCosts, read as read_costs
-from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, meter_line, metrics, resource, verdicts
+from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, key_of, loop_for, meter_line, metrics, resource, unasked, verdicts
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
 from cases import approvals, brief, cards, investigate, learning, letters
-from cases.approvals import UNPRICED, why_not_ask
+from cases.approvals import UNMEASURED, UNPRICED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.memory_store import stamp
 from cases.models import ADVISE, GROUP_FACT, CaseRecord, NoteRecord, Principal, StoreError
@@ -30,6 +30,11 @@ HEADLINE = "Look at 60 private endpoints in 14 groups, starting with pe-60"
 def absent() -> dict:
     """What the real toolbox records for a measurement that has no data in the window: a total that is not there."""
     return {"metrics": {"Traffic": {"total": None, "days": 30, "days_with_data": 0, "totals": [None]}}}
+
+
+def measured() -> dict:
+    """What the real toolbox records for a measurement that has a value on every day of the window."""
+    return metrics(Traffic=40)
 
 
 def endpoints(count: int, cost=float, **changes) -> list:
@@ -49,10 +54,12 @@ def priced(handles) -> dict:
     return {"action": "remove", "effects": [{"handle": handle, "meters": [f"m{handle[1:]}"], "remains": {"form": "none"}} for handle in handles], "how": "Remove them."}
 
 
-def raw_of(count: int, **changes) -> dict:
-    """One finding of the Investigator that asks for a look at `count` resources, none of which has data to measure, and states the change that code prices (`priced`)."""
-    values = dict(handles=[f"r{n}" for n in range(1, count + 1)], basis="other", proposal="investigate", confidence=0.4, summary="These resources have no data in the window.", evidence=[])
+def raw_of(count: int, unmeasured: bool = False, **changes) -> dict:
+    """One finding of the Investigator that asks for a look at `count` resources, each with a cited measurement that the tools confirm (`measured`; `unmeasured` cites none), and states the change that
+    code prices (`priced`): a request needs both."""
+    values = dict(handles=[f"r{n}" for n in range(1, count + 1)], basis="other", proposal="investigate", confidence=0.4, summary="These resources are used a little.")
     values.update(changes)
+    values.setdefault("evidence", [] if unmeasured else [entry(handle, "Traffic", 40) for handle in values["handles"]])
     values.setdefault("change", priced(values["handles"]))
     return finding(**values)
 
@@ -67,7 +74,7 @@ def watch(raw, resources, *, clock=None, extras=None, skeptic=None, evidence=Non
     clock = clock or Moving()
     if meters is None:
         meters = {f"m{r.handle[1:]}": meter_line(r.handle, r.cost_usd_30d) for r in resources if r.cost_usd_30d}
-    toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: absent() for r in resources}, meters=meters)
+    toolbox = FakeToolbox(resources, evidence if evidence is not None else {r.handle: measured() for r in resources}, meters=meters)
     h = Harness(FakeFoundry(answer(*(raw if isinstance(raw, list) else [raw])), skeptic), toolbox, clock=clock, extras=extras if extras is not None else loop_for(clock))
     if contexts is not None:
         h.contexts = contexts
@@ -226,9 +233,9 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertEqual((case.cost_usd_30d, case.facts[GROUP_FACT]["costUsd30d"], case.facts["costUsd30d"], none.store.plans_open()), (None, None, None, []))
 
     def test_the_status_comes_from_decide_with_the_verdict_of_the_finding_as_for_any_resource(self):
-        for label, raw, skeptic, objections in (("it agrees", raw_of(8, confidence=0.99), None, (NO_MEASUREMENT,)),
-                                                ("it disagrees", raw_of(8), verdicts(("disagree", ("It may be needed.",), "No.")), (NO_MEASUREMENT, "It may be needed.")),
-                                                ("it is unsure", raw_of(8), verdicts(("unsure", (), "The window is short.")), (NO_MEASUREMENT, "The window is short."))):
+        for label, raw, skeptic, objections in (("it agrees", raw_of(8, unmeasured=True, confidence=0.99), None, (NO_MEASUREMENT,)),
+                                                ("it disagrees", raw_of(8, unmeasured=True), verdicts(("disagree", ("It may be needed.",), "No.")), (NO_MEASUREMENT, "It may be needed.")),
+                                                ("it is unsure", raw_of(8, unmeasured=True), verdicts(("unsure", (), "The window is short.")), (NO_MEASUREMENT, "The window is short."))):
             with self.subTest(label):
                 h = watch(raw, endpoints(8), skeptic=skeptic)
                 case = only_case(h)
@@ -245,7 +252,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         self.assertEqual((h.result.unmeasured, case.objections), (59, ()))
         (line,) = h.of("investigation.finding")
         self.assertEqual((line["handles"], line["unmeasured"]), (60, 59))
-        every = watch(raw_of(60), endpoints(60))
+        every = watch(raw_of(60, unmeasured=True), endpoints(60))
         self.assertEqual((every.result.unmeasured, only_case(every).objections), (60, (NO_MEASUREMENT,)))
         self.assertIn("60 resources of the findings have no measurement that backs the finding, so a person has to judge them", every.notes)
 
@@ -293,7 +300,7 @@ class WhenAFindingToInvestigateCoversManyResources(unittest.TestCase):
         change = {"action": "remove", "effects": [{"handle": f"r{n}", "meters": [f"m{n}"], "remains": {"form": "none"}} for n in range(1, 4)]}
         case = only_case(watch(raw_of(7, change=change), resources, meters=meters))
         self.assertEqual((case.facts["change"]["price"]["resources"], case.facts["change"]["price"]["members"], case.saving_usd_month), (3, 7, 150.0))
-        self.assertIn("3 of 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
+        self.assertIn("3 of the 7 resources", brief.build_brief(case, None, now=WEB_NOW).saving.basis)
 
 
 class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
@@ -320,7 +327,23 @@ class WhenTheRuleOfTheSavingMeetsAGroup(unittest.TestCase):
         self.assertEqual((case.cost_usd_30d, case.saving_usd_month, case.status, case.facts[GROUP_FACT]["count"]), (1830.0, None, "needs_human", 60))
         self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNPRICED, [], None))
         self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
-        self.assertTrue(h.notes[-1].endswith("opened 1 case; no request was made for 1 of them because no saving was priced from the bill"), h.notes[-1])
+        self.assertEqual(unasked(h), ["no request was made for 1 case because no saving was priced from the bill"])
+
+
+    def test_a_group_that_nothing_measured_is_no_request_however_much_it_saves_and_the_end_note_counts_it(self):
+        h = watch(raw_of(60, unmeasured=True), endpoints(60))
+        case = only_case(h)
+        self.assertEqual((case.saving_usd_month, case.facts[GROUP_FACT]["count"], case.objections), (1830.0, 60, (NO_MEASUREMENT,)))
+        self.assertEqual((why_not_ask(case), h.store.plans_open(), case.plan_id), (UNMEASURED, [], None))
+        self.assertTrue(learning.OpenQuestions(h.store, h.clock()).is_open(case), "the Investigator is given it again by recall_open_questions")
+        self.assertEqual(unasked(h), ["no request was made for 1 case because nothing was measured of its use"])
+
+    def test_a_group_is_judged_by_the_fields_of_its_case_which_are_those_of_the_resource_that_it_belongs_to(self):
+        resources = endpoints(60)
+        evidence = {r.handle: (metrics(Traffic=0) if r.handle == "r60" else absent()) for r in resources}
+        h = watch(raw_of(60, evidence=[entry("r60", "Traffic", 0)]), resources, evidence=evidence)
+        case = only_case(h)
+        self.assertEqual((h.result.unmeasured, case.objections, why_not_ask(case), len(h.store.plans_open())), (59, (), None, 1))
 
 
 class WhenTheSameFindingComesAgain(unittest.TestCase):
@@ -765,7 +788,7 @@ class TheBriefOfAGroup(unittest.TestCase):
         self.assertEqual([(f.label, f.value, f.source) for f in self.b.facts[:4]],
                          [("Covers", "60 private endpoints in 14 resource groups", "Azure Resource Graph"),
                           ("Together they cost", "$1,830 in the last 30 days", "Azure cost lines"),
-                          ("Bill lines it would shrink", "60 lines, $1,830 a month", "Azure cost lines"),
+                          ("Charges it would shrink", "60 charges, $1,830 a month", "Azure cost lines"),
                           ("Examples", "pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more", "Azure Resource Graph")])
         self.assertNotIn("Cost, last 30 days", [f.label for f in self.b.facts])
         self.assertLessEqual(len(self.b.facts), brief.MAX_FACTS)
@@ -875,7 +898,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(self.reply.headings(1), ["Look at 60 private endpoints in 14 resource groups"])
         self.assertEqual(self.reply.main.find("p", class_="say save").text(), "Meternaut worked out that this could save about $21,960 a year ($1,830 a month).")
         self.assertIn("Covers 60 private endpoints in 14 resource groups Azure Resource Graph Together they cost $1,830 in the last 30 days Azure cost lines "
-                      "Bill lines it would shrink 60 lines, $1,830 a month Azure cost lines "
+                      "Charges it would shrink 60 charges, $1,830 a month Azure cost lines "
                       "Examples pe-60, pe-59, pe-58, pe-57, pe-56, pe-55 and 54 more Azure Resource Graph", self.text)
         self.assertTrue(self.reply.form(has_button="Worth acting on").has_button("Not worth it"))
         self.assertEqual(self.reply.problems, [])
@@ -899,7 +922,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_the_group_that_code_made(self):
         facts = {row["Fact"] for row in self.reply.table("facts").rows}
-        self.assertEqual(facts, {"basis", "costUsd30d", "finding", "metrics", "proposal"})
+        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metrics", "proposal"})
         self.assertIn(GROUP_FACT, self.case.facts)
 
     def test_the_start_page_lists_the_one_decision_with_the_headline_of_the_group(self):
@@ -932,7 +955,7 @@ class WhatAPersonSees(unittest.TestCase):
     def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
         self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
-        for repeated in ("Covers", "Together they cost", "Bill lines it would shrink", "Whose is it"):
+        for repeated in ("Covers", "Together they cost", "Charges it would shrink", "Whose is it"):
             self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")
         self.assertIn("Meternaut worked out that this could save about $21,960 a year ($1,830 a month).", letter.text)
@@ -952,7 +975,7 @@ class WhatAPersonSees(unittest.TestCase):
         self.assertEqual(found["headline"], "Look at 60 private endpoints in 14 resource groups")
         self.assertNotIn("place", found, "a request for many resources has no place of its own")
         self.assertEqual(found["value"], "Meternaut worked out that this could save about $21,960 a year \\($1,830 a month\\).")
-        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Bill lines it would shrink", "60 lines, $1,830 a month"):
+        for row in ("Covers", "60 private endpoints in 14 resource groups", "Together they cost", "$1,830 in the last 30 days", "Charges it would shrink", "60 charges, $1,830 a month"):
             self.assertIn(row, text)
         self.assertNotIn("No figure", text)
 

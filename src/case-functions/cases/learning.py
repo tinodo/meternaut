@@ -22,7 +22,7 @@ What is made of the lessons, all of it by code and all of it explainable:
   person or a resource.
 * `OpenQuestions` says which earlier findings are still open questions: the case of the investigation is `needs_human` or `proposed`, and either no request to a person is open for the resource
   or the first AI was not sure enough, and no person answered lately or marked the resource do-not-touch. The Investigator gets them through the tool `recall_open_questions`, as a typed row
-  for each (the resource, how often it was seen, for how long, how sure the last judgement was), and the Watch takes such a resource up again at once when the Investigator cites it again
+  for each (the resource, how often it was seen, for how long, how sure the last judgement was, and why the rules of asking hold it back, if they do), and the Watch takes such a resource up again at once when the Investigator cites it again
   (investigate._judged_lately), so that an open question comes back with the tools until it is decision-ready or dropped.
 
 The starting values below were written before anything was measured, and tools/learning-check.py holds them against evaluation/learning-thresholds.json: on its first run, on the invented replay set,
@@ -40,7 +40,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from . import ownership
 from .approvals import ADVICE_QUIET_DAYS
-from .brief import past_line, says_nothing, taken_back  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
+from .brief import past_line, says_nothing, taken_back, why_not_ask  # noqa: F401  (the one line of the brief is written there: the brief imports nothing but the records)
 from .decide import PROPOSE_CONFIDENCE, Decision
 from .memory_store import parse, stamp
 from .models import ADVISE, DECLINE_REASONS, HELD, ActionRecord, CaseRecord, LessonRecord, PlanRecord, Store, StoreError
@@ -587,8 +587,8 @@ OPEN_POOL = 45  # the open questions that one answer starts from: some of their 
 @dataclass(frozen=True)
 class OpenQuestion:
     """One earlier finding that is still an open question, as typed values: the resource (an id of an estate, which only code reads: the tool gives the Investigator a handle for it), its type
-    as Azure names it, in how many Watches it was seen, for how many days, how sure the last judgement was, and whether a request to a person waits. No text of the case, no reason and no name
-    of a person."""
+    as Azure names it, in how many Watches it was seen, for how many days, how sure the last judgement was, whether a request to a person waits, and why the rules of asking hold the finding back, if
+    they do (a word of code's). No text of the case and no name of a person."""
 
     resource_id: str
     resource_type: str
@@ -596,6 +596,7 @@ class OpenQuestion:
     days_open: int
     confidence: float | None
     request: str  # "open" when a request to a person waits for an answer, else "none"
+    why: str  # why the rules of asking hold the finding back, as it is judged now: a key of approvals.NOT_ASKED, else "none". A code's word, never a text of the case
 
 
 def _sure(confidence: object) -> bool:
@@ -657,5 +658,5 @@ class OpenQuestions:
             except (ValueError, TypeError):
                 days = 0
             found.append(OpenQuestion(case.resource_id, type_word(case.resource_type), max(0, case.runs_seen), days, round(confidence, 2) if confidence is not None and 0 <= confidence <= 1 else None,
-                                      "open" if case.resource_id.lower() in waiting else "none"))
+                                      "open" if case.resource_id.lower() in waiting else "none", why_not_ask(case) or "none"))
         return found

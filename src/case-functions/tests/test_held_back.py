@@ -9,11 +9,12 @@ from dataclasses import replace
 from support import SUBSCRIPTION, NOW
 from test_names_and_cost import DEV, PROBLEM, a_subscription_with_a_bill, advisor_item, the_case
 from test_run_loop import GROUP, OID, Moving, loop_for, watch
-from test_web_support import make_advice, make_advice_case, make_decision, page_of
+from test_web_support import make_advice, make_advice_case, make_decision, page_of, priced_facts
 
 from cases import brief, learning
 from cases.advisor import ADVICE_NONE
-from cases.approvals import NOTHING_TO_SAY, RULES_CHANGED
+from cases.approvals import ASKED_UNDER, ASKING_RULES, NOTHING_TO_SAY, RULES_CHANGED, UNCONFIRMED, UNMEASURED, why_not_ask
+from cases.decide import NO_MEASUREMENT
 
 SUBSCRIPTION_ID = f"/subscriptions/{SUBSCRIPTION}"
 GROUP_ID = f"{SUBSCRIPTION_ID}/resourceGroups/rg-demo"
@@ -334,6 +335,7 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
                 self.store.plan_put(plan)
                 summary, events, _ = self.watch()
                 self.assertEqual((self.store.plan_get(plan.plan_id).state, [e for e in events if e["type"] == "case.held" and e["caseId"] == case.case_id]), (plan.state, []))
+                self.assertNotIn(ASKED_UNDER, self.store.plan_get(plan.plan_id).preconditions, "only a request of the investigation is marked as asked under its rules")
 
     def test_a_request_for_a_finding_that_code_priced_stays_open(self):
         self.store.case_put(replace(self.case, saving_usd_month=120.0))
@@ -357,6 +359,153 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
         self.assertEqual(len([e for e in events if e["type"] == "plan.revived"]), 1, "it came back: nobody had answered it, and no clock closes a request")
         self.assertEqual((plan.state, plan.preconditions["takenBack"], self.store.plans_open(), summary.held), ("expired", "rules", [], 1))
         self.assertEqual(self.store.case_get(self.case.case_id).status, "needs_human")
+
+
+def unasked(reason, **changes):
+    """A finding of the investigation that code priced a saving for and that an earlier Watch asked a person about on less than the rules ask for now: nothing was measured of the resource (`unmeasured`), or
+    its saving is a switch to another price of the list that the second AI did not agree to (`unconfirmed`)."""
+    own = {UNMEASURED: dict(objections=(NO_MEASUREMENT,), facts={"basis": "other", "proposal": "change", "metrics": {}}),
+           UNCONFIRMED: dict(objections=("It may not be possible.",), facts=priced_facts("alternative", metrics={"Traffic": 5}), learned={"skeptic": "disagree"})}[reason]
+    return unpriced(**{"case_id": f"k{reason}", "plan_id": f"p{reason}", "recommendation": "change", "saving_usd_month": 40.0, "cost_usd_30d": 200.0, **own, **changes})
+
+
+class AnOpenRequestForAFindingThatNothingMeasuredOrThatNobodyConfirmedIsTakenBack(unittest.TestCase):
+    """A finding of the investigation is asked about only when something was measured of the resource's use (approvals.UNMEASURED) and, for a switch to another price of the list, when the second AI
+    agreed (UNCONFIRMED). A request that an earlier Watch made without that has no ASKED_UNDER, and is taken back at the next Watch with the reason `rules`: once, in words, in the History, and never when a
+    person answered it. A request that was made under today's rules is never taken back for them, whatever a later judgment of its finding says."""
+
+    def setUp(self):
+        self.clock = Moving()
+        self.extras = loop_for(self.clock)
+        self.store = self.extras.store
+
+    def made(self, reason, asked_under=False, **changes):
+        """The finding for `reason` and its open request, as the Watch before these rules made it (no ASKED_UNDER), or as today's rules make it."""
+        case = unasked(reason, **changes)
+        pre = {"family": "advise", "caseStatus": "needs_human", **({ASKED_UNDER: ASKING_RULES} if asked_under else {})}
+        plan = request_for(case, title="Check whether the account contoso-ai in group rg-demo is still used", resource_name="contoso-ai", resource_group="rg-demo", saving_usd_month=case.saving_usd_month,
+                           created_at="2026-11-01T09:00:00Z", expires_at="", preconditions=pre)
+        self.store.case_put(case)
+        self.store.plan_put(plan)
+        return case, plan
+
+    def watch(self):
+        from support import FakeEstate
+        return watch(FakeEstate(), self.extras, self.clock)
+
+    def each(self):
+        for reason in (UNMEASURED, UNCONFIRMED):
+            with self.subTest(reason):
+                self.setUp()
+                yield reason
+
+    def test_the_request_that_nobody_answered_is_taken_back_with_the_reason_rules_said_in_the_history_counted_and_asked_about_no_more(self):
+        for reason in self.each():
+            case, plan = self.made(reason)
+            self.assertEqual(why_not_ask(case), reason)
+            summary, events, _ = self.watch()
+            taken = self.store.plan_get(plan.plan_id)
+            self.assertEqual((taken.state, taken.preconditions["takenBack"], taken.expires_at, self.store.plans_open(), self.store.plans_held()), ("expired", "rules", "2026-11-04T12:00:00Z", [], []))
+            (held,) = [e for e in events if e["type"] == "case.held"]
+            self.assertEqual((held["caseId"], held["detector"], held["reason"]), (case.case_id, "investigation", RULES_CHANGED))
+            self.assertEqual((summary.held, self.store.runs_recent()[0].held), (1, 1))
+            self.assertIn(f"1 finding {RULES_CHANGED}", [e["note"] for e in events if e["type"] == "run.note"])
+            kept = self.store.case_get(case.case_id)
+            self.assertEqual(kept.status, "needs_human", "the finding stays what it was")
+            self.assertTrue(learning.OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again, with the reason")
+            self.assertEqual([row.why for row in learning.OpenQuestions(self.store, NOW).rows()], [reason])
+            self.clock.advance(hours=3)
+            again, events, _ = self.watch()
+            self.assertEqual((again.held, [e for e in events if e["type"] == "case.held"], self.store.plan_get(plan.plan_id), self.store.plans_held()), (0, [], taken, []), "a second Watch takes back nothing more")
+            self.clock.advance(days=8)
+            self.watch()
+            self.assertEqual((self.store.plans_open(), self.store.plans_held()), ([], []), "and nobody is asked about it again")
+
+    def test_the_page_says_taken_back_and_why_and_nothing_was_changed_in_azure(self):
+        for reason in self.each():
+            case, plan = self.made(reason)
+            self.watch()
+            after, kept = self.store.plan_get(plan.plan_id), self.store.case_get(case.case_id)
+            shown = brief.build_brief(kept, after, now=NOW)
+            self.assertEqual((shown.outcome.state, shown.outcome.title, shown.outcome.lines), ("expired", "Taken back", (brief.TAKEN_BACK["rules"], "Nothing was changed in Azure.")))
+            _, text = page_of(kept, after)
+            self.assertIn("Taken back", text)
+            self.assertIn("Meternaut took this request back because its rules changed.", text)
+
+    def test_a_request_that_was_made_under_todays_rules_is_never_taken_back_when_its_finding_is_judged_again_without_a_measurement_or_with_another_verdict(self):
+        for reason in self.each():
+            case, plan = self.made(reason, asked_under=True)
+            self.assertEqual(why_not_ask(case), reason, "the finding as it is judged now would not be asked about")
+            summary, events, _ = self.watch()
+            self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
+            self.clock.advance(days=8)
+            self.watch()
+            self.assertEqual(self.store.plan_get(plan.plan_id).state, "open")
+
+    def test_a_request_that_a_person_answered_in_any_way_is_never_taken_back(self):
+        for reason in self.each():
+            for decision, state in (("approve", "consumed"), ("decline", "declined"), ("ask", "open"), ("later", "open"), ("not_mine", "open")):
+                with self.subTest(reason=reason, decision=decision):
+                    self.setUp()
+                    _, plan = self.made(reason)
+                    self.store.decision_put(make_decision(plan_id=plan.plan_id, approver_oid=OID, decision=decision))
+                    if state != "open":
+                        self.store.plan_put(replace(plan, state=state))
+                    summary, events, _ = self.watch()
+                    self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), (state, 0, []))
+
+    def test_what_is_not_an_open_request_for_this_kind_of_finding_is_never_taken_back(self):
+        for reason in self.each():
+            case, plan = self.made(reason)
+            advisor = unasked(reason, case_id="kadvisor", plan_id="padvisor", detector="advisor-cost", resource_id=SUBSCRIPTION_ID, resource_name=SUBSCRIPTION, resource_group="",
+                              resource_type="microsoft.subscriptions/subscriptions", advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
+            rule_based = unasked(reason, case_id="krule", plan_id="prule", detector="orphan-private-endpoint")
+            for label, other, request in (("a change that is open", case, request_for(case, family="delete-disk", preconditions={"family": "delete-disk"}, plan_id=plan.plan_id)),
+                                          ("a recommendation of Advisor", advisor, request_for(advisor, title="Buy a reservation: subscription")),
+                                          ("a finding of a rule-based detector", rule_based, request_for(rule_based, title="Check whether the resource contoso-ai is still used")),
+                                          ("a held request", case, request_for(case, plan_id=plan.plan_id, state="held", preconditions={"family": "advise", "held": "nothing"}))):
+                with self.subTest(reason=reason, case=label):
+                    self.setUp()
+                    self.store.case_put(other)
+                    self.store.plan_put(request)
+                    summary, events, _ = self.watch()
+                    self.assertEqual((self.store.plan_get(request.plan_id).state, [e for e in events if e["type"] == "case.held" and e["caseId"] == other.case_id]), (request.state, []))
+
+    def test_a_request_for_a_finding_that_was_measured_and_confirmed_stays_open_whenever_it_was_made(self):
+        measured = {UNMEASURED: dict(objections=()), UNCONFIRMED: dict(learned={"skeptic": "agree"}, confidence=0.9)}
+        for reason in self.each():
+            _, plan = self.made(reason, **measured[reason])
+            summary, events, _ = self.watch()
+            self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), ("open", 0, []))
+
+    def test_a_switch_that_the_second_ai_agreed_to_is_taken_back_when_the_first_was_not_sure_and_stays_when_it_was(self):
+        for confidence, state in ((0.45, "expired"), (0.69, "expired"), (None, "expired"), (0.7, "open")):
+            with self.subTest(confidence=confidence):
+                self.setUp()
+                case, plan = self.made(UNCONFIRMED, learned={"skeptic": "agree"}, confidence=confidence)
+                self.assertEqual(why_not_ask(case), None if state == "open" else UNCONFIRMED)
+                summary, events, _ = self.watch()
+                self.assertEqual((self.store.plan_get(plan.plan_id).state, summary.held), (state, int(state == "expired")))
+
+    def test_a_request_about_something_in_a_group_of_meternauts_own_is_left_alone_and_the_same_request_outside_it_is_taken_back(self):
+        for reason in self.each():
+            _, outside = self.made(reason)
+            mine = unasked(reason, case_id="kmine", plan_id="pmine", resource_group=GROUP, resource_name="contoso-mine")
+            self.store.case_put(mine)
+            self.store.plan_put(request_for(mine, title=f"Check whether the account contoso-mine in group {GROUP} is still used", saving_usd_month=40.0, created_at="2026-11-01T09:00:00Z", expires_at=""))
+            summary, events, _ = self.watch()
+            self.assertEqual((self.store.plan_get("pmine").state, [e for e in events if e["type"] == "case.held" and e["caseId"] == mine.case_id]), ("open", []))
+            self.assertEqual((self.store.plan_get(outside.plan_id).state, summary.held), ("expired", 1))
+
+    def test_a_request_that_the_old_clock_closed_and_that_comes_back_is_taken_back_in_the_same_watch(self):
+        for reason in self.each():
+            case, _ = self.made(reason)
+            self.store.plan_put(request_for(case, plan_id=f"p{reason}", state="expired", saving_usd_month=40.0, created_at="2026-10-26T12:00:00Z", expires_at="2026-10-29T12:00:00Z"))
+            self.store.case_put(replace(case, status="expired"))
+            summary, events, _ = self.watch()
+            plan = self.store.plan_get(f"p{reason}")
+            self.assertEqual(len([e for e in events if e["type"] == "plan.revived"]), 1, "it came back: nobody had answered it, and no clock closes a request")
+            self.assertEqual((plan.state, plan.preconditions["takenBack"], self.store.plans_open(), summary.held), ("expired", "rules", [], 1))
 
 
 if __name__ == "__main__":

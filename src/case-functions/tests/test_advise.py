@@ -12,7 +12,7 @@ from dataclasses import replace
 from support import APP_ROOT  # noqa: F401
 
 from cases import brief
-from cases.approvals import ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, UNPRICED, Approvals, ApprovalSettings, why_not_ask
+from cases.approvals import ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ANSWERS, ASKED_UNDER, ASKING_RULES, UNCONFIRMED, UNMEASURED, UNPRICED, Approvals, ApprovalSettings, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.delegated import Delegation, SigninSettings
 from cases.detectors import Lead
@@ -30,7 +30,7 @@ from cases.store import TableStore, table_calls
 from cases.web import words
 from test_runner import FakeAzure
 from test_store import ACCOUNT, FakeTables, plan as stored_plan
-from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Console, FailingStore, make_advice_case, make_run)
+from test_web_support import (MAYA, NOW, OPS, OWNER, STRANGER, SUB, TINO, VM, Console, FailingStore, make_advice_case, make_run, priced_facts)
 
 CHANGE_GROUP = "meternaut-sc-rg"
 OTHER = "orphan-private-endpoint"  # a rule-based detector: the rule for the findings of the investigation does not apply to its cases
@@ -144,7 +144,7 @@ class MakingTheAdvice(Base):
     def test_a_finding_that_needs_a_person_gets_one_open_plan_that_changes_nothing(self):
         plan = self.plan
         self.assertEqual((plan.family, plan.state, plan.approval_class, plan.approvers), (ADVISE, "open", "R1", NAMED))
-        self.assertEqual(plan.preconditions, {"family": ADVISE, "caseStatus": "needs_human"})
+        self.assertEqual(plan.preconditions, {"family": ADVISE, "caseStatus": "needs_human", ASKED_UNDER: ASKING_RULES}, "a request of the investigation keeps the rules that it was asked under")
         self.assertRegex(plan.code, r"^[0-9A-F]{8}$")
         self.assertEqual(plan.expires_at, "", "nothing expires")
         self.assertEqual((plan.what_changes, plan.could_go_wrong, plan.undo), (brief.ADVICE_CHANGE, brief.acting_risk(self.case).text, brief.ADVICE_UNDO))
@@ -258,8 +258,8 @@ class TheWorthOfARequest(unittest.TestCase):
         return make_advice_case(**base)
 
     def priced(self, n=0, **changes) -> CaseRecord:
-        """The same finding with the saving that code worked out from the bill lines: the only kind of finding of the investigation that a person is asked about."""
-        return self.finding(n, **{"saving_usd_month": 10.0, **changes})
+        """The same finding with the saving that code worked out from the bill lines and a measurement that was read: the only kind of finding of the investigation that a person is asked about."""
+        return self.finding(n, **{"saving_usd_month": 10.0, "objections": (), **changes})
 
     def settled_not(self, count: int, **changes) -> None:
         for n in range(count):
@@ -297,6 +297,76 @@ class TheWorthOfARequest(unittest.TestCase):
                 (plan,) = self.open_advice()
                 self.assertEqual(plan.saving_usd_month, 10.0, "the request states the saving that code priced")
 
+    def test_a_finding_that_nothing_measured_is_no_request_whatever_it_saves_and_stays_an_open_question_for_that_reason(self):
+        for name, changes, reason in (("a saving and a dear resource", dict(saving_usd_month=400.0, cost_usd_30d=848.0), UNMEASURED),
+                                      ("a saving and a cheap resource", dict(cost_usd_30d=3.0, objections=(NO_MEASUREMENT, "It may be in use.")), UNMEASURED),
+                                      ("both AIs agree", dict(status="proposed", confidence=0.9, saving_usd_month=400.0), UNMEASURED),
+                                      ("no saving either: the first reason that holds", dict(saving_usd_month=None), UNPRICED)):
+            with self.subTest(name):
+                self.setUp()
+                case = self.priced(**{"objections": (NO_MEASUREMENT,), **changes})
+                self.assertEqual((case.detector, why_not_ask(case)), ("investigation", reason))
+                self.store.case_put(case)
+                self.assertIsNone(self.approvals.advise(case, NAMED))
+                self.assertIsNone(self.approvals.plan_for(case, lead_of(case), NAMED))
+                self.assertEqual(self.store.plans, {})
+                kept = self.store.case_get(case.case_id)
+                self.assertEqual((kept.status, kept.plan_id), (case.status, None), "the finding stays what it was")
+                self.assertTrue(OpenQuestions(self.store, NOW).is_open(kept), "the Investigator is given it again by recall_open_questions")
+
+    def test_a_switch_to_another_price_of_the_list_is_asked_about_only_when_the_second_ai_agreed(self):
+        for forms, switch in ((("alternative",), True), (("alternative", "alternative"), True), (("alternative", "none"), True), (("none", "alternative"), True), (("assumed switch",), True),
+                              (("assumed switch", "none"), True), (("none", "quantity"), False), (("none",), False), (("quantity",), False), (("ratio",), False), (("share_of_days",), False),
+                              (("assumed",), False)):
+            for verdict in ("agree", "disagree", "unsure", "none", None):
+                with self.subTest(forms=forms, verdict=verdict):
+                    self.setUp()
+                    case = self.priced(facts=priced_facts(*forms), learned={} if verdict is None else {"skeptic": verdict}, confidence=0.9)
+                    asked = not switch or verdict == "agree"
+                    self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
+                    self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
+                    self.assertEqual(len(self.open_advice()), int(asked))
+                    if not asked:
+                        self.assertTrue(OpenQuestions(self.store, NOW).is_open(case), "what is not asked about is an open question")
+
+    def test_a_switch_that_the_second_ai_agreed_to_is_asked_about_only_when_the_first_ai_was_sure_enough_too(self):
+        for forms in (("alternative",), ("assumed switch",)):  # a switch priced from an alternative that the tool showed, and one priced from a share that the AI assumes
+            for confidence, asked in ((0.45, False), (0.69, False), (0.7, True), (0.95, True), (None, False)):
+                with self.subTest(forms=forms, confidence=confidence):
+                    self.setUp()
+                    case = self.priced(facts=priced_facts(*forms), learned={"skeptic": "agree"}, confidence=confidence)
+                    self.assertEqual(why_not_ask(case), None if asked else UNCONFIRMED)
+                    self.assertEqual(self.approvals.advise(case, NAMED) is not None, asked)
+        for forms in (("none",), ("quantity",), ("none", "quantity")):
+            with self.subTest(forms=forms):
+                self.assertIsNone(why_not_ask(self.priced(facts=priced_facts(*forms), learned={"skeptic": "agree"}, confidence=0.45)), "only a switch needs both AIs to be sure: the rest is checked by the bill")
+
+    def test_the_other_rules_come_first_and_a_case_that_names_no_change_is_no_switch(self):
+        agreed, unsure = {"skeptic": "agree"}, {"skeptic": "unsure"}
+        self.assertEqual(why_not_ask(self.priced(facts=priced_facts("alternative"), learned=unsure, saving_usd_month=None)), UNPRICED)
+        self.assertEqual(why_not_ask(self.priced(facts=priced_facts("alternative"), learned=agreed, objections=(NO_MEASUREMENT,))), UNMEASURED)
+        self.assertEqual(why_not_ask(self.priced(facts=priced_facts("alternative"), learned=unsure, objections=(NO_MEASUREMENT,))), UNMEASURED)
+        for facts in ({}, {"change": "text"}, {"change": {"price": "text"}}, {"change": {"action": "remove", "missing": "lines"}}, "text"):
+            with self.subTest(facts=facts):
+                self.assertIsNone(why_not_ask(self.priced(facts=facts, learned=unsure)))
+
+    def test_azure_advisor_and_the_rule_based_detectors_are_asked_about_with_no_measurement_and_no_second_ai(self):
+        advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
+        for name, changes in (("Azure Advisor's own claim", dict(detector="advisor-cost", advice=advice)), ("a rule-based detector", dict(detector=OTHER))):
+            with self.subTest(name):
+                self.setUp()
+                case = self.priced(**{"objections": (NO_MEASUREMENT,), "facts": priced_facts("alternative"), "learned": {"skeptic": "none"}, **changes})
+                self.assertIsNone(why_not_ask(case))
+                self.assertIsNotNone(self.approvals.advise(case, NAMED))
+
+    def test_a_request_of_the_investigation_keeps_the_rules_that_it_was_asked_under_and_no_other_request_does(self):
+        asked = self.approvals.advise(self.priced(), NAMED)
+        self.assertEqual(asked.preconditions, {"family": ADVISE, "caseStatus": "needs_human", ASKED_UNDER: ASKING_RULES})
+        for n, (name, changes) in enumerate((("Azure Advisor's own claim", dict(detector="advisor-cost", advice={"problem": "Buy a reservation"})), ("a rule-based detector", dict(detector=OTHER))), 1):
+            with self.subTest(name):
+                other = self.approvals.advise(self.priced(n, **changes), NAMED)
+                self.assertNotIn(ASKED_UNDER, other.preconditions)
+
     def test_a_case_of_azure_advisor_or_of_a_rule_based_detector_with_no_saving_is_asked_about_whatever_it_costs_and_whatever_backs_it(self):
         advice = {"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}
         for name, changes in (("Azure Advisor's own claim", dict(detector="advisor-cost", advice=advice, objections=(), cost_usd_30d=0.0)),
@@ -310,10 +380,10 @@ class TheWorthOfARequest(unittest.TestCase):
                 self.assertIsNotNone(self.approvals.advise(case, NAMED))
 
     def test_a_figure_that_code_computed_from_the_bill_lines_or_that_azure_advisor_gave_is_something_to_decide_with_even_for_a_cheap_resource(self):
-        self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0)), "the figure that code computed from the bill lines is the case's own saving")
+        self.assertIsNone(why_not_ask(self.priced(cost_usd_30d=20.0, saving_usd_month=12.0)), "the figure that code computed from the bill lines is the case's own saving")
         advisor = {"n": 1, "usd": 144.0, "low": 144.0, "high": 144.0, "rows": [["Standard_D2s_v5", 2, "swedencentral", "P1Y", 144.0, "USD", 30, "single"]]}
-        self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, facts={"advisor": advisor})))
-        self.assertIsNotNone(self.approvals.advise(self.finding(cost_usd_30d=20.0, saving_usd_month=12.0), NAMED))
+        self.assertIsNone(why_not_ask(self.finding(cost_usd_30d=20.0, objections=(), facts={"advisor": advisor})))
+        self.assertIsNotNone(self.approvals.advise(self.priced(cost_usd_30d=20.0, saving_usd_month=12.0), NAMED))
         for name, found in (("no digest", {}), ("a figure of nothing", {"advisor": {**advisor, "usd": 0}}), ("a change that was not priced", {"change": {"action": "remove", "missing": "lines"}})):
             with self.subTest(name):
                 self.assertEqual(why_not_ask(self.finding(cost_usd_30d=20.0, facts=found)), UNPRICED)

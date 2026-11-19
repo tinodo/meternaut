@@ -9,7 +9,8 @@ from types import SimpleNamespace
 
 import support  # noqa: F401  (puts the app on the path)
 from cases import brief as brief_mod, escalation, events, http, loop_config, mail, people as people_mod, run as run_mod, wiring
-from cases.approvals import ApprovalSettings, Approvals
+from cases.approvals import ASKED_UNDER, ASKING_RULES, ApprovalSettings, Approvals
+from cases.decide import NO_MEASUREMENT
 from cases.escalation import Ladder
 from cases.families import digest as plan_digest
 from cases.memory_store import MemoryStore, parse, stamp
@@ -21,6 +22,7 @@ from test_directory import A, CONTACT, MANAGER, NO_CONTACT, OWNER, PEOPLE, Graph
 from test_letters import make_case, make_plan
 from test_people_and_loop_config import FULL
 from test_store import ACCOUNT, FakeTables
+from test_web_support import priced_facts
 
 START = dt.datetime(2026, 11, 2, 10, 0, 0, tzinfo=dt.timezone.utc)
 SENDER = "meternaut-ai@example.com"
@@ -398,26 +400,37 @@ class TheRevival(unittest.TestCase):
 
 class ARequestThatNoSavingBacksIsNotChased(unittest.TestCase):
     """A request for a finding of the investigation with no saving that code priced, that states no saving itself, is taken back by the Watch (Approvals.hold_back_empty), and the ladder, which reads
-    the open requests, makes no step for it. A request that was asked with a saving stays, whatever a later judgment of its finding names. Nothing is silent: the request says that it was taken back."""
+    the open requests, makes no step for it. A request that was asked with a saving stays, whatever a later judgment of its finding names. Nothing is silent: the request says that it was taken back.
+    So is a request that nothing measured or that a switch of the price list that nobody confirmed (UNMEASURED, UNCONFIRMED) made before these rules, and not one made under them (ASKED_UNDER)."""
 
-    def world(self, asked=None, **changes):
-        """The request `p1` states `asked` (a saving, or none), and its case, a finding of the investigation, has the saving of `changes` (none by default)."""
+    def world(self, asked=None, pre=None, **changes):
+        """The request `p1` states `asked` (a saving, or none) and has the keys of `pre` in its preconditions, and its case, a finding of the investigation, has the saving of `changes` (none by default)."""
         world = World()
-        world.store.plan_put(advice("p1", "c1", saving_usd_month=asked))
+        world.store.plan_put(advice("p1", "c1", saving_usd_month=asked, **({"preconditions": {"family": "advise", "caseStatus": "needs_human", **pre}} if pre else {})))
         world.store.case_put(make_case(case_id="c1", status="needs_human", plan_id="p1", resource_name="disk-p1", detector="investigation", **{"saving_usd_month": None, "cost_usd_30d": 848.0, **changes}))
         return world
+
+    def check(self, world, steps):
+        taken = Approvals(world.store, ApprovalSettings(change_scopes=()), world.clock).hold_back_empty()
+        self.assertEqual([plan.plan_id for plan, _ in taken], [] if steps else ["p1"])
+        self.assertEqual((world.store.plan_get("p1").state, brief_mod.taken_back(world.store.plan_get("p1"))), ("open", "") if steps else ("expired", "rules"))
+        world.clock.advance(days=100)
+        world.tick(3)
+        self.assertEqual((len(world.steps()), bool(world.mail.calls), [kind for kind, _ in world.events]), (steps, bool(steps), ["escalation.step"] * steps))
 
     def test_no_step_is_made_after_the_take_back_and_one_is_made_for_a_request_that_a_saving_backs(self):
         for label, asked, changes, steps in (("no saving anywhere", None, {}, 0), ("a saving of the case", None, dict(saving_usd_month=120.0), 1),
                                              ("a saving that the request was asked with, and a case that names none now", 41.2, {}, 1)):
             with self.subTest(label):
-                world = self.world(asked, **changes)
-                taken = Approvals(world.store, ApprovalSettings(change_scopes=()), world.clock).hold_back_empty()
-                self.assertEqual([plan.plan_id for plan, _ in taken], [] if steps else ["p1"])
-                self.assertEqual((world.store.plan_get("p1").state, brief_mod.taken_back(world.store.plan_get("p1"))), ("open", "") if steps else ("expired", "rules"))
-                world.clock.advance(days=100)
-                world.tick(3)
-                self.assertEqual((len(world.steps()), bool(world.mail.calls), [kind for kind, _ in world.events]), (steps, bool(steps), ["escalation.step"] * steps))
+                self.check(self.world(asked, **changes), steps)
+
+    def test_no_step_is_made_after_the_take_back_of_a_finding_that_nothing_measured_or_nobody_confirmed_and_one_is_made_for_a_request_made_under_todays_rules(self):
+        unmeasured, unconfirmed = dict(objections=(NO_MEASUREMENT,)), dict(facts=priced_facts("alternative"), learned={"skeptic": "unsure"})
+        for label, changes, pre, steps in (("nothing measured, asked before the rules", unmeasured, None, 0), ("a switch nobody confirmed, asked before the rules", unconfirmed, None, 0),
+                                           ("nothing measured, asked under the rules", unmeasured, {ASKED_UNDER: ASKING_RULES}, 1),
+                                           ("a switch nobody confirmed, asked under the rules", unconfirmed, {ASKED_UNDER: ASKING_RULES}, 1)):
+            with self.subTest(label):
+                self.check(self.world(120.0, pre, saving_usd_month=120.0, **changes), steps)
 
 
 class TheWeeklyLetter(unittest.TestCase):
