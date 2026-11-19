@@ -140,7 +140,7 @@ Measured on the fakes, with the real toolbox and an invented estate of five reso
 
 **What it costs.** About 700 bytes more in the archive of the sources (measured on an LF copy of the commit, as `tools/tests/test_publish.py` describes), and one read of the table of the records at the start of a run.
 
-**Not proved.** That rotation finds more waste for each run on the real estate: coverage of resources is not coverage of waste, and the next real run is scored against the private list. That 21 days is the right window: it is a constant, not an estimate of how fast an estate changes, and a resource that was looked at and then changed is not looked at again before the window ends. That a resource is remembered only when `profile` read it: one that the Investigator described or measured with another tool is not, and may be seeded again. That the beat uses what `lookedAt` tells it: no model was called.
+**Not proved.** That rotation finds more waste for each run on the real estate: coverage of resources is not coverage of waste, and the next real run is scored against the private list. That 21 days is the right window: it is a constant, not an estimate of how fast an estate changes, and a resource that was looked at and then changed is not looked at again before the window ends. That a resource is remembered only when `profile` read it: one that the Investigator described or measured with another tool is not, and may be seeded again. That a run which is cut off inside its investigation is remembered: it writes no record ([below](#a-watch-is-never-run-again-by-a-redelivery)), so what it looked at is looked at again. That the beat uses what `lookedAt` tells it: no model was called.
 
 ## A Watch is never run again by a redelivery
 
