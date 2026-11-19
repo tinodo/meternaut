@@ -190,7 +190,7 @@ def kinds() -> list[Kind]:
                      "Microsoft.Compute/virtualMachines", n=24),
              _deleting(), _group(), _advisor(True), _advisor(False)]
     found += [_older(detector, n) for n, detector in enumerate(THE_SIX, 1)]
-    found += [_older(detector, n + 10, cost_read=False) for n, detector in enumerate(THE_SIX, 1)] + [_advisor(True, "eur"), _advisor(True, "none")]
+    found += [_older(detector, n + 10, cost_read=False) for n, detector in enumerate(THE_SIX, 1)]
     found += [_family(name) for name in MAKERS]
     return found
 
@@ -298,9 +298,6 @@ GAPS: dict[tuple[str, str, str], str] = {
         "change, change-disk-tier": "the family cannot price a change of tier: it reads no price list, so the request asks for an approval and states no saving, which is a defect of the family (a person is told what it costs, and that nothing is claimed)",
         **{f"older check, {detector}, cost not read": "the bill could not be read, and an older check states its own figure or none: the request is still asked, says that Meternaut could not read what the resource costs and states no saving, "
                                                       "because the rule that a request which states no saving is not asked is not applied to the older checks yet" for detector in THE_SIX},
-        "Azure Advisor, a commitment that it prices in euros": "Azure Advisor gave its figure in euros, which Meternaut does not turn into dollars: the request is still asked and states no saving, because the rule that a request which states no saving "
-                                                               "is not asked is not applied to Azure Advisor's own claims yet",
-        "Azure Advisor, a commitment with no figure": "Azure Advisor gave no figure: the request is still asked and states no saving, because the rule that a request which states no saving is not asked is not applied to Azure Advisor's own claims yet",
     }.items() for surface in SURFACES}
 
 
@@ -319,7 +316,7 @@ class EveryRequestCanBeDecided(unittest.TestCase):
 
     def test_every_kind_is_built_and_there_are_many(self):
         found = kinds()
-        self.assertGreaterEqual(len(found), 31)
+        self.assertGreaterEqual(len(found), 29, "31 before the two kinds of Azure Advisor that state no figure left: they are not asked about now (advisor_without_a_figure)")
         self.assertEqual(len({kind.name for kind in found}), len(found), "a name for each kind")
         self.assertEqual({kind.plan.family for kind in found if kind.change}, set(MAKERS), "every family of change is a kind")
 
@@ -347,6 +344,12 @@ def without_a_figure() -> list[Kind]:
             Kind("50 private endpoints with no saving", group, group_plan, "50 private endpoints", "private endpoints")]
 
 
+def advisor_without_a_figure() -> list[Kind]:
+    """Azure Advisor's own recommendations that give no saving in dollars: the figure is in euros (which Meternaut does not turn into dollars) or there is none. They were named as gaps of this test while the
+    rule of asking did not reach Advisor, and were asked about all the same, stating no saving. Now brief.why_not_ask holds them back (NO_FIGURE), so they are no request that a person can fail to decide."""
+    return [_advisor(True, "eur"), _advisor(True, "none")]
+
+
 class NobodyIsAskedWithoutAFigure(unittest.TestCase):
     """A request without a figure is a defect: the rules of asking hold such a finding back, and the page that it would have had fails the question of what it saves."""
 
@@ -355,8 +358,13 @@ class NobodyIsAskedWithoutAFigure(unittest.TestCase):
             with self.subTest(kind.name):
                 self.assertEqual(brief_mod.why_not_ask(kind.case), brief_mod.UNPRICED)
 
+    def test_the_rules_of_asking_do_not_ask_about_a_recommendation_of_azure_advisor_that_counts_no_saving_in_dollars(self):
+        for kind in advisor_without_a_figure():
+            with self.subTest(kind.name):
+                self.assertEqual(brief_mod.why_not_ask(kind.case), brief_mod.NO_FIGURE)
+
     def test_the_request_that_would_be_made_anyway_fails_the_question_of_what_it_saves_on_every_surface(self):
-        for kind in without_a_figure():
+        for kind in without_a_figure() + advisor_without_a_figure():
             for surface, shown in surfaces(kind).items():
                 with self.subTest(kind.name, surface=surface):
                     self.assertEqual(what_it_saves(shown, kind), ["it states no saving: a request without a figure is a defect, and nobody is asked without one"])
@@ -424,7 +432,7 @@ class TheApprovalLettersDoNotGrowWithoutSayingSo(unittest.TestCase):
 
     @staticmethod
     def base(name: str) -> str:
-        return name.removesuffix(", cost not read").removesuffix(" that it prices in euros").removesuffix(" with no figure")
+        return name.removesuffix(", cost not read")
 
     def test_no_letter_is_longer_than_it_was_on_main_except_by_the_words_that_are_named(self):
         for kind in kinds():

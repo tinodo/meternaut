@@ -1,21 +1,28 @@
 """Who is asked about a finding of the investigation, end to end (cases/approvals.py why_not_ask): a request is made only when code priced a saving, something was measured of the resource's use, and,
 for a switch to another price of the price list, the second AI agreed. What is not asked about stays a case and an open question; a request that was made under these rules is never taken back when
-its finding is judged again; one that was made before them is. The investigation runs with a fake Foundry and a fake toolbox (the harness of test_investigate). Every name is invented.
+its finding is judged again; one that was made before them is. The investigation runs with a fake Foundry and a fake toolbox (the harness of test_investigate). Azure Advisor's own recommendations
+are asked about only when a saving in dollars is counted for them, and the last class of this file says how, with the Watch of test_advisor_parity. Every name is invented.
 """
 import json
 import unittest
 from dataclasses import replace
 
 import support  # noqa: F401  (it puts the app on the path)
+import test_advisor_parity as advisor_fixtures
+from support import SUBSCRIPTION, disk_row
 from test_investigate import FakeFoundry, FakeToolbox, Harness, Moving, answer, entry, finding, meter_line, metrics, priced, resource, unasked, verdicts
 from test_pricing import COMPUTE, LISTED, billed_units, block, effect
+from test_run_loop import GROUP, PLANTED
 
 from cases import learning
-from cases.approvals import ASKED_UNDER, ASKING_RULES, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, why_not_ask
-from cases.brief import taken_back
+from cases.approvals import ASKED_UNDER, ASKING_RULES, NO_FIGURE, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, ApprovalSettings, Approvals, build_advice, why_not_ask
+from cases.brief import says_nothing, taken_back
 from cases.decide import NO_MEASUREMENT
+from cases.detectors import ADVISOR
 from cases.families import digest as plan_digest
-from test_web_support import make_decision
+from cases.memory_store import MemoryStore
+from test_estate_watch import of_type
+from test_web_support import TINO, Console, make_advice_case, make_case, make_decision
 
 CHEAPER = "Take the cheaper plan."
 SECOND_AI_DID_NOT_AGREE = "the second AI did not agree that the switch can be made, or the first was not sure"
@@ -133,7 +140,7 @@ class WhenAFindingIsNotAskedAbout(unittest.TestCase):
         self.assertEqual((h.result.not_asked, unasked(h)), ({UNCONFIRMED: 1}, [f"no request was made for 1 case because {SECOND_AI_DID_NOT_AGREE}"]), "the second is not, and a request for another resource does not hide it")
 
     def test_the_reasons_are_the_keys_of_the_words_and_the_words_say_why_in_plain_terms(self):
-        self.assertEqual(tuple(NOT_ASKED), (UNPRICED, UNMEASURED, UNCONFIRMED))
+        self.assertEqual(tuple(NOT_ASKED), (UNPRICED, UNMEASURED, UNCONFIRMED, NO_FIGURE), "the order of the reasons of the investigation stays, and the one of Azure Advisor is the last")
         self.assertEqual(NOT_ASKED[UNMEASURED], "nothing was measured of {their} use")
         self.assertEqual(NOT_ASKED[UNCONFIRMED], SECOND_AI_DID_NOT_AGREE)
         self.assertEqual(NO_MEASUREMENT, "no measurement backs this finding; a person has to judge it", "the one flag that the rule reads")
@@ -219,3 +226,152 @@ class WhenTheFindingIsJudgedAgain(unittest.TestCase):
                 self.assertEqual([(plan.plan_id, taken_back(plan)) for plan, _ in taken], [(self.plan.plan_id, "rules")])
                 self.assertEqual(self.extras.approvals.hold_back_empty(), [], "once")
                 self.assertEqual(self.extras.store.plans_open(), [])
+
+
+# -- Azure Advisor's own recommendations ---------------------------------------------------------------------------------------------------------------------
+
+NO_FIGURE_WORDS = "Meternaut counts no saving in dollars from Azure Advisor"
+
+
+class WhenAnAdvisorRecommendationCountsNoSaving(unittest.TestCase):
+    """A recommendation of Azure Advisor is asked about only when a saving in dollars is counted for it (brief.why_not_ask, NO_FIGURE). Two of the nine decisions of the invented list of test_advisor_parity
+    are alternatives of a purchase that saves more, so Advisor's figure for them is not counted: nobody is asked about them, the History and the start page say why, and a request that an earlier version made
+    for one of them is taken back when it states no saving."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.watched = advisor_fixtures.Watched().run()
+
+    def alternatives(self, watched):
+        return [case for case in watched.cases() if case.facts["advisor"]["alt"]]
+
+    def old_request(self, **changes):
+        """A Watch, and the request that an earlier version made for an alternative: it states no saving, whatever `changes` say (a request that was asked while the purchase was the counted one has one)."""
+        watched = advisor_fixtures.Watched().run()
+        alternative = self.alternatives(watched)[0]
+        plan = replace(build_advice(alternative, (TINO,), watched.clock(), watched.extras.approvals.settings), **changes)
+        watched.store.plan_put(plan)
+        return watched, alternative, plan
+
+    def test_an_alternative_of_a_purchase_that_saves_more_is_not_asked_about_and_the_counted_ones_are(self):
+        watched = self.watched
+        self.assertEqual(len(self.alternatives(watched)), 2)
+        for case in watched.cases():
+            counted = not case.facts["advisor"]["alt"]
+            with self.subTest(case.case_id, counted=counted):
+                self.assertEqual((why_not_ask(case), bool(case.plan_id)), (None, True) if counted else (NO_FIGURE, False))
+        self.assertEqual(len(watched.store.plans_open()), 7)
+        self.assertEqual(learning.OpenQuestions(watched.store, watched.clock()).rows(), [], "no question for the Investigator: it is no finding of the investigation")
+
+    def test_a_recommendation_with_no_figure_in_dollars_is_not_asked_about_whether_it_is_in_euros_or_has_none(self):
+        for label, change in (("euros", {"savingsCurrency": "EUR"}), ("no figure", {"annualSavingsAmount": "none"})):
+            with self.subTest(label):
+                watched = advisor_fixtures.Watched(advisor_fixtures.estate({SUBSCRIPTION: [], advisor_fixtures.SUB_B: [advisor_fixtures.rec(advisor_fixtures.VM, advisor_fixtures.SUB_B, 1, **change)]})).run()
+                (case,) = watched.cases()
+                self.assertEqual((why_not_ask(case), watched.store.plans_open(), case.status), (NO_FIGURE, [], "needs_human"))
+                self.assertEqual(Approvals(watched.store, ApprovalSettings(change_scopes=())).advise(case, (TINO,)), None)
+
+    def test_the_words_are_plain_and_say_what_is_counted_and_not_that_advisor_gave_nothing_because_an_alternative_has_a_figure_of_its_own(self):
+        self.assertEqual(NOT_ASKED[NO_FIGURE], NO_FIGURE_WORDS)
+        (alternative, *_) = self.alternatives(self.watched)
+        self.assertGreater(alternative.facts["advisor"]["low"], 0, "Advisor gave a figure for it, so 'Advisor gave no saving' would be untrue; what is true is that none is counted")
+
+    def test_a_recommendation_that_cannot_say_what_to_look_at_keeps_its_own_reason_and_its_held_note(self):
+        case = make_case(case_id="kold", detector=ADVISOR, status="needs_human", resource_id=f"/subscriptions/{SUBSCRIPTION}", resource_type="microsoft.subscriptions/subscriptions", resource_name="",
+                         resource_group="", subscription_id=SUBSCRIPTION, plan_id=None, saving_usd_month=None, cost_usd_30d=None, facts={"category": "cost", "impact": "high"}, advice={})
+        self.assertEqual((says_nothing(case), why_not_ask(case)), (True, None), "the four whole-subscription findings with no words are held back for nothing to say, as before")
+
+    def test_the_waste_that_meternaut_planted_and_the_older_checks_are_asked_about_all_the_same_with_a_saving_of_nothing(self):
+        for detector in ("orphan-managed-disk", "orphan-public-ip", "orphan-private-endpoint", "stopped-vm", "empty-app-service-plan", "load-balancer-without-backends"):
+            with self.subTest(detector):
+                case = make_case(case_id=f"k{detector}", detector=detector, status="needs_human", recommendation="change", saving_usd_month=0.0, cost_usd_30d=0.0, owner={"lookedUp": True})
+                self.assertIsNone(why_not_ask(case))
+                plan = Approvals(MemoryStore(), ApprovalSettings(change_scopes=())).advise(case, (TINO,))
+                self.assertEqual(plan is not None and (plan.family, plan.saving_usd_month), ("advise", None), "a request that states no saving is made for it, as it always was")
+        no_figure = make_case(case_id="kadvisor", detector=ADVISOR, status="needs_human", recommendation="change", saving_usd_month=None, cost_usd_30d=0.0,
+                              facts={"category": "cost", "advisor": {"n": 1, "usd": 0.0, "low": 0.0, "high": 0.0, "alt": "", "rows": [["Standard_D2s_v6", 1, "x", "P1Y", None, "EUR", 30, "Single"]]}},
+                              advice={"problem": "Buy reservations", "solution": "Buy reservations"})
+        self.assertEqual((why_not_ask(no_figure), Approvals(MemoryStore(), ApprovalSettings(change_scopes=())).advise(no_figure, (TINO,))), (NO_FIGURE, None), "and a recommendation of Advisor with none is not")
+
+    def test_a_disk_that_meternaut_planted_is_asked_about_when_advisor_lists_it_with_a_figure_of_nothing(self):
+        lists, _ = advisor_fixtures.the_list()
+        tenant = advisor_fixtures.estate(lists)
+        row = disk_row("planted-disk-1", GROUP, tags=PLANTED, timeCreated="2026-01-02T10:00:00+00:00")
+        lists[SUBSCRIPTION][-3] = advisor_fixtures.rec(advisor_fixtures.DISKS, SUBSCRIPTION, 0, annual=0.0, resource=row["id"])
+        tenant.graph["orphan-managed-disk"] = [row]
+        watched = advisor_fixtures.Watched(tenant).run()
+        (case,) = [c for c in watched.store.cases_recent() if c.detector == "orphan-managed-disk"]
+        (plan,) = [p for p in watched.store.plans_open() if p.case_id == case.case_id]
+        self.assertEqual((plan.family, plan.saving_usd_month or 0, case.facts["advisor"]["usd"], why_not_ask(case)), ("delete-disk", 0, 0.0, None))
+
+    def test_an_old_request_that_states_no_saving_is_taken_back_by_the_watch_with_the_reason_rules_and_its_case_stays(self):
+        watched, alternative, plan = self.old_request()
+        self.assertIsNone(plan.saving_usd_month)
+        watched.clock.advance(days=1)
+        watched.run()
+        kept = watched.store.plan_get(plan.plan_id)
+        self.assertEqual((kept.state, taken_back(kept), watched.store.case_get(alternative.case_id).status), ("expired", "rules", "needs_human"))
+        self.assertEqual([e["reason"] for e in of_type(watched.events, "case.held") if e["caseId"] == alternative.case_id], ["held back: Meternaut's rules changed"])
+        self.assertTrue(any("held back: Meternaut's rules changed" in e["note"] for e in of_type(watched.events, "run.note")), "the Watch counts it")
+        self.assertEqual(len(watched.store.plans_open()), 7, "every request of a counted purchase is as it was")
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual((len(watched.store.plans_open()), of_type(watched.events, "case.held")), (7, []), "once: no request is made again for it, and the History does not say it again")
+
+    def test_a_request_that_was_asked_with_a_saving_stays_whatever_the_figure_of_its_case_is_now_and_so_does_one_that_a_person_put_off(self):
+        for label, changes, decided in (("asked with a saving", {"saving_usd_month": 44.5}, False), ("put off", {}, True)):
+            with self.subTest(label):
+                watched, _, plan = self.old_request(**changes)
+                if decided:
+                    watched.store.decision_put(make_decision(plan_id=plan.plan_id, approver_oid=TINO, decision="later"))
+                self.assertEqual(watched.extras.approvals.hold_back_empty(), [])
+                watched.clock.advance(days=1)
+                watched.run()
+                self.assertEqual((watched.store.plan_get(plan.plan_id).state, len(watched.store.plans_open())), ("open", 8))
+
+    def test_the_request_of_the_counted_purchase_of_a_pair_is_untouched_and_the_alternative_comes_back_when_the_counted_one_goes(self):
+        fx = advisor_fixtures
+        lists = {SUBSCRIPTION: [], fx.SUB_B: fx.variants(fx.VM, fx.SUB_B, 250.0, 0, sku=fx.D2S) + fx.variants(fx.SAVINGS_PLAN, fx.SUB_B, 450.0, 30, lookbacks=(30,))}
+        watched = fx.Watched(fx.estate(lists)).run()
+        reservation, plan_of_savings = watched.case(fx.VM, fx.SUB_B), watched.case(fx.SAVINGS_PLAN, fx.SUB_B)
+        self.assertEqual((reservation.facts["advisor"]["alt"], reservation.plan_id, why_not_ask(reservation)), ("savings plan", None, NO_FIGURE), "the reservation is the alternative")
+        (counted,) = watched.store.plans_open()
+        self.assertEqual((counted.case_id, counted.saving_usd_month), (plan_of_savings.case_id, round(585.0 / 12, 2)))
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual(watched.store.plans_open(), [counted], "a Watch of the same list changes nothing")
+        watched.tenant.advisor_of = {SUBSCRIPTION: [], fx.SUB_B: fx.variants(fx.VM, fx.SUB_B, 250.0, 0, sku=fx.D2S)}  # the savings plan is bought: Advisor lists it no more
+        watched.clock.advance(days=1)
+        watched.run()
+        (asked,) = watched.store.plans_open()
+        self.assertEqual((asked.case_id, asked.saving_usd_month, watched.store.plan_get(counted.plan_id).state), (reservation.case_id, round(267.5 / 12, 2), "expired"))
+        self.assertEqual([e["caseKey"] for e in of_type(watched.events, "plan.created")], [reservation.case_id], "the alternative is asked about as soon as it counts a saving")
+
+    def test_the_history_says_once_why_nobody_is_asked_about_an_alternative(self):
+        watched = advisor_fixtures.Watched().run()
+        held = of_type(watched.events, "case.held")
+        self.assertEqual([(e["detector"], e["reason"]) for e in held], [(ADVISOR, f"held back: {NO_FIGURE_WORDS}")] * 2)
+        self.assertEqual({e["caseId"] for e in held}, {case.case_id for case in self.alternatives(watched)})
+        self.assertIn(f"2 findings held back: {NO_FIGURE_WORDS}", [e["note"] for e in of_type(watched.events, "run.note")])
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual((of_type(watched.events, "case.held"), [e for e in of_type(watched.events, "run.note") if NO_FIGURE_WORDS in e["note"]]), ([], []), "it is not said again at each Watch")
+
+    def test_the_start_page_counts_them_by_cause_and_says_that_meternaut_and_not_the_ai_looks_again(self):
+        watched = advisor_fixtures.Watched().run()
+        content = Console(store=watched.store).get("/").content
+        self.assertIn("Held back: 2 findings", content)
+        self.assertIn(f"Nobody is asked about 2 findings yet. For both of them, {NO_FIGURE_WORDS}. Meternaut looks at them again at its next search.", content)
+        watched.store.case_put(make_advice_case(case_id="case3500", resource_id="/subscriptions/x/resourceGroups/rg/providers/p/t/dear", resource_name="dear", plan_id=None, saving_usd_month=None, cost_usd_30d=848.0, objections=()))
+        content = Console(store=watched.store).get("/").content
+        self.assertIn(f"Nobody is asked about 3 findings yet. For 1 of them, Meternaut could not work out from the bill what a change would save. For 2, {NO_FIGURE_WORDS}. Meternaut looks at them again at its next search.",
+                      content)
+
+    def test_a_request_for_the_same_subscription_does_not_hide_an_alternative_and_an_answer_to_it_takes_the_alternative_out_of_the_count(self):
+        watched = advisor_fixtures.Watched().run()
+        alternative = self.alternatives(watched)[0]
+        asked_about_the_subscription = [p for p in watched.store.plans_open() if p.resource_id.lower() == alternative.resource_id.lower()]
+        self.assertTrue(asked_about_the_subscription, "the counted purchases of the same subscription have requests about the same resource id")
+        self.assertIn("Held back: 2 findings", Console(store=watched.store).get("/").content)
+        watched.store.plan_put(replace(build_advice(alternative, (TINO,), watched.clock(), watched.extras.approvals.settings), state="withdrawn"))
+        self.assertIn("Held back: 1 finding", Console(store=watched.store).get("/").content, "a person who said that it is not theirs lately is not asked again, and it is not counted")

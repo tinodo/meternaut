@@ -22,8 +22,8 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
-from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord, CaseRecord,
-                     DecisionRecord, PlanRecord, Readiness, started)
+from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
+                     CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
@@ -778,11 +778,12 @@ def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
             and (shared(case.resource_type) or not measured_zero(case.facts)))
 
 
-# Why no request is made for a finding of the investigation (why_not_ask), in the order that it is judged: their keys, and their words in the History and in the end note of the investigation. The first
-# that holds is the one that is said. The pages read it too (the start page counts the findings that nobody is asked about by reason), so it is here, with the other rules of what is asked.
-UNPRICED, UNMEASURED, UNCONFIRMED = "unpriced", "unmeasured", "unconfirmed"
+# Why no request is made for a finding of the investigation or an Advisor recommendation (why_not_ask), in the order that it is judged: their keys, and their words in the History and in the end note of the
+# investigation. The first that holds is the one that is said. The pages read it too (the start page counts the findings that nobody is asked about by reason), so it is here, with the other rules of what is asked.
+UNPRICED, UNMEASURED, UNCONFIRMED, NO_FIGURE = "unpriced", "unmeasured", "unconfirmed", "no-figure"
 NOT_ASKED = {UNPRICED: "no saving was priced from the bill", UNMEASURED: "nothing was measured of {their} use",
-             UNCONFIRMED: "the second AI did not agree that the switch can be made, or the first was not sure"}  # {their}: "its" for one case and "their" for more, so that the words agree with the number
+             UNCONFIRMED: "the second AI did not agree that the switch can be made, or the first was not sure",  # {their}: "its" for one case and "their" for more, so that the words agree with the number
+             NO_FIGURE: "Meternaut counts no saving in dollars from Azure Advisor"}  # an alternative of a purchase that saves more has a figure of its own that is not counted, so this is not "Advisor gave none"
 NO_MEASUREMENT = "no measurement backs this finding; a person has to judge it"  # what a case says when no measurement that code confirmed backs it (cases/decide.py): it is never proposed
 
 
@@ -792,10 +793,14 @@ def stated_saving(case: CaseRecord) -> float | None:
 
 
 def why_not_ask(case: CaseRecord) -> str | None:
-    """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. Only a finding of the investigation is held back: when code priced no saving
-    for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of
-    the price list (pricing.is_switch), unless the second AI agreed and the first was sure enough (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must
-    be sure. The older detectors and Azure Advisor state their own figure or none, and a person is asked about them as ever."""
+    """None when a finding gives a person something to decide with; otherwise why not, the first key of NOT_ASKED that holds. A recommendation of Azure Advisor (its own case, made by code) that states
+    no saving is held back (NO_FIGURE): none in dollars, or an alternative of a purchase that saves more, whose figure is not counted; one that cannot say what to look at keeps its own words
+    (says_nothing). A finding of the investigation is held back when code priced no saving for it, whatever its resource costs (UNPRICED); when no measurement of the resource was read
+    (NO_MEASUREMENT: UNMEASURED), whatever it saves; or, when the finding is a switch to another price of the price list (pricing.is_switch), unless the second AI agreed and the first was sure enough
+    (UNCONFIRMED): nothing in the bill or in a measurement can check that this resource can move to that tier, so both AIs must be sure. The older detectors state their own figure or none, and a person is
+    asked about them as ever."""
+    if case.detector == ADVISOR:
+        return None if stated_saving(case) or says_nothing(case) else NO_FIGURE
     if case.detector != INVESTIGATION:
         return None
     if not stated_saving(case):

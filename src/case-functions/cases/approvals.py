@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Collection, Mapping, Sequence
 
 from . import brief, switches, twopeople
-from .brief import NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
+from .brief import NO_FIGURE, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
 from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
 from .families import registry
@@ -114,9 +114,10 @@ def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Sto
 
 
 def _asked_on_less(case: CaseRecord, plan: PlanRecord) -> bool:
-    """Whether an open request was made on less than the rules of asking ask for now (why_not_ask): it states no saving when none was priced, or it was made before the other rules (no ASKED_UNDER)."""
+    """Whether an open request was made on less than the rules of asking ask for now (why_not_ask): it states no saving when none was priced or counted (UNPRICED, NO_FIGURE: a request that was asked
+    with a saving stays), or it was made before the other rules (no ASKED_UNDER)."""
     why = why_not_ask(case)
-    return bool(why) and (not (plan.saving_usd_month or 0) > 0 if why == UNPRICED else ASKED_UNDER not in (plan.preconditions or {}))
+    return bool(why) and (not (plan.saving_usd_month or 0) > 0 if why in (UNPRICED, NO_FIGURE) else ASKED_UNDER not in (plan.preconditions or {}))
 
 
 def build_plan(case: CaseRecord, lead: Lead, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings,

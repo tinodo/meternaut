@@ -11,7 +11,7 @@ import unittest
 from support import NOW, RG, SUBSCRIPTION, FakeEstate
 from test_run_loop import OID, Moving, loop_for, watch
 from test_web_support import NOW as WEB_NOW
-from test_web_support import Console, make_advice, make_case
+from test_web_support import Console, make_advice, make_case, make_decision
 
 from cases import cards, detectors, letters
 from cases.brief import build_brief
@@ -58,6 +58,12 @@ class TheFindingAboutASubscription(unittest.TestCase):
         cls.clock = Moving()
         cls.extras = loop_for(cls.clock)
         cls.estate = a_subscription_with_a_bill()
+        about = f"/subscriptions/{SUBSCRIPTION}"
+        lead = detectors.advisor_lead(advisor_item(), SUBSCRIPTION)
+        # A request that an earlier version made, and that a person put off: nobody is asked about a recommendation that counts no saving now, and a request that is theirs stays, so the Watch keeps it and reads its daily cost.
+        cls.extras.store.plan_put(make_advice(plan_id="plan-put-off", case_id=f"k{detectors.ident('advisor-cost', f'{SUBSCRIPTION}|{lead.lead_id}')}", resource_id=about, resource_name=DEV, resource_group="", subscription_id=SUBSCRIPTION,
+                                              title=f"{PROBLEM} (subscription {DEV})", saving_usd_month=None, waiting_costs_usd_day=None, approvers=(OID,)))
+        cls.extras.store.decision_put(make_decision(plan_id="plan-put-off", approver_oid=OID, decision="later"))
         cls.summary, cls.events, _ = watch(cls.estate, cls.extras, cls.clock)
         cls.case = the_case(cls.extras, "advisor-cost")
         (cls.plan,) = cls.extras.store.plans_open()
@@ -222,13 +228,13 @@ class AdvisorsOwnWords(unittest.TestCase):
 class TheRun(unittest.TestCase):
     """What the Watch says once more about a finding that was taken up."""
 
-    def test_the_run_says_nothing_was_held_back(self):
+    def test_the_run_says_that_the_finding_was_held_back_because_no_saving_is_counted_for_it(self):
         clock = Moving()
         extras = loop_for(clock)
         summary, events, _ = watch(a_subscription_with_a_bill(), extras, clock)
-        self.assertEqual((summary.held, extras.store.runs_recent()[0].held), (0, 0))
-        self.assertEqual([e for e in events if e["type"] == "case.held"], [])
-        self.assertEqual(events[-1]["heldBack"], 0)
+        self.assertEqual((summary.held, extras.store.runs_recent()[0].held), (1, 1))
+        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], ["held back: Meternaut counts no saving in dollars from Azure Advisor"])
+        self.assertEqual(events[-1]["heldBack"], 1)
 
 
 def _walk(node):

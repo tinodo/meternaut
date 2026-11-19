@@ -13,7 +13,7 @@ from test_web_support import make_advice, make_advice_case, make_decision, page_
 
 from cases import brief, learning
 from cases.advisor import ADVICE_NONE
-from cases.approvals import ASKED_UNDER, ASKING_RULES, NOTHING_TO_SAY, RULES_CHANGED, UNCONFIRMED, UNMEASURED, why_not_ask
+from cases.approvals import ASKED_UNDER, ASKING_RULES, NO_FIGURE, NOTHING_TO_SAY, RULES_CHANGED, UNCONFIRMED, UNMEASURED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 
 SUBSCRIPTION_ID = f"/subscriptions/{SUBSCRIPTION}"
@@ -96,11 +96,21 @@ class AFindingThatGetsItsWordsIsAskedAbout(unittest.TestCase):
         self.assertEqual((first.held, extras.store.plans_open()), (1, []))
         clock.advance(days=8)  # the finding is asked about again after the days that the loop waits
         estate = a_subscription_with_a_bill()
+        estate.advisor = [advisor_item(extendedProperties={"annualSavingsAmount": "240", "savingsCurrency": "USD"})]  # its words, and a saving in dollars: nobody is asked about a recommendation without one
         second, events, _ = watch(estate, extras, clock)
         (plan,) = extras.store.plans_open()
         self.assertEqual((second.held, offered), (0, [plan.plan_id]))
         self.assertEqual([e for e in events if e["type"] == "case.held"], [])
         self.assertTrue(plan.title.startswith(PROBLEM))
+
+    def test_the_same_finding_with_the_words_of_advisor_and_no_saving_in_dollars_is_not_asked_about_and_the_history_says_why(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        summary, events, _ = watch(a_subscription_with_a_bill(), extras, clock)
+        self.assertEqual((extras.store.plans_open(), summary.held), ([], 1))
+        (held,) = [e for e in events if e["type"] == "case.held"]
+        self.assertEqual((held["detector"], held["reason"]), ("advisor-cost", "held back: Meternaut counts no saving in dollars from Azure Advisor"))
+        self.assertIn("1 finding held back: Meternaut counts no saving in dollars from Azure Advisor", [e["note"] for e in events if e["type"] == "run.note"])
 
 
 TYPED = {"annualSavingsAmount": "240", "savingsCurrency": "USD", "sku": "Standard_D2s_v6", "term": "P1Y", "lookbackPeriod": "30", "region": "swedencentral", "qty": "1", "scope": "Single",
@@ -235,10 +245,18 @@ class AnOpenRequestThatSaysNothingIsTakenBack(unittest.TestCase):
         self.assertEqual([e for e in events if e["type"] == "case.held"], [])
 
     def test_a_request_that_has_something_to_say_stays_open(self):
-        said = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
+        said = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}, saving_usd_month=120.0)
         self.store.case_put(said)
         summary, _, _ = self.watch()
         self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held), ("open", 0))
+
+    def test_a_request_that_has_words_and_no_saving_is_taken_back_with_the_reason_rules_because_nobody_is_asked_without_a_saving(self):
+        words = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
+        self.store.case_put(words)
+        summary, events, _ = self.watch()
+        plan = self.store.plan_get(self.plan.plan_id)
+        self.assertEqual((plan.state, plan.preconditions["takenBack"], summary.held, why_not_ask(words)), ("expired", "rules", 1, NO_FIGURE))
+        self.assertEqual([e["reason"] for e in events if e["type"] == "case.held"], ["held back: Meternaut's rules changed"])
 
     def test_a_request_of_a_change_is_never_taken_back(self):
         self.store.plan_put(request_for(self.case, family="delete-disk", preconditions={"family": "delete-disk"}))
@@ -323,10 +341,10 @@ class AnOpenRequestForAFindingThatNoSavingBacksIsTakenBack(unittest.TestCase):
                 self.assertEqual((self.store.plan_get(self.plan.plan_id).state, summary.held, [e for e in events if e["type"] == "case.held"]), (state, 0, []))
 
     def test_what_is_not_an_open_request_for_this_kind_of_finding_is_never_taken_back(self):
-        advisor = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"})
+        advisor = finding(advice={"problem": "Buy a reservation", "solution": "Reserve the machines that run all month"}, saving_usd_month=120.0)
         rule_based = unpriced(case_id="krule1", detector="orphan-private-endpoint", plan_id="prule1", objections=(), cost_usd_30d=80.0)
         for label, case, plan in (("a change that is open", self.case, request_for(self.case, family="delete-disk", preconditions={"family": "delete-disk"}, plan_id=self.plan.plan_id)),
-                                  ("a recommendation of Advisor", advisor, request_for(advisor, title="Buy a reservation: subscription")),
+                                  ("a recommendation of Advisor that counts a saving", advisor, request_for(advisor, title="Buy a reservation: subscription")),
                                   ("a finding of a rule-based detector", rule_based, request_for(rule_based, title="Check whether the resource contoso-ai is still used")),
                                   ("a held request", self.case, request_for(self.case, plan_id=self.plan.plan_id, state="held", preconditions={"family": "advise", "held": "nothing"}))):
             with self.subTest(label):
