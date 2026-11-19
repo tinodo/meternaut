@@ -992,7 +992,8 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
 
     PUBLISHES = {
         "cases": {"action": "cases", "title": "Publish the cases to the function app from inside the network, in the Operator", "id": "publish_cases", "seconds": 1200, "minutes": 25,
-                  "cleanup": "Delete any container group of the publish of the cases that is left", "files": ["cases-source.zip", "build-function-app.sh"]},
+                  "cleanup": "Delete any container group of the publish of the cases that is left", "files": ["cases-source.zip", "build-function-app.sh"],
+                  "fetch_files": ["build-function-app.sh", "source-digest.py", "requirements.txt", "host.json"]},
     }
     PROBE = "Run the probe in the Operator"
 
@@ -1036,7 +1037,11 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
         self.assertIn("id-token: write", self.text.split("jobs:")[0], "the job may ask for the token")
         for want in self.PUBLISHES.values():
             block, script = self.step(want["title"]), self.script(want["title"])
-            self.assertEqual(re.findall(r"--secure-env [A-Za-z_=]+", block), ["--secure-env AZURE_FEDERATED_TOKEN"], "one secure value, and it is named, never given")
+            self.assertEqual(sorted(re.findall(r"--secure-env [A-Za-z_=]+", block)), ["--secure-env AZURE_FEDERATED_TOKEN", "--secure-env GITHUB_TOKEN"],
+                             "two secure values, each named and never given: the deploy identity's token, and (only for a private repository, only on the fetch path) the token of the run that reads the repository")
+            self.assertEqual(re.findall(r"(?m)^          GITHUB_TOKEN: (.+)$", block), ["${{ inputs.sources == 'fetch' && github.event.repository.private && github.token || '' }}"],
+                             "the token of the run is in the environment of the step only for a private repository on the fetch path, and is empty in every other run")
+            self.assertEqual(re.findall(r"(?m)^.*--secure-env GITHUB_TOKEN.*$", script), ['            if [ -n "${GITHUB_TOKEN:-}" ]; then github_token=(--secure-env GITHUB_TOKEN); fi'], "named in one place, on the fetch path, and only when it is set")
             for value in re.findall(r'--env "[A-Z_]+=([^"]*)"', script):
                 self.assertNotRegex(value, r"(?i)token", "no --env value is the token")
             for word in ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_PATH", "set -x", "xtrace", " tee ", "::set-output", "::save-state"):
@@ -1082,10 +1087,11 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
             expected = {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES"}
             if want["action"] == "cases":
                 expected.add("PUBLISH_PLAN")  # the plan kind of the web page's app: the usage app is always Flex Consumption and says nothing
+                expected |= {"PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST"}  # the fetch path of the input sources: the container fetches the commit instead of unpacking an archive
             self.assertEqual(names, expected, want["title"])
             given |= names
             sent = re.findall(r'--secret-file "([^"=]+)=', script)
-            self.assertEqual(sent, want["files"], want["title"])
+            self.assertEqual(sent, want["fetch_files"] + want["files"], f"{want['title']}: the files of the fetch path first, then the files of the request path")
             for name in sent:
                 self.assertIn(f"$volume/{name}", source, f"{name}: the container script looks for the file that the step sends")
         self.assertEqual(read - given, {"PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP"}, "the script reads what the steps give it, and an optional hold and the hooks of its tests")

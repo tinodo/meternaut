@@ -1091,10 +1091,12 @@ def release(ctx: Context) -> Outcome:
         return unknown("The cases app carries no record of the release that runs: the action cases writes the tags meternaut-build-commit and meternaut-package-sha256 after it has published the code and the app answers, "
                        "so either it has not run since they were added, or its last run stopped before that (a deploy takes the tags off, and the publish puts them back).")
     commit = str(ctx.options.get("commit") or "").lower()
-    main_digest = ""
+    main_digest = held_digest = ""
     if ctx.options.get("app_dir"):
         try:
-            main_digest = load_sibling("source_digest_of_the_drift_check", "source-digest.py").digest(Path(ctx.options["app_dir"]))
+            digests = load_sibling("source_digest_of_the_drift_check", "source-digest.py")
+            main_digest = digests.digest(Path(ctx.options["app_dir"]))
+            held_digest = digests.digest(Path(ctx.options["app_dir"]), as_held=True)  # `sources: fetch` publishes the files as the repository holds them, and records that digest
         except Exception as e:  # a folder that is not the app: the comparison by digest is then not possible
             return unknown(f"The digest of the app's files at main could not be worked out: {plain(e, 120)}.")
     if not commit and not main_digest:
@@ -1102,7 +1104,7 @@ def release(ctx: Context) -> Outcome:
     if commit and live_commit == commit:
         return passed(f"The cases app runs commit {commit[:12]}, which is main.")
     if main_digest and live_digest:
-        if live_digest == main_digest:
+        if live_digest in (main_digest, held_digest):
             return passed(f"The cases app runs commit {live_commit[:12] or 'unknown'} and main is {commit[:12] or 'newer'}, and the digest of the app's own files is the same: main changed nothing of the app.")
         return failed(f"The cases app runs commit {live_commit[:12] or 'unknown'} with the digest {live_digest[:12]}, and main has {commit[:12] or 'a newer commit'} with the digest {main_digest[:12]}: the app is not "
                       "the code of main. Either a merge has not been deployed yet (run the action cases), or the app was changed outside the workflow.", closed=False)

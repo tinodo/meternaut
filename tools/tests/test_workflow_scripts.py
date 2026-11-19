@@ -1536,6 +1536,191 @@ class TheSourcesAreCheckedAgainstTheCapOfTheToolBeforeTheOperatorIsLookedFor(uni
         self.assertIn("The sources have to get smaller.", done.stdout)
 
 
+REAL_PYTHON_STAND_IN = """#!/bin/bash
+# stand-in for python3 that is the real Python: the pack step runs the digest tool over the checkout
+exec "$REAL_PYTHON" "$@"
+"""
+FETCH_STEP_PYTHON3 = PROBE_STEP_PYTHON3.replace('  echo "token-in-env=${AZURE_FEDERATED_TOKEN-unset}"\n', '  echo "token-in-env=${AZURE_FEDERATED_TOKEN-unset}"\n  echo "github-token-in-env=${GITHUB_TOKEN-unset}"\n')
+assert FETCH_STEP_PYTHON3 != PROBE_STEP_PYTHON3
+
+
+@unittest.skipIf(BASH is None, "no bash on this machine")
+class TheSourcesCanBeFetchedByTheOperatorInsteadOfSent(unittest.TestCase):
+    """The input `sources` of the Hub (docs/proposals/07-private-by-default.md): by request, the default, the pack step makes the archive and the publish step sends it, as every run did; by fetch the pack step
+    packs nothing and works out the digest of the checkout, and the publish step sends the scripts, the digest tool, the lock and the host file, and names the commit, the repository and the digest, and (for a
+    private repository only) the token of the run. The steps are run with bash against stand-ins, and the call that the publish step builds is the one that the tool itself accepts."""
+
+    PUBLISH = "Publish the cases to the function app from inside the network, in the Operator"
+    PACK = "Pack the cases app's sources for the Operator"
+    SHA = "0123456789abcdef0123456789abcdef01234567"
+    REPOSITORY = "some-owner/some-repo"
+    DIGEST = "ab" * 32
+    TOKEN_OF_THE_RUN = "fake-github-token-of-the-run-4kP8sD2mQ7zX"
+    FETCH_FILES = {"build-function-app.sh": "tools/build-function-app.sh", "source-digest.py": "tools/source-digest.py", "requirements.txt": "src/case-functions/requirements.txt",
+                   "host.json": "src/case-functions/host.json"}
+    SUBSCRIPTION = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.SUBSCRIPTION
+    GROUP = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.GROUP
+    SUBNET = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.SUBNET
+    IDENTITY = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.IDENTITY
+    IMAGE = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.IMAGE
+    DEPLOY_CLIENT = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.DEPLOY_CLIENT
+    DEPLOY_TENANT = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.DEPLOY_TENANT
+    TOKEN = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.TOKEN
+    BEARER = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.BEARER
+    URL = ThePublishStepsFindTheOperatorAskForTheTokenAndStartTheContainerGroup.URL
+    APP = "func-meternaut-cases-0a1b2c3d"
+
+    def run_publish(self, sources="fetch", private=False, token_in_env=None):
+        """The publish step. `private` says that the repository is private, which is what puts the token of the run in the step's environment on the fetch path (the workflow's expression); `token_in_env`
+        overrides what the step's environment holds, for a run that the expression would not have given it."""
+        temp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        if sources == "request":
+            (temp / "cases-source.zip").write_bytes(b"x" * 4321)
+        held = self.TOKEN_OF_THE_RUN if (sources == "fetch" and private) else ""
+        env = {"ENV_SUBSCRIPTION_ID": self.SUBSCRIPTION, "ENV_RESOURCE_GROUP": self.GROUP, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "GITHUB_RUN_ID": "1234567890", "OPERATOR_IMAGE": self.IMAGE,
+               "ACTION": "cases", "FUNCTION_APP": self.APP, "DEPLOY_CLIENT_ID": self.DEPLOY_CLIENT, "DEPLOY_TENANT_ID": self.DEPLOY_TENANT, "CASES_APP_PLAN": "Flex",
+               "FAKE_IDENTITY_ID": self.IDENTITY, "FAKE_SUBNET": "ok", "FAKE_CURL": "ok", "FAKE_TOKEN": self.TOKEN, "FAKE_EXIT": "0", "RUNNER_TEMP": temp.as_posix(),
+               "GITHUB_STEP_SUMMARY": (temp / "summary.md").as_posix(), "ACTIONS_ID_TOKEN_REQUEST_URL": self.URL, "ACTIONS_ID_TOKEN_REQUEST_TOKEN": self.BEARER,
+               "SOURCES": sources, "SOURCES_DIGEST": self.DIGEST if sources == "fetch" else "", "GITHUB_SHA": self.SHA, "GITHUB_REPOSITORY": self.REPOSITORY,
+               "GITHUB_TOKEN": held if token_in_env is None else token_in_env}
+        done, lines, _ = run_step_script(self.PUBLISH, {"az": PUBLISH_STEP_AZ, "curl": PROBE_STEP_CURL, "python3": FETCH_STEP_PYTHON3}, env, prelude=PROBE_STEP_PRELUDE)
+        calls, other = split_calls(lines)
+        return done, calls, other, temp
+
+    def expected(self, temp, token=False):
+        return (["tools/operator-run.py", "run", "--resource-group", self.GROUP, "--name", "op-publish-1234567890", "--subnet-id", self.SUBNET, "--identity-id", self.IDENTITY, "--image", self.IMAGE,
+                 "--script", "operator/publish.sh"]
+                + [word for name, path in self.FETCH_FILES.items() for word in ("--secret-file", f"{name}={path}")]
+                + ["--env", "PUBLISH_KIND=cases", "--env", "PUBLISH_PLAN=Flex", "--env", f"PUBLISH_APP={self.APP}", "--env", f"PUBLISH_RESOURCE_GROUP={self.GROUP}",
+                   "--env", f"PUBLISH_SUBSCRIPTION={self.SUBSCRIPTION}", "--env", f"PUBLISH_CLIENT_ID={self.DEPLOY_CLIENT}", "--env", f"PUBLISH_TENANT_ID={self.DEPLOY_TENANT}",
+                   "--env", f"PUBLISH_SOURCES_COMMIT={self.SHA}", "--env", f"PUBLISH_SOURCES_REPOSITORY={self.REPOSITORY}", "--env", f"PUBLISH_SOURCES_DIGEST={self.DIGEST}",
+                   "--secure-env", "AZURE_FEDERATED_TOKEN"]
+                + (["--secure-env", "GITHUB_TOKEN"] if token else [])
+                + ["--dns-server", "10.20.0.4", "--dns-server", "10.20.0.5", "--timeout-seconds", "1200", "--summary", (temp / "summary.md").as_posix()])
+
+    def test_by_fetch_the_call_sends_no_archive_and_carries_the_scripts_the_digest_tool_the_lock_and_the_host_file_and_names_the_commit_the_repository_and_the_digest(self):
+        done, calls, other, temp = self.run_publish()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        self.assertEqual(argv, self.expected(temp))
+        files = {line.split()[1]: int(line.split()[2]) for line in other if line.startswith("file ")}
+        self.assertEqual(files, {name: (ROOT / path).stat().st_size for name, path in self.FETCH_FILES.items()}, "each file goes whole, from the checkout of this run")
+        self.assertNotIn("cases-source.zip", " ".join(argv))
+        self.assertFalse([word for word in argv if word.startswith("PUBLISH_FILE_BYTES")], "no archive was sent, so no size of one")
+        self.assertIn("github-token-in-env=", other, "a public repository is read with no token: the step's environment holds none")
+        self.assertEqual((temp / "cases-source.zip").exists(), False)
+        self.assertEqual(sum(line.startswith("curl ") for line in other), 1, "one request, for the token of the deploy identity: the runner fetches nothing from GitHub")
+
+    def test_a_private_repository_gives_the_tool_the_token_of_the_run_by_name_and_it_is_on_no_command_line_and_in_no_file_and_never_printed(self):
+        done, calls, other, temp = self.run_publish(private=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        (argv,) = calls
+        self.assertEqual(argv, self.expected(temp, token=True))
+        self.assertEqual(argv[argv.index("GITHUB_TOKEN") - 1], "--secure-env", "named and not given: the tool takes the value from the environment")
+        self.assertIn(f"github-token-in-env={self.TOKEN_OF_THE_RUN}", other, "the call of the tool has it in its environment")
+        for word in argv + [line for line in other if not line.startswith(("token-in-env=", "github-token-in-env="))]:
+            self.assertNotIn(self.TOKEN_OF_THE_RUN, word, "on no command line and in no line of a stand-in")
+        self.assertNotIn(self.TOKEN_OF_THE_RUN, done.stdout + done.stderr)
+        for path in temp.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(self.TOKEN_OF_THE_RUN.encode(), path.read_bytes(), f"not in a file of the run: {path.name}")
+
+    def test_by_request_the_call_is_what_it_was_whatever_the_repository_and_the_token_of_the_run_is_never_passed(self):
+        for private in (False, True):
+            done, calls, other, temp = self.run_publish(sources="request", private=private, token_in_env="")
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            (argv,) = calls
+            self.assertEqual([word for word in argv if "SOURCES" in word or word == "GITHUB_TOKEN"], [])
+            self.assertIn("cases-source.zip=" + temp.as_posix() + "/cases-source.zip", argv)
+            self.assertIn("PUBLISH_FILE_BYTES=4321", argv)
+            self.assertEqual(argv.count("--secure-env"), 1)
+        done, calls, other, temp = self.run_publish(sources="request", token_in_env=self.TOKEN_OF_THE_RUN)
+        (argv,) = calls
+        self.assertEqual(argv.count("--secure-env"), 1, "even a token that is in the environment is not named on the request path: nothing there reads GitHub")
+        self.assertNotIn("GITHUB_TOKEN", argv)
+
+    def test_the_call_is_accepted_by_the_tool_both_tokens_are_secure_values_that_it_never_prints_and_the_request_no_longer_holds_the_sources(self):
+        tool = load_operator_tool()
+        done, calls, other, temp = self.run_publish(private=True)
+        (argv,) = calls
+        args = tool.build_parser().parse_args(argv[1:])
+        with mock.patch.dict(os.environ, {"AZURE_FEDERATED_TOKEN": self.TOKEN, "GITHUB_TOKEN": self.TOKEN_OF_THE_RUN}):
+            plain, secure, servers = tool.check_options(args)
+        self.assertEqual(secure, [("AZURE_FEDERATED_TOKEN", self.TOKEN), ("GITHUB_TOKEN", self.TOKEN_OF_THE_RUN)])
+        self.assertEqual(sorted(name for name, _ in plain), sorted(["PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
+                                                                   "PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST"]))
+        with contextlib.chdir(ROOT):
+            files = tool.read_files(args)
+        self.assertEqual(sorted(files), sorted(["build-function-app.sh", "publish.sh", "source-digest.py", "requirements.txt", "host.json"]))
+        self.assertLess(sum(len(content) for content in files.values()), 100_000, "the sources do not ride in the request: the cap of 480,000 bytes no longer limits the code")
+        document = tool.group_document(args, files, plain, secure, servers, "2026-11-19T20:00:00Z")
+        variables = document["properties"]["containers"][0]["properties"]["environmentVariables"]
+        self.assertIn({"name": "GITHUB_TOKEN", "secureValue": self.TOKEN_OF_THE_RUN}, variables)
+        self.assertEqual([variable for variable in variables if self.TOKEN_OF_THE_RUN in json.dumps(variable)], [{"name": "GITHUB_TOKEN", "secureValue": self.TOKEN_OF_THE_RUN}])
+        self.assertEqual(json.dumps(document).count(self.TOKEN_OF_THE_RUN), 1, "once in the request, as a secure value, which Azure does not show again")
+        printer = tool.Printer([self.TOKEN, self.TOKEN_OF_THE_RUN])
+        self.assertNotIn(self.TOKEN_OF_THE_RUN, printer.redact(f"a line that says {self.TOKEN_OF_THE_RUN} in the middle, and again {self.TOKEN_OF_THE_RUN}"))
+        self.assertNotIn(self.TOKEN_OF_THE_RUN, printer.redact(json.dumps({"value": self.TOKEN_OF_THE_RUN})))
+        without_it = {key: value for key, value in os.environ.items() if key != "GITHUB_TOKEN"}
+        with mock.patch.dict(os.environ, {**without_it, "AZURE_FEDERATED_TOKEN": self.TOKEN}, clear=True), self.assertRaises(tool.Problem) as refused:
+            tool.check_options(args)
+        self.assertIn("GITHUB_TOKEN", str(refused.exception), "a token that is named and not set stops the call: the tool does not send an empty one")
+
+    def run_pack(self, sources="fetch", env=None, python=True):
+        with tempfile.TemporaryDirectory() as temp:
+            digest = subprocess.run([sys.executable, str(ROOT / "tools" / "source-digest.py"), "src/case-functions", "--as-held"], capture_output=True, text=True, cwd=ROOT).stdout.strip()
+            full = {"RUNNER_TEMP": Path(temp).as_posix(), "SOURCES": sources, "GITHUB_SHA": self.SHA, "GITHUB_REPOSITORY": self.REPOSITORY, "PACKAGE_SHA256": digest,
+                    "REAL_PYTHON": Path(sys.executable).as_posix(), **(env or {})}
+            done, lines, out = run_step_script(self.PACK, {"bash": PUBLISH_STEP_BASH, "python3": REAL_PYTHON_STAND_IN}, full, prelude=PROBE_STEP_PRELUDE)
+            return done, lines, out, digest, sorted(path.name for path in Path(temp).iterdir() if path.name not in ("bin", "step.sh", "log.txt", "out.txt", "summary.md"))
+
+    def test_by_fetch_the_pack_step_builds_and_packs_nothing_and_hands_on_the_digest_of_the_checkout_as_the_files_are_held(self):
+        done, lines, out, digest, left = self.run_pack()
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(out, f"sources_digest={digest}\n", "the one output, and no zip_sha256: there is no archive")
+        self.assertEqual((lines, left), ([], []), "no build script was run and nothing was made")
+        self.assertIn(f"The sources are not packed: the Operator fetches the files of commit {self.SHA} from GitHub and holds them against the digest {digest}", done.stdout)
+
+    def test_by_fetch_a_digest_that_is_not_the_one_that_the_release_records_or_a_commit_or_a_repository_that_cannot_be_fetched_stops_the_run_before_the_operator_is_looked_for(self):
+        for changes, said in (({"PACKAGE_SHA256": "0" * 64}, "is not the digest that the release of this run records"), ({"PACKAGE_SHA256": ""}, "is not the digest that the release of this run records"),
+                              ({"GITHUB_SHA": "main"}, "is not one that the Operator can fetch the sources of"), ({"GITHUB_SHA": self.SHA[:39]}, "is not one that the Operator can fetch"),
+                              ({"GITHUB_REPOSITORY": "owner"}, "is not one that the Operator can fetch"), ({"GITHUB_REPOSITORY": "owner/name; touch canary"}, "is not one that the Operator can fetch")):
+            done, lines, out, _, _ = self.run_pack(env=changes)
+            self.assertEqual(done.returncode, 1, changes)
+            self.assertIn(said, done.stdout, changes)
+            self.assertIn("Nothing was changed.", done.stdout)
+            self.assertEqual((lines, out), ([], ""), "nothing was built and nothing was handed on")
+
+    def test_by_request_the_pack_step_is_what_it_was_and_a_request_that_is_too_big_says_that_the_run_can_fetch_instead(self):
+        for sources in ("request", ""):
+            done, lines, out, _, _ = self.run_pack(sources=sources, env={"FAKE_PACKAGE_BYTES": "200000"})
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(len(lines), 1, "the one build, in the mode that packs the sources")
+            self.assertRegex(out, r"^zip_sha256=[0-9a-f]{64}\n$")
+        done, lines, out, _, _ = self.run_pack(sources="request", env={"FAKE_PACKAGE_BYTES": "480000"})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("The sources have to get smaller. Or run cases again with the input sources set to fetch: the Operator then fetches the sources from GitHub, and the size of the request does not limit them.",
+                      done.stdout)
+
+    def test_the_input_is_a_choice_of_request_and_fetch_that_defaults_to_request_and_only_the_four_steps_that_need_it_read_it_and_none_reads_it_inside_a_script(self):
+        inputs = WORKFLOW[WORKFLOW.index("    inputs:\n"):WORKFLOW.index("\npermissions:\n")]
+        block = re.search(r"(?ms)^      sources:\n(.*?)(?=^      \w|\Z)", inputs).group(1)
+        self.assertEqual(re.findall(r"(?m)^        (\w+): (.+)$", block)[1:], [("type", "choice"), ("required", "false"), ("default", "request")], "the default stays request: a run that does not ask for fetch is what it always was")
+        self.assertEqual(re.findall(r"(?m)^          - (\S+)$", block), ["request", "fetch"])
+        description = re.search(r'(?m)^        description: "(.+)"$', block).group(1)
+        for words in ("request, the default", "480,000 bytes of files at most", "fetch: this run sends no sources", "before it signs in", "with their comments", "private repository is read with the token of this run"):
+            self.assertIn(words, description, words)
+        steps = re.split(r"(?m)^      - ", WORKFLOW.split("    steps:\n", 1)[1])[1:]
+        users = [re.match(r"name: (.+)", b).group(1) for b in steps if "inputs.sources" in b]
+        self.assertEqual(users, ["Work out which release the cases app is given, the commit and the digest of its own files", self.PACK, self.PUBLISH, "Record the release that runs on the cases app, in its tags and in the summary"])
+        for block in steps:
+            if "inputs.sources" in block:
+                self.assertEqual(re.findall(r"(?m)^          [A-Z_]+: .*inputs\.sources.*$", block), ["          SOURCES: ${{ inputs.sources }}"] + (["          GITHUB_TOKEN: ${{ inputs.sources == 'fetch' && github.event.repository.private && github.token || '' }}"] if self.PUBLISH in block.split("\n", 1)[0] else []),
+                                 "a value reaches a script through env, and only as a word of the Hub's own list of choices")
+        self.assertEqual(WORKFLOW.count("github.token"), WORKFLOW.count("GH_TOKEN: ${{ github.token }}") + 1, "the token of the run is used by the step that reads the checks of CI, and now by this one step, and nowhere else")
+
+
 POWERSHELLS = []
 
 

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -178,6 +179,14 @@ if [ "$1" = "tools/source-digest.py" ]; then printf '%s\\n' "$FAKE_DIGEST"; fi
         self.assertEqual(out.splitlines(), [f"build_commit={COMMIT}", f"package_sha256={DIGEST}"])
         self.assertEqual(lines, ["python3 tools/source-digest.py src/case-functions"])
 
+    def test_by_fetch_the_digest_is_the_one_of_the_files_as_the_repository_holds_them_because_those_are_the_files_that_the_app_runs_from_and_by_request_it_is_the_shipped_one(self):
+        for sources, flag in (("fetch", " --as-held"), ("request", ""), ("", "")):
+            with self.subTest(sources=sources):
+                done, lines, out = self.release(SOURCES=sources)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(lines, [f"python3 tools/source-digest.py src/case-functions{flag}"])
+                self.assertEqual(out.splitlines(), [f"build_commit={COMMIT}", f"package_sha256={DIGEST}"])
+
     def test_a_commit_or_a_digest_that_is_not_one_stops_the_run_before_anything_is_changed(self):
         for env in ({"GITHUB_SHA": "main"}, {"GITHUB_SHA": COMMIT[:39]}, {"FAKE_DIGEST": "abc"}, {"FAKE_DIGEST": ""}):
             with self.subTest(env=env):
@@ -230,6 +239,46 @@ esac
                 self.assertNotEqual(done.returncode, 0)
                 self.assertEqual([line for line in lines if "--method" in line], [], "nothing is read and nothing is written")
                 self.assertIn("The code was published; nothing was recorded.", done.stdout + done.stderr)
+
+    def summary_of(self, **env):
+        """The record step with a summary file that the test can read afterwards, and the summary that it wrote."""
+        with tempfile.TemporaryDirectory() as folder:
+            summary = Path(folder) / "summary.md"
+            done, lines, _ = self.record(GITHUB_STEP_SUMMARY=summary.as_posix(), **env)
+            return done, lines, summary.read_text(encoding="utf-8") if summary.exists() else ""
+
+    def test_by_request_the_summary_says_that_the_sources_were_sent_with_the_hash_of_the_archive_and_by_fetch_that_none_was_and_says_who_held_what_against_what(self):
+        done, lines, summary = self.summary_of(SOURCES="request")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn(f"- Commit: `{COMMIT}`", summary)
+        self.assertIn("How the sources came: by request", summary)
+        self.assertIn(f"`{ZIP}`", summary, "the hash of the archive that this run sent")
+        self.assertIn("`python3 tools/source-digest.py src/case-functions` works it out", summary)
+        done, lines, summary = self.summary_of()
+        self.assertIn("How the sources came: by request", summary, "no input is the default, which is request")
+        done, lines, summary = self.summary_of(SOURCES="fetch", ZIP_SHA256="")
+        self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+        self.assertIn(f"- Commit: `{COMMIT}`", summary)
+        self.assertIn(f"- Digest of the app's own files: `{DIGEST}`", summary)
+        self.assertIn("`python3 tools/source-digest.py src/case-functions --as-held` works it out", summary)
+        self.assertIn(f"How the sources came: by fetch (the input `sources`). This run sent no archive of sources. The Operator fetched the files of commit `{COMMIT}` from GitHub and held them against the digest above", summary)
+        self.assertIn("published them as the repository holds them, with their comments", summary)
+        self.assertNotIn("sources archive", summary, "there is no archive to hash")
+        done, lines, _ = self.record(SOURCES="fetch", ZIP_SHA256="")
+        patch = next(line for line in lines if "--method patch" in line)
+        self.assertEqual(json.loads(re.search(r"--body (\{.*\})", patch).group(1)), {"operation": "Merge", "properties": {"tags": {"meternaut-build-commit": COMMIT, "meternaut-package-sha256": DIGEST}}},
+                         "the same two tags by both ways: the commit and the digest")
+
+    def test_by_fetch_a_release_that_is_not_known_is_still_not_written_but_the_missing_archive_is_no_reason(self):
+        for env in ({"BUILD_COMMIT": ""}, {"PACKAGE_SHA256": "xyz"}, {"PACKAGE_SHA256": ""}):
+            with self.subTest(env=env):
+                done, lines, _ = self.record(SOURCES="fetch", ZIP_SHA256="", **env)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual([line for line in lines if "--method" in line], [])
+        done, lines, _ = self.record(SOURCES="fetch", ZIP_SHA256="")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        done, lines, _ = self.record(SOURCES="request", ZIP_SHA256="")
+        self.assertNotEqual(done.returncode, 0, "by request the archive is part of the record, and its absence is a release that is not known")
 
     def test_the_pack_step_records_the_sha256_of_the_archive_as_an_output(self):
         block = step(HUB, "Pack the cases app's sources for the Operator")
