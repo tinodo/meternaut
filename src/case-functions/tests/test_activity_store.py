@@ -40,11 +40,11 @@ class InvestigationContract:
 
     def test_a_record_comes_back_as_it_was_kept(self):
         full = record(5, findings=({"n": 1, "basis": "no-usage", "says": "A sentence.", "fates": {"request": 2}},), kinds=(["contoso.example/widgets", "lm"],), unread=("contoso.example/gadgets",),
-                      note="a note", stop="tokens", subs=3, subs_costed=2)
+                      note="a note", stop="tokens", subs=3, subs_costed=2, profiled=("a1b2c3d4e5f6", "0123456789ab"))
         self.store.investigation_put(full)
         (kept,) = self.store.investigations_recent()
         self.assertEqual(kept, full)
-        self.assertEqual(kept.findings[0]["fates"], {"request": 2})
+        self.assertEqual((kept.findings[0]["fates"], kept.profiled), ({"request": 2}, ("a1b2c3d4e5f6", "0123456789ab")), "the hashes of the resources that were looked at come back as a tuple")
 
     def test_only_the_newest_twenty_are_kept_whatever_the_order_in_which_they_were_written(self):
         self.assertEqual(KEPT_INVESTIGATIONS, 20)
@@ -61,7 +61,7 @@ class InvestigationContract:
 
     def test_a_record_that_was_written_before_a_field_existed_still_reads_and_a_newer_one_reads_in_an_older_version(self):
         old = InvestigationRecord.from_json(json.dumps({"run_id": "r", "at": "2026-11-05T05:30:00Z"}))
-        self.assertEqual((old.end, old.answered, old.examined, old.findings, old.known, old.unread), ("failed", False, (), (), 0, ()))
+        self.assertEqual((old.end, old.answered, old.examined, old.findings, old.known, old.unread, old.profiled), ("failed", False, (), (), 0, (), ()))
         newer = InvestigationRecord.from_json(json.dumps({"run_id": "r", "at": "2026-11-05T05:30:00Z", "a_field_of_the_future": 1, "examined": ["x"]}))
         self.assertEqual(newer.examined, ("x",))
 

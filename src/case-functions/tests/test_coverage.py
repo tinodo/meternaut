@@ -305,6 +305,7 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
                        extras=ti.loop_for(self.clock, store or self.store))
         h.s.history.run_id = f"{number:032d}"
         h.contexts = {SUB: Context(locks=[], recent=set(), managed_groups=set(), costs=costs_of(estate), currency="USD")}
+        h.notes.append("a note of the Watch from before the investigation")
         h.go()
         return h, estate, box
 
@@ -334,6 +335,7 @@ class ARunInTheLastDaysOfARun(unittest.TestCase):
             h, estate, box = self.go(number)
             notes.append([n for n in h.notes if n.startswith("This run looked at")])
             finished.append({key: h.of("investigation.finished")[0].get(key) for key in ("profiled", "firstTime", "inWindow")})
+            self.assertEqual(h.notes[0], notes[-1][0], "the first of the notes of the run: a run keeps its first twenty, and this is the one that says what it looked at")
         self.assertEqual(notes, [["This run looked at 5 resources, all of them for the first time in 21 days."],
                                  ["This run looked at 5 resources, all of them for the first time in 21 days. In 21 days Meternaut has looked at 10 resources."],
                                  ["This run looked at 5 resources, 2 of them for the first time in 21 days. In 21 days Meternaut has looked at 12 resources."]])

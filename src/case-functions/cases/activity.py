@@ -1,7 +1,8 @@
 """What an investigation looked at, kept as one compact record for the page "What the AI looked at" (docs/proposals/23-what-the-ai-looked-at.md).
 
 Made from what the run knows: the toolbox's log and handles, the kinds in the cost lines that the Watch read, the Investigator's phrases and each finding. The AI's text is cleaned of ids and of the
-names that the tools showed; no name, tag, id or amount is kept (the cost lines only order the kinds). A fault here is one line in the log, and the investigation goes on.
+names that the tools showed; no name, tag, id or amount is kept (the cost lines only order the kinds). The one thing kept of a resource is the hash of its id, when a picture of it was read (`profiled`):
+it says that the resource was looked at, so that the next runs look at others first (docs/proposals/25-beats.md). A fault here is one line in the log, and the investigation goes on.
 """
 from __future__ import annotations
 

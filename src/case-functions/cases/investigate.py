@@ -882,6 +882,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         counts = activity.coverage(toolbox)
         if any(counts):
             note(activity.looked_note(*counts))
+            notes.insert(0, notes.pop())  # first, so that the cap on the notes that a run keeps never takes it
             fields.update(zip(("profiled", "firstTime", "inWindow"), counts))
         h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **({"beats": len(out.beats)} if focused else {}), **fields)
 

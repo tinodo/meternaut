@@ -120,7 +120,7 @@ class Seed:
     pictures: list[dict] | None = None
     failed: int = 0
     alternatives: list[dict] = field(default_factory=list)
-    seen: int = 0  # how many of the resources of the beat's kinds the runs of the last days and this one looked at (Toolbox.seen_in)
+    seen: int = 0  # how many of the resources of the beat's kinds the runs of the last days looked at (Toolbox.seen_in): the input of the beat says so when it is not 0
 
 
 def _said(text: object) -> dict:
@@ -171,9 +171,10 @@ def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
 
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
-    """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
-    and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
-    dearest resource of the beat (the one that costs most of the first resources that the listings of its kinds give, which are in the order of cost; the first kind when they cost the same or the listings give no
+    """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds that no run of the last days looked at (the dearest when all were looked at:
+    cases/investigate.py asks the toolbox for that order for these reads, and for no other), one of each kind first, then the next of each, SEED_RESOURCES in all,
+    and their pictures: the first SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
+    dearest resource of the beat (the one that costs most of the first resources that the listings of its kinds give; the first kind when they cost the same or the listings give no
     cost), the list prices of the dearest meter of its picture (`price_alternatives`, see `_prices`): what a change to another size or tier of it would cost. It costs no model tokens, and what it shows is
     registered as evidence like any answer of a tool.
     A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves `alternatives` empty and is no read that failed: the Investigator may ask for them
