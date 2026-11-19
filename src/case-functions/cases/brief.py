@@ -215,9 +215,10 @@ SECOND_WORDS = {
 ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded with your name."
 ADVICE_WHO = "If you decide to act, you do it yourself in Azure with your own rights."
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
-# What a person who is asked about advice is asked, in one text that the page, the card and the letters all say as it is (asked_of): whether what the title names is worth it, that an answer changes nothing
-# in Azure, and what saying yes means. It says it as a statement: a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin).
-ASKED = "You are asked whether it is worth {what}. Answering changes nothing in Azure. If you say yes, you {do} yourself."
+# What a person who is asked about advice is asked, in one sentence that the page, the card and the letters all say as it is (asked_of): whether what the title names is worth it. It says it as a statement:
+# a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin). That an answer changes nothing in Azure, and that a person who says yes acts alone, are said once
+# by the chip and by ADVICE_CHANGE and ADVICE_WHO, which every channel shows.
+ASKED = "You are asked whether it is worth {what}."
 ASKED_WHAT = {VERBS["delete"]: "deleting {thing}", CHANGE_VERBS["remove"]: "removing {thing}", CHANGE_VERBS["reduce"]: "reducing {thing}", CHANGE_VERBS["switch"]: "switching {thing}{ends}",
               CHANGE_VERBS["schedule"]: "scheduling {thing}", CHANGE_VERBS["commit"]: "a commitment for {thing}", LOOK: "a closer look at {thing}"}
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when the digest of its figure holds no name for the target (one made before the names)
@@ -975,16 +976,13 @@ def headline_of(family: str, name: str, group: str, rtype: str, recommendation: 
 
 def asked_of(case: CaseRecord | None, rtype: str, together: Group | None) -> str:
     """What a person is asked about a request of advice that waits, in the words of its verb (ASKED): whether it is worth switching, reducing, removing, deleting, scheduling or committing, or looking
-    closer, then that an answer changes nothing in Azure, and that a person who says yes does it themselves. A switch names both ends when its figure keeps them, and says "another price of the same
-    service" when it keeps none. Code's words: no name of the estate is in it, only the kind of the resource."""
+    closer. A switch names both ends when its figure keeps them, and says "another price of the same service" when it keeps none. Code's words: no name of the estate is in it, only the kind of the resource."""
     thing = f"these {number_text(together.count)} {group_things(together)}" if together is not None else f"the {kind_words(rtype)[1]}"
     if advice_of(case) is not None:
-        return ASKED.format(what="acting on this recommendation of Azure Advisor", do="make the change")
+        return ASKED.format(what="acting on this recommendation of Azure Advisor")
     if still_used(case):
-        return ASKED.format(what=f"checking whether {thing} is still used", do="look into it")
-    verb = verb_of(case)
-    what = ASKED_WHAT.get(verb, ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE))
-    return ASKED.format(what=what, do="look into it" if verb not in ASKED_WHAT or verb == LOOK else "make the change")
+        return ASKED.format(what=f"checking whether {thing} is still used")
+    return ASKED.format(what=ASKED_WHAT.get(verb_of(case), ASKED_WHAT[LOOK]).format(thing=thing, ends=switch_ends(case, OTHER_PRICE)))
 
 
 def plan_headline(plan: PlanRecord) -> str:

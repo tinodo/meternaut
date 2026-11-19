@@ -18,8 +18,7 @@ from cases.models import EscalationRecord
 from cases.web.figures import title_of
 from test_words import BASE, CONTACTS, FIREWALL_GROUP, PERSON, Rendered, _ai_account, _ai_plan, _card_of, _firewall, _group_finding, _held_finding, _letter, _page, blocks_of_card
 
-ASKED = "You are asked whether it is worth {what}. Answering changes nothing in Azure. If you say yes, you {do} yourself."
-SWITCH = ASKED.format(what="switching the firewall from Standard Deployment to Basic Deployment", do="make the change")
+SWITCH = "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment."
 
 
 def brief_of(case, plan):
@@ -72,27 +71,25 @@ class TheTitleOfASwitch(unittest.TestCase):
 
 
 class TheSentenceOfWhatIsAsked(unittest.TestCase):
-    def test_it_follows_the_verb_of_the_title_and_says_that_an_answer_changes_nothing_and_that_a_person_who_says_yes_does_it_themselves(self):
+    def test_it_follows_the_verb_of_the_title_and_is_one_whole_sentence(self):
         case, plan = _firewall()
-        self.assertEqual(brief_of(case, plan).asked, SWITCH)
-        self.assertEqual(brief_of(without_names(case), plan).asked, ASKED.format(what="switching the firewall to another price of the same service", do="make the change"))
-        for action, what in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment.")
+        self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
+        for action, said in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
             with self.subTest(action=action):
-                self.assertEqual(brief_of(with_action(case, action), plan).asked, ASKED.format(what=what, do="make the change"))
+                self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether it is worth {said}.")
 
     def test_a_deletion_a_look_a_question_of_use_and_a_recommendation_of_advisor_each_have_their_own_words(self):
         disk = dict(detector="investigation", resource_type="microsoft.compute/disks", resource_name="d-1", recommendation="delete")
         zero = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 0.0}, "metricDaysWithData": {"M": 28}})
         used = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 4.0}, "metricDaysWithData": {"M": 28}})
         advisor = make_advice_case(advice={"problem": "Buy a reservation", "solution": "Buy it"}, detector="advisor-cost")
-        for label, case, what, do in (("a deletion that a measured zero backs", zero, "deleting the disk", "make the change"),
-                                      ("a question of use", used, "checking whether the disk is still used", "look into it"),
-                                      ("a look", _ai_account(), "a closer look at the AI services account", "look into it"),
-                                      ("a recommendation of Advisor", advisor, "acting on this recommendation of Azure Advisor", "make the change")):
+        for label, case, said in (("a deletion that a measured zero backs", zero, "deleting the disk"), ("a question of use", used, "checking whether the disk is still used"),
+                                  ("a look", _ai_account(), "a closer look at the AI services account"), ("a recommendation of Advisor", advisor, "acting on this recommendation of Azure Advisor")):
             with self.subTest(label):
-                self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, ASKED.format(what=what, do=do))
+                self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, f"You are asked whether it is worth {said}.")
         group, plan = _group_finding()
-        self.assertEqual(brief_of(group, plan).asked, ASKED.format(what="a closer look at these 50 private endpoints", do="look into it"))
+        self.assertEqual(brief_of(group, plan).asked, "You are asked whether it is worth a closer look at these 50 private endpoints.")
 
     def test_only_a_request_of_advice_that_waits_is_asked_anything(self):
         case, plan = _firewall()
@@ -134,7 +131,7 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
             case = with_action(firewall, action)
             asked = brief_of(case, plan).asked
             with self.subTest(action=action):
-                self.assertTrue(asked.startswith("You are asked whether it is worth ") and asked.endswith("yourself."), asked)
+                self.assertTrue(asked.startswith("You are asked whether it is worth ") and asked.endswith(".") and asked.count(".") == 1, asked)
                 self.assertIn(asked, [block.text for block in _page(action, case, plan).blocks])
                 self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
                 self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
@@ -166,7 +163,7 @@ class TheWordsOfAPriceThatAnAiOrTheEstateCouldInfluence(unittest.TestCase):
         case, plan = _firewall()
         hostile = with_words(case, to=self.HOSTILE, now=self.HOSTILE)
         self.assertEqual(brief_of(hostile, plan).headline, "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
-        self.assertEqual(brief_of(hostile, plan).asked, ASKED.format(what="switching the firewall to another price of the same service", do="make the change"))
+        self.assertEqual(brief_of(hostile, plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
         for surface, shown in self.surfaces(hostile, plan).items():
             with self.subTest(surface):
                 self.assertFalse(any("alert(1)" in block.text for block in shown.blocks), [block.text for block in shown.blocks if "alert(1)" in block.text])
