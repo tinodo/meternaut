@@ -276,12 +276,29 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         watched = Watched().run()
         first = {plan.plan_id for plan in watched.store.plans_open()}
         lists, _ = the_list()
+        lists[SUBSCRIPTION].append(rec(COSMOS, SUBSCRIPTION, 40, annual=40.0, term="P1Y", lookbackPeriod="90"))
+        watched.tenant.advisor_of = lists
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual({plan.plan_id for plan in watched.store.plans_open()}, first, "no second request for a purchase that is asked about already, and none for an alternative that counts none still")
+        self.assertEqual(len(watched.cases()), 9)
+        said = watched.case(COSMOS).facts["advisor"]
+        self.assertEqual((said["n"], said["low"], said["usd"], said["alt"]), (7, 40.0, 40.0, ""), "a new variant is a row of the decision, and it is the smallest now")
+        self.assertEqual((watched.case(SAVINGS_PLAN).facts["advisor"]["alt"], watched.case(SAVINGS_PLAN).plan_id), ("reservations", None), "the reservations (588.5 less 13.5) still beat the savings plan (520)")
+        self.assertEqual(watched.case(COSMOS).runs_seen, 2)
+        self.assertEqual((watched.summary.cases, of_type(watched.events, "case.result")), (0, []), "a request that waits is not announced again, and the Watch does not count it as made")
+
+    def test_when_the_counted_purchase_moves_the_alternative_that_counts_a_saving_now_is_asked_about_and_what_was_asked_stays_and_no_purchase_is_asked_twice(self):
+        watched = Watched().run()
+        first = {plan.plan_id for plan in watched.store.plans_open()}
+        lists, _ = the_list()
         lists[SUBSCRIPTION].append(rec(VM, SUBSCRIPTION, 40, annual=100.0, sku=D2S, qty="2", term="P1Y", lookbackPeriod="90"))
         watched.tenant.advisor_of = lists
         watched.clock.advance(days=1)
         watched.run()
         now = {plan.case_id: plan.plan_id for plan in watched.store.plans_open()}
-        self.assertEqual(set(now.values()) - first, {now[watched.case(SAVINGS_PLAN).case_id]}, "no second request for a request that waits: the only new one is for the savings plan, which counts a saving now")
+        self.assertEqual(len(now), len(watched.store.plans_open()), "one request for each purchase: none is made twice")
+        self.assertEqual(set(now.values()) - first, {now[watched.case(SAVINGS_PLAN).case_id]}, "the only new one is for the savings plan, which counts a saving now")
         self.assertTrue(first <= set(now.values()), "and what was asked with a saving stays, though it is an alternative now")
         self.assertEqual(len(watched.cases()), 9)
         said = watched.case(VM, sku=D2S).facts["advisor"]
