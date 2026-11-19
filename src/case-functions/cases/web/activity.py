@@ -175,7 +175,7 @@ def _earlier(ctx: Ctx, records: list[InvestigationRecord], unrecorded: list) -> 
 
 
 def activity_page(ctx: Ctx) -> Response:
-    records = ctx.store.investigations_recent(KEPT_INVESTIGATIONS)  # a store that cannot be read is the fault page of the router: "I cannot reach my records"
+    records = ctx.store.investigations_recent(KEPT_INVESTIGATIONS)  # a store that cannot be read is the fault page of the router: "Meternaut cannot reach its records"
     runs, runs_ok = read(lambda: ctx.store.runs_recent(KEPT_INVESTIGATIONS * 2), [])
     latest = records[0] if records else None
     recorded = {record.run_id for record in records}

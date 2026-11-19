@@ -239,7 +239,7 @@ class SavingSettings(unittest.TestCase):
         self.console.store.settings_put = fail
         reply = self.post()
         self.assertEqual(reply.status, 503)
-        self.assertIn("I cannot reach my records", reply.content)
+        self.assertIn("Meternaut cannot reach its records", reply.content)
         self.assertIn("Open the page again to see what was stored.", reply.content)
         self.assertEqual(self.console.store.settings, {})
 
@@ -517,7 +517,7 @@ class TheNotesPage(unittest.TestCase):
         before = snapshot(self.console.store)
         reply = self.console.post("/me/notes/n2/delete", {"nonce": token})
         self.assertEqual(reply.status, 404)
-        self.assertIn("I cannot find this note", reply.content)
+        self.assertIn("Meternaut cannot find this note", reply.content)
         self.assertEqual(snapshot(self.console.store), before)
 
     def test_the_list_shows_the_use_count_the_source_and_how_it_was_understood(self):

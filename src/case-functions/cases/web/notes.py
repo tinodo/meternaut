@@ -137,6 +137,6 @@ def notes_delete(ctx: Ctx, note_id: str) -> Response:
     if not ctx.store.nonce_use(ctx.request.form.get("nonce", ""), oid, "note-delete"):
         return _refused(ctx)
     if not any(note.note_id == note_id for note in ctx.store.notes_of(oid)):
-        return message_page(ctx, 404, "I cannot find this note", "You have no note with this address. Nothing has changed.", back=("/me/notes", "Back to your notes"))
+        return message_page(ctx, 404, "Meternaut cannot find this note", "You have no note with this address. Nothing has changed.", back=("/me/notes", "Back to your notes"))
     ctx.store.note_delete(oid, note_id)
     return notes_page(ctx, banner=notice("success", "Deleted", "The note is deleted."))

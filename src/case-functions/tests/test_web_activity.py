@@ -300,7 +300,7 @@ class WhenSomethingCannotBeRead(unittest.TestCase):
     def test_a_store_that_cannot_give_the_records_is_the_plain_fault_of_the_router_and_no_trace(self):
         reply = Console(store=FailingStore(fail={"investigations_recent"}, clock=lambda: NOW)).get(PATH)
         self.assertEqual(reply.status, 503)
-        self.assertEqual(reply.headings(1), ["I cannot reach my records"])
+        self.assertEqual(reply.headings(1), ["Meternaut cannot reach its records"])
         self.assertIn("Nothing has changed.", reply.content)
         self.assertNotIn("Traceback", reply.text)
         self.assertNotIn("StoreError", reply.text)

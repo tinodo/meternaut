@@ -374,7 +374,7 @@ class WhenTheButtonCannotBeUsed(unittest.TestCase):
         for oid in (MAYA, OPS):
             reply = console.get("/ok/plan0001/decline", query=token_for(console, "plan0001", "decline", oid=oid), oid=oid)
             self.assert_nothing_is_sent(reply, 403)
-            self.assertEqual(reply.headings(1), ["I cannot take your OK on this request."], oid)
+            self.assertEqual(reply.headings(1), ["Meternaut cannot take your OK on this request."], oid)
         nothing = console.get("/ok/nothing/decline", query=query)
         self.assert_nothing_is_sent(nothing, 404)
 
@@ -398,7 +398,7 @@ class WhenTheButtonCannotBeUsed(unittest.TestCase):
         reply = console.get("/ok/plan0001/decline", query=query)
         self.assertEqual(reply.status, 503)
         self.assertEqual(script_of(reply), [])
-        self.assertIn("I cannot reach my records", reply.content)
+        self.assertIn("Meternaut cannot reach its records", reply.content)
 
     def test_only_a_get_opens_the_page(self):
         console = seeded()

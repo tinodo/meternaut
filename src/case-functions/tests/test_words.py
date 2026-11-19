@@ -402,6 +402,47 @@ def _done_change():
     return case, plan, action, [make_decision(at=at(minutes=-41))]
 
 
+FAILED = dict(state="failed", verified_at=None, verification={}, result="", error="Azure refused: the disk is locked.")
+NOTHING_TO_DO = dict(state="done", verified_at=None, verification={"noChange": True}, result="The disk did not exist any more when Meternaut looked. Nothing to delete.")
+
+
+def _ended(name: str, changes: dict):
+    """A change that was made, that failed or that had nothing to change (`changes` of the verified action of _done_change): the page, the result card and the done letter of it."""
+    case, plan, action, decisions = _done_change()
+    action = dataclasses.replace(action, **changes)
+    console = Console()
+    for record in (case,):
+        console.store.case_put(record)
+    console.store.plan_put(plan)
+    console.store.action_put(action)
+    for decision in decisions:
+        console.store.decision_put(decision)
+    context = cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS)
+    shown = brief_mod.build_brief(case, plan, action, decisions, now=NOW)
+    return {f"change, {name}": Rendered(f"change, {name}", "page", blocks_of_html(console.get(f"/ok/{plan.plan_id}").text)),
+            f"Teams card, a change: {name}": Rendered(f"Teams card, a change: {name}", "card", blocks_of_card(cards.result_card(shown, context))),
+            f"done letter, {name}": _letter(f"done letter, {name}", letters.done_letter(plan, action, case, PERSON, BASE, NOW, CONTACTS, decisions))}
+
+
+def _closed_card(name: str, case, plan, decisions=()) -> Rendered:
+    shown = brief_mod.build_brief(case, plan, None, decisions, now=NOW)
+    return Rendered(name, "card", blocks_of_card(cards.closed_card(shown, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))
+
+
+def _answered_advice(name: str, decision: str, reason: str = "") -> Rendered:
+    """The page of advice that a person answered: worth acting on, or not worth it."""
+    case, plan = _ai_account(), _ai_plan(state="consumed" if decision == "approve" else "declined")
+    console = Console()
+    console.store.case_put(case)
+    console.store.plan_put(plan)
+    console.store.decision_put(make_decision(plan_id=plan.plan_id, decision=decision, reason=reason, at=at(days=-1)))
+    return Rendered(name, "page", blocks_of_html(console.get(f"/ok/{plan.plan_id}").text))
+
+
+def _cannot_be_read(name: str, path: str, failing: set[str]) -> Rendered:
+    return Rendered(name, "page", blocks_of_html(Console(store=FailingStore(fail=failing, clock=lambda: NOW)).get(path).text))
+
+
 @functools.lru_cache(maxsize=1)
 def cases() -> dict[str, Rendered]:
     """The typical pages and messages, by name, rendered with the test fakes. The order is the order of the gallery."""
@@ -447,6 +488,19 @@ def cases() -> dict[str, Rendered]:
     found["Teams card, the first one"] = Rendered("Teams card, the first one", "card", blocks_of_card(cards.first_contact_card("Maya", BASE, CONTACTS)))
     found["done letter"] = _letter("done letter", letters.done_letter(done_plan, done_action, done_case, PERSON, BASE, NOW, CONTACTS, done_decisions))
     found["first-contact letter"] = _letter("first-contact letter", letters.first_contact_letter(PERSON, BASE, NOW, CONTACTS, plan.plan_id))
+    found["Decisions page, cannot be read"] = _cannot_be_read("Decisions page, cannot be read", "/", {"plans_open", "plans_recent"})
+    found["Savings page, cannot be read"] = _cannot_be_read("Savings page, cannot be read", "/ops/savings", {"cases_recent", "plans_recent"})
+    found["advice, answered: worth acting on"] = _answered_advice("advice, answered: worth acting on", "approve")
+    found["advice, answered: not worth it"] = _answered_advice("advice, answered: not worth it", "decline", "handled")
+    for name, changes in (("made and checked", {}), ("not made", FAILED), ("nothing to change", NOTHING_TO_DO)):
+        for label, shown in _ended(name, changes).items():
+            found.setdefault(label, shown)
+    found["Teams card, closed: declined"] = _closed_card("Teams card, closed: declined", make_case(plan_id="plan0001"), make_plan(state="declined"), [make_decision(decision="decline", reason="handled")])
+    found["Teams card, closed: an old timer"] = _closed_card("Teams card, closed: an old timer", case, _ai_plan(state="expired", preconditions={"family": "advise", "caseStatus": "needs_human"}))
+    found["escalation letter, the first one"] = _letter("escalation letter, the first one", letters.escalation_letter(
+        plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="contact", first=True, added=True))
+    found["weekly letter of the escalation contacts"] = _letter("weekly letter of the escalation contacts", letters.escalation_weekly_letter(
+        PERSON, BASE, NOW + dt.timedelta(days=9), [(plan, case), (_machine_plan(), _priced_machine())], CONTACTS, problems=("Meternaut cannot look up managers, because the app has no permission to read them yet.",), first=True))
     return found
 
 
@@ -485,8 +539,12 @@ def gallery() -> str:
 GUID_FORM = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 # What the owner threw out (and the shapes that go with it): each makes the lint fail when it is put back, and a test below puts each back.
 BANNED = ("saving not measured", "The most that a change could save", "Money is in US dollars", "Unproven:", "code checked", "not checked by code", "Why you are told", "nothing to undo",
-          "Consider changing", "bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of")
+          "Consider changing", "bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of",
+          "by A person", "Nothing more to do", "Decided:", "Status of the finding", "State of the request", "First seen", "The models are")  # the last row: the words of the closed cards and of the Details that phase 2 replaced
 SENTENCE_START = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
+I_VOICE = re.compile(r"(?<![\w.'])I (?:am|cannot|could|can|will|have|did|do|write|tell|pass|change|send|look|read)\b|\b[Mm]y (?:list|letters|records|messages)\b")  # Meternaut is not "I" on a page, a card or a letter
+SPEAKS_AS_I = {"first-contact letter", "Teams card, the first one"}  # the two that greet a person for the first time speak as "I" from the first word to the last
+ABBREVIATED = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}\b|\b\d{1,2} (?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b")  # "Wed 4 Nov", "5 Nov 10:30 UTC": outside the Details a day is "4 November"
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
 ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
@@ -522,6 +580,14 @@ def problems(shown: Rendered) -> list[str]:
             found.append(f"{where}: an old risk label")
         if DOUBLED.search(text):
             found.append(f"{where}: a doubled word")
+        if I_VOICE.search(text) and shown.name not in SPEAKS_AS_I:
+            found.append(f"{where}: speaks as I and not as Meternaut")
+        if ABBREVIATED.search(text) and not block.details:
+            found.append(f"{where}: an abbreviated date outside the Details")
+        if block.kind in SENTENCES_ONLY:
+            said = [part.strip().lower() for part in SENTENCE_START.split(text) if len(part.split()) >= 4]
+            if len(said) != len(set(said)):
+                found.append(f"{where}: says the same sentence twice")
         if block.kind == "chart" or not re.search(r"[A-Za-z]", text):
             continue
         if PUNCTUATION.search(text):
@@ -584,9 +650,13 @@ class TheWordsReadAsSentences(unittest.TestCase):
                 self.assertEqual([], problems(shown))
 
     def test_the_gallery_holds_the_pages_and_messages_that_the_owner_named(self):
-        self.assertGreaterEqual(len(cases()), 15)
+        self.assertGreaterEqual(len(cases()), 40)
         for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, a switch (the firewall)", "advice, one request for many resources", "change, delete a disk",
-                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch"):
+                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch",
+                       "History page", "Decisions page, cannot be read", "Savings page, cannot be read", "advice, answered: worth acting on", "advice, answered: not worth it",
+                       "change, made and checked", "change, not made", "change, nothing to change", "Teams card, a change: not made", "Teams card, a change: nothing to change",
+                       "done letter, not made", "done letter, nothing to change", "Teams card, closed: declined", "Teams card, closed: an old timer", "escalation letter, the first one",
+                       "weekly letter of the escalation contacts", "first-contact letter", "Teams card, the first one"):
             self.assertIn(wanted, cases())
 
     def test_every_rule_catches_its_fault(self):
@@ -606,6 +676,9 @@ class TheWordsReadAsSentences(unittest.TestCase):
                                    _made("paragraph", "SAVES, SCENARIO. A YEAR IS TWELVE TIMES THE MONTH.")],
             "an old risk label": [_made("paragraph", "Risk: medium."), _made("paragraph", "Risk, high: it could break traffic."), _made("item", "RISK: LOW.")],
             "a doubled word": [_made("paragraph", "The Watch's own investigation investigation found it."), _made("value", "Found by the Watch's own investigation investigation", details=True)],
+            "speaks as I": [_made("paragraph", "I cannot read the runs now."), _made("item", "Meternaut cannot say what waiting costs, and I tell the next person.")],
+            "an abbreviated date": [_made("paragraph", "It was approved on 5 Nov at 10:30."), _made("paragraph", "It was found on Wed 4 Nov.")],
+            "says the same sentence twice": _made("paragraph", "Nothing was changed in Azure. Nothing was changed in Azure."),
             "a capital letter after the colon": [_made("paragraph", "Impact not analysed: Meternaut did not look at what depends on it."), _made("item", "If you act: What depends on it can slow down or stop.")],
         }
         for fault, made in faults.items():
@@ -623,6 +696,19 @@ class TheWordsReadAsSentences(unittest.TestCase):
         for one in allowed:
             with self.subTest(one.blocks[0].kind, text=one.blocks[0].text):
                 self.assertEqual([], problems(one))
+
+    def test_the_two_messages_that_greet_a_person_speak_as_i_and_no_other_speaks_so(self):
+        said = "Hello Maya. I am Meternaut, an AI that looks for Azure resources. I write to you when a decision waits for you."
+        greeting = Rendered("first-contact letter", "letter", (Block("paragraph", said, said),))
+        self.assertEqual([], problems(greeting))
+        self.assertTrue(any("speaks as I" in line for line in problems(dataclasses.replace(greeting, name="done letter"))))
+
+    def test_a_voice_that_is_put_back_by_hand_makes_the_lint_fail_on_the_letter(self):
+        plan, case = _ai_plan(), _ai_account()
+        with mock.patch.object(letters, "ESCALATION_CAN", "On the page you can answer. Then I pass it on."):
+            shown = _letter("escalation letter", letters.escalation_letter(plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="same"))
+        self.assertTrue(any("speaks as I" in line for line in problems(shown)), problems(shown))
+        self.assertEqual([], problems(_letter("escalation letter", letters.escalation_letter(plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="same"))), "as it is, it speaks as Meternaut")
 
     def test_each_phrase_that_the_owner_threw_out_makes_the_lint_fail_when_it_is_put_back(self):
         # `ADVICE_WHO` is a sentence that the page, the letter and the card all say to a person who is asked about advice: putting a phrase back into it puts it back on all three.

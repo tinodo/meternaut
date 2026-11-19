@@ -22,9 +22,9 @@ SELECT = "?$select=id,displayName,mail,userType,accountEnabled"
 # What could not be looked up or used on the way: the closed words that a step keeps, and the plain sentence that a message says about each.
 NOTES = {
     "no_manager": "No manager is set for the person in the directory.",
-    "no_permission": "I could not look up the manager (no permission yet).",
-    "throttled": "I could not look up the manager (the directory asked me to wait).",
-    "unreachable": "I could not look up the manager (the directory did not answer).",
+    "no_permission": "Meternaut could not look up the manager (no permission yet).",
+    "throttled": "Meternaut could not look up the manager (the directory asked it to wait).",
+    "unreachable": "Meternaut could not look up the manager (the directory did not answer).",
     "disabled": "The account that was found is disabled, so it was skipped.",
     "no_mail": "The person that was found has no mail address, so it was skipped.",
     "not_member": "The person that was found is not a member of this organisation, so it was skipped.",

@@ -255,7 +255,7 @@ class Delegation:
         try:
             state = self.store.nonce_new(principal.oid, PURPOSE, SIGNIN_SECONDS, data)
         except StoreError:
-            return Begun(refusal=DecideResult(False, "error", "I cannot reach my records right now. Nothing is approved. Try again in a few minutes."))
+            return Begun(refusal=DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing is approved. Try again in a few minutes."))
         self.emit("signin.started", planId=plan.plan_id)
         return Begun(location=authorize_url(self.signin, state, challenge, oidc_nonce, hint))
 
@@ -266,7 +266,7 @@ class Delegation:
         try:
             raw = self.store.nonce_take(state, principal.oid, PURPOSE) if STATE.fullmatch(state) else None
         except StoreError:
-            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. Try again in a few minutes.")
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing was changed. Try again in a few minutes.")
         started = _read(raw)
         if started is None:
             return DecideResult(False, "refused_state", "This sign-in is not valid any more: it was used already, it ran out of time, or somebody else started it. Nothing was changed.")
@@ -308,7 +308,7 @@ class Delegation:
         try:
             done = execute(self.run(tokens.access_token), action, approved_digest=started["digest"])
         except StoreError:
-            return DecideResult(False, "error", "I cannot reach my records right now. Look at the resource in Azure before anything is tried again.", plan)
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Look at the resource in Azure before anything is tried again.", plan)
         if done.kind == "step_up" and not started.get("stepup"):
             return self._ask_again(principal, plan, started, done.action, done.claims, str(tokens.claims.get("preferred_username") or ""))
         return DecideResult(done.kind in ("ran", "ran_unconfirmed", "running", "unchanged"), done.kind, done.action.result or done.action.error or "", self._plan(plan.plan_id) or plan)
@@ -370,7 +370,7 @@ class Delegation:
         try:
             self.approvals.close_waiting(plan, action, text)
         except StoreError:
-            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
         self.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=False)
         return DecideResult(False, "refused_code", text, self._plan(plan.plan_id) or plan)
 
@@ -381,7 +381,7 @@ class Delegation:
         try:
             self.approvals.close_waiting(plan, action, text)
         except StoreError:
-            return DecideResult(False, "error", "I cannot reach my records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
+            return DecideResult(False, "error", "Meternaut cannot reach its records right now. Nothing was changed. The request closes by itself in a few minutes.", plan)
         self.emit("action.finished", planId=plan.plan_id, family=plan.family, ok=False)
         return DecideResult(False, "step_up_failed", text, self._plan(plan.plan_id) or plan)
 

@@ -693,7 +693,7 @@ class TheBriefOfACase(unittest.TestCase):
     def test_a_case_that_does_not_exist_is_a_404(self):
         reply = self.console.get("/why/nothing")
         self.assertEqual(reply.status, 404)
-        self.assertIn("I cannot find this finding", reply.content)
+        self.assertIn("Meternaut cannot find this finding", reply.content)
 
     def test_the_page_says_in_its_footer_that_an_ai_wrote_what_it_shows(self):
         footer = self.reply.root.find("footer")
