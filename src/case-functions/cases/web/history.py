@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from ..brief import TAKEN_BACK, because_text, plan_headline, taken_back
+from ..brief import TAKEN_BACK, TIMER_CLOSED, because_text, plan_headline, taken_back
 from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
 from .common import answerable, closed_by_the_bill, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
@@ -135,7 +135,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
             events += _action_events(ctx, plan, actions[plan.plan_id])
         if plan.state == "expired":
             why = taken_back(plan)
-            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan),             TAKEN_BACK[why] if why else "An old timer closed this request, before requests were kept open until somebody answered."))
+            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else TIMER_CLOSED))
     for found in quiet.values():
                     events.append(Event(max(found), "expired", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding",
                             "Meternaut took it back, and it says why." if len(found) == 1 else "Meternaut took them back, and each says why."))

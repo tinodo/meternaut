@@ -8,9 +8,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import support  # noqa: F401  (puts the app on the path)
+from cases import brief as brief_mod
 from cases import letters
 from cases.letters import DARK, LIGHT, MAX_LISTED, Letter
-from cases.models import ActionRecord, CaseRecord, PlanRecord, RunRecord
+from cases.models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord, RunRecord
 from cases.people import Person
 
 NOW = dt.datetime(2026, 11, 5, 10, 18, 0, tzinfo=dt.timezone.utc)
@@ -583,9 +584,12 @@ class Done(unittest.TestCase):
 
     def test_a_change_that_ran_says_what_ran_the_result_what_it_saves_in_the_words_of_the_pages_and_that_it_cannot_be_undone(self):
         text = self.letter(plan=make_plan(state="consumed")).text
-        self.assertIn("Done: Delete the unattached disk disk-zq7-name.", text)
+        self.assertIn("Delete the unattached disk disk-zq7-name\n====", text)
         self.assertIn("Managed disk, resource group rg-zq7-group", text)
-        self.assertIn("Result: Deleted. Azure no longer lists the resource.", text)
+        self.assertIn("Approved by a person, and made with their own Azure rights.", text, "without the answers, the letter names nobody")
+        named = letters.done_letter(make_plan(state="consumed"), make_action(), make_case(), PERSON, BASE, NOW, CONTACTS, [DecisionRecord("p1a2b3c4d5", OID, "Maya", "approve", "2026-11-05T10:30:00Z", "7F3K92QD")])
+        self.assertIn("Approved by Maya, and made with their own Azure rights.", named.text)
+        self.assertIn("Deleted. Azure no longer lists the resource.", text)
         self.assertEqual(text.count("Azure no longer lists the resource."), 1, "a line that the result holds is not said twice")
         self.assertIn("Meternaut worked out that this could save about $494 a year ($41.20 a month).\nIt is based on your bill for the last 30 days. Cost Management confirms it 8 to 72 hours after the change.", text)
         self.assertNotIn("US dollars", text)
@@ -600,20 +604,18 @@ class Done(unittest.TestCase):
 
     def test_a_change_that_did_not_complete_does_not_claim_that_it_ran(self):
         letter = self.letter(action=make_action(state="failed", result="", error="Azure refused the change (403, AuthorizationFailed).", verification={}))
-        self.assertIn("The change was tried and did not complete: Delete the unattached disk disk-zq7-name.", letter.text)
-        self.assertIn("What happened: Azure refused the change (403, AuthorizationFailed).", letter.text)
-        self.assertIn("Look at the resource in Azure before anything else is done with it.", letter.text)
+        self.assertIn("The change was tried and did not complete.\n\nAzure refused the change (403, AuthorizationFailed).\n\n" + brief_mod.LOOK_IN_AZURE, letter.text)
         for claim in ("Done:", "cannot be undone", "saving", "Saves", "a year", "a month"):
             self.assertNotIn(claim, letter.text)
         unknown = self.letter(action=make_action(state="unknown", result="Azure accepted the delete and still lists the resource.", verification={}))
-        self.assertIn("The change was started, and its result is not known:", unknown.text)
+        self.assertIn("The change was started, and its result is not known.\n\nAzure accepted the delete and still lists the resource.", unknown.text)
 
     def test_a_verified_saving_is_said_as_verified_and_nothing_more_is_awaited(self):
         action = make_action(state="verified", verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "currency": "USD"})
         text = self.letter(action=action).text
         self.assertIn("The change saves about $494 a year ($41.20 a month).\nThe bill since the change shows no cost for this resource.", text)
         self.assertNotIn("8 to 72 hours", text)
-        self.assertIn("The bill since the change shows $0.00.", text)
+        self.assertEqual(text.count("The bill since the change shows"), 1, "the bill is said once: the figure rests on it, and the lines of the check do not say it again")
 
     def test_the_word_verified_is_said_only_when_the_cost_lines_after_the_change_confirm_the_saving(self):
         for action in (make_action(), make_action(state="done", verification={"gone": True}), make_action(state="failed", error="Refused.", verification={}),

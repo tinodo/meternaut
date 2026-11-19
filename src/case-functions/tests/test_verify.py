@@ -704,7 +704,8 @@ class TheRequestThatWasClosed(unittest.TestCase):
         (message,) = world.queue_fake.messages()
         said = " ".join(cs.texts(message["card"]))
         self.assertEqual(message["op"], "update")
-        self.assertIn("Closed because the cost went down. " + SAID + " Nothing was changed by Meternaut.", said)
+        self.assertIn(SAID + " Nothing was changed by Meternaut.", said)
+        self.assertNotIn("Closed because the cost went down", said, "the card says it once, in the sentence")
         self.assertNotRegex(said, r"\$|\d{3}")
 
     def test_no_letter_lists_it(self):

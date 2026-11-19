@@ -323,7 +323,7 @@ class AnOpenRequestThatTheRulesOfTodayHoldBackIsTakenBack(unittest.TestCase):
         self.assertEqual(b.outcome.lines, ("Meternaut took this request back because its rules changed. It asked about this resource on less evidence than its rules ask for now.", "Nothing was changed in Azure."))
         card = cards.closed_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{after.plan_id}"))
         text = {block["id"]: block["text"] for block in walk_blocks(card)}["closed"]
-        self.assertTrue(text.startswith("Taken back. Meternaut took this request back because its rules changed."), text)
+        self.assertTrue(text.startswith("Meternaut took this request back because its rules changed."), text)
         self.assertIn("Nothing was changed in Azure.", text)
         self.assertEqual(learning.lesson_of(after, kept, [], None, WEB_NOW), None, "a request that Meternaut took back is not one that nobody answered")
 

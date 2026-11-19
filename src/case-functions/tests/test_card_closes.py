@@ -13,12 +13,14 @@ import support  # noqa: F401  (puts the app on the path)
 import cardsupport as cs
 from cases import cardcheck, cards, loop, mail, offers, teamsqueue
 from cases.approvals import ApprovalSettings, Approvals
+from cases.brief import LOOK_IN_AZURE
 from cases.models import ActionRecord, DecisionRecord, SwitchRecord
 from test_cards import actions_of, brief_of, by_id, ctx_for, make_advice_plan, make_case, make_plan, texts
 
 MESSAGE, CONVERSATION = "1731331200000", "19:abc-def@unq.gbl.spaces"
 GOOD = {"v": 1, "request": cs.PLAN_ID, "to": "maya@example.com", "message": MESSAGE, "conversation": CONVERSATION}
-CLOSED_LINE = "Decided: Declined by Anna, 5 Nov 10:30 UTC. Nothing more to do."
+CLOSED_LINE = "Declined by Anna. Nothing more is asked of you."
+MADE_LINE = "Approved by Anna, and made with their own Azure rights. Nothing more is asked of you."
 
 
 def written(**changes) -> str:
@@ -71,7 +73,7 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         self.assertEqual((cardcheck.check(card), actions_of(card)), ([], []), "a card that is closed has no button")
         return by_id(card)
 
-    def test_a_declined_request_says_who_and_when_and_that_nothing_more_is_to_be_done(self):
+    def test_a_declined_request_says_who_and_that_nothing_more_is_asked(self):
         plan = make_plan(state="declined")
         ids = self.closing(plan, decisions=[self.ANNA])
         self.assertEqual((ids["closed"]["text"], ids["kind"]["text"]), (CLOSED_LINE, "Closed"))
@@ -79,22 +81,21 @@ class TheCardThatReplacesAnother(unittest.TestCase):
         self.assertEqual(ids["headline"]["text"], by_id(cards.result_card(brief, ctx_for(brief)))["headline"]["text"], "the headline of the request, as on every card")
 
     def test_an_approval_is_worded_from_what_became_of_the_change(self):
-        made = "Decided: Approved and done by Anna, 5 Nov 10:31 UTC. Nothing more to do."
-        for state, plan_state, more, words in (("done", "consumed", {}, made), ("verified", "consumed", {}, made),
-                                               ("done", "consumed", {"verification": {"noChange": True}}, "Decided: Approved, nothing to change by Anna, 5 Nov 10:31 UTC. Nothing more to do."),
-                                               ("failed", "failed", {"error": self.REASON, "result": self.REASON}, f"Approved by Anna, not made: {cards.md(self.REASON)}")):
+        for state, plan_state, more, words in (("done", "consumed", {}, MADE_LINE), ("verified", "consumed", {}, MADE_LINE),
+                                               ("done", "consumed", {"verification": {"noChange": True}}, "Approved by Anna. Nothing was changed. Deleted."),
+                                               ("failed", "failed", {"error": self.REASON, "result": self.REASON}, f"Anna approved this, but the change was not made. {cards.md(self.REASON)} {LOOK_IN_AZURE}")):
             with self.subTest(state=state, more=more):
                 action = dataclasses.replace(self.MADE, state=state, **more)
                 self.assertEqual(self.closing(make_plan(state=plan_state), action=action, decisions=[self.APPROVED])["closed"]["text"], words)
 
     def test_the_answer_to_advice_and_a_withdrawn_request_use_the_words_of_the_page(self):
-        self.assertIn("Decided: Worth acting on by Anna", self.closing(make_advice_plan(state="consumed"), case=make_case(status="acknowledged"), decisions=[self.APPROVED])["closed"]["text"])
+        self.assertIn("Anna said this is worth acting on.", self.closing(make_advice_plan(state="consumed"), case=make_case(status="acknowledged"), decisions=[self.APPROVED])["closed"]["text"])
         not_mine = dataclasses.replace(self.ANNA, decision="not_mine")
-        self.assertIn("Decided: Withdrawn by Anna, 5 Nov 10:30 UTC.", self.closing(make_plan(state="withdrawn"), decisions=[not_mine])["closed"]["text"])
+        self.assertIn("Anna said that this is not theirs.", self.closing(make_plan(state="withdrawn"), decisions=[not_mine])["closed"]["text"])
 
     def test_a_request_that_meternaut_took_back_says_so_on_its_closing_card(self):
         said = self.closing(make_plan(state="expired", preconditions={"takenBack": "group"}))["closed"]["text"]
-        self.assertTrue(said.startswith("Taken back. Meternaut took this request back"), said)
+        self.assertTrue(said.startswith("Meternaut took this request back"), said)
         self.assertNotIn("Nobody answered", said)
 
     def test_a_name_cannot_start_a_link_or_a_list(self):
@@ -219,7 +220,7 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
             self.assertNotIn("request", message)
             self.assertEqual(cardcheck.check(message["card"]), [])
             self.assertEqual(actions_of(message["card"]), [])
-            self.assertIn("Not worth it by Anna", " ".join(texts(message["card"])))
+            self.assertIn("Anna said it is not worth acting on.", " ".join(texts(message["card"])))
         self.assertEqual((got["maya@example.com"]["message"], got["anna@example.com"]["message"]), ("1731331200001", "1731331200002"), "each person's own message")
 
     def test_it_is_done_once_and_each_try_is_written(self):
@@ -232,9 +233,9 @@ class TheCardClosesWhenTheRequestEnds(unittest.TestCase):
 
     def test_an_answer_to_advice_a_made_change_and_an_expiry_close_it_too(self):
         made = ActionRecord(cs.PLAN_ID, "c1", "delete-disk", "r1", "done", "2026-11-05T10:30:00Z", finished_at="2026-11-05T10:31:00Z", result="Deleted.")
-        for make, state, decision, action, words in ((cs.change_plan, "consumed", "approve", made, "Decided: Approved and done by Anna"),
-                                                     (cs.advice_plan, "consumed", "approve", None, "Decided: Worth acting on by Anna"),
-                                                     (cs.advice_plan, "expired", None, None, "Taken back. A timer closed this request")):
+        for make, state, decision, action, words in ((cs.change_plan, "consumed", "approve", made, "Approved by Anna, and made with their own Azure rights."),
+                                                     (cs.advice_plan, "consumed", "approve", None, "Anna said this is worth acting on."),
+                                                     (cs.advice_plan, "expired", None, None, "An old timer closed this request")):
             with self.subTest(state=state, plan=make.__name__):
                 world = cs.World()
                 plan = world.open_plan(make(expires_at="2026-12-01T00:00:00Z"))
@@ -317,18 +318,18 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
 
     def test_a_change_that_azure_refused_is_closed_as_not_made_and_says_why(self):
         self.move("failed", "failed", error=self.REASON, result=self.REASON, finished_at="2026-11-05T10:31:00Z")
-        self.assertEqual(self.closing(), [f"Approved by Maya, not made: {cards.md(self.REASON)}"])
+        self.assertEqual(self.closing(), [f"Maya approved this, but the change was not made. {cards.md(self.REASON)} {LOOK_IN_AZURE}"])
 
     def test_a_change_that_is_made_is_closed_as_approved_and_done(self):
         self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
-        self.assertEqual(self.closing(), ["Decided: Approved and done by Maya, 5 Nov 10:40 UTC. Nothing more to do."])
+        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. Nothing more is asked of you."])
 
     def test_the_card_stays_while_the_change_waits_for_the_extra_check_and_closes_with_what_came_of_the_wait(self):
         waiting = self.move("approved", "queued", step_up=True, result="The change waits until the approver has completed the check.")
         self.assertEqual(self.closing(), [], "approved is not the end: the check may still be completed")
         why = "The extra sign-in check that Azure asked for was not completed in time, so the change was not made. Nothing was changed."
         self.approvals.close_waiting(self.world.store.plan_get(cs.PLAN_ID), waiting, why)
-        self.assertEqual(self.closing(), [f"Approved by Maya, not made: {cards.md(why)}"])
+        self.assertEqual(self.closing(), [f"Maya approved this, but the change was not made. {cards.md(why)} {LOOK_IN_AZURE}"])
 
     def test_the_card_stays_while_the_change_is_being_made_or_is_not_confirmed_yet(self):
         for state in ("running", "unknown"):
@@ -336,7 +337,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
                 self.move("consumed", state)
                 self.assertEqual(self.closing(), [])
         self.move("consumed", "done", finished_at="2026-11-05T10:40:00Z", result="Deleted.")
-        self.assertEqual(self.closing(), ["Decided: Approved and done by Maya, 5 Nov 10:40 UTC. Nothing more to do."])
+        self.assertEqual(self.closing(), ["Approved by Maya, and made with their own Azure rights. Nothing more is asked of you."])
 
     def test_a_request_that_a_check_opened_again_has_not_lost_its_card(self):
         waiting = self.move("approved", "queued", step_up=True)
@@ -347,7 +348,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
 
     def test_a_card_that_was_closed_is_not_a_card_that_was_sent_when_the_request_is_open_again(self):
         self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
-        self.assertEqual(self.closing()[0][:34], "Taken back. A timer closed this re")
+        self.assertEqual(self.closing()[0][:34], "An old timer closed this request, ")
         self.world.store.plan_put(self.plan)
         self.fake.calls.clear()
         self.world.clock.advance(minutes=1)
@@ -357,7 +358,7 @@ class WhenAnApprovedChangeEnds(unittest.TestCase):
         offers.record_posted(written(message="1731331299999"), self.world.store, self.world.people, self.world.clock)
         self.world.store.plan_put(dataclasses.replace(self.plan, state="expired"))
         self.fake.calls.clear()
-        self.assertEqual(self.closing()[0][:34], "Taken back. A timer closed this re")
+        self.assertEqual(self.closing()[0][:34], "An old timer closed this request, ")
         (update,) = self.fake.messages()
         self.assertEqual(update["message"], "1731331299999", "the new card closes in its turn, and the old one is not closed again")
 

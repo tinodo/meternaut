@@ -172,7 +172,7 @@ def blocks_of_html(document: str) -> tuple[Block, ...]:
     return tuple(reader.blocks)
 
 
-LABEL_IDS = {"header", "ai-label", "kind", "headline", "place", "chips"}
+LABEL_IDS = {"header", "ai-label", "kind", "headline", "place", "chips", "outcome"}
 
 
 def blocks_of_card(card: dict) -> tuple[Block, ...]:
@@ -441,7 +441,7 @@ def cases() -> dict[str, Rendered]:
     found["Teams card, a request that was taken back"] = Rendered("Teams card, a request that was taken back", "card", blocks_of_card(
         cards.closed_card(taken_brief, cards.CardContext(page_url=f"{BASE}/ok/{taken_plan.plan_id}", contacts=CONTACTS))))
     found["Teams card, the first one"] = Rendered("Teams card, the first one", "card", blocks_of_card(cards.first_contact_card("Maya", BASE, CONTACTS)))
-    found["done letter"] = _letter("done letter", letters.done_letter(done_plan, done_action, done_case, PERSON, BASE, NOW, CONTACTS))
+    found["done letter"] = _letter("done letter", letters.done_letter(done_plan, done_action, done_case, PERSON, BASE, NOW, CONTACTS, done_decisions))
     found["first-contact letter"] = _letter("first-contact letter", letters.first_contact_letter(PERSON, BASE, NOW, CONTACTS, plan.plan_id))
     return found
 
@@ -492,7 +492,6 @@ DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
 LABEL_COLON = re.compile(r"^([^:.?!]{3,60}): (?=[A-Z][a-z])")  # "Impact not analysed: Meternaut did not look ...": a sentence after a colon starts with a capital letter
 RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart
 MOST_WORDS = 40
-NOT_YET = {"Teams card, a change that was made and checked", "done letter"}  # the cases that phase 2 has not rewritten yet; each step takes its cases out
 STOPS = ".?!"
 SENTENCES_ONLY = ("paragraph", "item")  # these end with a full stop, a question mark or an exclamation mark; a heading, a label, a term, a cell and a button need none
 SHORT_VALUE = 5  # a value of a list of facts that is shorter than this many words is a name or a number, not a sentence
@@ -577,8 +576,6 @@ class TheWordsReadAsSentences(unittest.TestCase):
 
     def test_every_case_reads_as_sentences(self):
         for name, shown in {**cases(), **family_words()}.items():
-            if name in NOT_YET:
-                continue
             with self.subTest(name):
                 self.assertEqual([], problems(shown))
 

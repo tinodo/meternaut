@@ -133,6 +133,9 @@ TAKEN_BACK = {"rules": "Meternaut took this request back because its rules chang
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
+TIMER_CLOSED = "An old timer closed this request, before requests were kept open until somebody answered."  # a request that the clock of before rule 38 closed: the page and the History say it the same way
+LOOK_IN_AZURE = "Look at the resource in Azure before anything else is done with it."  # what a change that did not complete asks of a person: the page, the card and the letter say it the same way
+# What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
 WITH_WHOM = {"same": "the people who were asked first", "manager": "the manager of the person who was asked first", "tag": "the person named in the escalation tag",
              "contact": "the escalation contact", "owners": "the owners of Meternaut"}
 SAID_HOW = {"same": "asked first", "manager": "the manager", "tag": "named in the escalation tag", "contact": "an escalation contact", "owners": "an owner"}
@@ -235,6 +238,7 @@ RUNNING_IN_AZURE = "Azure accepted the change and is still making it. Meternaut 
 # gone already. No write was made, so the saving is not claimed for this approval.
 NOTHING_CHANGED = "Nothing was changed"
 NOTHING_CHANGED_SAVING = "Nothing was changed, so no saving is claimed for this approval."
+NO_COST_AFTER = "The bill since the change shows no cost for this resource."  # what a verified saving of a change that ends the cost rests on; the lines of the check do not say it again
 # What a person is told while a switch holds the answer that approves: all of them hold a change, and only the full stop holds advice (nothing changes in Azure for it).
 PAUSED_CHANGES = "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."
 PAUSED_ADVICE = "Meternaut is paused here. Nothing has changed, and your answer cannot be recorded now."
@@ -1520,7 +1524,7 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
     # figure, in the branch below, and never "no cost".
     ends = fam is None or fam.cost_ends
     if action is not None and action.state == "verified" and ends and before is not None and after == 0 and before > 0:
-        return Saving(round(before, 2), "Verified", "The bill since the change shows no cost for this resource.", None, "")
+        return Saving(round(before, 2), "Verified", NO_COST_AFTER, None, "")
     saved = _figure(check.get("savedUsdMonth"))
     if action is not None and action.state == "verified" and saved is not None and saved > 0:
         return Saving(round(saved, 2), "Verified", "The bill for the whole days since the change is lower than for the 30 days before it.", None, "")
@@ -1768,7 +1772,7 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
     if check.get("now"):
         lines.append(text_of(check["now"], 200))
     after = _figure(check.get("costAfterUsd"))
-    if after is not None and check.get("currency") in (None, "", "USD"):
+    if after is not None and check.get("currency") in (None, "", "USD") and not (after == 0 and NO_COST_AFTER in said):
         lines.append(f"The bill since the change shows {usd_text(after)}.")
     before = _figure(check.get("costBeforeUsd30d"))
     if before is not None:
@@ -1779,12 +1783,13 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
 
 
 def _nothing_changed(result: object) -> str:
-    """The line of an approval that changed nothing: that nothing was changed, and the action's own sentence of code ("The machine was already stopped ... Nothing to change.") without its last short sentence."""
+    """The line of an approval that changed nothing: the action's own sentence of code ("The machine was already stopped ... Nothing to change.") without its last short sentence, or that nothing
+    was changed when the action says no more. The title of the outcome says already that nothing was changed."""
     why = text_of(result, 300)
     for ending in ("Nothing to change.", "Nothing to delete."):
         if why.endswith(ending):
             why = why[: -len(ending)].rstrip()
-    return f"Nothing was changed. {why}" if why else "Nothing was changed."
+    return why or "Nothing was changed."
 
 
 def waiting_cost(monthly: float | None, level: str, days: int, before: float = 0.0, own: int | None = None) -> str:
@@ -1858,7 +1863,7 @@ def because_text(reason: object) -> str:
     return "" if not word else " for another reason" if reason == "other" else f" because {word}"
 
 
-def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None) -> Outcome:
+def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, decisions: Sequence[DecisionRecord], case: CaseRecord | None = None, saying: str = "") -> Outcome:
     none = Outcome("", "", (), "", "", "")
     if plan is None or state in ("open", HELD):
         return none
@@ -1870,13 +1875,13 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
             verified = why == "verified"  # somebody changed something in Azure then: Meternaut did not, and the page says that and not that nothing was changed
             return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
                            title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
-        return Outcome("expired", "Taken back", ("A timer closed this request before Meternaut kept every request open.", "Nothing changed."),
+        return Outcome("expired", "Taken back", (TIMER_CLOSED, "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
     if state == "declined":
         found = _decisive(decisions, "decline")
         who = text_of(found.approver_name, 80) if found else "A person"
         because = because_text(found.reason if found else "")
-        said = f"{who} said it is not worth acting on{because}." if advice else f"Declined by {who}{because}."
+        said = f"{who} said it is not worth acting on{because}." if advice else f"Declined by {who if found else 'a person'}{because}."
         return Outcome("declined", "Not worth it" if advice else "Declined", (said, "Nothing changed."), "Not worth it" if advice else "Declined", who, found.at if found else "")
     if state == "withdrawn":
         found = _decisive(decisions, "not_mine")
@@ -1884,30 +1889,31 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         return Outcome("withdrawn", "Not theirs", (f"{who} said that this is not theirs.", "Nothing changed."), "Not theirs", who, found.at if found else "")
     found = _decisive(decisions, "approve")
     who = text_of(found.approver_name, 80) if found else "A person"
+    by = who if found else "a person"  # "Approved by a person", and "A person said ..." at the start of a sentence
     at = found.at if found else ""
     first = _confirmed_line(plan, decisions)
     if advice:
         return Outcome("answered", "Worth acting on", (f"{who} said this is worth acting on.", "Nothing was changed in Azure."), "Worth acting on", who, at)
     if state == "approved":
         waiting = action is not None and action.state == "queued" and action.step_up
-        return Outcome("approved", "Approved", (f"Approved by {who}.", *first, WAITING_FOR_THE_CHECK if waiting else "The change is being made now."), "Being made now", who, at)
+        return Outcome("approved", "Approved", (f"Approved by {by}.", *first, WAITING_FOR_THE_CHECK if waiting else "The change is being made now."), "Being made now", who, at)
     if action is None:
-        return Outcome("approved", "Approved", (f"Approved by {who}.", *first), "Approved", who, at)
+        return Outcome("approved", "Approved", (f"Approved by {by}.", *first), "Approved", who, at)
     check = action.verification if isinstance(action.verification, dict) else {}
     if action.no_change and action.state in ("done", "verified", "unknown") and state == "consumed":
         # The person approved, and when Meternaut looked the resource was as the plan wants (or gone): nothing was written, so no line says that it was made with anyone's rights.
-        return Outcome("unchanged", NOTHING_CHANGED, (f"Approved by {who}.", *first, _nothing_changed(action.result)), NOTHING_CHANGED, who, action.finished_at or at)
+        return Outcome("unchanged", NOTHING_CHANGED, (f"Approved by {by}.", *first, _nothing_changed(action.result)), NOTHING_CHANGED, who, action.finished_at or at)
     if action.state == "verified":
-        return Outcome("verified", "Done and checked", (f"Approved by {who}, and made with their own Azure rights.", *first, *(check_lines(check) or [text_of(action.result, 300)])),
+        return Outcome("verified", "Done and checked", (f"Approved by {by}, and made with their own Azure rights.", *first, *(check_lines(check, saying) or [text_of(action.result, 300)])),
                        "Done and checked", who, action.finished_at or at)
     if action.state == "running":
-        return Outcome("running", "Running in Azure", (f"Approved by {who}, and sent to Azure with their own Azure rights.", *first, text_of(action.result, 300) or RUNNING_IN_AZURE),
+        return Outcome("running", "Running in Azure", (f"Approved by {by}, and sent to Azure with their own Azure rights.", *first, text_of(action.result, 300) or RUNNING_IN_AZURE),
                        "Running in Azure", who, at)
     if action.state in ("done", "unknown") and state == "consumed":
-        lines = [f"Approved by {who}, and made with their own Azure rights.", *first, text_of(action.result, 300), *check_lines(check, action.result or "")]
+        lines = [f"Approved by {by}, and made with their own Azure rights.", *first, text_of(action.result, 300), *check_lines(check, action.result or "")]
         return Outcome("done", "Done", tuple(line for line in lines if line), "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
     detail = text_of(action.error or action.result, 300) or "The change could not be finished."
-    return Outcome("failed", "Not made", (detail,), "Not made", who, action.finished_at or at)
+    return Outcome("failed", "Not made", (detail, LOOK_IN_AZURE), "Not made", who, action.finished_at or at)
 
 
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
@@ -1956,7 +1962,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         where=_where(name, group, subscription, resource_id, rtype, case.subscription_name if case is not None else ""),
         answers=_answers(kind, state, may_answer, changes_paused, second.stage if second is not None else "", looked is not None and looked.state == REFUSED), found_at=plain(found_at, 30),
         age_days=age,
-        models=models_of(case), outcome=_outcome(plan, state, action, decisions, case), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
+        models=models_of(case), outcome=_outcome(plan, state, action, decisions, case, saving.basis), two_people=plan is not None and plan.approval_class == TWO_PEOPLE_CLASS,
         past=past_line(case.learned.get("past")) if kind != "info" and case is not None and isinstance(case.learned, dict) and "past" in case.learned else "",
         access=ACCESS_WORDS.get(str(case.learned.get("access")), "") if kind != "info" and case is not None and isinstance(case.learned, dict) else "",
         options=advisor_options(case) if kind == "advice" else (), group=together, how=how_of(case),

@@ -248,7 +248,7 @@ class TheLadder(unittest.TestCase):
         world.clock.advance(days=1)
         world.tick()
         (to_manager,) = world.mail.sent_to("mae@example.com")
-        self.assertIn("I am Meternaut, an AI that looks for Azure resources", to_manager[2])
+        self.assertIn("Meternaut is an AI that looks for Azure resources", to_manager[2])
         self.assertIn("you are the manager of Ada", to_manager[2])
         self.assertIn("Ada, asked first, was told on", to_manager[2])
         again = world.store.mails_since(MANAGER, "2000-01-01T00:00:00Z")

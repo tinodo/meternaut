@@ -154,13 +154,20 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 kinds = ("unsure",)  # its own kind: the letter that says what happened when the result is known later is still due
             else:
                 kinds = ("notice", "verified") if action.state == "verified" else ("notice",)
+
+            def answers():
+                try:
+                    return store.decisions_of_plan(plan.plan_id)
+                except Exception:  # noqa: BLE001 (the letter is worth more than the name of the person who approved)
+                    return ()
+
             for oid in plan.approvers:
                 person = people.by_oid(oid)
                 if person is None or not person.mail or quiet_now(person):
                     continue
                 for kind in kinds:
                     if due(person, kind, plan.plan_id) and not card_goes_first(person, f"{kind}-card", since, plan.plan_id):
-                        mailer.send(person, letters.done_letter(plan, action, case, person, base, now, contacts()), kind, plan.plan_id)
+                        mailer.send(person, letters.done_letter(plan, action, case, person, base, now, contacts(), answers()), kind, plan.plan_id)
         safely("the letter about a change", work)
 
     def on_run(run: RunRecord) -> None:

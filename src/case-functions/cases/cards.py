@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, parse_time, plain
+from .brief import ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, plain
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -30,7 +30,7 @@ KIND_LABELS = {"change": "Needs your OK", "advice": "Needs your answer", "result
 # The text of a notification: what Teams shows on a lock screen. No resource name and no amount, like the subject of a letter (AGENTS.md rule 26 (c)).
 SUMMARIES = {"change": "[Meternaut] A change to Azure waits for your OK", "advice": "[Meternaut] A decision waits for you", "result": "[Meternaut] A change to Azure has run",
              "first_contact": "[Meternaut] An AI assistant for Azure costs will write to you", "closed": "[Meternaut] A request was closed", "test": "[Meternaut] A test of the Teams cards"}
-ENDED = {"done": "Approved and done", "verified": "Approved and done", "unchanged": "Approved, nothing to change", "withdrawn": "Withdrawn"}
+NOTHING_MORE = "Nothing more is asked of you."
 PAGE_BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # What a TextBlock reads as Markdown (the subset that Teams shows), a < that could open a mention or a tag, and the characters that start a list at the start of a text.
@@ -299,19 +299,16 @@ def result_card(brief: Brief, ctx: CardContext) -> dict:
 
 
 def closed_card(brief: Brief, ctx: CardContext) -> dict:
-    """The card that replaces one that cannot be answered any more: one line on what became of the request, in the words of its real end, and no button. An open request, or an approved change that
-    is not over, has none."""
+    """The card that replaces one that cannot be answered any more: what became of the request in whole sentences, in the words of its real end, and no button. An open request, or an approved
+    change that is not over, has none."""
     _check_context(ctx, brief)
-    outcome, moment = brief.outcome, parse_time(brief.outcome.at)
+    outcome = brief.outcome
     if outcome.state in ("", "approved", "running"):
         raise CardError("only a request that has ended has a closing card")
-    by = md(outcome.by, 80)
-    if outcome.state == "expired":
-        said = f"{md(outcome.title, 40)}. {md(outcome.lines[0], 200)} {md(outcome.lines[1], 80)}"
-    elif outcome.state == "failed":
-        said = f"Approved by {by}, not made: {md(outcome.lines[0], 200)}"
-    else:
-        said = f"Decided: {md(ENDED.get(outcome.state, outcome.title), 40)} by {by}" + (f", {moment.day} {moment:%b %H:%M} UTC" if moment else "") + ". Nothing more to do."
+    lines = outcome.lines
+    kept = {"expired": lines[:2], "failed": (f"{outcome.by} approved this, but the change was not made.", *lines[:2]),
+            "unchanged": (lines[0], "Nothing was changed.", *lines[-1:])}.get(outcome.state, (*lines[:1], NOTHING_MORE))
+    said = " ".join(md(line, 300) for line in dict.fromkeys(kept))
     return _card(brief, ctx, "closed", [_block("closed", said, weight="Bolder")], said)
 
 

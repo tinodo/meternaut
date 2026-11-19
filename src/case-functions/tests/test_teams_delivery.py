@@ -179,7 +179,7 @@ class TheCardClosesByAnUpdateOfItsActivity(unittest.TestCase):
         self.assertEqual((call["method"], call["url"]), ("PUT", f"https://smba.trafficmanager.net/teams/v3/conversations/{CONVERSATION}/activities/{ACTIVITY}"))
         (card,) = [a["content"] for a in self.world.bodies("update")[0]["attachments"]]
         self.assertEqual((cardcheck.check(card), "Action." in json.dumps(card)), ([], False))
-        self.assertIn("Not worth it by Anna", " ".join(cs.texts(card)))
+        self.assertIn("Anna said it is not worth acting on.", " ".join(cs.texts(card)))
         self.assertEqual(self.world.bodies("update")[0]["summary"], cards.SUMMARIES["closed"])
         self.assertEqual([(m.kind, m.status, m.detail) for m in self.world.tries(cs.MAYA, offers.CLOSED)], [(offers.CLOSED, "sent", teamsbot.SENT)])
         self.assertEqual(self.world.queue_fake.calls, [], "nothing is put on a queue")
@@ -217,7 +217,7 @@ class TheCardClosesByAnUpdateOfItsActivity(unittest.TestCase):
         world.clock.advance(minutes=1)
         world.run()
         (card,) = [a["content"] for a in world.bodies("update")[0]["attachments"]]
-        self.assertIn(f"Approved by Maya, not made: {cards.md(reason)}", " ".join(cs.texts(card)))
+        self.assertIn(f"Maya approved this, but the change was not made. {cards.md(reason)}", " ".join(cs.texts(card)))
 
     def test_a_request_that_is_open_again_gets_a_new_card_and_only_that_one_is_closed_in_its_turn(self):
         end(self.world, self.plan)
