@@ -15,12 +15,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, ways_sentences, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, plan_headline, taken_back, text_of, times_text, waited_text, why_a_person, ways_sentences, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
-from .figures import Figure, chart, chip, cost_of, dollars, figure_for, risk_chip, says, series_of, series_reason, title_of, under, use_block, waiting_words
+from .figures import Figure, chart, chip, cost_of, dollars, figure_for, risk_chip, says, series_of, series_reason, short_title, title_of, under, use_block, waiting_words
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
@@ -84,6 +84,16 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     kind = {"expired": "warning", "failed": "error", "done": "success", "verified": "success"}.get(outcome.state, "info")
     when = paragraph(ctx.moment(outcome.at)) if outcome.at else Safe("")
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
+
+
+def _replaced(ctx: Ctx, case: CaseRecord | None, plan: PlanRecord | None) -> Safe:
+    """The request that took the place of this one when Meternaut could make the change itself (taken back as `upgraded`): its title, as a link to it. Nothing for any other request."""
+    if case is None or plan is None or taken_back(plan, case) != "upgraded" or not case.plan_id or case.plan_id == plan.plan_id:
+        return Safe("")
+    new, ok = read(lambda: ctx.store.plan_get(case.plan_id), None)
+    if new is None or not ok:
+        return Safe("")
+    return paragraph(join([Safe("The new request is "), link(ctx.url(f"/ok/{new.plan_id}"), short_title(plan_headline(new), new.resource_group)), Safe(".")]))
 
 
 def _hold(brief: Brief) -> Safe:
@@ -435,7 +445,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_asked(brief), _look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _others(brief), _happens(brief), _waiting(ctx, brief)]
+    parts += [_asked(brief), _look(brief), _outcome(ctx, brief), _replaced(ctx, case, plan), _hold(brief), _decision(brief, case, ctx.now), _others(brief), _happens(brief), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

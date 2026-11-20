@@ -213,6 +213,7 @@ ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the pla
 # proposals.CANNOT), or Meternaut makes no change for this kind of finding. A request of Azure Advisor and of an older check keeps ADVICE_CHANGE. Who acts is ADVICE_WHO for all of them.
 ADVICE_CANNOT = "Meternaut cannot make this change itself.{why} Your answer is recorded with your name."
 ADVICE_NONE = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."
+ADVICE_NOT_COUNT = "Meternaut only lowers a count of units, and {what} is not one, so it has nothing to change here. Your answer is recorded with your name."  # the change that the finding states is a ratio on a property that is no count
 # What a person who is asked about advice is asked, in one sentence that the page, the card and the letters all say as it is (asked_of): whether to do what the title names, with what changes from what
 # to what when the finding states it. It says it as a statement: a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin).
 ASKED = "You are asked whether to {what}."
@@ -2067,7 +2068,13 @@ def advice_words(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str,
     from . import proposals
 
     why = proposals.cannot(plan.preconditions if plan is not None else None)
-    return (ADVICE_CANNOT.format(why=f" {why}" if why else "") if proposals.settings(case.facts) else ADVICE_NONE), ADVICE_WHO
+    if proposals.settings(case.facts):
+        return ADVICE_CANNOT.format(why=f" {why}" if why else ""), ADVICE_WHO
+    price = _price(case)
+    on = price.get("on") if price.get("form") == "ratio" else None  # the property that the change states a ratio on: a setting that code dropped as no count leaves this behind
+    if isinstance(on, str) and pricing.NAME.fullmatch(on) and not proposals.countlike(on):
+        return ADVICE_NOT_COUNT.format(what=proposals.label(on)), ADVICE_WHO
+    return ADVICE_NONE, ADVICE_WHO
 
 
 def _rounded(value: float) -> float:

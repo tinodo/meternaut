@@ -22,7 +22,7 @@ from test_investigate import FakeFoundry, FakeToolbox, Harness, answer, entry, f
 from test_words import Rendered, _letter, blocks_of_card, blocks_of_html, problems
 
 from cases import brief as brief_mod
-from cases import pricing, proposals, upkeep
+from cases import letters, pricing, proposals, upkeep
 from cases.families import gates, words
 from cases.models import GROUP_FACT
 from cases.runner import execute
@@ -125,7 +125,7 @@ def surfaces(world, plan) -> dict[str, Rendered]:
     case = world.store.case_get(plan.case_id)
     page = Rendered("page", "page", blocks_of_html(console_of(world, plan, case).get(f"/ok/{plan.plan_id}").text))
     return {"page": page, "card": Rendered("card", "card", blocks_of_card(tfs.card_of(tfs.shown(world, plan)))),
-            "letter": _letter("letter", __import__("cases.letters", fromlist=["approval_letter"]).approval_letter(plan, case, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS))}
+            "letter": _letter("letter", letters.approval_letter(plan, case, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS))}
 
 
 def read(shown: Rendered) -> str:
@@ -233,3 +233,111 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             outcome = tfs.shown(world, finished, done.action).outcome
             self.assertEqual((outcome.title, outcome.result), ("Done", "Done"))
             self.assertTrue(any("Azure shows the bastion host with scale units at 2, and its last operation worked." in line for line in outcome.lines), outcome.lines)
+
+    def test_the_confirm_step_is_said_on_the_page_and_on_the_card_with_the_nouns_and_the_numbers_of_the_request(self):
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            world, lead, case = world_of(host(), self.case)
+            plan = world.approvals.plan_for(case, lead, (OID,))
+            console = console_of(world, plan, case)
+            form = console.get(f"/ok/{plan.plan_id}").form(f"/ok/{plan.plan_id}", has_button="Approve")
+            reply = console.submit(form, "Approve", confirm=False, note="Go on")
+            self.assertEqual(reply.status, 200, "approving asks once more before anything is signed in")
+            self.assertTrue(reply.headings(1)[0].startswith(f"Confirm: Scale down the bastion host bastion-one in resource group {REAL_GROUP}: scale units from 4 to 2"), reply.headings(1))
+            self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", reply.main.text())
+            self.assertIn("Meternaut does not know what a lower number takes away from what uses the bastion host.", reply.main.find("div", class_="notice warning").text())
+            self.assertEqual((console.delegate.begins, world.store.decisions_of_plan(plan.plan_id)), ([], []), "nothing is recorded and no sign-in starts at the first press")
+            card = tfs.card_of(tfs.shown(world, plan))
+            texts = {item["id"]: item["text"] for item in tfs.by_id(card).values() if isinstance(item, dict) and "text" in item}
+            self.assertEqual(texts["sure-text"], f"This changes a real resource: the bastion host bastion-one in resource group {REAL_GROUP}. Nothing is changed until you press Yes.")
+
+    def test_a_change_that_azure_also_changed_something_else_for_is_done_with_a_difference_on_the_page_the_card_and_the_letter(self):
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            world, lead, case = world_of(host(), self.case)
+            world.arm.also = {"retentionDays": 99}
+            plan = world.approvals.plan_for(case, lead, (OID,))
+            world.approve(plan)
+            done = execute(world.services(plan, TOKEN), world.store.action_get(plan.plan_id), approved_digest=plan.digest)
+            self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+            kept = world.store.plan_get(plan.plan_id)
+            b = tfs.shown(world, kept, done.action)
+            self.assertEqual((b.outcome.title, b.outcome.result), ("Done, with a difference", "Done, with a difference"))
+            said = "Azure shows the bastion host with scale units at 2, and its last operation worked. Azure also changed: properties.retentionDays."
+            self.assertIn(said, b.outcome.lines)
+            self.assertEqual(sum("Azure also changed" in line for line in b.outcome.lines), 1, "said once")
+            page = console_of(world, kept, case).get(f"/ok/{plan.plan_id}").text
+            self.assertIn("Done, with a difference", page)
+            self.assertIn("Azure also changed: properties.retentionDays.", page)
+            letter = letters.done_letter(kept, done.action, case, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS)
+            self.assertEqual(letter.subject, "[Meternaut] " + letters.DIFFERENT_SUBJECT)
+            self.assertIn(said, letter.text)
+            self.assertEqual(sum("Azure also changed" in line for line in letter.text.splitlines()), 1)
+
+    def test_the_request_that_asked_is_taken_back_once_with_its_words_and_the_new_request_is_named_on_its_page_and_in_the_history(self):
+        world, lead, case = world_of(host(), self.case)
+        old = world.approvals.plan_for(case, lead, (OID,))
+        self.assertEqual((old.family, old.preconditions[proposals.CANNOT_KEY]), ("advise", "switch-off"), "the line is as it is: the request asks")
+        lines = []
+        history = mock.Mock(emit=lambda kind, **fields: lines.append((kind, fields)))
+        extras = mock.Mock(approvals=world.approvals, approvers=lambda: (OID,))
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            said = upkeep.upgrade(extras, history)
+            later = upkeep.upgrade(extras, history)
+        self.assertEqual(len(said), 1)
+        self.assertIn("taken back, because Meternaut can make the change itself now", said[0])
+        self.assertEqual((later, len(lines)), ([], 1), "said once: the next Watch finds nothing to say")
+        taken = world.store.plan_get(old.plan_id)
+        (new,) = [plan for plan in world.store.plans_open() if plan.state == "open"]
+        self.assertEqual((taken.state, taken.preconditions["takenBack"], new.family), ("expired", "upgraded", "change-setting"))
+        case = world.store.case_get(old.case_id)
+        console = console_of(world, new, case)
+        console.store.plan_put(taken)
+        page = console.get(f"/ok/{old.plan_id}")
+        text = page.main.text()
+        self.assertIn(brief_mod.TAKEN_BACK["upgraded"], text)
+        self.assertIn("Nothing was changed in Azure.", text)
+        (pointer,) = [a for a in page.main.find_all("a") if a.attrs.get("href") == f"/ok/{new.plan_id}"]
+        self.assertEqual(pointer.text(), f"Scale down the bastion host bastion-one in resource group {REAL_GROUP}: scale units from 4 to 2")
+        feed = console.get("/history").main.text()
+        self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", feed)
+        self.assertIn(brief_mod.TAKEN_BACK["upgraded"], feed, "a request that a change took the place of is a line of its own and says why")
+        self.assertNotIn("request to look at a finding", feed)
+
+    def test_a_setting_that_is_no_count_is_dropped_with_its_reason_in_the_notes_and_the_request_still_asks_and_says_what_is_true(self):
+        change = reduction({"handle": "r1", "property": "retentionDays", "from": 30, "to": 7}, on="retentionDays", start=30, to=7, others=())
+        case, notes = investigated(host(), change=change)
+        self.assertEqual([note for note in notes if "dropped" in note], ["finding 1: code dropped 1 of 1 setting (a property that is not a count or a size: 1)"])
+        self.assertNotIn("set", case.facts.get(proposals.KEY, {}), "nothing is kept of the setting")
+        world, lead, case = world_of(host(), case)
+        plan = world.approvals.plan_for(case, lead, (OID,))
+        self.assertEqual(plan.family, "advise", "the finding is still asked about")
+        for surface, one in surfaces(world, plan).items():
+            with self.subTest(surface):
+                text = read(one)
+                self.assertIn("Scale down the bastion host bastion-one: retention days from 30 to 7", " ".join(block.text for block in one.blocks))
+                self.assertIn("Meternaut only lowers a count of units, and retention days is not one, so it has nothing to change here. Your answer is recorded with your name.", text)
+                self.assertNotIn("did not name a setting", text, "the AI did name one: code dropped it")
+                self.assertEqual([], problems(replace(one, name=f"a setting that is no count, {surface}")))
+
+    def test_a_number_at_the_root_of_a_resource_of_another_kind_is_lowered_there_and_the_words_follow_the_kind(self):
+        shown = pool()
+        change = reduction({"handle": "r1", "property": "sku.capacity", "from": 3, "to": 2}, on="sku.capacity", start=3, to=2, others=())
+        case, notes = investigated(shown, kind=POOL, name="pool-one", change=change)
+        self.assertEqual(case.facts[proposals.KEY], {"set": [{"path": "sku.capacity", "from": 3, "to": 2}]}, notes)
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            world, lead, case = world_of(shown, case, POOL)
+            plan = world.approvals.plan_for(case, lead, (OID,))
+            self.assertEqual(plan.family, "change-setting")
+            self.assertEqual(plan.title, f"Scale down the worker pool pool-one in resource group {REAL_GROUP}: sku capacity from 3 to 2")
+            for surface, one in surfaces(world, plan).items():
+                with self.subTest(surface):
+                    self.assertIn("You are asked whether to let Meternaut scale down the worker pool pool-one in resource group", read(one))
+                    self.assertIn("by lowering sku capacity from 3 to 2.", read(one))
+            read_before = json.loads(json.dumps(world.arm.get(shown["id"])))
+            world.approve(plan)
+            done = execute(world.services(plan, TOKEN), world.store.action_get(plan.plan_id), approved_digest=plan.digest)
+            self.assertEqual((done.kind, done.action.state), ("ran", "done"), done.action.result)
+            (key, query, body), = world.arm.puts
+            self.assertEqual((key, query), (shown["id"].lower(), f"api-version={API}"))
+            self.assertEqual(body["sku"], {"name": "S2", "capacity": 2}, "the number is lowered where it is, at the root")
+            self.assertEqual(body["properties"], {key: value for key, value in read_before["properties"].items() if key != "provisioningState"}, "and nothing under properties moves")
+            self.assertEqual(world.arm.get(shown["id"])["sku"]["capacity"], 2)

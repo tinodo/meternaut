@@ -107,7 +107,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
         if answerable(ctx, plan) and (plan.expires_at >= since if plan.plan_id in bill else plan.created_at >= old):
             if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
                 continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
-            if plan.family == "advise" and plan.state == "expired" and taken_back(plan) != "verified":
+            if plan.family == "advise" and plan.state == "expired" and taken_back(plan) not in ("verified", "upgraded"):  # one that a change took the place of is a line of its own: the change is what happened to it
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
