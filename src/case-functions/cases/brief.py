@@ -134,8 +134,6 @@ SHARED_RISK = "Traffic that you cannot see from here may depend on it."
 RARE_USE = "Acting on it could break something that uses it less often than Meternaut measured."
 CHANGE_RISK = "If you act, what depends on it can slow down or stop."
 NOT_MEASURED_USE = "Nothing was measured of its use, and a read of Azure cannot see what depends on it."  # what could go wrong, for a finding of the investigation that nothing measured: said instead of a stock sentence
-NOT_KNOWN_DEPENDS = "Meternaut does not know what depends on it."  # what could go wrong begins with what is not known, and then says what was measured, which is no reassurance under a risk
-NOT_KNOWN_DEPENDS_MANY = "Meternaut does not know what depends on them."
 NO_FINDING = "Meternaut has no record of the finding behind this request, so it cannot say what could go wrong."  # for a request whose finding is not in the records
 COMMIT_RISK = "It commits you to pay for a term."  # the risk of a commitment that a finding names (a purchase, which no resource is changed or removed for)
 NOT_MEASURED = "The AI cited no measurement, so nothing shows whether anything uses it."
@@ -213,11 +211,12 @@ ADVICE_WHO = "If you act, you do it yourself in Azure with your own rights."
 NO_HISTORY = "There is no history of cases like this yet."  # what the page and the card say when too few like it were answered; a letter, which is read once, leaves it out
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
 # What an answer does to advice that the investigation made, for the kind of change that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
-# proposals.CANNOT); it is a reduction of a count and the AI named no setting, or only one that code dropped as no count, so there is nothing for Meternaut to change; it is a removal, a switch, a
+# proposals.CANNOT); it is a reduction of a count and the AI named no setting that Meternaut could check (it named none, or code dropped what it named), so there is nothing for Meternaut to change, or it
+# named one that code dropped as no count; it is a removal, a switch, a
 # schedule, a commitment or a deletion, which Meternaut cannot make at all (ADVICE_ONLY_COUNT); or it asks only for a look, and nothing changes. A request of Azure Advisor and of an older check keeps
 # ADVICE_CHANGE. Who acts is ADVICE_WHO for all of them.
 ADVICE_CANNOT = "Meternaut cannot make this change itself.{why} Your answer is recorded with your name."
-ADVICE_NONE = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."  # only for a reduction of a count: the one kind of change that a setting could have been named for
+ADVICE_NONE = "The AI named no setting that Meternaut could check, so it has nothing to change here. Your answer is recorded with your name."  # only for a reduction of a count, the one kind of change that a setting could have been named for: the AI named none, or code dropped what it named, and the brief cannot tell which
 ADVICE_NOT_COUNT = "Meternaut only lowers a count of units, and {what} is not one, so it has nothing to change here. Your answer is recorded with your name."  # the change that the finding states is a ratio on a property that is no count
 ADVICE_ONLY_COUNT = "Meternaut cannot make this change itself, because it only lowers a count of units. Your answer is recorded with your name."  # a removal, a switch, a schedule, a commitment or a deletion: the AI was never asked for a setting for them
 ONLY_COUNT_VERBS = (VERBS["delete"], CHANGE_VERBS["remove"], CHANGE_VERBS["switch"], CHANGE_VERBS["schedule"], CHANGE_VERBS["commit"])  # the verbs of the changes that Meternaut cannot make at all
@@ -1024,19 +1023,25 @@ def acting_risk(case: CaseRecord | None) -> Risk:
         doubt = doubt_of(case)
         noun = kind_words(case.resource_type, case.resource_id)[1]
         reason = f"Other resources can depend on {'them' if group is not None else f'a {noun}'}." if level == "high" else ""  # the reason for the chip: the kind is one that others share, and no measurement shows that nothing uses it
-        unknown = (NOT_KNOWN_DEPENDS_MANY if group is not None else NOT_KNOWN_DEPENDS) if _metric_facts(case) else ""  # what a measurement of use cannot say, before what it says: a zero is no reassurance under "What could go wrong"
-        return Risk(level, " ".join(part for part in (reason or unknown, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
+        return Risk(level, " ".join(part for part in (reason, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
     parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
     return Risk(level, " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
 
 
 def use_words(case: CaseRecord) -> str:
-    """What was measured of the use of the resource, as sentences of this finding ("The Sessions metric was 0 in 30 days, with a value on 30 of those days."), or that nothing was and what a read cannot
-    see. A finding about many resources says that the measurement is the first one's."""
-    said = " ".join(f"The {fact.label} metric was {covered(fact.value)}." for fact in _metric_facts(case))
-    if group_of(case) is not None:
-        return f"For the first of them, {said[:1].lower()}{said[1:]}" if said else NOT_MEASURED_USE.replace(" its use", " their use").replace("on it", "on them")
-    return said or NOT_MEASURED_USE
+    """What was measured of the use of the resource, one sentence for each measurement (at most two), each with what a measurement cannot show: "The Sessions metric was 0 in 30 days, which does not
+    show what depends on it." The second says "either" and does not say it again. Nothing measured says that, and what a read of Azure cannot see. A finding about many resources says that the first
+    measurement is the first resource's."""
+    facts = _metric_facts(case)
+    many = group_of(case) is not None
+    if not facts:
+        return NOT_MEASURED_USE.replace(" its use", " their use").replace("on it", "on them") if many else NOT_MEASURED_USE
+    sentences = []
+    for place, fact in enumerate(facts):
+        shows = "it either" if place else f"what depends on {'them' if many else 'it'}"
+        sentences.append(f"the {fact.label} metric was {covered(fact.value)}, which does not show {shows}.")
+    first = f"For the first of them, {sentences[0]}" if many else f"{sentences[0][:1].upper()}{sentences[0][1:]}"
+    return " ".join([first, *(f"{said[:1].upper()}{said[1:]}" for said in sentences[1:])])
 
 
 def check_first(case: CaseRecord | None) -> tuple[str, ...]:
@@ -2079,8 +2084,9 @@ def _decided(outcome: Outcome, decisions: Sequence[DecisionRecord]) -> Outcome:
 
 def advice_words(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str, str]:
     """What an answer does to advice, and who acts, for the kind of change that the request is about. For a finding of the investigation that proposes a setting: that Meternaut cannot make the change (with
-    the reason that the request keeps, if it keeps one: proposals.CANNOT). For a reduction of a count with no setting: that the AI named none, so there is nothing for Meternaut to change (or that the
-    property is no count). For a removal, a switch, a schedule, a commitment or a deletion: that Meternaut cannot make it, because it only lowers a count of units. For a request that asks only for a
+    the reason that the request keeps, if it keeps one: proposals.CANNOT). For a reduction of a count with no setting: that the AI named no setting that Meternaut could check (it named none, or code dropped
+    what it named: the brief cannot tell which), so there is nothing for Meternaut to change, or that the property is no count. For a removal, a switch, a schedule, a commitment or a deletion: that
+    Meternaut cannot make it, because it only lowers a count of units. For a request that asks only for a
     look, and for every request of Azure Advisor and of an older check: that nothing changes in Azure."""
     if case is None or case.detector != INVESTIGATION:
         return ADVICE_CHANGE, ADVICE_WHO
@@ -2126,6 +2132,13 @@ def worked_of(case: CaseRecord | None, saving: Saving, whole: str, cost: float |
 COUNT_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")  # how many ways are said: the Investigator names at most three, and a count of things is a word in a sentence about them
 AI_WORD_REMAINS = "What would remain after each of them is the AI's word, and Meternaut did not check it."  # what the block of the other ways says once, above its table: the new quantity or share of a way is the AI's number even when the saving is worked out from the bill
 AI_WORD_REMAINS_ONE = "What would remain after it is the AI's word, and Meternaut did not check it."  # the same for a block of one way
+AI_WORD_REMAINS_SOME = "For {count} of them, what would remain is the AI's word, and Meternaut did not check it."  # the same when only some of the ways have a number that the AI chose
+
+
+def ai_chose_what_remains(other: proposals.Other) -> bool:
+    """Whether what would remain after a way is a number that the AI chose: the saving rests on a share that the AI assumed, or the way lowers a quantity or turns the resource off for a share of the
+    days (pricing.ALLOWED: a quantity, a ratio, a share of days). A removal leaves nothing, and a switch that is priced from the list leaves what the list says, which a tool read."""
+    return other.estimate or other.action in ("reduce", "schedule")
 
 
 def _count_word(count: int) -> str:
@@ -2156,15 +2169,21 @@ def ways_said(others: Sequence[proposals.Other]) -> str:
 
 
 def ways_sentences(others: Sequence[proposals.Other], on: str, page: bool = True) -> str:
-    """The sentences about the other ways that the AI named: how many, and how each figure was made. The page says it above the table, and says too that what would remain after each of them is the AI's
-    word; a card and a letter, which have no table, say that the page shows them."""
+    """The sentences about the other ways that the AI named: how many, and how each figure was made. The page says it above the table, and says too, for the ways whose remaining quantity or share the AI
+    chose (ai_chose_what_remains), that what would remain is the AI's word and that Meternaut did not check it; a card and a letter, which have no table, say that the page shows them."""
     many = len(others)
     first = f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}."
     clause = ways_said(others)
     if not page:
         return f"{first} The page shows {'it' if many == 1 else 'them'}: {clause}."
     alike = many == 1 or many in _ways_by_figure(others)  # a mix is counted after "Of them,"; ways that are alike are said once, as a sentence of their own
-    return f"{first} {clause[:1].upper()}{clause[1:]}. {AI_WORD_REMAINS_ONE if many == 1 else AI_WORD_REMAINS}" if alike else f"{first} Of them, {clause}. {AI_WORD_REMAINS}"
+    said = f"{first} {clause[:1].upper()}{clause[1:]}." if alike else f"{first} Of them, {clause}."
+    chosen = sum(ai_chose_what_remains(other) for other in others)
+    if not chosen:
+        return said  # a removal leaves nothing, and what a switch priced from a list leaves is the price that a tool read: there is no number of the AI's to say so of
+    if chosen < many:
+        return f"{said} {AI_WORD_REMAINS_SOME.format(count=_count_word(chosen))}"
+    return f"{said} {AI_WORD_REMAINS_ONE if many == 1 else AI_WORD_REMAINS}"
 
 
 def others_line(brief: Brief) -> str:

@@ -171,6 +171,8 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                 self.assertEqual([], problems(replace(one, name=f"the line off, {surface}")))
         page = read(shown["page"])
         self.assertIn("Of them, one is the AI's estimate and one is not priced.", page)
+        self.assertIn("For one of them, what would remain is the AI's word, and Meternaut did not check it.", page, "the removal leaves nothing: only the way with an assumed share rests on a number of the AI's")
+        self.assertNotIn("after each of them", page)
         self.assertIn("The page shows them: one is the AI's estimate and one is not priced.", read(shown["card"]))
         self.assertIn("The page shows them: one is the AI's estimate and one is not priced.", read(shown["letter"]))
         listed = [block.text for block in shown["page"].blocks if block.details and block.kind == "cell"]
@@ -240,6 +242,26 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             outcome = tfs.shown(world, finished, done.action).outcome
             self.assertEqual((outcome.title, outcome.result), ("Done", "Done"))
             self.assertTrue(any("Azure shows the bastion host with scale units at 2, and its last operation worked." in line for line in outcome.lines), outcome.lines)
+            recent = [li.text() for ul in console_of(world, finished, case).get("/").main.find_all("ul", class_="recent") for li in ul.find_all("li")]
+            rows = [row for row in recent if "bastion-one" in row]
+            self.assertTrue(rows, recent)
+            self.assertEqual([row for row in rows if "in resource group" in row], [], "the Recently row has the short title, as the History has: the place is on the page of the request")
+
+    def test_a_setting_that_no_tool_showed_is_dropped_and_the_words_do_not_say_that_the_ai_named_none(self):
+        change = reduction({"handle": "r1", "property": "nodeCount", "from": 4, "to": 2}, others=())
+        case, notes = investigated(host(), change=change)
+        self.assertEqual([note for note in notes if "dropped" in note], ["finding 1: code dropped 1 of 1 setting (a property that no tool showed: 1)"])
+        self.assertNotIn("set", case.facts.get(proposals.KEY, {}), "nothing is kept of the setting")
+        world, lead, case = world_of(host(), case)
+        plan = world.approvals.plan_for(case, lead, (OID,))
+        self.assertEqual(plan.family, "advise", "the finding is still asked about")
+        for surface, one in surfaces(world, plan).items():
+            with self.subTest(surface):
+                text = read(one)
+                self.assertIn("The AI named no setting that Meternaut could check, so it has nothing to change here. Your answer is recorded with your name.", text)
+                self.assertNotIn("did not name a setting", text, "the AI did name one: code dropped it")
+                self.assertNotIn("is not one, so it has nothing to change here", text, "code did not find that the setting was no count")
+                self.assertEqual([], problems(replace(one, name=f"a setting that no tool showed, {surface}")))
 
     def test_the_confirm_step_is_said_on_the_page_and_on_the_card_with_the_nouns_and_the_numbers_of_the_request(self):
         with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
@@ -250,7 +272,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             reply = console.submit(form, "Approve", confirm=False, note="Go on")
             self.assertEqual(reply.status, 200, "approving asks once more before anything is signed in")
             self.assertEqual(reply.headings(1), ["Confirm this change"])
-            self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the bastion host bastion-one: scale units from 4 to 2"], "the title has its own line")
+            self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the bastion host bastion-one: scale units from 4 to 2."], "the title has its own line, and the line ends with a full stop")
             self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", reply.main.text())
             self.assertIn("Meternaut does not know what a lower number takes away from what uses the bastion host.", reply.main.find("div", class_="notice warning").text())
             self.assertEqual((console.delegate.begins, world.store.decisions_of_plan(plan.plan_id)), ([], []), "nothing is recorded and no sign-in starts at the first press")

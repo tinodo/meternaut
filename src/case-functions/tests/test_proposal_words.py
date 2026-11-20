@@ -122,11 +122,12 @@ def title_of(shown: Rendered) -> str:
 class TheKindOfAResourceInWords(unittest.TestCase):
     """A kind that the brief has no words for is said in the words of the type segment of its id: "bastionHosts" is a bastion host, and never "the resource" when the id says better."""
 
-    REAL = (("bastionHosts", "bastion host"), ("registries", "registry"), ("storageAccounts", "storage account"), ("searchServices", "search service"), ("natGateways", "nat gateway"),
+    REAL = (("bastionHosts", "bastion host"), ("registries", "registry"), ("storageAccounts", "storage account"), ("searchServices", "search service"), ("natGateways", "NAT gateway"),
             ("virtualNetworkGateways", "virtual network gateway"), ("databases", "database"), ("publicIPPrefixes", "public IP prefix"), ("publicIPAddresses", "public IP address"),
+            ("customIpPrefixes", "custom IP prefix"), ("ipGroups", "IP group"), ("vpnGateways", "VPN gateway"),
             ("signalR", "SignalR"), ("privateEndpoints", "private endpoint"), ("namespaces", "namespace"), ("workspaces", "workspace"), ("managedClusters", "managed cluster"),
             ("flexibleServers", "flexible server"), ("networkInterfaces", "network interface"), ("applicationGateways", "application gateway"), ("loadBalancers", "load balancer"),
-            ("virtualMachineScaleSets", "virtual machine scale set"), ("privateDnsZones", "private dns zone"), ("frontDoors", "front door"), ("redis", "redis"), ("caches", "cache"),
+            ("virtualMachineScaleSets", "virtual machine scale set"), ("privateDnsZones", "private DNS zone"), ("frontDoors", "front door"), ("redis", "redis"), ("caches", "cache"),
             ("profiles", "profile"), ("serverfarms", "serverfarm"), ("networkSecurityGroups", "network security group"), ("expressRouteCircuits", "express route circuit"), ("vaults", "vault"),
             ("indexes", "index"), ("analysisServices", "analysis service"), ("searches", "search"), ("sites", "site"), ("ddosProtectionPlans", "ddos protection plan"),
             ("serverGroupsv2", "server group"), ("flexibleServersv2", "flexible server"), ("workspacesV3", "workspace"), ("SignalR", "SignalR"))
@@ -361,7 +362,7 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
                 text = read(shown)
                 self.assertIn("Meternaut cannot make this change itself. The owner has not yet allowed Meternaut to change real resources. Your answer is recorded with your name.", text)
                 self.assertIn(brief_mod.ADVICE_WHO, text)
-                self.assertIn("The Sessions metric was 0 in 30 days.", text)
+                self.assertIn("The Sessions metric was 0 in 30 days, which does not show what depends on it.", text)
         page = surfaces(case, plan)["page"]
         self.assertIn("What the AI says you could do. Meternaut did not check the wording.", [block.text for block in page.blocks if block.kind == "paragraph"])
         self.assertIn(HOW, quotes(page))
@@ -379,18 +380,19 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
                         self.assertNotIn(stock, text, "a request with a setting and a reason says the reason, and no sentence that fits any request")
                     self.assertEqual([], problems(dataclasses.replace(shown, name=f"{key}, {surface}")))
 
-    def test_a_finding_with_no_setting_says_that_the_ai_named_none_and_so_nothing_is_there_to_change(self):
+    def test_a_finding_with_no_setting_that_meternaut_could_check_says_so_and_so_nothing_is_there_to_change(self):
         case, plan = gateway()
         for surface, shown in surfaces(case, plan).items():
             with self.subTest(surface):
-                self.assertIn("The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name.", read(shown))
+                self.assertIn("The AI named no setting that Meternaut could check, so it has nothing to change here. Your answer is recorded with your name.", read(shown))
+                self.assertNotIn("did not name a setting", read(shown), "code may have dropped a setting that the AI named, and the words do not say what is false when it did")
                 self.assertIn(brief_mod.ADVICE_WHO, read(shown))
                 self.assertNotIn("cannot make this change itself", read(shown))
                 self.assertNotIn("for this kind of finding yet", read(shown), "a sentence that fits any request is gone")
         self.assertIn(HOW, quotes(surfaces(case, plan)["page"]))
 
     def test_each_kind_of_change_that_names_no_setting_says_what_is_true_of_it_and_the_sentence_of_another_kind_is_absent(self):
-        none = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."
+        none = "The AI named no setting that Meternaut could check, so it has nothing to change here. Your answer is recorded with your name."
         only_count = "Meternaut cannot make this change itself, because it only lowers a count of units. Your answer is recorded with your name."
         nothing = brief_mod.ADVICE_CHANGE
         kinds = [("reduce", {}, none), ("remove", {}, only_count), ("switch", {}, only_count), ("schedule", {}, only_count), ("commit", {}, only_count), ("delete", {"recommendation": "delete"}, only_count),
@@ -408,6 +410,7 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
                     self.assertIn(brief_mod.ADVICE_WHO, text)
                     for other in {none, only_count, nothing} - {said}:
                         self.assertNotIn(other, text, "a sentence that is true of another kind of change is not said of this one")
+                    self.assertNotIn("did not name a setting", text, "the one sentence that says what the AI did not do may be false: code can drop a setting that the AI named")
                     self.assertEqual([], problems(dataclasses.replace(shown, name=f"{action}, {surface}")))
 
     def test_a_finding_with_a_setting_and_no_reason_on_record_says_that_meternaut_cannot_make_the_change_and_no_more(self):
@@ -572,30 +575,43 @@ class OtherWaysToSave(unittest.TestCase):
         self.assertIn("The AI named 2 other ways to save on this gateway. Of them, one is worked out from the bill and one is not priced.", read(page))
         self.assertIn("If you approve", [block.text for block in page.blocks if block.kind == "heading"])
 
-    def test_the_block_says_once_above_the_table_that_what_would_remain_is_the_ais_word_whatever_kind_of_ways_it_lists_and_says_nothing_when_there_are_none(self):
+    def test_the_block_says_that_what_would_remain_is_the_ais_word_only_for_the_ways_whose_number_the_ai_chose_and_says_nothing_for_a_removal_or_when_there_are_no_ways(self):
         free = {"title": "Use the free tier", "givesUp": "It is shared.", "action": "reduce", "inPlace": True, "lowUsd": 100.8, "highUsd": 151.2, "estimate": True}
         priced = {"title": "Cut the extra units", "givesUp": "Fewer units.", "action": "reduce", "lowUsd": 50.0, "highUsd": 50.0}
+        timed = {"title": "Turn it off at night", "givesUp": "Nothing at night.", "action": "schedule", "lowUsd": 30.0, "highUsd": 30.0}
         unpriced = {"title": "Remove the gateway", "givesUp": "Everything stops.", "action": "remove"}
-        lists = {"worked out from the bill": [priced], "the AI's estimate": [free], "not priced": [unpriced], "bill and not priced": [priced, unpriced], "all three kinds": [priced, free, unpriced]}
+        deleted = {"title": "Delete the gateway", "givesUp": "Everything stops for good.", "action": "remove"}
+        listed = {"title": "Move to the tier on the list", "givesUp": "Fewer features.", "action": "switch", "lowUsd": 40.0, "highUsd": 40.0}  # priced from a list that a tool read: nothing of it is the AI's number
         many = "What would remain after each of them is the AI's word, and Meternaut did not check it."
         one = "What would remain after it is the AI's word, and Meternaut did not check it."
-        for name, ways in lists.items():
-            sentence, other = (one, many) if len(ways) == 1 else (many, one)
+
+        def some(count: str) -> str:
+            return f"For {count} of them, what would remain is the AI's word, and Meternaut did not check it."
+
+        lists = {"one reduction": ([priced], one), "one estimate": ([free], one), "one schedule": ([timed], one), "one removal": ([unpriced], ""), "one switch priced from a list": ([listed], ""),
+                 "two reductions": ([priced, free], many), "a reduction and a schedule": ([priced, timed], many), "two removals": ([unpriced, deleted], ""), "a removal and a switch": ([unpriced, listed], ""),
+                 "a reduction and a removal": ([priced, unpriced], some("one")), "two reductions and a removal": ([priced, free, unpriced], some("two")),
+                 "a removal, a switch and a schedule": ([unpriced, listed, timed], some("one")), "three reductions": ([priced, free, timed], many)}
+        every = (one, many, some("one"), some("two"), some("three"))
+        for name, (ways, sentence) in lists.items():
             case, plan = gateway({"set": SET, "others": ways})
             for surface, shown in surfaces(case, plan).items():
                 with self.subTest(name, surface=surface):
                     text = read(shown)
-                    self.assertEqual(text.count(sentence), 1 if surface == "page" else 0, "the page says it once, above the table; a card and a letter say that the page shows the ways")
-                    self.assertNotIn(other, text, "one way is not 'each of them', and two or more are not 'it'")
-            page = [block.text for block in surfaces(case, plan)["page"].blocks if not block.details]
-            above = page.index(next(text for text in page if sentence in text))
-            self.assertLess(above, page.index("Other way"), "above the table")
+                    for said in every:
+                        self.assertEqual(text.count(said), 1 if said == sentence and surface == "page" else 0, f"the page says it once, above the table, and a card and a letter say that the page shows the ways: {said}")
+            if sentence:
+                page = [block.text for block in surfaces(case, plan)["page"].blocks if not block.details]
+                self.assertLess(page.index(next(text for text in page if sentence in text)), page.index("Other way"), f"{name}: above the table")
         case, plan = gateway(SETTING)
-        self.assertNotIn(many, read(surfaces(case, plan)["page"]), "no ways, no sentence")
-        self.assertNotIn(one, read(surfaces(case, plan)["page"]), "no ways, no sentence")
+        for said in every:
+            self.assertNotIn(said, read(surfaces(case, plan)["page"]), "no ways, no sentence")
         with mock.patch.object(brief_mod, "AI_WORD_REMAINS", ""):
-            case, plan = gateway(BOTH)
+            case, plan = gateway({"set": SET, "others": [priced, free]})
             self.assertNotIn(many, read(surfaces(case, plan)["page"]))
+        with mock.patch.object(brief_mod, "ai_chose_what_remains", lambda other: True):  # every way said to rest on the AI's number: a removal too, which leaves nothing
+            case, plan = gateway({"set": SET, "others": [unpriced, deleted]})
+            self.assertIn(many, read(surfaces(case, plan)["page"]))
 
     def test_what_the_ai_says_of_how_azure_does_it_is_said_as_the_ai_s_and_never_in_meternaut_s_voice(self):
         case, plan = gateway({"set": SET, "others": [OTHERS[0], {"title": "Lower it in place", "givesUp": "Nothing else.", "action": "reduce", "inPlace": True}]})
@@ -698,7 +714,7 @@ class TheListsSayItInTheWordsOfNow(unittest.TestCase):
 
 class TheWordsOfALowerNumberThatMeternautMakes(unittest.TestCase):
     """The short words that a card and a letter carry keep the sentence that says that nothing else is promised, whatever the size of the plan; what Azure also changed is said with the path of each number or
-    flag; who does it says that Azure starts the change and may need minutes; and what could go wrong begins with what is not known."""
+    flag; who does it says that Azure starts the change and may need minutes; and what could go wrong says what each measurement was and that it does not show what depends on the resource."""
 
     TARGETS = ({"set": [{"path": "capacityUnits", "from": 4, "to": 2}]},
                {"set": [{"path": "capacityUnits", "from": 4, "to": 3}, {"path": "sku.capacity", "from": 2, "to": 1}]},
@@ -725,17 +741,47 @@ class TheWordsOfALowerNumberThatMeternautMakes(unittest.TestCase):
         self.assertIn("Azure checks your rights, starts the change right then and may need a few minutes to finish it.", brief_mod.WHO_ACTS)
         self.assertNotIn("makes the change right then", brief_mod.WHO_ACTS)
 
-    def test_what_could_go_wrong_begins_with_what_is_not_known_when_something_was_measured_and_says_it_once(self):
+    def test_what_could_go_wrong_says_what_each_measurement_was_and_what_it_does_not_show_and_no_sentence_of_what_is_not_known_comes_before_it(self):
+        stock = "Meternaut does not know what depends on"
         case, plan = gateway(SETTING)
-        text = brief_of(case, plan).risk.text
-        self.assertTrue(text.startswith("Meternaut does not know what depends on it. The Sessions metric was 0 in 30 days."), text)
-        self.assertTrue(text.endswith(f'The second AI says: "{DOUBT}"'), text)
+        self.assertEqual(brief_of(case, plan).risk.text, f'The Sessions metric was 0 in 30 days, which does not show what depends on it. The second AI says: "{DOUBT}"')
+        two = {**gateway_facts(proposal=SETTING), "metrics": {"Sessions": 0.0, "Percentage CPU": 3.2}, "metricUnits": {"Sessions": "Count", "Percentage CPU": "Percent"}, "metricDays": {"Sessions": 30, "Percentage CPU": 30},
+               "metricDaysWithData": {"Sessions": 30, "Percentage CPU": 28}, "citedMetrics": 2}
+        case, plan = gateway(SETTING, facts=two)
+        self.assertEqual(brief_of(case, plan).risk.text, "The Sessions metric was 0 in 30 days, which does not show what depends on it. "
+                         f'The Percentage CPU metric was 3.2% in 30 days, 28 of them with a value, which does not show it either. The second AI says: "{DOUBT}"', "one sentence for each measurement, and the clause is not said twice")
+        three = {**two, "metrics": {**two["metrics"], "Disk reads": 7.0}, "metricUnits": {**two["metricUnits"], "Disk reads": "Count"}, "metricDays": {**two["metricDays"], "Disk reads": 30}}
+        case, plan = gateway(SETTING, facts=three)
+        self.assertEqual(brief_of(case, plan).risk.text.count("metric was"), 2, "at most two measurements are said")
         nothing = {**gateway_facts(proposal=SETTING), "metrics": {}, "metricUnits": {}, "metricDays": {}, "metricDaysWithData": {}, "citedMetrics": 0}
         case, plan = gateway(SETTING, facts=nothing)
-        self.assertTrue(brief_of(case, plan).risk.text.startswith(brief_mod.NOT_MEASURED_USE), "nothing measured: that sentence already says what is not known, and it is not said twice")
-        self.assertNotIn(brief_mod.NOT_KNOWN_DEPENDS, brief_of(case, plan).risk.text)
+        self.assertTrue(brief_of(case, plan).risk.text.startswith(brief_mod.NOT_MEASURED_USE), "nothing measured: the sentence that is true of that case")
         many, plan = gateways()
-        self.assertTrue(brief_of(many, plan).risk.text.startswith("Meternaut does not know what depends on them. For the first of them, the Sessions metric was 0 in 30 days."), brief_of(many, plan).risk.text)
+        self.assertTrue(brief_of(many, plan).risk.text.startswith("For the first of them, the Sessions metric was 0 in 30 days, which does not show what depends on them."), brief_of(many, plan).risk.text)
+        none_for_many, plan = gateways()
+        none_for_many = dataclasses.replace(none_for_many, facts={**nothing, GROUP_FACT: none_for_many.facts[GROUP_FACT], pricing.KEY: none_for_many.facts[pricing.KEY]})
+        self.assertTrue(brief_of(none_for_many, plan).risk.text.startswith("Nothing was measured of their use, and a read of Azure cannot see what depends on them."), brief_of(none_for_many, plan).risk.text)
+        for found in (SETTING, None):
+            case, plan = gateway(found)
+            for surface, shown in surfaces(case, plan).items():
+                with self.subTest(surface=surface):
+                    self.assertNotIn(stock, read(shown), "the sentence that stood on every request that had a measurement says nothing of this one")
+                    self.assertIn("The Sessions metric was 0 in 30 days, which does not show what depends on it.", read(shown))
+
+    def test_the_stock_sentence_of_what_is_not_known_is_in_no_kind_of_request(self):
+        stock = "Meternaut does not know what depends on"
+        for action in ("reduce", "remove", "switch", "schedule", "commit"):
+            facts = copy.deepcopy(gateway_facts())
+            facts[pricing.KEY]["action"] = action
+            case, plan = gateway(facts=facts)
+            self.assertNotIn(stock, brief_of(case, plan).risk.text, action)
+        for more in ({"recommendation": "delete"}, {"recommendation": "investigate"}):
+            case, plan = gateway(**more)
+            self.assertNotIn(stock, brief_of(case, plan).risk.text, str(more))
+        many, plan = gateways()
+        self.assertNotIn(stock, brief_of(many, plan).risk.text)
+        case, plan = gateway(facts={**gateway_facts(), "metrics": {"Sessions": 4.0}}, resource_type="microsoft.network/privateendpoints")
+        self.assertNotIn(stock, brief_of(case, plan).risk.text, "a high risk has its reason and the measurement, and nothing of what is not known")
 
 
 def hated(shown: Rendered) -> list[str]:

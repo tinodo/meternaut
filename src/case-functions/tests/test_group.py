@@ -798,7 +798,8 @@ class TheBriefOfAGroup(unittest.TestCase):
         single = brief.build_brief(only_case(one), one.store.plans_open()[0], now=WEB_NOW, may_answer=True)
         self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk.level), (single.answers, single.change, single.who_acts, single.undo, single.risk.level))
         reason, _, rest = single.risk.text.partition(". ")
-        self.assertEqual(self.b.risk.text, "Other resources can depend on them. For the first of them, t" + rest[1:], "the measurement that a case keeps is that of the first resource, and the risk says so")
+        self.assertEqual(self.b.risk.text, "Other resources can depend on them. For the first of them, t" + rest[1:].replace("does not show what depends on it", "does not show what depends on them", 1),
+                         "the measurement that a case keeps is that of the first resource, and the risk says so")
         self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (1830.0, "Expected", 61.0))
         self.assertIn("60 resources", self.b.saving.basis)
         self.assertEqual(self.b.options, ())

@@ -19,8 +19,8 @@ from ..brief import IF_ACTED, NO_FIGURE, NOT_WORKED_OUT, UNCONFIRMED, UNMEASURED
 from ..models import ADVICE_QUIET_DAYS, ADVISE, ADVISOR, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, spark, summed, title_of, under,
-                      use_block)
+from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, short_title, spark, summed,
+                      title_of, under, use_block)
 from .layout import code, details, kpi, kpis, link, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -424,7 +424,7 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
         label, kind, shape = OUTCOMES.get("cost-down" if taken_back(plan) == "verified" else outcome.state, (outcome.state.capitalize(), "", "square"))  # a request that the bill closed is good news, not a take-back
         who = fmt("{by}, {day}", by=outcome.by, day=ctx.day(outcome.at or plan.created_at)) if outcome.by else ctx.day(outcome.at or plan.created_at)
         said = fmt("{result}. {who}", result=outcome.result, who=who) if outcome.result.lower() != label.lower() else who  # the chip says the state: the quiet part says more only when the result is more than the chip
-        rows.append((outcome.at or plan.created_at, fmt('<li>{chip}<span>{headline}</span><span class="quiet">{said}</span></li>', chip=chip(label, kind, shape), headline=plan_headline(plan), said=said)))
+        rows.append((outcome.at or plan.created_at, fmt('<li>{chip}<span>{headline}</span><span class="quiet">{said}</span></li>', chip=chip(label, kind, shape), headline=short_title(plan_headline(plan), plan.resource_group), said=said)))
     rows.sort(key=lambda item: item[0], reverse=True)
     if not rows:
         return join([heading, paragraph("Nothing was decided yet.")])

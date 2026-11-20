@@ -266,6 +266,7 @@ TYPE_WORDS = {
     "microsoft.resources/resourcegroups": ("Resource group", "resource group"),
 }
 PLAIN_WORD = re.compile(r"[A-Z]?[a-z]+")  # a plain word of a type segment, against an acronym ("IP") or a name that has a capital inside it ("SignalR"), which are kept as they are
+ACRONYMS = frozenset({"ip", "dns", "vpn", "nat", "sql", "api", "vm", "db", "cdn", "tls", "ssl", "waf", "nsg", "ssd", "gpu", "cpu"})  # words of a type segment that a person says in capitals even when the segment spells only the first one so ("customIpPrefixes" is "custom IP prefix"); any other word stays plain
 VERSION_TAIL = re.compile(r"(?<=[a-z])[vV]\d+$")  # the version that a type segment ends in ("serverGroupsv2"): a person says "server group"
 
 
@@ -281,12 +282,12 @@ def _singular(word: str) -> str:
 
 def type_noun(segment: str) -> str:
     """The noun that the type segment of an id says: its camel case in words, the last one in the singular, an acronym ("IP") and a name with a capital inside it ("signalR" is "SignalR") as they are,
-    and a version that it ends in left out ("serverGroupsv2" is "server group")."""
+    a short word that is an acronym in capitals ("customIpPrefixes" is "custom IP prefix"), and a version that it ends in left out ("serverGroupsv2" is "server group")."""
     pieces = WORD.findall(VERSION_TAIL.sub("", segment) or segment)
     if len(pieces) > 1 and len(pieces[-1]) == 1 and pieces[-1].isupper():
         pieces[-2:] = [pieces[-2] + pieces[-1]]
-    names = [piece.lower() if PLAIN_WORD.fullmatch(piece) else piece[:1].upper() + piece[1:] for piece in pieces]
-    if PLAIN_WORD.fullmatch(pieces[-1]):
+    names = [piece.upper() if piece.lower() in ACRONYMS else piece.lower() if PLAIN_WORD.fullmatch(piece) else piece[:1].upper() + piece[1:] for piece in pieces]
+    if PLAIN_WORD.fullmatch(pieces[-1]) and pieces[-1].lower() not in ACRONYMS:
         names[-1] = _singular(names[-1])
     return " ".join(names)
 

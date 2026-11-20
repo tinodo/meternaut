@@ -61,7 +61,7 @@ class MissingDataIsNotZero(unittest.TestCase):
                 self.assertIn(f"finding 1: {HELD_UNPROVEN}", h.notes)
                 plan = made_before(h, case)
                 self.assertTrue(plan.title.startswith("Check whether the thing thing-1"), plan.title + " (a kind that the brief has no words for is said in the words of the type segment of its id)")
-                said = f"{brief.NOT_KNOWN_DEPENDS} The MetricA metric was 0 in 30 days, 19 of them with a value." if label == "19 of 30 days" else brief.NOT_MEASURED_USE  # 19 days of nil are a measurement and no measured zero: what a measurement cannot say comes first
+                said = "The MetricA metric was 0 in 30 days, 19 of them with a value, which does not show what depends on it." if label == "19 of 30 days" else brief.NOT_MEASURED_USE  # 19 days of nil are a measurement and no measured zero: what a measurement cannot show is said with it
                 self.assertTrue(plan.could_go_wrong.startswith(said), plan.could_go_wrong)
 
     def test_a_deletion_with_a_measured_zero_on_every_resource_of_a_kind_that_others_do_not_share_stays_a_deletion(self):
@@ -187,7 +187,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
                                 facts={"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "metricDaysWithData": {"MetricA": 27}, "metricDays": {"MetricA": 30}})
         b = brief.build_brief(case, make_advice(resource_id=DISK, resource_name="disk-demo", resource_group="rg-platform"), now=WEB_NOW, may_answer=True)
         self.assertEqual(b.headline, "Consider deleting the disk disk-demo in group rg-platform")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'Meternaut does not know what depends on it. The MetricA metric was 0 in 30 days, 27 of them with a value. The second AI says: "A monthly job may need the headroom."'))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'The MetricA metric was 0 in 30 days, 27 of them with a value, which does not show what depends on it. The second AI says: "A monthly job may need the headroom."'))
         self.assertEqual((b.check_first, stake.chips_of(b)[0]), ((), "Medium risk if you act"))
         self.assertIn("with a value on 27 of those days", next(f.value for f in b.facts if f.label == "MetricA"))
 
@@ -195,7 +195,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         asks_to_change = endpoint_case(recommendation="change", facts={"basis": "oversized", "proposal": "change", "metrics": {"MetricA": 4}})
         b = brief.build_brief(asks_to_change, endpoint_plan(asks_to_change, title="Look at the private endpoint pe-apim-demo"), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.headline.startswith("Look at"), b.risk.level, b.risk.text),
-                         (True, "high", 'Other resources can depend on a private endpoint. The MetricA metric was 4 in the period measured. The second AI says: "Disconnected shows how it is now, not for how long."'))
+                         (True, "high", 'Other resources can depend on a private endpoint. The MetricA metric was 4 in the period measured, which does not show what depends on it. The second AI says: "Disconnected shows how it is now, not for how long."'))
         self.assertEqual(b.check_first, (), "it is not the question whether the resource is still used")
 
     def test_a_request_with_no_plan_and_a_case_of_the_older_detectors_keep_their_words(self):
