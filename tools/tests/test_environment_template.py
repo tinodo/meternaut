@@ -477,7 +477,7 @@ class Workflow(unittest.TestCase):
         self.assertIn(f"uses: {pinned.group(1)}", text(".github/workflows/checks.yml"), "the very action that the checks use")
         self.assertIn('python-version: "3.13"', block)
         self.assertLess(names.index(title), names.index("The templates compile, for the check of their parameter files"))
-        self.assertLess(names.index(title), names.index("Pack the cases app's sources for the Operator"), "the app is not built with its libraries on the runner any more, but the runtime is set up before anything of an app is packed")
+        self.assertLess(names.index(title), names.index("Work out which release the cases app is given, the commit and the digest of its own files"), "the runtime is set up before the digest of the app's files is worked out and before anything is published")
         self.assertRegex(text("environment/cases/main.bicep"), r"3\.13", "the runtime that the app is made for")
         self.assertIn("python3 -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)'", text("tools/build-function-app.sh"))
 
@@ -938,7 +938,7 @@ class AnAppsPrivateEndpointIsNeverAddedWithoutTheWait(unittest.TestCase):
             "action": "cases", "variable": "CASES_ENDPOINTS", "output": "cases_endpoints", "deploy": "Deploy the first cases",
             "wait": "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
             "login": "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-            "build": "Pack the cases app's sources for the Operator", "publish": "Publish the cases to the function app from inside the network, in the Operator",
+            "publish": "Publish the cases to the function app from inside the network, in the Operator",
             "given": "The cases app was not given its code."},
     }
 
@@ -975,9 +975,9 @@ class AnAppsPrivateEndpointIsNeverAddedWithoutTheWait(unittest.TestCase):
             self.assertEqual(re.findall(r"\baz ([a-z-]+ [a-z-]+ [a-z-]+ [a-z-]+)", self.script(app["wait"])), ["network private-endpoint dns-zone-group list"], "it reads the zone group of the endpoint and nothing else")
             for word in ("--method", "--yes", "dns-zone-group create", "dns-zone-group delete", "az network private-dns", "az role", "az resource"):
                 self.assertNotIn(word, self.script(app["wait"]), f"{path}: {word}")
-            order = [self.names.index(app[key]) for key in ("deploy", "wait", "login", "build", "publish")]
-            self.assertEqual(order, sorted(order), f"{path}: the deploy, the wait, a fresh sign-in (the first credential is old by the end of a wait), the build and the publish, in that order")
-            for key in ("wait", "login", "build", "publish"):
+            order = [self.names.index(app[key]) for key in ("deploy", "wait", "login", "publish")]
+            self.assertEqual(order, sorted(order), f"{path}: the deploy, the wait, a fresh sign-in (the first credential is old by the end of a wait) and the publish, in that order")
+            for key in ("wait", "login", "publish"):
                 self.assertIn(f"        if: inputs.action == '{app['action']}'\n", self.step(app[key]), f"{path}: {key}")
 
     def test_the_comment_of_the_wait_says_what_happened_so_that_nobody_takes_the_wait_away(self):
@@ -992,8 +992,8 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
 
     PUBLISHES = {
         "cases": {"action": "cases", "title": "Publish the cases to the function app from inside the network, in the Operator", "id": "publish_cases", "seconds": 1200, "minutes": 25,
-                  "cleanup": "Delete any container group of the publish of the cases that is left", "files": ["cases-source.zip", "build-function-app.sh"],
-                  "fetch_files": ["build-function-app.sh", "source-digest.py", "requirements.txt", "host.json"]},
+                  "cleanup": "Delete any container group of the publish of the cases that is left",
+                  "files": ["build-function-app.sh", "source-digest.py", "requirements.txt", "host.json"]},
     }
     PROBE = "Run the probe in the Operator"
 
@@ -1013,7 +1013,7 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
     def test_each_publish_finds_the_operator_then_asks_for_the_token_right_before_the_tool_and_the_tool_is_the_last_thing_it_runs(self):
         for kind, want in self.PUBLISHES.items():
             script = self.script(want["title"])
-            order = ('identity_id=$(az resource list', "grep -Eq '^/subscriptions/' <<< \"$identity_id\"", 'az rest --method get --url "https://management.azure.com${subnet_id}', "dns=()", "bytes=$(wc -c",
+            order = ('identity_id=$(az resource list', "grep -Eq '^/subscriptions/' <<< \"$identity_id\"", 'az rest --method get --url "https://management.azure.com${subnet_id}', "dns=()", "files=(",
                      "curl_status=0", 'echo "::add-mask::$token"', 'AZURE_FEDERATED_TOKEN="$token" python3 tools/operator-run.py run')
             positions = [script.index(word) for word in order]
             self.assertEqual(positions, sorted(positions), f"{kind}: everything else is ready before the token is asked for: it is valid for five minutes")
@@ -1038,10 +1038,10 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
         for want in self.PUBLISHES.values():
             block, script = self.step(want["title"]), self.script(want["title"])
             self.assertEqual(sorted(re.findall(r"--secure-env [A-Za-z_=]+", block)), ["--secure-env AZURE_FEDERATED_TOKEN", "--secure-env GITHUB_TOKEN"],
-                             "two secure values, each named and never given: the deploy identity's token, and (only for a private repository, only on the fetch path) the token of the run that reads the repository")
-            self.assertEqual(re.findall(r"(?m)^          GITHUB_TOKEN: (.+)$", block), ["${{ inputs.sources == 'fetch' && github.event.repository.private && github.token || '' }}"],
-                             "the token of the run is in the environment of the step only for a private repository on the fetch path, and is empty in every other run")
-            self.assertEqual(re.findall(r"(?m)^.*--secure-env GITHUB_TOKEN.*$", script), ['            if [ -n "${GITHUB_TOKEN:-}" ]; then github_token=(--secure-env GITHUB_TOKEN); fi'], "named in one place, on the fetch path, and only when it is set")
+                             "two secure values, each named and never given: the deploy identity's token, and (only for a private repository) the token of the run that reads the repository")
+            self.assertEqual(re.findall(r"(?m)^          GITHUB_TOKEN: (.+)$", block), ["${{ github.event.repository.private && github.token || '' }}"],
+                             "the token of the run is in the environment of the step only for a private repository, and is empty in every other run")
+            self.assertEqual(re.findall(r"(?m)^.*--secure-env GITHUB_TOKEN.*$", script), ['          if [ -n "${GITHUB_TOKEN:-}" ]; then github_token=(--secure-env GITHUB_TOKEN); fi'], "named in one place, and only when it is set")
             for value in re.findall(r'--env "[A-Z_]+=([^"]*)"', script):
                 self.assertNotRegex(value, r"(?i)token", "no --env value is the token")
             for word in ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_PATH", "set -x", "xtrace", " tee ", "::set-output", "::save-state"):
@@ -1084,32 +1084,25 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
         for want in self.PUBLISHES.values():
             script = self.script(want["title"])
             names = set(re.findall(r'--env "(PUBLISH_[A-Z_]+)=', script))
-            expected = {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES"}
-            if want["action"] == "cases":
-                expected.add("PUBLISH_PLAN")  # the plan kind of the web page's app: the usage app is always Flex Consumption and says nothing
-                expected |= {"PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST"}  # the fetch path of the input sources: the container fetches the commit instead of unpacking an archive
+            expected = {"PUBLISH_KIND", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_PLAN",
+                        "PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST"}  # the container fetches the commit of the run: the three variables are always set
             self.assertEqual(names, expected, want["title"])
             given |= names
             sent = re.findall(r'--secret-file "([^"=]+)=', script)
-            self.assertEqual(sent, want["fetch_files"] + want["files"], f"{want['title']}: the files of the fetch path first, then the files of the request path")
+            self.assertEqual(sent, want["files"], f"{want['title']}: the build script, the tool that makes the digest, the lock and the host file: no sources")
             for name in sent:
                 self.assertIn(f"$volume/{name}", source, f"{name}: the container script looks for the file that the step sends")
         self.assertEqual(read - given, {"PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP"}, "the script reads what the steps give it, and an optional hold and the hooks of its tests")
         self.assertEqual(given - read, set(), "and the steps give it nothing that it does not read")
         self.assertIn("AZURE_FEDERATED_TOKEN", source)
 
-    def test_the_runner_builds_no_libraries_of_the_app_and_only_zips_the_sources_with_the_script_that_the_container_builds_with(self):
-        builders = [(re.match(r"name: (.+)", b).group(1), b) for b in self.steps if "tools/build-function-app.sh" in b and "--secret-file" not in b]
-        self.assertEqual([name for name, _ in builders], ["Pack the cases app's sources for the Operator"],
-                         "the finished package of the app is too big for a container group's request: it is not built here")
-        self.assertIn('FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/cases-source" "$RUNNER_TEMP/cases-source.zip"', builders[0][1])
-        for name, block in builders:
-            self.assertEqual(len(re.findall(r"(?m)^\s*FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app\.sh ", block)), 1, f"{name}: one build, in the mode that installs nothing")
+    def test_the_runner_builds_nothing_for_the_publish_and_the_build_script_runs_in_the_container_only_with_the_files_that_it_fetched(self):
+        builders = [re.match(r"name: (.+)", b).group(1) for b in self.steps if "tools/build-function-app.sh" in b and "--secret-file" not in b]
+        self.assertEqual(builders, [], "the finished package of the app is too big for a container group's request, and the sources are fetched: the runner builds and packs nothing")
         self.assertNotIn("FUNCTION_APP_BUILD_IN_OPERATOR", self.text, "that switch is set in the container only, by the container script")
         container = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
         self.assertIn("FUNCTION_APP_BUILD_IN_OPERATOR=1", container)
         self.assertIn("FUNCTION_APP_SOURCE_DIR=", container)
-        self.assertNotIn("FUNCTION_APP_SOURCES_ONLY", container, "the container never zips sources: it builds from them")
 
     def test_the_summaries_say_that_the_code_is_published_from_inside_the_network_and_what_a_stop_at_that_step_means_and_the_order_on_an_estate_that_has_no_operator(self):
         for words in ("It publishes the app's code from inside the network, in a container group of the Operator that signs in as the deploy identity with a token of the run and goes through the "
@@ -1118,7 +1111,7 @@ class TheCodeIsPublishedFromInsideTheNetwork(unittest.TestCase):
                       "If they stop at the step that publishes the code from inside the network, the app and its endpoint are made and the app was not given its code: the lines say that the Operator is not there",
                       "on an estate that has none the order is base, cases, operator, and then cases again) or what the container said.",
                       "The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the "
-                      "hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with "
+                      "hash-locked lock file (it fetched the sources of this commit from GitHub and held them against the digest of this run's own checkout before it signed in, because the finished package is too big for a request) and published the finished package through the app's private endpoint: with "
                       "the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan",
                       "the runner published nothing"):
             self.assertIn(words, self.text, words)
@@ -1235,7 +1228,7 @@ class CasesWorkflow(unittest.TestCase):
                  "Let the cases app go from an integration subnet that is not the one of the template", "Deploy the first cases",
                  "Wait until the landing zone has registered the cases app's private endpoint in the central zone",
                  "Sign in to Azure again for the publish of the cases, because the first sign-in's credential lasts five minutes",
-                 "Pack the cases app's sources for the Operator", "Publish the cases to the function app from inside the network, in the Operator",
+                 "Publish the cases to the function app from inside the network, in the Operator",
                  "Delete any container group of the publish of the cases that is left",
                  "Sign in to Azure again for the health check of the cases app in the Operator, because the publish in the Operator can take a quarter of an hour and a credential lasts five minutes",
                  "Wait until the cases app answers", "Delete any container group of the health check of the cases app that is left",
@@ -1258,19 +1251,20 @@ class CasesWorkflow(unittest.TestCase):
         self.assertIn("--output functionAppId", deploy)
         self.assertEqual(self.text.count("--template environment/cases/main.bicep"), 3, "the preview, the step before the deploy (which asks for a preview of the deploy, to read the role assignments that it would write) and the deploy, nothing else")
 
-    def test_the_cases_are_published_in_the_operator_with_the_deploy_identity_and_no_password_from_sources_that_the_container_builds(self):
-        pack, publish = self.step("Pack the cases app's sources for the Operator"), self.step("Publish the cases to the function app from inside the network, in the Operator")
-        self.assertIn('FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/cases-source" "$RUNNER_TEMP/cases-source.zip"', pack)
-        for word in ("--script operator/publish.sh", '--secret-file "cases-source.zip=$RUNNER_TEMP/cases-source.zip"', '--secret-file "build-function-app.sh=tools/build-function-app.sh"', '--env "PUBLISH_KIND=cases"',
-                     '--env "PUBLISH_APP=$FUNCTION_APP"', "--secure-env AZURE_FEDERATED_TOKEN", '--name "op-publish-$GITHUB_RUN_ID"', '--image "$OPERATOR_IMAGE"', '"${dns[@]}"'):
+    def test_the_cases_are_published_in_the_operator_with_the_deploy_identity_and_no_password_from_sources_that_the_container_fetches(self):
+        publish = self.step("Publish the cases to the function app from inside the network, in the Operator")
+        for word in ("--script operator/publish.sh", '--secret-file "build-function-app.sh=tools/build-function-app.sh"', '--secret-file "source-digest.py=tools/source-digest.py"',
+                     '--secret-file "requirements.txt=src/case-functions/requirements.txt"', '--secret-file "host.json=src/case-functions/host.json"', '--env "PUBLISH_KIND=cases"',
+                     '--env "PUBLISH_APP=$FUNCTION_APP"', '--env "PUBLISH_SOURCES_COMMIT=$GITHUB_SHA"', '--env "PUBLISH_SOURCES_REPOSITORY=$GITHUB_REPOSITORY"', '--env "PUBLISH_SOURCES_DIGEST=$PACKAGE_SHA256"',
+                     "--secure-env AZURE_FEDERATED_TOKEN", '--name "op-publish-$GITHUB_RUN_ID"', '--image "$OPERATOR_IMAGE"', '"${dns[@]}"'):
             self.assertIn(word, publish, word)
-        self.assertIn('bytes=$(wc -c < "$RUNNER_TEMP/cases-source.zip" | tr -d \' \')', publish, "the size that the container compares the file in its volume with is the size of the sources")
+        self.assertIn("PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}", publish, "the digest that the container holds the fetched files against is the one that the release step worked out over this checkout")
         self.assertIn("FUNCTION_APP: ${{ steps.params.outputs.cases_function_app_name }}", publish)
         self.assertIn('echo "::add-mask::$token"', publish, "the token is masked at once")
         self.assertLess(publish.index("::add-mask::"), publish.index("python3 tools/operator-run.py run"), "and before anything is started with it")
         self.assertIn("this run has none", publish, "no token: nothing is published, and the step says why")
         for word in ("az webapp deploy", "publishing-credentials", "--user", "--password", "config-zip", "kit/", "environment/", "zipdeploy", "--data-binary", "get-access-token", "package.zip", "case-functions.zip"):
-            self.assertNotIn(word, publish + pack, word)
+            self.assertNotIn(word, publish, word)
 
     def test_the_function_subnet_is_read_before_anything_is_removed_and_a_plan_that_still_holds_it_is_named_with_what_to_do(self):
         title = "The function subnet is free for the cases app, which runs on Flex Consumption"
