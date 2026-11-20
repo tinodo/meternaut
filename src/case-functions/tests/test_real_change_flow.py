@@ -24,7 +24,6 @@ from test_words import Rendered, _letter, blocks_of_card, blocks_of_html, proble
 from cases import brief as brief_mod
 from cases import letters, pricing, proposals, upkeep
 from cases.families import gates, words
-from cases.models import GROUP_FACT
 from cases.runner import execute
 
 HOST, POOL = "microsoft.example/bastionhosts", "microsoft.example/workerpools"
