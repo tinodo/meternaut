@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, PROPOSED, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -405,7 +405,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
         parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, which Meternaut's code made into a request.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE)}  # what code made of the estate is in the evidence above, and no AI saw it
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE, PROPOSED)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
                            [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))

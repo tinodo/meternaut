@@ -8,6 +8,7 @@ from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
                               priced_facts, snapshot)
 
+from cases import proposals
 from cases.costs import analysis_url
 from cases.decide import NO_MEASUREMENT
 from cases.models import GROUP_FACT, SettingsRecord, StoreError
@@ -816,7 +817,7 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
         self.assertEqual(labels[:3], ["What the AI says. Meternaut did not check the wording.", "What the AI says you could do. Meternaut did not check the wording.", "What the second AI doubts."])
         self.assertIn("Take it down one size.", self.reply.content)
-        self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"})
+        self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"} - {proposals.KEY}, "the key of what a finding proposes is no typed fact")
 
     def test_a_finding_that_states_no_change_has_no_such_box(self):
         self.console.store.case_put(make_case(**INVESTIGATED))

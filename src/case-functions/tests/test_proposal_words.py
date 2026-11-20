@@ -415,6 +415,21 @@ class OtherWaysToSave(unittest.TestCase):
             with self.subTest(surface):
                 self.assertNotIn("other way", read(shown))
 
+    def test_the_details_list_no_row_for_what_the_finding_proposes_because_its_words_are_the_ai_s(self):
+        from cases.web import brief_page
+
+        case, plan = gateway(BOTH)
+
+        def details() -> list[str]:
+            return [block.text for block in surfaces(case, plan)["page"].blocks if block.details and block.kind == "cell"]
+
+        self.assertIn("basis", details())
+        self.assertNotIn(proposals.KEY, details())
+        self.assertEqual([text for text in details() if "Lite is shared" in text], [])
+        with mock.patch.object(brief_page, "PROPOSED", "nothing"):
+            self.assertIn(proposals.KEY, details())
+            self.assertTrue([text for text in details() if "Lite is shared" in text])
+
     def test_the_table_fails_when_the_readers_are_taken_out(self):
         case, plan = gateway(BOTH)
         with mock.patch.object(proposals, "others", lambda facts: ()):
@@ -426,7 +441,9 @@ class EverySurfaceReadsAsSentences(unittest.TestCase):
     """The lint of the words (test_words) holds the new sentences too: voice, whole sentences, no abbreviated date and no repeated sentence."""
 
     def test_each_request_reads_as_sentences_on_the_page_the_card_and_the_letter(self):
-        for name, (case, plan) in {"cannot": gateway(BOTH, precondition="switch-off"), "no change yet": gateway(), "a change": a_change()}.items():
+        group = {"count": 6, "groups": 2, "type": TYPE, "names": ["lab-gw-2", "lab-gw-3"], "costUsd30d": 2400.0}
+        for name, (case, plan) in {"cannot": gateway(BOTH, precondition="switch-off"), "no change yet": gateway(), "a change": a_change(),
+                                   "a group": gateway(facts={**gateway_facts(), GROUP_FACT: group}, number=4)}.items():
             for surface, shown in surfaces(case, plan).items():
                 with self.subTest(name, surface=surface):
                     self.assertEqual([], problems(dataclasses.replace(shown, name=f"{name}, {surface}")))

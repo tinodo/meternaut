@@ -106,6 +106,7 @@ HOLD_WORDS = {
 # What removing the resource would do (cases/impact.py makes the digest of the check, code gives the verdict and no model sees it), kept in the facts of the case under IMPACT.
 IMPACT = "impact"
 CHANGE = pricing.KEY  # the key of the change that a finding states, kept in the facts of the case (cases/pricing.py makes its digest)
+PROPOSED = proposals.KEY  # the key of what a finding proposes (cases/proposals.py): the titles and the words about what each gives up in it are the AI's own, so the Details list it as no typed fact
 IMPACT_VERDICTS = {"safe": "Safe to remove", "check": "Check first", "keep": "Do not remove"}
 IMPACT_SAYS = {"safe": "It looks safe to remove.", "check": "Check what depends on it before you remove it.", "keep": "Do not remove it."}  # the verdict as the first sentence of the line of a card or a letter
 NOT_ANALYSED = "Meternaut did not look at what depends on it."
