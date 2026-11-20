@@ -274,7 +274,7 @@ class ThePlan(unittest.TestCase):
         self.assertEqual(plan.digest, plan_digest.digest_of(plan))
         self.assertEqual(plan.title, f"Scale down the gateway {NAME} in resource group {REAL_GROUP}: capacity units from 4 to 2")
         said = sentences(plan)
-        self.assertIn("with your own permissions", said)
+        self.assertIn("It uses your own permissions", said)
         self.assertIn("capacity units to 4", plan.undo)
         self.assertIn("--set properties.capacityUnits=4 --api-version 2024-05-01", plan.undo)
         self.assertIn("Azure Monitor shows ActiveSessions at 0 over 30 days", said)
@@ -298,7 +298,7 @@ class ThePlan(unittest.TestCase):
         plan = world.plan(facts={proposals.KEY: {"set": [{"path": "CAPACITYunits", "from": 4, "to": 3}, {"path": "sku.capacity", "from": 2, "to": 1}]}})
         self.assertEqual(plan.target["set"], [{"path": "capacityUnits", "from": 4, "to": 3}, {"path": "sku.capacity", "from": 2, "to": 1}])
         self.assertIn("capacity units from 4 to 3 and sku capacity from 2 to 1", plan.title)
-        self.assertIn("those numbers", plan.what_changes)
+        self.assertIn("with this change: capacity units from 4 to 3 and sku capacity from 2 to 1", plan.what_changes)
         self.assertIn("--set properties.capacityUnits=4 sku.capacity=2", plan.undo)
 
     def test_each_reason_that_a_plan_cannot_be_made_is_kept_by_the_request_that_asks_instead_and_has_its_words(self):

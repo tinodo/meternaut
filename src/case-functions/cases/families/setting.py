@@ -34,13 +34,12 @@ from ..http import HttpError, Refused
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
 from . import calls, words
-from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, read_resource, refusal, skeptic_sentence, subscription_words
+from .base import Env, Family, Located, Planned, Stop, Unreadable, Verdict, evidence_text, per_day_check, read_resource, refusal, skeptic_sentence
 from .gates import Gates
 
 ENVELOPE = frozenset({"id", "name", "type", "systemdata"})  # what only a GET has, at the root of the resource
 READ_ONLY = frozenset({"etag", "provisioningstate"})  # what Azure fills in itself, at every depth
 METRIC_TIME = "%Y-%m-%dT%H:%M:%SZ"
-MAX_DAYS = 30
 BUSY = "something else is changing the resource right now, or its last operation did not work"
 # The words of a refusal right before the change, as the end of "Meternaut did not change the <kind>: ...", for the two gates of the owner.
 GATES = {"outside": "the resource is not in a resource group on the owner's list of places where a real change may be made", "switch-off": "the owner has not allowed changes of real resources"}
@@ -185,18 +184,11 @@ def read_total(env: Env, located: Located, name: str, days: int) -> float:
     return math.fsum(totals)
 
 
-def measured_of(preconditions: dict) -> list[tuple[str, float, int]]:
-    """The measurements that a plan cites, as (name, total, days)."""
-    items = preconditions.get("measured") if isinstance(preconditions.get("measured"), list) else []
-    return [(i["name"], i["total"], i["days"]) for i in items if isinstance(i, dict) and isinstance(i.get("name"), str) and words.METRIC_WORDS.fullmatch(i["name"])
-            and _number(i.get("total")) and i["total"] >= 0 and isinstance(i.get("days"), int) and 0 < i["days"] <= MAX_DAYS]
-
-
 def cited(facts: object) -> list[dict]:
     """The measurements that the case cites, as typed values (name, total, days), at most three: the ones that Azure Monitor can be asked for again by name."""
     metrics, days = (facts.get("metrics"), facts.get("metricDays")) if isinstance(facts, dict) else (None, None)
     rows = [{"name": name, "total": total, "days": days[name]} for name, total in (metrics.items() if isinstance(metrics, dict) else []) if isinstance(days, dict) and name in days]
-    return [row for row in rows if words.METRIC_WORDS.fullmatch(row["name"]) and _number(row["total"]) and row["total"] >= 0 and isinstance(row["days"], int) and 0 < row["days"] <= MAX_DAYS][:3]
+    return [{"name": name, "total": total, "days": window} for name, total, window in words.measured({"measured": rows})]
 
 
 class ChangeSetting(Family):
@@ -259,29 +251,16 @@ class ChangeSetting(Family):
         stopped = judge(resource, aims)
         if stopped is not None:
             raise Cannot(stopped[0])
-        sets = [{"path": find(resource, path)[2], "from": now, "to": to} for path, now, to in aims]  # type: ignore[index]
-        target = {"set": sets, "apiVersion": api, "location": clean_text(str(resource.get("location") or ""), 40)}
+        target = {"set": [{"path": find(resource, path)[2], "from": now, "to": to} for path, now, to in aims],  # type: ignore[index]
+                  "apiVersion": api, "location": clean_text(str(resource.get("location") or ""), 40)}
         group, name = clean_text(getattr(lead, "resource_group"), 90), clean_text(getattr(lead, "name"), 120)
         pre = {"family": self.name, "resourceType": getattr(lead, "resource_type").lower(), "resourceGroup": group.lower(), "measured": cited(getattr(lead, "facts", {}))}
-        kind, said, back, now = words.kind_words(getattr(lead, "resource_id")), words.changes_text(target), words.changes_text(target, "back"), words.changes_text(target, "now")
+        kind = words.kind_words(getattr(lead, "resource_id"))
+        said = words.setting_words(kind, name, group, target, pre)  # the words that the pages show are the words of the record: one text
         reading = words.measured_text(pre)
-        many = len(aims) != 1
-        command = " ".join(f"{s['path'] if s['path'].lower().startswith('sku') else 'properties.' + s['path']}={proposals.shown(s['from'])}" for s in sets)
         return Planned(
-            title=f"Scale down the {kind} {name} in resource group {group}: {said}",
-            what_changes=(f"When you approve, Meternaut changes the {kind} {name} in resource group {group} (subscription {subscription_words(lead)}): {said}, with your own permissions. "
-                          f"It sends the {kind} back to Azure as it was read, with only {'those numbers' if many else 'that number'} changed. Right before it acts, it reads the {kind} again and stops unless "
-                          f"{'every old value is' if many else 'the old value is'} still the one shown here, the last operation on the {kind} worked, no lock and no do-not-touch note is on it, "
-                          "and its resource group is still on the owner's list of places for real changes."
-                          + (f" It also reads {words._list([n for n, _, _ in measured_of(pre)])} again over the same number of days, and stops if "
-                             f"{'it is' if len(measured_of(pre)) == 1 else 'any of them is'} above what this request was made with." if reading else "")),
-            could_go_wrong=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
-                            + (f"What it checked: {reading}, and that no lock is on the {kind}. " if reading else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
-                            + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
-                            f"If your account may not change the {kind}, Azure refuses and nothing changes. {skeptic_sentence(case)}"),
-            undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with az resource update --ids <resource id> --set {command} --api-version {api}. "
-                  "That update takes minutes too and needs the same right."),
-            evidence=evidence_text(lead, f"the {kind} shows {now} as Azure returns it now (read by code)." + (f" {reading}, which the AI's tools read and code checked." if reading else "")),
+            title=said.headline, what_changes=f"{said.change} {said.rechecked}", could_go_wrong=f"{said.risk} {skeptic_sentence(case)}", undo=said.undo,
+            evidence=evidence_text(lead, f"the {kind} shows {words.changes_text(target, 'now')} as Azure returns it now (read by code)." + (f" {reading}, which the AI's tools read and code checked." if reading else "")),
             target=target, preconditions=pre, saving_usd_month=case.saving_usd_month if (case.saving_usd_month or 0) > 0 else None)
 
     # -- the re-check -------------------------------------------------------------------------------------------------------------------------------------------
@@ -310,7 +289,7 @@ class ChangeSetting(Family):
             stopped = judge(resource, aims)
             if stopped is not None:
                 raise Stop(stopped[1])
-            for name, total, days in measured_of(pre):
+            for name, total, days in words.measured(pre):
                 now = read_total(env, located, name, days)
                 if now > total:
                     raise Stop(f"{name} is {proposals.shown(round(now, 2))} over the last {days} days, above the {proposals.shown(total)} that the request was made with, so something may use the resource")

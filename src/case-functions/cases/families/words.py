@@ -29,6 +29,8 @@ RESOURCE_TYPE = re.compile(r"microsoft\.[a-z0-9]{2,30}/[a-z0-9]{2,40}")
 # The key path of a setting that `change-setting` changes (dotted words, the platform's own spelling, no list), and the name of a measurement that its plan cites (cases/investigate.py METRIC_NAME).
 SETTING_PATH = re.compile(r"[A-Za-z][A-Za-z0-9]{0,59}(?:\.[A-Za-z][A-Za-z0-9]{0,59}){0,5}")
 METRIC_WORDS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}")
+API_VERSION = re.compile(r"\d{4}-\d{2}-\d{2}")  # an api-version that is not a preview
+MEASURED_DAYS = 30  # the most days that a cited measurement covers: the toolbox looks back at most that far
 
 
 @dataclass(frozen=True)
@@ -267,28 +269,44 @@ def changes_text(target: dict, how: str = "change") -> str:
     return _list([say(*item) for item in sets]) if sets else "a number"
 
 
-def measured_text(preconditions: dict) -> str:
-    """The measurements that a plan of `change-setting` cites, from its preconditions, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
-    items = preconditions.get("measured") if isinstance(preconditions.get("measured"), list) else []
-    cited = [f"{item['name']} at {value(item['total'])} over {item['days']} days" for item in items[:3] if isinstance(item, dict) and isinstance(item.get("name"), str)
-             and isinstance(item.get("total"), (int, float)) and isinstance(item.get("days"), int) and METRIC_WORDS.fullmatch(item["name"])]
-    return f"Azure Monitor shows {_list(cited)}" if cited else ""
+def measured(pre: dict) -> list[tuple[str, int | float, int]]:
+    """The measurements that a plan of `change-setting` cites, from its preconditions, as (name, total, days): a plain metric name, a total that is not below nothing and a window of 1 to MEASURED_DAYS days,
+    at most three."""
+    items = pre.get("measured") if isinstance(pre.get("measured"), list) else []
+    return [(i["name"], i["total"], i["days"]) for i in items if isinstance(i, dict) and isinstance(i.get("name"), str) and METRIC_WORDS.fullmatch(i["name"])
+            and isinstance(i.get("total"), (int, float)) and not isinstance(i.get("total"), bool) and i["total"] >= 0 and isinstance(i.get("days"), int) and 0 < i["days"] <= MEASURED_DAYS][:3]
+
+
+def measured_text(pre: dict) -> str:
+    """The measurements that a plan cites, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
+    return f"Azure Monitor shows {_list([f'{name} at {value(total)} over {days} days' for name, total, days in measured(pre)])}" if measured(pre) else ""
+
+
+def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
+    """The words of a plan of `change-setting`, from the kind of the resource, its name and group, and the target and the preconditions of the plan. The pages, the cards, the letters and the record of the
+    plan read this one text, so that what a person is shown is what is kept."""
+    said, cited = changes_text(target), measured_text(pre)
+    api = target.get("apiVersion")
+    again = f" It also reads {_list([name for name, _, _ in measured(pre)])} again over the same number of days, and stops if the reading is above what this request was made with." if cited else ""
+    command = " ".join(f"{path if path.lower().startswith('sku') else 'properties.' + path}={value(old)}" for path, old, _ in _sets(target))
+    command = f"az resource update --ids <resource id> --set {command}{f' --api-version {api}' if isinstance(api, str) and API_VERSION.fullmatch(api) else ''}" if command else "az resource update"
+    return Words(
+        headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
+        change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change: {said}. It uses your own permissions, and nothing else "
+                f"of the {kind} changes."),
+        rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
+                   f"note, and it is in a resource group on the owner's list for real changes.{again}"),
+        risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
+              + (f"What it checked: {cited}, and that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
+              + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
+              f"If your account may not change the {kind}, Azure refuses and nothing changes."),
+        level="medium",
+        undo=f"Set {changes_text(target, 'back')} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right.", reversible=True)
 
 
 def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
-    kind = kind_words(plan.resource_id if plan is not None else "")
-    thing = name or "this resource"
-    target = _target(plan)
-    said, back = changes_text(target), changes_text(target, "back")
-    cited = measured_text(plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
-    return Words(
-        headline=f"Scale down the {kind} {thing}{f' in resource group {group}' if group else ''}: {said}",
-        change=f"Azure changes the {kind} {thing} in resource group {group or 'this group'}: {said}. Nothing else of it changes.",
-        rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
-                   "note, and it is in a resource group on the owner's list for real changes."),
-        risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. " + (f"{cited}, and no lock stops the change." if cited else "No measurement of its use is cited, and no lock stops the change.")),
-        level="medium",
-        undo=f"Set {back} again, on the page of the {kind} in the Azure portal or with az resource update. Azure carries out that update the same way.", reversible=True)
+    return setting_words(kind_words(plan.resource_id if plan is not None else ""), name or "this resource", group or "this group", _target(plan),
+                         plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
 
 
 @dataclass(frozen=True)
