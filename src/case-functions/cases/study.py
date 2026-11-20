@@ -6,8 +6,9 @@ One run of the Study (the timer `study-weekly`, or the control message with the 
      is read or asked before that.
   2. It reads again the claims that are due (code only: the page is fetched again and the quote must still be on it, a quote that is not is marked stale).
   3. It surveys the estate: the kinds of resource that it has (one Resource Graph query, the same one that the investigation's overview makes) that have no current claim and no mark that they
-     were studied, the dearest first (what each kind cost over the last 30 closed days, in US dollars, from the cost that the Watch reads; then the most common, then the name), at most
-     STUDY_MAX_TYPES of them. The list is made from what exists, and only dollars rank it: no person writes it and no rule in code names a kind of resource.
+     were studied, those that an open finding or a request that waits is about first (what the pages say about them is on record before the Investigator judges one of them again), then the
+     dearest (what each kind cost over the last 30 closed days, in US dollars, from the cost that the Watch reads; then the most common, then the name), at most STUDY_MAX_TYPES of them. The list
+     is made from what exists, and only dollars and the store's open findings rank it: no person writes it and no rule in code names a kind of resource.
   4. It runs the Scholar (cases/agents.py) through the agent harness (cases/harness.py: the lock, the switches, the budgets, the guard on the tool calls, the trace) with one tool, `fetch_doc`
      (cases/library.py), which this app runs against public pages only. Every model call goes through the AI Gateway, as every model call of Meternaut does.
   5. It checks every claim in the Scholar's answer by code: the kind of resource is one of the input, the kind of claim is on the closed list, the page is one that this run read, and the quote is
@@ -29,7 +30,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Collection, Mapping
 
-from . import agents, config as cfg, harness as harness_module, library, scope as scope_mod, switches, toolbox, wiring
+from . import agents, config as cfg, harness as harness_module, learning, library, scope as scope_mod, switches, toolbox, wiring
 from .arm import Arm
 from .events import History
 from .foundry import FoundryError, Foundry
@@ -49,6 +50,7 @@ SURVEY_CLAIMS = 500  # the claims of the store that the survey looks at
 REASONS = ("shape", "type", "kind", "url", "quote", "cap", "duplicate")  # why a claim is thrown away: the words of the History, never the text of the claim
 COST_SECONDS = 60  # a read of the cost of a subscription starts only in the first minute of the survey, so that a slow Cost Management does not take the time of the Scholar
 COST_NOTE = "the cost of some kinds of resource could not be read, so they are studied after the kinds that have a cost, the most common first"
+OPEN_NOTE = "the open findings could not be read, so the kinds are studied dearest first"
 
 
 @dataclass
@@ -185,10 +187,18 @@ def type_costs(s: Services, subscriptions: Collection[str], now: dt.datetime) ->
     return costs, complete
 
 
+def open_kinds(s: Services, now: dt.datetime) -> set[str]:
+    """The kinds of resource that a finding that nobody has decided (learning.OpenQuestions) or a request that waits for an answer is about: the store's own record, with no name and no text."""
+    kinds = {question.resource_type for question in learning.OpenQuestions(s.store, now).rows(2 * learning.OPEN_CASES)}  # type: ignore[arg-type]
+    kinds |= {learning.resource_type_of(None, plan) for plan in s.store.plans_open() if plan.state == "open"}  # type: ignore[union-attr]
+    return kinds - {"other"}
+
+
 def survey(s: Services, now: dt.datetime, notes: list[str]) -> list[dict]:
-    """The kinds of resource of the estate that wait to be studied, as the input of the Scholar wants them: the type, and the address of its reference page. The dearest come first (their cost over the
-    30 closed days in dollars, to the cent, then how many there are, then the name), and a kind that has no cost line comes after those that have one. When a cost cannot be read the note says so, and
-    the kinds of that subscription count as having none. A kind that has a current claim, or a mark that it was studied, does not wait. A kind that is not a plain name of a resource type is left out."""
+    """The kinds of resource of the estate that wait to be studied, as the input of the Scholar wants them: the type, and the address of its reference page. The kinds that an open finding or a
+    request that waits is about come first, then the dearest (their cost over the 30 closed days in dollars, to the cent, then how many there are, then the name), and a kind that has no cost
+    line comes after those that have one. When a cost cannot be read the note says so, and the kinds of that subscription count as having none. A kind that has a current claim, or a mark that
+    it was studied, does not wait. A kind that is not a plain name of a resource type is left out."""
     st = s.settings
     try:
         scope = scope_mod.resolve(s.arm, st, None, s.redact)
@@ -205,8 +215,13 @@ def survey(s: Services, now: dt.datetime, notes: list[str]) -> list[dict]:
     costs, complete = type_costs(s, scope.subscriptions, now)
     if not complete:
         notes.append(COST_NOTE)
+    try:
+        open_ones = open_kinds(s, now)
+    except StoreError:
+        open_ones = set()
+        notes.append(OPEN_NOTE)
     known = {claim.resource_type for claim in s.store.claims_recent(SURVEY_CLAIMS) if library.current(claim, now)}  # type: ignore[union-attr]
-    ranked = sorted(counts.items(), key=lambda item: (item[0] not in costs, -round(costs.get(item[0], 0.0), 2), -item[1], item[0]))
+    ranked = sorted(counts.items(), key=lambda item: (item[0] not in open_ones, item[0] not in costs, -round(costs.get(item[0], 0.0), 2), -item[1], item[0]))
     waiting = [(resource_type, library.reference_url(resource_type)) for resource_type, _ in ranked if resource_type not in known]
     return [{"type": resource_type, "reference": reference} for resource_type, reference in waiting if reference][: st.study_max_types]
 

@@ -8,6 +8,8 @@ object of findings. Nothing in it is believed before code has checked it:
 - the cost of the resources is added up by code from the cost lines, and the agent never supplies a figure;
 - the change that a finding states (its action, the meters that it would shrink and what remains of them) is checked against the meters and the numbers that the tools showed, and the saving
   is computed by code from the bill lines (cases/pricing.py);
+- the settings that the change proposes to lower (`set`) and the other ways that it names to save on the same resource (`others`) are checked entry by entry against what the tools showed, and each
+  other way is priced from the bill like the change (cases/proposals.py): an entry that fails is dropped and counted, and the finding stays;
 - the guards of guards.py hold every resource, and a resource with a guard on leaves the finding;
 - a second agent, the Skeptic, then tries to break the findings that are left, and decide.py gives each resource its status.
 
@@ -32,7 +34,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, roles, upkeep, wiring
+from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -147,6 +149,7 @@ class Finding:
     covered_usd: float | None = None
     change: pricing.Change | None = None  # the change that the Investigator stated, read strictly (cases/pricing.py); None when it stated none
     priced: pricing.Priced | None = None  # what code made of it for the resources that are left: the figure of each, or why it has none
+    ways: proposals.Checked | None = None  # what code kept of the settings and the other ways that the change proposes, and what it dropped (cases/proposals.py)
     fates: dict[str, int] = field(default_factory=dict)  # its resources by what became of them: request, person, dropped, or why the request was held back (cases/activity.py)
     beat: int = 1  # the beat of the investigation whose session wrote it (cases/beats.py)
 
@@ -712,6 +715,7 @@ def _skeptic_text(findings: list[Finding], toolbox: Toolbox, level: tuple, left_
         model = pricing.view(f.change, f.priced, getattr(toolbox, "meters", {}), meter_word, count, left_out | (set(f.handles) - kept)) if f.priced is not None else None
         if model and model["effects"]:
             said["change"] = model  # the model of the saving, for the Skeptic to judge: the lines that it rests on and what remains of them, never the words of the AI for a person
+        said.update(proposals.view((item.handle, item.lead.facts) for item in f.items if item.handle not in left_out))  # the settings and the other ways that code kept, as typed data
         listed.append(said)
     return agents.skeptic_input(listed)
 
@@ -1148,7 +1152,10 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             continue
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
         states = {handle: _cost_state(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower()), costs[handle]) for handle in finding.handles}
-        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY}, meter_word)
+        blocked = {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY}
+        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, blocked, meter_word)
+        finding.ways = proposals.check(finding.change, finding.proposal, finding.handles, toolbox.evidence,
+                                       lambda option: pricing.price(option, finding.handles, toolbox, costs, blocked, meter_word))
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)
@@ -1156,6 +1163,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
             stated = pricing.digest(finding.change, finding.priced, handle, advisor)
             if stated is not None:
                 facts[pricing.KEY] = stated  # the change that the finding states, with the figure that code computed from the bill lines or the word that says why there is none
+            if handle in finding.ways.ways:
+                facts[proposals.KEY] = finding.ways.ways[handle]  # the settings and the other ways that code kept for this resource
             lead = _lead(resource, facts, costs[handle], advisor, state, _estimate(toolbox, resource, state))
             finding.seen.add(lead.lead_id)
             old = _earlier(s, lead)
@@ -1300,6 +1309,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     for finding in survivors:
         if finding.note:
             note(f"finding {finding.number}: {finding.note}")
+        if finding.ways is not None and (told := proposals.note_of(finding.ways)):
+            note(f"finding {finding.number}: {told}")
     if out.unmeasured:
         note(f"{out.unmeasured} resource{'' if out.unmeasured == 1 else 's'} of the findings {'has' if out.unmeasured == 1 else 'have'} no measurement that backs the "
              f"finding, so a person has to judge {'it' if out.unmeasured == 1 else 'them'}")
@@ -1453,7 +1464,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
     lead = item.lead
     if group:
         together = _together(group, finding.capped, finding.silenced)
-        kept = {k: v for k, v in lead.facts.items() if k != pricing.KEY}  # the figure of one resource is not the figure of the group
+        kept = {k: v for k, v in lead.facts.items() if k not in (pricing.KEY, proposals.KEY)}  # the figure and the proposals of one resource are not those of the group
         combined = pricing.combine([member.lead.facts.get(pricing.KEY) for member in group], len(group))
         kept.update({pricing.KEY: combined} if combined is not None else {})  # the digest of the group is made from the digests of its resources
         lead = replace(lead, cost_usd_30d=together["costUsd30d"], cost_state=_together_state(group, together["costUsd30d"]), estimate={},
@@ -1503,7 +1514,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if not saving and outcome.status != "dropped" and (asked := ex.approvals.asked_saving(old)):
             saving = asked  # judged again with no price while a request that was asked with one is open: the case keeps what the person was shown, the figure and the price (its level and basis)
             if pricing.saved(old.facts) is not None:
-                lead = replace(lead, facts={**lead.facts, pricing.KEY: old.facts[pricing.KEY]})
+                lead = replace(lead, facts={**lead.facts, pricing.KEY: old.facts[pricing.KEY], **({proposals.KEY: old.facts[proposals.KEY]} if proposals.KEY in old.facts and proposals.KEY not in lead.facts else {})})
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,

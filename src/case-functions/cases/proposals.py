@@ -1,8 +1,8 @@
 """What a finding proposes to be done to a resource, as data that code checked: the settings to change, and the other ways to save on the same resource.
 
-The Investigator states them in the key `change` of its answer (`set` and `others`, cases/agents.py). cases/investigate.py keeps an entry only after code has compared it with what the tools showed in
-the same run, and puts the kept ones in the facts of the case under KEY, in the plain shape below. The family `change-setting` (cases/families/setting.py) makes a `set` when a person approves it,
-with that person's own token (AGENTS.md rule 29), and the pages, cards and letters say both in words. This module reads and shapes that data and decides nothing: standard library only, and no
+The Investigator states them in the key `change` of its answer (`set` and `others`, cases/agents.py). `check` keeps an entry only after comparing it with what the tools showed in the same run, and
+cases/investigate.py puts the kept ones in the facts of the case under KEY, in the plain shape below. The family `change-setting` (cases/families/setting.py) makes a `set` when a person approves it,
+with that person's own token (AGENTS.md rule 29), and the pages, cards and letters say both in words. The readers and the builders here decide nothing about Azure: standard library only, and no
 call to Azure. A reader never raises: what is not in the shape is left out.
 
 The shape, under facts[KEY]:
@@ -14,13 +14,28 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Iterable, Mapping, NamedTuple, Sequence
 
-KEY = "proposal"
+from . import pricing
+from .pricing import NAME, _number
+from .roles import clean_text
+
+KEY = "ways"  # not "proposal": the facts of a case already hold the word of the finding's proposal under that key
 MAX_SETTINGS, MAX_OTHERS = 3, 3
 MAX_TITLE, MAX_GIVES_UP = 80, 240
+TITLE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 ,()/'+-]{{0,{MAX_TITLE - 1}}}")  # a title: plain words, with a few marks and no stop inside it
 WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # the words of a camel case key
+# Why an entry was dropped, in the words of the notes of a run: by the kind of entry, then the rule.
+WHY = {
+    "set": {"action": "the finding does not propose to reduce", "shape": "not an entry of the form", "handle": "a resource that the finding does not name", "name": "not a plain property name",
+            "shown": "a property that no tool showed", "number": "a value that is not one plain number", "from": "an old value that the tools did not show",
+            "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice", "ratio": "numbers that differ from the change's own",
+            "limit": "over the limit"},
+    "other": {"group": "a finding of more than one resource", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
+              "duplicate": "the same as the change or another way", "limit": "over the limit"},
+}
 # Why Meternaut cannot make a change that a finding proposes. The family `change-setting` stores one key in the preconditions of the request that it makes instead (`cannotChange`), and the pages,
 # cards and letters say its sentence. The sentences are whole, plain and about this one request.
 CANNOT = {
@@ -121,3 +136,141 @@ def shown(value: object) -> str:
     if isinstance(value, int):
         return f"{value:,}"
     return str(round(value, 2)) if isinstance(value, float) else str(value)
+
+
+# -- what code keeps of an answer -------------------------------------------------------------------------------------------------------------------
+
+class Checked(NamedTuple):
+    """What code made of the settings and the other ways that an answer proposed: for each handle the entry of facts[KEY] that was kept, how many entries were dropped for each (kind, rule) of WHY,
+    and how many settings and other ways the answer listed."""
+
+    ways: dict
+    dropped: Counter
+    said: tuple[int, int]
+
+
+def _same(one: float, other: float) -> bool:
+    return math.isclose(one, other, rel_tol=1e-6, abs_tol=0.0)
+
+
+def _ratios(change: pricing.Change) -> dict:
+    """The pairs of numbers that the change states as a ratio on a property, by (handle, property): a setting of that property has to be the same change."""
+    found: dict = {}
+    for effect in change.effects:
+        said, on = effect.remains, effect.remains.get("on")
+        pair = (_number(said.get("from")), _number(said.get("to")))
+        if said.get("form") == "ratio" and isinstance(on, str) and None not in pair:
+            found.setdefault((effect.handle, on), []).append(pair)
+    return found
+
+
+def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Mapping) -> tuple[str, dict] | str:
+    """The handle and the entry of one setting, or the rule that it fails: a resource of the finding, a property that a tool showed under that name with one plain number, the old value that the
+    tool showed, a new value that is smaller and of the same kind (whole where the old one is whole) and, where the change states a ratio on the property, that ratio's numbers."""
+    if not isinstance(item, Mapping):
+        return "shape"
+    handle, name = item.get("handle"), item.get("property")
+    if not isinstance(handle, str) or handle not in handles:
+        return "handle"
+    if not isinstance(name, str) or not NAME.fullmatch(name):
+        return "name"
+    block = evidence.get(handle)
+    held = block.get("properties") if isinstance(block, Mapping) else None
+    if not isinstance(held, Mapping) or name not in held:
+        return "shown"
+    now = _number(held[name])
+    if now is None:
+        return "number"
+    start, to = _number(item.get("from")), _number(item.get("to"))
+    if start is None or not _same(start, now):
+        return "from"
+    if to is None or not 0 <= to < now or (now == int(now) and to != int(to)):
+        return "to"
+    if any(not (_same(one, now) and _same(other, to)) for one, other in ratios.get((handle, name), ())):
+        return "ratio"
+    return handle, {"path": name, "from": held[name], "to": int(to) if now == int(now) else to}
+
+
+def _title(value: object) -> str:
+    """A title as it is kept: one line of plain words, at most MAX_TITLE characters, with no link, markup or amount of money in it; empty when it is not that."""
+    text = " ".join(value[:4 * MAX_TITLE].split()).rstrip(".") if isinstance(value, str) else ""
+    return text if TITLE.fullmatch(text) and clean_text(text, MAX_TITLE) == text else ""
+
+
+def _other(item: object, taken: list, titles: set) -> tuple[dict, pricing.Change] | str:
+    """The entry (without its figures) and the change of one other way, or the rule that it fails: a title in plain words, a change with an action that code can read, and not the same as the
+    change that the finding states or as a way that was kept before it."""
+    if not isinstance(item, Mapping):
+        return "shape"
+    title = _title(item.get("title"))
+    if not title:
+        return "title"
+    option = pricing.parse(item.get("change"))
+    if option is None or option.action == "none":
+        return "action"
+    if (option.action, option.effects) in taken or title.casefold() in titles:
+        return "duplicate"
+    gives_up, place = item.get("gives_up"), item.get("in_place")
+    return {"title": title, "givesUp": clean_text(gives_up, MAX_GIVES_UP) if isinstance(gives_up, str) else "", "action": option.action,
+            **({"inPlace": place} if isinstance(place, bool) else {})}, option
+
+
+def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], evidence: Mapping, price: Callable[[pricing.Change], pricing.Priced]) -> Checked:
+    """What code keeps of the settings and the other ways that the change of a finding states. `proposal` is the finding's, `handles` the resources that it covers, `evidence` what the tools showed
+    for each handle (Toolbox.evidence) and `price` the price of a change from the bill (cases/pricing.py price, for those handles). An entry that fails a rule is dropped by itself and counted, and
+    the finding is never dropped for it. Settings are kept only for a finding that proposes a change by the action reduce, and other ways only for a finding of one resource. A way that cannot be
+    priced is kept with no figure, and no way ever becomes a setting."""
+    dropped: Counter = Counter()
+    ways: dict[str, dict] = {}
+    if change is None:
+        return Checked(ways, dropped, (0, 0))
+    ratios, seen = _ratios(change), set()
+    for item in change.settings:
+        found = _setting(item, handles, evidence, ratios) if proposal == "change" and change.action == "reduce" else "action"
+        if not isinstance(found, str):
+            found = "duplicate" if (found[0], found[1]["path"]) in seen else "limit" if len(seen) >= MAX_SETTINGS else found
+        if isinstance(found, str):
+            dropped["set", found] += 1
+        else:
+            seen.add((found[0], found[1]["path"]))
+            ways.setdefault(found[0], {}).setdefault("set", []).append(found[1])
+    if change.others and len(handles) != 1:
+        dropped["other", "group"] += len(change.others)
+    elif change.others:
+        kept: list[dict] = []
+        taken, titles = [(change.action, change.effects)], set()
+        for item in change.others:
+            found = _other(item, taken, titles)
+            if isinstance(found, str) or len(kept) >= MAX_OTHERS:
+                dropped["other", found if isinstance(found, str) else "limit"] += 1
+                continue
+            entry, option = found
+            row = price(option).rows.get(handles[0])
+            kept.append({**entry, **({"lowUsd": row.low, "highUsd": row.high} if row is not None else {})})
+            taken.append((option.action, option.effects))
+            titles.add(entry["title"].casefold())
+        if kept:
+            ways.setdefault(handles[0], {})["others"] = kept
+    return Checked(ways, dropped, (len(change.settings), len(change.others)))
+
+
+def note_of(checked: Checked) -> str:
+    """The sentence for the notes of a run about the entries that code dropped (how many of those that the answer listed, and why), or "" when it dropped none."""
+    parts = []
+    for place, (kind, noun) in enumerate((("set", "setting"), ("other", "other way"))):
+        gone = {why: count for (what, why), count in checked.dropped.items() if what == kind}
+        if gone:
+            parts.append(f"{sum(gone.values())} of {checked.said[place]} {noun}{'' if checked.said[place] == 1 else 's'} ({', '.join(f'{WHY[kind][why]}: {count}' for why, count in gone.items())})")
+    return "code dropped " + " and ".join(parts) if parts else ""
+
+
+def view(items: Iterable[tuple[str, object]]) -> dict:
+    """What the Skeptic is shown of the proposals of a finding, from the facts of the cases of its resources (`items`: a handle and the facts of its case): the settings, each with its handle, the
+    property as the tools showed it and the value now and after, and the other ways, each with its title, what it gives up (the Investigator's words), the action, whether Azure changes the resource
+    where it is, and what code priced it at a month. A key is there only when it has entries."""
+    lowered, ways = [], []
+    for handle, facts in items:
+        lowered += [{"handle": handle, "property": item.path, "from": item.now, "to": item.to} for item in settings(facts)]
+        ways += [{key: value for key, value in (("title", way.title), ("givesUp", way.gives_up), ("action", way.action), ("inPlace", way.in_place), ("lowUsd", way.low), ("highUsd", way.high))
+                  if value is not None} for way in others(facts)]
+    return {**({"set": lowered} if lowered else {}), **({"others": ways} if ways else {})}

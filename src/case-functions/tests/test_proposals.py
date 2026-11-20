@@ -1,6 +1,7 @@
 """The readers of what a finding proposes (cases/proposals.py): they never raise, and they leave out what is not in the shape."""
 import unittest
 
+import support  # noqa: F401  (puts the app on the path)
 from cases import proposals
 
 

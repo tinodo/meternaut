@@ -2,7 +2,7 @@
   "agents": {
     "meternaut-investigator": {
       "connection": "aigateway",
-      "instructionsSha256": "ee959cfb844124cbe460d1c35937c36bd597d39c70551b5280342f4c313cf893",
+      "instructionsSha256": "eb367de2e2e4fae0d57eb957cae8d6553377fbad2acc7d2d2d195aa68423b314",
       "kind": "prompt",
       "model": "gpt-5.5",
       "options": {
@@ -53,7 +53,7 @@
     },
     "meternaut-skeptic": {
       "connection": "aigateway",
-      "instructionsSha256": "d01f986d4eda75a7c74c9496d9b8840f3f508206a25c8114538319e6b753a9c5",
+      "instructionsSha256": "f290a1b4f5e68e708280c46d23cd7d8d8042a04c5610924a0adcadc59a31b07b",
       "kind": "prompt",
       "model": "gpt-6.1-sol",
       "options": {
