@@ -856,7 +856,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
     def test_approving_a_delete_shows_a_page_that_asks_once_more_and_starts_no_sign_in(self):
         self.assertEqual(self.reply.status, 200)
         self.assertEqual(self.reply.headings(1), ["Confirm this change"])
-        self.assertEqual([node.text() for node in self.reply.main.find_all("strong")], ["Delete the unattached disk planted-disk-1"], "the title has its own line under the heading")
+        self.assertEqual([node.text() for node in self.reply.main.find_all("strong")], ["Delete the unattached disk planted-disk-1."], "the title has its own line under the heading, and the line ends with a full stop")
         self.assertEqual(self.reply.root.find("title").text(), "Confirm this change: Delete the unattached disk planted-disk-1 - Meternaut")
         self.assertNotIn("Location", self.reply.headers)
         self.assertEqual((self.delegate.begins, self.delegate.finishes), ([], []))

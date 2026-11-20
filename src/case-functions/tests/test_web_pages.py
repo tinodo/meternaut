@@ -536,7 +536,7 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.decision_put(make_decision(plan_id=f"plan2{n:03d}", decision="decline", at=at(hours=-n - 1)))
         reply = console.get("/")
         listing = [spans(li) for li in reply.main.find("ul", class_="recent").find_all("li")]
-        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n} in group meternaut-test-rg", "Tino, 5 November"] for n in range(5)], "the title and the state are not joined by a colon: the chip says the state")
+        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n}", "Tino, 5 November"] for n in range(5)], "the title is short, as the History's is (the place is on the page), and the state is no part of it: the chip says the state")
 
     def test_an_advice_that_nobody_answered_is_no_row_of_recently_decided_and_a_change_that_nobody_answered_is(self):
         console = seeded()

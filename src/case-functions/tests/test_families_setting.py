@@ -1437,7 +1437,7 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         reply = console.submit(form, "Approve", confirm=False, note="Go on")
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.headings(1), ["Confirm this change"], "a plain heading: the title has its own line, so no heading holds two colons")
-        self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the gateway gw-one: capacity units from 4 to 2"])
+        self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the gateway gw-one: capacity units from 4 to 2."])
         self.assertIn("This is the gateway gw-one in resource group rg-owner-real", reply.main.text())
         text = reply.main.text()
         self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", text)
