@@ -46,6 +46,7 @@ DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": 
 DONE_SUBJECTS = {"done": "A change to Azure has run", "verified": "A change to Azure has run", "failed": "A change to Azure did not run",
                  "unknown": "The result of a change to Azure is not known"}
 UNCHANGED_SUBJECT = "Nothing had to change in Azure"
+DIFFERENT_SUBJECT = "A change to Azure has run, and Azure also changed something else"
 BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -272,7 +273,7 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         risk = brief.risk.text
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    undo = (("Undo", _data(brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips
+    undo = (("Undo", _data(brief.undo.short or brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half
     return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), *undo, ("What could go wrong", _data(brief.risk.text, 200)))
 
 
@@ -356,7 +357,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
     brief = brief_mod.build_brief(case, plan, action, decisions, now=now)
     unchanged = brief.outcome.state == "unchanged"
     ran = action.state in ("done", "verified") and not unchanged
-    doc = _Doc(UNCHANGED_SUBJECT if unchanged else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
+    doc = _Doc(UNCHANGED_SUBJECT if unchanged else DIFFERENT_SUBJECT if brief.outcome.title == "Done, with a difference" else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
     doc.heading(_data(title_text(brief), 200))
     _place(doc, brief)
     if unchanged:
@@ -369,7 +370,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
             doc.paragraph(_data(line, 300))
         stake = stake_of(brief)
         doc.figure(stake, then="Cost Management confirms it 8 to 72 hours after the change." if stake.state == "save" and stake.level != "Verified" else "")
-        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 200))
+        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.short or brief.undo.how, 200))
     else:
         doc.paragraph({"failed": "The change was tried and did not complete.", "unknown": "The change was started, and its result is not known."}.get(action.state, "The change is in progress."))
         detail = _data(action.error or action.result, 240)

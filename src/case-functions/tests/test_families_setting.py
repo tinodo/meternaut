@@ -4,6 +4,7 @@ Everything here is invented: the kind `microsoft.example/gateways`, its number `
 the key path that a finding proposes and the rest from the resource itself. The tests say what each gate does by taking it away, what the plan says, what the PUT holds, and what the client of the one request
 refuses before it sends.
 """
+import datetime as dt
 import json
 import re
 import unittest
@@ -14,21 +15,27 @@ from urllib.parse import parse_qs, urlsplit
 import familysupport as fs
 from familysupport import APPROVER, GROUP, NOW, OID, SCOPES, SUB
 from support import APP_ROOT, REPO_ROOT
+from test_cards import buttons_for, by_id
+from test_families_briefs import console_of
 
-from cases import loop_config, proposals
+from cases import approvals as approvals_module
+from cases import brief as brief_mod
+from cases import cardcheck, cards, letters, loop_config, proposals
 from cases.approvals import ApprovalSettings, Approvals, SETTING, why_not
 from cases.delegated import Delegation, SigninSettings, Tokens
 from cases.detectors import Lead
 from cases.families import calls, registry, words
 from cases.families import digest as plan_digest
 from cases.families import gates as gates_module
+from cases.families import setting as setting_module
 from cases.families.azure import Azure
 from cases.families.base import Env, Stop
 from cases.families.gates import ChangeScope, Gates, parse_scopes
-from cases.families.setting import ChangeSetting, put_body
+from cases.families.setting import ChangeSetting, differences, kept_of, provisioning_of, put_body
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
-from cases.models import CaseRecord, DecisionRecord, NoteRecord, SwitchRecord
+from cases.models import AUTOMATED, CaseRecord, DecisionRecord, NoteRecord, SwitchRecord
+from cases.people import Person
 from cases.runner import RunnerServices, execute, read_calls, tick
 from test_runner import challenge
 
@@ -83,6 +90,24 @@ class RealArm(fs.Arm):
         self.puts: list[tuple[str, str, object]] = []
         self.never = False
         self.fails = False
+        self.also: dict = {}  # properties that Azure changes by itself when it carries out the update
+        self.etag_header: str | None = None  # the ETag header that a read of the resource carries (else the etag of its body is all that there is)
+        self.timeout_put = False  # the request of the PUT is sent and no answer comes
+
+    def transport(self, method, url, headers, data, timeout):
+        if method == "PUT" and self.timeout_put:
+            self.calls.append((method, url))
+            raise TimeoutError("timed out")
+        return super().transport(method, url, headers, data, timeout)
+
+    def read(self, key: str):
+        status, headers, body = super().read(key)
+        return (status, {**headers, "ETag": self.etag_header}, body) if status == 200 and self.etag_header else (status, headers, body)
+
+    def settled(self, found):
+        if found is not None:
+            found["properties"].update(self.also)
+        return self.set_provisioning(found, "Failed" if self.fails else "Succeeded")
 
     def answer(self, method: str, key: str, body):
         if key == f"/subscriptions/{REAL_SUB}/providers/microsoft.example":
@@ -109,6 +134,10 @@ class RealArm(fs.Arm):
                 status, headers, answer = self.write_answers.pop(0)
                 if status >= 300:
                     return status, dict(headers), answer
+            sent = self.headers[-1].get("If-Match")
+            current = self.etag_header or self.resources.get(key, {}).get("etag")
+            if sent is not None and (key not in self.resources or str(sent).removeprefix("W/").strip('"') != str(current).removeprefix("W/").strip('"')):
+                return 412, {}, b'{"error":{"code":"PreconditionFailed","message":"the etag does not match"}}'
             self.puts.append((key, urlsplit(self.url).query, body))
             if key not in self.resources:
                 return 404, {}, b'{"error":{"code":"ResourceNotFound","message":"gone"}}'
@@ -117,7 +146,7 @@ class RealArm(fs.Arm):
             stated["properties"] = {**body["properties"], "provisioningState": "Updating"}
             self.resources[key] = stated
             if not self.never:
-                self.effects[key] = fs.Effect(self.reads_before_effect, lambda found: self.set_provisioning(found, "Failed" if self.fails else "Succeeded"))
+                self.effects[key] = fs.Effect(self.reads_before_effect, self.settled)
             return self.started(201)
         return super().write(method, key, body)
 
@@ -358,7 +387,7 @@ class ThePlan(unittest.TestCase):
                 world = Real()
                 plan = world.plan_for(facts={proposals.KEY: {"set": [item]}})
                 self.assertEqual(plan.family, "advise")
-                self.assertIn(plan.preconditions.get(proposals.CANNOT_KEY), ("unsupported", "mismatch"))
+                self.assertIn(plan.preconditions.get(proposals.CANNOT_KEY), ("unsupported", "mismatch", "not-a-count"))
         world = Real()
         too_many = [{"path": p, "from": 4, "to": 2} for p in ("capacityUnits", "retentionDays", "sku.capacity", "tier")]
         self.assertEqual(world.plan_for(facts={proposals.KEY: {"set": too_many}}).family, "advise")
@@ -845,11 +874,604 @@ def brief_words(key: str) -> str:
     return brief.TAKEN_BACK[key]
 
 
+PERSON = Person(OID, "Tino", ("approver", "owner"), "tino@example.com")
+BASE = "https://meternaut.example"
+CONTACTS = ("Maya (maya@example.com)", "Ops (ops@example.com)")
+
+
+def shown(world, plan, action=None, **more):
+    """The brief of the request of a plan, for the person who may answer it."""
+    more.setdefault("may_answer", True)
+    return brief_mod.build_brief(world.store.case_get(plan.case_id), plan, action, [], now=NOW, **more)
+
+
+def card_of(b):
+    return cards.decision_card(b, buttons_for(b))
+
+
+class TheRulesOfAskingApplyToAChange(unittest.TestCase):
+    def test_a_finding_that_no_saving_was_priced_for_gets_no_request_of_any_kind_and_nothing_is_read(self):
+        world = Real()
+        lead = lead_of(world.resource)
+        case = world.case(lead, saving_usd_month=None)
+        self.assertIsNone(world.approvals.plan_for(case, lead, (OID,)))
+        self.assertEqual((world.store.plans_open(), world.arm.calls), ([], []))
+        self.assertEqual(Real().plan_for().family, SETTING, "the same finding with a priced saving gets its change")
+
+    def test_a_declined_change_is_not_asked_again_within_the_quiet_days_and_is_again_after_them(self):
+        world = Real()
+        plan = world.plan()
+        world.store.plan_put(replace(plan, state="declined"))
+        lead, case = lead_of(world.resource), replace(world.store.case_get(plan.case_id), status="proposed")
+        world.clock.advance(days=10)
+        self.assertIsNone(world.approvals.plan_for(case, lead, (OID,)), "a person said no ten days ago: nothing is made, not the change and not advice")
+        world.clock.advance(days=25)
+        self.assertEqual(world.approvals.plan_for(case, lead, (OID,)).family, SETTING)
+
+    def test_a_resource_that_an_automation_changed_lately_gets_the_warning_on_the_change_request_on_the_page_the_card_and_the_letter(self):
+        world = Real()
+        lead = lead_of(world.resource)
+        since = stamp(NOW - dt.timedelta(days=3))
+        plan = world.approvals.plan_for(world.case(lead, owner={"automatedAt": since}), lead, (OID,))
+        self.assertEqual((plan.family, plan.preconditions[AUTOMATED]), (SETTING, since))
+        b = shown(world, plan)
+        self.assertTrue(b.heads_up.startswith("An automation changed this"), b.heads_up)
+        self.assertIn(brief_mod.AUTOMATION_ACT, b.heads_up)
+        self.assertEqual(by_id(card_of(b))["heads-up"]["text"], f"**Heads-up:** {b.heads_up}")
+        letter = letters.approval_letter(plan, world.store.case_get(plan.case_id), PERSON, BASE, NOW, CONTACTS)
+        self.assertIn(f"Heads-up: {b.heads_up}", letter.text)
+        reply = console_of(world, plan, world.store.case_get(plan.case_id)).get(f"/ok/{plan.plan_id}")
+        self.assertIn("An automation changed this", reply.main.text())
+        old = Real()
+        lead = lead_of(old.resource)
+        quiet = old.approvals.plan_for(old.case(lead, owner={"automatedAt": stamp(NOW - dt.timedelta(days=20))}), lead, (OID,))
+        self.assertEqual((quiet.family, AUTOMATED in quiet.preconditions), (SETTING, False), "an automation that changed it three weeks ago is no warning")
+
+
+class ThePromiseAfterTheWrite(unittest.TestCase):
+    def test_the_plan_does_not_promise_that_nothing_else_changes_and_says_what_is_checked_and_what_is_not_seen(self):
+        plan = Real().plan()
+        self.assertNotIn("nothing else of the", " ".join((plan.what_changes, plan.could_go_wrong, plan.undo)).lower(), "the promise that was made before is gone")
+        self.assertIn("A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes.", plan.what_changes)
+        self.assertIn("Afterwards it reads the gateway again and checks the number, and that every other property that it sent is still what it sent.", plan.what_changes)
+
+    def test_a_property_that_azure_changes_besides_the_number_is_said_and_the_request_is_done_with_a_difference_and_never_verified(self):
+        world = Real()
+        world.arm.also = {"retentionDays": 99}
+        plan = world.plan()
+        done = world.run(plan)
+        self.assertEqual((done.kind, done.action.state), ("ran", "done"))
+        self.assertIn("Azure also changed: properties.retentionDays.", done.action.result)
+        self.assertEqual((done.action.verification["differences"], done.action.verification["compared"]), ("properties.retentionDays", True))
+        kept, case = world.store.plan_get(plan.plan_id), world.store.case_get(plan.case_id)
+        b = shown(world, kept, done.action)
+        self.assertEqual((b.outcome.title, b.outcome.result), ("Done, with a difference", "Done, with a difference"))
+        self.assertTrue(any("Azure also changed: properties.retentionDays." in line for line in b.outcome.lines), b.outcome.lines)
+        self.assertEqual(letters.done_letter(kept, done.action, case, PERSON, BASE, NOW, CONTACTS).subject, "[Meternaut] " + letters.DIFFERENT_SUBJECT)
+        result = cards.result_card(b, cards.CardContext(page_url=f"{BASE}/ok/{b.plan_id}", contacts=CONTACTS))
+        self.assertEqual(by_id(result)["outcome"]["text"], "Done, with a difference")
+        world.costs.totals = {RID.lower(): 30.0}
+        world.clock.advance(days=5)
+        tick(world.timer)
+        self.assertEqual(world.store.action_get(plan.plan_id).verification["costAfterUsd"], 30.0, "the cost lines were read and they show the saving")
+        self.assertEqual(world.store.action_get(plan.plan_id).state, "done", "the cost lines confirm the saving, and a change that also changed something else is still no 'done and checked'")
+        clean = Real()
+        plan = clean.plan()
+        done = clean.run(plan)
+        self.assertEqual((done.action.verification["compared"], "differences" in done.action.verification, "also changed" in done.action.result), (True, False, False))
+        self.assertEqual(shown(clean, clean.store.plan_get(plan.plan_id), done.action).outcome.title, "Done")
+        clean.costs.totals = {RID.lower(): 30.0}
+        clean.clock.advance(days=5)
+        tick(clean.timer)
+        self.assertEqual(clean.store.action_get(plan.plan_id).state, "verified", "the control: with nothing else changed the same cost lines verify it")
+
+    def test_what_was_sent_is_kept_for_the_timer_and_the_comparison_is_made_when_azure_finishes_later(self):
+        world = Real()
+        world.arm.also = {"retentionDays": 99}
+        world.arm.operation_polls = ["InProgress"]
+        world.arm.reads_before_effect = 50
+        plan = world.plan()
+        done = world.run(plan)
+        self.assertEqual(done.action.state, "running")
+        self.assertIn("kept", done.action.operation, "the check that comes later has what was sent to compare with")
+        self.assertLess(len(json.dumps(done.action.operation)), 4000)
+        world.arm.effects[RID.lower()].reads = 0
+        tick(world.timer)
+        action = world.store.action_get(plan.plan_id)
+        self.assertEqual((action.state, action.verification["differences"]), ("done", "properties.retentionDays"))
+        self.assertIn("Azure also changed: properties.retentionDays", action.result)
+
+    def test_a_check_that_has_nothing_to_compare_with_says_so_and_is_still_done(self):
+        world = Real()
+        plan = world.plan()
+        world.arm.get(RID)["properties"]["capacityUnits"] = 2
+        verdict = registry.get(SETTING).verify(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), plan)
+        self.assertEqual((verdict.state, verdict.evidence["compared"]), ("done", False))
+        self.assertTrue(verdict.text.endswith("Meternaut could not compare the other properties with what it sent."), verdict.text)
+
+    def test_what_azure_adds_is_no_difference_and_what_it_changes_or_removes_is_and_whole_numbers_are_one_number(self):
+        body = {"location": "x", "tags": {"team": "blue"}, "sku": {"name": "Lite", "capacity": 1}, "properties": {"capacityUnits": 2, "label": "front", "list": [1, 2]}}
+        kept = kept_of(body)
+        same = json.loads(json.dumps(body))
+        added = {**same, "id": "i", "etag": "e", "systemData": {"a": 1}, "properties": {**same["properties"], "added": 5, "provisioningState": "Succeeded"}}
+        self.assertEqual(differences(added, kept), [])
+        self.assertEqual(differences({**same, "tags": {"team": "red"}}, kept), ["tags.team"])
+        self.assertEqual(differences({k: v for k, v in same.items() if k != "location"}, kept), ["location"])
+        self.assertEqual(differences({**same, "properties": {**same["properties"], "capacityUnits": 2.0}}, kept), [], "2 and 2.0 are one number")
+        self.assertEqual(differences({**same, "properties": {**same["properties"], "list": [1, 3]}}, kept), ["properties.list"])
+        self.assertIsNone(differences(same, None))
+        self.assertIsNone(differences(same, {"depth": 99, "hashes": {}}))
+
+    def test_what_is_kept_of_a_large_body_is_small_and_still_compares(self):
+        big = {"properties": {f"k{n}": {"a": n, "b": [n]} for n in range(400)}}
+        kept = kept_of(big)
+        self.assertLessEqual(len(kept["hashes"]), setting_module.KEPT_MOST)
+        self.assertLess(kept["depth"], setting_module.KEPT_DEPTH)
+        self.assertLess(len(json.dumps(kept)), 8000)
+        self.assertEqual(differences(big, kept), [])
+        self.assertEqual(differences({"properties": {**big["properties"], "k7": {"a": 8, "b": [7]}}}, kept), ["properties"], "below the depth that is kept a change is one change of the part that holds it")
+        long = {"properties": {f"{'k' * 100}{n}": n for n in range(100)}}
+        kept = kept_of(long)
+        self.assertEqual(kept["depth"], 1, "a hundred long names are more bytes than a record of an action should carry")
+        self.assertLessEqual(len(json.dumps(kept)), setting_module.KEPT_BYTES)
+        self.assertEqual(kept_of({f"{'k' * 9000}": 1}), {}, "when even the first level is too large nothing is kept, and the check says that it could not compare")
+
+    def test_a_number_that_is_neither_the_old_one_nor_the_new_one_when_azure_is_done_is_a_failure_in_plain_words(self):
+        world = Real()
+        plan = world.plan()
+        env = Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock)
+        world.arm.get(RID)["properties"]["capacityUnits"] = 3
+        verdict = registry.get(SETTING).verify(env, plan)
+        self.assertEqual((verdict.state, verdict.text), ("failed", "Azure shows capacity units at 3, which is neither the old value 4 nor the new value 2."))
+        world.arm.get(RID)["properties"]["provisioningState"] = "Updating"
+        self.assertEqual(registry.get(SETTING).verify(env, plan).state, "pending", "while Azure is still at it a number in between is no end")
+        world = Real()
+        world.arm.also = {"capacityUnits": 3}
+        plan = world.plan()
+        done = world.run(plan)
+        self.assertEqual((done.kind, done.action.state), ("failed", "failed"))
+        self.assertIn("neither the old value 4 nor the new value 2", done.action.result)
+
+
+class TheBodyKeepsWhatIsNotAzuresOwn(unittest.TestCase):
+    def test_a_tag_called_etag_and_a_free_form_map_are_sent_as_they_are_and_only_a_part_of_the_resource_loses_its_etag(self):
+        resource = gateway(tags={"name": "front", "ETag": "mine", "provisioningState": "mine", "team": "blue"})
+        resource["properties"]["settings"] = {"etag": "free", "provisioningState": "free", "other": 1}
+        resource["properties"]["ipConfigurations"][0]["etag"] = 'W/"x"'
+        resource["provisioningState"] = "Succeeded"
+        body = put_body(resource, [("capacityUnits", 4, 2)])
+        self.assertEqual(body["tags"], {"name": "front", "ETag": "mine", "provisioningState": "mine", "team": "blue"}, "a tag is never entered, whatever its name: a tag called name does not make the map a part of the resource")
+        self.assertEqual(body["properties"]["settings"], {"etag": "free", "provisioningState": "free", "other": 1})
+        self.assertNotIn("etag", body["properties"]["ipConfigurations"][0], "a part of the resource has its own etag, which Azure fills in")
+        self.assertNotIn("provisioningState", body["properties"])
+        self.assertNotIn("provisioningState", body["properties"]["ipConfigurations"][0]["properties"])
+        self.assertEqual(body["provisioningState"], "Succeeded", "only a direct child of properties is Azure's own place for it")
+        for key in ("id", "name", "type", "systemData", "etag"):
+            self.assertNotIn(key, body)
+
+    def test_the_provisioning_state_is_found_in_any_case_under_properties_and_at_the_root_and_the_busy_guard_fires(self):
+        for resource, wanted in (({"properties": {"provisioningState": "Updating"}}, "updating"), ({"properties": {"PROVISIONINGSTATE": "Updating"}}, "updating"),
+                                 ({"provisioningstate": "Failed"}, "failed"), ({"properties": {"provisioningState": "Succeeded"}, "provisioningState": "Updating"}, "updating"),
+                                 ({"properties": {}}, ""), ({"properties": {"provisioningState": "Succeeded"}}, "succeeded"), ({"properties": {"provisioningState": " "}}, "")):
+            self.assertEqual(provisioning_of(resource), wanted, resource)
+        for spelled in ({"properties": {"ProvisioningState": "Updating"}}, {"provisioningState": "Updating"}):
+            world = Real()
+            world.arm.get(RID)["properties"].pop("provisioningState")
+            for key, value in spelled.items():
+                (world.arm.get(RID)["properties"] if key == "properties" else world.arm.get(RID)).update(value if key == "properties" else {key: value})
+            plan = world.plan_for()
+            self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", "busy"), spelled)
+
+
+class TheWriteIsMadeOnlyOnWhatWasRead(unittest.TestCase):
+    def sent(self, world):
+        return [header["If-Match"] for header in world.arm.headers if "If-Match" in header]
+
+    def test_the_put_carries_the_etag_of_the_last_reading_the_header_first_and_else_the_one_of_the_body(self):
+        world = Real()
+        world.run(world.plan())
+        self.assertEqual(self.sent(world), ['W/"11111111-2222-3333-4444-555555555555"'])
+        world = Real()
+        world.arm.etag_header = '"from-the-header"'
+        world.run(world.plan())
+        self.assertEqual(self.sent(world), ['"from-the-header"'])
+
+    def test_a_resource_that_changed_after_the_last_reading_or_is_gone_is_refused_with_a_412_in_plain_words_and_the_put_is_tried_once(self):
+        for what in ("changed", "gone"):
+            with self.subTest(what):
+                world = Real()
+                plan = world.plan()
+                world.approve(plan)
+                gets = []
+
+                def hold_after(method, key):
+                    if method == "GET" and key == RID.lower():
+                        gets.append(key)
+                        if len(gets) == 2:  # the first reading is the check and the second is the one that the body is made from: somebody acts right after it
+                            if what == "changed":
+                                world.arm.get(RID)["etag"] = 'W/"somebody-else"'
+                            else:
+                                del world.arm.resources[RID.lower()]
+                world.arm.hold_after = hold_after
+                done = execute(world.services(plan), world.store.action_get(plan.plan_id), approved_digest=plan.digest)
+                self.assertEqual(done.kind, "stopped", done.action.result)
+                self.assertEqual(done.action.result, "Meternaut did not change the gateway: the gateway changed while Meternaut was about to change it. Nothing was changed.")
+                self.assertEqual((world.arm.puts, len(world.arm.writes_of("PUT"))), ([], 1), "one try, which Azure refused, and no other")
+                self.assertEqual(world.store.plan_get(plan.plan_id).state, "open", "open again: a person approves it again, and it is read again")
+
+    def test_a_resource_that_shows_no_etag_is_written_with_no_header(self):
+        world = Real()
+        world.arm.get(RID).pop("etag")
+        done = world.run(world.plan())
+        self.assertEqual((done.kind, self.sent(world)), ("ran", []))
+
+    def test_an_etag_that_the_body_shows_bare_is_quoted_and_one_that_is_not_an_etag_is_not_sent(self):
+        world = Real()
+        world.arm.get(RID)["etag"] = "0x8DB-bare-1"
+        self.assertEqual(world.run(world.plan()).kind, "ran")
+        self.assertEqual(self.sent(world), ['"0x8DB-bare-1"'])
+        for hostile in ('"a"\r\nX-Evil: yes', 'has space', '"' + "x" * 300 + '"', 7):
+            with self.subTest(ascii(hostile)):
+                world = Real()
+                world.arm.get(RID)["etag"] = hostile
+                self.assertEqual(world.run(world.plan()).kind, "ran")
+                self.assertEqual(self.sent(world), [], "nothing that is not an entity tag goes into a header")
+
+
+class WhenThePutFails(unittest.TestCase):
+    def test_each_failure_of_the_put_is_recorded_in_plain_words_and_the_put_is_made_once(self):
+        wanted = {403: ("azure_refused", "Azure refused to change the resource"), 404: ("failed", "The change was refused or failed"), 409: ("failed", "The change was refused or failed"),
+                  429: ("failed", "The change was refused or failed"), 500: ("failed", "The change was refused or failed"), 503: ("failed", "The change was refused or failed")}
+        for status, (kind, text) in wanted.items():
+            with self.subTest(status):
+                world = Real()
+                plan = world.plan()
+                world.arm.write_answers = [(status, {}, b'{"error":{"code":"Conflict","message":"no"}}')]
+                done = world.run(plan)
+                self.assertEqual((done.kind, done.action.state), (kind, "failed"))
+                self.assertIn(text, done.action.result)
+                self.assertEqual((len(world.arm.writes_of("PUT")), world.arm.puts, world.live()), (1, [], 4), "one try, nothing stored, the number as it was")
+                self.assertEqual(world.store.plan_get(plan.plan_id).state, "failed")
+                tick(world.timer)
+                self.assertEqual(len(world.arm.writes_of("PUT")), 1, "nothing makes a second try")
+
+    def test_a_timeout_after_the_request_was_sent_is_not_known_and_nothing_writes_again(self):
+        world = Real()
+        world.arm.timeout_put = True
+        plan = world.plan()
+        done = world.run(plan)
+        self.assertEqual(done.action.state, "unknown", done.action.result)
+        self.assertIn("Check the resource before anything is tried again", done.action.result)
+        tick(world.timer)
+        world.clock.advance(minutes=30)
+        tick(world.timer)
+        self.assertEqual(len(world.arm.writes_of("PUT")), 1)
+
+    def test_a_plan_that_was_changed_after_the_approval_is_refused_and_nothing_is_written(self):
+        world = Real()
+        plan = world.plan()
+        action = world.approve(plan)
+        self.assertEqual(world.store.action_get(plan.plan_id).plan_digest, plan.digest)
+        world.store.plan_put(replace(world.store.plan_get(plan.plan_id), target={**plan.target, "set": [{"path": "capacityUnits", "from": 4, "to": 1}]}))
+        done = execute(world.services(plan), action, approved_digest=plan.digest)
+        self.assertEqual((done.kind, done.action.state), ("stopped", "failed"))
+        self.assertEqual(world.arm.writes(), [])
+        self.assertIsNotNone(plan_digest.problem(world.store.plan_get(plan.plan_id), plan.digest))
+
+
+class TheUndoIsExact(unittest.TestCase):
+    def target(self, *settings):
+        return {"set": [{"path": path, "from": old, "to": new} for path, old, new in settings], "apiVersion": API}
+
+    def test_the_command_takes_the_raw_numbers_and_puts_a_path_at_the_root_by_one_test(self):
+        said = words.setting_words("gateway", "gw-one", "rg", self.target(("unitCount", 1440, 720), ("scaleUnits", 0.125, 0.0625), ("skuCount", 8, 4)), {})
+        self.assertIn("--set properties.unitCount=1440 properties.scaleUnits=0.125 properties.skuCount=8 --api-version 2024-05-01", said.undo)
+        self.assertIn("Set unit count to 1440, scale units to 0.125 and sku count to 8 again:", said.undo)
+        for rounded in ("1,440", "0.12 ", "0.12,"):
+            self.assertNotIn(rounded, said.undo)
+        self.assertIn("--set sku.capacity=2 ", words.setting_words("gateway", "gw-one", "rg", self.target(("sku.capacity", 2, 1)), {}).undo)
+        for path, root in (("sku.capacity", True), ("SKU.Capacity", True), ("skuCount", False), ("skuname.x", False), ("capacityUnits", False), ("properties.x", False)):
+            self.assertEqual(words.at_root(path), root, path)
+
+    def test_the_finder_of_a_path_and_the_command_agree_on_where_it_is(self):
+        resource = gateway()
+        resource["properties"]["skuCount"] = 8
+        for path in ("skuCount", "sku.capacity", "capacityUnits"):
+            parent, _, _ = setting_module.find(resource, path)
+            command = words.setting_words("gateway", "g", "rg", self.target((path, 1, 0)), {}).undo
+            self.assertIn(f"--set {'' if parent is resource['sku'] else 'properties.'}{path}=1 ", command, path)
+        body = put_body(resource, [("skuCount", 8, 4)])
+        self.assertEqual((body["properties"]["skuCount"], body["sku"]), (4, {"name": "Lite", "capacity": 2}), "skuCount is under properties and sku is untouched")
+
+    def test_a_card_and_a_letter_say_the_first_sentence_of_the_undo_and_never_cut_a_command_while_the_page_says_it_whole(self):
+        world = Real()
+        world.arm.get(RID)["properties"]["replicaCount"] = 3
+        three = {proposals.KEY: {"set": [{"path": "capacityUnits", "from": 4, "to": 2}, {"path": "sku.capacity", "from": 2, "to": 1}, {"path": "replicaCount", "from": 3, "to": 2}]}}
+        plan = world.plan(facts=three)
+        self.assertGreater(len(plan.undo), 300)
+        command = "az resource update --ids <resource id> --set properties.capacityUnits=4 sku.capacity=2 properties.replicaCount=3 --api-version 2024-05-01"
+        short = "Set capacity units to 4, sku capacity to 2 and replica count to 3 again in the Azure portal. The page has the command."
+        b = shown(world, plan)
+        self.assertEqual((b.undo.short, command in b.undo.how), (short, True))
+        self.assertEqual(by_id(card_of(b))["undo"]["text"], f"**Undo:** {short}")
+        case = world.store.case_get(plan.case_id)
+        letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
+        self.assertIn(short, letter.text)
+        self.assertNotIn("az resource", letter.text)
+        self.assertIn(command, console_of(world, plan, case).get(f"/ok/{plan.plan_id}").facts()["Undo"])
+        done = world.run(plan)
+        self.assertEqual(done.kind, "ran", done.action.result)
+        after = letters.done_letter(world.store.plan_get(plan.plan_id), done.action, case, PERSON, BASE, NOW, CONTACTS)
+        self.assertIn(short, after.text)
+        self.assertNotIn("az resource", after.text)
+        wordy = self.target(*((f"{'a' * 40}{word}Units", 1, 0) for word in ("One", "Two", "Three")))
+        self.assertEqual(words.setting_words("gateway", "g", "rg", wordy, {}).short_undo, "Set the numbers back to what they were in the Azure portal. The page has the command.")
+
+
+class TheCountGate(unittest.TestCase):
+    def test_only_a_count_of_units_is_lowered(self):
+        for path in ("capacityUnits", "sku.capacity", "instanceCount", "numberOfNodes", "maxReplicas", "scaleUnits"):
+            self.assertTrue(setting_module._countlike(path), path)
+        for path in ("retentionDays", "tier", "label", "autoScaleEnabled", "accessMode", "sizeLimit"):
+            self.assertFalse(setting_module._countlike(path), path)
+
+    def test_a_setting_that_is_not_a_count_is_refused_at_the_plan_with_its_own_words_before_any_read(self):
+        world = Real()
+        plan = world.plan_for(facts={proposals.KEY: {"set": [{"path": "retentionDays", "from": 30, "to": 7}]}})
+        self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", "not-a-count"))
+        self.assertEqual(proposals.cannot(plan.preconditions), "Meternaut only lowers a count of units, and this setting is not one.")
+        self.assertEqual(world.arm.calls, [], "nothing is read for a setting that Meternaut would not lower")
+        mixed = Real().plan_for(facts={proposals.KEY: {"set": [{"path": "capacityUnits", "from": 4, "to": 2}, {"path": "retentionDays", "from": 30, "to": 7}]}})
+        self.assertEqual(mixed.preconditions[proposals.CANNOT_KEY], "not-a-count", "one setting that is not a count is enough")
+
+    def test_a_plan_that_names_one_is_refused_again_right_before_the_write_by_the_look_and_by_the_runner(self):
+        world = Real()
+        good = world.plan()
+        old = replace(plan_digest.sealed(replace(good, target={**good.target, "set": [{"path": "retentionDays", "from": 30, "to": 7}]})), code=good.code)
+        with self.assertRaises(Stop) as raised:
+            registry.get(SETTING).recheck(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), old)
+        self.assertEqual(str(raised.exception), "a number of the request is not a count of units, which is all that Meternaut lowers")
+        world.store.plan_put(old)
+        done = execute(world.services(old), world.approve(old), approved_digest=old.digest)
+        self.assertEqual(done.kind, "stopped")
+        self.assertEqual(done.action.result, "Meternaut did not change the gateway: a number of the request is not a count of units, which is all that Meternaut lowers. Nothing was changed.")
+        self.assertEqual(world.arm.writes(), [])
+
+    def test_the_undo_says_that_setting_the_number_back_does_not_bring_back_what_was_cut_off(self):
+        self.assertTrue(Real().plan().undo.endswith("Setting it back does not bring back what the lower number cut off meanwhile."))
+
+
+class TheRealChangeAsksOnceMore(unittest.TestCase):
+    def made(self):
+        world = Real()
+        plan = world.plan()
+        return world, plan, world.store.case_get(plan.case_id)
+
+    def test_the_brief_of_a_real_change_asks_once_more_although_it_can_be_undone_and_no_old_family_does(self):
+        world, plan, _ = self.made()
+        b = shown(world, plan)
+        self.assertEqual((b.confirm, b.undo.reversible), (True, True))
+        old = fs.World()
+        done = old.plan(old.arm.add(fs.disk()), "disk", "delete", cost=20.0)
+        before = brief_mod.build_brief(old.store.case_get(done.case_id), done, now=NOW, may_answer=True)
+        self.assertEqual((before.confirm, before.undo.short), (False, ""))
+        for name in ("stop-vm", "resize-vm", "change-disk-tier", "scale-vpn-gateway"):
+            self.assertFalse(words.words_of(name, None, "", "x", "g").confirm, name)
+
+    def test_approving_asks_on_a_page_of_its_own_with_words_that_are_true_and_starts_no_sign_in(self):
+        world, plan, case = self.made()
+        console = console_of(world, plan, case)
+        form = console.get(f"/ok/{plan.plan_id}").form(f"/ok/{plan.plan_id}", has_button="Approve")
+        reply = console.submit(form, "Approve", confirm=False, note="Go on")
+        self.assertEqual(reply.status, 200)
+        self.assertTrue(reply.headings(1)[0].startswith("Confirm: Scale down the gateway gw-one in resource group rg-owner-real"), reply.headings(1))
+        text = reply.main.text()
+        self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", text)
+        self.assertEqual([p.text() for p in reply.main.find_all("p", class_="notice-title")], ["This changes a real resource"])
+        self.assertIn("Meternaut does not know what a lower number takes away", reply.main.find("div", class_="notice warning").text())
+        self.assertNotIn("cannot be undone", text)
+        self.assertEqual((console.delegate.begins, console.delegate.finishes), ([], []))
+        self.assertEqual(world.store.decisions_of_plan(plan.plan_id), [])
+        (back,) = [a for a in reply.main.find_all("a") if a.text() == "No, go back"]
+        self.assertEqual(back.attrs["href"], f"/ok/{plan.plan_id}")
+        second = reply.form(f"/ok/{plan.plan_id}", has_button="Yes, change it")
+        self.assertEqual(second.fields["confirm"], "yes")
+        sent = console.submit(second, "Yes, change it", confirm=False)
+        self.assertEqual(sent.status, 303)
+        self.assertEqual(len(console.delegate.begins), 1)
+
+    def test_the_card_asks_twice_and_says_that_a_real_resource_changes(self):
+        world, plan, _ = self.made()
+        b = shown(world, plan)
+        card = card_of(b)
+        self.assertEqual(cardcheck.check(card), [])
+        ids = by_id(card)
+        approve, decline, _ = ids["decisions"]["actions"]
+        self.assertEqual((approve["type"], approve["title"], approve["tooltip"]), ("Action.ToggleVisibility", "Approve", "Asks once more: this changes a real resource."))
+        self.assertNotIn("url", approve)
+        self.assertEqual(decline["type"], "Action.OpenUrl")
+        where = f"{b.where.kind} {b.where.name} in resource group {b.where.group}"
+        self.assertEqual(ids["sure-text"]["text"], f"This changes a real resource: {where}. Nothing is changed until you press Yes.")
+        back, yes = ids["sure-actions"]["actions"]
+        self.assertEqual((back["title"], yes["title"], yes["type"]), ("No, go back", "Yes, change it", "Action.OpenUrl"))
+
+    def test_the_letter_says_what_can_be_undone_and_asks_for_the_decision_on_the_page(self):
+        world, plan, case = self.made()
+        letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
+        self.assertIn("Can be undone", letter.text)
+        self.assertIn("Undo: Set capacity units to 4 again in the Azure portal. The page has the command.", letter.text)
+        self.assertIn("It runs with your own permissions.", letter.text)
+        self.assertIn("Review and decide: ", letter.text)
+
+    def test_a_delete_that_cannot_be_undone_keeps_its_own_words_on_the_card_and_in_the_letter(self):
+        old = fs.World()
+        plan = old.plan(old.arm.add(fs.disk()), "disk", "delete", cost=20.0)
+        case = old.store.case_get(plan.case_id)
+        b = brief_mod.build_brief(case, plan, now=NOW, may_answer=True)
+        ids = by_id(card_of(b))
+        self.assertTrue(ids["sure-text"]["text"].startswith("This cannot be undone: "), ids["sure-text"]["text"])
+        self.assertEqual(ids["approve"]["tooltip"], "Asks once more: this cannot be undone.")
+        self.assertEqual(ids["sure-yes"]["title"], "Yes, delete it")
+        letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
+        self.assertIn("Cannot be undone", letter.text)
+        self.assertNotIn("real resource", letter.text)
+
+
+class TheIdsAreAsciiOnly(unittest.TestCase):
+    FOLDING = (("prod-k", "prod-\u212a"), ("rg-s", "rg-\u017f"), ("rg-i", "rg-\u0131"), ("rg-i", "rg-\u0130"), ("rg-k", "rg-\u212a"))
+
+    def test_a_letter_that_folds_into_an_ascii_one_is_no_name_of_a_listed_group_and_no_id_is_accepted_for_it(self):
+        for listed, folded in self.FOLDING:
+            with self.subTest(listed, folded=ascii(folded)):
+                gates = Gates((), real_scopes=(ChangeScope(REAL_SUB, listed),))
+                self.assertIsNotNone(gates.real_scope_of(REAL_SUB, listed.upper()), "the ASCII spelling in any case is the listed group")
+                self.assertIsNone(gates.real_scope_of(REAL_SUB, folded))
+                self.assertIsNone(gates.real_scope_of(REAL_SUB.replace("d", "\uff44"), listed))
+                rid = f"/subscriptions/{REAL_SUB}/resourceGroups/{folded}/providers/Microsoft.Example/gateways/gw-one"
+                self.assertIsNone(calls.GENERIC_ID.fullmatch(rid))
+                self.assertIsNone(calls.RESOURCE_ID.fullmatch(rid))
+                self.assertIsNone(calls.located_for(rid, gates))
+                self.assertIsNone(calls.one_write(rid, API, gates, lambda text: text).put_url)
+                with self.assertRaises(Stop):
+                    registry.get(SETTING).locate(rid, gates)
+                for _, pattern in calls.real_reads(gates.real_scopes):
+                    self.assertIsNone(pattern.fullmatch(f"https://management.azure.com/subscriptions/{REAL_SUB}/resourceGroups/{folded}/providers/Microsoft.Example/gateways/gw-one"))
+
+    def test_a_name_of_a_resource_a_provider_or_a_version_that_is_not_ascii_is_refused_too(self):
+        gates = Gates((), real_scopes=(REAL,))
+        for rid in (f"/subscriptions/{REAL_SUB}/resourceGroups/{REAL_GROUP}/providers/Microsoft.Example/gateways/gw-\u017f",
+                    f"/subscriptions/{REAL_SUB}/resourceGroups/{REAL_GROUP}/providers/Microsoft.Example/gateway\u017f/gw-one",
+                    f"/subscriptions/{REAL_SUB}/resourceGroups/{REAL_GROUP}/providers/Microsoft.Examp\u212ae/gateways/gw-one"):
+            self.assertIsNone(calls.located_for(rid, gates), ascii(rid))
+        self.assertIsNone(calls.RELEASED.fullmatch("\u0662\u0660\u0662\u0664-\u0660\u0661-\u0660\u0661"), "digits of another script are no version")
+        self.assertIsNone(words.API_VERSION.fullmatch("\u0662\u0660\u0662\u0664-\u0660\u0661-\u0660\u0661"))
+        self.assertIsNotNone(calls.RELEASED.fullmatch("2024-05-01"))
+
+    def test_the_old_families_are_held_by_the_same_comparison(self):
+        scopes = (ChangeScope(SUB, "meternaut-k"),)
+        self.assertIsNotNone(gates_module.scope_of(scopes, SUB, "METERNAUT-K"))
+        self.assertIsNone(gates_module.scope_of(scopes, SUB, "meternaut-\u212a"))
+        self.assertIsNone(gates_module.scope_of(scopes, SUB, None))
+
+
+class TheUpgradeAsksTheSameRules(unittest.TestCase):
+    def test_a_do_not_touch_mark_after_a_change_request_closes_it_as_left_alone_and_no_advice_is_made(self):
+        world = Real()
+        plan = world.plan()
+        world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+        (taken, new, case), = world.approvals.upgrade((OID,))
+        self.assertEqual((taken.plan_id, new), (plan.plan_id, None))
+        self.assertEqual(world.store.plan_get(plan.plan_id).preconditions["takenBack"], "left-alone")
+        self.assertEqual(world.store.plans_open(), [])
+        self.assertEqual(world.store.case_get(case.case_id).status, "proposed", "nobody waits for an OK on it now")
+        self.assertEqual(world.approvals.upgrade((OID,)), [], "and the next Watch finds nothing to do")
+
+    def test_a_resource_that_is_being_changed_right_now_takes_nothing_back(self):
+        world = Real()
+        plan = world.plan()
+        world.arm.get(RID)["properties"]["provisioningState"] = "Updating"
+        self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual(world.store.plan_get(plan.plan_id), plan)
+        world.arm.get(RID)["properties"]["provisioningState"] = "Succeeded"
+        self.assertEqual(world.approvals.upgrade((OID,)), [], "and when it is done it is as it was asked")
+
+    def test_the_request_that_replaces_a_change_is_made_by_advise_so_its_rules_and_the_quiet_days_hold_it_back_too(self):
+        world = Real()
+        plan = world.plan()
+        world.arm.get(RID)["properties"]["capacityUnits"] = 5
+        world.store.plan_put(replace(approvals_module.build_advice(world.store.case_get(plan.case_id), (OID,), NOW, world.settings), state="declined"))
+        (taken, new, _), = world.approvals.upgrade((OID,))
+        self.assertEqual((taken.plan_id, new), (plan.plan_id, None), "a person said no a moment ago: the change is taken back and no advice takes its place")
+        self.assertEqual(world.store.plan_get(plan.plan_id).preconditions["takenBack"], "changed")
+        again = Real()
+        plan = again.plan()
+        again.arm.get(RID)["properties"]["capacityUnits"] = 5
+        (taken, new, _), = again.approvals.upgrade((OID,))
+        self.assertEqual((new.family, new.preconditions[proposals.CANNOT_KEY]), ("advise", "mismatch"), "when the rules let it through advice is made, with its reason")
+
+    def test_the_new_request_is_announced_once_and_not_at_every_watch(self):
+        from cases import upkeep
+        with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):
+            world = Real()
+            self.assertEqual(world.plan_for().family, "advise")
+        announced = []
+        extras = mock.Mock(approvals=world.approvals, approvers=lambda: (OID,), store=world.store, on_plan=lambda plan, case: announced.append((plan.family, case.status)))
+        history = mock.Mock(emit=lambda kind, **fields: None)
+        self.assertEqual(len(upkeep.upgrade(extras, history)), 1)
+        self.assertEqual(announced, [(SETTING, "awaiting_ok")])
+        for _ in range(3):
+            self.assertEqual(upkeep.upgrade(extras, history), [])
+        self.assertEqual(len(announced), 1, "a request that holds is not announced again")
+
+
+class EveryReasonThatAChangeCannotBeMadeHasItsKeyAndItsWords(unittest.TestCase):
+    def key_of(self, plan):
+        self.assertEqual((plan.family, plan.state), ("advise", "open"))
+        return plan.preconditions.get(proposals.CANNOT_KEY)
+
+    def test_every_key_of_the_table_is_made_by_a_case_here_and_says_a_whole_sentence(self):
+        made = {}
+        with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):
+            made["switch-off"] = self.key_of(Real().plan_for())
+        made["outside"] = self.key_of(Real(real=()).plan_for())
+        world = Real()
+        world.arm.locks[RID.lower()] = [{"name": "keep"}]
+        made["locked"] = self.key_of(world.plan_for())
+        world = Real(real=())
+        old = world.plan_for()
+        world.regroup((REAL,))
+        world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+        world.approvals.upgrade((OID,))
+        made["do-not-touch"] = self.key_of(world.store.plan_get(old.plan_id))
+        world = Real()
+        world.arm.read_status = 403
+        made["unreadable"] = self.key_of(world.plan_for())
+        world = Real()
+        world.arm.get(RID)["properties"]["capacityUnits"] = 5
+        made["mismatch"] = self.key_of(world.plan_for())
+        world = Real()
+        world.arm.get(RID)["properties"]["provisioningState"] = "Updating"
+        made["busy"] = self.key_of(world.plan_for())
+        made["unsupported"] = self.key_of(Real().plan_for(facts={proposals.KEY: {"set": [{"path": "capacityUnits", "from": 4, "to": 6}]}}))
+        world = Real()
+        world.arm.versions = ["2025-02-01-preview", "2026-01-01-preview"]
+        made["no-version"] = self.key_of(world.plan_for())
+        made["not-a-count"] = self.key_of(Real().plan_for(facts={proposals.KEY: {"set": [{"path": "retentionDays", "from": 30, "to": 7}]}}))
+        world = Real()
+        lead = lead_of(world.resource)
+        made["unsettled"] = self.key_of(world.approvals.plan_for(world.case(lead, status="needs_human"), lead, (OID,)))
+        world = Real()
+        lead = lead_of(world.resource)
+        case = world.case(lead)
+        self.assertIsNone(world.approvals.plan_for(case, lead, ()), "with nobody to ask nothing is made")
+        made["approvers"] = world.approvals._reason(case, ())
+        self.assertEqual(set(made), set(proposals.CANNOT), "a key of the table that no case here makes has no test")
+        for key, found in made.items():
+            self.assertEqual(found, key)
+            sentence = proposals.CANNOT[key]
+            self.assertTrue(sentence[:1].isupper() and sentence.endswith(".") and len(sentence.split()) >= 6, sentence)
+
+    def test_a_finding_that_carries_settings_always_gets_a_reason_whatever_stopped_the_change(self):
+        world = Real()
+        lead = lead_of(world.resource)
+        world.approvals.reader = None
+        self.assertEqual(self_key(world.approvals.plan_for(world.case(lead), lead, (OID,))), "unreadable", "no reader here: the change cannot be checked")
+        world = Real(real=(ChangeScope(SUB, GROUP),))
+        lead = lead_of(world.resource, resource_group=GROUP, subscription_id=SUB)
+        self.assertEqual(self_key(world.approvals.plan_for(world.case(lead), lead, (OID,))), "outside", "a group of Meternaut's own is no place of this family")
+
+
+def self_key(plan):
+    return plan.preconditions.get(proposals.CANNOT_KEY) if plan is not None else None
+
+
 class TheOldFamiliesAreAsTheyWere(unittest.TestCase):
     def test_the_registry_holds_the_new_family_last_and_its_words_and_it_is_the_only_one_that_is_real(self):
         self.assertEqual(registry.names()[-1], SETTING)
         self.assertEqual([f.name for f in registry.REGISTRY if f.real], [SETTING])
         self.assertEqual(words.shown(SETTING).summary, registry.get(SETTING).summary)
+        self.assertEqual({name: words.shown(name).real for name in registry.names()}, {name: registry.get(name).real for name in registry.names()}, "the two flags cannot drift apart")
+        self.assertEqual([name for name in registry.names() if words.words_of(name, None, "", "x", "g").confirm], [SETTING], "only the family of real resources asks once more although it can be undone")
         self.assertIn(SETTING, words.kinds())
         self.assertEqual(words.called_of(SETTING), "change")
 

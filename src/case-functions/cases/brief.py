@@ -296,6 +296,7 @@ class Confidence:
 class Undo:
     reversible: bool
     how: str
+    short: str = ""  # the first sentence of `how`, for a card and a letter, which never cut a command in half; empty when `how` may be cut as it is
 
 
 @dataclass(frozen=True)
@@ -485,6 +486,8 @@ class Brief:
     verb: str = LOOK
     # What a person is asked about this request of advice while it waits (asked_of): the same text on the page, the card and the letters; empty for every other request.
     asked: str = ""
+    # The change asks once more before the sign-in although it can be undone, because it changes a real resource (words.Words.confirm): False for every family that was before it.
+    confirm: bool = False
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -752,8 +755,9 @@ def automation_note(case: CaseRecord | None, now: dt.datetime) -> str:
 
 
 def heads_up_of(plan: PlanRecord | None, now: dt.datetime) -> str:
-    """The warning of an open request of advice, from the time that it kept (automation_words), as one safe line; "" for any other request."""
-    pre = plan.preconditions if plan is not None and plan.family == ADVISE and plan.state == "open" and isinstance(plan.preconditions, dict) else {}
+    """The warning of an open request of advice, or of a change of the family that works on real resources, from the time that it kept (automation_words), as one safe line; "" for any other request."""
+    found = shown(plan.family) if plan is not None else None
+    pre = plan.preconditions if plan is not None and (plan.family == ADVISE or found is not None and found.real) and plan.state == "open" and isinstance(plan.preconditions, dict) else {}
     return plain(automation_words(pre.get(AUTOMATED), now), 300)
 
 
@@ -1786,6 +1790,8 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
         lines.append("Azure no longer lists the resource." if check["gone"] else "Azure still lists the resource.")
     if check.get("now"):
         lines.append(text_of(check["now"], 200))
+    if check.get("differences"):
+        lines.append(f"Azure also changed: {text_of(check['differences'], 200).rstrip('.')}.")
     after = _figure(check.get("costAfterUsd"))
     if after is not None and check.get("currency") in (None, "", "USD") and not (after == 0 and NO_COST_AFTER in said):
         lines.append(f"The bill since the change shows {usd_text(after)}.")
@@ -1926,7 +1932,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
                        "Running in Azure", who, at)
     if action.state in ("done", "unknown") and state == "consumed":
         lines = [f"Approved by {by}, and made with their own Azure rights.", *first, text_of(action.result, 300), *check_lines(check, action.result or "")]
-        return Outcome("done", "Done", tuple(line for line in lines if line), "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
+        differs = bool(check.get("differences"))  # Azure also changed something else than the numbers that were asked for: never a clean success
+        return Outcome("done", "Done, with a difference" if differs else "Done", tuple(line for line in lines if line),
+                       "Done, with a difference" if differs else "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
     detail = text_of(action.error or action.result, 300) or "The change could not be finished."
     return Outcome("failed", "Not made", (detail, LOOK_IN_AZURE), "Not made", who, action.finished_at or at)
 
@@ -1954,7 +1962,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
     if said is not None:
         change, who, rechecked = said.change, WHO_ACTS, said.rechecked
-        undo, risk = Undo(said.reversible, said.undo), Risk(said.level, said.risk)
+        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk)
     elif kind == "change":
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
@@ -1993,7 +2001,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
-        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE) if kind == "change" and state == "open" else "")
+        asked=asked_of(case, rtype, together) if kind == "advice" and state == "open" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE) if kind == "change" and state == "open" else "",
+        confirm=said is not None and said.confirm)
 
 
 def order_key(brief: Brief) -> tuple:

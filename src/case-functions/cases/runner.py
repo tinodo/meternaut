@@ -213,6 +213,9 @@ def execute(s: RunnerServices, action: ActionRecord, *, approved_digest: str) ->
         return _failed(s, started, plan, f"The app may not make this call ({str(error)[:120]}). Nothing was changed.", kind="stopped")
     else:
         accepted = lro.initiated(response)
+        if env.kept:  # what the family wrote down at its write, for the checks that come after it, here or in the timer's
+            started = replace(started, operation={**started.operation, "kept": env.kept})
+            s.store.action_put(started)
     return _settle(s, env, family, plan, started, accepted)
 
 
@@ -258,7 +261,7 @@ def _settle(s: RunnerServices, env: Env, family: Family, plan: PlanRecord, start
 def _running(s: RunnerServices, started: ActionRecord, plan: PlanRecord, accepted: lro.Initiated) -> Executed:
     """Azure accepted the change and has not finished it: the plan is used (a plan runs once), the case is running, and the action keeps the marker that tells the timer to read the
     resource later. This is not a failure and not an end."""
-    running = replace(started, state="running", result=RUNNING_TEXT, finished_at=None, operation={"pending": True, "acceptedAt": stamp(s.clock()), "via": accepted.via or "none"})
+    running = replace(started, state="running", result=RUNNING_TEXT, finished_at=None, operation={**started.operation, "pending": True, "acceptedAt": stamp(s.clock()), "via": accepted.via or "none"})
     s.store.action_put(running)
     s.store.plan_put(replace(plan, state="consumed"))
     case = s.store.case_get(plan.case_id)
@@ -286,14 +289,14 @@ def _failed(s: RunnerServices, action: ActionRecord, plan: PlanRecord | None, te
     return Executed(_finish(s, action, plan, state="unknown" if unknown else "failed", result=text, plan_state="failed", case_status="failed", error=text), kind)
 
 
-def _read_env(s: RunnerServices) -> Env:
-    """The checks after a change read with the token of `s`: the timer's own, which is the reader's and has no write on its list."""
-    return _env(s)
+def _read_env(s: RunnerServices, kept: object = None) -> Env:
+    """The checks after a change read with the token of `s`: the timer's own, which is the reader's and has no write on its list. `kept` is what the family wrote down at its write (the action's `operation`)."""
+    return replace(_env(s), kept=dict(kept) if isinstance(kept, dict) else {})
 
 
-def _verdict(s: RunnerServices, family: Family, plan: PlanRecord) -> Verdict:
+def _verdict(s: RunnerServices, family: Family, plan: PlanRecord, action: ActionRecord | None = None) -> Verdict:
     try:
-        return family.verify(_read_env(s), plan)
+        return family.verify(_read_env(s, action.operation.get("kept") if action is not None else None), plan)
     except (Stop, HttpError, Refused):
         return Verdict("unknown", "The resource could not be read.")
 
@@ -306,7 +309,7 @@ def _settle_pending(s: RunnerServices, action: ActionRecord) -> ActionRecord | N
     if plan is None or family is None:
         return None
     now = s.clock()
-    verdict = _verdict(s, family, plan)
+    verdict = _verdict(s, family, plan, action)
     ended = {**action.operation, "pending": False}
     if verdict.state == "done":
         updated = replace(action, state="done", result=verdict.text.rstrip(".") + " (confirmed by the later check).", finished_at=stamp(now),
@@ -392,7 +395,7 @@ def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
     noted = False
     settled = bool(verification.get("gone")) if family.deletes else bool(verification.get("now"))
     if not settled:
-        verdict = _verdict(s, family, plan)
+        verdict = _verdict(s, family, plan, action)
         if verdict.state == "done":
             verification.update(verdict.evidence, checkedAt=stamp(now))
             settled, changed = True, True
@@ -402,7 +405,7 @@ def _verify(s: RunnerServices, action: ActionRecord) -> ActionRecord | None:
     if settled and action.state in ("unknown", "done") and action.finished_at and s.arm is not None:
         touched, confirmed = _cost_check(s, plan, family, parse(action.finished_at), now, verification)
         changed = changed or touched
-        if confirmed:
+        if confirmed and not verification.get("differences"):  # a change that also changed something else is never "done and checked"
             updated = replace(action, state="verified", verified_at=stamp(now), verification=verification)
             s.store.action_put(updated)
             case = s.store.case_get(plan.case_id)
@@ -434,7 +437,8 @@ def verdict_text(family: Family, verification: dict, said: str) -> str:
     now = verification.get("now")
     if family.deletes:
         return "Deleted. Azure no longer lists the resource (confirmed by the later check)."
-    return (str(now).rstrip(".") if now else said.rstrip(".")) + " (confirmed by the later check)."
+    text = (str(now).rstrip(".") if now else said.rstrip(".")) + " (confirmed by the later check)."
+    return f"{text} {words.compared_text(verification)}".strip()
 
 
 def tick(s: RunnerServices) -> TickResult:

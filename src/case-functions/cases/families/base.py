@@ -32,6 +32,8 @@ from .azure import Azure
 from .calls import ARM_HOST, LOCKS_API, NAME, RESOURCE_ID, Call, Kind
 from .gates import ChangeScope, Gates
 
+ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e]{0,190}"')  # an entity tag as a header carries it: quoted, in printable ASCII, so that a hostile answer cannot put anything else in a header
+
 
 class Stop(Exception):
     """A check that fails before the change: the text says which, in plain words, as the end of a sentence ("Meternaut did not change the disk: <text>"), and nothing has been changed.
@@ -52,12 +54,14 @@ class Unreadable(Exception):
 @dataclass(frozen=True)
 class Env:
     """What a family works with: the calls (with a token), the places and the mark that a change may be made on, the do-not-touch notes (a person's third gate) and the clock (a family that
-    reads a measurement of the last days needs the day)."""
+    reads a measurement of the last days needs the day). `kept` is what a family writes down at its write for the checks that come after it, in the same request or later (the runner keeps it
+    in the action and gives it back): nothing of it is trusted but as data, and an old family keeps nothing."""
 
     azure: Azure
     gates: Gates
     do_not_touch: Callable[[], set[str]] = lambda: set()
     clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc)
+    kept: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -157,10 +161,12 @@ def locate(resource_id: str, gates: Gates, kinds: tuple[Kind, ...]) -> Located:
     return Located(scope, kind, name)
 
 
-def read_resource(env: Env, located: Located, suffix: str = "", query: str = "") -> dict | None:
-    """The resource as Azure shows it now; None when Azure says that it does not exist. Raises Stop when the person may not read it or it cannot be read."""
+def read_answer(env: Env, located: Located, suffix: str = "", query: str = "") -> tuple[dict, str] | None:
+    """The resource as Azure shows it now and its ETag (the header, else the `etag` of the body, else empty); None when Azure says that it does not exist. Raises Stop when the person may not
+    read it or it cannot be read."""
     try:
-        data = env.azure.get(located.url(suffix, query)).json()
+        answer = env.azure.get(located.url(suffix, query))
+        data = answer.json()
     except HttpError as error:
         if error.status == 404:
             return None
@@ -171,7 +177,17 @@ def read_resource(env: Env, located: Located, suffix: str = "", query: str = "")
         raise Stop("the app may not read this resource", unread=True) from error
     if not isinstance(data, dict):
         raise Stop("Azure answered with something that is not a resource", unread=True)
-    return data
+    tag = next((value for name, value in answer.headers.items() if str(name).lower() == "etag"), None)
+    if tag is None:  # the etag of the body is a bare string at some providers: a header carries it in quotes
+        tag = next((value for name, value in data.items() if str(name).lower() == "etag"), "")
+        tag = f'"{tag}"' if isinstance(tag, str) and tag and not tag.startswith(('"', 'W/"')) else tag
+    return data, tag.strip() if isinstance(tag, str) and ETAG.fullmatch(tag.strip()) else ""
+
+
+def read_resource(env: Env, located: Located, suffix: str = "", query: str = "") -> dict | None:
+    """The resource as Azure shows it now; None when Azure says that it does not exist. Raises Stop when the person may not read it or it cannot be read."""
+    found = read_answer(env, located, suffix, query)
+    return None if found is None else found[0]
 
 
 class Family:

@@ -86,7 +86,10 @@ def parse_scopes(text: str) -> tuple[tuple[ChangeScope, ...], list[str]]:
 
 
 def scope_of(scopes: Sequence[ChangeScope], subscription_id: str | None, resource_group: str | None) -> ChangeScope | None:
-    """The scope that holds a resource of this subscription and this group, or None. Both have to match, without case: a group of the same name in another subscription is not it."""
+    """The scope that holds a resource of this subscription and this group, or None. Both have to match, without case: a group of the same name in another subscription is not it. Only ASCII
+    is compared, and it is the name as it was given that has to be ASCII: lower case folds the Kelvin sign (U+212A) into a k, so a name that is not ASCII is no name of a listed group."""
+    if not (subscription_id or "").isascii() or not (resource_group or "").isascii():
+        return None
     wanted = ((subscription_id or "").lower(), (resource_group or "").lower())
     if not wanted[0] or not wanted[1]:
         return None

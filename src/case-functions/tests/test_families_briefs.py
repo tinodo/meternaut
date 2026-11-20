@@ -113,7 +113,7 @@ def texts_of(card) -> dict[str, str]:
 
 class TheRegistryFeedsTheBrief(unittest.TestCase):
     def test_every_family_of_the_registry_is_shown_here_and_a_new_one_cannot_be_forgotten(self):
-        planted = {name for name in registry.names() if not registry.get(name).real}  # the family that works on real resources is shown by test_families_setting.py
+        planted = {name for name in registry.names() if not registry.get(name).real}  # the family that works on real resources says no planted tag and no planted group, so the words below do not fit it; its brief, page, card and letter are tested in test_families_setting.py (TheRealChangeAsksOnceMore, TheUndoIsExact, ThePromiseAfterTheWrite)
         self.assertEqual(set(MAKERS), planted)
         self.assertEqual(set(REVERSIBLE), planted)
 

@@ -176,7 +176,11 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
         lines.append(f"Cost lines were last asked for on {data['costAskedOn']}.")
     if data.get("note"):
         lines.append(f"Note: {data['note']}")
-    known = {"gone", "checkedAt", "costAfterUsd", "currency", "costLinesFrom", "costLinesTo", "costBeforeUsd30d", "costAskedOn", "costGaveUp", "note"}
+    if data.get("differences"):
+        lines.append(f"Azure also changed: {data['differences']}.")
+    elif data.get("compared") is False:
+        lines.append("Meternaut could not compare the other properties with what it sent.")
+    known = {"gone", "checkedAt", "costAfterUsd", "currency", "costLinesFrom", "costLinesTo", "costBeforeUsd30d", "costAskedOn", "costGaveUp", "note", "differences", "compared"}
     lines += [f"{name}: {value}" for name, value in sorted(data.items()) if name not in known and isinstance(value, (str, int, float, bool))][:5]
     return join((paragraph(line) for line in lines)) if lines else esc("Not checked yet.")
 

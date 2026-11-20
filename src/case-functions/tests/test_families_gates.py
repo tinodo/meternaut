@@ -60,7 +60,7 @@ def world_with(name: str, **more):
 class EveryFamilyHasASample(unittest.TestCase):
     def test_the_samples_are_the_families_of_the_registry_and_each_makes_the_plan_of_its_own_family(self):
         self.assertEqual(set(SAMPLES), {name for name in registry.names() if not registry.get(name).real},
-                         "a family that is added has to be given a sample here, and is then held to every gate below (the family that works on the owner's real resources has gates of its own: test_families_setting.py)")
+                         "a family that is added has to be given a sample here, and is then held to every gate below (the family that works on the owner's real resources has gates of its own, in a world of its own: test_families_setting.py, TheOwnersLine, TheIdsAreAsciiOnly and TheChecksRightBeforeTheChange)")
         for name in SAMPLES:
             with self.subTest(name):
                 world, resource, kind, recommendation, detector = world_with(name)

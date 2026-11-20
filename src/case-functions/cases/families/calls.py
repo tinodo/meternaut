@@ -42,12 +42,13 @@ P2S_API = "2026-01-01"
 # Learn, "Metrics - List" (read on 2026-11-11): api-version 2023-10-01, `timespan` as start/end, `interval` as an ISO 8601 duration, `aggregation` a comma separated list.
 METRICS_API = "2023-10-01"
 
+IA = re.I | re.A  # no pattern of an address folds the case of a letter that is not ASCII: the Kelvin sign (U+212A) is a k and a long s (U+017F) an s to a Unicode match, and neither is in any name
 # A name of one or two dots would walk up the address once a server reads it, so it is not a name.
 NAME = r"(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]{1,80}"
 # The id of one resource in a resource group, as a plan holds it: every part is checked, and nothing may follow the name.
 RESOURCE_ID = re.compile(
     r"/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourceGroups/([A-Za-z0-9._()-]{1,90})"
-    rf"/providers/([A-Za-z0-9.]{{1,80}})/([A-Za-z0-9]{{1,40}})/({NAME})", re.I)
+    rf"/providers/([A-Za-z0-9.]{{1,80}})/([A-Za-z0-9]{{1,40}})/({NAME})", IA)
 
 
 @dataclass(frozen=True)
@@ -139,7 +140,7 @@ def _base(scope: ChangeScope) -> str:
 
 
 def _pattern(scope: ChangeScope, call: Call) -> "re.Pattern[str]":
-    return re.compile(_base(scope) + rf"/providers/{re.escape(call.kind.provider)}/{re.escape(call.kind.collection)}/{NAME}{re.escape(call.suffix)}", re.I)
+    return re.compile(_base(scope) + rf"/providers/{re.escape(call.kind.provider)}/{re.escape(call.kind.collection)}/{NAME}{re.escape(call.suffix)}", IA)
 
 
 def _locks(scope: ChangeScope) -> "re.Pattern[str]":
@@ -147,18 +148,18 @@ def _locks(scope: ChangeScope) -> "re.Pattern[str]":
     host = re.escape(f"https://{ARM_HOST}")
     covered = (host + re.escape(f"/subscriptions/{scope.subscription}") + rf"(?:/resourceGroups/{re.escape(scope.group)}"
                rf"(?:/providers/[A-Za-z0-9.]{{1,80}}/[A-Za-z0-9]{{1,40}}/{NAME})?)?")
-    return re.compile(covered + r"/providers/Microsoft\.Authorization/locks", re.I)
+    return re.compile(covered + r"/providers/Microsoft\.Authorization/locks", IA)
 
 
 def _operations(scope: ChangeScope) -> "re.Pattern[str]":
     """The status of an asynchronous operation of Compute or Network in the subscription (Learn, "Status of asynchronous operations": the address that the header Azure-AsyncOperation or
     Location of the answer gives, under /subscriptions/<id>/providers/<provider>/locations/<region>/). It reads a status and changes nothing."""
     return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/") + r"(?:Microsoft\.Compute|Microsoft\.Network)/locations/[A-Za-z0-9]{1,40}"
-                      r"/[A-Za-z]{3,30}/[A-Za-z0-9._~-]{1,100}", re.I)
+                      r"/[A-Za-z]{3,30}/[A-Za-z0-9._~-]{1,100}", IA)
 
 
 def _usage(scope: ChangeScope) -> "re.Pattern[str]":
-    return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{COMPUTE}/locations/") + r"[A-Za-z0-9]{1,40}/usages", re.I)
+    return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{COMPUTE}/locations/") + r"[A-Za-z0-9]{1,40}/usages", IA)
 
 
 def _once(calls: Sequence[tuple[str, "re.Pattern[str]"]]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -199,13 +200,13 @@ PROVIDER = r"[A-Za-z][A-Za-z0-9]{0,39}(?:\.[A-Za-z][A-Za-z0-9]{0,39}){1,3}"
 COLLECTION = r"[A-Za-z][A-Za-z0-9]{0,39}"
 GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 GROUP = r"[A-Za-z0-9._()-]{1,90}"
-GENERIC_ID = re.compile(rf"/subscriptions/({GUID})/resourceGroups/({GROUP})/providers/({PROVIDER})/({COLLECTION})/({NAME})", re.I)
-RELEASED = re.compile(r"\d{4}-\d{2}-\d{2}")  # an api-version that is not a preview
+GENERIC_ID = re.compile(rf"/subscriptions/({GUID})/resourceGroups/({GROUP})/providers/({PROVIDER})/({COLLECTION})/({NAME})", IA)
+RELEASED = re.compile(r"\d{4}-\d{2}-\d{2}", re.A)  # an api-version that is not a preview
 PROVIDERS_API = "2021-04-01"  # Learn, "Providers - Get": the api-versions of each resource type of a namespace
 
 
 def _in(scope: ChangeScope, tail: str) -> "re.Pattern[str]":
-    return re.compile(_base(scope) + tail, re.I)
+    return re.compile(_base(scope) + tail, IA)
 
 
 def real_reads(scopes: Sequence[ChangeScope]) -> list[tuple[str, "re.Pattern[str]"]]:
@@ -215,7 +216,7 @@ def real_reads(scopes: Sequence[ChangeScope]) -> list[tuple[str, "re.Pattern[str
     for scope in scopes:
         one = rf"/providers/{PROVIDER}/{COLLECTION}/{NAME}"
         found += [(GET, _in(scope, one)), (GET, _in(scope, one + "/providers/Microsoft\\.Insights/metrics")), (GET, _locks(scope)),
-                  (GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/") + PROVIDER, re.I))]
+                  (GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/") + PROVIDER, IA))]
     return found
 
 
@@ -224,7 +225,7 @@ def operation_reads(scope: ChangeScope, provider: str, collection: str, name: st
     resource itself. GET only."""
     ident = r"(?!\.{1,2}$)[A-Za-z0-9._~-]{1,100}"
     own = f"/providers/{re.escape(provider)}/{re.escape(collection)}/{re.escape(name)}"
-    return [(GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{provider}/locations/") + rf"[A-Za-z0-9]{{1,40}}/[A-Za-z]{{3,30}}/{ident}", re.I)),
+    return [(GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{provider}/locations/") + rf"[A-Za-z0-9]{{1,40}}/[A-Za-z]{{3,30}}/{ident}", IA)),
             (GET, _in(scope, own + rf"/(?:operationResults|operationStatuses|operations)/{ident}"))]
 
 
