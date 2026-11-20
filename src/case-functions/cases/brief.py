@@ -210,7 +210,8 @@ ADVICE_WHO = "If you act, you do it yourself in Azure with your own rights."
 NO_HISTORY = "There is no history of cases like this yet."  # what the page and the card say when too few like it were answered; a letter, which is read once, leaves it out
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
 # What an answer does to advice that the investigation made, for the kind that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
-# proposals.CANNOT), or Meternaut makes no change for this kind of finding. A request of Azure Advisor and of an older check keeps ADVICE_CHANGE. Who acts is ADVICE_WHO for all of them.
+# proposals.CANNOT), or the AI named no setting, or only one that code dropped as no count, so there is nothing for Meternaut to change. A request of Azure Advisor and of an older check keeps
+# ADVICE_CHANGE. Who acts is ADVICE_WHO for all of them.
 ADVICE_CANNOT = "Meternaut cannot make this change itself.{why} Your answer is recorded with your name."
 ADVICE_NONE = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."
 ADVICE_NOT_COUNT = "Meternaut only lowers a count of units, and {what} is not one, so it has nothing to change here. Your answer is recorded with your name."  # the change that the finding states is a ratio on a property that is no count

@@ -229,9 +229,12 @@ def series_reason(brief: Brief, case: CaseRecord | None) -> str:
 
 
 def short_title(headline: str, group: str = "") -> str:
-    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place)."""
-    place = f" in group {group}" if group else ""
-    return headline.replace(place, "", 1) if place and place in headline else headline
+    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place), whether the headline says "in group g" (a finding) or "in
+    resource group g" (a change that Meternaut makes)."""
+    for place in (f" in group {group}", f" in resource group {group}") if group else ():
+        if place in headline:
+            return headline.replace(place, "", 1)
+    return headline
 
 
 def title_of(brief: Brief) -> tuple[Safe, str]:

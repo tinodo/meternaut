@@ -194,7 +194,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             for surface, one in asked.items():
                 with self.subTest(surface):
                     text = read(one)
-                    self.assertIn(f"Scale down the bastion host bastion-one in resource group {REAL_GROUP}: scale units from 4 to 2", " ".join(b.text for b in one.blocks))
+                    self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", " ".join(b.text for b in one.blocks))
                     self.assertIn(f"You are asked whether to let Meternaut scale down the bastion host bastion-one in resource group {REAL_GROUP} by lowering scale units from 4 to 2.", text)
                     self.assertIn("At the rate of the last 7 days this bastion host costs about $202 a month for what the change would shrink.", text, "the figure says what it rests on, as the request that asked did")
                     self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced." if surface != "page" else "Of them, 1 is the AI's estimate and 1 is not priced.", text)
@@ -242,7 +242,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             form = console.get(f"/ok/{plan.plan_id}").form(f"/ok/{plan.plan_id}", has_button="Approve")
             reply = console.submit(form, "Approve", confirm=False, note="Go on")
             self.assertEqual(reply.status, 200, "approving asks once more before anything is signed in")
-            self.assertTrue(reply.headings(1)[0].startswith(f"Confirm: Scale down the bastion host bastion-one in resource group {REAL_GROUP}: scale units from 4 to 2"), reply.headings(1))
+            self.assertTrue(reply.headings(1)[0].startswith("Confirm: Scale down the bastion host bastion-one: scale units from 4 to 2"), reply.headings(1))
             self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", reply.main.text())
             self.assertIn("Meternaut does not know what a lower number takes away from what uses the bastion host.", reply.main.find("div", class_="notice warning").text())
             self.assertEqual((console.delegate.begins, world.store.decisions_of_plan(plan.plan_id)), ([], []), "nothing is recorded and no sign-in starts at the first press")
@@ -272,6 +272,31 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             self.assertIn(said, letter.text)
             self.assertEqual(sum("Azure also changed" in line for line in letter.text.splitlines()), 1)
 
+    def test_every_place_that_shows_the_title_shows_the_same_one_for_the_change_the_advice_with_a_setting_and_the_advice_with_none(self):
+        title = "Scale down the bastion host bastion-one: scale units from 4 to 2"
+        bare = reduction(others=())
+        del bare["set"]
+        none, _ = investigated(host(), change=bare)
+        self.assertEqual(none.facts.get(proposals.KEY, {}).get("set"), None, "the AI named no setting")
+        kinds = {"the change that Meternaut makes": (self.case, True), "advice with a setting": (self.case, False), "advice with no setting": (none, False)}
+        for kind, (case, on) in kinds.items():
+            with self.subTest(kind), mock.patch.object(gates, "REAL_CHANGES_ALLOWED", on):
+                world, lead, mine = world_of(host(), case)
+                plan = world.approvals.plan_for(mine, lead, (OID,))
+                self.assertEqual(plan.family, "change-setting" if on else "advise")
+                for surface, one in surfaces(world, plan).items():
+                    heads = [block.text for block in one.blocks if block.text.startswith("Scale down the") and block.kind in ("heading", "label") and not block.details]
+                    self.assertEqual(heads, [title], f"{surface}: one title, and the place is on the line under it")
+                sent = {"escalation letter": letters.escalation_letter(plan, mine, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS, source="owners"),
+                        "escalation digest": letters.escalation_digest_letter(tfs.PERSON, tfs.BASE, tfs.NOW, [(plan, mine, "owners")], tfs.CONTACTS),
+                        "weekly letter": letters.escalation_weekly_letter(tfs.PERSON, tfs.BASE, tfs.NOW, [(plan, mine)], tfs.CONTACTS),
+                        "digest": letters.digest_letter(tfs.PERSON, tfs.BASE, tfs.NOW, [(plan, mine)], tfs.CONTACTS)}
+                for name, letter in sent.items():
+                    self.assertIn(title, letter.text, name)
+                    self.assertNotRegex(letter.text, r"bastion-one in (resource )?group \S+: scale units", name)
+                rows = [link.text() for link in console_of(world, plan, mine).get("/").main.find_all("a") if link.attrs.get("href") == f"/ok/{plan.plan_id}"]
+                self.assertEqual([row.removeprefix("Review and decide: ").removeprefix("Review: ") for row in rows], [title], "the Decisions page")
+
     def test_the_request_that_asked_is_taken_back_once_with_its_words_and_the_new_request_is_named_on_its_page_and_in_the_history(self):
         world, lead, case = world_of(host(), self.case)
         old = world.approvals.plan_for(case, lead, (OID,))
@@ -296,7 +321,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertIn(brief_mod.TAKEN_BACK["upgraded"], text)
         self.assertIn("Nothing was changed in Azure.", text)
         (pointer,) = [a for a in page.main.find_all("a") if a.attrs.get("href") == f"/ok/{new.plan_id}"]
-        self.assertEqual(pointer.text(), f"Scale down the bastion host bastion-one in resource group {REAL_GROUP}: scale units from 4 to 2")
+        self.assertEqual(pointer.text(), "Scale down the bastion host bastion-one: scale units from 4 to 2", "the same title as the request that it replaces")
         feed = console.get("/history").main.text()
         self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", feed)
         self.assertIn(brief_mod.TAKEN_BACK["upgraded"], feed, "a request that a change took the place of is a line of its own and says why")

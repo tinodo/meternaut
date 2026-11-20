@@ -108,7 +108,8 @@ class ThePage(unittest.TestCase):
         reply = self.console.get("/ok/plan0001")
         self.assertNotIn("cannot be undone", reply.content)
         self.assertEqual(reply.facts()["Undo"], "Resize the disk back to its old size within 24 hours.")
-        self.assertEqual(reply.headings(1), ["Delete an unattached managed disk in resource group meternaut-test-rg"], "a family without words of its own keeps the plan's title")
+        self.assertEqual(reply.headings(1), ["Delete an unattached managed disk"], "a family without words of its own keeps the plan's title, and the line under it names the group")
+        self.assertIn("meternaut-test-rg", reply.main.find("p", class_="meta").text())
 
     def test_a_change_with_no_undo_text_says_so_plainly(self):
         self.console.store.plan_put(make_plan(family="resize-disk", undo=""))
