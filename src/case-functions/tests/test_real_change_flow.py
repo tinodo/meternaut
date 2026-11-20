@@ -267,12 +267,14 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             said = "Azure shows the bastion host with scale units at 2, and its last operation worked. Azure also changed: properties.retentionDays."
             self.assertIn(said, b.outcome.lines)
             self.assertEqual(sum("Azure also changed" in line for line in b.outcome.lines), 1, "said once")
+            self.assertNotIn("scale units at 2.", b.outcome.lines, "what Azure shows is said once, in the sentence of the result, and not again as a fragment")
             page = console_of(world, kept, case).get(f"/ok/{plan.plan_id}").text
             self.assertIn("Done, with a difference", page)
             self.assertIn("Azure also changed: properties.retentionDays.", page)
             letter = letters.done_letter(kept, done.action, case, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS)
             self.assertEqual(letter.subject, "[Meternaut] " + letters.DIFFERENT_SUBJECT)
             self.assertIn(said, letter.text)
+            self.assertNotIn("scale units at 2.", letter.text.splitlines(), "and not as a line of its own in the letter")
             self.assertEqual(sum("Azure also changed" in line for line in letter.text.splitlines()), 1)
 
     def test_every_place_that_shows_the_title_shows_the_same_one_for_the_change_the_advice_with_a_setting_and_the_advice_with_none(self):

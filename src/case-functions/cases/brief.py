@@ -1916,7 +1916,7 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
         lines.append(f"The 30 days before the change cost {usd_text(before)}.")
     if check.get("note"):
         lines.append(text_of(check["note"], 200))
-    return [line for line in lines if line.lower() not in said.lower()]
+    return [line for line in lines if line.lower().rstrip(". ") not in said.lower()]  # the full stop does not count: "Size x." is said already by "... at size x, and ..."
 
 
 def _nothing_changed(result: object) -> str:
