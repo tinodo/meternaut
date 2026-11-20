@@ -1365,15 +1365,17 @@ class TheCountGate(unittest.TestCase):
     def test_a_key_that_decides_how_much_is_kept_is_refused_with_its_own_reason_and_a_count_or_a_size_is_still_accepted(self):
         kept = ("retentionCount", "retentionSizeGB", "numberOfDaysToKeep", "keepCount", "backupCount", "snapshotCount", "backup.count", "numberOfBackups", "properties.retention.maxCount",
                 "keepcount", "backupcount", "BACKUPCOUNT", "ttlcount", "retentionpolicy.count", "numberOfSnapShots", "maxHistoryCount", "maxVersionCount", "restorePointCount", "archiveCount", "purgeCount",
-                "maxThrottleCount")  # the last holds ttl inside another word: a name that merely contains one of the words is refused too
-        self.assertEqual(proposals.KEPT_WORDS, ("retention", "retain", "retained", "keep", "kept", "ttl", "backup", "snapshot", "history", "version", "restore", "archive", "purge"))
+                "maxThrottleCount",  # the last holds ttl inside another word: a name that merely contains one of the words is refused too
+                "recoveryPointCount", "revisionCount", "checkpointCount", "softDeleteCount", "logFileCount", "purgingCount", "deleteRetentionCount")
+        self.assertEqual(proposals.KEPT_WORDS, ("retention", "retain", "retained", "keep", "kept", "ttl", "backup", "snapshot", "history", "version", "restore", "archive", "purg", "recover", "revision",
+                                                "checkpoint", "softdelete", "delete", "logfile"))
         for path in (*kept, "ttl", "ttlSeconds"):
             with self.subTest(path):
                 self.assertFalse(proposals.countlike(path), path)
                 self.assertFalse(setting_module._countlike(path), path)
         for path in kept:
             self.assertEqual(proposals._refusal(path), "kept", path)
-        for path in ("scaleUnits", "sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "dailyQuotaGb", "diskSizeGB"):
+        for path in ("scaleUnits", "sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "dailyQuotaGb", "diskSizeGB", "partitionCount", "replicaCount", "nodeCount", "minCapacity"):
             self.assertTrue(proposals.countlike(path), path)
         self.assertEqual(proposals.WHY["set"]["kept"], "a setting that decides how much is kept, which a lower number deletes")
         self.assertEqual(proposals._setting({"handle": "r1", "property": "retentionCount", "from": 30, "to": 7}, ["r1"], {"r1": {"properties": {"retentionCount": 30}}}, {}), "kept",
@@ -1724,6 +1726,33 @@ class TheUpgradeAsksTheSameRules(unittest.TestCase):
                         self.assertEqual((new.family, new.preconditions[proposals.CANNOT_KEY]), ("advise", name), "with nothing in the way the request that asks instead says why")
                     if other is not None:
                         self.assertEqual(world.store.plan_get(other.plan_id).state, "open", "the other request is not touched")
+
+    def test_a_plan_whose_own_target_the_gate_refuses_is_taken_back_though_the_finding_is_valid_whatever_else_stops_a_plan(self):
+        refused = (("not-a-count", {"path": "retentionDays", "from": 30, "to": 7}), ("unsupported", {"path": "capacityUnits", "from": 4, "to": 6}),
+                   ("not-a-count", {"path": "revisionCount", "from": 30, "to": 7}))
+        for key, own in refused:
+            for stop in ("a second open request", "no reader"):
+                with self.subTest(key=key, path=own["path"], stop=stop):
+                    world = Real()
+                    plan = world.plan()
+                    case = world.store.case_get(plan.case_id)
+                    self.assertEqual(case.facts[proposals.KEY]["set"], [SET], "the finding is valid and stays as it was")
+                    old = replace(plan_digest.sealed(replace(plan, target={**plan.target, "set": [own]})), code=plan.code)  # a plan that was made under another gate
+                    world.store.plan_put(old)
+                    other = None
+                    if stop == "no reader":
+                        world.approvals.reader = None
+                    else:
+                        other = approvals_module.build_advice(case, (OID,), NOW, world.settings)
+                        world.store.plan_put(other)
+                    done = world.approvals.upgrade((OID,))
+                    mine = [(taken, new) for taken, new, _ in done if taken.plan_id == plan.plan_id]
+                    self.assertEqual(len(mine), 1, "the plan's own target is refused: it is taken back")
+                    self.assertEqual((world.store.plan_get(plan.plan_id).state, world.store.plan_get(plan.plan_id).preconditions["takenBack"]), ("expired", "changed"))
+        world = Real()
+        plan = world.plan()
+        self.assertEqual(world.approvals.upgrade((OID,)), [], "the control: a plan whose own target passes the gate is left alone")
+        self.assertEqual(registry.get(SETTING).own(plan), "")
 
 
 class EveryReasonThatAChangeCannotBeMadeHasItsKeyAndItsWords(unittest.TestCase):
