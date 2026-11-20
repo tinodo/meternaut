@@ -69,10 +69,10 @@ NOT_MADE_APP_STOPPED = (f"The change was not made: the app stopped before it cou
                         "Nothing is known to have been changed. A new plan is made when the Watch finds the resource again.")
 
 
-def read_calls(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+def read_calls(scopes: Sequence[ChangeScope], real: Sequence[ChangeScope] = ()) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
     """(method, address without its query) of the reads that the checks make: each kind of resource that a family reads, in the resource groups of the change scopes, and locks and the
-    quota. No write."""
-    return read_patterns(scopes)
+    quota; the groups of the real change scopes (`real`) add the reads of the family `change-setting`. No write."""
+    return read_patterns(scopes, real)
 
 
 def change_calls(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -132,7 +132,7 @@ def _finish(s: RunnerServices, action: ActionRecord, plan: PlanRecord, *, state:
 def _stopped(why: str, plan: PlanRecord | None = None) -> str:
     """What the record says when a check right before the change refuses it, in the words of a person: what Meternaut did not do, why, and that nothing was changed. `why` is the end of a
     sentence that a check wrote (no capital letter, no full stop); the resource is named as the plan's kind of resource calls it ("the disk")."""
-    noun = words.noun_of(words.type_of(plan.family, plan.preconditions)) if plan is not None else "resource"
+    noun = words.plan_noun(plan)
     return f"Meternaut did not change the {noun}: {why}. Nothing was changed."
 
 

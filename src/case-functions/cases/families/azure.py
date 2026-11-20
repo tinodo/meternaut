@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Callable
 
 from ..http import Client, Response
-from .calls import ARM_RESOURCE, WRITES, Call
+from .calls import ARM_RESOURCE, RESOURCE_PUT, WRITES, Call
 
 
 class Azure:
@@ -25,8 +25,9 @@ class Azure:
         return self.client.request("GET", url, headers=self._headers(), timeout=timeout)
 
     def write(self, call: Call, url: str, body: object = None) -> Response:
-        """The one write of a change: made once, never retried (a write that failed may have been carried out). `call` has to be one of WRITES."""
-        if call not in WRITES:
+        """The one write of a change: made once, never retried (a write that failed may have been carried out). `call` has to be one of WRITES, or the PUT of the family `change-setting`, which only the
+        client of that one request lets through (calls.one_write)."""
+        if call not in WRITES and call != RESOURCE_PUT:
             raise LookupError("this is not a call that Meternaut may make")
         headers = {**self._headers(), "x-ms-correlation-request-id": self.correlation or "none"}
         return self.client.request(call.method, url, headers=headers, body=body, timeout=60, retries=0, retry_network=False)

@@ -18,11 +18,13 @@ from . import config as cfg
 from . import delegated, drift, learning, loop_config, people as people_mod, precheck, runner, web, wiring
 from .approvals import Approvals
 from .events import History
+from .families import calls as arm_calls
 from .families import registry
 from .families.azure import Azure
 from .http import Client, default_transport
 from .identity import Identity
 from .memory_store import utc_now
+from .models import PlanRecord
 from .redact import Redactor
 from .runner import RunnerServices
 
@@ -48,7 +50,7 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
     approval = wiring.approval_settings(settings)
     approvals = Approvals(store, approval, clock)
     watch = cfg.load(env)
-    acts_on = registry.acts_on(settings.planted_tag, settings.change_scopes)
+    acts_on = registry.acts_on(settings.planted_tag, settings.change_scopes, settings.real_change_scopes)
     history = History(uuid.uuid4().hex, None, clock, redact)
     signin = delegated.settings_of(settings)
     change_client = Client(runner.change_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
@@ -57,14 +59,21 @@ def build_services(env: Mapping[str, str], *, transport=default_transport, sleep
         # The person's own token, for the one request that makes the change: nothing keeps it.
         return RunnerServices(store, change_client, lambda resource: token, approval, clock=clock, sleep=sleep, emit=history.emit)
 
+    def run_one(token: str, plan: PlanRecord) -> RunnerServices:
+        # The change of a real resource has a client of its own, built from the approved plan: reads of the real groups and one PUT, the plan's own resource at the plan's api-version, and no write at all while
+        # the owner's line is off (families/calls.py one_write). The static client above holds no real group.
+        target = plan.target if isinstance(plan.target, dict) else {}
+        client = arm_calls.one_write(plan.resource_id, str(target.get("apiVersion", "")), approval.gates, redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        return RunnerServices(store, client, lambda resource: token, approval, clock=clock, sleep=sleep, emit=history.emit)
+
     if signin is None:
         def redeem(code: str, verifier: str) -> delegated.Tokens:
             raise delegated.SigninError("Signing in to Azure is not set up here. Nothing is approved.")
     else:
         redeem = delegated.TokenClient(signin, Identity({**env, "AZURE_CLIENT_ID": signin.assertion_client_id}, **options).token,
                                        Client(delegated.token_calls(signin), redact, transport=transport, sleep=sleep, monotonic=monotonic)).redeem
-    delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit)
-    reader_calls = runner.read_calls(settings.change_scopes)
+    delegate = delegated.Delegation(store, approvals, signin, redeem, run, emit=history.emit, run_one=run_one)
+    reader_calls = runner.read_calls(settings.change_scopes, settings.real_change_scopes)
 
     def look() -> Azure:
         # The reader of one look at a resource before a page offers Approve (cases/precheck.py): the app's own identity, and a list of calls that holds reads only, in the resource groups of the

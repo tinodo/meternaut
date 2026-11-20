@@ -18,7 +18,7 @@ from . import learning
 from .approvals import HELD_BACK, HELD_WORDS, LEFT_ALONE, NOT_ASKED, NOTHING_TO_SAY, RELEASED
 from .detectors import Lead
 from .events import History
-from .models import HELD, CaseRecord, PlanRecord, StoreError
+from .models import ADVISE, HELD, CaseRecord, PlanRecord, StoreError
 from .roles import clean_text
 
 
@@ -98,6 +98,21 @@ def ask(ex, history: History, record: CaseRecord, lead: Lead, holds: list[str] |
     why = ex.approvals.held_why(record) or (brief.NO_FIGURE if brief.why_not_ask(record) == brief.NO_FIGURE and not ex.approvals.has_request(record) else "")
     if (why or brief.says_nothing(record)) and holds is not None:
         holds.append(held(history, record, why))
+
+
+def upgrade(ex, history: History) -> list[str]:
+    """Makes the open requests of the findings that propose a change what Meternaut can make of them now (Approvals.upgrade): a request that only asked is taken back, with the reason `upgraded`, when the
+    change can be made now, and the request of a change that does not hold any more, with `changed`; each new request keeps the start of the wait of the one it replaces. Says each in the History with
+    `plan.created` and `was` (the family of the plan that was taken back), and returns one plain sentence for each kind of change."""
+    done = ex.approvals.upgrade(ex.approvers())
+    for old, new, case in done:
+        history.emit("plan.created", planId=new.plan_id, caseKey=case.case_id, family=new.family, approvers=len(new.approvers), was=old.family)
+    made = sum(1 for old, new, _ in done if new.family != ADVISE)
+    back = len(done) - made
+    return [text for count, text in ((made, f"{made} request{'s' if made != 1 else ''} that only asked whether a change is worth it {'were' if made != 1 else 'was'} taken back, because Meternaut can make the change itself now: "
+                                            "a request to approve it takes its place"),
+                                     (back, f"{back} request{'s' if back != 1 else ''} to approve a change {'were' if back != 1 else 'was'} taken back, because the finding or the resource changed: "
+                                            "a new request takes its place")) if count]
 
 
 def take_back(ex, history: History) -> Counter:

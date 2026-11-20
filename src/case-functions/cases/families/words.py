@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable
 
+from .. import proposals
 from ..models import PlanRecord
 
 # What a plan of a change of a gateway's scale units, and its re-check right before it acts, ask of the connection count: it is read for the last CONNECTION_DAYS closed days, it has to hold a
@@ -25,6 +26,9 @@ RE_CHECK = ("the resource is still unattached or unassigned, still carries the t
             "and has no management lock")
 SIZE_NAME = re.compile(r"[A-Za-z]{1,10}_[A-Za-z0-9_]{1,40}")
 RESOURCE_TYPE = re.compile(r"microsoft\.[a-z0-9]{2,30}/[a-z0-9]{2,40}")
+# The key path of a setting that `change-setting` changes (dotted words, the platform's own spelling, no list), and the name of a measurement that its plan cites (cases/investigate.py METRIC_NAME).
+SETTING_PATH = re.compile(r"[A-Za-z][A-Za-z0-9]{0,59}(?:\.[A-Za-z][A-Za-z0-9]{0,59}){0,5}")
+METRIC_WORDS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}")
 
 
 @dataclass(frozen=True)
@@ -221,6 +225,72 @@ def scale_vpn_gateway(plan: PlanRecord | None, rtype: str, name: str, group: str
         reversible=True)
 
 
+def _singular(word: str) -> str:
+    for tail, ending in (("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x")):
+        if word.endswith(tail):
+            return word[:-len(tail)] + ending
+    return word[:-1] if word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
+
+
+def kind_words(resource_id: object) -> str:
+    """The kind of the resource of an id in words of a person, from the type segment before its name: `bastionHosts` is "bastion host". "resource" when the id has no such segment."""
+    parts = str(resource_id or "").split("/")
+    segment = parts[-2] if len(parts) >= 9 else ""
+    names = [word.lower() for word in proposals.WORD.findall(segment)] if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else []
+    return " ".join([*names[:-1], _singular(names[-1])]) if names else "resource"
+
+
+def plan_noun(plan: PlanRecord | None) -> str:
+    """The resource of a plan as a noun of a sentence: from the type segment of its id for the family that works on any kind, else the noun of its kind."""
+    if plan is not None and plan.family == "change-setting":
+        return kind_words(plan.resource_id)
+    return noun_of(type_of(plan.family, plan.preconditions)) if plan is not None else "resource"
+
+
+def _sets(target: dict) -> list[tuple[str, object, object]]:
+    """The settings that a plan of `change-setting` changes, as (path, from, to), from its target: a path of plain words and two numbers, at most three."""
+    items = target.get("set") if isinstance(target.get("set"), list) else []
+    return [(item["path"], item["from"], item["to"]) for item in items[:3] if isinstance(item, dict) and isinstance(item.get("path"), str) and SETTING_PATH.fullmatch(item["path"])
+            and all(isinstance(item.get(key), (int, float)) and not isinstance(item.get(key), bool) for key in ("from", "to"))]
+
+
+def _list(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def changes_text(target: dict, how: str = "change") -> str:
+    """What a plan of `change-setting` changes, from its target: "scale units from 4 to 2 and sku capacity from 8 to 6"; `how` is `back` for how it is put back ("scale units to 4 and sku capacity to 8"),
+    `now` for what it shows before the change ("scale units at 4") and `new` for what it shows after it ("scale units at 2")."""
+    sets = _sets(target)
+    say = {"back": lambda path, old, new: f"{proposals.label(path)} to {proposals.shown(old)}", "now": lambda path, old, new: f"{proposals.label(path)} at {proposals.shown(old)}",
+           "new": lambda path, old, new: f"{proposals.label(path)} at {proposals.shown(new)}"}.get(how, lambda path, old, new: f"{proposals.label(path)} from {proposals.shown(old)} to {proposals.shown(new)}")
+    return _list([say(*item) for item in sets]) if sets else "a number"
+
+
+def measured_text(preconditions: dict) -> str:
+    """The measurements that a plan of `change-setting` cites, from its preconditions, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
+    items = preconditions.get("measured") if isinstance(preconditions.get("measured"), list) else []
+    shown = [f"{item['name']} at {proposals.shown(item['total'])} over {item['days']} days" for item in items[:3] if isinstance(item, dict) and isinstance(item.get("name"), str)
+             and isinstance(item.get("total"), (int, float)) and isinstance(item.get("days"), int) and METRIC_WORDS.fullmatch(item["name"])]
+    return f"Azure Monitor shows {_list(shown)}" if shown else ""
+
+
+def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
+    kind = kind_words(plan.resource_id if plan is not None else "")
+    label = name or "this resource"
+    target = _target(plan)
+    said, back = changes_text(target), changes_text(target, "back")
+    cited = measured_text(plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
+    return Words(
+        headline=f"Scale down the {kind} {label}{f' in resource group {group}' if group else ''}: {said}",
+        change=f"Azure changes {said} of the {kind} {label} in resource group {group or 'this group'}. Nothing else of it changes.",
+        rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
+                   "note, and it is in a resource group on the owner's list for real changes."),
+        risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. " + (f"{cited}, and no lock stops the change." if cited else "No measurement of its use is cited, and no lock stops the change.")),
+        level="medium",
+        undo=f"Set {back} again, on the page of the {kind} in the Azure portal or with az resource update. Azure carries out that update the same way.", reversible=True)
+
+
 @dataclass(frozen=True)
 class Shown:
     """How one family shows itself to a person. `words` takes the plan (None for a case that has none yet), the type of the resource that the caller knows, the name and the group."""
@@ -255,6 +325,8 @@ SHOWN: dict[str, Shown] = {
         scale_vpn_gateway, "scale-down", "microsoft.network/p2svpngateways", saving_level="Scenario",
         summary="lower the scale units of a point-to-site gateway by one step (never below 1) when nobody has been connected for days",
         saving_basis="It assumes that the cost falls with the share of scale units that is taken away. Meternaut did not read the price list, so this is an estimate."),
+    "change-setting": Shown(
+        change_setting, "change", summary="lower a number of a resource, in a group that the owner listed, to a smaller one that a finding proposes"),
 }
 
 

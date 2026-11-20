@@ -183,6 +183,7 @@ class Family:
     recommendations: tuple[str, ...] = ()
     detectors: tuple[str, ...] = ()  # the older detectors whose leads this family takes (they stay only for waste that Meternaut plants itself)
     deletes: bool = False  # the change removes the resource: a resource that is not there is the aim, not a fault
+    real: bool = False  # the family changes the owner's real resources, held by the owner's line and the list of real groups (gates.py) and not by the planted gates (`change-setting`)
     reads_to_plan: bool = False  # a plan needs facts that code reads from Azure first (a delete of an unattached disk or address needs none: the lead says it)
     does: str = "delete the resource"  # what the change does, for the words of a refusal: "Azure refused to delete the resource ..."
     read_query: str = ""  # asked for with the re-check's read (a machine's power state is in its instance view)

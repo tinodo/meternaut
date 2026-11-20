@@ -32,6 +32,7 @@ CANNOT = {
     "mismatch": "Azure no longer shows the value that the AI saw, so the change would not be the one that was judged.",
     "busy": "Azure shows that something else is changing the resource right now.",
     "unsupported": "Meternaut can only lower a number that Azure shows as a plain value of the resource, and this is not one.",
+    "no-version": "Azure lists no released version of its interface for this kind of resource, so Meternaut cannot change it safely.",
 }
 CANNOT_KEY = "cannotChange"
 

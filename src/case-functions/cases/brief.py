@@ -130,6 +130,8 @@ TAKEN_BACK = {"rules": "Meternaut took this request back because its rules chang
               "group": "Meternaut took this request back. It was one of several requests about single resources, and one request for the whole group waits now.",
               "nothing": "Meternaut took this request back, because the finding does not say what to look at.",
               "gone": "Meternaut took this request back, because the resource is not in Azure any more. There is nothing left to decide.",
+              "upgraded": "Meternaut took this request back, because it can make this change itself now. A new request asks you to approve the change.",
+              "changed": "Meternaut took this request back, because it no longer matches the finding or the resource, which changed after the request was made.",
               "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence

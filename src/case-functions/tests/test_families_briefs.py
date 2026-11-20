@@ -113,8 +113,9 @@ def texts_of(card) -> dict[str, str]:
 
 class TheRegistryFeedsTheBrief(unittest.TestCase):
     def test_every_family_of_the_registry_is_shown_here_and_a_new_one_cannot_be_forgotten(self):
-        self.assertEqual(set(MAKERS), set(registry.names()))
-        self.assertEqual(set(REVERSIBLE), set(registry.names()))
+        planted = {name for name in registry.names() if not registry.get(name).real}  # the family that works on real resources is shown by test_families_setting.py
+        self.assertEqual(set(MAKERS), planted)
+        self.assertEqual(set(REVERSIBLE), planted)
 
     def test_each_family_feeds_every_field_of_the_brief_that_a_decision_needs(self):
         for name in MAKERS:

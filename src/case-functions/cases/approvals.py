@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import Callable, Collection, Mapping, Sequence
 
-from . import brief, switches, twopeople
+from . import brief, proposals, switches, twopeople
 from .brief import NO_FIGURE, NOT_ASKED, UNCONFIRMED, UNMEASURED, UNPRICED, stated_saving, why_not_ask  # noqa: F401  (the rule of asking is in the brief, which the pages read too: this applies it, and others import it from here)
 from .detectors import ADVISOR, Lead
 from .families import digest as plan_digest
@@ -20,6 +20,7 @@ from .families import registry
 from .families.azure import Azure
 from .families.base import Env, Family, Stop, Unreadable
 from .families.gates import ChangeScope, Gates
+from .families.setting import Cannot, ChangeSetting
 from .memory_store import parse, stamp, utc_now
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVICE_QUIET_DAYS, ADVISE, AUTOMATED, COST_AT_ASK, COST_OF, COST_SEEN, COST_SPREAD, DECLINE_REASONS, GROUP_FACT, HELD, INVESTIGATION,
                      ActionRecord, CaseRecord, DecideResult, DecisionRecord, EscalationRecord, PlanRecord, Principal, Store, StoreError, TwoPeopleRule, escalated_to, may_answer, started)
@@ -69,6 +70,7 @@ HELD_NO_APPROVAL = "This finding is held back, so there is no request to approve
 GROUP_CASES_READ = 200  # the latest cases that are read to find the groups whose requests are open
 # The recommendations that may lead to a plan of a change (the family that matches picks among them: cases/families).
 CHANGE_RECOMMENDATIONS = ("delete", "change")
+SETTING = ChangeSetting.name  # the family that lowers a number of a resource in a group that the owner listed (cases/families/setting.py)
 PAUSED_MESSAGE = brief.PAUSED_CHANGES
 PAUSED_ADVICE = brief.PAUSED_ADVICE
 
@@ -77,10 +79,11 @@ PAUSED_ADVICE = brief.PAUSED_ADVICE
 class ApprovalSettings:
     change_scopes: tuple[ChangeScope, ...]  # the resource groups of Meternaut's own in which a plan is made and a change may be made: each in one subscription
     planted_tag: str = "meternaut-planted"
+    real_change_scopes: tuple[ChangeScope, ...] = ()  # the groups of the owner's real resources, for the family `change-setting` and nothing else (cases/families/gates.py)
 
     @property
     def gates(self) -> Gates:
-        return Gates(self.change_scopes, self.planted_tag)
+        return Gates(self.change_scopes, self.planted_tag, self.real_change_scopes)
 
 
 def is_fixture(lead: Lead, settings: ApprovalSettings) -> bool:
@@ -90,23 +93,27 @@ def is_fixture(lead: Lead, settings: ApprovalSettings) -> bool:
     return gates.why_outside(lead.subscription_id, lead.resource_group) is None and gates.why_not_planted(lead.tags, lead.resource_type, lead.name) is None
 
 
-def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Store, family: Family | None = None) -> str | None:
+def why_not(case: CaseRecord, lead: Lead, settings: ApprovalSettings, store: Store, family: Family | None = None, replacing: str = "") -> str | None:
     """None when a plan can be made for the case; otherwise the plain reason why not. The gates come in this order: what the case recommends, a family that matches, the scope, the
-    planted tag and list, a person's do-not-touch note and an open plan."""
+    planted tag and list, a person's do-not-touch note and an open plan. The family that works on real resources has gates of its own (gates.py: the owner's line and the list of real groups,
+    which it checks itself, with its reasons) and is never offered a resource in a group of Meternaut's own; `replacing` is the plan that a new one takes the place of, which is no open plan."""
     if case.status != "proposed" or case.recommendation not in CHANGE_RECOMMENDATIONS:
         return "the case is not proposed for a change"
     if family is None and not registry.candidates(lead.detector, lead.resource_type, case.recommendation):
         return "Meternaut has no change for this kind of resource"
+    real = family is not None and family.real
     outside = settings.gates.why_outside(lead.subscription_id, lead.resource_group)
-    if outside is not None:
+    if real and outside is None:
+        return "the resource is in a group of Meternaut's own, where its own planted waste lives"
+    if not real and outside is not None:
         return outside
-    not_planted = settings.gates.why_not_planted(lead.tags, lead.resource_type, lead.name)
+    not_planted = None if real else settings.gates.why_not_planted(lead.tags, lead.resource_type, lead.name)
     if not_planted is not None:
         return not_planted
     try:
-        if lead.resource_id.lower() in store.do_not_touch():
+        if lead.resource_id.lower() in store.do_not_touch() and not real:
             return "a person marked the resource do-not-touch"
-        if any(p.resource_id.lower() == lead.resource_id.lower() for p in store.plans_open()):
+        if any(p.resource_id.lower() == lead.resource_id.lower() and p.plan_id != replacing for p in store.plans_open()):
             return "a plan for this resource is open already"
     except StoreError:
         return "the store could not be read"
@@ -150,11 +157,13 @@ def own_group(case: CaseRecord, settings: ApprovalSettings) -> bool:
     return settings.gates.why_outside(case.subscription_id, case.resource_group) is None
 
 
-def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex, held: str = "") -> PlanRecord:
+def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime, settings: ApprovalSettings, new_id: Callable[[], str] = lambda: uuid.uuid4().hex, held: str = "",
+                 cannot: str = "") -> PlanRecord:
     """The plan that asks a person whether a finding is worth acting on. It changes nothing in Azure: the words are code's, and the figures are the case's own (what code computed from the bill lines that the
     finding names, decide.py). A finding that has no figure of its own but whose facts hold what Azure Advisor says takes Advisor's. `held` (a key of brief.HOLD_WORDS) makes it the request of a finding
     that a guard holds back: the state HELD, and the reason kept in the preconditions. A request about a resource that something that runs by itself changed lately keeps the time of that change
-    (`automated`), so that every page, card and letter says the same warning (brief.automation_note); what Meternaut planted is exempt."""
+    (`automated`), so that every page, card and letter says the same warning (brief.automation_note); what Meternaut planted is exempt. `cannot` (a key of proposals.CANNOT) is why Meternaut cannot make
+    the change that the finding proposes: the request keeps it, and the pages say it in words (proposals.cannot)."""
     saving = _saving(case)
     by_advisor = case.detector == ADVISOR  # Azure Advisor's own recommendation, made by code: no AI looked at it
     automated = "" if held or own_group(case, settings) else brief.automation_since(case, now)
@@ -170,7 +179,7 @@ def build_advice(case: CaseRecord, approvers: tuple[str, ...], now: dt.datetime,
         saving_usd_month=saving, waiting_costs_usd_day=round(saving / 30, 2) if saving else None, could_go_wrong=brief.acting_risk(case).text, undo=brief.ADVICE_UNDO,
         evidence_level=judged + " Not measured yet: the saving, which cost lines confirm after a change.", approvers=approvers, created_at=stamp(now), expires_at="",
         state=HELD if held else "open", approval_class="R1", preconditions={"family": ADVISE, "caseStatus": case.status, **({"source": ADVISOR} if by_advisor else {}), **({HELD: held} if held else {}),
-                                                                           **({AUTOMATED: automated} if automated else {}),
+                                                                           **({AUTOMATED: automated} if automated else {}), **({proposals.CANNOT_KEY: cannot} if cannot in proposals.CANNOT else {}),
                                                                            **({ASKED_UNDER: ASKING_RULES} if case.detector == INVESTIGATION and not held else {})}))
 
 
@@ -773,35 +782,93 @@ class Approvals:
         The model's recommendation only chooses among the families that match the resource (cases/families). Each of them that passes the gates reads what its plan needs from Azure with
         the reader (when it needs to) and writes the plan itself, in code; the first that has a plan wins. A family that cannot read, or finds the resource not as a plan needs it, makes none,
         and the finding gets the advise plan instead."""
-        if not approvers:
-            return None
-        rule = self.store.rule_get()  # a store that cannot be read makes no plan now: the Watch tries again at its next run
-        for family in registry.candidates(lead.detector, lead.resource_type, case.recommendation):
-            if why_not(case, lead, self.settings, self.store, family) is not None:
-                continue
-            facts = self._facts(family, lead)
-            if facts is None:
-                continue
-            try:
-                plan = build_plan(case, lead, approvers, self.clock(), self.settings, family=family, facts=facts, rule=rule)
-            except ValueError:
-                continue
+        plan, _ = self._create(case, lead, approvers)
+        return plan
+
+    def _create(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> tuple[PlanRecord | None, str]:
+        """`create`, and when the family that works on real resources could not make a plan, the key of proposals.CANNOT that says why (the advise plan keeps it)."""
+        plan, cannot = self._make(case, lead, approvers)
+        if plan is not None:
             self.store.plan_put(plan)
             self.store.case_put(_with(case, status="awaiting_ok", plan_id=plan.plan_id, updated_at=stamp(self.clock())))
-            return plan
-        return None
+        return plan, cannot
+
+    def _make(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...], replacing: str = "") -> tuple[PlanRecord | None, str]:
+        """The plan of a change for the case, not stored, or None and the reason of the family that works on real resources (a key of proposals.CANNOT, or empty). `replacing` is the open plan that the
+        new one takes the place of."""
+        if not approvers:
+            return None, ""
+        rule = self.store.rule_get()  # a store that cannot be read makes no plan now: the Watch tries again at its next run
+        cannot = ""
+        for family in registry.candidates(lead.detector, lead.resource_type, case.recommendation):
+            if why_not(case, lead, self.settings, self.store, family, replacing) is not None:
+                continue
+            try:
+                facts = self._facts(family, lead)
+                if facts is None:
+                    continue
+                return build_plan(case, lead, approvers, self.clock(), self.settings, family=family, facts=facts, rule=rule), ""
+            except Cannot as error:
+                cannot = cannot or error.key
+            except ValueError:
+                continue
+        return None, cannot
 
     def _facts(self, family: Family, lead: Lead) -> dict | None:
-        """What the family reads to write its plan, or None when it cannot: there is no reader here, or Azure shows the resource as no plan of the family can use."""
+        """What the family reads to write its plan, or None when it cannot: there is no reader here, or Azure shows the resource as no plan of the family can use. The family that works on real resources
+        locates the resource itself, and says why it cannot (Cannot)."""
         if not family.needs_reads(lead):
             return {}
         if self.reader is None:
             return None
+        env = Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock)
         try:
-            located = family.locate(lead.resource_id, self.settings.gates)
-            return family.facts(Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock), lead, located)
+            return family.facts(env, lead, None if family.real else family.locate(lead.resource_id, self.settings.gates))
+        except Cannot:
+            raise
         except (Stop, Unreadable):
             return None
+
+    def upgrade(self, approvers: tuple[str, ...]) -> list[tuple[PlanRecord, PlanRecord, CaseRecord]]:
+        """Makes the open requests of findings that propose a change what Meternaut can make of them now, and takes back the ones that are not (no clock closes anything: AGENTS.md rule 38). A request
+        that asks whether the change is worth it, for a case that proposes settings, is taken back, with the reason `upgraded`, when the plan of a change can be made for it now (the owner's line was
+        switched on, the group was listed, the resource changed), and the plan of the change takes its place, with the start of the wait of the request that it replaces (_carry). An open plan of the
+        family that works on real resources whose case no longer holds, because the resource or the finding is not as the plan says, is taken back with the reason `changed`, and the plan that can be made
+        now, or the request that asks the person, takes its place. A request that asks only keeps the reason why Meternaut cannot make the change, brought up to date. A request that a person answered is
+        never touched. Returns (the plan that was taken back, the plan that took its place, its case) for each."""
+        done: list[tuple[PlanRecord, PlanRecord, CaseRecord]] = []
+        try:
+            for plan in [p for p in self.store.plans_open() if p.state == "open" and p.family in (ADVISE, SETTING)]:
+                case = self.store.case_get(plan.case_id)
+                if case is None or case.recommendation != "change" or case.status not in ("proposed", "awaiting_ok") or not proposals.settings(case.facts) or not approvers:
+                    continue
+                view = _with(case, status="proposed")  # the case of an open request of a change waits for an OK, and the rules of making a plan ask for a proposal
+                made, cannot = self._make(view, _lead_of(case), approvers, replacing=plan.plan_id)
+                if plan.family == SETTING and made is not None and made.target == plan.target:
+                    continue  # it still holds
+                if plan.family == ADVISE and made is None:
+                    if (plan.preconditions or {}).get(proposals.CANNOT_KEY, "") != cannot and not self.store.decisions_of_plan(plan.plan_id):
+                        self._keep_reason(plan.plan_id, cannot)
+                    continue
+                fresh = self.store.plan_get(plan.plan_id)  # read again: a person may have answered it since the list was read
+                if fresh is None or fresh.state != "open" or self.store.decisions_of_plan(plan.plan_id):
+                    continue
+                taken = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": "upgraded" if made is not None and plan.family == ADVISE else "changed"})
+                self.store.plan_put(taken)
+                new = made or build_advice(view, approvers, self.clock(), self.settings, cannot=cannot)
+                self.store.plan_put(new)
+                self.store.case_put(_with(case, status="awaiting_ok" if made is not None else "proposed", plan_id=new.plan_id, updated_at=stamp(self.clock())))
+                self._carry(taken, new)
+                done.append((taken, new, case))
+        except StoreError:
+            pass
+        return done
+
+    def _keep_reason(self, plan_id: str, cannot: str) -> None:
+        """Brings the reason why Meternaut cannot make the change up to date in an open request that only asks, sealed again with its code (a card or a letter that was sent keeps working)."""
+        fresh = self.store.plan_get(plan_id)
+        if fresh is not None and fresh.state == "open":
+            self.store.plan_put(_resealed(fresh, {proposals.CANNOT_KEY: cannot}))
 
     def asked_saving(self, case: CaseRecord | None) -> float | None:
         """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the figure and the
@@ -819,7 +886,7 @@ class Approvals:
         except StoreError:
             return False
 
-    def advise(self, case: CaseRecord, approvers: tuple[str, ...]) -> PlanRecord | None:
+    def advise(self, case: CaseRecord, approvers: tuple[str, ...], cannot: str = "") -> PlanRecord | None:
         """The advise plan for a finding that a person has to look at and that Meternaut may not change: it makes no change in Azure, and the person's answer is recorded.
 
         None when the case is not a finding for a person (its status is not proposed or needs_human), when nobody can answer, when a person marked the resource do-not-touch,
@@ -848,7 +915,7 @@ class Approvals:
             for plan in self.store.plans_recent(200):
                 if about_the_same(plan, case) and plan.family == ADVISE and plan.state in ("declined", "consumed", "withdrawn") and parse(plan.created_at) >= quiet:
                     return None
-            plan = build_advice(case, approvers, now, self.settings)
+            plan = build_advice(case, approvers, now, self.settings, cannot=cannot)
             self.store.plan_put(plan)
             self.store.case_put(_with(case, plan_id=plan.plan_id, updated_at=stamp(now)))
             return plan
@@ -856,12 +923,14 @@ class Approvals:
             return None
 
     def plan_for(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
-        """The plan for a case that a person has to look at: the plan of a change when Meternaut may make one for it, else the advise plan."""
+        """The plan for a case that a person has to look at: the plan of a change when Meternaut may make one for it, else the advise plan, with the reason why not when the finding proposes a change
+        that Meternaut cannot make (proposals.CANNOT)."""
+        cannot = ""
         if case.status == "proposed":
-            plan = self.create(case, lead, approvers)
+            plan, cannot = self._create(case, lead, approvers)
             if plan is not None:
                 return plan
-        return self.advise(case, approvers)
+        return self.advise(case, approvers, cannot)
 
 
 def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:
@@ -907,6 +976,13 @@ def _refused_stepup(kind: str, message: str, plan: PlanRecord | None = None) -> 
 
 def _with(case: CaseRecord, **changes) -> CaseRecord:
     return replace(case, **changes)
+
+
+def _lead_of(case: CaseRecord) -> Lead:
+    """The lead of a case whose finding was not found again just now: the family reads the rest from Azure, and the settings and the cited measurements are in the case's own facts."""
+    return Lead(detector=case.detector, resource_id=case.resource_id, resource_type=case.resource_type, name=case.resource_name, resource_group=case.resource_group,
+                subscription_id=case.subscription_id, location="", tags={}, managed_by="", facts=case.facts if isinstance(case.facts, dict) else {}, cost_usd_30d=case.cost_usd_30d,
+                subscription_name=case.subscription_name)
 
 
 def _plan_with(plan: PlanRecord, **changes) -> PlanRecord:
