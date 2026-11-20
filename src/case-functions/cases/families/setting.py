@@ -69,8 +69,8 @@ def _whole(value: object) -> bool:
 
 
 def _countlike(path: str) -> bool:
-    """Whether the last key of a path names a count of units (proposals.countlike, the one gate of the AI side too): the only numbers that Meternaut lowers, because lowering a number of another kind (a
-    retention, a limit, a size of data) can destroy what is kept. It is asked at the plan and again at the re-check right before the write."""
+    """Whether the last key of a path names a count or a size of what the resource holds (proposals.countlike, the one gate of the AI side too): the only numbers that Meternaut lowers, because lowering a
+    period (a retention in days), a version, a state or a flag can destroy what is kept or means something else. It is asked at the plan and again at the re-check right before the write."""
     return proposals.countlike(path)
 
 
