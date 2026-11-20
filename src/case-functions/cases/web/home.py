@@ -462,7 +462,7 @@ def home(ctx: Ctx) -> Response:
         more = paragraph(fmt('{n} more {waits}. <a href="{href}">Show all</a>.', n=rest, waits="decision waits" if rest == 1 else "decisions wait", href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
         top = join([_head(ctx, units, sort), walk_start(ctx, walk_ids(ctx, rows)), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
                     _lane(ctx, "ready", "Ready to decide", f"Each of these is a change that Meternaut would make in Azure after you approve it. {order}", ready, largest, show, True),
-                    _lane(ctx, "look", "Worth a closer look", "Meternaut proposes no change for these yet. A saving here is an estimate. Where a row shows only a cost, "
+                    _lane(ctx, "look", "Worth a closer look", "Meternaut makes no change for these. Your answer to each is recorded with your name. A saving here is an estimate. Where a row shows only a cost, "
                           f"nobody has worked out what a change would save. {order}", look, largest, show, False),
                     more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), cut_notice(ctx), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

@@ -300,6 +300,9 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                     self.assertNotRegex(letter.text, r"bastion-one in (resource )?group \S+: scale units", name)
                 rows = [link.text() for link in console_of(world, plan, mine).get("/").main.find_all("a") if link.attrs.get("href") == f"/ok/{plan.plan_id}"]
                 self.assertEqual([row.removeprefix("Review and decide: ").removeprefix("Review: ") for row in rows], [title], "the Decisions page")
+                lane = console_of(world, plan, mine).get("/").main.text()
+                self.assertNotIn("proposes no change", lane, "the lane of a request that asks does not say that nothing is proposed, over a row that says what the AI proposes")
+                self.assertIn("Each of these is a change that Meternaut would make in Azure after you approve it." if on else "Meternaut makes no change for these. Your answer to each is recorded with your name.", lane)
 
     def test_the_request_that_asked_is_taken_back_once_with_its_words_and_the_new_request_is_named_on_its_page_and_in_the_history(self):
         world, lead, case = world_of(host(), self.case)
