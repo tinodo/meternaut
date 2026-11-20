@@ -21,6 +21,19 @@ KEY = "proposal"
 MAX_SETTINGS, MAX_OTHERS = 3, 3
 MAX_TITLE, MAX_GIVES_UP = 80, 240
 WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # the words of a camel case key
+# Why Meternaut cannot make a change that a finding proposes. The family `change-setting` stores one key in the preconditions of the request that it makes instead (`cannotChange`), and the pages,
+# cards and letters say its sentence. The sentences are whole, plain and about this one request.
+CANNOT = {
+    "switch-off": "The owner has not yet allowed Meternaut to change real resources.",
+    "outside": "This resource group is not on the list of places where Meternaut may make a change.",
+    "locked": "A lock on the resource or on its resource group stops changes.",
+    "do-not-touch": "A person marked this resource do-not-touch.",
+    "unreadable": "Meternaut could not read the resource in Azure just now, so it could not check the change.",
+    "mismatch": "Azure no longer shows the value that the AI saw, so the change would not be the one that was judged.",
+    "busy": "Azure shows that something else is changing the resource right now.",
+    "unsupported": "Meternaut can only lower a number that Azure shows as a plain value of the resource, and this is not one.",
+}
+CANNOT_KEY = "cannotChange"
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,12 @@ def others(facts: object) -> tuple[Other, ...]:
         out.append(Other(_text(item.get("title"), MAX_TITLE), _text(item.get("givesUp"), MAX_GIVES_UP), _text(item.get("action"), 20), place if isinstance(place, bool) else None,
                          _money(item.get("lowUsd")), _money(item.get("highUsd"))))
     return tuple(out[:MAX_OTHERS])
+
+
+def cannot(preconditions: object) -> str:
+    """The sentence that says why Meternaut cannot make the change of a request, from the key that the request keeps; empty when it keeps none or one that is not known."""
+    key = preconditions.get(CANNOT_KEY) if isinstance(preconditions, Mapping) else None
+    return CANNOT.get(key, "") if isinstance(key, str) else ""
 
 
 def label(path: str) -> str:

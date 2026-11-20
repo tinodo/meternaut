@@ -26,6 +26,13 @@ class ReadersTest(unittest.TestCase):
         (one,) = proposals.others(facts)
         self.assertEqual((one.title, len(one.gives_up), one.action, one.in_place, one.low, one.high), ("Use the small tier", proposals.MAX_GIVES_UP, "switch", False, 270.5, None))
 
+    def test_why_a_change_cannot_be_made(self):
+        self.assertEqual(proposals.cannot({proposals.CANNOT_KEY: "outside"}), proposals.CANNOT["outside"])
+        for nothing in (None, {}, {proposals.CANNOT_KEY: "nope"}, {proposals.CANNOT_KEY: 3}, "x"):
+            self.assertEqual(proposals.cannot(nothing), "")
+        for sentence in proposals.CANNOT.values():
+            self.assertTrue(sentence.endswith(".") and sentence[0].isupper())
+
     def test_words_of_a_key_and_a_value(self):
         self.assertEqual(proposals.label("scaleUnits"), "scale units")
         self.assertEqual(proposals.label("sku.capacity"), "sku capacity")
