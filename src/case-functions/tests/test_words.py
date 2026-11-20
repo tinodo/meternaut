@@ -15,12 +15,12 @@ import unittest
 from html.parser import HTMLParser
 from unittest import mock
 
-from test_web_support import NOW, SUB, TINO, VM, Console, at, make_advice, make_advice_case, make_case, make_plan
+from test_web_support import NOW, SUB, TINO, VM, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan, make_run
 
 import support  # noqa: F401  (puts the app on the path)
 from cases import brief as brief_mod
 from cases import cards, letters
-from cases.models import AUTOMATED, GROUP_FACT, HELD, EscalationRecord
+from cases.models import AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, EscalationRecord
 from cases.people import Person
 
 OLGA = "22222222-3333-4444-5555-666666666666"
@@ -33,6 +33,7 @@ AI = f"/subscriptions/{SUB}/resourceGroups/{AI_GROUP}/providers/Microsoft.Cognit
 BATCH = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-batch/providers/Microsoft.Compute/virtualMachines/fabrikam-batch-01"
 PE = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-net/providers/Microsoft.Network/privateEndpoints/pe-fabrikam-1"
 SUBSCRIPTION_NAME = "fabrikam-prod"
+ADVICE_TITLE = "Look at the virtual machine oversized-vm-1 in group team-apps-rg, because it may be larger than its use needs"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -104,6 +105,8 @@ class Reader(HTMLParser):
         if tag == "br" and self.open:
             self.open[-1]["parts"].append(GAP)
         span = next((SPAN_BLOCKS[name] for name in classes if name in SPAN_BLOCKS), "") if tag == "span" else ""
+        if tag == "span" and "chip" in classes and self.open:
+            self.open[-1]["chipped"] = True  # a line that starts with a chip is a chip and a title, and its one sentence is the quiet part under it
         if tag in TEXT_TAGS or (tag == "a" and classes & BUTTON_CLASSES) or span:
             self.open.append({"tag": tag, "kind": span or self._kind_of(tag, classes), "parts": [], "details": self.details > 0, "region": self.region[-1], "inside": {"a": 0, "time": 0},
                               "loose": False, "linked": False, "timed": False, "inner": 0, "row": self.row if tag in ("th", "td") else 0})
@@ -142,6 +145,8 @@ class Reader(HTMLParser):
                 kind = "label"
             elif " · " in text:
                 kind = "label"
+            elif found.get("chipped") and kind == "item":
+                kind = "label"
         if found["tag"] == "span" and self.open:
             self.open[-1]["parts"].append(GAP)
         if text:
@@ -171,7 +176,7 @@ def blocks_of_html(document: str) -> tuple[Block, ...]:
     return tuple(reader.blocks)
 
 
-LABEL_IDS = {"header", "ai-label", "kind", "headline", "place", "chips"}
+LABEL_IDS = {"header", "ai-label", "kind", "headline", "place", "chips", "outcome"}
 
 
 def blocks_of_card(card: dict) -> tuple[Block, ...]:
@@ -355,6 +360,107 @@ def _savings() -> Rendered:
     return Rendered("Savings page", "page", blocks_of_html(reply.text))
 
 
+def _history(console: Console | None = None) -> Rendered:
+    """What happened in the last days, as a person who may answer every request reads it: a decline, a request that a timer closed, a change that was made and checked, a request that the bill closed,
+    advice that was answered, advice that Meternaut took back, a change that failed and the findings of a day."""
+    console = console or Console()
+    store = console.store
+    store.plan_put(make_plan(state="declined"))
+    store.decision_put(make_decision(decision="decline", reason="handled", at=at(days=-1)))
+    store.case_put(make_case(case_id="case0004", first_seen_at=at(days=-1), resource_name="fabrikam-disk-4", plan_id="plan0004"))
+    store.plan_put(make_plan(plan_id="plan0004", case_id="case0004", resource_name="fabrikam-disk-4", state="consumed", created_at=at(days=-4), expires_at=at(days=-1)))
+    store.decision_put(make_decision(plan_id="plan0004", at=at(days=-3, hours=-1)))
+    store.action_put(make_action(plan_id="plan0004", case_id="case0004", state="verified", finished_at=at(days=-3), verified_at=at(days=-1, hours=-2),
+                                 result="Deleted. Azure no longer lists the resource.", verification={"gone": True, "note": "Cost lines show no cost."}))
+    store.plan_put(make_plan(plan_id="plan0005", case_id="case0005", state="expired", created_at=at(days=-6), expires_at=at(days=-2)))
+    store.case_put(make_advice_case())
+    store.plan_put(make_advice(state="consumed", created_at=at(days=-2), title=ADVICE_TITLE))
+    store.decision_put(make_decision(plan_id="plan0002", decision="approve", at=at(days=-2, hours=-1)))
+    store.plan_put(make_advice(plan_id="plan0006", case_id="case0006", state="expired", created_at=at(days=-3), expires_at=at(days=-1, hours=-3), preconditions={"family": "advise", "takenBack": "rules"}))
+    store.plan_put(make_advice(plan_id="plan0007", case_id="case0007", state="expired", created_at=at(days=-14), expires_at=at(days=-1, hours=-5), title=ADVICE_TITLE,
+                               preconditions={"family": "advise", "caseStatus": "needs_human", "takenBack": "verified", COST_AT_ASK: 300.0, COST_SEEN: 120.0}))
+    store.plan_put(make_plan(plan_id="plan0008", case_id="case0008", resource_name="fabrikam-disk-8", state="consumed", created_at=at(days=-3), expires_at=at(days=-1)))
+    store.decision_put(make_decision(plan_id="plan0008", at=at(days=-2, hours=-3)))
+    store.action_put(make_action(plan_id="plan0008", case_id="case0008", state="failed", finished_at=at(days=-2, hours=-2), error="Azure refused: the disk is locked."))
+    reply = console.get("/history")
+    if reply.status != 200:
+        raise AssertionError(f"the history answered {reply.status}")
+    return Rendered("History page", "page", blocks_of_html(reply.text))
+
+
+def _history_cannot_be_read() -> Rendered:
+    """The History when the store cannot be read: the notice of an error, and what stays."""
+    reply = Console(store=FailingStore(fail={"plans_recent", "plans_expired"}, clock=lambda: NOW)).get("/history")
+    return Rendered("History page, cannot be read", "page", blocks_of_html(reply.text))
+
+
+def _done_change():
+    """A change that was made, and that the cost lines of the bill then confirmed: its case, plan, action and the decision that approved it."""
+    case, plan = make_case(plan_id="plan0001"), make_plan(state="consumed")
+    action = make_action(state="verified", queued_at=at(minutes=-40), finished_at=at(minutes=-30), verified_at=at(minutes=-5), result="Deleted. Azure no longer lists the resource.",
+                         verification={"gone": True, "costAfterUsd": 0.0, "costBeforeUsd30d": 41.2, "checkedAt": at(minutes=-5)})
+    return case, plan, action, [make_decision(at=at(minutes=-41))]
+
+
+FAILED = dict(state="failed", verified_at=None, verification={}, result="", error="Azure refused: the disk is locked.")
+NOTHING_TO_DO = dict(state="done", verified_at=None, verification={"noChange": True}, result="The disk did not exist any more when Meternaut looked. Nothing to delete.")
+
+
+def _ended(name: str, changes: dict):
+    """A change that was made, that failed or that had nothing to change (`changes` of the verified action of _done_change): the page, the result card and the done letter of it."""
+    case, plan, action, decisions = _done_change()
+    action = dataclasses.replace(action, **changes)
+    console = Console()
+    for record in (case,):
+        console.store.case_put(record)
+    console.store.plan_put(plan)
+    console.store.action_put(action)
+    for decision in decisions:
+        console.store.decision_put(decision)
+    context = cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS)
+    shown = brief_mod.build_brief(case, plan, action, decisions, now=NOW)
+    return {f"change, {name}": Rendered(f"change, {name}", "page", blocks_of_html(console.get(f"/ok/{plan.plan_id}").text)),
+            f"Teams card, a change: {name}": Rendered(f"Teams card, a change: {name}", "card", blocks_of_card(cards.result_card(shown, context))),
+            f"done letter, {name}": _letter(f"done letter, {name}", letters.done_letter(plan, action, case, PERSON, BASE, NOW, CONTACTS, decisions))}
+
+
+def _closed_card(name: str, case, plan, decisions=()) -> Rendered:
+    shown = brief_mod.build_brief(case, plan, None, decisions, now=NOW)
+    return Rendered(name, "card", blocks_of_card(cards.closed_card(shown, cards.CardContext(page_url=f"{BASE}/ok/{plan.plan_id}", contacts=CONTACTS))))
+
+
+def _answered_advice(name: str, decision: str, reason: str = "") -> Rendered:
+    """The page of advice that a person answered: worth acting on, or not worth it."""
+    case, plan = _ai_account(), _ai_plan(state="consumed" if decision == "approve" else "declined")
+    console = Console()
+    console.store.case_put(case)
+    console.store.plan_put(plan)
+    console.store.decision_put(make_decision(plan_id=plan.plan_id, decision=decision, reason=reason, at=at(days=-1)))
+    return Rendered(name, "page", blocks_of_html(console.get(f"/ok/{plan.plan_id}").text))
+
+
+def _cannot_be_read(name: str, path: str, failing: set[str]) -> Rendered:
+    return Rendered(name, "page", blocks_of_html(Console(store=FailingStore(fail=failing, clock=lambda: NOW)).get(path).text))
+
+
+def _run_notes() -> Rendered:
+    """The notes of a run that say what it looked at, as the page of the runs shows them (/ops/runs): none, one and many resources looked at, the note of a run that counts the dearest resources of some
+    kinds as seen because some earlier runs were not recorded by resource, and a memory that could not be read. The blocks are the items of the notes of the page, so that the words that a person reads are
+    the ones that are held to the style."""
+    from cases import activity
+
+    notes = (activity.looked_note(0, 0, 52), activity.looked_note(1, 1, 1), activity.looked_note(19, 14, 52), activity.looked_note(5, 5, 5, True), activity.UNREADABLE)
+    console = Console()
+    console.store.run_put(make_run(run_id="run00001", started_at=at(minutes=-5), notes=notes))
+    reply = console.get("/ops/runs")
+    if reply.status != 200:
+        raise AssertionError(f"the page of the runs answered {reply.status}")
+    shown = tuple(block for block in blocks_of_html(reply.text) if block.text in notes)
+    if [block.text for block in shown] != list(notes):
+        raise AssertionError("the page of the runs does not show the notes of the run as they are")
+    return Rendered("Run notes, what a run looked at", "page", shown)
+
+
 @functools.lru_cache(maxsize=1)
 def cases() -> dict[str, Rendered]:
     """The typical pages and messages, by name, rendered with the test fakes. The order is the order of the gallery."""
@@ -387,6 +493,33 @@ def cases() -> dict[str, Rendered]:
     found["Teams card, change"] = Rendered("Teams card, change", "card", blocks_of_card(_card_of(make_case(plan_id="plan0001"), make_plan())))
     found["Decisions page"] = _decisions()
     found["Savings page"] = _savings()
+    found["History page"] = _history()
+    found["History page, cannot be read"] = _history_cannot_be_read()
+    done_case, done_plan, done_action, done_decisions = _done_change()
+    done_brief = brief_mod.build_brief(done_case, done_plan, done_action, done_decisions, now=NOW)
+    found["Teams card, a change that was made and checked"] = Rendered("Teams card, a change that was made and checked", "card", blocks_of_card(
+        cards.result_card(done_brief, cards.CardContext(page_url=f"{BASE}/ok/{done_plan.plan_id}", contacts=CONTACTS))))
+    taken_case, taken_plan = _taken_back()
+    taken_brief = brief_mod.build_brief(taken_case, taken_plan, None, (), now=NOW)
+    found["Teams card, a request that was taken back"] = Rendered("Teams card, a request that was taken back", "card", blocks_of_card(
+        cards.closed_card(taken_brief, cards.CardContext(page_url=f"{BASE}/ok/{taken_plan.plan_id}", contacts=CONTACTS))))
+    found["Teams card, the first one"] = Rendered("Teams card, the first one", "card", blocks_of_card(cards.first_contact_card("Maya", BASE, CONTACTS)))
+    found["done letter"] = _letter("done letter", letters.done_letter(done_plan, done_action, done_case, PERSON, BASE, NOW, CONTACTS, done_decisions))
+    found["first-contact letter"] = _letter("first-contact letter", letters.first_contact_letter(PERSON, BASE, NOW, CONTACTS, plan.plan_id))
+    found["Decisions page, cannot be read"] = _cannot_be_read("Decisions page, cannot be read", "/", {"plans_open", "plans_recent"})
+    found["Savings page, cannot be read"] = _cannot_be_read("Savings page, cannot be read", "/ops/savings", {"cases_recent", "plans_recent"})
+    found["advice, answered: worth acting on"] = _answered_advice("advice, answered: worth acting on", "approve")
+    found["advice, answered: not worth it"] = _answered_advice("advice, answered: not worth it", "decline", "handled")
+    for name, changes in (("made and checked", {}), ("not made", FAILED), ("nothing to change", NOTHING_TO_DO)):
+        for label, shown in _ended(name, changes).items():
+            found.setdefault(label, shown)
+    found["Teams card, closed: declined"] = _closed_card("Teams card, closed: declined", make_case(plan_id="plan0001"), make_plan(state="declined"), [make_decision(decision="decline", reason="handled")])
+    found["Teams card, closed: an old timer"] = _closed_card("Teams card, closed: an old timer", case, _ai_plan(state="expired", preconditions={"family": "advise", "caseStatus": "needs_human"}))
+    found["escalation letter, the first one"] = _letter("escalation letter, the first one", letters.escalation_letter(
+        plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="contact", first=True, added=True))
+    found["weekly letter of the escalation contacts"] = _letter("weekly letter of the escalation contacts", letters.escalation_weekly_letter(
+        PERSON, BASE, NOW + dt.timedelta(days=9), [(plan, case), (_machine_plan(), _priced_machine())], CONTACTS, problems=("Meternaut cannot look up managers, because the app has no permission to read them yet.",), first=True))
+    found["Run notes, what a run looked at"] = _run_notes()
     return found
 
 
@@ -425,8 +558,12 @@ def gallery() -> str:
 GUID_FORM = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 # What the owner threw out (and the shapes that go with it): each makes the lint fail when it is put back, and a test below puts each back.
 BANNED = ("saving not measured", "The most that a change could save", "Money is in US dollars", "Unproven:", "code checked", "not checked by code", "Why you are told", "nothing to undo",
-          "Consider changing", "bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of")
+          "Consider changing", "bill line", "scaled by", "of list", "the alternative's list price", "the AI's target of",
+          "by A person", "Nothing more to do", "Decided:", "Status of the finding", "State of the request", "First seen", "The models are")  # the last row: the words of the closed cards and of the Details that phase 2 replaced
 SENTENCE_START = re.compile(r"(?<=[.?!])\s+(?=[\"“(]?[A-Z0-9$])")
+I_VOICE = re.compile(r"(?<![\w.'])I (?:am|cannot|could|can|will|have|did|do|write|tell|pass|change|send|look|read)\b|\b[Mm]y (?:list|letters|records|messages)\b")  # Meternaut is not "I" on a page, a card or a letter
+SPEAKS_AS_I = {"first-contact letter", "Teams card, the first one"}  # the two that greet a person for the first time speak as "I" from the first word to the last
+ABBREVIATED = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}\b|\b\d{1,2} (?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b")  # "Wed 4 Nov", "5 Nov 10:30 UTC": outside the Details a day is "4 November"
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
 ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
@@ -434,7 +571,7 @@ OLD_MONEY = re.compile(r"\b(?:saves|could save|costs),\s+(?:scenario|expected|ve
 OLD_RISK = re.compile(r"(?:^|[.!?]\s+)risk[:,]\s+(?:low|medium|high)\b", re.IGNORECASE)  # the risk of the old pages said as a label that starts a sentence ("Risk: high.", "Risk, medium:"); the chip says "Medium risk, High confidence"
 DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
 LABEL_COLON = re.compile(r"^([^:.?!]{3,60}): (?=[A-Z][a-z])")  # "Impact not analysed: Meternaut did not look ...": a sentence after a colon starts with a capital letter
-RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source", "Responsible for Meternaut")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart; the footer is the last (phase 2 says it as a sentence)
+RUN_IN = ("Heads-up", "If you answer", "If you approve", "What could go wrong", "Whose is it", "Undo", "Source")  # the bold labels of a line of a card or a letter and the source of a fact of a card, which a colon sets apart
 MOST_WORDS = 40
 STOPS = ".?!"
 SENTENCES_ONLY = ("paragraph", "item")  # these end with a full stop, a question mark or an exclamation mark; a heading, a label, a term, a cell and a button need none
@@ -462,6 +599,14 @@ def problems(shown: Rendered) -> list[str]:
             found.append(f"{where}: an old risk label")
         if DOUBLED.search(text):
             found.append(f"{where}: a doubled word")
+        if I_VOICE.search(text) and shown.name not in SPEAKS_AS_I:
+            found.append(f"{where}: speaks as I and not as Meternaut")
+        if ABBREVIATED.search(text) and not block.details:
+            found.append(f"{where}: an abbreviated date outside the Details")
+        if block.kind in SENTENCES_ONLY:
+            said = [part.strip().lower() for part in SENTENCE_START.split(text) if len(part.split()) >= 4]
+            if len(said) != len(set(said)):
+                found.append(f"{where}: says the same sentence twice")
         if block.kind == "chart" or not re.search(r"[A-Za-z]", text):
             continue
         if PUNCTUATION.search(text):
@@ -524,9 +669,13 @@ class TheWordsReadAsSentences(unittest.TestCase):
                 self.assertEqual([], problems(shown))
 
     def test_the_gallery_holds_the_pages_and_messages_that_the_owner_named(self):
-        self.assertGreaterEqual(len(cases()), 15)
+        self.assertGreaterEqual(len(cases()), 40)
         for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, a switch (the firewall)", "advice, one request for many resources", "change, delete a disk",
-                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch"):
+                       "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch",
+                       "History page", "Decisions page, cannot be read", "Savings page, cannot be read", "advice, answered: worth acting on", "advice, answered: not worth it",
+                       "change, made and checked", "change, not made", "change, nothing to change", "Teams card, a change: not made", "Teams card, a change: nothing to change",
+                       "done letter, not made", "done letter, nothing to change", "Teams card, closed: declined", "Teams card, closed: an old timer", "escalation letter, the first one",
+                       "weekly letter of the escalation contacts", "first-contact letter", "Teams card, the first one"):
             self.assertIn(wanted, cases())
 
     def test_every_rule_catches_its_fault(self):
@@ -546,6 +695,9 @@ class TheWordsReadAsSentences(unittest.TestCase):
                                    _made("paragraph", "SAVES, SCENARIO. A YEAR IS TWELVE TIMES THE MONTH.")],
             "an old risk label": [_made("paragraph", "Risk: medium."), _made("paragraph", "Risk, high: it could break traffic."), _made("item", "RISK: LOW.")],
             "a doubled word": [_made("paragraph", "The Watch's own investigation investigation found it."), _made("value", "Found by the Watch's own investigation investigation", details=True)],
+            "speaks as I": [_made("paragraph", "I cannot read the runs now."), _made("item", "Meternaut cannot say what waiting costs, and I tell the next person.")],
+            "an abbreviated date": [_made("paragraph", "It was approved on 5 Nov at 10:30."), _made("paragraph", "It was found on Wed 4 Nov.")],
+            "says the same sentence twice": _made("paragraph", "Nothing was changed in Azure. Nothing was changed in Azure."),
             "a capital letter after the colon": [_made("paragraph", "Impact not analysed: Meternaut did not look at what depends on it."), _made("item", "If you act: What depends on it can slow down or stop.")],
         }
         for fault, made in faults.items():
@@ -563,6 +715,19 @@ class TheWordsReadAsSentences(unittest.TestCase):
         for one in allowed:
             with self.subTest(one.blocks[0].kind, text=one.blocks[0].text):
                 self.assertEqual([], problems(one))
+
+    def test_the_two_messages_that_greet_a_person_speak_as_i_and_no_other_speaks_so(self):
+        said = "Hello Maya. I am Meternaut, an AI that looks for Azure resources. I write to you when a decision waits for you."
+        greeting = Rendered("first-contact letter", "letter", (Block("paragraph", said, said),))
+        self.assertEqual([], problems(greeting))
+        self.assertTrue(any("speaks as I" in line for line in problems(dataclasses.replace(greeting, name="done letter"))))
+
+    def test_a_voice_that_is_put_back_by_hand_makes_the_lint_fail_on_the_letter(self):
+        plan, case = _ai_plan(), _ai_account()
+        with mock.patch.object(letters, "ESCALATION_CAN", "On the page you can answer. Then I pass it on."):
+            shown = _letter("escalation letter", letters.escalation_letter(plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="same"))
+        self.assertTrue(any("speaks as I" in line for line in problems(shown)), problems(shown))
+        self.assertEqual([], problems(_letter("escalation letter", letters.escalation_letter(plan, case, PERSON, BASE, NOW + dt.timedelta(days=9), CONTACTS, source="same"))), "as it is, it speaks as Meternaut")
 
     def test_each_phrase_that_the_owner_threw_out_makes_the_lint_fail_when_it_is_put_back(self):
         # `ADVICE_WHO` is a sentence that the page, the letter and the card all say to a person who is asked about advice: putting a phrase back into it puts it back on all three.

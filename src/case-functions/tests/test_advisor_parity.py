@@ -197,11 +197,14 @@ class TheCasesOfTheWatch(unittest.TestCase):
     def store_plans(self):
         return self.watched.store.plans_open()
 
-    def test_each_decision_has_one_request_and_an_alternative_has_one_too_so_that_a_person_can_decide_on_each(self):
+    def test_each_decision_that_counts_a_saving_has_one_request_and_an_alternative_that_counts_none_has_none(self):
         plans = self.store_plans()
-        self.assertEqual(len(plans), 9)
-        self.assertEqual({plan.case_id for plan in plans}, {case.case_id for case in self.watched.cases()})
-        self.assertEqual(len(of_type(self.watched.events, "plan.created")), 9)
+        alternatives = {case.case_id for case in self.watched.cases() if case.facts["advisor"]["alt"]}
+        self.assertEqual(len(alternatives), 2, "the savings plan of the first subscription and the reservation of the second")
+        self.assertEqual({plan.case_id for plan in plans}, {case.case_id for case in self.watched.cases()} - alternatives, "a person is asked about what Advisor saves, and not about the other way to buy")
+        self.assertEqual((len(plans), len(of_type(self.watched.events, "plan.created"))), (7, 7))
+        self.assertEqual({case.plan_id for case in self.watched.cases() if case.case_id in alternatives}, {None})
+        self.assertEqual(all(plan.saving_usd_month for plan in plans), True, "every request that is made states a saving")
 
     def test_a_row_says_the_sku_the_quantity_the_region_the_term_the_saving_a_year_the_look_back_and_the_scope(self):
         (row,) = [r for r in self.decision(SAVINGS_PLAN, SUB_B).facts["advisor"]["rows"] if r[3] == "P3Y"]
@@ -216,7 +219,7 @@ class TheCasesOfTheWatch(unittest.TestCase):
         plan = next(p for p in self.store_plans() if p.case_id == case.case_id)
         said = brief_mod.build_brief(case, plan, now=NOW)
         self.assertEqual((said.saving.level, round(said.saving.monthly, 2)), ("Scenario", month(case)))
-        self.assertIn("smallest of its variants", said.saving.basis)
+        self.assertIn("smallest of its options", said.saving.basis)
         self.assertIn("alternatives", said.saving.basis)
 
     def test_the_history_says_each_case_with_its_figure_and_that_nothing_was_judged_by_a_model(self):
@@ -248,7 +251,7 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         other = Watched(euros).run()
         disks = [c for c in other.cases() if c.facts["advisor"]["type"] == DISKS]
         self.assertEqual(([c.facts["advisor"]["skipped"] for c in disks], [month(c) for c in disks]), ([1, 1, 1], [0.0, 0.0, 0.0]))
-        self.assertEqual(len(other.store.plans_open()), 9, "a recommendation without a figure in dollars is still a request")
+        self.assertEqual(len(other.store.plans_open()), 4, "a recommendation without a figure in dollars is no request (the three disks and the two alternatives have none): the four that state a saving are asked")
 
     def test_a_recommendation_that_says_neither_a_problem_nor_a_solution_still_makes_a_request_with_words_of_code(self):
         bare = rec(VM, SUB_B, 9)
@@ -266,10 +269,26 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         ran = investigate.Investigation(ran=True)
         with mock.patch.object(investigate, "investigate", return_value=ran):
             watched.run()
-        self.assertEqual(len([p for p in watched.store.plans_open() if p.case_id.startswith("k") and not p.case_id.startswith("kopen")]), 9)
-        self.assertFalse([e for e in of_type(watched.events, "case.held")])
+        self.assertEqual(len([p for p in watched.store.plans_open() if p.case_id.startswith("k") and not p.case_id.startswith("kopen")]), 7, "all that state a saving: the two alternatives count none")
+        self.assertEqual([e["reason"] for e in of_type(watched.events, "case.held")], [f"held back: {brief_mod.NOT_ASKED[brief_mod.NO_FIGURE]}"] * 2, "and no guard holds back any other")
 
     def test_the_next_watch_makes_no_second_request_for_a_request_that_is_open_and_keeps_the_cases_up_to_date(self):
+        watched = Watched().run()
+        first = {plan.plan_id for plan in watched.store.plans_open()}
+        lists, _ = the_list()
+        lists[SUBSCRIPTION].append(rec(COSMOS, SUBSCRIPTION, 40, annual=40.0, term="P1Y", lookbackPeriod="90"))
+        watched.tenant.advisor_of = lists
+        watched.clock.advance(days=1)
+        watched.run()
+        self.assertEqual({plan.plan_id for plan in watched.store.plans_open()}, first, "no second request for a purchase that is asked about already, and none for an alternative that counts none still")
+        self.assertEqual(len(watched.cases()), 9)
+        said = watched.case(COSMOS).facts["advisor"]
+        self.assertEqual((said["n"], said["low"], said["usd"], said["alt"]), (7, 40.0, 40.0, ""), "a new variant is a row of the decision, and it is the smallest now")
+        self.assertEqual((watched.case(SAVINGS_PLAN).facts["advisor"]["alt"], watched.case(SAVINGS_PLAN).plan_id), ("reservations", None), "the reservations (588.5 less 13.5) still beat the savings plan (520)")
+        self.assertEqual(watched.case(COSMOS).runs_seen, 2)
+        self.assertEqual((watched.summary.cases, of_type(watched.events, "case.result")), (0, []), "a request that waits is not announced again, and the Watch does not count it as made")
+
+    def test_when_the_counted_purchase_moves_the_alternative_that_counts_a_saving_now_is_asked_about_and_what_was_asked_stays_and_no_purchase_is_asked_twice(self):
         watched = Watched().run()
         first = {plan.plan_id for plan in watched.store.plans_open()}
         lists, _ = the_list()
@@ -277,7 +296,10 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         watched.tenant.advisor_of = lists
         watched.clock.advance(days=1)
         watched.run()
-        self.assertEqual({plan.plan_id for plan in watched.store.plans_open()}, first)
+        now = {plan.case_id: plan.plan_id for plan in watched.store.plans_open()}
+        self.assertEqual(len(now), len(watched.store.plans_open()), "one request for each purchase: none is made twice")
+        self.assertEqual(set(now.values()) - first, {now[watched.case(SAVINGS_PLAN).case_id]}, "the only new one is for the savings plan, which counts a saving now")
+        self.assertTrue(first <= set(now.values()), "and what was asked with a saving stays, though it is an alternative now")
         self.assertEqual(len(watched.cases()), 9)
         said = watched.case(VM, sku=D2S).facts["advisor"]
         self.assertEqual((said["n"], said["low"]), (7, 100.0), "a new variant is a row of the decision, and it is the smallest now")
@@ -295,7 +317,7 @@ class OnePerRecommendationAndNoneDroppedSilently(unittest.TestCase):
         watched.clock.advance(days=3)
         watched.run()
         self.assertEqual(watched.case(COSMOS).status, "declined", "a person's answer is not undone by a Watch")
-        self.assertEqual(len(watched.store.plans_open()), 8)
+        self.assertEqual(len(watched.store.plans_open()), 6, "the seven that state a saving, less the one that was declined")
         watched.clock.advance(days=31)
         watched.run()
         self.assertEqual((watched.case(COSMOS).status, len([p for p in watched.store.plans_open() if p.case_id == case.case_id])), ("needs_human", 1))
@@ -329,7 +351,7 @@ class ADecisionThatAdvisorChangesOrDelists(unittest.TestCase):
         self.assertIn(brief_mod.TAKEN_BACK["delisted"], brief_mod.build_brief(case, plan, now=NOW).outcome.lines)
         self.assertTrue(any("closed: Advisor does not list it any more" in e["note"] for e in of_type(watched.events, "run.note")))
         after = rows_of(Console(store=watched.store).get("/ops/savings"))["Waiting for a person"]
-        self.assertEqual((before["Findings"], after["Findings"], len(watched.store.plans_open())), ("9", "8", 8))
+        self.assertEqual((before["Findings"], after["Findings"], len(watched.store.plans_open())), ("9", "8", 6), "nine findings wait, seven of them have a request, and the closed one is one of the seven")
         self.assertNotEqual(before["Saving a year"], after["Saving a year"], "its figure is no longer counted")
 
     def test_a_decline_of_a_decision_that_is_gone_stays_and_so_does_an_answer_that_is_recorded(self):
@@ -348,7 +370,7 @@ class ADecisionThatAdvisorChangesOrDelists(unittest.TestCase):
         watched.tenant.broken = {("advisor", SUBSCRIPTION): 403}
         watched.clock.advance(days=1)
         watched.run()
-        self.assertEqual(({c.status for c in watched.cases()}, len(watched.store.plans_open())), ({"needs_human"}, 9))
+        self.assertEqual(({c.status for c in watched.cases()}, len(watched.store.plans_open())), ({"needs_human"}, 7))
         self.assertFalse([e for e in of_type(watched.events, "run.note") if "does not list" in e["note"]])
 
 
@@ -371,7 +393,7 @@ class WhatIsOneDecisionAndWhatIsNot(unittest.TestCase):
         (case,) = Watched(estate({SUBSCRIPTION: [], SUB_B: rows})).run().cases()
         said = case.facts["advisor"]
         self.assertEqual((said["n"], said["usd"], {row[1] for row in said["rows"]}), (6, 200.0, {2, 3}))
-        self.assertIn("differ by quantity, term and look-back", brief_mod.advisor_of(case).sentence)
+        self.assertIn("differ by quantity, term and how far back Advisor looked", brief_mod.advisor_of(case).sentence)
 
     def test_the_same_product_in_another_scope_is_an_alternative_and_only_the_larger_is_counted(self):
         single = variants(VM, SUB_B, 100.0, 0, lookbacks=(7,), scope="Single")
@@ -521,7 +543,7 @@ class AnEarlierVersionsRequestForAWholeSubscriptionIsClosed(unittest.TestCase):
         watched.run()
         closed, ended = watched.store.plan_get("pold"), watched.store.case_get("kold")
         self.assertEqual((closed.state, closed.preconditions["takenBack"], ended.status), ("expired", "advisor", "expired"))
-        self.assertEqual(len(watched.store.plans_open()), 9)
+        self.assertEqual(len(watched.store.plans_open()), 7, "the seven decisions that state a saving are asked: the two alternatives count none")
         self.assertIn(brief_mod.TAKEN_BACK["advisor"], brief_mod.build_brief(ended, closed, now=NOW).outcome.lines)
         self.assertTrue(any("earlier request" in e["note"] and "closed" in e["note"] for e in of_type(watched.events, "run.note")))
 
@@ -556,19 +578,24 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertEqual([(row["For how long"], row["Saves a year"], row["Looked back"]) for row in (table.rows[0], table.rows[-1])],
                          [("1 year", "$321", "7 days"), ("3 years", "$960", "60 days")], "the smallest first")
         text = reply.content.replace("&#x27;", "'")
-        self.assertIn("6 variants of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and look-back", text)
-        self.assertIn(f"they are alternatives, and Meternaut counts the smallest: {self.year} a year", text)
+        self.assertIn("6 options of one purchase (Standard_D2s_v6 × 2, swedencentral, one subscription) that differ by term and how far back Advisor looked", text)
+        self.assertIn(f"You buy only one of them, so they are alternatives. Meternaut counts the smallest, which is {self.year} a year", text)
         self.assertIn("The largest is $960 a year with a term of 3 years", text)
         self.assertIn(f"Azure Advisor estimates that this could save about {self.year} a year", text)
         self.assertIn(brief_mod.ADVISOR_BASIS_MANY, text)
         self.assertNotIn("add up to", text)
 
-    def test_the_page_of_an_alternative_says_what_is_counted_instead_and_counts_nothing_for_itself(self):
-        case = self.watched.case(SAVINGS_PLAN)
-        plan = next(p for p in self.watched.store.plans_open() if p.case_id == case.case_id)
-        text = Console(store=self.watched.store).get(f"/ok/{plan.plan_id}").content.replace("&#x27;", "'")
-        self.assertIn("Advisor lists another purchase for this subscription that saves more (reservations)", text)
-        self.assertIn("nothing is added for this request", text)
+    def test_the_page_of_an_alternative_that_an_earlier_request_asked_about_says_what_is_counted_instead_and_counts_nothing_for_itself(self):
+        watched = Watched().run()
+        case = watched.case(SAVINGS_PLAN)
+        self.assertIsNone(case.plan_id, "nobody is asked about an alternative now: this request was made by an earlier version, and a person put it off, so it is theirs")
+        plan = make_plan(plan_id="palt", case_id=case.case_id, family=ADVISE, resource_id=case.resource_id, state="open", approvers=(TINO,), preconditions={"family": ADVISE, "caseStatus": "needs_human"})
+        watched.store.plan_put(plan)
+        watched.store.decision_put(make_decision(plan_id="palt", approver_oid=TINO, decision="later"))
+        self.assertEqual(watched.extras.approvals.hold_back_empty(), [], "a request that a person put off stays")
+        text = Console(store=watched.store).get(f"/ok/{plan.plan_id}").content.replace("&#x27;", "'")
+        self.assertIn("Azure Advisor lists another purchase for this subscription that would save more (reservations)", text)
+        self.assertIn("it adds nothing for this request", text)
         self.assertNotIn("Meternaut worked out that this could save", text)
         self.assertEqual(brief_mod.build_brief(case, plan, now=NOW).saving.monthly, None)
 
@@ -619,5 +646,5 @@ class WhatThePageTheLetterAndTheCardSay(unittest.TestCase):
         self.assertIn(f"${round(self.case.facts['advisor']['usd']):,}", letter.text)
         built = brief_mod.build_brief(self.case, self.plan, now=NOW, may_answer=True)
         card = json.dumps(cards.decision_card(built, cards.CardContext(page_url=f"https://meternaut.example/ok/{self.plan.plan_id}", contacts=())))
-        self.assertIn("Order of work", card)
+        self.assertIn("Remove what is idle and resize what is too big first, and then commit.", card)
         self.assertIn("Advisor's list", card)

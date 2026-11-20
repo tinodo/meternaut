@@ -526,7 +526,7 @@ class TheSavingsOfAzureAdvisor(unittest.TestCase):
         self.assertEqual(row["Findings"], "2")
         self.assertIn(EXPECTED_BASIS, row["Saving a year"])
         self.assertIn("$240", row["Saving a year"], "its own figure, 20 a month")
-        self.assertIn("It is Azure Advisor's own estimate of the smallest of its variants.", row["Saving a year"].replace("&#x27;", "'"))
+        self.assertIn("It is Azure Advisor's own estimate for the smallest of its options.", row["Saving a year"].replace("&#x27;", "'"))
         self.assertIn("$120", row["Saving a year"], "Advisor's figure for the finding that has none of its own: 10 a month")
         self.assertNotIn("$480", row["Saving a year"])
         self.assertNotIn("$840", row["Saving a year"])

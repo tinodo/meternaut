@@ -501,7 +501,7 @@ class TheIntroduction(unittest.TestCase):
         self.assertEqual(first["title"], "[Meternaut] An AI assistant for Azure costs will write to you")
         self.assertEqual(second["title"], "[Meternaut] A decision waits for you")
         self.assertEqual(link_of(first["card"])["url"], f"{cs.BASE}/")
-        self.assertIn("You got this because you chose Teams", json.dumps(first["card"]))
+        self.assertIn("You chose Teams, and you are on my list of people.", json.dumps(first["card"]))
         for message in (first, second):
             self.assertEqual((message["to"], cardcheck.check(message["card"])), ("maya@example.com", []))
         self.assertEqual([(m.kind, m.status, m.plan_id) for m in self.world.tries()], [("first-contact-card", "sent", None), ("advice-card", "sent", cs.PLAN_ID)])

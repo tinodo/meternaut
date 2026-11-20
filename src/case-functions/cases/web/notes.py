@@ -94,7 +94,7 @@ def notes_page(ctx: Ctx, *, values: dict[str, str] | None = None, errors: dict[s
         parts.append(error_summary(list(errors.items())))
     parts.append(Safe("<h2>Your notes</h2>"))
     if not ok:
-        parts.append(notice("error", "Your notes cannot be read", "I cannot read your notes now. Nothing has changed."))
+        parts.append(notice("error", "Your notes cannot be read", "Meternaut cannot read your notes now. Nothing has changed."))
     elif not notes:
         parts.append(paragraph("You have no note and no do-not-touch mark."))
     else:
@@ -137,6 +137,6 @@ def notes_delete(ctx: Ctx, note_id: str) -> Response:
     if not ctx.store.nonce_use(ctx.request.form.get("nonce", ""), oid, "note-delete"):
         return _refused(ctx)
     if not any(note.note_id == note_id for note in ctx.store.notes_of(oid)):
-        return message_page(ctx, 404, "I cannot find this note", "You have no note with this address. Nothing has changed.", back=("/me/notes", "Back to your notes"))
+        return message_page(ctx, 404, "Meternaut cannot find this note", "You have no note with this address. Nothing has changed.", back=("/me/notes", "Back to your notes"))
     ctx.store.note_delete(oid, note_id)
     return notes_page(ctx, banner=notice("success", "Deleted", "The note is deleted."))

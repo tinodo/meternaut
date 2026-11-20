@@ -3,6 +3,7 @@
 
     python tools/source-digest.py src/case-functions            # prints 64 hexadecimal digits
     python tools/source-digest.py src/case-functions --manifest # prints one line for each file: its SHA-256 and its path
+    python tools/source-digest.py src/case-functions --as-held  # the digest of the files as they are held, with nothing stripped (sources: fetch)
 
 The release that the action cases publishes is named by two values that Azure keeps with the function app (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): BUILD_COMMIT, the git commit
 that the run was made from, and PACKAGE_SHA256, this digest of the app's own files. A digest of the zip file would change with every run (a zip holds the time of each file), so this one is of the content: for
@@ -18,6 +19,11 @@ This is the algorithm of the app itself (src/case-functions/cases/release.py, wh
 setting PACKAGE_SHA256: the control A-RELEASE). The two must give the same digest for the folder that is shipped, or that control fails on every release and pulls the switch of the investigation. A test pins the
 digest of a known folder, and holds the two to each other for the real app, once it is stripped. Nothing is imported from the app here, but for the one module that says what a docstring is (cases/lockfile.py, through
 tools/strip-sources.py), so that this tool runs on a runner that has only a checkout.
+
+--as-held is the other way that the sources reach the Operator: `sources: fetch` of the Hub (docs/proposals/07-private-by-default.md). The Operator then fetches the files of the commit from GitHub and publishes them as the
+repository holds them, with their comments, because the size of a request does not limit them there. The files that run are those, so the digest that the app works out over them (cases/release.py) is the digest of the
+raw files, and that is what this flag makes: the same lines and the same order, and no stripping. It loads nothing but hashlib, so the Operator's container runs this one file, alone, over the files that it fetched,
+and holds the result against the digest that the workflow made over its own checkout.
 """
 from __future__ import annotations
 
@@ -66,15 +72,15 @@ def files_of(root: Path, package: str = CODE_PACKAGE) -> list[tuple[str, Path]]:
     return sorted(found)
 
 
-def manifest(root: Path, package: str = CODE_PACKAGE) -> list[tuple[str, str]]:
-    """(SHA-256 of the file's bytes as they are shipped, with CRLF read as LF, its path) for every file that the digest covers, in the order of the paths."""
+def manifest(root: Path, package: str = CODE_PACKAGE, *, as_held: bool = False) -> list[tuple[str, str]]:
+    """(SHA-256 of the file's bytes as they are shipped, with CRLF read as LF, its path) for every file that the digest covers, in the order of the paths. With `as_held` the bytes are those of the file, none stripped."""
     found = []
     for relative, path in files_of(root, package):
         try:
             data = path.read_bytes()
         except OSError:
             raise Problem(f"{relative} cannot be read") from None
-        if path.suffix == ".py":
+        if path.suffix == ".py" and not as_held:
             try:
                 data = stripper().stripped(data, verified=False)
             except stripper().Problem as error:
@@ -83,9 +89,9 @@ def manifest(root: Path, package: str = CODE_PACKAGE) -> list[tuple[str, str]]:
     return found
 
 
-def digest(root: Path, package: str = CODE_PACKAGE) -> str:
+def digest(root: Path, package: str = CODE_PACKAGE, *, as_held: bool = False) -> str:
     total = hashlib.sha256()
-    for file_digest, relative in manifest(root, package):
+    for file_digest, relative in manifest(root, package, as_held=as_held):
         total.update(f"{relative}\0{file_digest}\n".encode("utf-8"))
     return total.hexdigest()
 
@@ -94,13 +100,14 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("app", help="the app's folder, src/case-functions")
     parser.add_argument("--manifest", action="store_true", help="print the SHA-256 and the path of every file instead of the digest")
+    parser.add_argument("--as-held", action="store_true", help="the files as the repository holds them, with nothing taken out of the Python files: the digest of the sources that the Operator fetches")
     args = parser.parse_args(argv)
     try:
         if args.manifest:
-            for file_digest, relative in manifest(Path(args.app)):
+            for file_digest, relative in manifest(Path(args.app), as_held=args.as_held):
                 print(f"{file_digest}  {relative}")
         else:
-            print(digest(Path(args.app)))
+            print(digest(Path(args.app), as_held=args.as_held))
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

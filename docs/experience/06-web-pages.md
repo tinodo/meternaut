@@ -78,7 +78,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 | The request expired | "This request expired on Friday 14:00 CET. Nothing has changed." | Nothing; "Talk to a person" if the change is still wanted |
 | The kill switch is pulled | "Changes are paused here. Nothing has changed, and your OK cannot be recorded now." | Wait; the page works again when changes resume, unless the request has expired |
 | The checks that run right before the change would refuse it | A box at the top that says why, and no Approve; after a press of Approve, "The change was not made" and "The request is still open" | Decline, decide later, or ask or tell; Approve is back when what stopped it is put right |
-| Not your role | "I cannot take your OK on this request." No plan details | "Talk to a person" if it should be yours |
+| Not your role | "Meternaut cannot take your OK on this request." No plan details | "Talk to a person" if it should be yours |
 | Step-up failed | "Your sign-in did not meet what this approval needs, for example a security key or passkey. Nothing is approved." | If Teams opened an embedded view, use the link in the approval-waiting e-mail in your own browser. If no required sign-in method is registered, choose "Talk to a person" |
 | The session ended | "You were signed out before you answered. Nothing is approved." | Sign in again; the plan and code are unchanged |
 | The page is unavailable | Where a front door publishes the page, a static page: "I cannot open approvals right now. Your request stays open until Friday 14:00 CET. Nothing has changed." Otherwise the browser's own error | Wait |
@@ -89,7 +89,7 @@ Both approvers are asked at once, see the same plan and evidence, and answer on 
 
 **The Details** of a decision (`/why/<id>` opens the same page) are the full record behind a message: the reasoning, receipts a person can re-run, the tools' numbers with their as-of time, the evidence level in words and the system's objections. Quoted text is escaped and set in a labelled quote, never as a link or control.
 
-**History** (`/history`; `/me/decisions` and `/me/activity` answer with it) is a plain feed of the last 30 days, newest day first: what people decided, with the reason of a decline; each change made or tried for a plan that names the person as approver, with its result and what the check afterwards found; and one line a day with the number of new findings. An approval made in the person's name is listed, so one they did not make is seen, and the Done card's "I did not approve this" reports it.
+**History** (`/history`; `/me/decisions` and `/me/activity` answer with it) is a plain feed of the last 30 days, newest day first, under one sentence that says what the page is, with days headed like "Wednesday 4 November": what people decided, with the reason of a decline; each change made or tried for a plan that names the person as approver, with its result and what the check afterwards found; and one line a day with the number of new findings. An approval made in the person's name is listed, so one they did not make is seen, and the Done card's "I did not approve this" reports it.
 
 **The notes page** shows everything the system has kept about the owner's resources.
 

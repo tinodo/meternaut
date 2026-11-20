@@ -179,7 +179,7 @@ class TheCardClosesByAnUpdateOfItsActivity(unittest.TestCase):
         self.assertEqual((call["method"], call["url"]), ("PUT", f"https://smba.trafficmanager.net/teams/v3/conversations/{CONVERSATION}/activities/{ACTIVITY}"))
         (card,) = [a["content"] for a in self.world.bodies("update")[0]["attachments"]]
         self.assertEqual((cardcheck.check(card), "Action." in json.dumps(card)), ([], False))
-        self.assertIn("Not worth it by Anna", " ".join(cs.texts(card)))
+        self.assertIn("Anna said it is not worth acting on.", " ".join(cs.texts(card)))
         self.assertEqual(self.world.bodies("update")[0]["summary"], cards.SUMMARIES["closed"])
         self.assertEqual([(m.kind, m.status, m.detail) for m in self.world.tries(cs.MAYA, offers.CLOSED)], [(offers.CLOSED, "sent", teamsbot.SENT)])
         self.assertEqual(self.world.queue_fake.calls, [], "nothing is put on a queue")
@@ -217,7 +217,7 @@ class TheCardClosesByAnUpdateOfItsActivity(unittest.TestCase):
         world.clock.advance(minutes=1)
         world.run()
         (card,) = [a["content"] for a in world.bodies("update")[0]["attachments"]]
-        self.assertIn(f"Approved by Maya, not made: {cards.md(reason)}", " ".join(cs.texts(card)))
+        self.assertIn(f"Maya approved this, but the change was not made. {cards.md(reason)}", " ".join(cs.texts(card)))
 
     def test_a_request_that_is_open_again_gets_a_new_card_and_only_that_one_is_closed_in_its_turn(self):
         end(self.world, self.plan)
@@ -648,7 +648,7 @@ class TheBlockOfTheOperationsPage(unittest.TestCase):
         def broken():
             raise OSError("down")
         console.services = dataclasses.replace(console.services, teams=broken)
-        self.assertIn("I cannot tell now which way the Teams cards go.", console.get("/ops").content)
+        self.assertIn("Meternaut cannot tell now which way the Teams cards go.", console.get("/ops").content)
 
 
 class TheTestCard(unittest.TestCase):
@@ -679,8 +679,8 @@ class TheTestCard(unittest.TestCase):
         self.assertEqual(self.teams.steps(), ["token", "create", "send", "update"])
         self.assertEqual(json.loads(self.teams.calls[1]["data"])["members"], [{"id": self.OWNER}])
         sent, closing = (json.loads(call["data"])["attachments"][0]["content"] for call in self.teams.calls[2:])
-        self.assertIn("Test card from Meternaut: nothing to do.", cs.texts(sent))
-        self.assertIn("Test card from Meternaut: closed, nothing to do.", cs.texts(closing))
+        self.assertIn("This is a test card from Meternaut. There is nothing to do.", cs.texts(sent))
+        self.assertIn("This test card from Meternaut is closed. There is nothing to do.", cs.texts(closing))
         self.assertEqual([(e["type"], e.get("step"), e["ok"], e.get("status")) for e in events],
                          [("teams.test.step", "token", True, 200), ("teams.test.step", "create", True, 201), ("teams.test.step", "send", True, 201), ("teams.test.step", "update", True, 200),
                           ("teams.test.finished", None, True, None)])

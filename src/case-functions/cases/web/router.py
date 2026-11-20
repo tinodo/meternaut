@@ -77,10 +77,10 @@ def handle(request: Request, services: Services) -> Response:
         return secured(_handle(request, services))
     except StoreError as error:
         LOG.warning("web: the store failed (status %s)", error.status)
-        return secured(_fault(request, services, 503, "I cannot reach my records", "Try again in a few minutes."))
+        return secured(_fault(request, services, 503, "Meternaut cannot reach its records", "Try again in a few minutes."))
     except Exception as error:  # noqa: BLE001 (a page must never show a trace)
         LOG.warning("web: %s", type(error).__name__)
-        return secured(_fault(request, services, 500, "Something went wrong on my side", "Try again in a few minutes."))
+        return secured(_fault(request, services, 500, "Something went wrong in Meternaut", "Try again in a few minutes."))
 
 
 def _fault(request: Request, services: Services, status: int, title: str, advice: str) -> Response:
@@ -119,7 +119,7 @@ def _handle(request: Request, services: Services) -> Response:
             return message_page(ctx, 415, "This form cannot be read", "Nothing was changed.", back=BACK)
     found = path is not None and [(m, rx.fullmatch(path), h, r) for m, rx, h, r in COMPILED if rx.fullmatch(path)]
     if not found:
-        return message_page(ctx, 404, "I cannot find this page", "No page has this address. Nothing has changed.", back=BACK)
+        return message_page(ctx, 404, "Meternaut cannot find this page", "No page has this address. Nothing has changed.", back=BACK)
     wanted = "GET" if method == "HEAD" else method
     route = next(((match, handler, roles) for m, match, handler, roles in found if m == wanted and not (method == "HEAD" and handler in NO_HEAD)), None)
     if route is None:

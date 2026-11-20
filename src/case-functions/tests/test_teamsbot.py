@@ -706,15 +706,15 @@ class TheListOfCallsIsExact(Case):
 class TheCardsOfTheTest(unittest.TestCase):
     def test_the_test_card_says_that_it_is_a_test_and_holds_nothing_of_the_estate_and_the_closing_card_replaces_it(self):
         first, closing = cards.probe_card(), cards.probe_card(True, contacts=("Maya (maya@example.com)",))
-        self.assertIn("Test card from Meternaut: nothing to do.", cs.texts(first))
-        self.assertIn("Test card from Meternaut: closed, nothing to do.", cs.texts(closing))
+        self.assertIn("This is a test card from Meternaut. There is nothing to do.", cs.texts(first))
+        self.assertIn("This test card from Meternaut is closed. There is nothing to do.", cs.texts(closing))
         for card in (first, closing):
             self.assertEqual(cards.cardcheck.check(card), [])
             self.assertNotIn("Action.", json.dumps(card), "no button: there is nothing to open")
             self.assertIn("Meternaut (AI)", cs.texts(card))
-            self.assertIn("Written by an AI", " ".join(cs.texts(card)))
-        self.assertNotIn("Responsible for Meternaut", json.dumps(first))
-        self.assertIn("Responsible for Meternaut: Maya (maya@example.com).", json.dumps(closing))
+            self.assertIn("An AI wrote this", " ".join(cs.texts(card)))
+        self.assertNotIn("answers for Meternaut", json.dumps(first))
+        self.assertIn("Maya (maya@example.com) answers for Meternaut.", json.dumps(closing))
         self.assertRegex(cards.SUMMARIES["test"], r"^\[Meternaut\] [^0-9]+$")
 
 

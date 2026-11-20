@@ -2,7 +2,7 @@
   "type": "AdaptiveCard",
   "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
   "version": "1.5",
-  "fallbackText": "Reminder: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "fallbackText": "Reminder: ${headline} Open it on the page: ${pageUrl} An AI wrote this.",
   "msteams": {
     "width": "Full"
   },
@@ -69,35 +69,10 @@
           "spacing": "None"
         },
         {
-          "type": "ColumnSet",
-          "columns": [
-            {
-              "type": "Column",
-              "width": "auto",
-              "items": [
-                {
-                  "type": "TextBlock",
-                  "text": "${priceBasis}",
-                  "wrap": true,
-                  "id": "price-basis",
-                  "weight": "Bolder"
-                }
-              ]
-            },
-            {
-              "type": "Column",
-              "width": "auto",
-              "items": [
-                {
-                  "type": "TextBlock",
-                  "text": "${savingWord}",
-                  "wrap": true,
-                  "id": "saving-word",
-                  "weight": "Bolder"
-                }
-              ]
-            }
-          ]
+          "type": "TextBlock",
+          "text": "${priceBasis}",
+          "wrap": true,
+          "id": "price-basis"
         },
         {
           "type": "TextBlock",
@@ -208,7 +183,7 @@
     },
     {
       "type": "TextBlock",
-      "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}.",
+      "text": "An AI wrote this, and a person approves every change. You got this because ${whyYouGetThis} ${contact} answers for Meternaut.",
       "wrap": true,
       "id": "ai-footer",
       "isSubtle": true,

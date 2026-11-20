@@ -5,7 +5,7 @@ clock, a store or the network: the caller passes the records, the address of the
 
 Every letter is a render of the decision brief (brief.py), cut to what a person needs and no more: a title and the place under it, the risk, how sure and what a change leaves behind as
 words, what it is worth (the figure a year and a month with its level and its basis, in the words of the pages: cases/stake.py), a few facts, what changes, whether it can be undone,
-what could go wrong, ONE button-link to the page where the person answers, and ONE footer line (that an AI wrote it, why the person got it, who is responsible for Meternaut). Nothing
+what could go wrong, ONE button-link to the page where the person answers, and ONE footer line (that an AI wrote it, why the person got it, who answers for Meternaut). Nothing
 else: no banner, no explanation of how Meternaut works, no repeated link.
 
 What every letter keeps (AGENTS.md rule 13 (d), 26 (c) and 36):
@@ -28,7 +28,7 @@ from typing import Collection, Sequence
 
 from . import brief as brief_mod
 from .brief import Brief, contact_text, plain
-from .models import ActionRecord, CaseRecord, PlanRecord, started
+from .models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord, started
 from .people import Person
 from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text, waited_line
 
@@ -77,12 +77,14 @@ def _plan_url(base: str, plan_id: str) -> str:
     return f"{base}/ok/{plan_id}"
 
 
-def _roles(person: Person) -> str:
-    return ", ".join(sorted(_data(role, 20) for role in person.roles)) or "none"
+def _as(person: Person) -> str:
+    """The roles of a person as the end of a sentence: ", as approver and owner" (nothing for a person who has no role)."""
+    roles = sorted(_data(role, 20) for role in person.roles)
+    return f", as {brief_mod.and_list(roles)}" if roles else ""
 
 
 def _names(contacts: Sequence[str], person: Person | None = None) -> tuple[str, ...]:
-    """The one person who is responsible for Meternaut, as plain text: the first of the contacts who is not the person who reads the letter (the first of all when nobody else is listed)."""
+    """The one person who answers for Meternaut, as plain text: the first of the contacts who is not the person who reads the letter (the first of all when nobody else is listed)."""
     cleaned = [c for c in (_data(c, 150) for c in contacts) if c]
     own = contact_text(person.name, person.mail) if person is not None else ""
     return tuple(([c for c in cleaned if c != own] or cleaned)[:1])
@@ -158,8 +160,8 @@ class _Doc:
     def button(self, text: str, url: str) -> None:
         self.blocks.append(_Button(text, url))
 
-    def footer(self, models: Sequence[str], why: str, contacts: Sequence[str], person: Person | None = None) -> None:
-        self.paragraph(brief_mod.footer_line(models, why, _names(contacts, person)), muted=True)
+    def footer(self, why: str, contacts: Sequence[str], person: Person | None = None) -> None:
+        self.paragraph(brief_mod.footer_line(why, _names(contacts, person)), muted=True)
 
     def build(self) -> Letter:
         return Letter(self.subject, _page(self.subject, self.blocks), _plain(self.blocks))
@@ -249,8 +251,16 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
+COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
+
+
+def _read(value: str) -> str:
+    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
+    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+
+
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
-    return tuple((_data(f.label, 60), _data(f.value, 120)) for f in brief.facts[:MAX_FACTS])
+    return tuple((_data(f.label, 60), _data(_read(f.value), 120)) for f in brief_mod.shown_facts(brief.facts, MAX_FACTS))
 
 
 def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -262,21 +272,20 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         risk = brief.risk.text
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), ("Undo", "This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 160)),
-            ("What could go wrong", _data(brief.risk.text, 200)))
+    undo = (("Undo", _data(brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips
+    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), *undo, ("What could go wrong", _data(brief.risk.text, 200)))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
-    """The first letter to a person, in three sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
+    """The first letter to a person, in four sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
     of the first request that waits for the person (the start page when it is not sent for one)."""
     base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
-    doc.paragraph(f"Hello {_data(person.name, 80)}, I am Meternaut, an AI that looks for Azure resources that cost money and are not used, and I write to you when a "
-                  "decision waits for you.")
-    doc.paragraph("I change nothing myself: you decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph(f"Hello {_data(person.name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
+    doc.paragraph("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.")
     doc.paragraph("You can pause or stop my letters under Settings on that page.")
     doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
-    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer(f"You are on my list of people{_as(person)}.", contacts, person)
     return doc.build()
 
 
@@ -315,7 +324,10 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     for line in (brief.past, brief.access):
         if line:
             doc.paragraph(_data(line, 240))
+    if brief.by_code:
+        doc.paragraph("Meternaut did not check Advisor's estimate.")  # Azure Advisor's own recommendation: the page and the card say the whole of it (confidence.because), a letter has room for the one thing that was not done
     if about_group:
+        doc.facts(*_fact_rows(brief)[:1])  # why it is a lead: the first fact that says so
         if brief.group.capped:  # the title says how many it covers and the figure what they cost or save, so the one thing that a letter adds is what the limit of a run left out
             doc.facts(("Left out", _data(f"{brief_mod.number_text(brief.group.capped)} more {brief_mod.group_things(brief.group)}, because of the limit of one run", 120)))
         said = _decision_rows(brief)
@@ -331,44 +343,42 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(_data(brief.impact.line, 340))
     doc.button("Review and decide" if brief.state == "open" else "See the request", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
-               else "You got this because you are on my list of people who receive letters.", contacts, person)
+    doc.footer(brief_mod.WHY_APPROVER if approver else brief_mod.WHY_LISTED, contacts, person)
     return doc.build()
 
 
-def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = ()) -> Letter:
-    """What happened to the change of one plan: what was done and what came of it (what it saves, in the words of the pages: Verified only when the cost lines after the change confirm it),
-    whether it can be undone, and one link to the page that shows the result."""
+def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None, person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (),
+                decisions: Sequence[DecisionRecord] = ()) -> Letter:
+    """What happened to the change of one plan: who approved it and what was done, what came of it (what it saves, in the words of the pages: Verified only when the cost lines after the change
+    confirm it), whether it can be undone, and one link to the page that shows the result. `decisions` are the answers to the plan, for the name of the person who approved it."""
     base = _base(base_url)
     url = _plan_url(base, plan.plan_id)
-    brief = brief_mod.build_brief(case, plan, action, (), now=now)
-    title = _data(title_text(brief), 200)
+    brief = brief_mod.build_brief(case, plan, action, decisions, now=now)
     unchanged = brief.outcome.state == "unchanged"
     ran = action.state in ("done", "verified") and not unchanged
     doc = _Doc(UNCHANGED_SUBJECT if unchanged else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
+    doc.heading(_data(title_text(brief), 200))
+    _place(doc, brief)
     if unchanged:
         # Approved, and nothing had to be changed: no line says that it ran, was made with anyone's rights or can be undone, and no saving is claimed.
-        doc.paragraph(f"You approved: {title}.")
+        doc.paragraph(f"{_data(brief.outcome.lines[0], 200)} Nothing had to be changed in Azure.")
         doc.paragraph(_data(brief.outcome.lines[-1], 300))
         doc.paragraph("No saving is claimed for this approval.")
     elif ran:
-        doc.paragraph(f"Done: {title}.")
-        _place(doc, brief)
-        said = [_data(line, 240) for line in (action.result, *brief_mod.check_lines(action.verification if isinstance(action.verification, dict) else {}, action.result or "")) if line]
-        doc.facts(*([("Result", " ".join(said[:3]))] if said else []))
+        for line in brief.outcome.lines[:4]:
+            doc.paragraph(_data(line, 300))
         stake = stake_of(brief)
         doc.figure(stake, then="Cost Management confirms it 8 to 72 hours after the change." if stake.state == "save" and stake.level != "Verified" else "")
         doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 200))
     else:
-        was = {"failed": "was tried and did not complete", "unknown": "was started, and its result is not known"}.get(action.state, "is in progress")
-        doc.paragraph(f"The change {was}: {title}.")
+        doc.paragraph({"failed": "The change was tried and did not complete.", "unknown": "The change was started, and its result is not known."}.get(action.state, "The change is in progress."))
         detail = _data(action.error or action.result, 240)
-        doc.facts(*([("What happened", detail)] if detail else []))
-        doc.paragraph("Look at the resource in Azure before anything else is done with it.")
+        if detail:
+            doc.paragraph(detail)
+        doc.paragraph(brief_mod.LOOK_IN_AZURE)
     doc.button("See what happened", url)
     approver = person.oid.lower() in {a.lower() for a in plan.approvers}
-    doc.footer(brief.models, "You got this because you are named as an approver of this request." if approver
-               else "You got this because you are on my list of people who receive letters.", contacts, person)
+    doc.footer(brief_mod.WHY_APPROVER if approver else brief_mod.WHY_LISTED, contacts, person)
     return doc.build()
 
 
@@ -411,7 +421,7 @@ def digest_letter(person: Person, base_url: str, now: dt.datetime, waiting: Sequ
         doc.button("Review and decide", _plan_url(base, only.plan_id))
     else:
         doc.button("Open the decisions" if rows else "See the held findings", f"{base}/")
-    doc.footer((), f"You got this because you are on my list of people, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer(f"You are on Meternaut's list of people{_as(person)}.", contacts, person)
     return doc.build()
 
 
@@ -432,13 +442,13 @@ ESCALATION_WHY_SHORT = {
     "contact": "You are told because you are an escalation contact.",
     "owners": "You are told because no manager or escalation contact could be found.",
 }
-ESCALATION_INTRO = ("I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to a person when a decision about one has waited and nobody has answered it. "
-                    "I change nothing myself. A person decides on a web page.")
+ESCALATION_INTRO = ("Meternaut is an AI that looks for Azure resources that cost money and are not used. It writes to a person when a decision about one has waited and nobody has answered it. "
+                    "It changes nothing itself. A person decides on a web page.")
 ESCALATION_ADDED = "You were added to the people who answer this request after it was made."
 ESCALATION_ADDED_SOME = "You were added to the people who answer some of these requests after they were made."
-ESCALATION_CAN = ("On the page you can say that it is worth acting on, that it is not worth it or that it is not yours (then I pass it on). "
+ESCALATION_CAN = ("On the page you can say that it is worth acting on, that it is not worth it or that it is not yours, and Meternaut passes it on. "
                   "You can also ask a question, or decide later, at most three times.")
-ESCALATION_CAN_NOT = "The page opens only for the people on my list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
+ESCALATION_CAN_NOT = "The page opens only for the people on Meternaut's list, and you are not on it yet. Tell one of the people below what you decide, or ask them to add you."
 
 
 def waited_days(plan: PlanRecord, now: dt.datetime, own: bool = False) -> int:
@@ -484,7 +494,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
         doc.paragraph(_data(note, 200), muted=True)
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
-    if brief.asked:
+    if brief.asked and not brief.two_people:  # this brief is built without the decisions: it cannot tell whether the reader confirmed already, so a change of two people is not asked here
         doc.paragraph(_data(brief.asked, 320))
     doc.figure(stake)
     if brief.heads_up:
@@ -501,7 +511,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
         doc.button("Review and decide", _plan_url(base, plan.plan_id))
-    doc.footer(brief.models, "You got this because a request has waited without an answer and I tell the next person.", contacts, person)
+    doc.footer("A request has waited without an answer, so Meternaut tells the next person.", contacts, person)
     return doc.build()
 
 
@@ -529,7 +539,7 @@ def escalation_digest_letter(person: Person, base_url: str, now: dt.datetime, ro
     doc.paragraph(ESCALATION_CAN if listed else ESCALATION_CAN_NOT)
     if listed:
         doc.button("Open the decisions", f"{base}/")
-    doc.footer((), "You got this because requests have waited without an answer and I tell the next person.", contacts, person)
+    doc.footer("Requests have waited without an answer, so Meternaut tells the next person.", contacts, person)
     return doc.build()
 
 
@@ -549,11 +559,14 @@ def escalation_weekly_letter(person: Person, base_url: str, now: dt.datetime, ro
         lines.append(" ".join(part for part in (f"{_data(title_text(brief), 200)}. {stake.short}", _how_long(days, waited_line(stake, days, plan.waited_usd, waited_days(plan, now, True))),
                                                  _heads_up(brief)) if part))
     if lines:
+        many, over = len(lines) > 1, sum(waited_days(plan, now) > 7 for plan, _ in rows[:WEEKLY_LISTED])
+        lead = ("These requests have" if many else "This request has") if over == len(lines) else "At least one of these has" if over else ""
+        doc.paragraph((f"{lead} waited more than a week without an answer." if lead else f"{'These requests are' if many else 'This request is'} waiting for an answer.") + (" The oldest is first." if many else ""))
         doc.items(*lines)
     if count > WEEKLY_LISTED:
         doc.paragraph(_more(count - WEEKLY_LISTED))
     for problem in problems:
         doc.paragraph(_data(problem, 300))
     doc.button("Open the decisions", f"{base}/")
-    doc.footer((), f"You got this because you are an escalation contact or an owner of Meternaut, with the roles: {_roles(person)}.", contacts, person)
+    doc.footer("You are an escalation contact or an owner of Meternaut.", contacts, person)
     return doc.build()

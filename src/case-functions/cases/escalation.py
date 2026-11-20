@@ -199,7 +199,7 @@ class Ladder:
     settings: EscalationSettings
     base: str
     clock: Callable[[], dt.datetime]
-    contacts: tuple[str, ...] = ()  # the people responsible for Meternaut, for the last line of a letter
+    contacts: tuple[str, ...] = ()  # the people who answer for Meternaut, for the last line of a letter
     tag: Callable[[PlanRecord], str] = lambda plan: ""
     emit: Callable[..., object] = lambda kind, **fields: None
     memory: dict = field(default_factory=dict)  # what the rounds of this process remember (`_MEMORY`): the cursor that the store could not keep

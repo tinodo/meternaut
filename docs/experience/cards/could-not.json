@@ -2,7 +2,7 @@
   "type": "AdaptiveCard",
   "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
   "version": "1.5",
-  "fallbackText": "Meternaut (AI) could not finish: ${headline} Open it on the page: ${pageUrl} Written by an AI.",
+  "fallbackText": "Meternaut (AI) could not finish: ${headline} Open it on the page: ${pageUrl} An AI wrote this.",
   "msteams": {
     "width": "Full"
   },
@@ -124,7 +124,7 @@
     },
     {
       "type": "TextBlock",
-      "text": "Written by an AI; a person approves every change. You got this because ${whyYouGetThis} Talk to a person: ${contact}.",
+      "text": "An AI wrote this, and a person approves every change. You got this because ${whyYouGetThis} ${contact} answers for Meternaut.",
       "wrap": true,
       "id": "ai-footer",
       "isSubtle": true,

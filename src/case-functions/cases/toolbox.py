@@ -78,6 +78,7 @@ use the tools); its answer has a cap of its own, result_cap("profile"), because 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import math
 import re
@@ -983,6 +984,11 @@ def _logged_arguments(arguments: object) -> dict:
         return {"truncated": True}
 
 
+def seen_hash(key: str) -> str:
+    """What the record of an investigation (cases/activity.py) keeps of a resource that was looked at, and never its id: the first 12 hex characters of the SHA-256 of its lower-case id."""
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
 class Toolbox:
     """The tools of one run: `specs` for the agent, `call` for each tool call that it makes, and, afterwards, `handles`, `evidence` and `log` for the investigation."""
 
@@ -1033,6 +1039,9 @@ class Toolbox:
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
         self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
         self.trial = False  # True while a call is a trial: a read that code makes for a beat, which leaves no failure and no list that is not whole or is larger than a product behind (cases/investigate.py sets it)
+        self.window: frozenset[str] = frozenset()  # the hashes (seen_hash) of the resources that the runs of the last days looked at, from the records of the investigations (cases/investigate.py sets it)
+        self.rotate = False  # True while a call is a read that code makes for a beat: `list_resources` by cost then puts what the window does not hold first (cases/investigate.py sets it, as it sets `trial`)
+        self.backfill: dict[str, int] = {}  # type -> how many of its dearest resources count as looked at for that read, beside `window`, as the runs from before the hashes seeded them (cases/investigate.py sets it)
         self._trials: list[Failed] = []  # the trial reads of the price list that failed one after the other: two end the trials of the run, and no call of the Investigator is held by them
         self._failures: dict[int, Failed] = {}  # the failures that have a note already, by id
         self.owners: ownership.OwnerReader | None = None  # the reader of the Activity Log of the tools (`changes`, `profile`): the investigation sets one that shares what it keeps with its own
@@ -1061,6 +1070,16 @@ class Toolbox:
         if entry is not None and entry.raw is not None:
             self._prefetch_lists([(entry.resource.resource_type, entry.sub)])
         return (entry.sku, dict(entry.properties)) if entry is not None else (None, {})
+
+    def looked_at(self) -> frozenset[str]:
+        """For code (cases/activity.py): the hashes of the resources of which a call of `profile` in this run, the Investigator's or code's, read some of the picture. A resource that was only listed or
+        described, or of which nothing could be read, is not one."""
+        return frozenset(seen_hash(self._by_handle[handle].key) for call in self.log if call["name"] == "profile" for handle in call.get("read", ()))
+
+    def seen_in(self, kinds: Iterable[str]) -> int:
+        """For code (cases/beats.py): how many of the resources of these types that a read has listed were looked at by the runs of the last days, and not by this one: the resources that `window` holds
+        and the `backfill` dearest of their type, which may be some of the same, counted once."""
+        return sum(n < self.backfill.get(kind, 0) or seen_hash(entry.key) in self.window for kind in kinds for n, entry in enumerate(sorted(self._entries_of(kind), key=lambda entry: (-(self._cost_total(entry) or 0.0), entry.key))))
 
     def call(self, name: str, arguments: dict) -> str:
         """Runs one tool. It never raises: a tool that fails answers {"error": "<a word from a fixed list>"}.
@@ -1649,6 +1668,10 @@ class Toolbox:
             return 0.0 if total is None else total
 
         entries.sort(key=(lambda entry: (-entry.size, -cost(entry), entry.key)) if order == "count" else (lambda entry: (-cost(entry), entry.key)))
+        if self.rotate and order == "cost":  # code's read for a beat: what no run looked at lately comes first, each group by cost and then by key; the dearest `backfill` of the type count as looked at
+            looked = self.window | self.looked_at()
+            flags = [n < self.backfill.get(kind, 0) or seen_hash(entry.key) in looked for n, entry in enumerate(entries)]
+            entries = [entry for _, entry in sorted(zip(flags, entries), key=lambda pair: pair[0])]
         return entries, [sub for sub in self.subscriptions if sub in self._unlisted]
 
     def _tool_list_resources(self, args: dict) -> dict:

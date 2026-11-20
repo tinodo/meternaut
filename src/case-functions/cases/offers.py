@@ -70,7 +70,7 @@ SUMMARY_OF = {APPROVAL: "change", ADVICE: "advice", NOTICE: "result", VERIFIED: 
 LETTER_OF = {APPROVAL: "approval", NOTICE: "notice", VERIFIED: "verified"}
 SWITCHES = ("messages", "all")
 MAX_DETAIL = 240
-WHY_TEAMS = "You got this because you chose Teams for my messages, and you are on my list of people."
+WHY_TEAMS = "You chose Teams, and you are on my list of people."
 SHORT_SENT = "The whole card did not fit in a message, so the short card went: the details are on the page."
 
 
@@ -94,7 +94,7 @@ def _spent(tries: list[MailRecord]) -> bool:
 
 
 def contacts_of(people: People, reader: str = "") -> tuple[str, ...]:
-    """The people who are responsible for Meternaut, for the last line of a card: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
+    """The people who answer for Meternaut, for the last line of a card: those with the role owner or ops (or everybody listed, when none has one), each as a name with the
     address, in plain text. A card names the first of them, and never the person who reads it (`reader` is that person's object id) when somebody else is listed, as the page and the letters do."""
     chosen = [p for p in people.persons if "ops" in p.roles or "owner" in p.roles] or list(people.persons)
     others = [p for p in chosen if p.oid.lower() != reader.lower()] if reader else chosen

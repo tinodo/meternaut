@@ -704,7 +704,8 @@ class TheRequestThatWasClosed(unittest.TestCase):
         (message,) = world.queue_fake.messages()
         said = " ".join(cs.texts(message["card"]))
         self.assertEqual(message["op"], "update")
-        self.assertIn("Closed because the cost went down. " + SAID + " Nothing was changed by Meternaut.", said)
+        self.assertIn(SAID + " Nothing was changed by Meternaut.", said)
+        self.assertNotIn("Closed because the cost went down", said, "the card says it once, in the sentence")
         self.assertNotRegex(said, r"\$|\d{3}")
 
     def test_no_letter_lists_it(self):
@@ -747,8 +748,8 @@ class ThePagesSayIt(unittest.TestCase):
         self.assertIn("Before the request, its cheapest week cost $300 a month. In each of the last two weeks of the bill, it cost at most $100 a month. "
                       "The newest two days are left out, because the bill is late. The request stated a saving of $120 a month.", text)
         self.assertNotIn("Nothing was changed in Azure.", text, "somebody changed it: Meternaut did not")
-        self.assertIn("State of the request The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.", text)
-        self.assertIn("Status of the finding Closed because the cost went down. The cost went down after the request was made", text)
+        self.assertIn("Where the request stands The cost went down after the request was made, as it suggested, and Meternaut closed the request. Meternaut changed nothing.", text)
+        self.assertIn("Where the finding stands Closed because the cost went down. The cost went down after the request was made", text)
         self.assertNotIn("Taken back", text, "the details do not call it a take-back with nothing changed")
         self.assertNotIn("A timer closed", text)
         self.assertEqual(reply.forms(), [], "there is nothing to answer")
@@ -804,8 +805,8 @@ class ThePagesSayIt(unittest.TestCase):
         def refuse():
             raise RuntimeError("the store is down")
         self.world.store.plans_expired = refuse
-        self.assertIn("I cannot read the recent decisions now", self.console.get("/").content)
-        self.assertIn("Cannot be read now", self.console.get("/history").content)
+        self.assertIn("Meternaut cannot read the recent decisions now", self.console.get("/").content)
+        self.assertIn("Meternaut cannot read this now", self.console.get("/history").content)
 
     def test_the_history_still_counts_the_other_requests_that_were_taken_back_in_one_line_for_a_day(self):
         self.world.ask("q1")

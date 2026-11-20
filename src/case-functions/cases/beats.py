@@ -73,10 +73,11 @@ def _service(kind: str) -> str:
     return kind.partition("/")[0]
 
 
-def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
+def plan(costs: Mapping[str, float], unowned: float, limit: int, touched: frozenset[str] = frozenset()) -> list[Beat]:
     """The beats, at most `limit`, from the dearest kinds down to FLOOR_PERCENT of the cost. A beat opens with the dearest kind that no beat has and takes the dearer-first kinds of the same
     service after it, BEAT_KINDS at most; the lines that no resource owns are ranked like a kind and make a beat of their own. What is left, the kinds below the floor and those that do not
-    fit in `limit` beats, is the last beat, which names the dearest CATCH_ALL_KINDS of them. Nothing is known to cost anything: no beat, and the caller makes one open beat."""
+    fit in `limit` beats, is the last beat, which names CATCH_ALL_KINDS of them, the kinds that no run of the last days touched (`touched`) first and then the dearest, so that over the runs every
+    kind gets its turn. Nothing is known to cost anything: no beat, and the caller makes one open beat."""
     ranked = sorted([(usd, kind) for kind, usd in costs.items() if usd > 0] + ([(unowned, BILLING)] if unowned > 0 else []), key=lambda entry: (-entry[0], entry[1]))
     total = sum(usd for usd, _ in ranked)
     if limit < 1 or total <= 0:
@@ -103,7 +104,7 @@ def plan(costs: Mapping[str, float], unowned: float, limit: int) -> list[Beat]:
     rest = [] if fits else [kind for kind in order if kind not in placed]
     beats = [Beat(number, tuple(k for k in group if k != BILLING), BILLING in group) for number, group in enumerate(chosen, 1)]
     if rest:
-        kinds = [k for k in rest if k != BILLING]
+        kinds = sorted((k for k in rest if k != BILLING), key=touched.__contains__)  # the sort is stable: the untouched first, and the dearest first in each group
         beats.append(Beat(len(beats) + 1, tuple(kinds[:CATCH_ALL_KINDS]), BILLING in rest, max(0, len(kinds) - CATCH_ALL_KINDS)))
     return [replace(beat, of=len(beats)) for beat in beats]
 
@@ -119,6 +120,7 @@ class Seed:
     pictures: list[dict] | None = None
     failed: int = 0
     alternatives: list[dict] = field(default_factory=list)
+    seen: int = 0  # how many of the resources of the beat's kinds the runs of the last days looked at (Toolbox.seen_in): the input of the beat says so when it is not 0
 
 
 def _said(text: object) -> dict:
@@ -169,9 +171,10 @@ def _prices(call: Callable[[str, dict], str], meter: str) -> dict:
 
 
 def seed(call: Callable[[str, dict], str], beat: Beat, warm: Callable[[Sequence[str]], object] | None = None) -> Seed:
-    """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds, one of each kind first, then the next dearest of each, SEED_RESOURCES in all,
-    and their pictures: the dearest SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
-    dearest resource of the beat (the one that costs most of the first resources that the listings of its kinds give, which are in the order of cost; the first kind when they cost the same or the listings give no
+    """Reads, with the tools that the Investigator has and through the same toolbox, the dearest resources of the beat's kinds that no run of the last days looked at (the dearest when all were looked at:
+    cases/investigate.py asks the toolbox for that order for these reads, and for no other), one of each kind first, then the next of each, SEED_RESOURCES in all,
+    and their pictures: the first SEED_HOURLY at the grain of the hour and the others at the day, so that two calls of `profile` with handles that the Investigator could pass itself. Then, for the
+    dearest resource of the beat (the one that costs most of the first resources that the listings of its kinds give; the first kind when they cost the same or the listings give no
     cost), the list prices of the dearest meter of its picture (`price_alternatives`, see `_prices`): what a change to another size or tier of it would cost. It costs no model tokens, and what it shows is
     registered as evidence like any answer of a tool.
     A refusal of the prices (a meter that the price list does not take, a list that could not be read, no price) leaves `alternatives` empty and is no read that failed: the Investigator may ask for them
@@ -284,6 +287,8 @@ def beat_input(beat: Beat, calls: int, seeded: Seed | None, earlier: Sequence[di
         body["beat"] = where
     if seeded is not None and seeded.counts:
         body["counts"] = seeded.counts
+    if seeded is not None and seeded.seen:
+        body["lookedAt"] = {"days": activity.LOOKED_DAYS, "resources": seeded.seen}
     if seeded is not None and seeded.pictures:
         body["pictures"] = seeded.pictures
     if earlier:

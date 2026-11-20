@@ -1,10 +1,12 @@
 """What an investigation looked at, kept as one compact record for the page "What the AI looked at" (docs/proposals/23-what-the-ai-looked-at.md).
 
 Made from what the run knows: the toolbox's log and handles, the kinds in the cost lines that the Watch read, the Investigator's phrases and each finding. The AI's text is cleaned of ids and of the
-names that the tools showed; no name, tag, id or amount is kept (the cost lines only order the kinds). A fault here is one line in the log, and the investigation goes on.
+names that the tools showed; no name, tag, id or amount is kept (the cost lines only order the kinds). The one thing kept of a resource is the hash of its id, when a picture of it was read (`profiled`):
+it says that the resource was looked at, so that the next runs look at others first (docs/proposals/25-beats.md). A fault here is one line in the log, and the investigation goes on.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import re
@@ -14,7 +16,7 @@ from typing import TYPE_CHECKING, Mapping
 from . import agents, roles
 from .brief import without_ids
 from .memory_store import stamp
-from .models import INVESTIGATION_ENDS, INVESTIGATION_TOUCHES, InvestigationRecord
+from .models import INVESTIGATION_ENDS, INVESTIGATION_TOUCHES, KEPT_INVESTIGATIONS, InvestigationRecord
 from .store import MAX_DATA
 from .toolbox import type_of_id, type_word
 
@@ -27,6 +29,9 @@ LOG = logging.getLogger("meternaut.activity")
 MAX_KIND = 80  # a kind of resource that is longer than this is left out
 MAX_KINDS = 20  # the kinds of each list that a record keeps
 MAX_FINDINGS = 16  # the findings that a record keeps when it has beats: those of all of them can be more than a row of the store takes, and `more` counts the rest
+LOOKED_DAYS = 21  # a resource whose picture a run of these days read, and a kind that its tools touched, count as looked at: the seeds of a beat and the last beat go to what no run of these days looked at first
+UNREADABLE = "The earlier investigations could not be read, so this run took the dearest resources first."  # the note of a run whose memory (the records of the last days) could not be read
+MAX_PROFILED = 300  # the hashes of the pictures that a record keeps: a run at the budgets of today reads about 160, and 300 are about 4,500 characters of a row of 30,000
 BEAT_PHRASES = 3  # what a beat said that it examined, at most as many phrases as this
 NAME = re.compile(r"\w+(?:[.-]\w+)*")  # a word that may be a resource's name: a full stop or a dash ends it unless a letter follows
 MAX_DOUBTS, DOUBT, NOTE = 2, 120, 160  # objections of the second AI that a record keeps, and the longest of one of them and of a note of code
@@ -121,6 +126,40 @@ def stop_of(harness: object) -> str:
     return next((record.reason for record in getattr(harness, "records", []) if record.outcome in ("refused", "stopped")), "")
 
 
+def earlier(store: object, now: dt.datetime) -> tuple[frozenset[str], frozenset[str], frozenset[str]] | None:
+    """What the runs of the last LOOKED_DAYS days looked at, from their records: the hashes of the resources whose picture was read, the kinds that their tools touched, and the kinds that the records
+    without a hash touched. A record without a hash is one from before the hashes, which seeded the dearest resources of the kinds of its beats, or one of a run that read no picture, which cannot be
+    told from it: the toolbox takes the dearest of those kinds as looked at, beside the hashes. A record that touched no kind (a run that failed early) assumes nothing. None when the store cannot be
+    read: the seeds are then the dearest first, as they always were, and the run says so (cases/investigate.py)."""
+    since = stamp(now - dt.timedelta(days=LOOKED_DAYS))
+    try:
+        found = [record for record in store.investigations_recent(KEPT_INVESTIGATIONS) if record.at >= since]  # type: ignore[attr-defined]
+        return (frozenset(word for record in found for word in record.profiled), frozenset(kind for record in found for kind, _ in record.kinds),
+                frozenset(kind for record in found if not record.profiled for kind, _ in record.kinds))
+    except Exception as error:  # noqa: BLE001 (a store that cannot be read changes the order of the seeds and nothing else)
+        LOG.warning("the earlier investigations could not be read (%s)", type(error).__name__)
+        return None
+
+
+def coverage(toolbox: object) -> tuple[int, int, int]:
+    """The counts of a run, for its History line and its note: the resources whose picture it read, those of them that the runs of the last days had not looked at, and all that those runs and this
+    one looked at."""
+    now, before = getattr(toolbox, "looked_at", frozenset)(), getattr(toolbox, "window", frozenset())
+    return len(now), len(now - before), len(now | before)
+
+
+def looked_note(now: int, new: int, total: int, assumed: object = False) -> str:
+    """The note of a run (counts of `coverage`): how many resources it looked at, how many of them for the first time in LOOKED_DAYS days and, when the runs before it looked at others, how many
+    those runs and this one looked at in all. With `assumed` (some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were taken as looked at)
+    it counts none as new and says so."""
+    days = f"{LOOKED_DAYS} days"
+    count = "no resources" if not now else f"{now:,} resource{'' if now == 1 else 's'}"
+    if assumed:
+        return f"This run looked at {count}. Some of the earlier runs were not recorded by resource, so the dearest resources of the kinds that they looked at were counted as seen."
+    how = "" if not now else f", {'for' if new else 'not for'} the first time in {days}" if now == 1 else f", {'all' if new == now else 'none' if not new else format(new, ',')} of them for the first time in {days}"
+    return f"This run looked at {count}{how}." + (f" In {days} Meternaut has looked at {total:,} resource{'' if total == 1 else 's'}." if total > now else "")
+
+
 def entry_of(finding: "Finding", names: frozenset[str]) -> dict:
     """One finding as the record keeps it; a dropped one says how many resources the AI listed."""
     kept = finding.reason is None
@@ -165,7 +204,7 @@ def record_of(s: object, out: "Investigation", contexts: Mapping[str, "Context"]
         note=plain(out.note, NOTE, names), examined=tuple(plain(p, agents.MAX_EXAMINED_TEXT, names) for p in out.examined[: agents.MAX_EXAMINED]),
         findings=tuple(entry_of(f, names) | ({"beat": f.beat} if parts else {}) for f in out.findings[:MAX_FINDINGS]), known=len(exist), looked=len(done),
         kinds=tuple([kind, done[kind]] for kind in order if kind in done)[:MAX_KINDS], unread=tuple(kind for kind in order if kind not in done)[:MAX_KINDS], subs=len(st.subscriptions),
-        subs_costed=costed, beats=tuple(parts), more=max(0, len(out.findings) - MAX_FINDINGS)))
+        subs_costed=costed, beats=tuple(parts), more=max(0, len(out.findings) - MAX_FINDINGS), profiled=tuple(sorted(getattr(out.toolbox, "looked_at", frozenset)()))[:MAX_PROFILED]))
 
 
 def keep(s: object, out: "Investigation", contexts: Mapping[str, "Context"], *, trigger: str, opened: object) -> None:

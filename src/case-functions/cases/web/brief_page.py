@@ -16,7 +16,7 @@ import datetime as dt
 import json
 
 from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
-from ..models import GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
+from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
@@ -340,9 +340,9 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         if case.status == "needs_human":
             meaning = why_a_person(case) or "A person has to look at it."  # only the reasons that are true of this finding, not the glossary of every one
         run = link(ctx.url(f"/ops/runs?run={link_part(case.run_id)}"), case.run_id) if ctx.principal.has("ops") else code(case.run_id)  # type: ignore[union-attr]
-        rows += [("Resource id", code(case.resource_id)), ("Subscription", code(case.subscription_id)), ("Finding", code(case.case_id)),
-                 ("How it was found", detector_cell(case.detector)), ("Status of the finding", f"{status_word}. {meaning}".strip()), ("Run", run),
-                 ("First seen", ctx.when(case.first_seen_at)), ("Last updated", ctx.when(case.updated_at)), ("Seen in", "1 run" if case.runs_seen == 1 else f"{case.runs_seen} runs"),
+        rows += [("Resource id", code(case.resource_id)), ("Subscription id", code(case.subscription_id)), ("Finding id", code(case.case_id)),
+                 ("How it was found", detector_cell(case.detector)), ("Where the finding stands", f"{status_word}. {meaning}".strip()), ("Search run", run),
+                 ("First found", ctx.when(case.first_seen_at)), ("Last updated", ctx.when(case.updated_at)), ("Found in", "1 search" if case.runs_seen == 1 else f"{case.runs_seen} searches"),
                  ("Resource type", kind_text(case.resource_type))]
         owner = case.owner if isinstance(case.owner, dict) else {}
         for label, key in (("Created by (an application)", "createdBy"), ("Last changed by (an application)", "changedBy")):  # the page says "an application", and keeps the id here
@@ -350,12 +350,12 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
             if GUID.fullmatch(who):
                 rows.append((label, code(who.lower())))
     elif plan is not None:
-        rows += [("Resource id", code(plan.resource_id)), ("Subscription", code(plan.subscription_id))]
+        rows += [("Resource id", code(plan.resource_id)), ("Subscription id", code(plan.subscription_id))]
     if plan is not None:
         waiting = action is not None and plan.state == "approved" and action.state == "queued" and action.step_up
         rows += [("Request code", fmt("{code}. It is a reference, not proof that this page is genuine.", code=code(plan.code))),
-                 ("State of the request", words.WAITING_TEXT if waiting else words.CLOSED_BY_THE_BILL[1] if taken_back(plan) == "verified" else words.PLAN_STATE.get(plan.state, plan.state)),
-                 ("Made", ctx.when(plan.created_at))]
+                 ("Where the request stands", words.WAITING_TEXT if waiting else words.CLOSED_BY_THE_BILL[1] if taken_back(plan) == "verified" else words.plan_state(plan.state, plan.family == ADVISE)),
+                 ("Request made", ctx.when(plan.created_at))]
         if plan.state == HELD:
             rows.append(("Ends", "It ends when nothing holds the finding back any more."))
     if ctx.services.host:
@@ -363,7 +363,7 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
     parts: list[object] = [summary(rows)]
     if case is not None:
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
-        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, made into a request by code.")] if by_code else [
+        parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, which Meternaut's code made into a request.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
         typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],

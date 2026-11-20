@@ -64,7 +64,7 @@ class TheOperationsPage(unittest.TestCase):
         self.assertEqual(len(self.console.get("/ops").table("latest-runs").rows), 5)
         broken = Console(store=FailingStore(fail={"runs_recent"}, clock=lambda: NOW))
         reply = broken.get("/ops")
-        self.assertIn("I cannot read the runs now.", reply.content)
+        self.assertIn("Meternaut cannot read the runs now.", reply.content)
         self.assertIn("State of each switch", reply.content)
         self.assertEqual(Console().get("/ops").content.count("No run is recorded yet."), 1)
 
@@ -513,7 +513,7 @@ class TheTwoPeopleRulePage(unittest.TestCase):
         unread = Console(store=FailingStore(fail=("rule_get",)))
         reply = unread.get("/ops/two-people")
         self.assertEqual(reply.status, 200)
-        self.assertIn("I cannot read the rule now, so what is shown is the starting rule: off. Nothing has changed.", reply.content)
+        self.assertIn("Meternaut cannot read the rule now, so it shows the starting rule, which is off. Nothing has changed.", reply.content)
 
 
 class FakeCheck:

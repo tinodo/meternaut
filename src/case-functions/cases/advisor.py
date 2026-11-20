@@ -16,7 +16,7 @@ from . import costs as cost_words
 from . import upkeep
 from .brief import ADVISOR_KEY as KEY
 from .brief import ADVISOR_ROWS as ROWS
-from .brief import advisor_says, says_nothing
+from .brief import advisor_says, says_nothing, why_not_ask
 from .detectors import ADVISOR, DETECTORS, Context, Lead, ident
 from .memory_store import parse, stamp
 from .models import ADVICE_QUIET_DAYS, INVESTIGATION, CaseRecord, StoreError
@@ -130,8 +130,8 @@ def _case(s, key: str, leads: list[Lead], said: dict, others: set[str], holds: l
         case_id=case_id, resource_id=lead.resource_id, resource_type=clean_text(lead.resource_type, 120), resource_group=clean_text(lead.resource_group, 90),
         subscription_id=lead.subscription_id, detector=ADVISOR, recommendation="change", first_seen_at=stamp(now), **changes)
     ex.store.case_put(record)
-    if not fresh and says_nothing(record):
-        return 0  # it was said when the case was made that it has nothing to say, and it is not said again at each Watch
+    if not fresh and (says_nothing(record) or why_not_ask(record)):
+        return 0  # it was said when the case was made that nobody is asked about it (nothing to say, or no saving counted), and it is not said again at each Watch
     if fresh:
         h.emit("case.started", caseId=case_id, leadId=lead.lead_id)
         h.emit("case.result", caseId=case_id, leadId=lead.lead_id, detector=record.detector, resourceName=clean_text(record.resource_name, 120), resourceType=record.resource_type,

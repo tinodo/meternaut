@@ -17,7 +17,10 @@
 #   Basic   the built package is posted to the deployment site's zip deployment, with curl, as the runner did
 # (The usage app, the other one published here, was removed on 2026-11-07.)
 #
-# What it reads, all from the environment (none of it is a secret, except the one that says so):
+# The sources come in the secret volume (cases-source.zip) or, with the three PUBLISH_SOURCES_* variables and no such file, by fetch: the container downloads the archive of that commit from GitHub and stops before the
+# sign-in unless the digest of the app's files in it is the workflow's (docs/proposals/07-private-by-default.md).
+#
+# What it reads, all from the environment (none of it is a secret, except the ones that say so):
 #   PUBLISH_KIND            cases (the only app that is published here now)
 #   PUBLISH_PLAN            Flex or Basic: the plan that the app runs on (the workflow passes CASES_APP_PLAN of tools/environment-params.py). Optional: empty is Basic.
 #   PUBLISH_APP             the name of the function app
@@ -29,6 +32,9 @@
 #                           variable. It is read once at the start and taken out of the environment, so that nothing that runs below inherits it, and it is never printed: it is handed to the
 #                           az login of the deploy identity and to nothing else
 #   PUBLISH_FILE_BYTES      the size that the main file of the secret volume (cases-source.zip) was sent with: a file that arrived short is never published
+#   PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY, PUBLISH_SOURCES_DIGEST
+#                           a commit (40 hex digits), owner/name and the digest of the app's files at it (64): all three or none; the volume then holds source-digest.py, requirements.txt, host.json
+#   GITHUB_TOKEN            OPTIONAL SECRET: the token of the run, for a private repository; it goes to curl on standard input only
 #   PUBLISH_HOLD_SECONDS    optional, 0 to 60, default 20: how long the container stays after the work, so that the log can be read whole
 #   PUBLISH_VOLUME          where the secret volume is mounted (default /mnt/op); PUBLISH_TMP where the work folder is made (default /tmp): both only for the tests
 #
@@ -47,6 +53,8 @@ tmp_root=${PUBLISH_TMP:-/tmp}
 federated_token=${AZURE_FEDERATED_TOKEN:-}
 unset AZURE_FEDERATED_TOKEN
 arm_token=""
+github_token=${GITHUB_TOKEN:-}
+unset GITHUB_TOKEN
 
 # A folder of its own for the Azure CLI's state, the sources, the build and the pip made by ensurepip, removed at the end whatever happens.
 work=""
@@ -86,6 +94,7 @@ quote() {
   if [ -n "$arm_token" ]; then
     text=${text//"$arm_token"/<token>}
   fi
+  text=${text//"${github_token:-<no token>}"/<token>}
   printf '%s\n' "$text" | tr -c '[:print:]\n' ' ' \
     | sed -E 's|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*|<token hidden>|g; s|([Bb]earer +)[A-Za-z0-9._~+/=-]{20,}|\1<token hidden>|g' \
     | cut -c1-160 | head -n "$2" | sed -E 's|^|  |'
@@ -106,6 +115,7 @@ group_name='^[A-Za-z0-9._()-]{1,90}$'
 number='^[0-9]{1,9}$'
 seconds='^[0-9]{1,2}$'
 token_characters='^[A-Za-z0-9._~+/=-]+$'
+repository_name='^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$'
 
 # A token is 20 to 8,000 of those characters (a repetition count of that size is not one that every regular expression library of bash takes, so the length is counted apart).
 looks_like_a_token() {
@@ -137,16 +147,34 @@ tenant_id=${PUBLISH_TENANT_ID:-}
 [[ $tenant_id =~ $guid ]] || refuse "PUBLISH_TENANT_ID is not a tenant id"
 looks_like_a_token "$federated_token" || refuse "AZURE_FEDERATED_TOKEN is not set, or is not made of the characters of a token"
 sent_bytes=${PUBLISH_FILE_BYTES:-}
-[[ $sent_bytes =~ $number ]] || refuse "PUBLISH_FILE_BYTES is not the size of the file that was sent"
+sources_repository=${PUBLISH_SOURCES_REPOSITORY:-}
+sources_commit=${PUBLISH_SOURCES_COMMIT:-}
+sources_digest=${PUBLISH_SOURCES_DIGEST:-}
+fetch=0
+if [ -n "$sources_repository$sources_commit$sources_digest" ]; then
+  fetch=1
+  [[ $sources_repository =~ $repository_name ]] || refuse "PUBLISH_SOURCES_REPOSITORY is not owner/name"
+  [[ $sources_commit =~ ^[0-9a-f]{40}$ ]] || refuse "PUBLISH_SOURCES_COMMIT is not a commit"
+  [[ $sources_digest =~ ^[0-9a-f]{64}$ ]] || refuse "PUBLISH_SOURCES_DIGEST is not a digest"
+else
+  [[ $sent_bytes =~ $number ]] || refuse "PUBLISH_FILE_BYTES is not the size of the file that was sent"
+fi
 hold=${PUBLISH_HOLD_SECONDS:-20}
 [[ $hold =~ $seconds ]] && [ "$hold" -le 60 ] || refuse "PUBLISH_HOLD_SECONDS is a number from 0 to 60"
 main_file="$volume/cases-source.zip"
 [ -f "$volume/build-function-app.sh" ] || refuse "build-function-app.sh is not in the secret volume"
-[ -f "$main_file" ] || refuse "${main_file##*/} is not in the secret volume"
+if [ "$fetch" = 1 ]; then
+  [ ! -e "$main_file" ] || refuse "the sources come in the volume and by fetch"
+  for file in source-digest.py requirements.txt host.json; do
+    [ -f "$volume/$file" ] || refuse "$file is not in the secret volume"
+  done
+else
+  [ -f "$main_file" ] || refuse "${main_file##*/} is not in the secret volume"
+fi
 
 missing=""
 programs="az python3 timeout sed getent"
-if [ "$plan" = Basic ]; then
+if [ "$plan" = Basic ] || [ "$fetch" = 1 ]; then
   programs="$programs curl"
 fi
 for program in $programs; do
@@ -164,8 +192,8 @@ else
   say FAIL "python3 does not run"
   exit 3
 fi
-# The sources are LZMA-compressed: stop before the sign-in when Python cannot open them.
-if ! python3 -c 'import lzma' 2> /dev/null; then
+# The sources of the request are LZMA-compressed: stop before the sign-in when Python cannot open them.
+if [ "$fetch" = 0 ] && ! python3 -c 'import lzma' 2> /dev/null; then
   say FAIL "python3 has no lzma module: the sources cannot be unpacked"
   exit 3
 fi
@@ -176,13 +204,105 @@ if ! work=$(mktemp -d "$tmp_root/publish-XXXXXX" 2> /dev/null); then
 fi
 export AZURE_CONFIG_DIR="$work/azure"
 
-# The file that carries the code arrived whole, or nothing is published: sources that are cut short would be a broken app.
-bytes=$(wc -c < "$main_file" | tr -d ' ')
-if [ "$bytes" != "$sent_bytes" ]; then
-  say FAIL "${main_file##*/} is $bytes bytes, $sent_bytes were sent"
-  exit 3
+# A failure stops the run before the sign-in, whose token lasts five minutes: a try is 30 seconds.
+fetch_sources() {
+  local archive="$work/sources.zip" host url attempt status code got="" said=""
+  SECONDS=0
+  for host in api codeload; do
+    url="https://api.github.com/repos/$sources_repository/zipball/$sources_commit"
+    [ "$host" = api ] || url="https://codeload.github.com/$sources_repository/zip/$sources_commit"
+    for attempt in 1 2; do
+      status=0
+      code=$({ [ -z "$github_token" ] || printf 'header = "Authorization: Bearer %s"\n' "$github_token"; } \
+        | curl --config - --fail --silent --show-error --location --max-time 30 --output "$archive" --write-out '%{http_code}' "$url" 2> "$work/curl.err") || status=$?
+      code=${code:0:3}
+      code=${code:-000}
+      [ "$code" != 200 ] || [ "$status" = 0 ] || code=000
+      said="${said:+$said, }$host HTTP $code"
+      if [ "$code" = 200 ]; then
+        got=$host
+        break 2
+      fi
+      if [ -n "$github_token" ] && { [ "$code" = 401 ] || [ "$code" = 403 ]; }; then
+        say FAIL "GitHub refused the token of this run (HTTP $code)"
+        exit 3
+      fi
+      case "$code" in
+        000 | 408 | 5??) [ "$attempt" = 2 ] || sleep 3 ;;
+        *) break ;;
+      esac
+    done
+  done
+  if [ -z "$got" ]; then
+    say FAIL "the sources of commit ${sources_commit:0:12} could not be fetched from GitHub: $said"
+    quote "$(cat "$work/curl.err" 2> /dev/null)" 2
+    exit 3
+  fi
+  say ok "the sources of commit ${sources_commit:0:12} are fetched from GitHub: $got, $(wc -c < "$archive" | tr -d ' ') bytes in $SECONDS s"
+  if ! message=$(python3 -c '
+import os, sys, zipfile
+app, target, leave = "src/case-functions/", os.path.realpath(sys.argv[2]), "a path of the archive would leave the folder"
+if os.path.getsize(sys.argv[1]) > 64 << 20:
+    sys.exit("it is more than 64 MB")
+try:
+    with zipfile.ZipFile(sys.argv[1]) as archive:
+        members = archive.infolist()
+        for member in members:
+            if member.filename.startswith("/") or ".." in member.filename.split("/"):
+                sys.exit(leave)
+        tops = {member.filename.split("/")[0] for member in members}
+        if len(tops) != 1:
+            sys.exit("it is not one commit")
+        prefix = tops.pop() + "/" + app
+        taken = 0
+        for member in members:
+            if member.filename.endswith("/") or not member.filename.startswith(prefix):
+                continue
+            relative = member.filename[len(prefix):]
+            if relative != "function_app.py" and not relative.startswith("cases/"):
+                continue
+            if relative != "function_app.py" and os.path.splitext(relative)[1] not in (".py", ".json"):
+                sys.exit("cases/ holds a file that the digest does not cover")
+            if member.file_size > 2 << 20:
+                sys.exit("an app file is more than 2 MB")
+            path = os.path.realpath(os.path.join(target, relative))
+            if "\\" in relative or not path.startswith(target + os.sep):
+                sys.exit(leave)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as handle:
+                handle.write(archive.read(member))
+            taken += 1
+except Exception as error:
+    sys.exit("it cannot be read: " + type(error).__name__)
+if not os.path.isfile(os.path.join(target, "function_app.py")):
+    sys.exit("function_app.py is not in the archive")
+if not os.path.isfile(os.path.join(target, "cases", "__init__.py")):
+    sys.exit("cases/ is not in the archive")
+print(taken)
+' "$archive" "$work/source" 2>&1); then
+    say FAIL "the archive cannot be used: $(clean "$message")"
+    exit 3
+  fi
+  say ok "the app's files are taken from it: $message files"
+  cp "$volume/requirements.txt" "$volume/host.json" "$work/source/"
+  if ! held=$(python3 "$volume/source-digest.py" "$work/source" --as-held 2>&1) || [ "$held" != "$sources_digest" ]; then
+    say FAIL "the files from GitHub are not those of the workflow's commit (digest ${held:0:12}, expected ${sources_digest:0:12})"
+    exit 3
+  fi
+  say ok "the files match the digest of the workflow's checkout (${held:0:12})"
+}
+
+if [ "$fetch" = 1 ]; then
+  fetch_sources
+else
+  # The file that carries the code arrived whole, or nothing is published: sources that are cut short would be a broken app.
+  bytes=$(wc -c < "$main_file" | tr -d ' ')
+  if [ "$bytes" != "$sent_bytes" ]; then
+    say FAIL "${main_file##*/} is $bytes bytes, $sent_bytes were sent"
+    exit 3
+  fi
+  say ok "${main_file##*/} is $bytes bytes, as sent"
 fi
-say ok "${main_file##*/} is $bytes bytes, as sent"
 
 # The deploy identity signs in first, because its token is valid for five minutes and the group took some of them to start. Three tries, because the first minute of a group can be noisy.
 login=0
@@ -296,7 +416,8 @@ megabytes() {
 build_package() {
   local app_directory=$1 package_name=$2 label=$3 attempt built=0 zip_bytes
   make_pip || return 3
-  if ! message=$(python3 -c '
+  if [ "$fetch" = 0 ]; then
+    if ! message=$(python3 -c '
 import io, os, sys, zipfile
 target = os.path.realpath(sys.argv[2])
 with zipfile.ZipFile(sys.argv[1]) as outer, zipfile.ZipFile(io.BytesIO(outer.read("sources.zip"))) as archive:
@@ -307,10 +428,11 @@ with zipfile.ZipFile(sys.argv[1]) as outer, zipfile.ZipFile(io.BytesIO(outer.rea
     archive.extractall(target)
     print(len(archive.namelist()))
 ' "$main_file" "$work/source" 2>&1); then
-    say FAIL "the sources could not be unpacked: $(clean "$message")"
-    return 3
+      say FAIL "the sources could not be unpacked: $(clean "$message")"
+      return 3
+    fi
+    say ok "the sources are unpacked: $message files"
   fi
-  say ok "the sources are unpacked: $message files"
   for attempt in 1 2; do
     SECONDS=0
     if build_output=$(env FUNCTION_APP_SOURCE_DIR="$work/source" FUNCTION_APP_BUILD_IN_OPERATOR=1 PIP_CACHE_DIR="$work/pip-cache" ${pip_python_path:+"PYTHONPATH=$pip_python_path"} \

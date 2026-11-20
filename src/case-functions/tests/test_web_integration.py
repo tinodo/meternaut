@@ -211,12 +211,12 @@ class WithTheRealLoop(unittest.TestCase):
         self.assertEqual(rows(plan_page)["Result"], "Deleted. Azure no longer lists the resource.")
         history = self.console.get("/history")
         lines = feed_lines(history)
-        self.assertIn(("Approved", "Delete the unattached disk planted-disk-1", "Tino"), lines)
+        self.assertIn(("Approved", "Delete the unattached disk planted-disk-1", "Approved by Tino."), lines)
         self.assertIn(("Change made", "Delete the unattached disk planted-disk-1", "Deleted. Azure no longer lists the resource."), lines)
         for old in ("/me/decisions", "/me/activity"):
             self.assertEqual(feed_lines(self.console.get(old)), lines, "the old addresses answer with the same page")
         notebook = self.console.get("/why/k1")
-        self.assertEqual(rows(notebook)["State of the request"], "Used. The change was made with the approver's own permissions, and a request runs once.")
+        self.assertEqual(rows(notebook)["Where the request stands"], "Done. The change was made with the approver's own permissions, and a request runs only once.")
         self.assertIn("Nothing waits for you.", self.console.get("/").content)
         for page in (returned, plan_page, history, notebook):
             for secret in (ACCESS, CODE, query["state"], query["nonce"], query["code_challenge"]):
@@ -299,7 +299,7 @@ class WithTheRealLoop(unittest.TestCase):
         self.reseal(approvers=(TINO, MAYA))
         main = self.form(button=APPROVE)
         reply = self.console.submit(main, APPROVE, oid=MAYA)
-        self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+        self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
         self.assertIn("This form is no longer valid.", reply.content)
         self.console.store.switch_put(SwitchRecord("changes", True, "Otto", "2026-11-05T08:00:00Z", "drill"))
         forged = self.console.post(self.path, {**main.fields, "decision": "approve"})
@@ -314,7 +314,7 @@ class WithTheRealLoop(unittest.TestCase):
         main = self.form(button=APPROVE)
         self.assertEqual(self.console.submit(main, APPROVE).status, 303)
         again = self.console.submit(main, APPROVE)
-        self.assertEqual((again.status, again.headings(1)), (500, ["I could not take your answer"]))
+        self.assertEqual((again.status, again.headings(1)), (500, ["Meternaut could not take your answer"]))
         self.assertIn("This form is no longer valid.", again.content)
         self.assertEqual(self.approve()[1].status, 200)
         late = self.console.post(self.path, {**main.fields, "decision": "approve", "nonce": self.console.store.nonce_new(TINO, self.plan.plan_id)})
@@ -346,7 +346,7 @@ class WithTheRealLoop(unittest.TestCase):
         (record,) = self.console.store.decisions_of_plan(self.plan.plan_id)
         self.assertEqual((record.decision, record.note, record.reason), ("decline", "Not now", "handled"))
         lines = feed_lines(self.console.get("/history"))
-        self.assertIn(("Declined", "Delete the unattached disk planted-disk-1", "Tino · reason: it is already handled"), lines)
+        self.assertIn(("Declined", "Delete the unattached disk planted-disk-1", "Declined by Tino because it is already handled."), lines)
 
     def test_a_person_who_is_not_named_is_refused_by_the_page_before_the_loop(self):
         self.assertEqual(self.console.get(self.path, oid=MAYA).status, 403)

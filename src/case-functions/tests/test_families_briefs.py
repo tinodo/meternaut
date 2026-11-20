@@ -223,7 +223,10 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertIn(brief.plain(b.change, 200), letter.text)
                 self.assertIn("It runs with your own permissions.", letter.text)
                 self.assertNotIn("sign in", letter.text.lower())
-                self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 160), letter.text)
+                if REVERSIBLE[name]:
+                    self.assertIn(brief.plain(b.undo.how, 160), letter.text)
+                else:
+                    self.assertNotIn("Undo:", letter.text, "the chips say it once, and a letter does not say it twice")
                 self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
                 self.assertIn("What could go wrong: ", letter.text)
                 self.assertIn(brief.plain(b.risk.text, 200), letter.text)
@@ -239,8 +242,8 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 b = a_brief(done, case, action)
                 letter = letters.done_letter(done, action, case, PERSON, BASE, fs.NOW, CONTACTS)
                 self.assertEqual(letter.subject, "[Meternaut] A change to Azure has run")
-                self.assertIn(f"Done: {brief.plain(figures.title_of(b)[1], 200)}.", letter.text)
-                self.assertIn("Azure shows the change. Azure shows the new state.", letter.text)
+                self.assertIn(f"{brief.plain(figures.title_of(b)[1], 200)}\n=", letter.text)
+                self.assertIn("Azure shows the change.\n\nAzure shows the new state.", letter.text)
                 self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 200), letter.text)
 
     def test_the_card_of_the_decision_is_the_brief_cut_short_for_each_family(self):
@@ -335,7 +338,7 @@ class WhileAzureIsStillMakingTheChange(unittest.TestCase):
         world, plan, case, action = self.running()
         letter = letters.done_letter(plan, action, case, PERSON, BASE, fs.NOW, CONTACTS)
         self.assertEqual(letter.subject, "[Meternaut] The state of a change to Azure")
-        self.assertIn("The change is in progress:", letter.text)
+        self.assertIn("The change is in progress.", letter.text)
         self.assertNotIn("Done:", letter.text)
         self.assertNotIn("has run", letter.text)
 

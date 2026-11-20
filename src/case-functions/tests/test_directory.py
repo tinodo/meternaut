@@ -70,7 +70,7 @@ class TheManager(unittest.TestCase):
             with self.subTest(status):
                 found = directory_of(Graph(managers={A: status})).next_after([A])
                 self.assertEqual((found.source, found.notes), ("contact", (word,)))
-                self.assertIn("I could not look up the manager", directory.NOTES[word])
+                self.assertIn("Meternaut could not look up the manager", directory.NOTES[word])
 
     def test_a_network_that_does_not_answer_and_a_token_that_cannot_be_had_are_soft_too(self):
         def down(method, url, headers, data, timeout):

@@ -181,7 +181,7 @@ class Headers(unittest.TestCase):
         self.check(reply)
         self.assertNotIn("division", reply.text)
         self.assertNotIn("Traceback", reply.text)
-        self.assertIn("Something went wrong on my side", reply.content)
+        self.assertIn("Something went wrong in Meternaut", reply.content)
 
 
 def directives(policy: str) -> dict[str, list[str]]:
@@ -658,7 +658,7 @@ class Routing(unittest.TestCase):
             with self.subTest(path=path):
                 reply = console.get(path)
                 self.assertEqual(reply.status, 404)
-                self.assertIn("I cannot find this page", reply.content)
+                self.assertIn("Meternaut cannot find this page", reply.content)
 
     def test_a_known_path_with_the_wrong_method_is_a_405_that_says_what_is_allowed(self):
         console = seeded()

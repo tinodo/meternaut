@@ -102,7 +102,7 @@ class TheSendingPage(unittest.TestCase):
         reply, _ = press(seeded(), "plan0001", "decline")
         self.assertIsNotNone(reply.root.find("nav"))
         self.assertIn("You see this because you pressed a button on a card that Meternaut sent you.", reply.root.find("footer").text())
-        self.assertIn("Models: model-detective-x, model-skeptic-y.", reply.root.find("footer").text())
+        self.assertIn("The AIs that wrote this are model-detective-x and model-skeptic-y.", reply.root.find("footer").text())
         self.assertNotRegex(reply.main.text(), r"(?i)\bsign(?:s|ed|ing)?[ -]in\b")
 
     def test_the_page_changes_nothing_and_makes_no_call_and_asks_nobody_and_the_token_is_still_good(self):
@@ -374,7 +374,7 @@ class WhenTheButtonCannotBeUsed(unittest.TestCase):
         for oid in (MAYA, OPS):
             reply = console.get("/ok/plan0001/decline", query=token_for(console, "plan0001", "decline", oid=oid), oid=oid)
             self.assert_nothing_is_sent(reply, 403)
-            self.assertEqual(reply.headings(1), ["I cannot take your OK on this request."], oid)
+            self.assertEqual(reply.headings(1), ["Meternaut cannot take your OK on this request."], oid)
         nothing = console.get("/ok/nothing/decline", query=query)
         self.assert_nothing_is_sent(nothing, 404)
 
@@ -398,7 +398,7 @@ class WhenTheButtonCannotBeUsed(unittest.TestCase):
         reply = console.get("/ok/plan0001/decline", query=query)
         self.assertEqual(reply.status, 503)
         self.assertEqual(script_of(reply), [])
-        self.assertIn("I cannot reach my records", reply.content)
+        self.assertIn("Meternaut cannot reach its records", reply.content)
 
     def test_only_a_get_opens_the_page(self):
         console = seeded()

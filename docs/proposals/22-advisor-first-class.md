@@ -27,7 +27,7 @@ The owner read what Meternaut had found and said that it was "not even on par wi
 
 **How a decision is counted.** Its figure is the smallest of its variants, in US dollars a year, at the level Scenario: Advisor's own estimate. The request says the range in plain words ("the smallest is counted; the largest is X with a term of three years"), shows every variant, and says that they are alternatives. The page, the letter, the card, the History line and Savings found all take this one figure from the case; the month is the year divided by twelve.
 
-**How alternatives across decisions are counted.** Advisor's fields name the size or product of a reservation, but not what a savings plan covers, so they do not say which decisions cover the same spend. So the rule is the cautious one. Among the commitments of one subscription, a product that Advisor offers in another scope counts once, by its larger figure; and the kinds of commitment (Advisor's sub-category) are alternatives of each other, so only the kind whose products add up to most is counted. The others keep their request and their figures, count nothing, and say what is counted instead, so a person can still decide on each. Two reservations of different sizes are not alternatives: both are counted.
+**How alternatives across decisions are counted.** Advisor's fields name the size or product of a reservation, but not what a savings plan covers, so they do not say which decisions cover the same spend. So the rule is the cautious one. Among the commitments of one subscription, a product that Advisor offers in another scope counts once, by its larger figure; and the kinds of commitment (Advisor's sub-category) are alternatives of each other, so only the kind whose products add up to most is counted. The others keep their figures, count nothing and say what is counted instead. Since 2026-11-19 nobody is asked about them: a request whose own page says that it adds nothing is a request that a person cannot decide (the rule `NO_FIGURE`, below). Two reservations of different sizes are not alternatives: both are counted.
 
 A recommendation in another currency, or with no figure, is counted and not added, and the page and the History say so. A disk names no currency, so it is read in dollars only when the cost lines of its subscription are in dollars. A case where an older check or the investigation has a figure of its own keeps that figure, and Advisor's is not added to it.
 
@@ -35,16 +35,17 @@ A recommendation in another currency, or with no figure, is counted and not adde
 
 ## What each guard does to an Advisor case
 
-Advisor's recommendations are claims with a figure, not findings that the AIs could not measure, so the default is that nothing Advisor says is held back.
+Advisor's recommendations are claims with a figure, not findings that the AIs could not measure, so the default is that nothing Advisor says is held back, except a recommendation that states no saving.
 
 | Guard | Decision |
 |---|---|
 | `UNPRICED`, `UNMEASURED`, `UNCONFIRMED` (`why_not_ask`) | Do not apply: they are about findings of the investigation, and an Advisor case has Advisor's own figure and no objection of an AI. A figure of a few cents still makes a request |
+| `NO_FIGURE` (`why_not_ask`, added 2026-11-19) | Applies to an Advisor case that states no saving: an alternative of a purchase that saves more (its figure is not counted), a figure in another currency, or none. Nobody is asked about it, and the History and the start page say "Meternaut counts no saving in dollars from Azure Advisor". A case that says nothing keeps its own reason (`says_nothing`), and a case that carries the finding of an older check about the same resource (the check's lead is left to it: `also` in its digest) is not held back, because the check's lead is left to it and nothing else would ask about the resource |
 | "Judged lately" | Does not apply: no AI judges an Advisor case. What a person answered is held for 30 days, as for every request |
 | `ADVICE_OPEN_MAX` | Advisor requests are not held by it and not counted by it |
 | `says_nothing` | A recommendation with a figure, a product or a term always says something: its rows, with words of code when Advisor wrote none. One with no words, no figure, no product and no term says nothing and is held back as before, and the History says it once |
 | `held_reason` | Is about deleting a resource, and an Advisor case never asks to delete. A case of an older check or the investigation for the same resource keeps its own guards and its own flow: it only gets Advisor's digest in its facts, with no new status, time or line of the History |
-| `take_back` | Takes back no Advisor case. A request of the first version that gave one figure for a whole subscription is closed with its reason, unless a person answered it. A decision that Advisor does not list any more is closed too, in a subscription whose list was read in that Watch |
+| `take_back` | Takes back an open request of an Advisor case only when the case states no saving now and the request states none (`NO_FIGURE`, with its own reason `no-figure` and its own words: "... although no saving was counted for it"; [proposal 30](30-escalation.md), item 22); a request that was asked with a saving stays, even when its purchase is an alternative now (a known limit), and so does every request that a person answered. A request of the first version that gave one figure for a whole subscription is closed with its reason, unless a person answered it. A decision that Advisor does not list any more is closed too, in a subscription whose list was read in that Watch |
 | Leads left to the investigation | An Advisor case is made whether or not the investigation ran |
 
 ## What is not proved

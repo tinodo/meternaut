@@ -176,15 +176,17 @@ footer details p{margin-top:var(--spacingXS);max-width:46rem}
 .thr-t{fill:var(--colorPaletteDarkOrangeForeground1);font-size:.6875rem;font-family:var(--fontFamilyBase)}
 .items{display:grid;gap:var(--spacingS);margin:0;padding:0;list-style:none}
 .focus+.items{margin-top:var(--spacingM)}
-.item{display:grid;grid-template-columns:2rem minmax(0,1fr) 10rem 7.5rem 6rem;grid-template-areas:"rank main impact spark act";align-items:center;gap:var(--spacingM) var(--spacingL);padding:var(--spacingM) var(--spacingL);background:var(--colorNeutralBackground1);border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-radius:var(--borderRadiusXLarge)}
+.item{display:grid;grid-template-columns:2rem minmax(0,1fr) 10rem 7.5rem 6rem;grid-template-areas:"rank main impact spark act" "rank below impact spark act";align-items:center;gap:var(--spacingXS) var(--spacingL);padding:var(--spacingM) var(--spacingL);background:var(--colorNeutralBackground1);border:var(--strokeWidthThin) solid var(--colorNeutralStroke2);border-radius:var(--borderRadiusXLarge)}
 .item:hover{border-color:var(--colorNeutralStroke1);box-shadow:var(--shadow4)}
 .rank{grid-area:rank;display:grid;place-items:center;width:2rem;height:2rem;border-radius:var(--borderRadiusCircular);background:var(--colorNeutralBackground3);color:var(--colorNeutralForeground2);font-weight:var(--fontWeightSemibold);font-variant-numeric:tabular-nums}
 .rank.first{background:var(--colorBrandBackground);color:var(--colorNeutralForegroundOnBrand)}
-.main{grid-area:main;min-width:0}
-.main .t,.main .m{display:block}
+.main{grid-area:main;min-width:0;align-self:end}
+.below{grid-area:below;min-width:0;align-self:start}
+.main .t,.main .m,.below .m{display:block}
 .main .t{margin:0;font-weight:var(--fontWeightSemibold);overflow-wrap:anywhere}
-.main .m{margin:var(--spacingXXS) 0 var(--spacingXS)}
-.main .chips{margin:0}
+.main .m{margin:var(--spacingXXS) 0 0}
+.below .m{margin:0 0 var(--spacingXS)}
+.below .chips{margin:0}
 .impact{grid-area:impact;text-align:right;font-variant-numeric:tabular-nums}
 .impact .lab{display:block;color:var(--colorNeutralForeground2);font-size:var(--fontSizeBase200);line-height:var(--lineHeightBase200)}
 .impact .y{display:block;font-size:var(--fontSizeBase500);line-height:var(--lineHeightBase500);font-weight:var(--fontWeightSemibold)}
@@ -233,7 +235,7 @@ details.grp[open] .when-open{display:inline}
 }
 @media (max-width:52rem){
 .focus{grid-template-columns:1fr}
-.item{grid-template-columns:2rem minmax(0,1fr) auto;grid-template-areas:"rank main impact" "rank spark act"}
+.item{grid-template-columns:2rem minmax(0,1fr) auto;grid-template-areas:"rank main impact" "rank below impact" "rank spark act"}
 }
 @media (max-width:40em){
 main{padding:var(--spacingL)}
@@ -243,7 +245,7 @@ dl.summary dt{padding-bottom:0;border-bottom:0}
 .actions>*{flex:none;width:100%;max-width:none}
 .btn,button{width:100%}
 td .btn,td button,.btn.sm{width:auto}
-.item{grid-template-columns:2rem minmax(0,1fr);grid-template-areas:"rank main" "rank impact" "rank spark" "rank act"}
+.item{grid-template-columns:2rem minmax(0,1fr);grid-template-areas:"rank main" "rank impact" "rank below" "rank spark" "rank act"}
 .impact,.act{text-align:left}
 .focus{padding:var(--spacingL)}
 .facts{grid-template-columns:1fr}

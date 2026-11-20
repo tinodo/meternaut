@@ -537,6 +537,9 @@ class InvestigationRecord(Record):
     # and says (what it said that it examined). Counts and words, no amount. `more` counts the findings that the record had no room for.
     beats: tuple[dict, ...] = ()
     more: int = 0
+    # The hashes (the first 12 hex characters of the SHA-256 of the lower-cased resource id, cases/toolbox.py seen_hash) of the resources whose picture the tools read in this run, so that the next runs
+    # look at others first. Never an id. A record from before has none: nothing is known to have been looked at.
+    profiled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

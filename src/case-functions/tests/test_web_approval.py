@@ -168,14 +168,14 @@ class ThePage(unittest.TestCase):
         self.assertEqual(case_page.headings(2)[:8], ["What it is worth", "If you approve", "Waiting", "What was measured", "What the AI saw", "How sure it is", "Whose is it", "Your answer"])
         self.assertEqual(case_page.facts(), self.reply.facts())
 
-    def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_is_responsible(self):
+    def test_the_footer_says_that_an_ai_wrote_it_and_under_about_this_page_why_the_person_sees_it_and_who_answers_for_meternaut(self):
         footer = self.reply.root.find("footer")
         self.assertEqual([p.text() for p in footer.find_all("p")], [
-            "Recommendations written by AI. A person approves every change.",
-            "Models: model-detective-x, model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
-            "Responsible for Meternaut: Olga (olga@example.com)."])
+            "An AI wrote the recommendations on this page, and a person approves every change.",
+            "The AIs that wrote this are model-detective-x and model-skeptic-y. You see this because you are named as an approver of this request, and you have the role approver. "
+            "Olga (olga@example.com) answers for Meternaut."])
         self.assertEqual(footer.find("summary").text(), "About this page")
-        self.assertEqual(footer.find_all("a"), [], "the person who is responsible is plain text with the address, not a link")
+        self.assertEqual(footer.find_all("a"), [], "the person who answers for Meternaut is plain text with the address, not a link")
         for gone in ("Request code", "Why you are seeing this", "This page is served from", "This request expires on"):
             self.assertNotIn(gone, footer.text())
 
@@ -467,11 +467,11 @@ class WhoMayAnswer(unittest.TestCase):
             with self.subTest(label=label, who=who):
                 reply = self.console.get("/ok/plan0001", oid=who)
                 self.assertEqual(reply.status, 403)
-                self.assertEqual(reply.headings(1), ["I cannot take your OK on this request."])
+                self.assertEqual(reply.headings(1), ["Meternaut cannot take your OK on this request."])
                 for secret in (HEADLINE, TITLE, make_plan().title, "planted-disk-1", "7F3K92QD", "meternaut-test-rg", "If you approve", "Saves, Expected", "$86", "7.17"):
                     self.assertNotIn(secret, reply.content, f"no plan detail: {secret}")
                 self.assertEqual(reply.root.find_all("button"), [])
-                self.assertIn("Responsible for Meternaut: ", reply.content)
+                self.assertIn(" answers for Meternaut.", reply.content)
 
     def test_a_request_that_does_not_exist_is_a_404_for_an_approver_and_the_refusal_for_anybody_else(self):
         self.assertEqual(self.console.get("/ok/nothing", oid=TINO).status, 404)
@@ -500,7 +500,7 @@ class WhoMayAnswer(unittest.TestCase):
                 with self.subTest(who=who, decision=decision):
                     reply = self.console.post("/ok/plan0001", fields, oid=who)
                     self.assertEqual(reply.status, 403)
-                    self.assertIn("I cannot take your OK on this request.", reply.content)
+                    self.assertIn("Meternaut cannot take your OK on this request.", reply.content)
                     self.assertNotIn("Location", reply.headers)
             for old in ("/ok/plan0001/ask", "/ok/plan0001/not-mine"):
                 with self.subTest(who=who, address=old):
@@ -519,7 +519,7 @@ class WhoMayAnswer(unittest.TestCase):
             with self.subTest(who=who):
                 reply = self.console.post("/ok/plan0001/withdraw", {"nonce": "tok"}, oid=who)
                 self.assertEqual(reply.status, 404)
-                self.assertIn("I cannot find this page", reply.content)
+                self.assertIn("Meternaut cannot find this page", reply.content)
                 self.assertEqual(self.console.get("/ok/plan0001/withdraw", oid=who).status, 404)
         self.assertEqual(self.console.post("/ok/plan0001/withdraw", {}, oid=STRANGER).status, 403)
         self.assertEqual((self.console.decider.calls, self.console.delegate.begins, self.console.delegate.finishes), ([], [], []))
@@ -551,11 +551,11 @@ KINDS = {  # the status, the title of the page, and a sentence that the page alw
     "step_up_failed": (400, "The extra sign-in check was not completed", "Nothing was changed. The request is closed."),
     "refused_code": (409, "This request changed", "This request changed. Nothing is approved. A new message will bring the new request and its code."),
     "refused_state": (409, "This request cannot take an answer", ""),
-    "refused_role": (403, "I cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
+    "refused_role": (403, "Meternaut cannot take your OK on this request.", "Nothing is approved. If this request should be yours, ask the person named under About this page at the foot of this page."),
     "refused_paused": (409, "Changes are paused", "Changes are paused here. Nothing has changed, and your OK cannot be recorded now."),
     "expired": (410, "This request was taken back", "Meternaut took this request back, so it cannot be answered. Nothing has changed."),
     "duplicate": (409, "Already answered", "You answered this request already. Your first answer stands, and nothing has changed."),
-    "error": (500, "I could not take your answer", "Open the request again to see where it stands."),
+    "error": (500, "Meternaut could not take your answer", "Open the request again to see where it stands."),
 }
 # The kinds whose page has a line for the message of the result. The page of every other kind has its own words only.
 SHOWS_THE_MESSAGE = ("ran", "ran_unconfirmed", "running", "unchanged", "stopped", "azure_refused", "failed", "signin_failed", "step_up_failed", "refused_state", "error")
@@ -606,9 +606,9 @@ class EveryKindOfResult(unittest.TestCase):
                     self.assertEqual(reply.status, status)
                     self.assertEqual(reply.headings(1), [title])
                     self.assertIn(sentence, reply.content)
-                    self.assertIn("Responsible for Meternaut: ", reply.content, "the same help on every page")
-                    self.assertIn("Recommendations written by AI. A person approves every change.", reply.content)
-                    self.assertIn("Models: model-detective-x", reply.content)
+                    self.assertIn(" answers for Meternaut.", reply.content, "the same help on every page")
+                    self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", reply.content)
+                    self.assertIn("The AIs that wrote this are model-detective-x", reply.content)
                     self.assertEqual(reply.problems, [])
                     self.assertEqual(reply.root.find_all("button"), [])
                     self.assertEqual(reply.forms(), [])
@@ -694,7 +694,7 @@ class EveryKindOfResult(unittest.TestCase):
             for route in self.routes:
                 with self.subTest(route=route.__name__, kind=kind):
                     reply = route(kind)
-                    self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                    self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                     self.assertIn("a message of the result", reply.content)
 
     def test_a_step_that_fails_or_answers_with_something_else_is_an_error_page_without_a_trace(self):
@@ -704,7 +704,7 @@ class EveryKindOfResult(unittest.TestCase):
                 self.decider.result = broken
                 self.delegate.finished = broken
                 for reply in (self.console.submit(form, "Decline"), self.console.get("/arm/return", query=RETURN)):
-                    self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                    self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                     self.assertIn("The approval service did not answer.", reply.content)
                     for leak in ("boom", "the store is down", "Traceback"):
                         self.assertNotIn(leak, reply.text)
@@ -960,7 +960,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         self.console.submit(self.form, APPROVE, confirm=False)
         self.assertEqual(snapshot(self.console.store), before)
         self.assertEqual({name: self.reply.headers.get(name) for name in layout.SECURITY_HEADERS}, layout.SECURITY_HEADERS)
-        self.assertIn("Recommendations written by AI. A person approves every change.", self.reply.content)
+        self.assertIn("An AI wrote the recommendations on this page, and a person approves every change.", self.reply.content)
 
 
 class TheSignInRedirect(unittest.TestCase):
@@ -1051,7 +1051,7 @@ class TheSignInRedirect(unittest.TestCase):
             with self.subTest(address=address):
                 self.delegate.begun = Begun(location=address)
                 reply = self.console.submit(self.form, APPROVE)
-                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                 self.assertNotIn("Location", reply.headers)
                 self.assertNotIn("evil.example", reply.text)
 
@@ -1060,7 +1060,7 @@ class TheSignInRedirect(unittest.TestCase):
             with self.subTest(begun=repr(begun)):
                 self.delegate.begun = begun
                 reply = self.console.submit(self.form, APPROVE)
-                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                 self.assertNotIn("Location", reply.headers)
 
     def test_a_begin_that_raises_is_an_error_page_without_a_trace_and_changes_nothing(self):
@@ -1069,7 +1069,7 @@ class TheSignInRedirect(unittest.TestCase):
             with self.subTest(error=repr(error)):
                 self.delegate.begun = error
                 reply = self.console.submit(self.form, APPROVE)
-                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                 self.assertIn("The approval service did not answer.", reply.content)
                 for leak in ("boom", "the store is down", "bad value", "Traceback"):
                     self.assertNotIn(leak, reply.text)
@@ -1219,7 +1219,7 @@ class TheReturnThatAsksForAnExtraCheck(unittest.TestCase):
         for address in elsewhere:
             with self.subTest(address=address):
                 reply = self.step_up(address)
-                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                 self.assertNotIn("Location", reply.headers)
                 self.assertNotIn("evil.example", reply.text)
                 self.assertNotIn("Azure asks for an extra sign-in check", reply.text, "the message of a result that is not whole is not shown")
@@ -1241,7 +1241,7 @@ class TheReturnThatAsksForAnExtraCheck(unittest.TestCase):
                               ("an address that is a list", {"location": [STEP_UP_ADDRESS]})):
             with self.subTest(label):
                 reply = self.step_up(**kwargs)
-                self.assertEqual((reply.status, reply.headings(1)), (500, ["I could not take your answer"]))
+                self.assertEqual((reply.status, reply.headings(1)), (500, ["Meternaut could not take your answer"]))
                 self.assertNotIn("Location", reply.headers)
 
     def test_a_result_of_another_kind_without_an_address_is_the_page_of_its_kind(self):
@@ -1542,8 +1542,8 @@ class TheListsOfAPersonTheLadderCameToReadOneIndex(unittest.TestCase):
                 self.fill(console, who, 3)
                 start, history = console.get("/", oid=who), console.get("/history", oid=who)
                 self.assertEqual((start.status, history.status), (200, 200))
-                for page, sentence in ((start, "I cannot read the open requests now. Nothing has changed."), (start, "I cannot read the recent decisions now. Nothing has changed."),
-                                       (history, "I cannot read the requests now. Nothing has changed.")):
+                for page, sentence in ((start, "Meternaut cannot read the open requests now. Nothing has changed."), (start, "Meternaut cannot read the recent decisions now. Nothing has changed."),
+                                       (history, "Meternaut cannot read the requests now. Nothing has changed.")):
                     self.assertIn(sentence, page.content)
                 self.assertNotIn("Nothing waits for you", start.content)
                 self.assertNotIn("Nothing has happened", history.content)
