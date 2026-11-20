@@ -87,8 +87,9 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
 
 
 def _replaced(ctx: Ctx, case: CaseRecord | None, plan: PlanRecord | None) -> Safe:
-    """The request that took the place of this one when Meternaut could make the change itself (taken back as `upgraded`): its title, as a link to it. Nothing for any other request."""
-    if case is None or plan is None or taken_back(plan, case) != "upgraded" or not case.plan_id or case.plan_id == plan.plan_id:
+    """The request that took the place of this one when Meternaut took it back because it could make the change itself (`upgraded`) or because the finding or the resource changed (`changed`): its
+    title, as a link to it. Nothing for any other request, and nothing when no other request was made (a request that a guard holds back has none)."""
+    if case is None or plan is None or taken_back(plan, case) not in ("upgraded", "changed") or not case.plan_id or case.plan_id == plan.plan_id:
         return Safe("")
     new, ok = read(lambda: ctx.store.plan_get(case.plan_id), None)
     if new is None or not ok:

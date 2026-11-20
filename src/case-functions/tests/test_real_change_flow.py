@@ -173,6 +173,9 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertIn("Of them, 1 is the AI's estimate and 1 is not priced.", page)
         self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced.", read(shown["card"]))
         self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced.", read(shown["letter"]))
+        listed = [block.text for block in shown["page"].blocks if block.details and block.kind == "cell"]
+        self.assertIn("proposal", listed, "the word of the finding's own proposal (change) is a typed fact, listed in the Details where it was")
+        self.assertNotIn(proposals.KEY, listed, "and the ways, which the page says in its own words, are not")
         saves = cells(shown["page"])
         self.assertEqual(saves[saves.index("Saves a month") + 3::3][:2], ["about $161 to $192, the AI's estimate", "Not priced"], "an estimate says so in its cell")
         self.assertIn("A saving that is the AI's estimate rests on a share of the cost that the AI assumed, and Meternaut did not check that share.", page)
@@ -326,6 +329,26 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", feed)
         self.assertIn(brief_mod.TAKEN_BACK["upgraded"], feed, "a request that a change took the place of is a line of its own and says why")
         self.assertNotIn("request to look at a finding", feed)
+
+    def test_a_change_that_does_not_hold_any_more_is_taken_back_as_changed_and_the_page_and_the_history_say_so_and_name_the_request_that_asks_instead(self):
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            world, lead, case = world_of(host(), self.case)
+            old = world.approvals.plan_for(case, lead, (OID,))
+            self.assertEqual(old.family, "change-setting")
+            world.arm.get(host()["id"])["properties"]["scaleUnits"] = 3
+            (taken, new, _), = world.approvals.upgrade((OID,))
+        self.assertEqual((taken.plan_id, taken.preconditions["takenBack"], new.family, new.preconditions[proposals.CANNOT_KEY]), (old.plan_id, "changed", "advise", "mismatch"))
+        console = console_of(world, new, world.store.case_get(old.case_id))
+        console.store.plan_put(world.store.plan_get(old.plan_id))
+        page = console.get(f"/ok/{old.plan_id}").main
+        self.assertIn(brief_mod.TAKEN_BACK["changed"], page.text())
+        (pointer,) = [a for a in page.find_all("a") if a.attrs.get("href") == f"/ok/{new.plan_id}"]
+        self.assertEqual(pointer.text(), "Scale down the bastion host bastion-one: scale units from 4 to 2", "the request that asks instead has the title of the one that was taken back")
+        feed = console.get("/history").main.text()
+        self.assertIn(brief_mod.TAKEN_BACK["changed"], feed)
+        self.assertNotIn("request to look at a finding", feed, "a change that was taken back is a line of its own")
+        asks = read(Rendered("page", "page", blocks_of_html(console.get(f"/ok/{new.plan_id}").text)))
+        self.assertIn(f"Meternaut cannot make this change itself. {proposals.CANNOT['mismatch']} Your answer is recorded with your name.", asks)
 
     def test_a_setting_that_is_no_count_is_dropped_with_its_reason_in_the_notes_and_the_request_still_asks_and_says_what_is_true(self):
         change = reduction({"handle": "r1", "property": "retentionDays", "from": 30, "to": 7}, on="retentionDays", start=30, to=7, others=())
