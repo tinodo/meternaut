@@ -4,12 +4,13 @@ Every kind of resource, property and word here is invented. An entry is kept onl
 counted, and the finding stays. The Skeptic is shown what was kept, and the facts of a case keep it as typed data (the words of the pages are another piece of work).
 """
 import json
+import re
 import unittest
 from collections import Counter
 from dataclasses import replace
 from unittest import mock
 
-from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, ScriptedAgent, answer, banned_in, disks_estate, entry, finding, key_of, loop_for, meter_line, metrics, resource,
+from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, ScriptedAgent, answer, banned_in, built, disks_estate, entry, finding, key_of, loop_for, meter_line, metrics, resource,
                               verdicts)
 
 from cases import agents, brief, investigate, models, pricing, proposals
@@ -26,8 +27,8 @@ REMOVE = {"title": "Remove it", "gives_up": "Everything that uses it.", "in_plac
 
 
 def properties(**more) -> dict:
-    """What the tools showed of an invented gateway: a number that a smaller one may be stated for, a word, a flag and a count."""
-    return {UNITS: 4, "tier": "Lite", "zoneRedundant": True, "retries": 8, **more}
+    """What the tools showed of an invented gateway: a number that a smaller one may be stated for, a word, a flag and another count."""
+    return {UNITS: 4, "tier": "Lite", "zoneRedundant": True, "maxReplicas": 8, **more}
 
 
 def invented(*numbers, **more) -> FakeToolbox:
@@ -69,6 +70,12 @@ def checked(change, handles=("r1",), proposal="change", evidence=None, price=Non
 def priced_by_the_bill(box=None):
     box = box or invented(1, 2)
     return lambda option: pricing.price(option, ["r1"], box, COSTS, None, meter_word)
+
+
+def priced_as(form: str):
+    """A price that gives the resource one figure of this form of change, 20 to 40 dollars a month: the shape of a row of the bill with invented numbers."""
+    row = pricing.Row("r1", 20.0, 40.0, 200.0, 1, form, {}, None, 0, ("m1",), 200.0, None, None, 0, None)
+    return lambda option: pricing.Priced(option.action, {"r1": row})
 
 
 class TheKeyOfTheFacts(unittest.TestCase):
@@ -137,9 +144,9 @@ class WhatCodeKeepsOfTheSettings(unittest.TestCase):
 
     def test_a_new_value_that_is_whole_is_kept_whole_and_one_that_is_fractional_is_kept_beside_a_fractional_old_value(self):
         self.assertEqual(checked(reduce(set=[{**GOOD, "to": 2.0}])).ways["r1"]["set"], [{"path": UNITS, "from": 4, "to": 2}])
-        box = {"r1": {"properties": properties(ratio=2.5)}}
-        found = checked(reduce(on="ratio", start=2.5, to=1.25, set=[{"handle": "r1", "property": "ratio", "from": 2.5, "to": 1.25}]), evidence=box)
-        self.assertEqual(found.ways["r1"]["set"], [{"path": "ratio", "from": 2.5, "to": 1.25}])
+        box = {"r1": {"properties": properties(computeCapacity=2.5)}}
+        found = checked(reduce(on="computeCapacity", start=2.5, to=1.25, set=[{"handle": "r1", "property": "computeCapacity", "from": 2.5, "to": 1.25}]), evidence=box)
+        self.assertEqual(found.ways["r1"]["set"], [{"path": "computeCapacity", "from": 2.5, "to": 1.25}])
         self.assertEqual(checked(reduce(to=0, set=[{**GOOD, "to": 0}])).ways["r1"]["set"][0]["to"], 0, "the new value may be nothing: 0 <= to < from")
 
     def test_each_entry_that_fails_a_rule_is_dropped_by_itself_and_counted_by_the_rule_and_the_others_stay(self):
@@ -176,7 +183,7 @@ class WhatCodeKeepsOfTheSettings(unittest.TestCase):
     def test_a_property_is_listed_once_for_a_resource_and_the_limit_is_the_shared_one(self):
         found = checked({"action": "reduce", "effects": [], "set": [GOOD, GOOD, {**GOOD, "to": 1}]})
         self.assertEqual((found.ways["r1"]["set"], found.dropped), ([{"path": UNITS, "from": 4, "to": 2}], Counter({("set", "duplicate"): 2})))
-        names = [f"count{n}" for n in range(proposals.MAX_SETTINGS + 2)]
+        names = [f"pool{letter}Count" for letter in "ABCDE"][: proposals.MAX_SETTINGS + 2]
         evidence = {"r1": {"properties": {name: 4 for name in names}}}
         many = [{"handle": "r1", "property": name, "from": 4, "to": 2} for name in names]
         found = checked({"action": "reduce", "effects": [], "set": many}, evidence=evidence)
@@ -195,18 +202,44 @@ class WhatCodeKeepsOfTheSettings(unittest.TestCase):
         for label, setting, why in (("another new value", {**GOOD, "to": 1}, "ratio"), ("zero as the new value", {**GOOD, "to": 0}, "ratio")):
             with self.subTest(label):
                 self.assertEqual(checked(reduce(start=4, to=2, set=[setting])).dropped, Counter({("set", why): 1}))
-        other = {"r1": {"properties": properties(retries=8)}}
-        self.assertEqual(checked(reduce(on="retries", start=8, to=4, set=[{**GOOD, "to": 1}]), evidence=other).dropped, Counter(), "a ratio on another property says nothing of this one")
+        other = {"r1": {"properties": properties(maxReplicas=8)}}
+        self.assertEqual(checked(reduce(on="maxReplicas", start=8, to=4, set=[{**GOOD, "to": 1}]), evidence=other).dropped, Counter(), "a ratio on another property says nothing of this one")
         two = {"r1": {"properties": properties()}, "r2": {"properties": properties()}}
         change = reduce(handle="r2", start=4, to=2, set=[{**GOOD, "to": 1}])
         self.assertEqual(checked(change, handles=("r1", "r2"), evidence=two).dropped, Counter(), "nor does a ratio of another resource")
         self.assertEqual(checked(reduce(start="four", to=2, set=[{**GOOD, "to": 1}])).dropped, Counter(), "a ratio that is no pair of numbers is no change that was priced")
 
     def test_the_settings_of_each_resource_are_its_own(self):
-        two = {handle: {"properties": properties(**({"retries": 6} if handle == "r2" else {}))} for handle in ("r1", "r2")}
-        change = {"action": "reduce", "effects": [], "set": [GOOD, {"handle": "r2", "property": "retries", "from": 6, "to": 3}]}
+        two = {handle: {"properties": properties(**({"maxReplicas": 6} if handle == "r2" else {}))} for handle in ("r1", "r2")}
+        change = {"action": "reduce", "effects": [], "set": [GOOD, {"handle": "r2", "property": "maxReplicas", "from": 6, "to": 3}]}
         found = checked(change, handles=("r1", "r2"), evidence=two)
-        self.assertEqual(found.ways, {"r1": {"set": [{"path": UNITS, "from": 4, "to": 2}]}, "r2": {"set": [{"path": "retries", "from": 6, "to": 3}]}})
+        self.assertEqual(found.ways, {"r1": {"set": [{"path": UNITS, "from": 4, "to": 2}]}, "r2": {"set": [{"path": "maxReplicas", "from": 6, "to": 3}]}})
+
+    def test_a_property_whose_last_key_is_no_count_or_size_is_dropped_whatever_number_the_tools_showed(self):
+        shown = {"minimumTlsVersion": (1.2, 0.6), "retentionDays": (30, 0), "zonesCount": (3, 1), "ipConfigurationsCount": (2, 1), "timeoutInMinutes": (10, 5), "sku.tier": (3, 1),
+                 "capacity.state": (2, 1)}
+        evidence = {"r1": {"properties": properties(**{name: now for name, (now, _) in shown.items()})}}
+        for name, (now, to) in shown.items():
+            with self.subTest(name):
+                found = checked(reduce(set=[{"handle": "r1", "property": name, "from": now, "to": to}, GOOD]), evidence=evidence)
+                self.assertEqual(found.ways["r1"]["set"], [{"path": UNITS, "from": 4, "to": 2}], "the good entry stays")
+                self.assertEqual((found.dropped, found.said), (Counter({("set", "count"): 1}), (2, 0)), "refused by its own rule, with every other rule met")
+
+    def test_a_property_whose_last_key_is_a_count_or_a_size_is_kept(self):
+        shown = {"scaleUnits": (4, 2), "sku.capacity": (3, 1), "instanceCount": (5, 2), "maxReplicas": (10, 3), "numberOfWorkers": (6, 3), "diskSizeGB": (128, 64), "count.count": (2, 1)}
+        for name, (now, to) in shown.items():
+            with self.subTest(name):
+                found = checked({"action": "reduce", "effects": [], "set": [{"handle": "r1", "property": name, "from": now, "to": to}]}, evidence={"r1": {"properties": {name: now}}})
+                self.assertEqual((found.ways, found.dropped), ({"r1": {"set": [{"path": name, "from": now, "to": to}]}}, Counter()))
+
+    def test_the_old_value_that_is_kept_is_the_one_that_the_tools_showed_and_not_the_spelling_of_the_ai(self):
+        for now, said, to in ((4, 4.0, 2), (4, 4.0000001, 2), (2.5, 2.5000001, 1.25)):
+            with self.subTest(now=now, said=said):
+                found = checked({"action": "reduce", "effects": [], "set": [{"handle": "r1", "property": "computeCapacity", "from": said, "to": to}]},
+                                evidence={"r1": {"properties": {"computeCapacity": now}}})
+                (kept,) = found.ways["r1"]["set"]
+                self.assertEqual(kept["from"], now)
+                self.assertIs(type(kept["from"]), type(now), "an int that the tools showed stays an int, whatever the AI wrote")
 
     def test_nothing_is_kept_of_an_answer_with_no_change_or_a_set_that_is_no_list(self):
         self.assertEqual(proposals.check(None, "change", ["r1"], {}, lambda option: pricing.Priced("")), proposals.Checked({}, Counter(), (0, 0)))
@@ -220,11 +253,11 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
         lite, gone = (pricing.price(pricing.parse(option["change"]), ["r1"], invented(1, 2), COSTS, None, meter_word).rows["r1"] for option in (LITE, REMOVE))
         self.assertGreater(gone.low, lite.low, "removing it saves more than a smaller tier: the figures are the bill's, each from its own change")
         self.assertEqual(found.ways, {"r1": {"others": [
-            {"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high},
+            {"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high, "estimate": True},
             {"title": "Remove it", "givesUp": "Everything that uses it.", "action": "remove", "inPlace": True, "lowUsd": gone.low, "highUsd": gone.high}]}})
         self.assertEqual((found.dropped, found.said), (Counter(), (0, 2)))
-        self.assertEqual([(o.title, o.in_place, o.low, o.high) for o in proposals.others({proposals.KEY: found.ways["r1"]})],
-                         [("Use the Lite tier", False, lite.low, lite.high), ("Remove it", True, gone.low, gone.high)])
+        self.assertEqual([(o.title, o.in_place, o.low, o.high, o.estimate) for o in proposals.others({proposals.KEY: found.ways["r1"]})],
+                         [("Use the Lite tier", False, lite.low, lite.high, True), ("Remove it", True, gone.low, gone.high, False)])
 
     def test_a_way_that_cannot_be_priced_is_kept_with_no_figure(self):
         unnamed = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}], "action": "remove"}}
@@ -252,6 +285,9 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
         table = (("a title of more than 80 characters", bad_title("x" * 81), "title"), ("a title with a link", bad_title("See https://evil.example/x"), "title"),
                  ("a title with markup", bad_title("<b>Use the Lite tier</b>"), "title"),
                  ("a title with an amount of money", bad_title("Save $500 a month"), "title"), ("a title with an amount in words of a currency", bad_title("Save 500 USD a month"), "title"),
+                 ("a title with an amount a month and no currency", bad_title("Saves 500/month"), "title"), ("a title with an amount a year and no currency", bad_title("Saves 500/year"), "title"),
+                 ("a title with an amount and no unit", bad_title("Save 1200"), "title"), ("a title with an amount that has a comma in it", bad_title("Save 1,200"), "title"),
+                 ("a title with a slash", bad_title("Lite/Basic tier"), "title"), ("a title with a colon, which loses the whole way", bad_title("Lite tier: free"), "title"),
                  ("a title that is empty", bad_title("   "), "title"), ("a title that is not text", bad_title(5), "title"), ("no title", {k: v for k, v in LITE.items() if k != "title"}, "title"),
                  ("a title with a line of a script", bad_title("Use it; drop table users"), "title"),
                  ("an action that is none", {**LITE, "change": {"action": "none"}}, "action"), ("an action that is unknown", {**LITE, "change": {**LITE["change"], "action": "teleport"}}, "action"),
@@ -262,6 +298,37 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
                 found = checked(reduce(others=[bad, LITE]))
                 self.assertEqual([item["title"] for item in found.ways["r1"]["others"]], ["Use the Lite tier"])
                 self.assertEqual((found.dropped, found.said), (Counter({("other", why): 1}), (0, 2)))
+
+    def test_a_title_may_hold_a_small_number_and_never_a_run_of_three_digits_which_is_an_amount(self):
+        for title, kept in (("Halve to 2 units (4 to 2)", True), ("Use 99 units", True), ("Use 100 units", False), ("Use 1 000 units", False)):
+            with self.subTest(title):
+                found = checked(reduce(others=[{**LITE, "title": title}]))
+                self.assertEqual([item["title"] for item in found.ways.get("r1", {}).get("others", [])], [title] if kept else [])
+                self.assertEqual(found.dropped, Counter() if kept else Counter({("other", "title"): 1}))
+
+    def test_a_way_is_an_estimate_when_its_share_that_remains_is_the_ais_word_and_it_keeps_its_figure_whatever_the_form(self):
+        for form in ("assumed", "mixed", "none", "quantity", "ratio", "share_of_days", "alternative"):
+            with self.subTest(form):
+                found = checked(reduce(others=[LITE]), price=priced_as(form))
+                (way,) = found.ways["r1"]["others"]
+                says = form in ("assumed", "mixed")
+                self.assertEqual((way["lowUsd"], way["highUsd"]), (20.0, 40.0), "a figure is kept for every form, an estimate or not")
+                self.assertEqual(("estimate" in way, way.get("estimate")), (says, True if says else None))
+                (read,) = proposals.others({proposals.KEY: found.ways["r1"]})
+                self.assertEqual((read.estimate, read.low, read.high), (says, 20.0, 40.0))
+
+    def test_the_forms_that_the_bill_prices_make_an_estimate_of_the_assumed_one_only(self):
+        halve = {"title": "Halve the hours", "gives_up": "Half of the hours.", "in_place": True,
+                 "change": {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "quantity", "from": 720, "to": 360}}], "how": "Halve them."}}
+        lower = {"title": "Lower the units to one", "gives_up": "Three of the four units.", "in_place": True, "change": reduce(to=1)}
+        for way, estimate in ((LITE, True), (REMOVE, False), (halve, False), (lower, False)):
+            with self.subTest(way["title"]):
+                (kept,) = checked(reduce(others=[way]), price=priced_by_the_bill()).ways["r1"]["others"]
+                self.assertEqual(("lowUsd" in kept, kept.get("estimate", False)), (True, estimate))
+
+    def test_a_way_with_no_row_is_no_estimate_for_it_has_no_figure(self):
+        (one,) = checked(reduce(others=[LITE])).ways["r1"]["others"]
+        self.assertEqual(sorted(one), ["action", "givesUp", "inPlace", "title"])
 
     def test_a_way_that_is_the_change_itself_or_another_way_again_is_dropped(self):
         same_as_main = {"title": "Lower the units", "gives_up": "Nothing.", "change": reduce()}
@@ -299,7 +366,7 @@ class WhatTheCaseKeepsAndTheNotesSay(unittest.TestCase):
         facts = facts_of(h)
         lite = pricing.price(pricing.parse(LITE["change"]), ["r1"], invented(1), COSTS, None, meter_word).rows["r1"]
         self.assertEqual(facts[proposals.KEY], {"set": [{"path": UNITS, "from": 4, "to": 2}], "others": [
-            {"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high}]})
+            {"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high, "estimate": True}]})
         self.assertEqual((facts["proposal"], facts["change"]["action"]), ("change", "reduce"), "the proposal word and the digest of the saving are where they were")
         self.assertEqual(facts["change"]["price"]["form"], "ratio")
         self.assertEqual([e for e in h.notes if "dropped" in e], [])
@@ -316,6 +383,12 @@ class WhatTheCaseKeepsAndTheNotesSay(unittest.TestCase):
         (note,) = [e for e in h.notes if "dropped" in e]
         self.assertEqual(note, "finding 1: code dropped 2 of 3 settings (a property that no tool showed: 1, a new value that is not a smaller number of the same kind: 1) "
                                "and 2 of 3 other ways (a title that is not plain words: 1, no action that code can read: 1)")
+
+    def test_a_setting_that_is_no_count_is_dropped_with_its_own_words_in_the_notes_and_the_finding_stays(self):
+        h = run(asked(reduce(set=[{"handle": "r1", "property": "minimumTlsVersion", "from": 1.2, "to": 1.0}])), invented(1, minimumTlsVersion=1.2))
+        self.assertEqual((h.result.cases, ways_of(h)), (1, None))
+        (note,) = [e for e in h.notes if "dropped" in e]
+        self.assertEqual(note, "finding 1: code dropped 1 of 1 setting (a property that is not a count or a size: 1)")
 
     def test_a_finding_whose_every_entry_is_bad_still_opens_its_case_with_no_proposal(self):
         h = run(asked(reduce(set=[{**GOOD, "from": 5}], others=[{"title": ""}])))
@@ -369,6 +442,22 @@ class WhenTheCaseIsJudgedAgain(unittest.TestCase):
         facts = self.twice(again=reduce(to=1, set=[{**GOOD, "to": 1}]))
         self.assertEqual(facts[proposals.KEY]["set"], [{"path": UNITS, "from": 4, "to": 1}], "an answer that states a proposal again is the one that stands")
 
+    def test_the_case_of_a_group_that_is_judged_again_keeps_none_of_the_ways_of_the_resource_it_belongs_to(self):
+        clock = Moving()
+        extras = loop_for(clock)
+        Harness(FakeFoundry(answer(asked(reduce(set=[GOOD], others=[LITE])))), invented(1), clock=clock, extras=extras).go()
+        (plan,) = extras.store.plans_open()
+        self.assertGreater(plan.saving_usd_month, 0, "r1 was asked with a saving that code priced, and its request is open")
+        clock.advance(days=8)
+        numbers = range(1, investigate.GROUP_MIN + 2)
+        group = finding(handles=[f"r{n}" for n in numbers], basis="other", proposal="investigate", evidence=[])
+        h = Harness(FakeFoundry(answer(group)), invented(*numbers), clock=clock, extras=extras)
+        h.go()
+        facts = extras.store.case_get(key_of(resource(1, resource_type=GATEWAYS))).facts
+        self.assertIn(models.GROUP_FACT, facts, "it is the case of a group, which belongs to r1")
+        self.assertEqual(facts["change"]["price"]["form"], "ratio", "what the open request was asked with stays: this run took the way that keeps it")
+        self.assertNotIn(proposals.KEY, facts, "a group keeps no proposal: the settings and the ways of r1 are those of r1 alone")
+
     def test_nothing_is_kept_for_a_case_that_no_open_request_waits_for(self):
         for label, between in (("a request that a person declined", lambda extras, plan: extras.store.plan_put(replace(plan, state="declined"))),
                                ("a request that is held back", lambda extras, plan: extras.store.plan_put(replace(plan, state="held"))),
@@ -389,8 +478,8 @@ class WhatTheSkepticIsShown(unittest.TestCase):
         one = self.seen(h)
         lite = pricing.price(pricing.parse(LITE["change"]), ["r1"], invented(1), COSTS, None, meter_word).rows["r1"]
         self.assertEqual(one["set"], [{"handle": "r1", "property": UNITS, "from": 4, "to": 2}])
-        self.assertEqual(one["others"], [{"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high}],
-                         "what code dropped is not shown, and what it priced is its figure")
+        self.assertEqual(one["others"], [{"title": "Use the Lite tier", "givesUp": LITE["gives_up"], "action": "switch", "inPlace": False, "lowUsd": lite.low, "highUsd": lite.high, "estimate": True}],
+                         "what code dropped is not shown, and what it priced is its figure, with the word that it is an estimate")
         self.assertEqual(one["proposal"], "change")
 
     def test_a_finding_that_proposes_neither_is_given_what_it_was_given_before(self):
@@ -405,24 +494,53 @@ class WhatTheSkepticIsShown(unittest.TestCase):
         self.assertEqual(case.status, "needs_human")
         self.assertEqual([item["path"] for item in case.facts[proposals.KEY]["set"]], [UNITS], "what was proposed is kept: the person sees it with the objection")
 
+    def test_a_resource_that_was_left_out_of_what_the_skeptic_is_shown_has_none_of_its_proposals_in_it(self):
+        box = invented(1, 2)
+        (one,) = built(box, ["r1", "r2"])
+        one.items[0].lead.facts[proposals.KEY] = {"set": [{"path": UNITS, "from": 4, "to": 2}], "others": [{"title": "Use the Lite tier", "givesUp": "", "action": "switch"}]}
+        one.items[1].lead.facts[proposals.KEY] = {"set": [{"path": UNITS, "from": 4, "to": 1}], "others": [{"title": "Remove it", "givesUp": "", "action": "remove"}]}
+        shown = json.loads(investigate._skeptic_text([one], box, investigate.DETAIL[0]))["findings"][0]
+        self.assertEqual([(item["handle"], item["to"]) for item in shown["set"]], [("r1", 2), ("r2", 1)])
+        self.assertEqual([item["title"] for item in shown["others"]], ["Use the Lite tier", "Remove it"])
+        left = json.loads(investigate._skeptic_text([one], box, investigate.DETAIL[0], {"r2"}))["findings"][0]
+        self.assertEqual([item["handle"] for item in left["evidence"]], ["r1"])
+        self.assertEqual([(item["handle"], item["to"]) for item in left["set"]], [("r1", 2)], "what was proposed for a resource that the Skeptic is not shown is not shown either")
+        self.assertEqual([item["title"] for item in left["others"]], ["Use the Lite tier"])
+
     def test_the_view_is_made_from_the_facts_of_the_cases_and_is_empty_for_a_case_with_none(self):
         facts = {proposals.KEY: {"set": [{"path": UNITS, "from": 4, "to": 2}], "others": [{"title": "Remove it", "givesUp": "", "action": "remove"}]}}
         self.assertEqual(proposals.view([("r1", facts), ("r2", {})]), {"set": [{"handle": "r1", "property": UNITS, "from": 4, "to": 2}],
                                                                      "others": [{"title": "Remove it", "givesUp": "", "action": "remove"}]})
         self.assertEqual(proposals.view([("r1", {}), ("r2", None)]), {})
 
+    def test_a_way_that_is_an_estimate_says_so_to_the_skeptic_and_a_way_that_is_not_says_nothing_of_it(self):
+        stored = lambda estimate: {proposals.KEY: {"others": [{"title": "Use the Lite tier", "givesUp": "", "action": "switch", "lowUsd": 10.0, "highUsd": 20.0, "estimate": estimate}]}}
+        self.assertIs(proposals.view([("r1", stored(True))])["others"][0]["estimate"], True)
+        self.assertIn('"estimate": true', json.dumps(proposals.view([("r1", stored(True))])))
+        for not_one in (False, None, "yes", 1, "true"):
+            self.assertNotIn("estimate", proposals.view([("r1", stored(not_one))])["others"][0])
+
 
 class WhatTheInstructionsSay(unittest.TestCase):
     def test_the_investigator_is_told_the_shape_of_set_and_of_others_and_what_code_does_with_them(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
-        for sentence in ('also state it in the change as "set":[{"handle":"r3","property":"<named exactly as a tool returned it>"', f"(the action reduce, at most {proposals.MAX_SETTINGS})",
-                         f'List in "others", at most {proposals.MAX_OTHERS} and only for a finding of one resource', f"at most {proposals.MAX_TITLE} characters, plain words",
-                         f"at most {proposals.MAX_GIVES_UP} characters", '"gives_up"', '"in_place"', "with that person's own rights", "name nothing in it that your tools did not show",
-                         "never only from what you already know", "from what the documentation was read to say", "name one only after you found what it must still carry", "Price each one through the same forms of change",
-                         "A price shows neither features nor limits, and an average hides a peak", "say in_place false when the documentation says that a smaller option needs the resource to be made again",
-                         "A person reads gives_up marked as your own words, which code did not check"):
+        for sentence in ('state it inside the change too, as "set":[{"handle":"r3","property":"<named exactly as a tool returned it>"', f"(the action reduce, at most {proposals.MAX_SETTINGS})",
+                         f'Inside the change as well, list in "others", at most {proposals.MAX_OTHERS} and only for a finding of one resource',
+                         f"at most {proposals.MAX_TITLE} characters of letters, digits, spaces and the marks , ( ) + - only, with no run of three digits",
+                         f"at most {proposals.MAX_GIVES_UP} characters", '"gives_up"', '"in_place"', "with the approver's own rights", "name nothing in it that your tools did not show",
+                         "never only from what you already know", "from what the documentation was read to say", "its own change, in the forms above, which code prices from the bill",
+                         "false when it says that it must be made again, else left out",
+                         "A person reads gives_up as your own words, which code did not check"):
             self.assertIn(sentence, " ".join(text.split()), sentence)
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no property, no limit and no option of any service")
+
+    def test_the_marks_that_the_instruction_allows_in_a_title_are_the_marks_that_code_keeps(self):
+        listed = re.search(r"the marks (.+?) only", agents.INVESTIGATOR_INSTRUCTIONS).group(1).split()
+        self.assertEqual(listed, [",", "(", ")", "+", "-"])
+        for mark in listed:
+            with self.subTest(mark):
+                title = f"Use a {mark} b"
+                self.assertEqual([item["title"] for item in checked(reduce(others=[{**LITE, "title": title}])).ways["r1"]["others"]], [title])
 
     def test_the_instructions_name_none_of_the_invented_kinds_properties_or_words_of_these_tests(self):
         for text in (agents.INVESTIGATOR_INSTRUCTIONS, agents.SKEPTIC_INSTRUCTIONS):

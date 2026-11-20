@@ -1514,7 +1514,7 @@ def _open_case(s: "Services", out: Investigation, finding: Finding, item: Item, 
         if not saving and outcome.status != "dropped" and (asked := ex.approvals.asked_saving(old)):
             saving = asked  # judged again with no price while a request that was asked with one is open: the case keeps what the person was shown, the figure and the price (its level and basis)
             if pricing.saved(old.facts) is not None:
-                lead = replace(lead, facts={**lead.facts, pricing.KEY: old.facts[pricing.KEY], **({proposals.KEY: old.facts[proposals.KEY]} if proposals.KEY in old.facts and proposals.KEY not in lead.facts else {})})
+                lead = replace(lead, facts={**lead.facts, pricing.KEY: old.facts[pricing.KEY], **({proposals.KEY: old.facts[proposals.KEY]} if proposals.KEY in old.facts and proposals.KEY not in lead.facts and not group else {})})
         record = CaseRecord(
             case_id=f"k{lead.lead_id}", resource_id=lead.resource_id, resource_name=clean_text(lead.name, 120), resource_type=clean_text(lead.resource_type, 120),
             resource_group=clean_text(lead.resource_group, 90), subscription_id=lead.subscription_id, detector=DETECTOR, run_id=h.run_id, status=outcome.status,

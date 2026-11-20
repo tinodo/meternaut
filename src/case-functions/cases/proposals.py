@@ -8,7 +8,8 @@ call to Azure. A reader never raises: what is not in the shape is left out.
 The shape, under facts[KEY]:
   {"set":    [{"path": "<a key path exactly as the tools returned it>", "from": <its value as the tools returned it>, "to": <the value to set>}],            at most MAX_SETTINGS
    "others": [{"title": "<plain words>", "givesUp": "<plain words>", "action": "<an action of cases/pricing.py>", "inPlace": <true, false or absent>,
-               "lowUsd": <a number>, "highUsd": <a number>}]}                                                                                              at most MAX_OTHERS
+               "lowUsd": <a number>, "highUsd": <a number>, "estimate": <true or absent>}]}                                                               at most MAX_OTHERS
+An estimate is a way whose saving rests on a share that the AI states and nothing checks (the form `assumed`): the pages say so. `countlike` is the one gate on which property may be lowered.
 """
 from __future__ import annotations
 
@@ -21,18 +22,19 @@ from typing import Callable, Iterable, Mapping, NamedTuple, Sequence
 from . import pricing
 from .pricing import NAME, _number
 from .roles import clean_text
+from .toolbox import COUNT_LIKE, _rank
 
 KEY = "ways"  # not "proposal": the facts of a case already hold the word of the finding's proposal under that key
 MAX_SETTINGS, MAX_OTHERS = 3, 3
 MAX_TITLE, MAX_GIVES_UP = 80, 240
-TITLE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 ,()/'+-]{{0,{MAX_TITLE - 1}}}")  # a title: plain words, with a few marks and no stop inside it
+TITLE = re.compile(rf"(?!.*[0-9]{{3}})[A-Za-z0-9][A-Za-z0-9 ,()'+-]{{0,{MAX_TITLE - 1}}}")  # a title: plain words, a few marks, no stop inside it and no run of three digits (an amount)
 WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # the words of a camel case key
 # Why an entry was dropped, in the words of the notes of a run: by the kind of entry, then the rule.
 WHY = {
     "set": {"action": "the finding does not propose to reduce", "shape": "not an entry of the form", "handle": "a resource that the finding does not name", "name": "not a plain property name",
-            "shown": "a property that no tool showed", "number": "a value that is not one plain number", "from": "an old value that the tools did not show",
-            "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice", "ratio": "numbers that differ from the change's own",
-            "limit": "over the limit"},
+            "shown": "a property that no tool showed", "number": "a value that is not one plain number", "count": "a property that is not a count or a size",
+            "from": "an old value that the tools did not show", "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice",
+            "ratio": "numbers that differ from the change's own", "limit": "over the limit"},
     "other": {"group": "a finding of more than one resource", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
               "duplicate": "the same as the change or another way", "limit": "over the limit"},
 }
@@ -62,7 +64,8 @@ class Setting:
 
 @dataclass(frozen=True)
 class Other:
-    """Another way to save on the same resource, which a person may take instead. `in_place` says whether Azure changes the resource where it is (True), or only by making it again (False)."""
+    """Another way to save on the same resource, which a person may take instead. `in_place` says whether Azure changes the resource where it is (True), or only by making it again (False).
+    `estimate` is True when its saving rests on a share that the AI states and nothing checks."""
 
     title: str
     gives_up: str
@@ -70,6 +73,7 @@ class Other:
     in_place: bool | None
     low: float | None
     high: float | None
+    estimate: bool = False
 
 
 def _scalar(value: object) -> bool | int | float | str | None:
@@ -112,7 +116,7 @@ def others(facts: object) -> tuple[Other, ...]:
             continue
         place = item.get("inPlace")
         out.append(Other(_text(item.get("title"), MAX_TITLE), _text(item.get("givesUp"), MAX_GIVES_UP), _text(item.get("action"), 20), place if isinstance(place, bool) else None,
-                         _money(item.get("lowUsd")), _money(item.get("highUsd"))))
+                         _money(item.get("lowUsd")), _money(item.get("highUsd")), item.get("estimate") is True))
     return tuple(out[:MAX_OTHERS])
 
 
@@ -153,6 +157,14 @@ def _same(one: float, other: float) -> bool:
     return math.isclose(one, other, rel_tol=1e-6, abs_tol=0.0)
 
 
+def countlike(path: str) -> bool:
+    """Whether the last key of a property path names a count or a size of what a resource holds (a count, units, replicas, cores, a size, a bandwidth, a capacity: the toolbox's own ranking of a key,
+    COUNT_LIKE, or a `numberOf...` key), the only kind of property that a setting may lower. A period, a version, a state, a flag and the length of a list that the toolbox makes up (`<plural>Count`) are not.
+    The last key decides, and the dotted path is the one that the tools showed, so the family that makes a change can apply the same gate when it plans."""
+    leaf = str(path).rsplit(".", 1)[-1]
+    return _rank(leaf) in COUNT_LIKE and not re.search(r"[^s]sCount$", leaf)  # a plural and `Count` is the length of a list, which the toolbox makes up from the key of the list
+
+
 def _ratios(change: pricing.Change) -> dict:
     """The pairs of numbers that the change states as a ratio on a property, by (handle, property): a setting of that property has to be the same change."""
     found: dict = {}
@@ -181,6 +193,8 @@ def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Ma
     now = _number(held[name])
     if now is None:
         return "number"
+    if not countlike(name):
+        return "count"
     start, to = _number(item.get("from")), _number(item.get("to"))
     if start is None or not _same(start, now):
         return "from"
@@ -246,7 +260,9 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
                 continue
             entry, option = found
             row = price(option).rows.get(handles[0])
-            kept.append({**entry, **({"lowUsd": row.low, "highUsd": row.high} if row is not None else {})})
+            if row is not None:
+                entry |= {"lowUsd": row.low, "highUsd": row.high, **({"estimate": True} if row.form in ("assumed", "mixed") else {})}  # these forms rest on a share that only the AI states
+            kept.append(entry)
             taken.append((option.action, option.effects))
             titles.add(entry["title"].casefold())
         if kept:
@@ -267,10 +283,10 @@ def note_of(checked: Checked) -> str:
 def view(items: Iterable[tuple[str, object]]) -> dict:
     """What the Skeptic is shown of the proposals of a finding, from the facts of the cases of its resources (`items`: a handle and the facts of its case): the settings, each with its handle, the
     property as the tools showed it and the value now and after, and the other ways, each with its title, what it gives up (the Investigator's words), the action, whether Azure changes the resource
-    where it is, and what code priced it at a month. A key is there only when it has entries."""
+    where it is, what code priced it at a month and whether that is an estimate. A key is there only when it has entries."""
     lowered, ways = [], []
     for handle, facts in items:
         lowered += [{"handle": handle, "property": item.path, "from": item.now, "to": item.to} for item in settings(facts)]
-        ways += [{key: value for key, value in (("title", way.title), ("givesUp", way.gives_up), ("action", way.action), ("inPlace", way.in_place), ("lowUsd", way.low), ("highUsd", way.high))
-                  if value is not None} for way in others(facts)]
+        ways += [{key: value for key, value in (("title", way.title), ("givesUp", way.gives_up), ("action", way.action), ("inPlace", way.in_place), ("lowUsd", way.low), ("highUsd", way.high),
+                                                ("estimate", way.estimate or None)) if value is not None} for way in others(facts)]
     return {**({"set": lowered} if lowered else {}), **({"others": ways} if ways else {})}

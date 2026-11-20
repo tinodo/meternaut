@@ -427,14 +427,14 @@ class TheAgentDefinitions(unittest.TestCase):
         self.assertEqual(investigate.parse_finding(1, finding(summary="Saves about 1200 a month."))[0].summary, "Saves about [figure removed] a month.")
 
     def test_the_instructions_stay_short_so_that_the_definition_stays_small(self):
-        # 13,000 since the settings that a change proposes and the other ways to save were added to the 10,878 of before: about 1,570 characters. 215 say how to learn what the smaller options are and how a thing
-        # is changed (item 4), and about 1,350 say how to state a setting that a person may approve and each other way with what it gives up, and that code checks them; nothing names a kind of resource, a property
-        # or an option. Before that: 11,000 since the price of an alternative was added to the 10,277 of main (the beats and their tuning): 601 characters, to 10,878. 356 say that a change to another tier or size can be priced and
+        # 12,400 since the settings that a change proposes and the other ways to save were added to the 10,878 of before: about 1,320 characters (12,201). 160 say how to learn what the smaller options are and how a
+        # thing is changed (item 4), and about 1,160 say how to state a setting that a person may approve and each other way with what it gives up, and that code checks them; nothing names a kind of resource, a
+        # property or an option. It was 13,000 for the first version of that text, which said again what item 4 says. Before that: 11,000 since the price of an alternative was added to the 10,277 of main (the beats and their tuning): 601 characters, to 10,878. 356 say that a change to another tier or size can be priced and
         # that the alternative must still be shown to do what is needed (item 4), and 245 say how to state a switch of one meter to a price that the tool for alternatives showed (the form alternative); nothing
         # names a kind of resource or a price. Before that: 10,500 since the principle of the beats was added to the 10,000 of the rate and the quantity of a meter: about 400 characters that say what to do with a part of the estate that code chose, and with the
         # lines of the bill that no resource owns, and about 550 that say how code works a saving out as a monthly rate and when a ratio on a property is right; every step of an investigation reads them
         # again (it was 9,500 since the change that a finding states, 7,000 since the whole that a resource belongs to, 6,500 since the meters, 5,600 since the data that is stored, 5,000 before).
-        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 13000)
+        self.assertLess(len(agents.INVESTIGATOR_INSTRUCTIONS), 12400)
 
     def test_the_investigator_is_told_in_general_words_what_to_do_with_a_beat_and_that_no_beat_means_the_whole_estate(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS

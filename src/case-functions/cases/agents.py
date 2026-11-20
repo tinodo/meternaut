@@ -77,7 +77,7 @@ INVESTIGATOR_INSTRUCTIONS = (
     "carry and what would then remain on the bill. An average can hide the peak that decides what a thing must carry. "
     "A change to another tier, size or number of units can be priced: a tool shows the list prices of the alternatives to a meter, and the rate that the bill pays against the list price of that meter. "
     "Say what the alternative must still do and how you know that it does, from your measurements and what the documentation was read to say: a price shows neither. "
-    "Learn what the smaller options are, and how the thing is changed, from its properties and from what the documentation was read to say, never only from what you already know, and name one only after you found what it must still carry.\n"
+    "Learn the smaller options, and how the thing is changed, from its properties and from what the documentation was read to say, never only from what you already know.\n"
     "5. An absent measurement is not proof that something is idle. Look at the window that the data covers, and say so in your summary when the window is "
     "short for your claim. But when a measurement has data for other resources of the same type over the same window and none at all for some, that "
     "difference is worth reporting: give the resources that have none as one finding with the basis other and the proposal investigate, with a lower confidence "
@@ -123,14 +123,13 @@ INVESTIGATOR_INSTRUCTIONS = (
     "(any action but remove): it is shown as your own assumption. State a change in how much of a billed meter is used in that meter's own quantity; a ratio on a property is right only when the bill "
     "follows that property. Code takes the cost of the meters from the bill, checks that each belongs to its resource and that the number that you cite is "
     "the tools', and works out the saving; it leaves out what it cannot check. When you cannot name the meters, give the action none.\n"
-    'When the change is a smaller number for a property that a tool showed, also state it in the change as "set":'
+    'When the change is a smaller count or size for a property that a tool showed, state it inside the change too, as "set":'
     '[{"handle":"r3","property":"<named exactly as a tool returned it>","from":<its number exactly as the tool returned it>,"to":<a smaller number of the same kind>}] '
-    f"(the action reduce, at most {MAX_SETTINGS}). Only a setting that is stated there can be approved by a person and made, with that person's own rights, so name nothing in it that your tools did not show. "
-    f'List in "others", at most {MAX_OTHERS} and only for a finding of one resource, every other way that you found to save on the same resource, one entry for each: '
-    f'{{"title":"<at most {MAX_TITLE} characters, plain words>","gives_up":"<at most {MAX_GIVES_UP} characters: what it costs, in features, limits and availability, as far as your tools and the documentation that was read show it>",'
-    '"in_place":<true when the resource can be altered where it is, false when it has to be made again>,"change":{"action":"<an action>","effects":[...],"how":"..."}}. '
-    "Price each one through the same forms of change. A price shows neither features nor limits, and an average hides a peak, so say what a way gives up only from what you read, and say in_place false "
-    "when the documentation says that a smaller option needs the resource to be made again. A person reads gives_up marked as your own words, which code did not check."
+    f"(the action reduce, at most {MAX_SETTINGS}). Only a setting stated there can be approved and made, with the approver's own rights: name nothing in it that your tools did not show. "
+    f'Inside the change as well, list in "others", at most {MAX_OTHERS} and only for a finding of one resource, every other way that you found to save on it: '
+    f'{{"title":"<at most {MAX_TITLE} characters of letters, digits, spaces and the marks , ( ) + - only, with no run of three digits>","gives_up":"<at most {MAX_GIVES_UP} characters: what it costs in features, limits and availability, as your tools and what the documentation was read to say show it>",'
+    '"in_place":<true when the documentation says that it can be altered where it is, false when it says that it must be made again, else left out>,"change":<its own change, in the forms above, which code prices from the bill>}. '
+    "A person reads gives_up as your own words, which code did not check."
 )
 
 SKEPTIC_INSTRUCTIONS = (
@@ -159,10 +158,10 @@ SKEPTIC_INSTRUCTIONS = (
     "Does every line scale with the change that is proposed? Does what remains follow from the evidence rows, or is a part of the cost fixed whatever is done? Would a smaller size still carry "
     "the highest value that the rows show? And an alternative, whose price shows neither its features nor its limits? Is an assumed share one that the evidence supports? When the model is wrong, or you cannot tell, say disagree or unsure and say which part in your "
     "objections: the finding then needs a person.\n\n"
-    "A finding may also hold set, the settings that it proposes to change (the handle, the property as a tool showed it, its value now and the value after the change), and others, other ways to save on the "
-    "same resource (a title, what each gives up in the Investigator's words, the action, whether the resource can be altered where it is, and what code priced it at a month, low and high). "
-    "Judge whether the new value is safe given the evidence rows, that is, whether it would still carry the highest value that they show, and whether what the other ways give up is right: it is a claim of the "
-    "Investigator, not a fact. When a new value is not safe, or what a way gives up is wrong or left out, say disagree or unsure and say which part: the finding then needs a person.\n\n"
+    "A finding may also hold set, the settings that it proposes (handle, property, value now and after), and others, other ways to save on the same resource (title, what each gives up in the "
+    "Investigator's words, action, whether it can be altered where it is, what code priced it at a month). "
+    "Judge whether the new value is safe given the evidence rows and whether what the other ways give up is right: both are claims of the Investigator, not facts. "
+    "When either is not right, say disagree or unsure and say which part: the finding then needs a person.\n\n"
     "Reply with one JSON object and nothing else, in this form:\n"
     '{"verdicts":[{"index":0,"verdict":"<agree, disagree or unsure>",'
     f'"objections":["<at most {MAX_OBJECTIONS} short sentences>"],"summary":"<at most {MAX_VERDICT_SUMMARY} characters, no money figures>"}}]}}\n'

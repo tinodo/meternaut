@@ -34,6 +34,23 @@ class ReadersTest(unittest.TestCase):
         for sentence in proposals.CANNOT.values():
             self.assertTrue(sentence.endswith(".") and sentence[0].isupper())
 
+    def test_an_estimate_is_read_only_where_it_is_true_and_a_way_with_none_is_not_one(self):
+        way = {"title": "Use the small tier", "lowUsd": 100.0, "highUsd": 150.0}
+        for stored, read in ((True, True), (False, False), (None, False), ("yes", False), ("true", False), ("1", False), (1, False), (1.0, False), ([True], False), ({"a": True}, False)):
+            with self.subTest(stored=stored):
+                (one,) = proposals.others({proposals.KEY: {"others": [{**way, "estimate": stored}]}})
+                self.assertIs(one.estimate, read)
+        (one,) = proposals.others({proposals.KEY: {"others": [way]}})
+        self.assertIs(one.estimate, False)
+
+    def test_only_a_property_whose_last_key_names_a_count_or_a_size_is_countlike(self):
+        for path in ("scaleUnits", "sku.capacity", "properties.sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "maximumNumberOfWorkers", "agentPoolProfiles.count", "workerCount",
+                     "diskSizeGB", "vCores", "bandwidthInMbps", "count.count", "processCount"):
+            self.assertTrue(proposals.countlike(path), path)
+        for path in ("minimumTlsVersion", "retentionDays", "zonesCount", "ipConfigurationsCount", "timeoutInMinutes", "zoneRedundant", "diskState", "sku.tier", "replicaCount.mode", "count.state",
+                     "", ".", "x.", "tier", None, 4):
+            self.assertFalse(proposals.countlike(path), path)
+
     def test_words_of_a_key_and_a_value(self):
         self.assertEqual(proposals.label("scaleUnits"), "scale units")
         self.assertEqual(proposals.label("sku.capacity"), "sku capacity")
