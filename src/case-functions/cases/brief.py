@@ -241,7 +241,7 @@ ASKED_BY_STAGE = {"first": ASKED_CONFIRM, "stale": ASKED_CONFIRM, "mine": "", "a
 ASKED_WHAT = {VERBS["delete"]: "delete {thing}", CHANGE_VERBS["remove"]: "remove {thing}", CHANGE_VERBS["reduce"]: "scale down {thing}{how}", CHANGE_VERBS["switch"]: "switch {thing}{ends}",
               CHANGE_VERBS["schedule"]: "turn off {thing} {when}", CHANGE_VERBS["commit"]: "buy a commitment for {thing}", LOOK: "look closer at {thing}"}
 TURN_OFF_WHEN = ("when it is not needed", "when they are not needed")  # what a schedule turns a resource off for, for one resource and for many, when the finding says no days
-IN_PLACE = {True: "Azure changes the resource where it is.", False: "Azure only does this by making the resource again."}  # what Azure does for another way to save (proposals.Other.in_place), and nothing is said when that is not known
+IN_PLACE = {True: "Azure changes the {noun} where it is.", False: "Azure only does this by making the {noun} again."}  # what Azure does for another way to save (proposals.Other.in_place), and nothing is said when that is not known
 OTHER_PRICE = " to another price of the same service"  # what a switch is to, when its figure is one alternative and the digest holds no name for the target (one made before the names)
 NO_CHANGE = "No request is open for this finding. Nothing changes in Azure."
 # What a plan says while its change waits in the queue: Azure asked the approver for an extra sign-in check, and the check is not completed yet.

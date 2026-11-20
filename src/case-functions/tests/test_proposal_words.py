@@ -398,7 +398,7 @@ class OtherWaysToSave(unittest.TestCase):
         text = read(page)
         self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", text)
         cells = [block.text for block in page.blocks if block.kind == "cell" and not block.details]
-        self.assertTrue(any("Move to the Lite tier" in cell and "Azure only does this by making the resource again." in cell for cell in cells), cells)
+        self.assertTrue(any("Move to the Lite tier" in cell and "Azure only does this by making the gateway again." in cell for cell in cells), cells)
         self.assertIn("$150 to $202", cells)
         self.assertIn("Lite is shared and carries no uptime promise.", cells)
         self.assertIn("Remove the gateway", cells, "a way that Azure has no word for in place or not says nothing of it")

@@ -190,7 +190,7 @@ def _others(brief: Brief) -> Safe:
     priced = sum(other.low is not None for other in brief.others)
     done = ("priced it" if priced else "could not price it") if many == 1 else f"priced {priced or 'none'} of them"
     on = f"these {group_things(brief.group)}" if brief.group is not None else f"this {brief.where.noun}"
-    rows = [[fmt('{title}<br><span class="muted">{place}</span>', title=other.title, place=IN_PLACE[other.in_place]) if other.in_place is not None else other.title, _saves(other),
+    rows = [[fmt('{title}<br><span class="muted">{place}</span>', title=other.title, place=IN_PLACE[other.in_place].format(noun=brief.where.noun)) if other.in_place is not None else other.title, _saves(other),
              other.gives_up or "Not said"] for other in brief.others]
     return join([Safe("<h2>Other ways to save here</h2>"), paragraph(f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}, and Meternaut {done} from the bill."),
                  table("others", "Other ways to save here", ["Other way", "Saves a month", "What it gives up"], rows, row_header=True, quiet_caption=True),
