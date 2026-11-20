@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -554,25 +555,34 @@ class WhatCannotBeReadIsUnknownAndNeverPass(unittest.TestCase):
         self.assertEqual(results["I-release"]["state"], "PASS")
         self.assertIn("main changed nothing of the app", results["I-release"]["detail"])
 
-    def test_an_app_that_was_published_by_fetch_is_held_to_the_files_of_main_as_they_are_held_and_a_digest_of_neither_form_still_fails(self):
-        # `sources: fetch` publishes the files with their comments, and its PACKAGE_SHA256 is the digest of the raw files (tools/source-digest.py --as-held): main's digest has to be worked out in that form too
+    def test_an_app_is_held_to_the_files_of_main_as_they_are_held_and_a_digest_of_another_commit_or_of_a_changed_comment_fails(self):
+        # The Operator publishes the files with their comments, and PACKAGE_SHA256 is the digest of those files (tools/source-digest.py): main's digest is worked out in that one form
         app = str(ROOT / "src" / "case-functions")
-        def fetched(estate):
-            estate[SITE]["tags"] = {"meternaut-build-commit": "e" * 40, "meternaut-package-sha256": load_digest(as_held=True)}
-        results, _, _, _ = world(fetched, app_dir=app)
+        def published(estate):
+            estate[SITE]["tags"] = {"meternaut-build-commit": "e" * 40, "meternaut-package-sha256": load_digest()}
+        results, _, _, _ = world(published, app_dir=app)
         self.assertEqual(results["I-release"]["state"], "PASS")
         self.assertIn("main changed nothing of the app", results["I-release"]["detail"])
-        self.assertNotEqual(load_digest(as_held=True), load_digest(), "the two forms are two digests: the checkout holds comments")
         other = lambda e: e[SITE]["tags"].update({"meternaut-build-commit": "e" * 40, "meternaut-package-sha256": "d" * 64})
         results, _, _, _ = world(other, app_dir=app)
-        self.assertEqual(results["I-release"]["state"], "FAIL", "a digest that is neither the shipped nor the held form of main's files is still the app of another commit")
+        self.assertEqual(results["I-release"]["state"], "FAIL", "a digest that is not the one of main's files is still the app of another commit")
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "app"
+            shutil.copytree(ROOT / "src" / "case-functions" / "cases", copy / "cases", ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copy(ROOT / "src" / "case-functions" / "function_app.py", copy)
+            results, _, _, _ = world(published, app_dir=str(copy))
+            self.assertEqual(results["I-release"]["state"], "PASS", "a copy of the files as they are is the same app")
+            with (copy / "function_app.py").open("ab") as handle:
+                handle.write(b"\n# a comment that the release of main does not have\n")
+            results, _, _, _ = world(published, app_dir=str(copy))
+        self.assertEqual(results["I-release"]["state"], "FAIL", "a comment is part of the file that runs, so it is part of the digest: nothing is taken out of the files before they are compared")
 
 
-def load_digest(as_held=False):
+def load_digest():
     spec_digest = importlib.util.spec_from_file_location("source_digest_for_the_drift_tests", ROOT / "tools" / "source-digest.py")
     module = importlib.util.module_from_spec(spec_digest)
     spec_digest.loader.exec_module(module)
-    return module.digest(ROOT / "src" / "case-functions", as_held=as_held)
+    return module.digest(ROOT / "src" / "case-functions")
 
 
 class TheToolOnlyReads(unittest.TestCase):

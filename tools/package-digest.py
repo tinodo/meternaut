@@ -4,7 +4,7 @@
     python tools/package-digest.py <folder> [--check HEX]
 
 The folder is the one that holds `function_app.py` and the package `cases/`: the folder that the deployment zips (the build directory of tools/build-function-app.sh) or the folder that the platform unpacked. The files are read as
-they are, and the files that are shipped have no comments (tools/strip-sources.py), so for a checkout, which has them, use tools/source-digest.py: it takes them out in memory, as the pack step does (a package that was fetched and not stripped, the Hub's `sources: fetch`, has the digest that this tool gives, which `source-digest.py --as-held` makes from a checkout). The digest covers `function_app.py` and every `.py` and `.json` file in `cases/`, in the order of their paths, with line ends read as LF (cases/release.py says
+they are, which is how the Operator publishes them (they keep their comments), so this gives what `tools/source-digest.py` gives for a checkout of the same commit. The digest covers `function_app.py` and every `.py` and `.json` file in `cases/`, in the order of their paths, with line ends read as LF (cases/release.py says
 exactly how), so that it is the same for the folder of a build and for the folder that the platform unpacked. The deployment sets it as the app
 setting PACKAGE_SHA256, the app computes it over its own files, and the drift check holds the two together (cases/drift.py, control A-RELEASE).
 

@@ -91,10 +91,11 @@ class TheShapeOfTheHub(unittest.TestCase):
     def test_a_value_that_a_dispatch_input_of_the_type_choice_takes_is_held_by_github_so_no_step_checks_it_again(self):
         self.assertNotIn("Refuse a value that the Hub does not know", HUB)
         dispatch = section(section(HUB, "on", 0), "workflow_dispatch", 2)
-        for name in ("action", "evals_command", "evals_judge", "redteam_mode", "sources"):
+        for name in ("action", "evals_command", "evals_judge", "redteam_mode"):
             body = section(section(dispatch, "inputs", 4), name, 6)
             self.assertRegex(body, r"(?m)^        type: choice$", name)
             self.assertTrue(re.findall(r"(?m)^          - \S+$", body), f"{name} has options, and GitHub holds a run that is started by hand to them")
+        self.assertNotRegex(section(dispatch, "inputs", 4), r"(?m)^      sources:", "the sources reach the Operator by fetch in every run: no input chooses the way")
         options = re.findall(r"(?m)^          - (\S+)$", section(section(dispatch, "inputs", 4), "action", 6))
         used = set(re.findall(r"inputs\.action == '([a-z0-9-]+)'", HUB))
         self.assertEqual(sorted(used - set(options)), [], "a step that names an action that the input does not offer would never run")

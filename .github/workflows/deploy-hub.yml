@@ -104,14 +104,6 @@ on:
           - auto
           - cloud
           - dataset
-      sources:
-        description: "Only with cases (and what-if, which previews the release that cases would record): how the cases app's sources reach the Operator. request, the default and the way of every run so far: this run packs the sources, with the comments of the Python files taken out, and sends them in the request, which takes 480,000 bytes of files at most; a run whose request is too big stops and says so. fetch: this run sends no sources. The Operator fetches the files of this commit from GitHub, holds them against the digest that this run worked out over its own checkout before it signs in, and stops with a plain line when anything differs, so the size of the request no longer limits the code; the files are published as the repository holds them, with their comments, and a private repository is read with the token of this run. Every other action ignores it."
-        type: choice
-        required: false
-        default: request
-        options:
-          - request
-          - fetch
 
 permissions:
   contents: read
@@ -374,26 +366,20 @@ jobs:
       - name: Work out which release the cases app is given, the commit and the digest of its own files
         id: release
         if: inputs.action == 'cases' || inputs.action == 'what-if'
-        env:
-          SOURCES: ${{ inputs.sources }}
         run: |
           # The release that this run deploys (docs/proposals/10-ai-security-and-governance.md, "The release that runs"): the git commit that the run was made from, and the digest of the app's own files at that commit
           # (tools/source-digest.py: the files that the build puts in the package; the libraries are pinned by hash in requirements.txt, which is one of them, and a zip file would change with every run). The template
           # gives them to the app as the settings BUILD_COMMIT and PACKAGE_SHA256, and a later step writes them as tags of the app once the code has been published and the app answers, which is what a reader of the
           # resource group (and tools/drift-check.py) sees. Values, not secrets: nothing here is read from Azure. The preview (what-if) works it out too, so that it shows the two settings of the app changing to this
           # commit and not going away (a template that is given no value writes no setting, and a preview without one would say that the app loses them).
-          # The digest is of the files that the app will run from, and the app works out the same over them (cases/release.py, the control A-RELEASE). By request (the input sources, the default) those are the files that the
-          # pack step strips of their comments, so the tool strips them in memory; by fetch they are the files as the repository holds them, so the tool is told so (--as-held).
+          # The digest is of the files that the app will run from, and the app works out the same over them (cases/release.py, the control A-RELEASE): the Operator fetches the files of this commit from GitHub and
+          # publishes them as the repository holds them, so the tool is told so (--as-held).
           commit="$GITHUB_SHA"
           if ! grep -Eq '^[0-9a-f]{40}$' <<< "$commit"; then
             echo "::error::The commit of this run is not a git commit id, so the release cannot be recorded. Nothing was changed."
             exit 1
           fi
-          if [ "${SOURCES:-request}" = fetch ]; then
-            digest=$(python3 tools/source-digest.py src/case-functions --as-held)
-          else
-            digest=$(python3 tools/source-digest.py src/case-functions)
-          fi
+          digest=$(python3 tools/source-digest.py src/case-functions --as-held)
           if ! grep -Eq '^[0-9a-f]{64}$' <<< "$digest"; then
             echo "::error::The digest of the cases app's files could not be worked out. Nothing was changed."
             exit 1
@@ -1328,55 +1314,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Pack the cases app's sources for the Operator
-        id: pack
-        if: inputs.action == 'cases'
-        env:
-          SOURCES: ${{ inputs.sources }}
-          PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
-        run: |
-          # The sources reach the Operator in one of two ways, and the input sources chooses: request (the default) packs them here and sends them, fetch sends none and the Operator fetches them from GitHub.
-          if [ "${SOURCES:-request}" = fetch ]; then
-            # Nothing is built or packed here, and the cap of the request does not apply: the request carries the two scripts, the digest tool, the lock and the host file. What is worked out here, over this run's own checkout, is
-            # the digest of the files as the repository holds them (they are published as they are held, with their comments, since the request does not carry them), which the Operator holds the fetched files against
-            # before it signs in. It is the digest that the step that works out the release recorded for PACKAGE_SHA256 (the app works out the same over the files that it runs from), and the two are held to each other here.
-            if ! grep -Eq '^[0-9a-f]{40}$' <<< "$GITHUB_SHA" || ! grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$' <<< "$GITHUB_REPOSITORY"; then
-              echo "::error::The commit or the repository of this run is not one that the Operator can fetch the sources of (a commit id of 40 hexadecimal digits and a name of the form owner/name). Nothing was changed."
-              exit 1
-            fi
-            digest=$(python3 tools/source-digest.py src/case-functions --as-held)
-            if ! grep -Eq '^[0-9a-f]{64}$' <<< "$digest" || [ "$digest" != "$PACKAGE_SHA256" ]; then
-              echo "::error::The digest of the cases app's files as the repository holds them could not be worked out, or it is not the digest that the release of this run records. The Operator would refuse the files. Nothing was changed."
-              exit 1
-            fi
-            echo "sources_digest=$digest" >> "$GITHUB_OUTPUT"
-            echo "The sources are not packed: the Operator fetches the files of commit $GITHUB_SHA from GitHub and holds them against the digest $digest, which this run worked out over its own checkout."
-            exit 0
-          fi
-          # The cases app is published from its sources. Its finished package is 614,068 bytes zipped, and a request with 632,656 bytes of files (that package and the container script) was refused with an
-          # internal server error on 2026-11-06, because a request takes at most 480,000 bytes of files (tools/operator-run.py). So the sources go (about 260 KB, packed as one LZMA stream, with the Python files stripped of their comments and
-          # docstring text by tools/strip-sources.py, which stops the pack when its own check fails: docs/proposals/27-package-without-comments.md) and the container builds the libraries (from the
-          # hash-locked requirements.txt in them) with the pip command of tools/build-function-app.sh (docs/proposals/07-private-by-default.md, phase 2). The same script makes this archive:
-          # its copy of the app's files, and no libraries.
-          FUNCTION_APP_SOURCES_ONLY=1 bash tools/build-function-app.sh case-functions cases "$RUNNER_TEMP/cases-source" "$RUNNER_TEMP/cases-source.zip"
-          # Everything that the request carries is counted here, with the evidence, before the Operator is looked for: the sources, the build script and the container script. tools/operator-run.py refuses more than 480,000 bytes
-          # of files (MAX_FILE_BYTES): a request with 466,104 bytes of files was taken, and one with 632,656 was refused with an internal server error on 2026-11-06 (the finished package, which this check now keeps out).
-          limit=480000
-          sources_bytes=$(wc -c < "$RUNNER_TEMP/cases-source.zip" | tr -d ' ')
-          build_bytes=$(wc -c < tools/build-function-app.sh | tr -d ' ')
-          script_bytes=$(wc -c < operator/publish.sh | tr -d ' ')
-          total=$((sources_bytes + build_bytes + script_bytes))
-          if [ "$total" -gt "$limit" ]; then
-            echo "::error::The files that go to the Operator are $total bytes (the cases app's sources $sources_bytes, the build script $build_bytes, the container script $script_bytes), more than the $limit bytes of files that a container group's request may hold: a request with 466104 bytes of files was taken, and one with 632656 was refused with an internal server error (2026-11-06). The sources have to get smaller. Or run cases again with the input sources set to fetch: the Operator then fetches the sources from GitHub, and the size of the request does not limit them."
-            exit 1
-          fi
-          echo "The files that go to the Operator are $total bytes, of the $limit that a container group's request may hold."
-          # The SHA-256 of the exact archive that is sent (a zip holds the time of each file, so it differs from run to run: it says what this run sent, and the digest of the app's own files, which the step that works out the
-          # release gave, is what is compared with main). The record step writes both in the summary once the code is published.
-          zip_sha256=$(sha256sum "$RUNNER_TEMP/cases-source.zip" | cut -d ' ' -f 1)
-          echo "zip_sha256=$zip_sha256" >> "$GITHUB_OUTPUT"
-          echo "The SHA-256 of the sources archive that goes to the Operator is $zip_sha256."
-
       - name: Publish the cases to the function app from inside the network, in the Operator
         id: publish_cases
         if: inputs.action == 'cases'
@@ -1389,16 +1326,20 @@ jobs:
           CASES_APP_PLAN: ${{ steps.params.outputs.cases_app_plan }}
           DEPLOY_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           DEPLOY_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          SOURCES: ${{ inputs.sources }}
-          SOURCES_DIGEST: ${{ steps.pack.outputs.sources_digest }}
-          # The token of this run, only for a private repository on the fetch path (a public repository is read with no token, and the request path never reads GitHub): it is what the container reads the private repository
-          # with, and it can read the contents of this repository and nothing else (the permissions of the job). It goes to the tool by name, as a secure value, and is never on a command line.
-          GITHUB_TOKEN: ${{ inputs.sources == 'fetch' && github.event.repository.private && github.token || '' }}
+          PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
+          # The token of this run, only for a private repository (a public repository is read with no token): it is what the container reads the private repository with, and it can read the contents of this
+          # repository and nothing else (the permissions of the job). It goes to the tool by name, as a secure value, and is never on a command line.
+          GITHUB_TOKEN: ${{ github.event.repository.private && github.token || '' }}
         run: |
           # The code is published from inside the network, in a short-lived container group of the Operator (docs/proposals/07-private-by-default.md, phase 2), through the app's private endpoint: once an app is private, this runner
           # cannot reach its deployment site. This is the one way to publish, so that it is the one that is proven. The app stays public in this phase. The container signs in as the DEPLOY IDENTITY, the one that this job signed in
           # as and that holds the right to write to the app, with a token that GitHub issues to this run (a federated credential: no key, no password and no publish profile), so the Operator's own identity needs no right that writes.
           # The Operator is found by its name, as the checks find it, and nothing is changed here. On an estate that has none yet this step stops after the deploy, and the order is base, cases, operator, and then cases again.
+          # The container fetches the files of this commit from this repository, so the name of the repository is checked first, before anything is read.
+          if ! grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$' <<< "$GITHUB_REPOSITORY"; then
+            echo "::error::The repository of this run is not of the form owner/name, so the Operator cannot fetch the files of its commit. Nothing was changed."
+            exit 1
+          fi
           subnet_id="/subscriptions/$ENV_SUBSCRIPTION_ID/resourceGroups/$ENV_RESOURCE_GROUP/providers/Microsoft.Network/virtualNetworks/vnet-meternaut/subnets/snet-ops"
           identity_id=$(az resource list --resource-group "$ENV_RESOURCE_GROUP" --name id-meternaut-operator --query "[0].id" --output tsv || true)
           if ! grep -Eq '^/subscriptions/' <<< "$identity_id"; then
@@ -1417,19 +1358,13 @@ jobs:
           # A container group does not take the DNS servers of the virtual network, so it is given the landing zone's.
           dns=()
           for server in ${ENV_DNS_SERVERS//,/ }; do dns+=(--dns-server "$server"); done
-          # What the request carries depends on how the sources come (the input sources). By request: the archive that the pack step made, and its size, which the container compares with what arrived. By fetch: no archive; the
-          # container fetches the commit of this run from this repository and holds the files against the digest that the pack step worked out over this checkout, and the lock and the host file ride in the request, from
-          # this checkout, because the digest does not cover them. The token of this run goes along only for a private repository.
+          # What the request carries: the container fetches the files of this commit from this repository and holds them against the digest that the step that works out the release made over this checkout, before it
+          # signs in, and the lock and the host file ride in the request, from this checkout, because the digest does not cover them. The token of this run goes along only for a private repository.
+          echo "The Operator fetches the files of commit $GITHUB_SHA from GitHub and holds them against the digest $PACKAGE_SHA256, which this run worked out over its own checkout."
+          files=(--secret-file "build-function-app.sh=tools/build-function-app.sh" --secret-file "source-digest.py=tools/source-digest.py" --secret-file "requirements.txt=src/case-functions/requirements.txt" --secret-file "host.json=src/case-functions/host.json")
+          fetch=(--env "PUBLISH_SOURCES_COMMIT=$GITHUB_SHA" --env "PUBLISH_SOURCES_REPOSITORY=$GITHUB_REPOSITORY" --env "PUBLISH_SOURCES_DIGEST=$PACKAGE_SHA256")
           github_token=()
-          if [ "${SOURCES:-request}" = fetch ]; then
-            files=(--secret-file "build-function-app.sh=tools/build-function-app.sh" --secret-file "source-digest.py=tools/source-digest.py" --secret-file "requirements.txt=src/case-functions/requirements.txt" --secret-file "host.json=src/case-functions/host.json")
-            way=(--env "PUBLISH_SOURCES_COMMIT=$GITHUB_SHA" --env "PUBLISH_SOURCES_REPOSITORY=$GITHUB_REPOSITORY" --env "PUBLISH_SOURCES_DIGEST=$SOURCES_DIGEST")
-            if [ -n "${GITHUB_TOKEN:-}" ]; then github_token=(--secure-env GITHUB_TOKEN); fi
-          else
-            bytes=$(wc -c < "$RUNNER_TEMP/cases-source.zip" | tr -d ' ')
-            files=(--secret-file "cases-source.zip=$RUNNER_TEMP/cases-source.zip" --secret-file "build-function-app.sh=tools/build-function-app.sh")
-            way=(--env "PUBLISH_FILE_BYTES=$bytes")
-          fi
+          if [ -n "${GITHUB_TOKEN:-}" ]; then github_token=(--secure-env GITHUB_TOKEN); fi
           # The deploy identity's token: the OpenID Connect token that GitHub issues to this run for the audience that its federated credential trusts, the one that azure/login asks for. It is requested here, right before the container
           # group is made, because it is valid for five minutes, and it is masked at once. It is written nowhere (not to the environment file, an output, a file of the run or the summary). It is on no command line either: the request
           # for it takes its bearer from a configuration on standard input, and the tool takes the token from the environment of that one command and sends it to the container group only as a secure value, which the group's
@@ -1461,7 +1396,7 @@ jobs:
             --subnet-id "$subnet_id" --identity-id "$identity_id" --image "$OPERATOR_IMAGE" --script operator/publish.sh \
             "${files[@]}" \
             --env "PUBLISH_KIND=cases" --env "PUBLISH_PLAN=$CASES_APP_PLAN" --env "PUBLISH_APP=$FUNCTION_APP" --env "PUBLISH_RESOURCE_GROUP=$ENV_RESOURCE_GROUP" --env "PUBLISH_SUBSCRIPTION=$ENV_SUBSCRIPTION_ID" \
-            --env "PUBLISH_CLIENT_ID=$DEPLOY_CLIENT_ID" --env "PUBLISH_TENANT_ID=$DEPLOY_TENANT_ID" "${way[@]}" --secure-env AZURE_FEDERATED_TOKEN "${github_token[@]}" \
+            --env "PUBLISH_CLIENT_ID=$DEPLOY_CLIENT_ID" --env "PUBLISH_TENANT_ID=$DEPLOY_TENANT_ID" "${fetch[@]}" --secure-env AZURE_FEDERATED_TOKEN "${github_token[@]}" \
             "${dns[@]}" --timeout-seconds 1200 --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Delete any container group of the publish of the cases that is left
@@ -1551,20 +1486,15 @@ jobs:
         env:
           BUILD_COMMIT: ${{ steps.release.outputs.build_commit }}
           PACKAGE_SHA256: ${{ steps.release.outputs.package_sha256 }}
-          ZIP_SHA256: ${{ steps.pack.outputs.zip_sha256 }}
           SITE_ID: ${{ steps.cases.outputs.site }}
-          SOURCES: ${{ inputs.sources }}
         run: |
           # Release integrity (docs/proposals/10-ai-security-and-governance.md, "The release that runs"). The code was published and the app answers, so only now is the release written as two tags of the function app, which a
           # reader of the resource group sees (the settings of an app need a right to read that a reader does not hold): meternaut-build-commit and meternaut-package-sha256. A tag is merged in with the tags call of Azure Resource
           # Manager and touches nothing else of the app. The template wrote the same two values as the app's settings BUILD_COMMIT and PACKAGE_SHA256, which the in-app check reads; a deploy takes the tags off, and this step
           # puts them back only after a publish that went through, so a run that stops before it leaves no tag that says otherwise. tools/drift-check.py compares the commit with main (UNKNOWN when there is none, FAIL when the
-          # app's files are not those of main). Values, not secrets: the commit and a digest. The summary also says which way the sources came (the input sources): by request there is an archive that this run sent, and its
-          # hash is recorded; by fetch there is none, and what is recorded is the commit that the Operator fetched and the digest that it held the files against.
-          fetched=false
-          if [ "${SOURCES:-request}" = fetch ]; then fetched=true; fi
-          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$BUILD_COMMIT" || ! grep -Eq '^[0-9a-f]{64}$' <<< "$PACKAGE_SHA256" || { [ "$fetched" = false ] && ! grep -Eq '^[0-9a-f]{64}$' <<< "$ZIP_SHA256"; }; then
-            echo "::error::The release of this run is not known (the commit, the digest of the app's files or the digest of the archive is missing or is not hexadecimal), so it cannot be recorded. The code was published; nothing was recorded."
+          # app's files are not those of main). Values, not secrets: the commit and a digest. What is recorded is the commit that the Operator fetched and the digest that it held the files against.
+          if ! grep -Eq '^[0-9a-f]{40}$' <<< "$BUILD_COMMIT" || ! grep -Eq '^[0-9a-f]{64}$' <<< "$PACKAGE_SHA256"; then
+            echo "::error::The release of this run is not known (the commit or the digest of the app's files is missing or is not hexadecimal), so it cannot be recorded. The code was published; nothing was recorded."
             exit 1
           fi
           body=$(printf '{"operation":"Merge","properties":{"tags":{"meternaut-build-commit":"%s","meternaut-package-sha256":"%s"}}}' "$BUILD_COMMIT" "$PACKAGE_SHA256")
@@ -1578,15 +1508,9 @@ jobs:
             echo "### The release that the cases app runs"
             echo
             echo "- Commit: \`$BUILD_COMMIT\`"
-            if [ "$fetched" = true ]; then
-              echo "- Digest of the app's own files: \`$PACKAGE_SHA256\` (the setting \`PACKAGE_SHA256\` and the tag \`meternaut-package-sha256\`; \`python3 tools/source-digest.py src/case-functions --as-held\` works it out for any commit, over the files as the repository holds them, which is what the app works out over the files that it runs from; \`tools/drift-check.py\` compares it with main)"
-              echo "- How the sources came: by fetch (the input \`sources\`). This run sent no archive of sources. The Operator fetched the files of commit \`$BUILD_COMMIT\` from GitHub and held them against the digest above, which this run worked out over its own checkout, before it signed in; it published them as the repository holds them, with their comments, and the lock and the host file came in the request, from the checkout."
-            else
-              echo "- Digest of the app's own files: \`$PACKAGE_SHA256\` (the setting \`PACKAGE_SHA256\` and the tag \`meternaut-package-sha256\`; \`python3 tools/source-digest.py src/case-functions\` works it out for any commit, and it is what \`tools/drift-check.py\` compares with main)"
-              echo "- How the sources came: by request (the input \`sources\`, the default). This run packed them and sent them to the Operator, with the comments of the Python files taken out."
-              echo "- SHA-256 of the sources archive that this run sent to the Operator, which built the package from it and the hash-locked libraries inside it: \`$ZIP_SHA256\` (an archive holds the time of each file, so this one differs from run to run: it says what this run sent)"
-            fi
-            echo "- SHA-256 of the exact package that the Operator built and published: the line \`the cases package that is published has the SHA-256 ...\` of the publish step, above in this summary (it is the hash of the bytes that went to the app, and it differs from run to run too)"
+            echo "- Digest of the app's own files: \`$PACKAGE_SHA256\` (the setting \`PACKAGE_SHA256\` and the tag \`meternaut-package-sha256\`; \`python3 tools/source-digest.py src/case-functions --as-held\` works it out for any commit, over the files as the repository holds them, which is what the app works out over the files that it runs from; \`tools/drift-check.py\` compares it with main)"
+            echo "- How the sources came: the Operator fetched the files of commit \`$BUILD_COMMIT\` from GitHub and held them against the digest above, which this run worked out over its own checkout, before it signed in; it published them as the repository holds them, with their comments, and the lock and the host file came in the request, from the checkout."
+            echo "- SHA-256 of the exact package that the Operator built and published: the line \`the cases package that is published has the SHA-256 ...\` of the publish step, above in this summary (it is the hash of the bytes that went to the app, and it differs from run to run)"
             echo "- Read back from Azure: the tags \`meternaut-build-commit\` and \`meternaut-package-sha256\` of the function app are these two values."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "The release is recorded: commit $BUILD_COMMIT, digest of the app's files $PACKAGE_SHA256."
@@ -3513,7 +3437,7 @@ jobs:
                 retire-old) echo "What Meternaut does not use any more was deleted in resource group \`$ENV_RESOURCE_GROUP\`, and nothing else: the usage recording (the usage function app, its plan and its private endpoint, the Cosmos DB account and its private endpoint, and the event hubs \`ai-usage\`, \`pii-usage\` and \`usage-control\`) and the old model account (its private endpoint, and then the account, which was purged so that its name and its quota are free) and the identity \`id-meternaut-usage\`. The lines above say for each one whether it was deleted or was not there, and the role assignments that the deleted identities left behind, which are listed and not deleted. The function subnet \`snet-func\` was read back after the deletes: it is free (no app but the cases app is integrated with it), so the action \`cases\` can put the web page's app on it if the app is on Flex Consumption (it is on Basic now, which does not use that subnet); the lines above say so and list the platform's links on the subnet, for information. The Event Hubs namespace (the action \`retire-event-hubs\` deletes it), the storage account, the workspace, Application Insights and every subnet were not touched. What the usage app's identity and the custom role Meternaut usage reader held in the owner's lab subscription is retired by a person, with \`tools/access-requirements.py retire --only W9,W10\` (environment/BOOTSTRAP.md), before this action, because that tool reads the usage app and its identity, which this action deletes. Running \`retire-old\` again is safe: it finds nothing." ;;
                 retire-event-hubs) echo "The Event Hubs namespace that carried the control event was deleted in resource group \`$ENV_RESOURCE_GROUP\`, and nothing else: its private endpoint, the namespace (with its hub \`cases-control\` and that hub's consumer group, and whatever else was in it), and the container \`azure-webjobs-eventhub\` of the storage account, which held the namespace's checkpoints. The lines above say for each one whether it was deleted or was not there, and that each was read back until it was gone. The control message goes through the Storage queue \`cases-control\` in the storage account, which this action reads before it deletes anything and does not touch. The base, the cases app, the Operator and every other resource were not touched. Running \`retire-event-hubs\` again is safe: it finds nothing." ;;
                 foundry) echo "The Foundry resource of the agents, \`$FOUNDRY_ACCOUNT\`, is in resource group \`$ENV_RESOURCE_GROUP\` and was read back from Azure: public network access and local authentication are off, project management is on, the project \`$FOUNDRY_PROJECT\` has an identity of its own, the models of environment/models.json are deployed with a guardrail that blocks jailbreaks and indirect attacks, the private endpoint is approved and the landing zone has registered its name, and the project sends its traces to Application Insights with its identity. The system-assigned identity of the cases app holds the Foundry User role on the project and nothing else there, and so do the Operator's identity (once the action operator has made it: the tools that check the agents read the project with it) and the project's own identity (for the continuous evaluation rule). The project endpoint is \`$FOUNDRY_ENDPOINT\`. No key was made, read or printed. The cases app was not changed: the next run of \`cases\` gives it that address." ;;
-                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control queue, a timer every minute for the loop and the web route of the pages), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the function app's sign-in to Microsoft Entra and holds no role), the control queue in the base's storage account, a year of retention for the traces and the History workbook, and a private endpoint of its own for the function app and its deployment site (the sub-resource \`sites\`), which the landing zone has registered in its central zone: the code is not published before that, so that a later probe finds the names. The app's public network access is \`$CASES_PUBLIC_ACCESS\` (the constant CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py). The app runs on the \`$CASES_APP_PLAN\` plan (the constant CASES_APP_PLAN in tools/environment-params.py): Basic (B1, always on, about 13 US dollars a month) was chosen on 2026-11-08, after a measurement found that the platform holds the web page's requests on Flex Consumption (which scales to zero and bills per execution), and Flex Consumption needs a measurement with \`page-latency\` that meets the rule twice (docs/proposals/07-private-by-default.md). The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file (the sources went in the request, because the finished package is too big for it) and published the finished package through the app's private endpoint: with the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan (the log shows that both names of the app resolve to private addresses there); the runner published nothing, and the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint (the log shows that the name resolves to a private address there). The function app's front door is knocked at from this runner, on the function app's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set (the check then also asks that the sign-in's return address names it), and on the app's own name when it is not; when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there). The deploy identity holds no role on the control queue: the Operator puts the control message there. The Watch reads the pilot subscription with two roles; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The Detective and the Skeptic call the AI Gateway (every model call of Meternaut goes through it: AGENTS.md rule 15 (c)), with the app's own identity and no key: the app reads no key and needs nothing of the owner's API Management instance. The gateway's host name was read from the service, and the app's identity holds AI Gateway Models User on the gateway only once the action \`aigateway\` has given it, which takes up to ten minutes to apply. Meternaut holds no right to change Azure. When a person approves a plan, the function app sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off. The Study (the Scholar, which reads Microsoft's public documentation) is switched by the variable STUDY of the environment hub, which was \`${STUDY:-not set}\` in this run and is off unless it says on; the action \`study-run\` runs it once." ;;
+                cases) echo "The first cases are in resource group \`$ENV_RESOURCE_GROUP\`: a function app with four functions (a daily timer, a trigger on the control queue, a timer every minute for the loop and the web route of the pages), its identities (its own system-assigned one, which reads and stores the records and sends the letters, and \`id-meternaut-console-auth\`, which only presents the function app's sign-in to Microsoft Entra and holds no role), the control queue in the base's storage account, a year of retention for the traces and the History workbook, and a private endpoint of its own for the function app and its deployment site (the sub-resource \`sites\`), which the landing zone has registered in its central zone: the code is not published before that, so that a later probe finds the names. The app's public network access is \`$CASES_PUBLIC_ACCESS\` (the constant CASES_APP_PUBLIC_NETWORK_ACCESS in tools/environment-params.py). The app runs on the \`$CASES_APP_PLAN\` plan (the constant CASES_APP_PLAN in tools/environment-params.py): Basic (B1, always on, about 13 US dollars a month) was chosen on 2026-11-08, after a measurement found that the platform holds the web page's requests on Flex Consumption (which scales to zero and bills per execution), and Flex Consumption needs a measurement with \`page-latency\` that meets the rule twice (docs/proposals/07-private-by-default.md). The code was published from inside the network: a short-lived container group of the Operator signed in as the deploy identity with a token of this run, built the libraries from the hash-locked lock file (it fetched the sources of this commit from GitHub and held them against the digest of this run's own checkout before it signed in, because the finished package is too big for a request) and published the finished package through the app's private endpoint: with the Azure CLI's zip deployment command while the app is on Flex Consumption, as the usage app's was, and posted to the deployment site while it is on a Basic plan (the log shows that both names of the app resolve to private addresses there); the runner published nothing, and the check that the app answers is made from inside the network too: a second container group of the Operator asked the app's own health address over its private endpoint (the log shows that the name resolves to a private address there). The function app's front door is knocked at from this runner, on the function app's host name on the platform's Application Gateway when the secret CONSOLE_HOST_NAME is set (the check then also asks that the sign-in's return address names it), and on the app's own name when it is not; when the app takes no public traffic and no host name is set, a closed app answers nobody outside the network, so the same check is made from inside it: a third container group of the Operator asked the app's own name over its private endpoint, and sent no credential (the log shows that the name resolves to a private address there). The deploy identity holds no role on the control queue: the Operator puts the control message there. The Watch reads the pilot subscription with two roles; this workflow gives none of them, a person gives them on the owner's written word (environment/BOOTSTRAP.md), and until they exist a run ends with an authorization error. The Detective and the Skeptic call the AI Gateway (every model call of Meternaut goes through it: AGENTS.md rule 15 (c)), with the app's own identity and no key: the app reads no key and needs nothing of the owner's API Management instance. The gateway's host name was read from the service, and the app's identity holds AI Gateway Models User on the gateway only once the action \`aigateway\` has given it, which takes up to ten minutes to apply. Meternaut holds no right to change Azure. When a person approves a plan, the function app sends that person to Microsoft Entra to sign in to Azure Resource Manager and runs the one change with that person's own permissions: Azure checks what that person may do, and its Activity Log names that person. The retired identity of the first loop, \`id-meternaut-runner\`, is removed when it is still there and nothing holds it. The app no longer carries the user-assigned identity that it used before, \`id-meternaut-cases\`. This workflow does not remove that identity: a person does, in the order of environment/BOOTSTRAP.md (its grants outside the project's group first, with tools/access-requirements.py retire, and the identity after that). The address of the Foundry project is given to the app only when the project is in Azure at that moment (the action \`foundry\` makes it); without it the investigation is off. The Study (the Scholar, which reads Microsoft's public documentation) is switched by the variable STUDY of the environment hub, which was \`${STUDY:-not set}\` in this run and is off unless it says on; the action \`study-run\` runs it once." ;;
                 cases-run) echo "The Operator, from inside the network, put the control message in the queue and read the telemetry, with its own identity and no key; this runner put nothing in the queue and read no telemetry. One Watch ran and wrote its History to the cases app's telemetry and its records to the store; the lines above are that: the leads, what each case came to, what the models said and the tokens that were used. The tokens that the lines above count are those of the Detective and the Skeptic, which call the AI Gateway with the app's identity and no key (a 403 says that the app's identity does not hold AI Gateway Models User yet: the action aigateway gives it, and a new role takes up to ten minutes to apply),                 while the agents of the investigation call their models through the project's connection and the AI Gateway when the switch of step 2 (AGENTS_VIA_AI_GATEWAY in tools/environment-params.py) is on, and straight to the model deployments of their own Foundry project when it is off, which is the way back. No resource of the estate was changed; with the investigation on, the Watch also created its agents and conversations in its own Foundry project." ;;
                 study-run) echo "The Operator, from inside the network, put the control message of the job study in the queue and read the telemetry, with its own identity and no key; this runner put nothing in the queue and read no telemetry. One Study ran, and the lines above are what its History says, as counts and plain words with every identifier masked: its state, the kinds of resource given to the Scholar and read about, the pages read, the claims kept and thrown away, the tokens and the seconds, and its notes. A claim is a quote that code found on the page that its address names; it is context for the Investigator and moves no finding, no figure and no proposal. The Study read public pages of Microsoft's documentation only (learn.microsoft.com, azure.microsoft.com and prices.azure.com) and the estate's kinds of resource, and made its own agent and conversations in the app's own Foundry project; no resource of the estate was changed. The timer \`study-weekly\` runs it every Monday while the variable STUDY of the environment hub is on; setting the variable to off and running \`cases\` stops it." ;;
                 page-latency) echo "The Operator, from inside the network, asked the web page's \`/healthz\` over the app's private endpoint with no credential, and this runner asked nothing. The lines above are one line for each request (the time, the status and the seconds), then a quiet gap and the requests after it, and the summary: the count, the median, the 95th percentile, the slowest, and how many requests were not 200 or took more than 5 and more than 15 seconds. No request took more than 15 seconds and none was not 200, which is what the rule of docs/proposals/07-private-by-default.md asks of the web page on Flex Consumption. The decision needs two such measurements of 20 minutes each. Nothing was changed." ;;

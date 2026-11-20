@@ -329,7 +329,7 @@ class Arguments(unittest.TestCase):
         code, _, err = clean_run(az, files={"size-test": b"x" * (op.MAX_FILE_BYTES + 1)})
         self.assertEqual((code, az.calls), (2, []))
         for words in ("more than 480000 bytes", "a request with 466104 bytes of files was taken", "one with 632656 was refused with an internal server error (2026-11-06)",
-                      "built in the container from sources"):
+                      "fetched or built in the container"):
             self.assertIn(words, err, words)
         self.assertNotIn("3000000", err)
 
