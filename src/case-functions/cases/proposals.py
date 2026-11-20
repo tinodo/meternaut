@@ -28,10 +28,12 @@ MAX_SETTINGS, MAX_OTHERS = 3, 3
 MAX_TITLE, MAX_GIVES_UP = 80, 240
 TITLE = re.compile(rf"(?!.*[0-9]{{3}})[A-Za-z0-9][A-Za-z0-9 ,()'+-]{{0,{MAX_TITLE - 1}}}")  # a title: plain words, a few marks, no stop inside it and no run of three digits (an amount)
 WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # the words of a camel case key
+KEPT_WORDS = ("retention", "retain", "retained", "keep", "kept", "ttl", "backup", "snapshot", "history", "version", "restore", "archive", "purge")  # found anywhere in a path, in any case and inside another word too, one of these says that the number decides how much is kept: a lower number deletes
 # Why an entry was dropped, in the words of the notes of a run: by the kind of entry, then the rule.
 WHY = {
     "set": {"action": "the finding is not a reduction", "shape": "not an entry of the form", "handle": "a resource that is not the finding's", "name": "not a plain property name",
             "shown": "a property that no tool showed", "number": "a value that is not one plain number", "count": "a property that is not a count or a size", "period": "a period, not a count or a size",
+            "kept": "a setting that decides how much is kept, which a lower number deletes",
             "from": "an old value that no tool showed", "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice",
             "ratio": "numbers that differ from the change's own", "limit": "over the limit"},
     "other": {"group": "a finding of several resources", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
@@ -162,19 +164,25 @@ def _same(one: float, other: float) -> bool:
 
 def _refusal(path: object) -> str:
     """Why the last key of a property path is no count, as a word of WHY, or "": the path must be a plain name of plain ASCII (pricing.NAME, which also bounds its length), and its last key must rank in
-    the toolbox's own order as a count or a size (COUNT_LIKE) or be a `numberOf...` key. The length of a list that the toolbox makes up (`<plural>Count`) is not a count, and a number of days,
-    hours or another period is a period of time and not a count of what the resource holds, with a reason of its own."""
+    the toolbox's own order as a count or a size (COUNT_LIKE) or be a `numberOf...` key. The length of a list that the toolbox makes up (`<plural>Count`) is not a count, a number of days,
+    hours or another period is a period of time and not a count of what the resource holds, and a path that contains one of KEPT_WORDS anywhere, in any case and inside another word too (a retention, a
+    backup, a snapshot, a time to live, what to keep, a history, a version, a restore, an archive, a purge: `retentionCount`, `keepcount`, `numberOfDaysToKeep`) decides how much is kept, which a lower
+    number deletes: each has a reason of its own. A name that merely contains one of the words is refused too (`maxThrottleCount` holds `ttl`): the safe side of a gate that decides what may be deleted."""
     from .toolbox import COUNT_LIKE, _rank  # imported here: the toolbox reaches the brief and the words of the families (through the lessons), and they import this module, so a top-level import would be circular
     leaf = path.rsplit(".", 1)[-1] if isinstance(path, str) and NAME.fullmatch(path) else ""
     if not leaf or _rank(leaf) not in COUNT_LIKE or re.search(r"[^s]sCount$", leaf):
         return "count"
-    return "period" if re.search(r"(?i)(?:day|hour|minute|second|week|month|year)s$", leaf) else ""
+    if re.search(r"(?i)(?:day|hour|minute|second|week|month|year)s$", leaf):
+        return "period"
+    return "kept" if any(word in path.lower() for word in KEPT_WORDS) else ""
 
 
 def countlike(path: str) -> bool:
     """Whether the last key of a property path names a count or a size of what a resource holds (a count, units, replicas, cores, a size, a bandwidth, a capacity: the toolbox's own ranking of a key,
     COUNT_LIKE, or a `numberOf...` key), the only kind of property that a setting may lower. A period (a retention in days, a `numberOf...` key that ends in days, hours or another period), a version, a
-    state, a flag and the length of a list that the toolbox makes up (`<plural>Count`) are not. The last key decides, and only a plain ASCII path is one: the function is pure and answers False for
+    state, a flag, the length of a list that the toolbox makes up (`<plural>Count`) and a setting that decides how much is kept (a path that contains a retention, backup, snapshot, ttl, keep, kept, history,
+    version, restore, archive or purge word anywhere in it, even inside another word) are not.
+    The last key decides the rank, the whole path is read for the words of what is kept, and only a plain ASCII path is one: the function is pure and answers False for
     anything that is not a path (it never raises). The dotted path is the one that the tools showed, so the family that makes a change can apply the same gate when it plans."""
     return not _refusal(path)
 

@@ -798,12 +798,17 @@ class Approvals:
     def _asks(self, case: CaseRecord, open_plans: Sequence[PlanRecord], now: dt.datetime) -> bool:
         """The rules of asking that every request about a finding passes, an advise plan and the plan of a change alike, in one place so that a change is never asked on less: the finding gives a person
         something to decide with (why_not_ask), can say what to look at (says_nothing), is held back by no guard (held_why), has a place free (places_full), and nobody answered a request about what it is
-        about within the quiet days (an advise plan, or a change of the family that works on real resources: a declined change is not asked again at the next judgment)."""
+        about within the quiet days (an advise plan, or a change of the family that works on real resources: a declined change is not asked again at the next judgment). The quiet days count from the
+        answer, and from the day that the request was made when no answer is on record: a request that waited forty days and was then declined is quiet for thirty days more."""
         if why_not_ask(case) is not None or brief.says_nothing(case) or self.held_why(case) or places_full(case, open_plans):
             return False
         quiet = now - dt.timedelta(days=ADVICE_QUIET_DAYS)
-        return not any(about_the_same(plan, case) and plan.family in (ADVISE, SETTING) and plan.state in ("declined", "consumed", "withdrawn") and parse(plan.created_at) >= quiet
+        return not any(about_the_same(plan, case) and plan.family in (ADVISE, SETTING) and plan.state in ("declined", "consumed", "withdrawn") and self._answered_at(plan) >= quiet
                        for plan in self.store.plans_recent(200))
+
+    def _answered_at(self, plan: PlanRecord) -> dt.datetime:
+        """When the quiet days of a request that a person answered begin: the time of the latest answer, and never before the day that the request was made."""
+        return max([parse(plan.created_at), *(parse(decision.at) for decision in self.store.decisions_of_plan(plan.plan_id) if decision.at)])
 
     def _asked(self, case: CaseRecord) -> bool:
         try:
@@ -819,15 +824,16 @@ class Approvals:
         return ("approvers" if not approvers else "unsettled" if case.status != "proposed" else "unsupported" if case.recommendation != "change"
                 else "outside" if own_group(case, self.settings) else "unreadable")
 
-    def _make(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...], replacing: str = "") -> tuple[PlanRecord | None, str]:
+    def _make(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...], replacing: str = "", asked: bool = False) -> tuple[PlanRecord | None, str]:
         """The plan of a change for the case, not stored, or None and the reason of the family that works on real resources (a key of proposals.CANNOT, or empty). `replacing` is the open plan that the
-        new one takes the place of. The family that works on real resources is asked about only a finding that the rules of asking let through (_asks)."""
+        new one takes the place of. The family that works on real resources is asked about only a finding that the rules of asking let through (_asks), unless `asked`: the request of a change that is open
+        was asked already, and the rules of asking decide whether a request is made, not whether the one that exists still holds (the family reads the resource and says)."""
         if not approvers:
             return None, ""
         rule = self.store.rule_get()  # a store that cannot be read makes no plan now: the Watch tries again at its next run
         cannot = ""
         for family in registry.candidates(lead.detector, lead.resource_type, case.recommendation):
-            if why_not(case, lead, self.settings, self.store, family, replacing) is not None or (family.real and not self._asked(case)):
+            if why_not(case, lead, self.settings, self.store, family, replacing) is not None or (family.real and not asked and not self._asked(case)):
                 continue
             try:
                 facts = self._facts(family, lead)
@@ -855,13 +861,27 @@ class Approvals:
         except (Stop, Unreadable):
             return None
 
+    def _closed(self, case: CaseRecord, lead: Lead) -> str:
+        """The key of proposals.CANNOT of a gate that is closed for the change of a finding, from the checks that need no read (ChangeSetting.closed: the count gate, the owner's line and list of real groups,
+        the do-not-touch note), or "". Nothing here reads Azure, so it holds with no reader, with Azure unreadable and with another request open for the resource: a closed gate takes an open request
+        back whatever else stops a plan short of the family (`_make` can return nothing before the family judges)."""
+        try:
+            registry.get(SETTING).closed(Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock), lead)
+        except Cannot as error:
+            return error.key
+        except (Stop, Unreadable):
+            return ""
+        return ""
+
     def upgrade(self, approvers: tuple[str, ...]) -> list[tuple[PlanRecord, PlanRecord | None, CaseRecord]]:
         """Makes the open requests of findings that propose a change what Meternaut can make of them now, and takes back the ones that are not (no clock closes anything: AGENTS.md rule 38). A request
         that asks whether the change is worth it, for a case that proposes settings, is taken back, with the reason `upgraded`, when the plan of a change can be made for it now (the owner's line was
         switched on, the group was listed, the resource changed), and the plan of the change takes its place, with the start of the wait of the request that it replaces (_carry). An open plan of the
         family that works on real resources whose case no longer holds, because the resource or the finding is not as the plan says, is taken back (`changed`, or `left-alone` when a person marked the
         resource do-not-touch), and the plan that can be made now takes its place, or else the advise plan, made as any other (advise: the rules of asking hold it back when they hold it back, and then
-        nothing takes its place). A reading of Azure that fails, or a resource that is being changed right now, takes nothing back. A request that asks only keeps the reason why Meternaut cannot make the
+        nothing takes its place). A reading of Azure that fails, or a resource that is being changed right now, takes nothing back, and neither does a later judgment that has no price, or that a guard or a
+        full place holds back: nothing says that the change does not hold, and a request is taken back only for a reason that is true. A gate that is closed (the count gate, the owner's line or list of real
+        groups, a do-not-touch note) is checked first, with no read, and takes the request back whatever else stops a new plan (another request open for the resource, no reader). A request that asks only keeps the reason why Meternaut cannot make the
         change, brought up to date. A request that a person answered is never touched. Returns (the plan that was taken back, the plan that took its place or None, its case) for each."""
         done: list[tuple[PlanRecord, PlanRecord | None, CaseRecord]] = []
         try:
@@ -870,9 +890,11 @@ class Approvals:
                 if case is None or case.recommendation != "change" or case.status not in ("proposed", "awaiting_ok") or not proposals.settings(case.facts) or not approvers:
                     continue
                 view = _with(case, status="proposed")  # the case of an open request of a change waits for an OK, and the rules of making a plan ask for a proposal
-                made, cannot = self._make(view, _lead_of(case), approvers, replacing=plan.plan_id)
-                if plan.family == SETTING and (cannot in ("unreadable", "busy") or made is not None and made.target == plan.target):
-                    continue  # it still holds, or Azure could not be read or is changing the resource right now: nothing is taken back for that
+                lead = _lead_of(case)
+                closed = self._closed(view, lead) if plan.family == SETTING else ""  # a closed gate needs no read, and takes the request back whatever `_make` finds
+                made, cannot = (None, closed) if closed else self._make(view, lead, approvers, replacing=plan.plan_id, asked=plan.family == SETTING)
+                if plan.family == SETTING and (cannot in ("unreadable", "busy") or made is not None and made.target == plan.target or made is None and not cannot and not self._own_group(view)):
+                    continue  # it still holds, Azure could not be read or is changing the resource, or nothing says that it does not hold (no price now, a guard, a place): nothing is taken back for that
                 if plan.family == ADVISE and made is None:
                     if cannot and (plan.preconditions or {}).get(proposals.CANNOT_KEY, "") != cannot and not self.store.decisions_of_plan(plan.plan_id):
                         self._keep_reason(plan.plan_id, cannot)
@@ -883,7 +905,7 @@ class Approvals:
                 why = "upgraded" if made is not None and plan.family == ADVISE else "left-alone" if cannot == "do-not-touch" else "changed"
                 taken = _plan_with(fresh, state="expired", expires_at=stamp(self.clock()), preconditions={**(fresh.preconditions or {}), "takenBack": why})
                 self.store.plan_put(taken)
-                if made is not None:
+                if made is not None and (plan.family != SETTING or self._asked(view)):  # the change that was asked for does not hold as asked: a new one takes its place only when the rules of asking let it through
                     new: PlanRecord | None = made
                     self.store.plan_put(made)
                     self.store.case_put(_with(case, status="awaiting_ok", plan_id=made.plan_id, updated_at=stamp(self.clock())))
@@ -905,10 +927,10 @@ class Approvals:
             self.store.plan_put(_resealed(fresh, {proposals.CANNOT_KEY: cannot}))
 
     def asked_saving(self, case: CaseRecord | None) -> float | None:
-        """The saving that the open request of a case states, or None. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the figure and the
+        """The saving that the open request of a case states, or None, whether it asks about the finding or is the change itself. A case that is judged again with no price keeps what its open request was asked with (cases/investigate.py): the figure and the
         price that it rests on, with its level and basis, so that the page of the request does not say that nothing was measured or that Azure Advisor gave it, and hold_back_empty does not take it back."""
         try:
-            return next((s for p in self.store.plans_open() if case and p.case_id == case.case_id and p.family == ADVISE and (s := p.saving_usd_month or 0) > 0), None)
+            return next((s for p in self.store.plans_open() if case and p.case_id == case.case_id and p.family in (ADVISE, SETTING) and (s := p.saving_usd_month or 0) > 0), None)
         except StoreError:
             return None
 

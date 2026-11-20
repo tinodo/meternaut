@@ -44,7 +44,7 @@ class Words:
     level: str  # low, medium or high
     undo: str
     reversible: bool
-    short_undo: str = ""  # the first sentence of the undo, for a card and a letter, which never cut a command in half: empty when the undo may be cut as it is
+    short_undo: str = ""  # a short undo of whole sentences (what to set back, what it does not bring back, where the command is), for a card and a letter, which never cut a command in half: empty when the undo may be cut as it is
     confirm: bool = False  # the change asks once more before the sign-in, although it can be undone: it changes a real resource
     ask: str = ""  # what the person is asked to let Meternaut do, as the end of "You are asked whether to let Meternaut ...": empty when the headline in lower case says it
 
@@ -359,13 +359,13 @@ def measured_text(pre: dict) -> str:
 
 
 def compared_text(check: object) -> str:
-    """What the check after a change of `change-setting` says of the other properties, from what it kept: which ones Azure also changed, or that they could not be compared; empty when they were
-    compared and none differs."""
+    """What the check after a change of `change-setting` says of the other numbers and flags that were sent, from what it kept: which ones Azure also changed, or that they could not be compared; empty when
+    they were compared and none differs. A text is not compared, and the plan says so."""
     if not isinstance(check, dict):
         return ""
     if isinstance(check.get("differences"), str) and check["differences"]:
         return f"Azure also changed: {check['differences']}."
-    return "Meternaut could not compare the other properties with what it sent." if check.get("compared") is False else ""
+    return "Meternaut could not compare the other numbers and flags with what it sent." if check.get("compared") is False else ""
 
 
 def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
@@ -377,14 +377,16 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
     command = " ".join(f"{path if at_root(path) else 'properties.' + path}={raw(old)}" for path, old, _ in _sets(target))
     command = f"az resource update --ids <resource id> --set {command}{f' --api-version {api}' if isinstance(api, str) and API_VERSION.fullmatch(api) else ''}" if command else "az resource update"
     back = changes_text(target, "back")
-    short = f"Set {back} again in the Azure portal. The page has the command."
-    if len(short) > 150:  # a card and a letter have room for one short sentence, and a sentence is never cut
-        short = "Set the numbers back to what they were in the Azure portal. The page has the command."
+    caveat, pointer = "It does not bring back what the lower number cut off meanwhile.", "The page has the command."
+    short = f"Set {back} again in the Azure portal."
+    if len(short) + len(caveat) + len(pointer) + 2 > 150:  # a card and a letter have room for three short sentences (a line of a letter holds 160 characters), and a sentence is never cut
+        short = "Set the numbers back to what they were in the Azure portal."
+    short = f"{short} {caveat} {pointer}"
     return Words(
         headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
         change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change, {said}. It uses your own permissions. "
                 f"A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes. Afterwards it reads the {kind} again and checks "
-                "the number, and that every other property that it sent is still what it sent."),
+                "the number, and that every other number and flag that it sent is still what it sent. It does not compare texts, such as a tier or a name."),
         rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
                    f"note, and it is in a resource group on the owner's list for real changes.{again}"),
         risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
