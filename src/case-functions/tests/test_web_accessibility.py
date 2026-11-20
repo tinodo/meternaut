@@ -494,7 +494,7 @@ class TheWords(unittest.TestCase):
     def test_a_request_of_advice_says_that_nothing_changes_in_azure_and_never_talks_of_signing_in(self):
         page = self.pages["GET /ok/plan0005"]
         self.assertIn("Answering changes nothing in Azure", page.content)
-        self.assertIn("Meternaut makes no change for this kind of finding yet.", page.content)
+        self.assertIn("The AI did not name a setting to change, so Meternaut has nothing to change here.", page.content)
         for gone in ("sign in to Azure", "Approve and sign in"):
             self.assertNotIn(gone, page.main.text())
         self.assertEqual([b[2] for f in page.forms() for b in f.buttons], ["Worth acting on", "Not worth it", "This is not mine", "Ask or tell", "Decide later"])

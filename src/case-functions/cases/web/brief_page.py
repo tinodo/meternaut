@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, PROPOSED, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -183,7 +183,7 @@ def _happens(brief: Brief) -> Safe:
 
 def _others(brief: Brief) -> Safe:
     """The other ways to save that the finding proposes, for information and not to answer: how many the AI named and how many Meternaut priced from the bill, and a table of what each saves a month, how
-    Azure does it when that is known and what it gives up. The titles and the words about what each gives up are the AI's."""
+    Azure does it when that is known and what it gives up. The titles, the words about how Azure does it and about what each gives up are the AI's."""
     if not brief.others:
         return Safe("")
     many = len(brief.others)
@@ -194,7 +194,7 @@ def _others(brief: Brief) -> Safe:
              other.gives_up or "Not said"] for other in brief.others]
     return join([Safe("<h2>Other ways to save here</h2>"), paragraph(f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}, and Meternaut {done} from the bill."),
                  table("others", "Other ways to save here", ["Other way", "Saves a month", "What it gives up"], rows, row_header=True, quiet_caption=True),
-                 paragraph("The titles and the words about what each gives up are the AI's, and Meternaut did not check the wording.", "m")])
+                 paragraph("The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them.", "m")])
 
 
 def _saves(other) -> str:
@@ -405,6 +405,8 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
         parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, which Meternaut's code made into a request.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
+        from ..brief import PROPOSED  # read here and not at the top: the key is kept by cases/proposals.py, which reads more than a page may load when it starts
+
         typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE, PROPOSED)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
                            [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)

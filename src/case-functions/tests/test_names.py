@@ -63,7 +63,7 @@ class TheTitleOfASwitch(unittest.TestCase):
 
     def test_no_other_verb_names_ends_and_a_group_of_switches_keeps_its_title(self):
         case, plan = _firewall()
-        for action, headline in (("reduce", "Scale down the firewall fabrikam-hub-fw in group rg-fabrikam-hub"), ("remove", "Remove the firewall fabrikam-hub-fw in group rg-fabrikam-hub"),
+        for action, headline in (("reduce", "Scale down the firewall fabrikam-hub-fw in group rg-fabrikam-hub"), ("remove", "Remove part of the firewall fabrikam-hub-fw in group rg-fabrikam-hub"),
                                  ("schedule", "Turn off the firewall fabrikam-hub-fw in group rg-fabrikam-hub when it is not needed"),
                                  ("commit", "Buy a commitment for the firewall fabrikam-hub-fw in group rg-fabrikam-hub")):
             with self.subTest(action=action):
@@ -79,7 +79,7 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
         self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether to switch the firewall to another price of the same service.")
         for mixed in (dict(form="mixed"), dict(form="mixed", switched=1)):  # a mix of rules, or one price beside an assumed share of the AI: no one price is the target, and no price is counted
             self.assertEqual(brief_of(with_words(case, **mixed), plan).asked, "You are asked whether to switch the firewall.", mixed)
-        for action, said in (("reduce", "scale down the firewall"), ("remove", "remove the firewall"), ("schedule", "turn off the firewall when it is not needed"), ("commit", "buy a commitment for the firewall")):
+        for action, said in (("reduce", "scale down the firewall"), ("remove", "remove part of the firewall"), ("schedule", "turn off the firewall when it is not needed"), ("commit", "buy a commitment for the firewall")):
             with self.subTest(action=action):
                 self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether to {said}.")
 
@@ -240,7 +240,7 @@ def _page_html(case, plan) -> str:
 
 
 class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
-    BASIS = ("Over the last 7 days this firewall paid about $864 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $252 a month for the same use, "
+    BASIS = ("At the rate of the last 7 days this firewall costs about $864 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $252 a month for the same use, "
              "so it would save about $612 a month. Meternaut did not check whether this firewall can be switched to it, or whether it has what this firewall needs.")
 
     def test_the_three_say_the_same_basis_in_plain_words(self):
@@ -255,7 +255,7 @@ class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
 
     def test_the_amounts_of_the_sentence_add_up_to_the_dollar_and_its_saving_is_the_one_above_it_on_the_page_the_card_and_the_letter(self):
         case, plan = _firewall(usd=864.6)  # 864.60 are paid, 252.18 would remain and 612.42 would be saved: $865, $252 and $612 are what the money shows, and 865 less 612 is 253
-        said = ("paid about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
+        said = ("costs about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
         for label, texts in (("page", [block.text for block in _page("switch", case, plan).blocks]), ("card", [block.text for block in blocks_of_card(_card_of(case, plan))]),
                              ("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text.splitlines())):
             with self.subTest(label):

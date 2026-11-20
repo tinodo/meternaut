@@ -112,6 +112,23 @@ def title_of(shown: Rendered) -> str:
 class TheKindOfAResourceInWords(unittest.TestCase):
     """A kind that the brief has no words for is said in the words of the type segment of its id: "bastionHosts" is a bastion host, and never "the resource" when the id says better."""
 
+    REAL = (("bastionHosts", "bastion host"), ("registries", "registry"), ("storageAccounts", "storage account"), ("searchServices", "search service"), ("natGateways", "nat gateway"),
+            ("virtualNetworkGateways", "virtual network gateway"), ("databases", "database"), ("publicIPPrefixes", "public IP prefix"), ("publicIPAddresses", "public IP address"),
+            ("signalR", "SignalR"), ("privateEndpoints", "private endpoint"), ("namespaces", "namespace"), ("workspaces", "workspace"), ("managedClusters", "managed cluster"),
+            ("flexibleServers", "flexible server"), ("networkInterfaces", "network interface"), ("applicationGateways", "application gateway"), ("loadBalancers", "load balancer"),
+            ("virtualMachineScaleSets", "virtual machine scale set"), ("privateDnsZones", "private dns zone"), ("frontDoors", "front door"), ("redis", "redis"), ("caches", "cache"),
+            ("profiles", "profile"), ("serverfarms", "serverfarm"), ("networkSecurityGroups", "network security group"), ("expressRouteCircuits", "express route circuit"), ("vaults", "vault"),
+            ("indexes", "index"), ("analysisServices", "analysis service"), ("searches", "search"), ("sites", "site"), ("ddosProtectionPlans", "ddos protection plan"))
+
+    def test_the_noun_of_a_real_type_segment_is_in_the_singular_and_keeps_an_acronym_and_a_name_whole(self):
+        for segment, noun in self.REAL:
+            rid = f"/subscriptions/{SUB}/resourceGroups/rg-a/providers/Microsoft.Example/{segment}/x-1"
+            with self.subTest(segment):
+                label, said = brief_mod.kind_words(f"microsoft.example/{segment.lower()}", rid)
+                self.assertEqual(said, noun)
+                self.assertEqual(label, noun[:1].upper() + noun[1:])
+        self.assertGreaterEqual(len(self.REAL), 20)
+
     def test_a_kind_without_words_is_said_in_words_of_the_type_segment_of_its_id(self):
         for segment, label, noun in (("labGateways", "Lab gateway", "lab gateway"), ("edgeProxies", "Edge proxy", "edge proxy"), ("portalAddresses", "Portal address", "portal address"),
                                      ("serviceClasses", "Service class", "service class"), ("gateways", "Gateway", "gateway"), ("bastionHosts", "Bastion host", "bastion host"),
@@ -151,14 +168,33 @@ class TheHeadlineSaysWhatChanges(unittest.TestCase):
         self.assertEqual(shown.verb, "Scale down")
         self.assertEqual(title_of(surfaces(case, plan)["page"]), "Scale down the gateway lab-gw-1: capacity units from 4 to 2", "the title of the page has no place: the line under it says it")
 
-    def test_without_a_setting_it_says_it_from_the_numbers_that_the_finding_priced(self):
-        self.assertEqual(self.headline("reduce", {"form": "quantity", "from": 1440, "to": 0}), "Scale down the gateway lab-gw-1 in group rg-lab: one charge from 1,440 to 0 hours in the last 30 days")
-        self.assertEqual(self.headline("reduce", {"form": "quantity", "from": 1440, "to": 720}), "Scale down the gateway lab-gw-1 in group rg-lab: one charge from 1,440 to 720 hours in the last 30 days")
+    def test_without_a_setting_it_says_it_from_the_numbers_that_the_finding_priced_and_names_the_charge_that_the_bill_names(self):
+        self.assertEqual(self.headline("reduce", {"form": "quantity", "from": 1440, "to": 0}), "Scale down the gateway lab-gw-1 in group rg-lab: the Extra Unit charge from 1,440 to 0 hours in the last 30 days")
+        self.assertEqual(self.headline("reduce", {"form": "quantity", "from": 1440, "to": 720}), "Scale down the gateway lab-gw-1 in group rg-lab: the Extra Unit charge from 1,440 to 720 hours in the last 30 days")
         self.assertEqual(self.headline("reduce", {"form": "ratio", "from": 4, "to": 2, "on": "capacityUnits"}), "Scale down the gateway lab-gw-1 in group rg-lab: capacity units from 4 to 2")
         self.assertEqual(self.headline("reduce", {"form": "assumed", "low": 0.4, "high": 0.7}), "Scale down the gateway lab-gw-1 in group rg-lab", "an assumed share has no numbers to say")
+        facts = gateway_facts("reduce", {"form": "quantity", "from": 1440, "to": 0})
+        for name in ("a b c d e f g", "x" * 41, "<b>Extra</b>", ""):
+            with self.subTest(charge=name):
+                case, plan = gateway(facts={**facts, pricing.KEY: {**facts[pricing.KEY], "price": {**facts[pricing.KEY]["price"], "charge": name}}})
+                self.assertEqual(brief_of(case, plan).headline, "Scale down the gateway lab-gw-1 in group rg-lab: one charge from 1,440 to 0 hours in the last 30 days", "a name that is not plain is never said")
+        without = {key: value for key, value in facts[pricing.KEY]["price"].items() if key not in ("charge", "read")}
+        case, plan = gateway(facts={**facts, pricing.KEY: {**facts[pricing.KEY], "price": without}})
+        self.assertEqual(brief_of(case, plan).headline, "Scale down the gateway lab-gw-1 in group rg-lab: one charge from 1,440 to 0 hours", "a digest that kept neither the name nor the days says neither")
+
+    def test_a_removal_says_the_whole_gateway_only_when_the_whole_cost_goes(self):
+        self.assertEqual(self.headline("remove", {"form": "none"}), "Remove part of the gateway lab-gw-1 in group rg-lab", "202 of the 411 that the gateway costs")
+        case, plan = gateway(facts=gateway_facts("remove", {"form": "none"}), cost_usd_30d=201.6)
+        self.assertEqual(brief_of(case, plan).headline, "Remove the gateway lab-gw-1 in group rg-lab", "the charges that go are all that it costs")
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether to remove the gateway.")
+        case, plan = gateway(facts=gateway_facts("remove", {"form": "none"}), cost_usd_30d=None)
+        self.assertEqual(brief_of(case, plan).headline, "Remove part of the gateway lab-gw-1 in group rg-lab", "with no cost to hold it against, nothing says that the whole of it goes")
+        case, plan = gateway(facts=gateway_facts("remove", {"form": "none"}))
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether to remove part of the gateway.")
+        with mock.patch.object(brief_mod, "REMOVES_ALL", 0.0):
+            self.assertEqual(brief_of(case, plan).headline, "Remove the gateway lab-gw-1 in group rg-lab", "a threshold of nothing is the old title for every removal")
 
     def test_the_other_changes_say_what_they_are(self):
-        self.assertEqual(self.headline("remove", {"form": "none"}), "Remove the gateway lab-gw-1 in group rg-lab")
         self.assertEqual(self.headline("schedule", {"form": "share_of_days", "days": 5, "of": 7, "span": 7}), "Turn off the gateway lab-gw-1 in group rg-lab on 2 of every 7 days")
         self.assertEqual(self.headline("schedule", {"form": "assumed", "low": 0.4, "high": 0.7}), "Turn off the gateway lab-gw-1 in group rg-lab when it is not needed")
         self.assertEqual(self.headline("commit", {"form": "assumed", "low": 0.2, "high": 0.3}), "Buy a commitment for the gateway lab-gw-1 in group rg-lab")
@@ -198,8 +234,8 @@ class TheQuestionNamesTheChange(unittest.TestCase):
     def test_advice_asks_whether_to_do_what_the_title_says(self):
         self.assertEqual(self.asked("reduce", {"form": "quantity", "from": 1440, "to": 0}, SETTING), "You are asked whether to scale down the gateway by lowering capacity units from 4 to 2.")
         self.assertEqual(self.asked("reduce", {"form": "quantity", "from": 1440, "to": 0}),
-                         "You are asked whether to scale down the gateway by lowering one charge from 1,440 to 0 hours in the last 30 days.")
-        self.assertEqual(self.asked("remove", {"form": "none"}), "You are asked whether to remove the gateway.")
+                         "You are asked whether to scale down the gateway by lowering the Extra Unit charge from 1,440 to 0 hours in the last 30 days.")
+        self.assertEqual(self.asked("remove", {"form": "none"}), "You are asked whether to remove part of the gateway.")
         self.assertEqual(self.asked("schedule", {"form": "share_of_days", "days": 5, "of": 7, "span": 7}), "You are asked whether to turn off the gateway on 2 of every 7 days.")
         self.assertEqual(self.asked("schedule", {"form": "assumed", "low": 0.4, "high": 0.7}), "You are asked whether to turn off the gateway when it is not needed.")
         self.assertEqual(self.asked("commit", {"form": "assumed", "low": 0.2, "high": 0.3}), "You are asked whether to buy a commitment for the gateway.")
@@ -242,11 +278,14 @@ class WhatItIsWorth(unittest.TestCase):
 
     def test_one_paragraph_says_how_it_was_worked_out_with_what_is_the_bill_s_and_what_is_the_ai_s(self):
         text = read(self.page())
-        for said in ("How Meternaut worked it out.", "Over the last 7 days this gateway paid about $202 a month for what the change would shrink.", "The bill shows 1,440 hours of it in the last 30 days.",
-                     "The change would lower that to 0 hours, which takes away all of it.", "The old quantity, 1,440, is the bill's own, and Meternaut checked it.",
-                     "The new quantity, 0, is the AI's choice, and Meternaut did not check it."):
+        for said in ("How Meternaut worked it out.", "At the rate of the last 7 days this gateway costs about $202 a month for what the change would shrink.",
+                     "The bill shows 1,440 hours of it in the last 30 days, and Meternaut checked that number against the bill.",
+                     "The AI says the change would lower that to 0 hours, which takes away all of it, and Meternaut did not check that."):
             self.assertIn(said, text)
-        self.assertNotIn("That is the AI's own proposal, and Meternaut did not check it.", text)
+        for gone in ("That is the AI's own proposal, and Meternaut did not check it.", "The old quantity", "is the AI's choice"):
+            self.assertNotIn(gone, text)
+        paragraph = next(block.text for block in self.page().blocks if block.text.startswith("How Meternaut worked it out."))
+        self.assertEqual(paragraph.count("did not check"), 1, "what Meternaut did not check is said once, with the AI's words")
 
     def test_the_paragraph_says_which_kind_of_resource_it_is_about_and_not_the_word_resource(self):
         case, plan = gateway(SETTING)
@@ -254,22 +293,22 @@ class WhatItIsWorth(unittest.TestCase):
             with self.subTest(surface):
                 self.assertNotIn("this resource", read(shown))
         with mock.patch.object(brief_mod, "kind_words", lambda *found: ("Resource", "resource")):
-            self.assertIn("this resource paid about $202", brief_of(case, plan).saving.basis)
+            self.assertIn("this resource costs about $202", brief_of(case, plan).saving.basis)
 
     def test_the_card_and_the_letter_say_the_same_in_the_same_words_without_the_table(self):
         case, plan = gateway(SETTING)
         for surface in ("card", "letter"):
             with self.subTest(surface):
                 text = read(surfaces(case, plan)[surface])
-                self.assertIn("The new quantity, 0, is the AI's choice, and Meternaut did not check it.", text)
+                self.assertIn("The AI says the change would lower that to 0 hours, which takes away all of it, and Meternaut did not check that.", text)
                 self.assertNotIn("How Meternaut worked it out", text)
                 self.assertNotIn("Now, a month", text)
 
     def test_a_ratio_and_a_share_of_days_say_what_is_checked_and_what_is_the_ai_s(self):
         for action, remains, said in (
                 ("reduce", {"form": "ratio", "from": 4, "to": 2, "on": "capacityUnits"},
-                 ("The change would lower capacity units from 4 to 2, which takes away 50 percent of it.", "The old number, 4, is what the tools read for capacity units, and Meternaut checked it.",
-                  "The new number, 2, is the AI's choice, and Meternaut did not check it.", "Meternaut also did not check that the charge falls in step with capacity units.")),
+                 ("The tools read capacity units as 4, and Meternaut checked that.",
+                  "The AI says the change would lower it to 2, which takes away 50 percent of it, and Meternaut did not check that or that the charge falls in step with capacity units.")),
                 ("schedule", {"form": "share_of_days", "days": 5, "of": 7, "span": 7},
                  ("The AI says it is needed 5 days of every 7, so the change would turn it off on 2 of every 7 days, which takes away 29 percent of it.",
                   "Those days are the AI's own, and Meternaut did not check them."))):
@@ -311,13 +350,39 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
             with self.subTest(key):
                 self.assertIn(sentence, brief_of(case, plan).change)
 
-    def test_a_finding_with_no_setting_says_that_no_change_is_made_for_this_kind_yet(self):
+    def test_a_finding_with_no_setting_says_that_the_ai_named_none_and_so_nothing_is_there_to_change(self):
         case, plan = gateway()
         for surface, shown in surfaces(case, plan).items():
             with self.subTest(surface):
-                self.assertIn("Meternaut makes no change for this kind of finding yet. Your answer is recorded with your name.", read(shown))
+                self.assertIn("The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name.", read(shown))
+                self.assertIn(brief_mod.ADVICE_WHO, read(shown))
                 self.assertNotIn("cannot make this change itself", read(shown))
+                self.assertNotIn("for this kind of finding yet", read(shown), "a sentence that fits any request is gone")
         self.assertIn(HOW, quotes(surfaces(case, plan)["page"]))
+
+    def test_a_finding_with_a_setting_and_no_reason_on_record_says_that_meternaut_cannot_make_the_change_and_no_more(self):
+        case, plan = gateway(SETTING)
+        self.assertEqual(brief_of(case, plan).change, "Meternaut cannot make this change itself. Your answer is recorded with your name.")
+
+    def test_a_request_with_no_finding_on_record_says_so_and_does_not_say_that_nothing_was_measured(self):
+        risk = brief_mod.acting_risk(None)
+        self.assertEqual(risk.text, brief_mod.NO_FINDING)
+        self.assertNotIn("measured", risk.text)
+
+    def test_a_high_risk_has_its_reason_next_to_it_and_a_medium_one_does_not_borrow_it(self):
+        facts = {**gateway_facts(), "metrics": {"Sessions": 4.0}}
+        case, plan = gateway(facts=facts, resource_type="microsoft.network/privateendpoints")
+        risk = brief_of(case, plan).risk
+        self.assertEqual(risk.level, "high")
+        self.assertTrue(risk.text.startswith("Other resources can depend on a private endpoint. The Sessions metric was 4"), risk.text)
+        quiet = dataclasses.replace(case, resource_type="microsoft.example/gateways")
+        self.assertEqual(brief_of(quiet, plan).risk.level, "medium")
+        self.assertNotIn("Other resources can depend", brief_of(quiet, plan).risk.text)
+        group = {"count": 3, "groups": 2, "type": "microsoft.network/privateendpoints", "names": ["a", "b"], "costUsd30d": 60.0}
+        many, plan = gateway(facts={**facts, GROUP_FACT: group}, resource_type="microsoft.network/privateendpoints")
+        self.assertTrue(brief_of(many, plan).risk.text.startswith("Other resources can depend on them. For the first of them, the Sessions metric was 4"), brief_of(many, plan).risk.text)
+        with mock.patch.object(brief_mod, "shared", lambda kind: False):
+            self.assertEqual(brief_of(case, plan).risk.level, "medium", "the level and the reason come from the same rule")
 
     def test_the_stock_sentences_that_the_owner_read_are_gone_where_a_measurement_exists(self):
         for precondition in ("switch-off", ""):
@@ -398,13 +463,13 @@ class OtherWaysToSave(unittest.TestCase):
         text = read(page)
         self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", text)
         cells = [block.text for block in page.blocks if block.kind == "cell" and not block.details]
-        self.assertTrue(any("Move to the Lite tier" in cell and "Azure only does this by making the gateway again." in cell for cell in cells), cells)
+        self.assertTrue(any("Move to the Lite tier" in cell and "The AI says Azure only does this by making the gateway again." in cell for cell in cells), cells)
         self.assertIn("$150 to $202", cells)
         self.assertIn("Lite is shared and carries no uptime promise.", cells)
         self.assertIn("Remove the gateway", cells, "a way that Azure has no word for in place or not says nothing of it")
         self.assertIn("Not priced", cells)
         self.assertIn("Everything that connects through it stops.", cells)
-        self.assertIn("The titles and the words about what each gives up are the AI's, and Meternaut did not check the wording.", text)
+        self.assertIn("The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them.", text)
 
     def test_the_card_and_the_letter_have_one_line_and_no_button(self):
         case, plan = gateway(BOTH)
@@ -424,6 +489,19 @@ class OtherWaysToSave(unittest.TestCase):
         self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", read(page))
         self.assertIn("If you approve", [block.text for block in page.blocks if block.kind == "heading"])
 
+    def test_what_the_ai_says_of_how_azure_does_it_is_said_as_the_ai_s_and_never_in_meternaut_s_voice(self):
+        case, plan = gateway({"set": SET, "others": [OTHERS[0], {"title": "Lower it in place", "givesUp": "Nothing else.", "action": "reduce", "inPlace": True}]})
+
+        def rows() -> list[str]:
+            return [block.text for block in surfaces(case, plan)["page"].blocks if block.kind == "cell" and ("making the gateway again" in block.text or "where it is" in block.text)]
+
+        self.assertEqual(len(rows()), 2)
+        self.assertTrue(any("The AI says Azure only does this by making the gateway again." in row for row in rows()))
+        self.assertTrue(any("The AI says Azure changes the gateway where it is." in row for row in rows()))
+        with mock.patch.dict(brief_mod.IN_PLACE, {True: "Azure changes the {noun} where it is.", False: "Azure only does this by making the {noun} again."}):
+            self.assertEqual(len(rows()), 2)
+            self.assertFalse([row for row in rows() if "The AI says" in row], "the old words claim it in the voice of Meternaut, which checked nothing of it")
+
     def test_nothing_is_said_when_the_finding_has_no_other_way(self):
         case, plan = gateway(SETTING)
         for surface, shown in surfaces(case, plan).items():
@@ -431,8 +509,6 @@ class OtherWaysToSave(unittest.TestCase):
                 self.assertNotIn("other way", read(shown))
 
     def test_the_details_list_no_row_for_what_the_finding_proposes_because_its_words_are_the_ai_s(self):
-        from cases.web import brief_page
-
         case, plan = gateway(BOTH)
 
         def details() -> list[str]:
@@ -441,9 +517,10 @@ class OtherWaysToSave(unittest.TestCase):
         self.assertIn("basis", details())
         self.assertNotIn(proposals.KEY, details())
         self.assertEqual([text for text in details() if "Lite is shared" in text], [])
-        with mock.patch.object(brief_page, "PROPOSED", "nothing"):
+        with mock.patch.object(brief_mod, "PROPOSED", "nothing"):
             self.assertIn(proposals.KEY, details())
             self.assertTrue([text for text in details() if "Lite is shared" in text])
+        self.assertEqual(brief_mod.PROPOSED, proposals.KEY, "the brief says the key that the shape of the proposals keeps, and no other")
 
     def test_the_table_fails_when_the_readers_are_taken_out(self):
         case, plan = gateway(BOTH)
@@ -467,7 +544,9 @@ class EverySurfaceReadsAsSentences(unittest.TestCase):
 class TheListsSayItInTheWordsOfNow(unittest.TestCase):
     """The title that a request made before these words kept is said in the new verbs in the lists of what was asked (the History): a request that waits has its title made again from its finding."""
 
-    OLD = (("Consider reducing the gateway lab-gw-1 in group rg-lab", "Scale down the gateway lab-gw-1 in group rg-lab"), ("Consider removing the gateway lab-gw-1 in group rg-lab", "Remove the gateway lab-gw-1 in group rg-lab"),
+    OLD = (("Consider reducing the gateway lab-gw-1 in group rg-lab", "Scale down the gateway lab-gw-1 in group rg-lab"),
+           ("Consider removing the gateway lab-gw-1 in group rg-lab", "Consider removing the gateway lab-gw-1 in group rg-lab"),  # whether the whole cost went is not in the stored title, so it is not said again
+           ("Consider scheduling 3 private endpoints in 2 groups, starting with lab-gw-1", "Turn off 3 private endpoints in 2 groups when they are not needed, starting with lab-gw-1"),
            ("Consider switching the firewall x in group g from A to B", "Switch the firewall x in group g from A to B"),
            ("Consider scheduling the gateway lab-gw-1 in group rg-lab", "Turn off the gateway lab-gw-1 in group rg-lab when it is not needed"),
            ("Consider a commitment for the gateway lab-gw-1 in group rg-lab", "Buy a commitment for the gateway lab-gw-1 in group rg-lab"),

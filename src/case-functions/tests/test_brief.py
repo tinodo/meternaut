@@ -664,7 +664,7 @@ class TheRiskFollowsTheVerbOfTheTitle(unittest.TestCase):
         # What was seen: the guard of cases/investigate.py (_hold_delete) holds only a proposal to delete, so a typed removal of a private endpoint is still titled "Remove ...".
         case = self.case("remove", "microsoft.network/privateendpoints", "oversized")
         self.assertTrue(headline_of(ADVISE, "pe-1", "rg-a", case.resource_type, "change", case=case).startswith("Remove the private endpoint"))
-        self.assertEqual(brief.acting_risk(case), brief.Risk("high", self.NOTHING_MEASURED, True))
+        self.assertEqual(brief.acting_risk(case), brief.Risk("high", "Other resources can depend on a private endpoint. " + self.NOTHING_MEASURED, True), "the chip has its reason: the kind is one that others share")
 
     def test_a_request_of_an_older_check_keeps_the_sentences_that_it_always_said(self):
         older = make_case(detector="orphan-private-endpoint", recommendation="delete", resource_type="microsoft.network/privateendpoints")

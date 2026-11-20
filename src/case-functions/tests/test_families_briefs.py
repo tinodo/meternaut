@@ -166,7 +166,7 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
         self.assertEqual(plan.family, "advise")
         b = a_brief(plan, case)
         self.assertEqual((b.kind, b.who_acts), ("advice", brief.ADVICE_WHO))
-        self.assertEqual(b.who_acts, "If you decide to act, you do it yourself in Azure with your own rights.")
+        self.assertEqual(b.who_acts, "If you act, you do it yourself in Azure with your own rights.")
         self.assertEqual((b.change, b.rechecked), (brief.ADVICE_NONE, ""), "nothing in the finding proposes a setting that Meternaut could change: Meternaut makes no change for this kind of finding")
 
 

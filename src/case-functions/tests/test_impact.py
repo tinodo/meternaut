@@ -471,7 +471,7 @@ class WhatAPersonReads(unittest.TestCase):
                 self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_NONE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", f'{brief.NOT_MEASURED_USE} The second AI says: "Disconnected shows how it is now, not for how long."'))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", f'Other resources can depend on a private endpoint. {brief.NOT_MEASURED_USE} The second AI says: "Disconnected shows how it is now, not for how long."'))
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, says in (("safe", "It looks safe to remove."), ("keep", "Do not remove it."), ("check", "Check what depends on it before you remove it.")):

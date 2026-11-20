@@ -320,7 +320,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
         doc.paragraph(brief_mod.others_line(brief))
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
-    for line in (brief.past, brief.access):
+    for line in (brief.past if brief.past != brief_mod.NO_HISTORY else "", brief.access):
         if line:
             doc.paragraph(_data(line, 240))
     if brief.by_code:

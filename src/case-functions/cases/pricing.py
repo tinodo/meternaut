@@ -34,7 +34,6 @@ from typing import Callable, Collection, Iterable, Mapping, NamedTuple, Sequence
 
 from .costs import money
 from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
-from .proposals import label
 from .roles import MAX_CITED_NAME, clean_text
 
 KEY = "change"  # the key of the facts of a case
@@ -52,6 +51,7 @@ METER = re.compile(r"m[0-9]{1,4}")
 NAME = re.compile(rf"[A-Za-z][A-Za-z0-9 ._/-]{{0,{MAX_CITED_NAME - 1}}}")  # the name of a property or a measurement as a tool returned it: a plain word, which a sentence may hold
 UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._/,-]{0,23}")  # the unit of a meter as Cost Management words it ("1 Hour", "100 GB/Month"): plain characters, which a sentence may hold
 PLAIN = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+){0,5}")  # a word of an alternative that the Skeptic is shown, beside the check of the tools: letters, digits and single spaces, at most 6 words and 40 characters
+WORDS_FOR_A_PERSON = ("read", "charge")  # what a quantity says to a person (the days that the meter was read and the name of the charge) and the second AI is not shown
 WHY = {
     "none": "No saving was worked out, because the AI did not say which charges on the bill the change would shrink.",
     "lines": f"No saving was worked out. The charges that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to work from.",
@@ -311,7 +311,10 @@ def _part(effect: Effect, action: str, block: Mapping, registry: Mapping, seen: 
         if len(effect.meters) != 1 or not math.isclose(said["from"], used[0][2].quantity, rel_tol=1e-5, abs_tol=0.0):  # the tool shows a quantity with six significant digits
             return "remains"
         unit = (used[0][2].words or ("",))[-1]
-        said = {**said, **({"unit": unit} if word is not None and word(unit) == unit and UNIT.fullmatch(unit) else {})}  # the unit passes the check of the tools, and is short
+        words = used[0][2].words
+        charge = words[2] if len(words) > 2 else ""
+        said = {**said, "read": used[0][2].days, **({"unit": unit} if word is not None and word(unit) == unit and UNIT.fullmatch(unit) else {}),  # the unit and the name of the charge pass the check of the tools, and are plain
+                **({"charge": charge} if word is not None and word(charge) == charge and PLAIN.fullmatch(charge) and len(charge) <= 40 else {})}
     since = math.fsum(got.week if got.since is None else got.since for _, got, _ in used) if any(got.since is not None for _, got, _ in used) else None
     total = math.fsum(got.high for _, got, _ in used)
     return Part(form, least, most, said, math.fsum(got.week for _, got, _ in used), since, math.fsum(got.week if got.steady is None else got.steady for _, got, _ in used),
@@ -454,7 +457,7 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     prices = [item["price"] for item in kept if isinstance(item.get("price"), Mapping)]
     if not prices:
         return {**out, "missing": next((item["missing"] for item in kept if item.get("missing") in WHY), "none")}
-    keys = ("form", "from", "on", "unit", "days", "span", "away", "offer", "list") + (() if prices[0].get("form") == "alternative" else ("to",))  # the `to` of a switch is a name, which one price can have twice
+    keys = ("form", "from", "on", "unit", "read", "charge", "days", "span", "away", "offer", "list") + (() if prices[0].get("form") == "alternative" else ("to",))  # the `to` of a switch is a name, which one price can have twice
     alike = len({tuple(str(price.get(key)) for key in keys) for price in prices}) == 1
     rated = all("weekUsd" in price for price in prices)  # a digest made before the rates has none, and a sum of such digests has none either
     total = {key: round(math.fsum(price.get(key) or 0 for price in prices), 2) for key in ("lowUsd", "highUsd", "billUsd", *(("weekUsd",) if rated else ()))}
@@ -502,15 +505,16 @@ def _firm(found: Mapping) -> bool:
 
 
 def _when(found: Mapping) -> str:
-    """Which days the figure counts, as the start of a sentence, from the numbers of the digest. A digest made before the rates counts the last 30 days."""
+    """Which rate the figure is, as the start of a sentence, from the numbers of the digest: what the resource costs a month at the rate of the last 7 days, of a typical day, or of the days since it
+    began. A digest made before the rates counts what was paid in the last 30 days."""
     week, since, steady, life = _number(found.get("weekUsd")), _number(found.get("sinceUsd")), _number(found.get("steadyUsd")), _whole(found.get("life"))
     if week is None:
         return f"Over the last {MONTH} days"
     if steady is not None and steady < (1 - ALIKE) * (week if since is None else min(week, since)):
-        return "Counting a typical day,"
+        return "At the rate of a typical day,"
     if since is not None and abs(week - since) > ALIKE * max(week, since):
-        return f"Counting the lower of the last {WEEK} days and " + ("the time since it began," if life else f"the last {MONTH} days,")
-    return f"Since it began {life} days ago," if life and life < WEEK and (_whole(found.get("resources")) or 1) == 1 else f"Over the last {WEEK} days"
+        return f"At the lower of the rates of the last {WEEK} days and " + ("the time since it began," if life else f"the last {MONTH} days,")
+    return f"At the rate of the {life} days since it began," if life and life < WEEK and (_whole(found.get("resources")) or 1) == 1 else f"At the rate of the last {WEEK} days"
 
 
 def _read(value: object) -> str:
@@ -524,19 +528,30 @@ def _shown(value: float) -> float:
     return float(math.floor(amount + 0.5)) if amount >= 100 else amount
 
 
+UNIT_WORD = re.compile(r"[A-Z]?[a-z]{2,}")  # a plain word of a unit ("Hour"), against an abbreviation ("GB", "GiB") that a bill gives as it is
+
+
 def billed(value: float, unit: object = None) -> str:
-    """A quantity as a person says it: "1,440 hours" for the unit "1 Hour", "1,440 units of 100 GB/Month" for any other plain unit, and the bare number when the digest keeps none."""
+    """A quantity as a person says it, with the unit as the bill gives it: "250 GB", "1,440 hours" for "1 Hour" (a plain word of a unit is in lower case and takes an s, an abbreviation neither),
+    "1,440 units of 100 GB/Month" for any other plain unit, and the bare number when the digest keeps none."""
     number = f"{value:,.10g}"
     if not (isinstance(unit, str) and UNIT.fullmatch(unit)):
         return number
     one = re.fullmatch(r"1 ([A-Za-z]+)", unit)
-    return f"{number} {one.group(1).lower()}{'' if value == 1 else 's'}" if one else f"{number} units of {unit}"
+    if not one:
+        return f"{number} units of {unit}"
+    word = one.group(1)
+    if not UNIT_WORD.fullmatch(word):
+        return f"{number} {word}"
+    return f"{number} {word.lower()}" + ("" if value == 1 or word.lower().endswith("s") else "s")
 
 
-def window(found: Mapping) -> str:
-    """The days that the quantity of a meter covers: those since it began, when it began inside the window, else the last 30."""
-    life = _whole(found.get("life"))
-    return f"the {life} days since it began" if life else f"the last {MONTH} days"
+def window(found: Mapping, several: bool = False) -> str:
+    """The days that the quantity of a meter covers: those since it began, when it began inside the window, else the days that the read had; nothing when the digest does not say (one made before it kept them)."""
+    life, read = _whole(found.get("life")), _whole(found.get("read"))
+    if life:
+        return "the days that the figure counts" if several else f"the {life} days since it began"
+    return f"the last {read} days" if read else ""
 
 
 def _gone(share: float) -> str:
@@ -544,30 +559,35 @@ def _gone(share: float) -> str:
 
 
 def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun: str = "resource") -> str:
-    """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what the bill shows and what the change would do to it, which number is the bill's
-    (Meternaut checked it) and which is the AI's choice (it did not), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
+    """What a figure rests on, as whole sentences: what the resource costs a month and at which rate (`base`), what the bill shows and what the AI says that the change would do to it, which number
+    Meternaut checked against the bill and which it did not, the range when there is one, and what the figure leaves out. A figure of many resources says it of all of them: a quantity as the sum, and a
+    number or a share of days of each. A switch names both ends when the digest holds their names."""
+    from .proposals import label  # the shape of what a finding proposes reads this module too, so it is imported where it is used and not at the top
+
     many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
     uneven = _whole(found.get("uneven"))
     who = f"{many} of the {members} resources" if members and members > many else (f"this {noun}" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
+    each, one = ("", "it") if many == 1 else (" on each of them", "each")
     when = _when(found)
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
     numbers = _number(start) is not None and _number(target) is not None
     to, now, ratio = _read(target) if form == "alternative" else "", _read(found.get("now")), _number(found.get("ratio"))
-    paid = f"{when}{',' if who[0].isdigit() and not when.endswith(',') else ''} {who} paid about {money(base)}{' a month' if _number(found.get('weekUsd')) is not None else ''} for " + (
+    rated = _number(found.get("weekUsd")) is not None
+    paid = f"{when}{',' if who[0].isdigit() and not when.endswith(',') else ''} {who} " + (f"{'costs' if many == 1 else 'cost'} about {money(base)} a month" if rated else f"paid about {money(base)}") + " for " + (
         "what the change would remove" if form == "none" else now or "what would be switched" if form == "alternative" else "what the change would shrink") + "."
     if form == "quantity":
-        text = paid + (f" The bill shows {billed(start, unit)} of it in {window(found)}. The change would lower that to {billed(target, unit)}, which takes away {_gone(1 - target / start)}. "
-                       f"The old quantity, {billed(start)}, is the bill's own, and Meternaut checked it. The new quantity, {billed(target)}, is the AI's choice, and Meternaut did not check it."
+        where = window(found, many > 1)
+        text = paid + (f" The bill shows {billed(start * many, unit)} of it{' in ' + where if where else ''}{f', {billed(start, unit)} for each of them,' if many > 1 else ','} and Meternaut checked that number against the bill. "
+                       f"The AI says the change would lower that to {billed(target * many, unit)}, which takes away {_gone(1 - target / start)}, and Meternaut did not check that."
                        if numbers else " The AI proposes a lower quantity, and Meternaut did not check it.")
     elif form == "ratio":
         name = label(on) if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
-        what = name or "the number"
-        text = paid + (f" The change would lower {what} from {start:g} to {target:g}, which takes away {_gone(1 - target / start)}. The old number, {start:g}, is what the tools read{' for ' + name if name else ''}, "
-                       f"and Meternaut checked it. The new number, {target:g}, is the AI's choice, and Meternaut did not check it. Meternaut also did not check that the charge falls in step with {what}."
+        text = paid + (f" The tools read {name or ('one of its numbers' if many == 1 else 'one of their numbers')} as {start:g}{each}, and Meternaut checked that. The AI says the change would lower it to {target:g}{each}, "
+                       f"which takes away {_gone(1 - target / start)}, and Meternaut did not check that or that the charge falls in step with {name or ('it' if many == 1 else 'them')}."
                        if numbers else " The AI proposes a change, and Meternaut did not check it.")
     elif form == "share_of_days":
-        text = paid + (f" The AI says it is needed {days} days of every {span}, so the change would turn it off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "
-                       "Those days are the AI's own, and Meternaut did not check them." if _whole(days) and _whole(span) else " The AI says it is needed only on some days, and Meternaut did not check that.")
+        text = paid + (f" The AI says {one} is needed {days} days of every {span}, so the change would turn {one} off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "
+                       "Those days are the AI's own, and Meternaut did not check them." if _whole(days) and _whole(span) else f" The AI says {one} is needed only on some days, and Meternaut did not check that.")
     elif form == "assumed":
         pair = [round(share * 100) for share in away] if isinstance(away, list) and len(away) == 2 and all(_number(share) is not None for share in away) else []
         said = f"{pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent" if pair else "a share"
@@ -702,7 +722,7 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
         if row.form == "quantity":  # the share is the window's: say when the meter's last week is not the window's mean
             got = rates(registry[row.meters[0]])
             more["moved"] = got.since is not None and abs(got.week - got.since) > DIFFER * max(got.week, got.since)
-        said = {key: (word(value) or "other" if key == "unit" else value) for key, value in row.said.items()} if row.form != "alternative" else {}  # the unit of a meter is a word of the platform, shown through the check of the tools
+        said = {key: (word(value) or "other" if key == "unit" else value) for key, value in row.said.items() if key not in WORDS_FOR_A_PERSON} if row.form != "alternative" else {}  # the unit of a meter is a word of the platform, shown through the check of the tools
         if row.alts:  # a switch: the words of the price (through the same check), its list price, the rate of the bill against list and the shares that remain
             more["alternatives"] = [{"meter": alt["meter"], "words": [_plain(text, word) for text in alt["words"]], "list": alt["list"], "ratio": alt["ratio"],
                                      "remains": [round(alt["remains"][0], 4), round(alt["remains"][1], 4)]} for alt in row.alts]

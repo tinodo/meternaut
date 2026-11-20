@@ -797,7 +797,8 @@ class TheBriefOfAGroup(unittest.TestCase):
         one = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
         single = brief.build_brief(only_case(one), one.store.plans_open()[0], now=WEB_NOW, may_answer=True)
         self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk.level), (single.answers, single.change, single.who_acts, single.undo, single.risk.level))
-        self.assertEqual(self.b.risk.text, "For the first of them, t" + single.risk.text[1:], "the measurement that a case keeps is that of the first resource, and the risk says so")
+        reason, _, rest = single.risk.text.partition(". ")
+        self.assertEqual(self.b.risk.text, "Other resources can depend on them. For the first of them, t" + rest[1:], "the measurement that a case keeps is that of the first resource, and the risk says so")
         self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (1830.0, "Expected", 61.0))
         self.assertIn("60 resources", self.b.saving.basis)
         self.assertEqual(self.b.options, ())
@@ -955,7 +956,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        self.assertIn("If you answer: Meternaut makes no change for this kind of finding yet. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
+        self.assertIn("If you answer: The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name. If you act, you do it yourself in Azure with your own rights.", letter.text)
         for repeated in ("Covers", "Together they cost", "Charges it would shrink", "Whose is it"):
             self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")

@@ -466,14 +466,17 @@ MAIN_WORDS = {  # what the approval letter of each kind measured on main (f84596
     "older check, empty-app-service-plan, cost not read": 167, "older check, stopped-vm, cost not read": 159, "older check, orphan-private-endpoint, cost not read": 159,
     "change, two people, first stage": 165, "change, two people, second stage": 165, "change, two people, mine stage": 165,
     "change, two people, stale stage": 165, "change, two people, alone stage": 165,
-    "advice, a setting that Meternaut cannot change": 276, "advice, a gateway with no setting to change": 265}  # the two kinds of the invented gateway are new (20 November 2026), so their size is the one that they had when they were added; the four kinds of Azure Advisor with no figure are no kinds here: nobody is asked about them, so there is no letter to hold to a size
+    "advice, a setting that Meternaut cannot change": 268, "advice, a gateway with no setting to change": 267}  # the two kinds of the invented gateway are new (20 November 2026), so their size is the one that they have: 276 and 265 when they were added, and 268 and 267 after the paragraph under the figure was made shorter and the answer said that the AI named no setting; the four kinds of Azure Advisor with no figure are no kinds here: nobody is asked about them, so there is no letter to hold to a size
 ASKS_WHAT_IT_DOES = "the sentence of what is asked names what Meternaut would do (whether to let Meternaut make this change) in the place of whether to approve this change"
+RATE_AND_NO_SETTING = "the figure says which rate the cost is, and what an answer does says that the AI named no setting for Meternaut to change"
 GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
-    "advice, a switch with names": (2, "what could go wrong says that nothing was measured of its use, in the place of a sentence about traffic"),
-    "advice, reduce (a number that a tool read)": (43, "the figure says what the bill shows, what the change does to it and which number is the bill's and which is the AI's, which kind of resource it is about, and what could go wrong says what the second AI doubts"),
-    "advice, schedule": (28, "the figure says which kind of resource it is about, on how many days of how many the change turns the resource off and which numbers are the AI's, and what could go wrong says what the second AI doubts"),
-    "advice, a group of many resources": (22, "the row that says why the finding is a lead, what could go wrong in the words of what was measured, and what an answer does for this kind of finding"),
-    "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Advisor's estimate"),
+    "advice, a switch with names": (16, "the figure says which rate the cost is, what could go wrong says that other resources can depend on a firewall and that nothing was measured of its use, and what an answer does says that the AI named no setting"),
+    "advice, reduce (an assumed share)": (3, RATE_AND_NO_SETTING),
+    "advice, reduce (a number that a tool read)": (34, "the figure says what the bill shows, what the AI says that the change does to it and which number Meternaut checked, which kind of resource it is about, and what could go wrong says what the second AI doubts"),
+    "advice, remove": (1, "the title and the question say that part of it is removed, and what an answer does says that the AI named no setting for Meternaut to change"),
+    "advice, schedule": (35, "the figure says which kind of resource it is about, which rate the cost is, on how many days of how many the change turns the resource off and which numbers are the AI's, and what could go wrong says what the second AI doubts"),
+    "advice, commit": (6, RATE_AND_NO_SETTING),
+    "advice, a group of many resources": (35, "the row that says why the finding is a lead, which rate the cost is, why the risk is high and what was measured of the use, and what an answer does for a finding that names no setting"),
     "change, stop-vm": (13, ASKS_WHAT_IT_DOES), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
     "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, scale-vpn-gateway": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
     "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES)}
