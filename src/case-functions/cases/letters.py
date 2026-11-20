@@ -271,7 +271,8 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     undo = (("Undo", _data(brief.undo.short or brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half
-    return (owner, ("If you approve", _data(plain_sentences(brief.change, 200), 200) + ("" if "own permissions" in brief.change else " It runs with your own permissions.") + two), *undo,
+    said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
+    return (owner, ("If you approve", _data(plain_sentences(said, 200), 200) + ("" if "own permissions" in said else " It runs with your own permissions.") + two), *undo,
             ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200)))
 
 

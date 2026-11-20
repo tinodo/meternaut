@@ -61,7 +61,7 @@ class MissingDataIsNotZero(unittest.TestCase):
                 self.assertIn(f"finding 1: {HELD_UNPROVEN}", h.notes)
                 plan = made_before(h, case)
                 self.assertTrue(plan.title.startswith("Check whether the thing thing-1"), plan.title + " (a kind that the brief has no words for is said in the words of the type segment of its id)")
-                said = "The MetricA metric was 0 in 30 days, 19 of them with a value." if label == "19 of 30 days" else brief.NOT_MEASURED_USE  # 19 days of nil are a measurement and no measured zero
+                said = f"{brief.NOT_KNOWN_DEPENDS} The MetricA metric was 0 in 30 days, 19 of them with a value." if label == "19 of 30 days" else brief.NOT_MEASURED_USE  # 19 days of nil are a measurement and no measured zero: what a measurement cannot say comes first
                 self.assertTrue(plan.could_go_wrong.startswith(said), plan.could_go_wrong)
 
     def test_a_deletion_with_a_measured_zero_on_every_resource_of_a_kind_that_others_do_not_share_stays_a_deletion(self):
@@ -153,7 +153,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
                 self.assertEqual(b.check_first, CHECK_FIRST)
                 self.assertEqual((b.risk.level, b.risk.text), ("high", NOTHING_MEASURED))
                 self.assertEqual(stake.chips_of(b), ("High risk if you act", "Low confidence", "Answering changes nothing in Azure"))
-                self.assertEqual((b.change, b.undo.how), (brief.ADVICE_NONE, ""), "answering changes nothing in Azure, and the page says what an answer does apart from the risk")
+                self.assertEqual((b.change, b.undo.how), (brief.ADVICE_CHANGE, ""), "a look proposes no change: answering changes nothing in Azure, and the page says what an answer does apart from the risk")
 
     def test_the_page_the_card_and_the_letter_say_the_two_things_apart_and_never_low_risk(self):
         case = endpoint_case()
@@ -162,7 +162,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
         self.assertEqual(reply.headings(1), ["Check whether the private endpoint pe-apim-demo is still used"])
         self.assertEqual(reply.main.find("p", class_="chips").text(), "High risk if you act Low confidence Answering changes nothing in Azure")
         self.assertIn(NOTHING_MEASURED, reply.main.text())
-        self.assertIn(brief.ADVICE_NONE, reply.main.text())
+        self.assertIn(brief.ADVICE_CHANGE, reply.main.text())
         self.assertIn("Check first", reply.headings(2))
         for line in CHECK_FIRST:
             self.assertIn(line, text)
@@ -187,7 +187,7 @@ class AdviceSaysNoMoreThanItKnows(unittest.TestCase):
                                 facts={"basis": "no-usage", "proposal": "delete", "metrics": {"MetricA": 0}, "metricDaysWithData": {"MetricA": 27}, "metricDays": {"MetricA": 30}})
         b = brief.build_brief(case, make_advice(resource_id=DISK, resource_name="disk-demo", resource_group="rg-platform"), now=WEB_NOW, may_answer=True)
         self.assertEqual(b.headline, "Consider deleting the disk disk-demo in group rg-platform")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'The MetricA metric was 0 in 30 days, 27 of them with a value. The second AI says: "A monthly job may need the headroom."'))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'Meternaut does not know what depends on it. The MetricA metric was 0 in 30 days, 27 of them with a value. The second AI says: "A monthly job may need the headroom."'))
         self.assertEqual((b.check_first, stake.chips_of(b)[0]), ((), "Medium risk if you act"))
         self.assertIn("with a value on 27 of those days", next(f.value for f in b.facts if f.label == "MetricA"))
 

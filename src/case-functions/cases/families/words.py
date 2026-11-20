@@ -47,6 +47,7 @@ class Words:
     short_undo: str = ""  # a short undo of whole sentences (what to set back, what it does not bring back, where the command is), for a card and a letter, which never cut a command in half: empty when the undo may be cut as it is
     confirm: bool = False  # the change asks once more before the sign-in, although it can be undone: it changes a real resource
     ask: str = ""  # what the person is asked to let Meternaut do, as the end of "You are asked whether to let Meternaut ...": empty when the headline in lower case says it
+    short_change: str = ""  # what changes, for a card and a letter, in whole short sentences that keep the caveat that nothing else is promised: empty when `change` may be cut by sentences as it is
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,7 @@ TYPE_WORDS = {
     "microsoft.resources/resourcegroups": ("Resource group", "resource group"),
 }
 PLAIN_WORD = re.compile(r"[A-Z]?[a-z]+")  # a plain word of a type segment, against an acronym ("IP") or a name that has a capital inside it ("SignalR"), which are kept as they are
+VERSION_TAIL = re.compile(r"(?<=[a-z])[vV]\d+$")  # the version that a type segment ends in ("serverGroupsv2"): a person says "server group"
 
 
 def _singular(word: str) -> str:
@@ -278,8 +280,9 @@ def _singular(word: str) -> str:
 
 
 def type_noun(segment: str) -> str:
-    """The noun that the type segment of an id says: its camel case in words, the last one in the singular, an acronym ("IP") and a name with a capital inside it ("signalR" is "SignalR") as they are."""
-    pieces = WORD.findall(segment)
+    """The noun that the type segment of an id says: its camel case in words, the last one in the singular, an acronym ("IP") and a name with a capital inside it ("signalR" is "SignalR") as they are,
+    and a version that it ends in left out ("serverGroupsv2" is "server group")."""
+    pieces = WORD.findall(VERSION_TAIL.sub("", segment) or segment)
     if len(pieces) > 1 and len(pieces[-1]) == 1 and pieces[-1].isupper():
         pieces[-2:] = [pieces[-2] + pieces[-1]]
     names = [piece.lower() if PLAIN_WORD.fullmatch(piece) else piece[:1].upper() + piece[1:] for piece in pieces]
@@ -359,13 +362,20 @@ def measured_text(pre: dict) -> str:
 
 
 def compared_text(check: object) -> str:
-    """What the check after a change of `change-setting` says of the other numbers and flags that were sent, from what it kept: which ones Azure also changed, or that they could not be compared; empty when
-    they were compared and none differs. A text is not compared, and the plan says so."""
+    """What the check after a change of `change-setting` says of the other numbers and flags that were sent, from what it kept: which ones Azure also changed (the path of each, as Azure names it), or that
+    they could not be compared; empty when they were compared and none differs. A text is not compared, and the plan says so."""
     if not isinstance(check, dict):
         return ""
     if isinstance(check.get("differences"), str) and check["differences"]:
-        return f"Azure also changed: {check['differences']}."
+        return also_changed(check["differences"])
     return "Meternaut could not compare the other numbers and flags with what it sent." if check.get("compared") is False else ""
+
+
+def also_changed(paths: str) -> str:
+    """The sentence that says which numbers or flags Azure also changed, from the paths that the check kept ("properties.x" or "properties.x, properties.y and 2 more"): the page, the card and the letter say it
+    the same way."""
+    many = "," in paths or " and " in paths
+    return f"Azure also changed the {'numbers or flags' if many else 'number or flag'} at {paths.rstrip('.')}."
 
 
 def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
@@ -382,6 +392,9 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
     if len(short) + len(caveat) + len(pointer) + 2 > 150:  # a card and a letter have room for three short sentences (a line of a letter holds 160 characters), and a sentence is never cut
         short = "Set the numbers back to what they were in the Azure portal."
     short = f"{short} {caveat} {pointer}"
+    sent = f"Meternaut sends the {kind} back to Azure as it was read, with this change, {said}."
+    if len(sent) > 120:  # a letter has room for 200 characters: the sentence that says that nothing else is promised is always kept, and this one is made shorter
+        sent = f"Meternaut sends the {kind} back to Azure as it was read, with the numbers lowered."
     return Words(
         headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
         change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change, {said}. It uses your own permissions. "
@@ -396,7 +409,8 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
         level="medium",
         undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right. "
               "Setting it back does not bring back what the lower number cut off meanwhile."),
-        reversible=True, short_undo=short, confirm=True, ask=f"scale down the {kind} {thing} in resource group {group} by lowering {said}")
+        reversible=True, short_undo=short, confirm=True, ask=f"scale down the {kind} {thing} in resource group {group} by lowering {said}",
+        short_change=f"{sent} It cannot promise that nothing else changes. It uses your own permissions.")
 
 
 def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:

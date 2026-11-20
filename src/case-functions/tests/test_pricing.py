@@ -749,8 +749,8 @@ class TheQuantityOfAMeter(unittest.TestCase):
         same = {"lowUsd": 66.67, "highUsd": 66.67, "billUsd": 100.0, "weekUsd": 100.0, "lines": 1, "resources": 1}
         ratio = {"action": "reduce", "price": {**same, "form": "ratio", "from": 12.0, "to": 4.0, "on": "units"}}
         text = pricing.saved({pricing.KEY: pricing.combine([ratio] * 6, 6)}).basis
-        self.assertIn("The tools read units as 12 on each of them, and Meternaut checked that. The AI says the change would lower it to 4 on each of them, which takes away 67 percent of it, "
-                      "and Meternaut did not check that or that the charge falls in step with units.", text)
+        self.assertIn("The tools read units as 12 on each of them, and Meternaut checked that. The AI says the change would lower it to 4 on each of them, which takes away 67 percent of it. "
+                      "Meternaut did not check that. Nor did it check that the charge falls in step with units.", text)
         days = {"action": "schedule", "price": {**same, "form": "share_of_days", "days": 5, "span": 7}}
         text = pricing.saved({pricing.KEY: pricing.combine([days] * 6, 6)}).basis
         self.assertIn("The AI says each is needed 5 days of every 7, so the change would turn each off on 2 of every 7 days, which takes away 29 percent of it.", text)
@@ -1268,7 +1268,7 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         self.assertEqual(removed.basis, "At the rate of the last 7 days this resource costs about $100 a month for what the change would remove. That comes from your bill.")
         ratio = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))))
         self.assertEqual(ratio.basis, "At the rate of the last 7 days this resource costs about $100 a month for what the change would shrink. The tools read units as 12, and Meternaut checked that. "
-                                      "The AI says the change would lower it to 4, which takes away 67 percent of it, and Meternaut did not check that or that the charge falls in step with units.")
+                                      "The AI says the change would lower it to 4, which takes away 67 percent of it. Meternaut did not check that. Nor did it check that the charge falls in step with units.")
         days = pricing.saved(self.facts(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7}))))
         self.assertEqual(days.basis, "At the rate of the last 7 days this resource costs about $60.00 a month for what the change would shrink. The AI says it is needed 5 days of every 7, "
                                      "so the change would turn it off on 2 of every 7 days, which takes away 29 percent of it. Those days are the AI's own, and Meternaut did not check them.")

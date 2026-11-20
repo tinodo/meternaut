@@ -77,7 +77,7 @@ class AFindingThatAnAutomationManagesIsAsked(Base):
         plan = self.approvals.advise(case, (TINO,))
         found = brief.build_brief(case, plan, now=self.now, may_answer=True)
         self.assertEqual((found.kind, found.state, found.hold, found.answers), ("advice", "open", None, ("approve", "decline", "not_mine", "ask", "later")))
-        self.assertEqual((found.change, found.heads_up), (brief.ADVICE_NONE, TWO_DAYS))
+        self.assertEqual((found.change, found.heads_up), (brief.ADVICE_CHANGE, TWO_DAYS))
         self.assertEqual(self.approvals.check_approve(BOB, plan.plan_id, plan.code)[1].kind, "refused_state", "there is no change to approve, and no sign-in to Azure is begun")
         self.assertTrue(self.answer(plan, "decline", reason="handled").ok)
 

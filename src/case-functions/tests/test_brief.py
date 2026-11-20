@@ -199,10 +199,10 @@ class TheBriefOfAdvice(unittest.TestCase):
         b = self.brief
         self.assertEqual((b.kind, b.family, b.state), ("advice", "advise", "open"))
         self.assertEqual(b.headline, "Look at the virtual machine oversized-vm-1 in group team-apps-rg, because it may be larger than its use needs")
-        self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_NONE, brief.ADVICE_WHO, ""), "a finding of the investigation with no setting to change: Meternaut makes no change for this kind yet")
+        self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_CHANGE, brief.ADVICE_WHO, ""), "a finding of the investigation that asks for a look and proposes no change: nothing changes in Azure")
         self.assertEqual((b.undo.reversible, b.undo.how), (True, ""), "an answer to advice changes nothing, so there is nothing to say about an undo")
         self.assertEqual(b.risk, brief.acting_risk(self.case), "the risk is that of doing what the title suggests, and answering changes nothing in Azure")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'The Percentage CPU metric was 3.2% in 30 days. The second AI says: "A monthly job may need the headroom."'),
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'Meternaut does not know what depends on it. The Percentage CPU metric was 3.2% in 30 days. The second AI says: "A monthly job may need the headroom."'),
                          "what could go wrong is what was measured of the use and what the second AI doubts, and no stock sentence")
         self.assertEqual(b.answers, ("approve", "decline", "not_mine", "ask", "later"))
         self.assertEqual(b.where.kind, "Virtual machine")
@@ -650,7 +650,7 @@ class TheRiskFollowsTheVerbOfTheTitle(unittest.TestCase):
                 measured = dataclasses.replace(case, facts={**case.facts, "metrics": {"Percentage CPU": 3.2}, "metricUnits": {"Percentage CPU": "Percent"}, "metricDays": {"Percentage CPU": 30},
                                                             "metricDaysWithData": {"Percentage CPU": 28}})
                 self.assertEqual(brief.acting_risk(measured).text,
-                                 'The Percentage CPU metric was 3.2% in 30 days, 28 of them with a value. The second AI says: "It may hold data that somebody wants."')
+                                 'Meternaut does not know what depends on it. The Percentage CPU metric was 3.2% in 30 days, 28 of them with a value. The second AI says: "It may hold data that somebody wants."')
 
     def test_a_removal_is_a_medium_risk_and_a_commitment_says_what_it_binds(self):
         removing = self.case("remove")

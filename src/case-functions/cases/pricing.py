@@ -591,7 +591,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
     elif form == "ratio":
         name = label(on) if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
         text = paid + (f" The tools read {name or ('one of its numbers' if many == 1 else 'one of their numbers')} as {start:g}{each}, and Meternaut checked that. The AI says the change would lower it to {target:g}{each}, "
-                       f"which takes away {_gone(1 - target / start)}, and Meternaut did not check that or that the charge falls in step with {name or ('it' if many == 1 else 'them')}."
+                       f"which takes away {_gone(1 - target / start)}. Meternaut did not check that. Nor did it check that the charge falls in step with {name or ('it' if many == 1 else 'them')}."
                        if numbers else " The AI proposes a change, and Meternaut did not check it.")
     elif form == "share_of_days":
         text = paid + (f" The AI says {one} is needed {days} days of every {span}, so the change would turn {one} off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "

@@ -342,11 +342,12 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     place = f" in resource group {brief.where.group}" if brief.where.group else ""
     named = f", subscription {brief.where.subscription_name or brief.where.subscription}" if (brief.where.subscription_name or brief.where.subscription) else ""
     real = brief.undo.reversible and brief.confirm  # a change that can be undone and changes a real resource: the words say what is true, and the old words stay for what cannot be undone
-    body = join([head(f"Confirm: {title}", "This changes a real resource. Nothing is changed until you confirm here." if real else "This change cannot be undone. Nothing is changed until you confirm here."),
+    body = join([head("Confirm this change", "This changes a real resource. Nothing is changed until you confirm here." if real else "This change cannot be undone. Nothing is changed until you confirm here."),
+                 paragraph(fmt("<strong>{title}</strong>", title=title)),  # the title has its own line: a heading with a colon in it and a title with one made two
                  notice("warning", "This changes a real resource" if real else "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
                  fmt('<p class="m">{where}</p>', where=f"This is the {brief.where.noun} {brief.where.name}{place}{named}."),
                  answer])
-    return page(ctx, f"Confirm: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
+    return page(ctx, f"Confirm this change: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
 
 
 def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
