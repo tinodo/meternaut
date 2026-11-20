@@ -304,6 +304,15 @@ class ChangeSetting(Family):
             raise Cannot("do-not-touch")
         return aims, located
 
+    def own(self, plan: PlanRecord) -> str:
+        """The key of proposals.CANNOT that refuses the plan's own target (the count gate, a path or a number that is no plain lowering), or "": the check that the re-check right before the write makes
+        (`aim_of`), with no read. A plan that was made under another gate is judged by the gate of today, whatever the finding proposes now."""
+        try:
+            aim_of(plan)
+        except Stop as stop:
+            return stop.__cause__.key if isinstance(stop.__cause__, Cannot) else "unsupported"
+        return ""
+
     def facts(self, env: Env, lead: object, located: Located | None = None) -> dict:
         """What the plan needs from Azure, in this order: the settings, the owner's gates, the do-not-touch note (`closed`), the api-version that the provider lists, the resource and its locks. Raises Cannot."""
         aims, located = self.closed(env, lead)
