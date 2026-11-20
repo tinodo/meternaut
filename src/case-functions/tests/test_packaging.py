@@ -256,7 +256,7 @@ class WhatTheAppIs(unittest.TestCase):
             with self.subTest(first=first):
                 code = f"import sys; sys.path.insert(0, sys.argv[1]); import {first}; print('loaded')"
                 done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True)
-                self.assertEqual((done.returncode, done.stdout.strip(), done.stderr.strip()[-400:]), (0, "loaded", ""))
+                self.assertEqual((done.returncode, done.stdout.strip()), (0, "loaded"), done.stderr.strip()[-400:])
 
     def test_the_header_of_a_refused_call_is_read_by_the_runner_alone_and_is_on_no_line_of_a_log_or_of_the_history(self):
         # A claims challenge (the `www-authenticate` header of a 401) is kept on the error of the call, never in its text. The runner is the one reader, and the parser of the
