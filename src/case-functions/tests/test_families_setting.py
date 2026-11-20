@@ -1135,6 +1135,17 @@ class WhenThePutFails(unittest.TestCase):
                 tick(world.timer)
                 self.assertEqual(len(world.arm.writes_of("PUT")), 1, "nothing makes a second try")
 
+    def test_a_claims_challenge_asks_for_the_check_once_and_the_one_write_that_follows_it_is_the_only_one_that_is_stored(self):
+        world = Real()
+        plan = world.plan()
+        world.arm.write_answers = [(401, challenge(), b'{"error":{"code":"InsufficientClaims","message":"a check is needed"}}')]
+        first = world.run(plan)
+        self.assertEqual((first.kind, first.action.state), ("step_up", "queued"))
+        self.assertEqual((world.store.plan_get(plan.plan_id).state, world.arm.puts, len(world.arm.writes_of("PUT"))), ("approved", [], 1), "nothing was written and the plan waits for the check")
+        again = execute(world.services(plan), world.store.action_get(plan.plan_id), approved_digest=plan.digest)
+        self.assertEqual((again.kind, again.action.state), ("ran", "done"))
+        self.assertEqual((len(world.arm.puts), len(world.arm.writes_of("PUT")), world.live()), (1, 2, 2), "two requests were sent, and Azure carried out one")
+
     def test_a_timeout_after_the_request_was_sent_is_not_known_and_nothing_writes_again(self):
         world = Real()
         world.arm.timeout_put = True
