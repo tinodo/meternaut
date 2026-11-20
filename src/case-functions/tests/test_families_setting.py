@@ -813,6 +813,19 @@ class TheRequestThatAsksBecomesTheRequestOfTheChange(unittest.TestCase):
         self.assertEqual(world.approvals.upgrade((OID,)), [])
         self.assertEqual(world.store.plan_get(plan.plan_id).state, "open")
 
+    def test_a_read_that_fails_takes_nothing_back_of_an_open_change_and_a_request_that_asks_says_that_azure_could_not_be_read(self):
+        world = Real()
+        plan = world.plan()
+        world.arm.provider_status = 503
+        self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual(world.store.plan_get(plan.plan_id), plan, "a blip of Azure does not take back a request that a person may be about to answer")
+        world = Real()
+        with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):
+            asked = self.asked(world)
+        world.arm.provider_status = 503
+        self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual(world.store.plan_get(asked.plan_id).preconditions[proposals.CANNOT_KEY], "unreadable")
+
     def test_the_watch_step_says_what_it_did_in_the_history_and_in_one_sentence_for_each_kind(self):
         from cases import upkeep
         with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):

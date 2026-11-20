@@ -845,8 +845,8 @@ class Approvals:
                     continue
                 view = _with(case, status="proposed")  # the case of an open request of a change waits for an OK, and the rules of making a plan ask for a proposal
                 made, cannot = self._make(view, _lead_of(case), approvers, replacing=plan.plan_id)
-                if plan.family == SETTING and made is not None and made.target == plan.target:
-                    continue  # it still holds
+                if plan.family == SETTING and (cannot == "unreadable" or made is not None and made.target == plan.target):
+                    continue  # it still holds, or Azure could not be read just now: a failed read takes nothing back
                 if plan.family == ADVISE and made is None:
                     if (plan.preconditions or {}).get(proposals.CANNOT_KEY, "") != cannot and not self.store.decisions_of_plan(plan.plan_id):
                         self._keep_reason(plan.plan_id, cannot)
