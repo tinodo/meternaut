@@ -9,7 +9,8 @@ from collections import Counter
 from dataclasses import replace
 from unittest import mock
 
-from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, answer, banned_in, entry, finding, key_of, loop_for, meter_line, metrics, resource, verdicts)
+from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, ScriptedAgent, answer, banned_in, disks_estate, entry, finding, key_of, loop_for, meter_line, metrics, resource,
+                              verdicts)
 
 from cases import agents, brief, investigate, models, pricing, proposals
 from cases.toolbox import meter_word
@@ -75,6 +76,39 @@ class TheKeyOfTheFacts(unittest.TestCase):
         made = investigate._facts(investigate.Finding(1, basis="oversized", proposal="change", asked="delete"), {"MetricA": 0}, 10.0, {}, 1)
         self.assertNotIn(proposals.KEY, made, "`proposal` is the word of the finding's proposal, and `change` is the digest of the saving")
         self.assertNotIn(proposals.KEY, (*made, pricing.KEY, models.GROUP_FACT, brief.IMPACT, brief.ADVISOR_KEY))
+
+
+class WithTheRealTools(unittest.TestCase):
+    """The real tools over the fake estate of test_toolbox, and an agent that copies numbers from their answers: a setting that copies what a tool returned is kept, and one that does not is dropped."""
+
+    def run_claim(self, set_, **more):
+        def claim(listed, measured):
+            cols = listed["cols"]
+            row = next(row for row in listed["rows"] if row[cols.index("diskSizeGB")] == 128)
+            handle = row[cols.index("handle")]
+            change = {"action": "reduce", "effects": [], "how": "Make it smaller.", "set": [{"handle": handle, **item} for item in set_], **more}
+            return [finding(handles=[handle], basis="oversized", proposal="change", evidence=[entry(handle, "MetricX", 0)], change=change)]
+
+        estate, real = disks_estate()
+        h = Harness(ScriptedAgent(claim), real, with_store=True)
+        h.go()
+        (case,) = [case for case in h.store.cases_recent() if case.resource_name == "disk-a"]
+        return h, case.facts.get(proposals.KEY)
+
+    def test_a_setting_that_copies_what_the_tools_returned_is_kept(self):
+        h, kept = self.run_claim([{"property": "diskSizeGB", "from": 128, "to": 64}])
+        self.assertEqual(kept, {"set": [{"path": "diskSizeGB", "from": 128, "to": 64}]})
+        self.assertEqual([note for note in h.notes if "dropped" in note], [])
+
+    def test_a_setting_that_does_not_is_dropped_and_the_case_is_opened_all_the_same(self):
+        for label, bad in (("an old value that the tools did not return", {"property": "diskSizeGB", "from": 127, "to": 64}),
+                           ("a word that the tools returned", {"property": "diskState", "from": "Unattached", "to": "Attached"}),
+                           ("a property that the tools did not show", {"property": "iops", "from": 500, "to": 250})):
+            with self.subTest(label):
+                h, kept = self.run_claim([bad])
+                self.assertIsNone(kept)
+                self.assertEqual(h.result.cases, 1, "the finding is kept: the case of the resource is opened")
+                self.assertEqual(len([note for note in h.notes if note.startswith("finding 1: code dropped 1 of 1 setting")]), 1)
 
 
 class WhatTheAnswerHolds(unittest.TestCase):
