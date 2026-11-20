@@ -352,11 +352,18 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
         self.assertIn("What the AI says you could do. Meternaut did not check the wording.", [block.text for block in page.blocks if block.kind == "paragraph"])
         self.assertIn(HOW, quotes(page))
 
-    def test_each_reason_that_a_change_cannot_be_made_is_said_in_its_own_sentence(self):
+    def test_each_reason_that_a_change_cannot_be_made_is_said_in_its_own_sentence_on_the_page_the_card_and_the_letter(self):
+        self.assertEqual(len(proposals.CANNOT), len(set(proposals.CANNOT.values())), "no two reasons share a sentence")
         for key, sentence in proposals.CANNOT.items():
-            case, plan = gateway(SETTING, precondition=key)
-            with self.subTest(key):
-                self.assertIn(sentence, brief_of(case, plan).change)
+            case, plan = gateway(BOTH, precondition=key)
+            self.assertIn(sentence, brief_of(case, plan).change)
+            for surface, shown in surfaces(case, plan).items():
+                with self.subTest(key=key, surface=surface):
+                    text = read(shown)
+                    self.assertIn(f"Meternaut cannot make this change itself. {sentence} Your answer is recorded with your name.", text)
+                    for stock in ("makes no change for this kind of finding yet", "Meternaut changes nothing in Azure.", "did not name a setting", "Traffic that you cannot see"):
+                        self.assertNotIn(stock, text, "a request with a setting and a reason says the reason, and no sentence that fits any request")
+                    self.assertEqual([], problems(dataclasses.replace(shown, name=f"{key}, {surface}")))
 
     def test_a_finding_with_no_setting_says_that_the_ai_named_none_and_so_nothing_is_there_to_change(self):
         case, plan = gateway()

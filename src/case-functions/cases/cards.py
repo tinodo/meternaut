@@ -216,8 +216,10 @@ def _toggle(id_: str, title: str, tooltip: str, targets: Sequence[tuple[str, boo
 def _sure(brief: Brief, yes_url: str) -> dict:
     """The question before a change that cannot be undone, or that changes a real resource, hidden until "Approve" is pressed: what is lost and where (or that nothing changes until "Yes"), and two
     buttons, the safe "No, go back" first."""
-    where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + (f" in resource group {md(brief.where.group, 90)}" if brief.where.group else "")
-    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}" if not brief.undo.reversible else f"This changes a real resource: {where}. Nothing is changed until you press Yes."
+    place = f" in resource group {md(brief.where.group, 90)}" if brief.where.group else ""
+    where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + place
+    here = " ".join(bit for bit in (f"the {md(brief.where.noun, 40)}", md(brief.where.name, 120)) if bit) + place  # in words that go on after a colon, as a sentence does
+    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}" if not brief.undo.reversible else f"This changes a real resource: {here}. Nothing is changed until you press Yes."
     return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
         _block("sure-text", text, weight="Bolder"),
         {"type": "ActionSet", "id": "sure-actions", "actions": [

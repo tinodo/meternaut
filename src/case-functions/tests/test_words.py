@@ -578,7 +578,7 @@ SPEAKS_AS_I = {"first-contact letter", "Teams card, the first one"}  # the two t
 ABBREVIATED = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}\b|\b\d{1,2} (?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b")  # "Wed 4 Nov", "5 Nov 10:30 UTC": outside the Details a day is "4 November"
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
-ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
+ISO_DATE = re.compile(r"(?<!--api-version )(?<!api-version=)\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details (the version of the interface in a command is no day)
 OLD_MONEY = re.compile(r"\b(?:saves|could save|costs),\s+(?:scenario|expected|verified)\b|\bbased on the \d+ (?:bill )?lines?\b|\ba year is twelve times the month\b", re.IGNORECASE)  # the money line of the old pages: a level as a label, "Based on the 2 bill lines" and the note that a year is twelve months
 OLD_RISK = re.compile(r"(?:^|[.!?]\s+)risk[:,]\s+(?:low|medium|high)\b", re.IGNORECASE)  # the risk of the old pages said as a label that starts a sentence ("Risk: high.", "Risk, medium:"); the chip says "Medium risk, High confidence"
 DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)

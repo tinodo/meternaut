@@ -382,13 +382,13 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
         short = "Set the numbers back to what they were in the Azure portal. The page has the command."
     return Words(
         headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
-        change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change: {said}. It uses your own permissions. "
+        change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change, {said}. It uses your own permissions. "
                 f"A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes. Afterwards it reads the {kind} again and checks "
                 "the number, and that every other property that it sent is still what it sent."),
         rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
                    f"note, and it is in a resource group on the owner's list for real changes.{again}"),
         risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
-              + (f"What it checked: {cited}, and that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
+              + (f"{cited}, and Meternaut checked that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
               + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
               f"If your account may not change the {kind}, Azure refuses and nothing changes."),
         level="medium",

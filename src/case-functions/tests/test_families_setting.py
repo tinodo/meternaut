@@ -327,7 +327,7 @@ class ThePlan(unittest.TestCase):
         plan = world.plan(facts={proposals.KEY: {"set": [{"path": "CAPACITYunits", "from": 4, "to": 3}, {"path": "sku.capacity", "from": 2, "to": 1}]}})
         self.assertEqual(plan.target["set"], [{"path": "capacityUnits", "from": 4, "to": 3}, {"path": "sku.capacity", "from": 2, "to": 1}])
         self.assertIn("capacity units from 4 to 3 and sku capacity from 2 to 1", plan.title)
-        self.assertIn("with this change: capacity units from 4 to 3 and sku capacity from 2 to 1", plan.what_changes)
+        self.assertIn("with this change, capacity units from 4 to 3 and sku capacity from 2 to 1", plan.what_changes)
         self.assertIn("--set properties.capacityUnits=4 sku.capacity=2", plan.undo)
 
     def test_each_reason_that_a_plan_cannot_be_made_is_kept_by_the_request_that_asks_instead_and_has_its_words(self):
@@ -1332,7 +1332,7 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         self.assertEqual((approve["type"], approve["title"], approve["tooltip"]), ("Action.ToggleVisibility", "Approve", "Asks once more: this changes a real resource."))
         self.assertNotIn("url", approve)
         self.assertEqual(decline["type"], "Action.OpenUrl")
-        where = f"{b.where.kind} {b.where.name} in resource group {b.where.group}"
+        where = f"the {b.where.noun} {b.where.name} in resource group {b.where.group}"
         self.assertEqual(ids["sure-text"]["text"], f"This changes a real resource: {where}. Nothing is changed until you press Yes.")
         back, yes = ids["sure-actions"]["actions"]
         self.assertEqual((back["title"], yes["title"], yes["type"]), ("No, go back", "Yes, change it", "Action.OpenUrl"))
