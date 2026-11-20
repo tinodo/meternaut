@@ -167,7 +167,7 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
         b = a_brief(plan, case)
         self.assertEqual((b.kind, b.who_acts), ("advice", brief.ADVICE_WHO))
         self.assertEqual(b.who_acts, "If you decide to act, you do it yourself in Azure with your own rights.")
-        self.assertEqual((b.change, b.rechecked), (brief.ADVICE_CHANGE, ""))
+        self.assertEqual((b.change, b.rechecked), (brief.ADVICE_NONE, ""), "nothing in the finding proposes a setting that Meternaut could change: Meternaut makes no change for this kind of finding")
 
 
 class ThePageIsARenderOfTheBrief(unittest.TestCase):
@@ -181,7 +181,7 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 self.assertEqual(reply.status, 200)
                 self.assertEqual(reply.headings(1), [figures.title_of(expected)[1]])
                 found = approve_rows(reply)
-                self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
+                self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"], "in the order of a decision: what is done, what is read again, what could go wrong, how to undo it")
                 self.assertEqual(found["What changes"], expected.change)
                 self.assertEqual(found["Who does it"], expected.who_acts)
                 self.assertEqual(found["Checked again"], expected.rechecked)

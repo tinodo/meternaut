@@ -63,11 +63,12 @@ class TheHeadline(unittest.TestCase):
                 self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", recommendation), f"{verb} the virtual machine vm-1 in group rg-a")
 
     def test_a_change_that_the_finding_names_is_named_by_its_action_and_a_look_says_why_in_one_clause_without_a_colon(self):
-        for action, verb in (("remove", "Consider removing"), ("reduce", "Consider reducing"), ("switch", "Consider switching"), ("schedule", "Consider scheduling"),
-                             ("commit", "Consider a commitment for")):
+        for action, headline in (("remove", "Remove the virtual machine vm-1 in group rg-a"), ("reduce", "Scale down the virtual machine vm-1 in group rg-a"),
+                                 ("switch", "Switch the virtual machine vm-1 in group rg-a"), ("schedule", "Turn off the virtual machine vm-1 in group rg-a when it is not needed"),
+                                 ("commit", "Buy a commitment for the virtual machine vm-1 in group rg-a")):
             with self.subTest(action=action):
                 case = make_case(detector="investigation", recommendation="change", facts={pricing.KEY: {"action": action}})
-                self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "change", case=case), f"{verb} the virtual machine vm-1 in group rg-a")
+                self.assertEqual(headline_of(ADVISE, "vm-1", "rg-a", "microsoft.compute/virtualmachines", "change", case=case), headline)
         measured = {"metrics": {"M": 0}, "metricDaysWithData": {"M": 28}, "proposal": "investigate"}
         for basis, why in (("no-usage", "nothing may be using it"), ("low-usage", "it may be used very little"), ("oversized", "it may be larger than its use needs"),
                            ("duplicate", "it may duplicate another resource"), ("unused-feature", "one of its features may be unused"),
@@ -198,10 +199,11 @@ class TheBriefOfAdvice(unittest.TestCase):
         b = self.brief
         self.assertEqual((b.kind, b.family, b.state), ("advice", "advise", "open"))
         self.assertEqual(b.headline, "Look at the virtual machine oversized-vm-1 in group team-apps-rg, because it may be larger than its use needs")
-        self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_CHANGE, brief.ADVICE_WHO, ""))
+        self.assertEqual((b.change, b.who_acts, b.rechecked), (brief.ADVICE_NONE, brief.ADVICE_WHO, ""), "a finding of the investigation with no setting to change: Meternaut makes no change for this kind yet")
         self.assertEqual((b.undo.reversible, b.undo.how), (True, ""), "an answer to advice changes nothing, so there is nothing to say about an undo")
         self.assertEqual(b.risk, brief.acting_risk(self.case), "the risk is that of doing what the title suggests, and answering changes nothing in Azure")
-        self.assertEqual((b.risk.level, b.risk.text), ("medium", "If you act, what depends on it can slow down or stop."))
+        self.assertEqual((b.risk.level, b.risk.text), ("medium", 'The Percentage CPU metric was 3.2% in 30 days. The second AI says: "A monthly job may need the headroom."'),
+                         "what could go wrong is what was measured of the use and what the second AI doubts, and no stock sentence")
         self.assertEqual(b.answers, ("approve", "decline", "not_mine", "ask", "later"))
         self.assertEqual(b.where.kind, "Virtual machine")
         self.assertEqual(b.where.portal_url, f"https://portal.azure.com/#resource{VM}")
@@ -601,8 +603,8 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         for case in (plain, modelled):
             risk = brief.acting_risk(case)
             self.assertEqual((brief.still_used(case), risk.level, bool(brief.check_first(case))), (True, "high", True))
-            self.assertIn("Nothing proves that it is unused, so acting on it could break something that still uses it.", risk.text)
-            self.assertIn("Traffic that you cannot see from here may depend on it.", risk.text)
+            self.assertIn(brief.NOT_MEASURED_USE, risk.text, "nothing was measured of its use, and that is what could go wrong: no stock sentence about traffic")
+            self.assertNotIn(brief.SHARED_RISK, risk.text)
 
 
 class TheReasonsThatAFindingNeedsAPerson(unittest.TestCase):
@@ -630,32 +632,45 @@ class TheReasonsThatAFindingNeedsAPerson(unittest.TestCase):
 
 
 class TheRiskFollowsTheVerbOfTheTitle(unittest.TestCase):
-    """The sentence of the risk of acting says what the verb of the title does, and not what the basis of the finding would suggest."""
+    """The level of the risk of acting follows what the verb of the title does, and not what the basis of the finding would suggest; what could go wrong is said from the facts of the finding: what
+    was measured of the use (or that nothing was) and what the second AI doubts, never a sentence that fits any request."""
+
+    NOTHING_MEASURED = f'{brief.NOT_MEASURED_USE} The second AI says: "It may hold data that somebody wants."'
 
     @staticmethod
     def case(action, rtype="microsoft.compute/virtualmachines", basis="low-usage"):
         return make_case(detector="investigation", recommendation="change", resource_type=rtype, facts={pricing.KEY: {"action": action}, "basis": basis})
 
-    def test_a_change_that_keeps_the_resource_says_that_what_depends_on_it_can_slow_down_or_stop_whatever_the_basis(self):
-        for action, verb in (("reduce", "Consider reducing"), ("switch", "Consider switching"), ("schedule", "Consider scheduling")):
+    def test_a_change_that_keeps_the_resource_is_a_medium_risk_whatever_the_basis_and_says_what_was_measured_or_that_nothing_was(self):
+        for action, headline in (("reduce", "Scale down the virtual machine"), ("switch", "Switch the virtual machine"), ("schedule", "Turn off the virtual machine")):
             with self.subTest(action=action):
                 case = self.case(action)
-                self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", case.resource_type, "change", case=case).startswith(f"{verb} the virtual machine"))
-                self.assertEqual(brief.acting_risk(case), brief.Risk("medium", "If you act, what depends on it can slow down or stop.", True))
+                self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", case.resource_type, "change", case=case).startswith(headline))
+                self.assertEqual(brief.acting_risk(case), brief.Risk("medium", self.NOTHING_MEASURED, True))
+                measured = dataclasses.replace(case, facts={**case.facts, "metrics": {"Percentage CPU": 3.2}, "metricUnits": {"Percentage CPU": "Percent"}, "metricDays": {"Percentage CPU": 30},
+                                                            "metricDaysWithData": {"Percentage CPU": 28}})
+                self.assertEqual(brief.acting_risk(measured).text,
+                                 'The Percentage CPU metric was 3.2% in 30 days, 28 of them with a value. The second AI says: "It may hold data that somebody wants."')
 
-    def test_a_removal_says_that_nothing_proves_that_it_is_unused_and_a_commitment_says_what_it_binds(self):
+    def test_a_removal_is_a_medium_risk_and_a_commitment_says_what_it_binds(self):
         removing = self.case("remove")
-        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", removing.resource_type, "change", case=removing).startswith("Consider removing the virtual machine"))
-        self.assertEqual(brief.acting_risk(removing), brief.Risk("medium", "Nothing proves that it is unused, so acting on it could break something that still uses it.", True))
+        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", removing.resource_type, "change", case=removing).startswith("Remove the virtual machine"))
+        self.assertEqual(brief.acting_risk(removing), brief.Risk("medium", self.NOTHING_MEASURED, True))
         buying = self.case("commit")
-        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", buying.resource_type, "change", case=buying).startswith("Consider a commitment for the virtual machine"))
+        self.assertTrue(headline_of(ADVISE, "vm-1", "rg-a", buying.resource_type, "change", case=buying).startswith("Buy a commitment for the virtual machine"))
         self.assertEqual(brief.acting_risk(buying), brief.Risk("high", "It commits you to pay for a term.", True))
 
-    def test_a_removal_of_a_resource_that_others_share_is_a_high_risk_in_the_words_of_what_they_may_carry(self):
-        # What was seen: the guard of cases/investigate.py (_hold_delete) holds only a proposal to delete, so a typed removal of a private endpoint is still titled "Consider removing ...".
+    def test_a_removal_of_a_resource_that_others_share_is_a_high_risk_when_nothing_measured_its_use(self):
+        # What was seen: the guard of cases/investigate.py (_hold_delete) holds only a proposal to delete, so a typed removal of a private endpoint is still titled "Remove ...".
         case = self.case("remove", "microsoft.network/privateendpoints", "oversized")
-        self.assertTrue(headline_of(ADVISE, "pe-1", "rg-a", case.resource_type, "change", case=case).startswith("Consider removing the private endpoint"))
-        self.assertEqual(brief.acting_risk(case), brief.Risk("high", "Traffic that you cannot see from here may depend on it.", True))
+        self.assertTrue(headline_of(ADVISE, "pe-1", "rg-a", case.resource_type, "change", case=case).startswith("Remove the private endpoint"))
+        self.assertEqual(brief.acting_risk(case), brief.Risk("high", self.NOTHING_MEASURED, True))
+
+    def test_a_request_of_an_older_check_keeps_the_sentences_that_it_always_said(self):
+        older = make_case(detector="orphan-private-endpoint", recommendation="delete", resource_type="microsoft.network/privateendpoints")
+        self.assertEqual(brief.acting_risk(older), brief.Risk("high", brief.SHARED_RISK, True))
+        disk = make_case(detector="orphan-managed-disk", recommendation="delete")
+        self.assertEqual(brief.acting_risk(disk), brief.Risk("medium", brief.CHANGE_RISK, True))
 
 
 class TheOwner(unittest.TestCase):
@@ -934,7 +949,7 @@ class WhatTheModuleIs(unittest.TestCase):
 
     def test_it_imports_only_the_standard_library_the_records_and_the_words_of_the_families(self):
         allowed = {"__future__", "datetime", "math", "re", "unicodedata", "dataclasses", "typing"}
-        pure = {"costs", "estimate", "pricing"}  # the words and the address of the cost, the table of list prices and the arithmetic of the saving: the next tests hold that they too hold no way to reach Azure
+        pure = {"costs", "estimate", "pricing", "proposals"}  # the words and the address of the cost, the table of list prices, the arithmetic of the saving and the shape of what a finding proposes: the next tests hold that they too hold no way to reach Azure
         for node in ast.walk(ast.parse(self.source)):
             if isinstance(node, ast.Import):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)

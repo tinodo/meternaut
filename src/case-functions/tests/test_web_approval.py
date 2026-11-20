@@ -63,7 +63,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(self.reply.measured(), {"Cost, last 30 days": ("$7.17", "Azure cost lines"), "State": ("Not attached to any virtual machine", "Azure Resource Graph"),
                                                  "Locks and keep tags": ("None found", "Azure, checked by Meternaut")})
         found = self.reply.facts()
-        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
+        self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"])
         self.assertEqual(found["What changes"], "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertTrue(found["Who does it"].startswith("You do it, with your own permissions."), found["Who does it"])
         self.assertIn("Azure checks your rights and makes the change right then.", found["Who does it"])

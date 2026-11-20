@@ -34,6 +34,7 @@ from typing import Callable, Collection, Iterable, Mapping, NamedTuple, Sequence
 
 from .costs import money
 from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
+from .proposals import label
 from .roles import MAX_CITED_NAME, clean_text
 
 KEY = "change"  # the key of the facts of a case
@@ -523,9 +524,28 @@ def _shown(value: float) -> float:
     return float(math.floor(amount + 0.5)) if amount >= 100 else amount
 
 
+def billed(value: float, unit: object = None) -> str:
+    """A quantity as a person says it: "1,440 hours" for the unit "1 Hour", "1,440 units of 100 GB/Month" for any other plain unit, and the bare number when the digest keeps none."""
+    number = f"{value:,.10g}"
+    if not (isinstance(unit, str) and UNIT.fullmatch(unit)):
+        return number
+    one = re.fullmatch(r"1 ([A-Za-z]+)", unit)
+    return f"{number} {one.group(1).lower()}{'' if value == 1 else 's'}" if one else f"{number} units of {unit}"
+
+
+def window(found: Mapping) -> str:
+    """The days that the quantity of a meter covers: those since it began, when it began inside the window, else the last 30."""
+    life = _whole(found.get("life"))
+    return f"the {life} days since it began" if life else f"the last {MONTH} days"
+
+
+def _gone(share: float) -> str:
+    return "all of it" if share >= 1 else f"{round(100 * share)} percent of it"
+
+
 def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> str:
-    """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what a form that is not the bill alone assumes and whose assumption it is
-    (the AI's, which Meternaut did not check), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
+    """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what the bill shows and what the change would do to it, which number is the bill's
+    (Meternaut checked it) and which is the AI's choice (it did not), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
     many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
     uneven = _whole(found.get("uneven"))
     who = f"{many} of the {members} resources" if members and members > many else ("this resource" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
@@ -533,17 +553,21 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
     numbers = _number(start) is not None and _number(target) is not None
     to, now, ratio = _read(target) if form == "alternative" else "", _read(found.get("now")), _number(found.get("ratio"))
-    of_the_ai = "That is the AI's own proposal, and Meternaut did not check it."
     paid = f"{when}{',' if who[0].isdigit() and not when.endswith(',') else ''} {who} paid about {money(base)}{' a month' if _number(found.get('weekUsd')) is not None else ''} for " + (
         "what the change would remove" if form == "none" else now or "what would be switched" if form == "alternative" else "what the change would shrink") + "."
     if form == "quantity":
-        text = paid + (f" The AI proposes to lower the quantity from {start:,.10g} to {target:,.10g}" + (f" in units of {unit}" if isinstance(unit, str) and UNIT.fullmatch(unit) else "") + "."
-                       if numbers else " The AI proposes a lower quantity.") + f" {of_the_ai}"
+        text = paid + (f" The bill shows {billed(start, unit)} of it in {window(found)}. The change would lower that to {billed(target, unit)}, which takes away {_gone(1 - target / start)}. "
+                       f"The old quantity, {billed(start)}, is the bill's own, and Meternaut checked it. The new quantity, {billed(target)}, is the AI's choice, and Meternaut did not check it."
+                       if numbers else " The AI proposes a lower quantity, and Meternaut did not check it.")
     elif form == "ratio":
-        name = f" in {on}" if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
-        text = paid + (f" The AI proposes a change{name} from {start:g} to {target:g}." if numbers else " The AI proposes a change.") + f" {of_the_ai}"
+        name = label(on) if isinstance(on, str) and len(on) <= 24 and NAME.fullmatch(on) else ""
+        what = name or "the number"
+        text = paid + (f" The change would lower {what} from {start:g} to {target:g}, which takes away {_gone(1 - target / start)}. The old number, {start:g}, is what the tools read{' for ' + name if name else ''}, "
+                       f"and Meternaut checked it. The new number, {target:g}, is the AI's choice, and Meternaut did not check it. Meternaut also did not check that the charge falls in step with {what}."
+                       if numbers else " The AI proposes a change, and Meternaut did not check it.")
     elif form == "share_of_days":
-        text = paid + (f" The AI says it is needed {days} days of every {span}." if _whole(days) and _whole(span) else " The AI says it is needed only on some days.") + f" {of_the_ai}"
+        text = paid + (f" The AI says it is needed {days} days of every {span}, so the change would turn it off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "
+                       "Those days are the AI's own, and Meternaut did not check them." if _whole(days) and _whole(span) else " The AI says it is needed only on some days, and Meternaut did not check that.")
     elif form == "assumed":
         pair = [round(share * 100) for share in away] if isinstance(away, list) and len(away) == 2 and all(_number(share) is not None for share in away) else []
         said = f"{pair[0]}" + (f" to {pair[1]}" if pair[1] != pair[0] else "") + " percent" if pair else "a share"

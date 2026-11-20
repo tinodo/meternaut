@@ -670,14 +670,21 @@ class TheQuantityOfAMeter(unittest.TestCase):
                                              self.price({"form": "quantity", "from": 1440, "to": 720}), "r1")}
         found = pricing.saved(facts)
         self.assertEqual((found.low, found.level), (100.8, pricing.SCENARIO))
-        self.assertEqual(found.basis, "Over the last 7 days this resource paid about $202 a month for what the change would shrink. The AI proposes to lower the quantity from 1,440 to 720 in units of 1 Hour. "
-                                      "That is the AI's own proposal, and Meternaut did not check it.")
+        self.assertEqual(found.basis, "Over the last 7 days this resource paid about $202 a month for what the change would shrink. The bill shows 1,440 hours of it in the last 30 days. "
+                                      "The change would lower that to 720 hours, which takes away 50 percent of it. The old quantity, 1,440, is the bill's own, and Meternaut checked it. "
+                                      "The new quantity, 720, is the AI's choice, and Meternaut did not check it.")
         for unit in ("<b>hours</b>", "a" * 25, "hours\n"):
             with self.subTest(unit=unit):
                 price = {**facts[pricing.KEY]["price"], "unit": unit}
                 self.assertNotIn(unit.strip(), pricing.saved({pricing.KEY: {"action": "reduce", "price": price}}).basis, "a unit that is not a plain word is never put into a sentence")
         bare = {key: value for key, value in facts[pricing.KEY]["price"].items() if key != "unit"}
-        self.assertTrue(pricing.saved({pricing.KEY: {"action": "reduce", "price": bare}}).basis.startswith("Over the last 7 days this resource paid about $202 a month for what the change would shrink. The AI proposes to lower the quantity from 1,440 to 720."))
+        self.assertTrue(pricing.saved({pricing.KEY: {"action": "reduce", "price": bare}}).basis.startswith(
+            "Over the last 7 days this resource paid about $202 a month for what the change would shrink. The bill shows 1,440 of it in the last 30 days. The change would lower that to 720,"))
+
+    def test_the_quantity_has_its_words_for_a_unit_of_one_for_many_and_for_a_meter_that_began_inside_the_window(self):
+        self.assertEqual([pricing.billed(1440, "1 Hour"), pricing.billed(1, "1 Hour"), pricing.billed(0, "1 Hour"), pricing.billed(1440, "100 GB/Month"), pricing.billed(1440, None), pricing.billed(2.5, "<b>x</b>")],
+                         ["1,440 hours", "1 hour", "0 hours", "1,440 units of 100 GB/Month", "1,440", "2.5"])
+        self.assertEqual((pricing.window({}), pricing.window({"life": 12})), ("the last 30 days", "the 12 days since it began"))
 
     def test_a_unit_is_kept_only_when_it_passes_the_check_that_the_tools_make_of_a_word_of_a_meter_and_is_short(self):
         meter = billed_units(words=("Example Gateway", "Standard Tier", "Extra Units", "OnDemand", "Usage", "<script>"))
@@ -1208,11 +1215,12 @@ class TheDigestAndWhatItSays(unittest.TestCase):
         removed = pricing.saved(self.facts(block("remove", effect("r1", ("m1", "m2")))))
         self.assertEqual(removed.basis, "Over the last 7 days this resource paid about $100 a month for what the change would remove. That comes from your bill.")
         ratio = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "ratio", "on": "units", "from": 12, "to": 4}))))
-        self.assertEqual(ratio.basis, "Over the last 7 days this resource paid about $100 a month for what the change would shrink. The AI proposes a change in units from 12 to 4. "
-                                      "That is the AI's own proposal, and Meternaut did not check it.")
+        self.assertEqual(ratio.basis, "Over the last 7 days this resource paid about $100 a month for what the change would shrink. The change would lower units from 12 to 4, which takes away 67 percent of it. "
+                                      "The old number, 12, is what the tools read for units, and Meternaut checked it. The new number, 4, is the AI's choice, and Meternaut did not check it. "
+                                      "Meternaut also did not check that the charge falls in step with units.")
         days = pricing.saved(self.facts(block("schedule", effect("r1", ("m1",), {"form": "share_of_days", "days": 5, "of": 7}))))
-        self.assertEqual(days.basis, "Over the last 7 days this resource paid about $60.00 a month for what the change would shrink. The AI says it is needed 5 days of every 7. "
-                                     "That is the AI's own proposal, and Meternaut did not check it.")
+        self.assertEqual(days.basis, "Over the last 7 days this resource paid about $60.00 a month for what the change would shrink. The AI says it is needed 5 days of every 7, "
+                                     "so the change would turn it off on 2 of every 7 days, which takes away 29 percent of it. Those days are the AI's own, and Meternaut did not check them.")
         assumed = pricing.saved(self.facts(block("reduce", effect("r1", ("m1", "m2"), {"form": "assumed", "low": 0.4, "high": 0.7}))))
         self.assertEqual(assumed.basis, "Over the last 7 days this resource paid about $100 a month for what the change would shrink. The AI assumes that 30 to 60 percent of that would go away. "
                                         "That is the AI's own assumption, and Meternaut did not check it. The saving could be anywhere from $30.00 to $60.00 a month, and Meternaut counts the low end.")
@@ -1800,7 +1808,8 @@ class ThePurityOfTheModule(unittest.TestCase):
             return {(node.level, node.module) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)} | {(0, a.name) for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names}
 
         standard = {(0, "__future__"), (0, "datetime"), (0, "math"), (0, "re"), (0, "json"), (0, "dataclasses"), (0, "typing")}
-        self.assertEqual(imports("pricing"), {(0, "__future__"), (0, "datetime"), (0, "math"), (0, "re"), (0, "dataclasses"), (0, "typing"), (1, "meters"), (1, "roles"), (1, "costs")})
+        self.assertEqual(imports("pricing"), {(0, "__future__"), (0, "datetime"), (0, "math"), (0, "re"), (0, "dataclasses"), (0, "typing"), (1, "meters"), (1, "roles"), (1, "costs"), (1, "proposals")})
+        self.assertLessEqual(imports("proposals"), standard, "the shape of what a finding proposes, which the words of the figure read, holds no way to reach Azure either")
         for name in ("meters", "roles"):
             self.assertLessEqual(imports(name), standard, name)
         for name in ("pricing", "meters", "roles"):

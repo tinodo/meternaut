@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, parse_time, plain,
+from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, others_line, parse_time, plain,
                     shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
@@ -142,6 +142,11 @@ def _facts(brief: Brief) -> list[dict]:
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
 
 
+def _others(brief: Brief) -> list[dict]:
+    """One line about the other ways to save that the finding proposes: how many the AI named. The page has them, with what each saves and gives up, and they are information: no button."""
+    return [_block("others", md(others_line(brief), 200))] if brief.others else []
+
+
 def _advisor(brief: Brief) -> list[dict]:
     """The order of work for a commitment that Azure Advisor recommends, in one line: the page has the rows and the whole of each step."""
     return [_block("advisor-order", md(ADVISOR_SHORT, 200))] if brief.advisor is not None and brief.options else []
@@ -169,7 +174,7 @@ def _decision_lines(brief: Brief) -> list[dict]:
     Azure and, when acting has a risk, what it is: one block each."""
     owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
     if brief.kind == "advice":
-        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", md(brief.risk.text, 300))] if brief.risk.acting else []), owner]
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, 300)}")] if brief.risk.acting else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
     change = md(brief.change, 300) + " It runs with your own permissions." + (f" {md(two, 320)}" if two else "")
     return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(brief.risk.text, 240)}"), owner]
@@ -277,7 +282,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     _check_context(ctx, brief)
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
-    body = [*_place(brief), _chips(brief), *_asked(brief), _stake(brief), *_heads_up(brief), _block("confidence", md(brief.confidence.because, 400)), *_learned(brief),
+    body = [*_place(brief), _chips(brief), *_asked(brief), _stake(brief), *_others(brief), *_heads_up(brief), _block("confidence", md(brief.confidence.because, 400)), *_learned(brief),
             *_facts(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 

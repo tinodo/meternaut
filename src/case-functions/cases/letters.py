@@ -251,12 +251,9 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
-COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
-
-
 def _read(value: str) -> str:
-    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
-    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+    """A measurement says on how many of its days it had a value only when that is not every one of them (brief.covered): a zero over 30 days may be a zero of 20."""
+    return brief_mod.covered(value)
 
 
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -319,6 +316,8 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     if brief.asked:
         doc.paragraph(_data(brief.asked, 320))
     doc.figure(stake_of(brief))
+    if brief.others:
+        doc.paragraph(brief_mod.others_line(brief))
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
     for line in (brief.past, brief.access):

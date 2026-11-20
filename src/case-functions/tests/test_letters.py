@@ -34,7 +34,9 @@ LINK_PATHS = re.compile(r"^https://meternaut\.example/(ok/[A-Za-z0-9_-]{1,64})?$
 # nothing in Azure" against "Low risk, Low confidence, Changes nothing in Azure"). The limits are the measure, rounded up to 5. The first-contact letter (106 to 105 words) and the digest (69 to
 # 56) keep the limits that they had. The approval letter of advice then said in three plain sentences what an answer does and who acts ("Meternaut changes nothing in Azure. Your answer is recorded
 # with your name. If you decide to act, you do it yourself in Azure with your own rights."), and the longest one, that of a group that code priced and that the limit of a run cut, is 186 words.
-MOST_WORDS = {"first contact": 110, "approval": 175, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, and in one what a person is asked (brief.ASKED), in words that a person reads once; the budget is rounded up to 5
+# On 20 November the approval letter of advice from the investigation said what an answer does for its kind of request (that Meternaut cannot make the change, and why, or that it makes no change for this
+# kind yet) and what could go wrong from the facts (what was measured of the use, and what the second AI doubts) where it had said stock sentences: the group letter went from 170 to 186 words.
+MOST_WORDS = {"first contact": 110, "approval": 190, "digest": 150, "done": 105}  # the approval letter of advice says in three sentences what an answer does and who acts, in one what a person is asked (brief.ASKED) and in one what could go wrong, in words that a person reads once; the budget is rounded up to 5
 
 
 def make_plan(**changes) -> PlanRecord:

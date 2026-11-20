@@ -124,6 +124,15 @@ def _group() -> Kind:
 PE_IDS = f"/subscriptions/{SUB}/resourceGroups/rg-fabrikam-net/providers/Microsoft.Network/privateEndpoints/pe-fabrikam-{{}}"
 
 
+def _gateway(cannot: bool) -> Kind:
+    """A finding that proposes to lower a setting of a resource of an invented kind (cases/proposals.py), asked as advice: Meternaut cannot make the change and says why (with two other ways to save),
+    or the finding states only the charge that it would take away and Meternaut makes no change for this kind of finding yet."""
+    from test_proposal_words import BOTH, gateway
+
+    case, plan = gateway(BOTH, precondition="switch-off") if cannot else gateway(number=2)
+    return Kind("advice, a setting that Meternaut cannot change" if cannot else "advice, a gateway with no setting to change", case, plan, "lab-gw-1", "gateway")
+
+
 def _advisor(commitment: bool, figure: str = "usd") -> Kind:
     """Azure Advisor's own recommendation, made into a request by code (no AI looked at it): a commitment, or a recommendation about one machine. `figure` is what it says it saves: dollars, euros
     (which Meternaut does not turn into dollars) or nothing."""
@@ -216,7 +225,7 @@ def kinds() -> list[Kind]:
                      "Microsoft.Compute/virtualMachines", n=23),
              _stated("advice, commit", "virtual machine", "commit", {"form": "assumed", "low": 0.2, "high": 0.3}, "fabrikam-batch-04", "microsoft.compute/virtualmachines",
                      "Microsoft.Compute/virtualMachines", n=24),
-             _deleting(), _group(), _advisor(True), _advisor(False)]
+             _deleting(), _group(), _gateway(True), _gateway(False), _advisor(True), _advisor(False)]
     found += [_older(detector, n) for n, detector in enumerate(THE_SIX, 1)]
     found += [_older(detector, n + 10, cost_read=False) for n, detector in enumerate(THE_SIX, 1)]
     found += [_family(name) for name in MAKERS]
@@ -265,7 +274,7 @@ ADVISOR = re.compile(r"What to look at|Azure Advisor says")  # what Azure Adviso
 ASKED = re.compile(r"You are asked (?:whether|to) [^.?!]+[.?!]")
 SAVES = re.compile(r"(?:could save|saves) about \$[\d,]+ a year")
 RESTS_ON = re.compile(r"bill|assum|estimate|list price|Advisor|Cost Management|proposal|proposes|paid|AI says", re.I)
-ASSUMES = re.compile(r"assum|estimate|list price|Advisor|proposal|proposes|AI says", re.I)
+ASSUMES = re.compile(r"assum|estimate|list price|Advisor|proposal|proposes|AI says|AI's choice|AI's own", re.I)
 CHECKED = re.compile(r"did not check(?! the wording)|did not read|has not checked|have not checked|not checked|nobody checked|could not check|cannot check", re.I)  # "did not check the wording" is said of every quote of an AI and answers no question of the figure
 NOTHING = re.compile(r"changes? nothing in Azure", re.I)
 
@@ -293,7 +302,8 @@ def what_is_asked(shown: Rendered, kind: Kind) -> list[str]:
 
 
 def lead_and_basis(shown: Rendered) -> tuple[str, str] | None:
-    blocks = seen(shown)
+    """The sentence that opens the money and the one under it. The arithmetic of a page (a small table) stands between them, and is no sentence."""
+    blocks = [block for block in seen(shown) if block.kind not in ("cell", "label")]
     for index, block in enumerate(blocks):
         if SAVES.search(block.text):
             return block.text, blocks[index + 1].text if index + 1 < len(blocks) else ""
@@ -455,12 +465,18 @@ MAIN_WORDS = {  # what the approval letter of each kind measured on main (f84596
     "older check, orphan-managed-disk, cost not read": 164, "older check, orphan-public-ip, cost not read": 165, "older check, load-balancer-without-backends, cost not read": 165,
     "older check, empty-app-service-plan, cost not read": 167, "older check, stopped-vm, cost not read": 159, "older check, orphan-private-endpoint, cost not read": 159,
     "change, two people, first stage": 165, "change, two people, second stage": 165, "change, two people, mine stage": 165,
-    "change, two people, stale stage": 165, "change, two people, alone stage": 165}  # the four kinds of Azure Advisor with no figure are no kinds here: nobody is asked about them, so there is no letter to hold to a size
+    "change, two people, stale stage": 165, "change, two people, alone stage": 165,
+    "advice, a setting that Meternaut cannot change": 276, "advice, a gateway with no setting to change": 265}  # the two kinds of the invented gateway are new (20 November 2026), so their size is the one that they had when they were added; the four kinds of Azure Advisor with no figure are no kinds here: nobody is asked about them, so there is no letter to hold to a size
+ASKS_WHAT_IT_DOES = "the sentence of what is asked names what Meternaut would do (whether to let Meternaut make this change) in the place of whether to approve this change"
 GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
-    "advice, a group of many resources": (3, "the row that says why the finding is a lead: what the investigation found"),
-    "Azure Advisor, a commitment": (1, "the sentence that says that Meternaut did not check Advisor's estimate"),
+    "advice, a switch with names": (2, "what could go wrong says that nothing was measured of its use, in the place of a sentence about traffic"),
+    "advice, reduce (a number that a tool read)": (42, "the figure says what the bill shows, what the change does to it and which number is the bill's and which is the AI's, and what could go wrong says what the second AI doubts"),
+    "advice, schedule": (27, "the figure says on how many days of how many the change turns the resource off and which numbers are the AI's, and what could go wrong says what the second AI doubts"),
+    "advice, a group of many resources": (22, "the row that says why the finding is a lead, what could go wrong in the words of what was measured, and what an answer does for this kind of finding"),
     "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Advisor's estimate"),
-    "change, stop-vm": (5, "the sentence that says what is asked of the person: whether to approve this change")}
+    "change, stop-vm": (13, ASKS_WHAT_IT_DOES), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
+    "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, scale-vpn-gateway": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
+    "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES)}
 
 
 class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.TestCase):
@@ -485,8 +501,9 @@ class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.Te
 class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase):
     """The first of the two people who approve a change can only confirm it, and a person who confirmed already or a request that nobody can approve asks nothing: nobody can act there."""
 
-    CONFIRM = "You are asked whether to confirm this change."
-    APPROVE = "You are asked whether to approve this change."
+    WHAT = "delete the unattached disk planted-disk-1 in group meternaut-fam-rg"  # what Meternaut would do, in the words of the title
+    CONFIRM = f"You are asked whether to confirm that Meternaut may {WHAT}."
+    APPROVE = f"You are asked whether to let Meternaut {WHAT}."
 
     def test_the_first_and_a_person_whose_confirmation_went_stale_are_asked_to_confirm_on_the_page_the_card_and_the_letter(self):
         for stage in ("first", "stale"):
@@ -502,7 +519,7 @@ class TheFirstOfTwoPeopleIsAskedToConfirmAndTheSecondToApprove(unittest.TestCase
             with self.subTest(surface):
                 text = text_of(surfaces(kind)[surface])
                 self.assertIn(self.APPROVE, text)
-                self.assertNotIn("to confirm this change", text)
+                self.assertNotIn("to confirm that Meternaut may", text)
 
     def test_a_person_who_cannot_act_is_asked_nothing_and_the_lines_of_the_stage_say_what_is_true(self):
         for stage, says in (("mine", "You confirmed the request"), ("alone", "so nobody can approve it")):

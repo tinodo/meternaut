@@ -431,9 +431,9 @@ class AFigureFromTheBillNeverSwitchesOffTheCheckOfWhatDependsOnAResource(unittes
                     self.assertEqual((b.impact.verdict if b.impact is not None else None, brief.still_used(case), b.risk.level), (verdict, True, level))
                 self.assertEqual(brief.acting_risk(plain), brief.acting_risk(priced))
 
-    def test_the_unproven_sentence_of_the_risk_stays_and_the_figure_is_shown_beside_it(self):
+    def test_what_could_go_wrong_stays_and_the_figure_is_shown_beside_it(self):
         plain, priced = self.pair("check")
-        self.assertIn(brief.UNPROVEN, brief.acting_risk(priced).text)
+        self.assertIn(brief.NOT_MEASURED_USE, brief.acting_risk(priced).text)
         b = brief.build_brief(priced, endpoint_plan(priced, saving_usd_month=None), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.saving.monthly, b.saving.level), (80.0, "Expected"))
         self.assertEqual(b.check_first, brief.build_brief(plain, endpoint_plan(plain, saving_usd_month=None), now=WEB_NOW, may_answer=True).check_first)
@@ -468,11 +468,10 @@ class WhatAPersonReads(unittest.TestCase):
                 b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
                 self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, words, verdict))
                 self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk{brief.IF_ACTED}")
-                self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
+                self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_NONE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", "Nothing proves that it is unused, so acting on it could break something that still uses it. "
-                                                                                          "Traffic that you cannot see from here may depend on it."))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", f'{brief.NOT_MEASURED_USE} The second AI says: "Disconnected shows how it is now, not for how long."'))
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, says in (("safe", "It looks safe to remove."), ("keep", "Do not remove it."), ("check", "Check what depends on it before you remove it.")):
