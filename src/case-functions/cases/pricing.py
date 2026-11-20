@@ -23,6 +23,7 @@ one that the tool showed in this run for that meter, in its unit, one price for 
 
 A meter that no tool showed, that belongs to another resource or to a whole type, or that gives no rate (a read of under 7 days, or fewer than 3 days of cost) is not counted; a bill line is counted
 once in a finding; what could not be checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
+A change may also state `set` and `others` (the settings to lower, the other ways to save); this module reads them as they were stated, and cases/proposals.py checks them and prices each other way with `price`.
 """
 from __future__ import annotations
 
@@ -78,6 +79,8 @@ class Change:
     action: str
     effects: tuple[Effect, ...]
     how: str  # the AI's words for a person, cleaned: never an input of a model
+    settings: tuple = ()  # what the AI stated in `set` and `others`, as it stated it: cases/proposals.py checks every entry against the tools and drops the ones that fail
+    others: tuple = ()
 
 
 class Row(NamedTuple):
@@ -144,6 +147,11 @@ def _whole(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _listed(value: object) -> tuple:
+    """The entries of a list that the answer states, as stated, at most MAX_EFFECTS: what is wrong with them is for cases/proposals.py to say."""
+    return tuple(value[:MAX_EFFECTS]) if isinstance(value, list) else ()
+
+
 def parse(raw: object) -> Change | None:
     """The change that an answer states, read strictly. None when the answer states none; a block that cannot be read is a change of the action none, which the finding says."""
     if raw is None:
@@ -157,7 +165,7 @@ def parse(raw: object) -> Change | None:
         if isinstance(item, dict) and isinstance(item.get("handle"), str):
             named = item.get("meters") if isinstance(item.get("meters"), list) else []
             effects.append(Effect(item["handle"], tuple(dict.fromkeys(m for m in named[:MAX_METERS] if isinstance(m, str))), item["remains"] if isinstance(item.get("remains"), dict) else {}))
-    return Change(action if action in ACTIONS else "none", tuple(effects), clean_text(raw.get("how"), MAX_HOW))
+    return Change(action if action in ACTIONS else "none", tuple(effects), clean_text(raw.get("how"), MAX_HOW), _listed(raw.get("set")), _listed(raw.get("others")))
 
 
 def _cited(block: Mapping, name: object, said: float) -> bool:

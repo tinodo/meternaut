@@ -249,6 +249,15 @@ class WhatTheAppIs(unittest.TestCase):
         done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True, check=True)
         self.assertEqual(done.stdout.strip(), "[]", "the round of cards, the queue and the bot are imported where they are used: a function app with the cards off loads none of them")
 
+    def test_the_modules_that_a_proposal_touches_each_load_as_the_first_import_so_that_no_circle_depends_on_the_order(self):
+        # The proposals are read by the brief and the words of the families, and the toolbox reaches both through the lessons: a top-level import of the toolbox in cases/proposals.py is a circle
+        # that fails for some orders of the imports only, and a test run that imports in one fixed order does not see it.
+        for first in ("cases.proposals", "cases.families.words", "cases.toolbox", "cases.approvals"):
+            with self.subTest(first=first):
+                code = f"import sys; sys.path.insert(0, sys.argv[1]); import {first}, cases.families.setting, cases.proposals; print('loaded')"
+                done = subprocess.run([sys.executable, "-c", code, str(APP_ROOT)], capture_output=True, text=True)
+                self.assertEqual((done.returncode, done.stdout.strip(), done.stderr.strip()[-400:]), (0, "loaded", ""))
+
     def test_the_header_of_a_refused_call_is_read_by_the_runner_alone_and_is_on_no_line_of_a_log_or_of_the_history(self):
         # A claims challenge (the `www-authenticate` header of a 401) is kept on the error of the call, never in its text. The runner is the one reader, and the parser of the
         # header is in a module of its own: a second reader, or a line that logs the header or the claims in it, is a decision to make with the rules in hand.

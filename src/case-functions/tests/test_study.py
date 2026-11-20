@@ -19,7 +19,7 @@ from cases.harness import Harness, HarnessRefused
 from cases.http import Client
 from cases.identity import IdentityError
 from cases.memory_store import MemoryStore, stamp
-from cases.models import CLAIM_KINDS, STUDIED, ClaimRecord, StoreError, SwitchRecord
+from cases.models import CLAIM_KINDS, STUDIED, CaseRecord, ClaimRecord, PlanRecord, StoreError, SwitchRecord
 from cases.redact import Redactor
 
 from test_investigate import ENDPOINT, make_settings
@@ -266,6 +266,65 @@ class TheSurvey(unittest.TestCase):
         found, _, world = self.survey(arm=FakeArm([{"type": name, "n": 1} for name in names], costs={SUB_A: costs}))
         self.assertEqual(world.settings.study_max_types, 8)
         self.assertEqual([item["type"] for item in found], names[:1:-1], "the cap of eight is applied after the ranking: the two cheapest wait for the next run")
+
+
+def undecided(kind, n=1):
+    """A finding of the investigation that nobody has decided: it needs a person and no request waits for it."""
+    return CaseRecord(case_id=f"k{n}", resource_id=f"/subscriptions/s/resourcegroups/g/providers/{kind}/x{n}", resource_name="x", resource_type=kind, resource_group="g", subscription_id="s",
+                      detector="investigation", run_id="r" * 32, status="needs_human", confidence=0.4, first_seen_at=stamp(NOW), updated_at=stamp(NOW))
+
+
+def waiting(kind, n=1, state="open"):
+    """A request to a person about a resource of the kind."""
+    return PlanRecord(plan_id=f"p{n}", case_id=f"k{n}", family="advise", resource_id=f"/subscriptions/s/resourcegroups/g/providers/{kind}/x{n}", resource_name="x", resource_group="g",
+                      subscription_id="s", code="ABCD1234", title="Look at it", what_changes="Nothing is changed.", saving_usd_month=None, waiting_costs_usd_day=None, could_go_wrong="Nothing.",
+                      undo="Nothing.", evidence_level="measured", approvers=("o",), created_at=stamp(NOW), expires_at=stamp(NOW + dt.timedelta(days=3)), state=state)
+
+
+class TheSurveyAndTheOpenFindings(unittest.TestCase):
+    """What the pages say about a kind of resource is on record before the Investigator judges one of it again: the kinds of the findings that nobody decided and of the requests that wait come first."""
+
+    COSTS = {SUB_A: priced((GIZMOS, 500.0), (GADGETS, 120.5), (WIDGETS, 10.0))}
+
+    def survey(self, *records, store=None, arm=None, **changes):
+        store = store if store is not None else MemoryStore(clock=lambda: NOW)
+        for record in records:
+            (store.case_put if isinstance(record, CaseRecord) else store.plan_put)(record)
+        world = World(store=store, arm=arm or FakeArm(costs=self.COSTS), **changes)
+        notes: list[str] = []
+        return [item["type"] for item in study.survey(world.services(), NOW, notes)], notes
+
+    def test_the_kinds_of_an_open_finding_and_of_a_request_that_waits_come_before_the_dearest_kind(self):
+        found, notes = self.survey(undecided(WIDGETS), waiting(GADGETS, 2))
+        self.assertEqual((found, notes), ([GADGETS, WIDGETS, GIZMOS], []), "the dearest kind is the gizmos, which nothing is open about")
+
+    def test_without_an_open_finding_or_a_request_the_order_is_the_dearest_first_as_before(self):
+        self.assertEqual(self.survey()[0], [GIZMOS, GADGETS, WIDGETS])
+
+    def test_a_finding_that_is_decided_or_is_not_the_investigations_and_a_request_that_waits_for_no_answer_do_not_count(self):
+        records = (replace(undecided(WIDGETS), status="dropped"), replace(undecided(WIDGETS, 2), detector="unattached-disk"), waiting(WIDGETS, 3, state="declined"),
+                   waiting(WIDGETS, 4, state="approved"))
+        self.assertEqual(self.survey(*records)[0], [GIZMOS, GADGETS, WIDGETS], "a request that was approved waits for no answer: the change is being made")
+
+    def test_the_cap_of_the_kinds_is_applied_after_the_open_ones_so_that_the_scholar_reads_them_first(self):
+        self.assertEqual(self.survey(undecided(WIDGETS), study_max_types=1)[0], [WIDGETS])
+
+    def test_a_kind_that_is_studied_already_does_not_wait_whatever_is_open_about_it(self):
+        store = MemoryStore(clock=lambda: NOW)
+        store.claim_put(claim(resource_type=WIDGETS))
+        self.assertEqual(self.survey(undecided(WIDGETS), store=store)[0], [GIZMOS, GADGETS])
+
+    def test_a_request_about_a_resource_that_has_no_type_of_azure_is_no_kind(self):
+        found, _ = self.survey(replace(waiting(WIDGETS), resource_id="/subscriptions/s/resourcegroups/g"), replace(undecided(GADGETS), resource_type="not a type"))
+        self.assertEqual(found, [GIZMOS, GADGETS, WIDGETS])
+
+    def test_a_store_that_cannot_read_its_findings_gives_the_old_order_and_one_plain_note(self):
+        class Failing(MemoryStore):
+            def cases_recent(self, limit=100, status=None):
+                raise StoreError("the table could not be read")
+
+        found, notes = self.survey(waiting(WIDGETS), store=Failing(clock=lambda: NOW))
+        self.assertEqual((found, notes), ([GIZMOS, GADGETS, WIDGETS], [study.OPEN_NOTE]))
 
 
 class WhatCodeKeepsOfTheAnswer(unittest.TestCase):

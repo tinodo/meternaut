@@ -1220,11 +1220,39 @@ class TheUndoIsExact(unittest.TestCase):
 
 
 class TheCountGate(unittest.TestCase):
-    def test_only_a_count_of_units_is_lowered(self):
-        for path in ("capacityUnits", "sku.capacity", "instanceCount", "numberOfNodes", "maxReplicas", "scaleUnits"):
+    def test_only_what_proposals_countlike_accepts_is_lowered_with_no_rule_of_the_family_of_its_own(self):
+        for path in ("scaleUnits", "sku.capacity", "instanceCount", "maxReplicas", "capacityUnits", "numberOfNodes", "replicaCount"):
             self.assertTrue(setting_module._countlike(path), path)
-        for path in ("retentionDays", "tier", "label", "autoScaleEnabled", "accessMode", "sizeLimit"):
+        for path in ("retentionDays", "minimumTlsVersion", "zonesCount", "numberOfRetentionDays", "tier", "label", "autoScaleEnabled", "accessMode", "sizeLimit", "\u0131nstanceCount", "instanceCount\u200b", ""):
             self.assertFalse(setting_module._countlike(path), path)
+        for path in ("scaleUnits", "zonesCount", "retentionDays", "numberOfHoursWorkers", "\u0131nstanceCount"):
+            self.assertEqual(setting_module._countlike(path), proposals.countlike(path), path)
+        for answer in (True, False):
+            with mock.patch.object(proposals, "countlike", return_value=answer) as asked:
+                self.assertIs(setting_module._countlike("whatever"), answer)
+                asked.assert_called_once_with("whatever")
+        with mock.patch.object(proposals, "countlike", return_value=False):
+            with self.assertRaises(setting_module.Cannot) as raised:
+                setting_module.aims_of(proposals.settings({proposals.KEY: {"set": [{"path": "capacityUnits", "from": 4, "to": 2}]}}))
+            self.assertEqual(raised.exception.key, "not-a-count")
+        with mock.patch.object(proposals, "countlike", return_value=True):
+            self.assertEqual(setting_module.aims_of(proposals.settings({proposals.KEY: {"set": [{"path": "retentionDays", "from": 30, "to": 7}]}})), [("retentionDays", 30, 7)])
+
+    def test_a_count_that_the_proposals_accept_is_planned_as_a_change_and_one_that_they_refuse_is_advice_with_its_own_words_before_any_read(self):
+        for name in ("scaleUnits", "instanceCount", "maxReplicas"):
+            with self.subTest(accepted=name):
+                world = Real()
+                world.arm.get(RID)["properties"][name] = 4
+                plan = world.plan_for(facts={proposals.KEY: {"set": [{"path": name, "from": 4, "to": 2}]}})
+                self.assertEqual((plan.family, proposals.CANNOT_KEY in plan.preconditions), (SETTING, False))
+        refused = (("retentionDays", 30, 7, "not-a-count"), ("minimumTlsVersion", 12, 10, "not-a-count"), ("zonesCount", 3, 1, "not-a-count"), ("numberOfRetentionDays", 30, 7, "not-a-count"),
+                   ("\u0131nstanceCount", 4, 2, "unsupported"))
+        for name, now, to, key in refused:
+            with self.subTest(refused=name):
+                world = Real()
+                plan = world.plan_for(facts={proposals.KEY: {"set": [{"path": name, "from": now, "to": to}]}})
+                self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", key))
+                self.assertEqual(world.arm.calls, [], "nothing is read for a setting that Meternaut would not lower")
 
     def test_a_setting_that_is_not_a_count_is_refused_at_the_plan_with_its_own_words_before_any_read(self):
         world = Real()
@@ -1238,10 +1266,13 @@ class TheCountGate(unittest.TestCase):
     def test_a_plan_that_names_one_is_refused_again_right_before_the_write_by_the_look_and_by_the_runner(self):
         world = Real()
         good = world.plan()
+        for name in ("retentionDays", "zonesCount", "numberOfRetentionDays", "minimumTlsVersion"):
+            with self.subTest(name):
+                old = replace(plan_digest.sealed(replace(good, target={**good.target, "set": [{"path": name, "from": 30, "to": 7}]})), code=good.code)
+                with self.assertRaises(Stop) as raised:
+                    registry.get(SETTING).recheck(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), old)
+                self.assertEqual(str(raised.exception), "a number of the request is not a count of units, which is all that Meternaut lowers")
         old = replace(plan_digest.sealed(replace(good, target={**good.target, "set": [{"path": "retentionDays", "from": 30, "to": 7}]})), code=good.code)
-        with self.assertRaises(Stop) as raised:
-            registry.get(SETTING).recheck(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), old)
-        self.assertEqual(str(raised.exception), "a number of the request is not a count of units, which is all that Meternaut lowers")
         world.store.plan_put(old)
         done = execute(world.services(old), world.approve(old), approved_digest=old.digest)
         self.assertEqual(done.kind, "stopped")

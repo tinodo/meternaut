@@ -69,13 +69,9 @@ def _whole(value: object) -> bool:
 
 
 def _countlike(path: str) -> bool:
-    """Whether the last key of a path names a count of units (a capacity, a count, replicas, a number of ...): the only numbers that Meternaut lowers, because lowering a number of another kind (a
-    retention, a limit, a size of data) can destroy what is kept. The rank of the toolbox says it until the proposals have a test of their own."""
-    check = getattr(proposals, "countlike", None)
-    if check is not None:
-        return bool(check(path))
-    from .. import toolbox  # imported here: the toolbox is large, and this is read at the plan and at the re-check only
-    return toolbox._rank(path.rsplit(".", 1)[-1]) in toolbox.COUNT_LIKE
+    """Whether the last key of a path names a count of units (proposals.countlike, the one gate of the AI side too): the only numbers that Meternaut lowers, because lowering a number of another kind (a
+    retention, a limit, a size of data) can destroy what is kept. It is asked at the plan and again at the re-check right before the write."""
+    return proposals.countlike(path)
 
 
 def aims_of(settings: tuple[proposals.Setting, ...]) -> list[Aim]:
