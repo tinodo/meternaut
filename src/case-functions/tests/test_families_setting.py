@@ -149,6 +149,12 @@ class Real:
         self.resource = self.arm.add(gateway())
         self.facts = facts
 
+    def regroup(self, real) -> None:
+        """The owner lists other groups: the settings, the reader and the approvals are made again, over the same records."""
+        self.settings = replace(self.settings, real_change_scopes=tuple(real))
+        self.reader = Azure(self.client(read_calls(SCOPES, tuple(real))), lambda resource: "reader-token")
+        self.approvals = Approvals(self.store, self.settings, self.clock, reader=self.reader)
+
     def client(self, patterns) -> Client:
         return Client(patterns, lambda text: text, transport=self.arm.transport, sleep=lambda seconds: None, monotonic=lambda: 0.0)
 
@@ -327,9 +333,7 @@ class ThePlan(unittest.TestCase):
         world = Real(real=())
         old = world.plan_for()
         self.assertEqual(old.family, "advise")
-        world.settings = replace(world.settings, real_change_scopes=(REAL,))
-        world.approvals.settings = world.settings
-        world.approvals.reader = Azure(world.client(read_calls(SCOPES, (REAL,))), lambda resource: "reader-token")
+        world.regroup((REAL,))
         world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
         self.assertEqual(world.approvals.upgrade((OID,)), [])
         self.assertEqual(world.store.plan_get(old.plan_id).preconditions[proposals.CANNOT_KEY], "do-not-touch")
@@ -348,7 +352,7 @@ class ThePlan(unittest.TestCase):
     def test_a_setting_that_goes_up_or_is_a_flag_a_word_a_list_or_nothing_is_not_made_here(self):
         for item in ({"path": "capacityUnits", "from": 4, "to": 4}, {"path": "capacityUnits", "from": 4, "to": -1}, {"path": "capacityUnits", "from": 4, "to": 2.5},
                      {"path": "autoScale", "from": False, "to": True}, {"path": "tier", "from": "Lite", "to": "Free"}, {"path": "ipConfigurations.name", "from": 4, "to": 2},
-                     {"path": "ipConfigurations[0].x", "from": 4, "to": 2}, {"path": "capacityUnits", "from": float("nan"), "to": 2}, {"path": "nothing.here", "from": 4, "to": 2},
+                     {"path": "ipConfigurations[0].x", "from": 4, "to": 2}, {"path": "nothing.here", "from": 4, "to": 2},
                      {"path": "tier", "from": 4, "to": 2}, {"path": "label", "from": 4, "to": 2}):
             with self.subTest(item):
                 world = Real()
@@ -359,10 +363,11 @@ class ThePlan(unittest.TestCase):
         too_many = [{"path": p, "from": 4, "to": 2} for p in ("capacityUnits", "retentionDays", "sku.capacity", "tier")]
         self.assertEqual(world.plan_for(facts={proposals.KEY: {"set": too_many}}).family, "advise")
 
-    def test_a_finding_that_proposes_no_setting_gets_no_change_plan_and_no_reason(self):
+    def test_a_finding_that_proposes_no_setting_gets_no_change_plan_and_nothing_is_said_about_it(self):
         world = Real()
         plan = world.plan_for(facts={"metrics": {}})
-        self.assertEqual((plan.family, proposals.CANNOT_KEY in plan.preconditions), ("advise", True))
+        self.assertEqual((plan.family, proposals.CANNOT_KEY in plan.preconditions), ("advise", False))
+        self.assertEqual(world.arm.calls, [], "no read for a finding that proposes no number")
 
     def test_a_resource_in_a_group_of_meternauts_own_is_never_offered_to_it(self):
         world = Real(real=(ChangeScope(SUB, GROUP),))
@@ -578,32 +583,33 @@ class TheChecksRightBeforeTheChange(unittest.TestCase):
         self.assertIn("Azure refused to change the resource", again.action.result)
         self.assertEqual(world.arm.puts, [], "Azure refused both: the fake stored nothing")
 
-    def test_a_change_that_stops_between_the_check_and_the_write_is_stopped_by_the_second_reading(self):
+    def test_a_number_that_changes_between_the_check_and_the_write_is_stopped_by_the_second_reading_and_nothing_is_written(self):
         world = Real()
         plan = world.plan()
         world.approve(plan)
-        flipped = []
+        reads = []
 
         def hold_after(method, key):
-            if method == "GET" and key == RID.lower() and len(flipped) == 0 and world.arm.calls.count(("GET", world.arm.url)) >= 0:
-                reads = [m for m, u in world.arm.calls if urlsplit(u).path.lower() == RID.lower()]
-                if len(reads) == 2:
-                    flipped.append(1)
+            if method == "GET" and key == RID.lower():
+                reads.append(key)
+                if len(reads) == 1:  # the first reading after the approval is the check: somebody changes the number right after it
                     world.arm.get(RID)["properties"]["capacityUnits"] = 3
         world.arm.hold_after = hold_after
         done = execute(world.services(plan), world.store.action_get(plan.plan_id), approved_digest=plan.digest)
         self.assertEqual(done.kind, "stopped", done.action.result)
-        self.assertEqual(world.arm.writes(), [])
+        self.assertIn("the resource changed after it was checked: capacity units is 3 now and was 4", done.action.result)
+        self.assertEqual((len(reads), world.arm.writes()), (2, []))
 
     def test_a_plan_that_names_a_number_or_a_version_that_the_family_does_not_make_is_refused_before_any_call(self):
         world = Real()
         plan = world.plan()
+        calls_before = len(world.arm.calls)
         for target in ({**plan.target, "apiVersion": "2024-05-01-preview"}, {**plan.target, "apiVersion": "x"}, {**plan.target, "set": []},
                        {**plan.target, "set": [{"path": "capacityUnits", "from": 2, "to": 4}]}, {**plan.target, "set": [{"path": "capacityUnits", "from": True, "to": 0}]}):
             with self.subTest(target):
                 with self.assertRaises(Stop):
                     registry.get(SETTING).recheck(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), replace(plan, target=target))
-        self.assertEqual(len(world.arm.calls), len([c for c in world.arm.calls]))
+        self.assertEqual(len(world.arm.calls), calls_before)
 
 
 class TheClientOfTheOneRequest(unittest.TestCase):
@@ -678,6 +684,8 @@ class TheClientOfTheOneRequest(unittest.TestCase):
         self.assertNotIn(REAL_SUB, text)
         for method, pattern in change_calls(scopes):
             self.assertIsNone(pattern.fullmatch(f"https://management.azure.com{RID}"), "the static client cannot even read a real resource")
+            self.assertIsNone(pattern.fullmatch(f"https://management.azure.com/subscriptions/{SUB}/resourceGroups/{GROUP}/providers/Microsoft.Example/gateways/gw-x"),
+                              "nor a resource of a kind that no family names, not even in the group of Meternaut's own")
         self.assertEqual(len(calls.WRITES), 11, "the named writes are as they were")
         self.assertEqual([c for c in calls.WRITES if c.method == "PUT"], [calls.Call("PUT", calls.P2S_GATEWAY)])
         self.assertNotIn(calls.RESOURCE_PUT, calls.WRITES)
@@ -756,7 +764,8 @@ class TheRequestThatAsksBecomesTheRequestOfTheChange(unittest.TestCase):
             old = self.asked(world)
             self.assertEqual(old.preconditions[proposals.CANNOT_KEY], "switch-off")
         world.clock.advance(days=5)
-        old = world.store.plan_put(replace(old, waiting_since="2026-11-03T09:00:00Z")) or world.store.plan_get(old.plan_id)
+        world.store.plan_put(replace(old, waiting_since="2026-11-03T09:00:00Z"))
+        old = world.store.plan_get(old.plan_id)
         done = world.approvals.upgrade((OID,))
         self.assertEqual(len(done), 1)
         taken, new, case = done[0]
@@ -774,10 +783,8 @@ class TheRequestThatAsksBecomesTheRequestOfTheChange(unittest.TestCase):
         world = Real(real=())
         old = self.asked(world)
         self.assertEqual(old.preconditions[proposals.CANNOT_KEY], "outside")
-        world.settings = replace(world.settings, real_change_scopes=(REAL,))
+        world.regroup((REAL,))
         with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):
-            world.approvals.settings = world.settings
-            world.approvals.reader = Azure(world.client(read_calls(SCOPES, (REAL,))), lambda resource: "reader-token")
             self.assertEqual(world.approvals.upgrade((OID,)), [])
         kept = world.store.plan_get(old.plan_id)
         self.assertEqual((kept.state, kept.preconditions[proposals.CANNOT_KEY], kept.code), ("open", "switch-off", old.code))

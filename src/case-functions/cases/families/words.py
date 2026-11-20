@@ -13,8 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Callable
 
-from .. import proposals
 from ..models import PlanRecord
+from ..proposals import WORD, label, shown as value
 
 # What a plan of a change of a gateway's scale units, and its re-check right before it acts, ask of the connection count: it is read for the last CONNECTION_DAYS closed days, it has to hold a
 # value for at least CONNECTION_MIN_DAYS of them (a count that was not recorded is not a count of nothing), and the most at one time in them has to be 0.
@@ -236,7 +236,7 @@ def kind_words(resource_id: object) -> str:
     """The kind of the resource of an id in words of a person, from the type segment before its name: `bastionHosts` is "bastion host". "resource" when the id has no such segment."""
     parts = str(resource_id or "").split("/")
     segment = parts[-2] if len(parts) >= 9 else ""
-    names = [word.lower() for word in proposals.WORD.findall(segment)] if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else []
+    names = [word.lower() for word in WORD.findall(segment)] if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else []
     return " ".join([*names[:-1], _singular(names[-1])]) if names else "resource"
 
 
@@ -262,28 +262,28 @@ def changes_text(target: dict, how: str = "change") -> str:
     """What a plan of `change-setting` changes, from its target: "scale units from 4 to 2 and sku capacity from 8 to 6"; `how` is `back` for how it is put back ("scale units to 4 and sku capacity to 8"),
     `now` for what it shows before the change ("scale units at 4") and `new` for what it shows after it ("scale units at 2")."""
     sets = _sets(target)
-    say = {"back": lambda path, old, new: f"{proposals.label(path)} to {proposals.shown(old)}", "now": lambda path, old, new: f"{proposals.label(path)} at {proposals.shown(old)}",
-           "new": lambda path, old, new: f"{proposals.label(path)} at {proposals.shown(new)}"}.get(how, lambda path, old, new: f"{proposals.label(path)} from {proposals.shown(old)} to {proposals.shown(new)}")
+    say = {"back": lambda path, old, new: f"{label(path)} to {value(old)}", "now": lambda path, old, new: f"{label(path)} at {value(old)}",
+           "new": lambda path, old, new: f"{label(path)} at {value(new)}"}.get(how, lambda path, old, new: f"{label(path)} from {value(old)} to {value(new)}")
     return _list([say(*item) for item in sets]) if sets else "a number"
 
 
 def measured_text(preconditions: dict) -> str:
     """The measurements that a plan of `change-setting` cites, from its preconditions, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
     items = preconditions.get("measured") if isinstance(preconditions.get("measured"), list) else []
-    shown = [f"{item['name']} at {proposals.shown(item['total'])} over {item['days']} days" for item in items[:3] if isinstance(item, dict) and isinstance(item.get("name"), str)
+    cited = [f"{item['name']} at {value(item['total'])} over {item['days']} days" for item in items[:3] if isinstance(item, dict) and isinstance(item.get("name"), str)
              and isinstance(item.get("total"), (int, float)) and isinstance(item.get("days"), int) and METRIC_WORDS.fullmatch(item["name"])]
-    return f"Azure Monitor shows {_list(shown)}" if shown else ""
+    return f"Azure Monitor shows {_list(cited)}" if cited else ""
 
 
 def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
     kind = kind_words(plan.resource_id if plan is not None else "")
-    label = name or "this resource"
+    thing = name or "this resource"
     target = _target(plan)
     said, back = changes_text(target), changes_text(target, "back")
     cited = measured_text(plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
     return Words(
-        headline=f"Scale down the {kind} {label}{f' in resource group {group}' if group else ''}: {said}",
-        change=f"Azure changes {said} of the {kind} {label} in resource group {group or 'this group'}. Nothing else of it changes.",
+        headline=f"Scale down the {kind} {thing}{f' in resource group {group}' if group else ''}: {said}",
+        change=f"Azure changes the {kind} {thing} in resource group {group or 'this group'}: {said}. Nothing else of it changes.",
         rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
                    "note, and it is in a resource group on the owner's list for real changes."),
         risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. " + (f"{cited}, and no lock stops the change." if cited else "No measurement of its use is cited, and no lock stops the change.")),

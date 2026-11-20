@@ -198,6 +198,7 @@ class Approvals:
         # reads only and only the resource groups of the change scopes. Without it, only a family that needs no read makes a plan, and every other finding gets the advise plan.
         self.store, self.settings, self.clock, self.reader = store, settings, clock, reader
         self.promoted: list[tuple[PlanRecord, CaseRecord]] = []  # the held requests that the last `settle` turned into ordinary ones (cases/upkeep.py says each in the History)
+        self.cannot = ""
 
     def _set_case(self, case_id: str, status: str) -> None:
         case = self.store.case_get(case_id)
@@ -782,7 +783,7 @@ class Approvals:
         The model's recommendation only chooses among the families that match the resource (cases/families). Each of them that passes the gates reads what its plan needs from Azure with
         the reader (when it needs to) and writes the plan itself, in code; the first that has a plan wins. A family that cannot read, or finds the resource not as a plan needs it, makes none,
         and the finding gets the advise plan instead."""
-        plan, _ = self._create(case, lead, approvers)
+        plan, self.cannot = self._create(case, lead, approvers)
         return plan
 
     def _create(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> tuple[PlanRecord | None, str]:
@@ -925,12 +926,12 @@ class Approvals:
     def plan_for(self, case: CaseRecord, lead: Lead, approvers: tuple[str, ...]) -> PlanRecord | None:
         """The plan for a case that a person has to look at: the plan of a change when Meternaut may make one for it, else the advise plan, with the reason why not when the finding proposes a change
         that Meternaut cannot make (proposals.CANNOT)."""
-        cannot = ""
+        self.cannot = ""  # why the last `create` made no plan of a change (a key of proposals.CANNOT), for the advise plan that follows it
         if case.status == "proposed":
-            plan, cannot = self._create(case, lead, approvers)
+            plan = self.create(case, lead, approvers)
             if plan is not None:
                 return plan
-        return self.advise(case, approvers, cannot)
+        return self.advise(case, approvers, self.cannot)
 
 
 def places_full(case: CaseRecord, open_plans: Sequence[PlanRecord]) -> bool:

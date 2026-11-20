@@ -226,7 +226,10 @@ class ChangeSetting(Family):
 
     def facts(self, env: Env, lead: object, located: Located | None = None) -> dict:
         """What the plan needs from Azure, in this order: the settings, the owner's gates, the do-not-touch note, the api-version that the provider lists, the resource and its locks. Raises Cannot."""
-        aims = aims_of(proposals.settings(getattr(lead, "facts", {})))
+        found = proposals.settings(getattr(lead, "facts", {}))
+        if not found:
+            raise Unreadable("the finding proposes no number to change")  # the family does not apply: nothing is said about it
+        aims = aims_of(found)
         located = self.locate(getattr(lead, "resource_id"), env.gates)
         why = env.gates.why_not_real(located.scope.subscription, located.scope.group)
         if why:
@@ -270,7 +273,8 @@ class ChangeSetting(Family):
                           f"It sends the {kind} back to Azure as it was read, with only {'those numbers' if many else 'that number'} changed. Right before it acts, it reads the {kind} again and stops unless "
                           f"{'every old value is' if many else 'the old value is'} still the one shown here, the last operation on the {kind} worked, no lock and no do-not-touch note is on it, "
                           "and its resource group is still on the owner's list of places for real changes."
-                          + (f" It also reads {words._list([n for n, _, _ in measured_of(pre)])} again over the same days, and stops if the reading is above what is shown here." if reading else "")),
+                          + (f" It also reads {words._list([n for n, _, _ in measured_of(pre)])} again over the same number of days, and stops if "
+                             f"{'it is' if len(measured_of(pre)) == 1 else 'any of them is'} above what this request was made with." if reading else "")),
             could_go_wrong=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
                             + (f"What it checked: {reading}, and that no lock is on the {kind}. " if reading else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
                             + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
