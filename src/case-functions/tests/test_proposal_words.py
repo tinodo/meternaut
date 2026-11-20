@@ -242,11 +242,19 @@ class WhatItIsWorth(unittest.TestCase):
 
     def test_one_paragraph_says_how_it_was_worked_out_with_what_is_the_bill_s_and_what_is_the_ai_s(self):
         text = read(self.page())
-        for said in ("How Meternaut worked it out.", "Over the last 7 days this resource paid about $202 a month for what the change would shrink.", "The bill shows 1,440 hours of it in the last 30 days.",
+        for said in ("How Meternaut worked it out.", "Over the last 7 days this gateway paid about $202 a month for what the change would shrink.", "The bill shows 1,440 hours of it in the last 30 days.",
                      "The change would lower that to 0 hours, which takes away all of it.", "The old quantity, 1,440, is the bill's own, and Meternaut checked it.",
                      "The new quantity, 0, is the AI's choice, and Meternaut did not check it."):
             self.assertIn(said, text)
         self.assertNotIn("That is the AI's own proposal, and Meternaut did not check it.", text)
+
+    def test_the_paragraph_says_which_kind_of_resource_it_is_about_and_not_the_word_resource(self):
+        case, plan = gateway(SETTING)
+        for surface, shown in surfaces(case, plan).items():
+            with self.subTest(surface):
+                self.assertNotIn("this resource", read(shown))
+        with mock.patch.object(brief_mod, "kind_words", lambda *found: ("Resource", "resource")):
+            self.assertIn("this resource paid about $202", brief_of(case, plan).saving.basis)
 
     def test_the_card_and_the_letter_say_the_same_in_the_same_words_without_the_table(self):
         case, plan = gateway(SETTING)
@@ -408,6 +416,13 @@ class OtherWaysToSave(unittest.TestCase):
                 self.assertNotIn("Lite is shared", text)
         buttons = [action["title"] for block in card_of(case, plan)["body"] if block.get("type") == "ActionSet" for action in block["actions"]]
         self.assertEqual(buttons, ["Review and decide"], "the other ways are information and make no button")
+
+    def test_a_request_that_meternaut_would_make_shows_them_too(self):
+        case, plan = a_change()
+        case = dataclasses.replace(case, facts=gateway_facts(proposal=BOTH))
+        page = surfaces(case, plan)["page"]
+        self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", read(page))
+        self.assertIn("If you approve", [block.text for block in page.blocks if block.kind == "heading"])
 
     def test_nothing_is_said_when_the_finding_has_no_other_way(self):
         case, plan = gateway(SETTING)

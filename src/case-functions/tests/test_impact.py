@@ -20,7 +20,7 @@ from test_missing_data import ABSENT, DISK, ENDPOINTS, PE, endpoint_case, endpoi
 from test_run_loop import Moving, loop_for
 from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case, page_of, walk_blocks
 
-from cases import brief, cards, evidence, impact, investigate, learning, letters, stake
+from cases import brief, cards, evidence, impact, investigate, learning, letters, proposals, stake
 from cases.approvals import IMPACT_NOT_CHECKED
 from cases.arm import MetricPoint
 from cases.http import HttpError
@@ -505,7 +505,7 @@ class WhatAPersonReads(unittest.TestCase):
         case = case_with(digest_of("safe"))
         case = dataclasses.replace(case, facts={**case.facts, "change": {"action": "remove", "how": "Remove it.", "missing": "none"}})
         reply, _ = page_of(case, endpoint_plan(case, saving_usd_month=None))
-        self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"})
+        self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"} - {proposals.KEY})
         self.assertNotIn("readAt", reply.content, "the digest is not printed as a row of raw JSON anywhere on the page")
         self.assertEqual(sorted(case.facts), ["asked", "basis", "change", "finding", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
 

@@ -543,12 +543,12 @@ def _gone(share: float) -> str:
     return "all of it" if share >= 1 else f"{round(100 * share)} percent of it"
 
 
-def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> str:
+def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun: str = "resource") -> str:
     """What a figure rests on, as whole sentences: what the resource paid over the days that the figure counts (`base`), what the bill shows and what the change would do to it, which number is the bill's
     (Meternaut checked it) and which is the AI's choice (it did not), the range when there is one, and what the figure leaves out. A switch names both ends when the digest holds their names."""
     many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
     uneven = _whole(found.get("uneven"))
-    who = f"{many} of the {members} resources" if members and members > many else ("this resource" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
+    who = f"{many} of the {members} resources" if members and members > many else (f"this {noun}" if many == 1 else f"these {many} resources")  # how many of the resources are priced comes first: a card cuts the end of the text
     when = _when(found)
     start, target, days, span, away, on, unit = (found.get(key) for key in ("from", "to", "days", "span", "away", "on", "unit"))
     numbers = _number(start) is not None and _number(target) is not None
@@ -584,7 +584,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
         if not listed:
             text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
                            if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays.")
-        text += " Meternaut did not check whether " + ("this resource can be switched to it, or whether it has what this resource needs." if many == 1
+        text += " Meternaut did not check whether " + (f"this {noun} can be switched to it, or whether it has what this {noun} needs." if many == 1
                                                       else "these resources can be switched to it, or whether it has what they need.")
     elif form == "mixed":
         text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
@@ -604,7 +604,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float) -> s
     return text
 
 
-def saved(facts: object, cost: float | None = None) -> Saved | None:
+def saved(facts: object, cost: float | None = None, noun: str = "resource") -> Saved | None:
     """The figure that a case keeps, read again: None when there is none or when a number is not as it should be (a high above what the bill lines cost on their higher rate, or above what the finding
     cost in 30 days allows for the days of life of its youngest line, a low of nothing, a form that is not one). The level follows from the form and from whether the rates agree, never from a word of
     the digest: Expected only when the figure follows from the bill alone."""
@@ -622,7 +622,7 @@ def saved(facts: object, cost: float | None = None) -> Saved | None:
     if cost is not None and high > (cost * MONTH / min(WEEK, life or WEEK) if rated else cost) + 0.005:
         return None
     base = round(min(bases) if rated else bill, 2)
-    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" and _firm(found) else SCENARIO, _basis(found, str(form), low, high, base), base, _whole(found.get("lines")) or 0,
+    return Saved(round(low, 2), round(high, 2), EXPECTED if form == "none" and _firm(found) else SCENARIO, _basis(found, str(form), low, high, base, noun), base, _whole(found.get("lines")) or 0,
                  "a month" if rated else f"in the last {MONTH} days")
 
 

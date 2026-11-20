@@ -470,8 +470,8 @@ MAIN_WORDS = {  # what the approval letter of each kind measured on main (f84596
 ASKS_WHAT_IT_DOES = "the sentence of what is asked names what Meternaut would do (whether to let Meternaut make this change) in the place of whether to approve this change"
 GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
     "advice, a switch with names": (2, "what could go wrong says that nothing was measured of its use, in the place of a sentence about traffic"),
-    "advice, reduce (a number that a tool read)": (42, "the figure says what the bill shows, what the change does to it and which number is the bill's and which is the AI's, and what could go wrong says what the second AI doubts"),
-    "advice, schedule": (27, "the figure says on how many days of how many the change turns the resource off and which numbers are the AI's, and what could go wrong says what the second AI doubts"),
+    "advice, reduce (a number that a tool read)": (43, "the figure says what the bill shows, what the change does to it and which number is the bill's and which is the AI's, which kind of resource it is about, and what could go wrong says what the second AI doubts"),
+    "advice, schedule": (28, "the figure says which kind of resource it is about, on how many days of how many the change turns the resource off and which numbers are the AI's, and what could go wrong says what the second AI doubts"),
     "advice, a group of many resources": (22, "the row that says why the finding is a lead, what could go wrong in the words of what was measured, and what an answer does for this kind of finding"),
     "Azure Advisor, one machine": (4, "the sentence that says that Meternaut did not check Advisor's estimate"),
     "change, stop-vm": (13, ASKS_WHAT_IT_DOES), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),

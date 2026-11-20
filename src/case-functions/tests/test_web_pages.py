@@ -805,7 +805,7 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
     def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
-        self.assertTrue(sub.startswith("How Meternaut worked it out. Over the last 30 days this resource paid about $36.00 for what the change would shrink. The change would lower the number from 3 to 2, "
+        self.assertTrue(sub.startswith("How Meternaut worked it out. Over the last 30 days this disk paid about $36.00 for what the change would shrink. The change would lower the number from 3 to 2, "
                                        "which takes away 33 percent of it. The old number, 3, is what the tools read, and Meternaut checked it. The new number, 2, is the AI's choice, and Meternaut did not check it."), sub)
         lead = next(p for p in card.find_all("p") if "say" in p.classes()).text()
         self.assertEqual(lead, "Meternaut worked out that this could save about $144 a year ($12.00 a month).")

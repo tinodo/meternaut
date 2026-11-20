@@ -16,7 +16,7 @@ from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Movin
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
-from cases import approvals, brief, cards, investigate, learning, letters
+from cases import approvals, brief, cards, investigate, learning, letters, proposals
 from cases.approvals import UNMEASURED, UNPRICED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.memory_store import stamp
@@ -923,7 +923,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_the_group_that_code_made(self):
         facts = {row["Fact"] for row in self.reply.table("facts").rows}
-        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metrics", "proposal"})
+        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metrics", "proposal"} - {proposals.KEY})
         self.assertIn(GROUP_FACT, self.case.facts)
 
     def test_the_start_page_lists_the_one_decision_with_the_headline_of_the_group(self):

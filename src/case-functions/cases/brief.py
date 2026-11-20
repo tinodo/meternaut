@@ -914,7 +914,7 @@ def _priced(case: CaseRecord | None) -> pricing.Saved | None:
     it, except for a group, whose resources are each bounded by their own cost when the figure is made."""
     if case is None:
         return None
-    return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d))
+    return pricing.saved(case.facts, None if group_of(case) is not None else _figure(case.cost_usd_30d), kind_words(case.resource_type, case.resource_id)[1])
 
 
 def advisor_estimate(case: CaseRecord | None) -> bool:

@@ -511,7 +511,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
     def test_the_brief_has_the_figure_with_its_level_and_the_basis_that_the_digest_gives(self):
         b = brief_of(priced_case(), priced_plan())
         self.assertEqual((b.saving.monthly, b.saving.level), (30.0, "Scenario"))
-        self.assertEqual(b.saving.basis, pricing.saved(priced_case().facts, 100.0).basis)
+        self.assertEqual(b.saving.basis, pricing.saved(priced_case().facts, 100.0, "thing").basis)
         self.assertIn("the AI's own assumption", b.saving.basis)
         self.assertEqual(b.saving.waiting_per_day, 1.0)
 
@@ -525,7 +525,7 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         b = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None))
         self.assertEqual((b.saving.monthly, b.saving.level), (22.5, "Scenario"), "600 hours at 0.0625 are 37.50 at list prices, and 30 at the rate of the bill: 22.50 to 30 saved, and the low end counts")
         self.assertIn("A switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. Your bill pays about 80 percent of the list price of Meter 1.", b.saving.basis)
-        self.assertIn("Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.", b.saving.basis)
+        self.assertIn("Meternaut did not check whether this thing can be switched to it, or whether it has what this thing needs.", b.saving.basis)
         self.assertEqual(b.how, "Take the basic tier.")
 
     def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):

@@ -251,9 +251,9 @@ class TheSavingsPage(unittest.TestCase):
         console.store.case_put(finding("proposed", case_id="c-assumption", saving_usd_month=30.0, cost_usd_30d=100.0, facts={"change": assumption}))
         row = rows_of(console.get(PATH))["Waiting for a person"]
         self.assertEqual(row["Findings"], "2")
-        self.assertIn("Could save about $360 a year ($30.00 a month) Over the last 30 days this resource paid about $100 for what the change would shrink. The AI assumes that 30 to 60 percent of that would go away.", row["Saving a year"])
+        self.assertIn("Could save about $360 a year ($30.00 a month) Over the last 30 days this disk paid about $100 for what the change would shrink. The AI assumes that 30 to 60 percent of that would go away.", row["Saving a year"])
         self.assertIn("That is the AI's own assumption, and Meternaut did not check it.", row["Saving a year"])
-        self.assertIn("Could save about $1,200 a year ($100 a month) Over the last 30 days this resource paid about $100 for what the change would remove. That comes from your bill.", row["Saving a year"])
+        self.assertIn("Could save about $1,200 a year ($100 a month) Over the last 30 days this disk paid about $100 for what the change would remove. That comes from your bill.", row["Saving a year"])
         self.assertEqual(row["Findings with no saving figure"], "None.")
 
     def test_two_confirmed_changes_of_one_finding_show_the_newest_in_its_row_and_are_two_changes_in_the_tile_which_the_note_says(self):
