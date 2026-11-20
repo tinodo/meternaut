@@ -156,6 +156,10 @@ jobs:
       # Whom the ladder of a request that waits asks after the people it was made for (docs/proposals/30-escalation.md): contacts (the people listed with the role escalation, else the owners; what an unset variable
       # reads as) or managers (the manager that Microsoft Entra names first, which needs the Graph permission User.Read.All, granted by a person). A plain word and no identifier, so a variable (rule 18 (b)). The builder refuses another word.
       ESCALATE_TO: ${{ vars.ESCALATE_TO }}
+      # The groups of the owner's REAL resources in which the family change-setting may lower a number (docs/proposals/32-real-changes.md): <subscription id>/<resource group>, separated by commas. Each names a subscription,
+      # so it is a secret of the environment and not a variable (rule 18 (b)); an unset secret reads as an empty string, which means no group is listed and nothing real can be changed. It does nothing while the owner's line in
+      # the app's code is off, a line that only he may change. The builder refuses a value that is wrong and the project's own group.
+      REAL_CHANGE_SCOPES: ${{ secrets.REAL_CHANGE_SCOPES }}
       ENV_ALERT_EMAILS: ${{ secrets.ENV_ALERT_EMAILS }}
       CONSOLE_APP_CLIENT_ID: ${{ secrets.CONSOLE_APP_CLIENT_ID }}
       CONSOLE_PEOPLE: ${{ secrets.CONSOLE_PEOPLE }}
@@ -223,6 +227,12 @@ jobs:
           while IFS= read -r item; do
             mask "$item"
           done < <(printf '%s' "$CONSOLE_PEOPLE" | grep -oE '"(oid|name|mail)"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/^"[a-z]+"[[:space:]]*:[[:space:]]*"(.*)"$/\1/' || true)
+          # The groups of real resources that the owner listed (a secret of the environment): the whole list, and each subscription id and each group name alone.
+          mask "$REAL_CHANGE_SCOPES"
+          read -ra items <<< "$(printf '%s' "$REAL_CHANGE_SCOPES" | tr ',/\n\r\t' '      ')"
+          for item in "${items[@]}"; do
+            mask "$item"
+          done
           # The digest that ends the name of every resource: tools/environment-params.py digest(), the first eight digits of the SHA-256 of "<subscription>/<resource group>" in lower case.
           if [ -n "$ENV_SUBSCRIPTION_ID" ] && [ -n "$ENV_RESOURCE_GROUP" ]; then
             mask "$(printf '%s' "${ENV_SUBSCRIPTION_ID,,}/${ENV_RESOURCE_GROUP,,}" | sha256sum | cut -c1-8)"

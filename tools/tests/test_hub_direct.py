@@ -139,6 +139,7 @@ EXAMPLE = {
     "CONSOLE_APP_CLIENT_ID": "12121212-3434-5656-7878-909090909090", "CONSOLE_HOST_NAME": "console.example.invalid", "MAIL_SENDER": "sender@example.invalid",
     "ENV_DNS_SERVERS": "10.99.1.4,10.99.1.5", "ENV_ALERT_EMAILS": "first@example.invalid, second@example.invalid",
     "DRIFT_ACCEPTED_EXEMPTIONS": "assignment-a/exemption-b, assignment-c/exemption-d", "DRIFT_ACCEPTED_DENY": "none",
+    "REAL_CHANGE_SCOPES": "dddddddd-4444-4555-8666-777777777777/rg-owner-real, eeeeeeee-4444-4555-8666-777777777777/rg-two",
     "CONSOLE_PEOPLE": '[{"oid":"abcdef12-0000-4000-8000-000000000001","name":"Ada Example","roles":["owner","approver"],"mail":"Ada@Example.invalid"},'
                       '{"oid":"abcdef12-0000-4000-8000-000000000002","name":"Bo Sample","roles":["ops"]}]',
 }
@@ -189,6 +190,13 @@ class TheMasks(unittest.TestCase):
         for word in ("none", "NONE", "None"):
             self.assertNotIn(word, masked)
         self.assertEqual(self.masked(DRIFT_ACCEPTED_EXEMPTIONS="NONE", DRIFT_ACCEPTED_DENY="None").isdisjoint({"NONE", "None", "none"}), True)
+
+    def test_the_real_groups_are_masked_whole_and_by_each_subscription_id_and_each_group_name(self):
+        masked = self.masked()
+        for value in (EXAMPLE["REAL_CHANGE_SCOPES"], "dddddddd-4444-4555-8666-777777777777", "DDDDDDDD-4444-4555-8666-777777777777", "rg-owner-real", "RG-OWNER-REAL", "eeeeeeee-4444-4555-8666-777777777777",
+                      "rg-two"):
+            self.assertIn(value, masked, value)
+        self.assertEqual(self.masked(REAL_CHANGE_SCOPES="").isdisjoint({"rg-owner-real", "rg-two"}), True, "an unset secret masks nothing")
 
     def test_the_people_of_the_console_are_masked_whole_and_by_their_object_id_their_name_and_their_address_and_not_by_their_roles(self):
         masked = self.masked()

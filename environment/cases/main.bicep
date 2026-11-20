@@ -165,6 +165,10 @@ param consoleHostName string = ''
 ])
 param escalateTo string = 'contacts'
 
+@description('The groups of the owner\'s real resources in which the family change-setting may lower a number, each as <subscription id>/<resource group>, separated by commas: the secret REAL_CHANGE_SCOPES of the environment hub (docs/proposals/32-real-changes.md). The app reads it as the setting REAL_CHANGE_SCOPES, and it does nothing while the owner\'s line in src/case-functions/cases/families/gates.py is off, a line that only the owner may change. Never the project\'s own group. Empty: no setting is written, and nothing is different from before.')
+@maxLength(2000)
+param realChangeScopes string = ''
+
 @description('The git commit that the deploy of this run was made from (the workflow passes the commit of the run). The app gets it as the setting BUILD_COMMIT, which the app itself may read. The tag that a reader of the resource group sees (meternaut-build-commit, which tools/drift-check.py compares with the commit of main) is not written here: the workflow writes it after the code has been published and the app answers, so that a publish that fails leaves no tag that says otherwise. Empty: no setting is written, and nothing is different from before. A value, not a secret.')
 @maxLength(64)
 param buildCommit string = ''
@@ -229,12 +233,15 @@ var tags = {
   'meternaut-stage': 'first-cases'
 }
 
-// The same two values as settings of the app, which the app itself may read (the in-app check of the agent harness compares the digest of the files that it runs from with the second); only the ones that are given.
-// They are the release that this deploy asks for. The tags that a reader of the resource group sees say which release has been published, and the workflow writes them after the publish.
+// The same two values as settings of the app, which the app itself may read (the in-app check of the agent harness compares the digest of the files that it runs from with the second), and the groups of real
+// resources; only the ones that are given. The first two are the release that this deploy asks for. The tags that a reader of the resource group sees say which release has been published, and the workflow writes them after the publish.
 var buildSettings = concat(empty(buildCommit) ? [] : [
   { name: 'BUILD_COMMIT', value: buildCommit }
 ], empty(packageSha256) ? [] : [
   { name: 'PACKAGE_SHA256', value: packageSha256 }
+], empty(realChangeScopes) ? [] : [
+  // The groups of real resources: written only when the owner listed one (the secret of the environment hub), so that the app is as it was while none is listed.
+  { name: 'REAL_CHANGE_SCOPES', value: realChangeScopes }
 ])
 
 var virtualNetworkName = 'vnet-${workload}'
