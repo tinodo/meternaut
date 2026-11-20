@@ -2,7 +2,7 @@
 import unittest
 
 import support  # noqa: F401  (puts the app on the path)
-from cases import proposals
+from cases import proposals, roles
 
 
 class ReadersTest(unittest.TestCase):
@@ -45,11 +45,32 @@ class ReadersTest(unittest.TestCase):
 
     def test_only_a_property_whose_last_key_names_a_count_or_a_size_is_countlike(self):
         for path in ("scaleUnits", "sku.capacity", "properties.sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "maximumNumberOfWorkers", "agentPoolProfiles.count", "workerCount",
-                     "diskSizeGB", "vCores", "bandwidthInMbps", "count.count", "processCount"):
+                     "diskSizeGB", "vCores", "bandwidthInMbps", "count.count", "processCount", "numberOfSites", "numberOfHoursWorkers", "numberOf" + "W" * (roles.MAX_CITED_NAME - 8)):
             self.assertTrue(proposals.countlike(path), path)
         for path in ("minimumTlsVersion", "retentionDays", "zonesCount", "ipConfigurationsCount", "timeoutInMinutes", "zoneRedundant", "diskState", "sku.tier", "replicaCount.mode", "count.state",
                      "", ".", "x.", "tier", None, 4):
             self.assertFalse(proposals.countlike(path), path)
+
+    def test_a_number_of_days_or_of_another_period_is_a_period_and_no_count(self):
+        for word in ("Days", "Hours", "Minutes", "Seconds", "Weeks", "Months", "Years"):
+            for path in (f"numberOf{word}", f"maximumNumberOf{word}", f"retention.numberOf{word}", f"numberof{word.lower()}", f"NUMBEROF{word.upper()}"):
+                with self.subTest(path):
+                    self.assertFalse(proposals.countlike(path))
+
+    def test_only_a_plain_ascii_path_of_the_length_that_the_tools_show_is_countlike(self):
+        for path in ("\u0456nstanceCount", "inst\u0430nceCount", "instance\u0421ount", "instanceCount\u200b", "\uff49nstanceCount", "sk\u0443.capacity", "\u0441ount.count"):
+            with self.subTest(path.encode("unicode_escape")):
+                self.assertFalse(proposals.countlike(path))
+        for path in ("numberOf;drop", "numberOf\tWorkers", "7instanceCount", "-instanceCount", "numberOf" + "W" * (roles.MAX_CITED_NAME - 7)):
+            with self.subTest(path[:24]):
+                self.assertFalse(proposals.countlike(path))
+
+    def test_countlike_is_pure_and_answers_false_for_what_is_no_path_without_raising(self):
+        for thing in ("", ".", "..", "[", "]", "[]", "a[b", "count[0]", "a[0].", None, 4, 4.5, True, b"count", ["count"], {"count": 1}, object(), "x" * 10 ** 6, "x" * 10 ** 6 + "Count",
+                      ".".join(["a"] * 10 ** 5)):
+            with self.subTest(type(thing).__name__):
+                self.assertIs(proposals.countlike(thing), False)
+        self.assertIs(type(proposals.countlike("a" * 10 ** 6 + ".count")), bool)
 
     def test_words_of_a_key_and_a_value(self):
         self.assertEqual(proposals.label("scaleUnits"), "scale units")

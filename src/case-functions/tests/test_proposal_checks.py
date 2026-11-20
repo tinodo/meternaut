@@ -225,8 +225,19 @@ class WhatCodeKeepsOfTheSettings(unittest.TestCase):
                 self.assertEqual(found.ways["r1"]["set"], [{"path": UNITS, "from": 4, "to": 2}], "the good entry stays")
                 self.assertEqual((found.dropped, found.said), (Counter({("set", "count"): 1}), (2, 0)), "refused by its own rule, with every other rule met")
 
+    def test_a_number_of_days_or_of_another_period_is_dropped_as_a_period_with_its_own_words_in_the_notes(self):
+        shown = {"numberOfDays": (30, 15), "maximumNumberOfHours": (24, 12), "numberOfMonths": (12, 6), "sku.numberOfYears": (3, 1)}
+        evidence = {"r1": {"properties": properties(**{name: now for name, (now, _) in shown.items()})}}
+        for name, (now, to) in shown.items():
+            with self.subTest(name):
+                found = checked(reduce(set=[{"handle": "r1", "property": name, "from": now, "to": to}, GOOD]), evidence=evidence)
+                self.assertEqual(found.ways["r1"]["set"], [{"path": UNITS, "from": 4, "to": 2}], "the good entry stays")
+                self.assertEqual((found.dropped, found.said), (Counter({("set", "period"): 1}), (2, 0)), "refused by its own rule, with every other rule met")
+                self.assertEqual(proposals.note_of(found), "code dropped 1 of 2 settings (a period, not a count or a size: 1)")
+
     def test_a_property_whose_last_key_is_a_count_or_a_size_is_kept(self):
-        shown = {"scaleUnits": (4, 2), "sku.capacity": (3, 1), "instanceCount": (5, 2), "maxReplicas": (10, 3), "numberOfWorkers": (6, 3), "diskSizeGB": (128, 64), "count.count": (2, 1)}
+        shown = {"scaleUnits": (4, 2), "sku.capacity": (3, 1), "instanceCount": (5, 2), "maxReplicas": (10, 3), "numberOfWorkers": (6, 3), "diskSizeGB": (128, 64), "count.count": (2, 1),
+                 "numberOfSites": (7, 3)}
         for name, (now, to) in shown.items():
             with self.subTest(name):
                 found = checked({"action": "reduce", "effects": [], "set": [{"handle": "r1", "property": name, "from": now, "to": to}]}, evidence={"r1": {"properties": {name: now}}})
@@ -525,12 +536,11 @@ class WhatTheInstructionsSay(unittest.TestCase):
     def test_the_investigator_is_told_the_shape_of_set_and_of_others_and_what_code_does_with_them(self):
         text = agents.INVESTIGATOR_INSTRUCTIONS
         for sentence in ('state it inside the change too, as "set":[{"handle":"r3","property":"<named exactly as a tool returned it>"', f"(the action reduce, at most {proposals.MAX_SETTINGS})",
-                         f'Inside the change as well, list in "others", at most {proposals.MAX_OTHERS} and only for a finding of one resource',
+                         f'For a finding of one resource, list every other way that you found to save on it inside the change as "others", at most {proposals.MAX_OTHERS}',
                          f"at most {proposals.MAX_TITLE} characters of letters, digits, spaces and the marks , ( ) + - only, with no run of three digits",
-                         f"at most {proposals.MAX_GIVES_UP} characters", '"gives_up"', '"in_place"', "with the approver's own rights", "name nothing in it that your tools did not show",
-                         "never only from what you already know", "from what the documentation was read to say", "its own change, in the forms above, which code prices from the bill",
-                         "false when it says that it must be made again, else left out",
-                         "A person reads gives_up as your own words, which code did not check"):
+                         f"at most {proposals.MAX_GIVES_UP} characters", '"gives_up"', '"in_place"', "name nothing in it that your tools did not show",
+                         "never only from what you already know", "from what the documentation was read to say", "its own change, in the forms above",
+                         "as the documentation says that it can be altered where it is or must be made again, else left out"):
             self.assertIn(sentence, " ".join(text.split()), sentence)
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no property, no limit and no option of any service")
 
@@ -550,7 +560,7 @@ class WhatTheInstructionsSay(unittest.TestCase):
     def test_the_skeptic_is_told_to_judge_the_new_value_and_what_the_other_ways_give_up_and_to_say_so_when_it_is_not_right(self):
         text = agents.SKEPTIC_INSTRUCTIONS
         for sentence in ("set, the settings that it proposes", "others, other ways to save", "Judge whether the new value is safe given the evidence rows",
-                         "whether what the other ways give up is right", "say disagree or unsure"):
+                         "a way marked estimate has a figure that rests on a share that the Investigator assumed", "whether what the other ways give up is right", "say disagree or unsure"):
             self.assertIn(sentence, text)
         self.assertEqual(banned_in(text), [])
 

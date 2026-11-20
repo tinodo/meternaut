@@ -31,12 +31,12 @@ TITLE = re.compile(rf"(?!.*[0-9]{{3}})[A-Za-z0-9][A-Za-z0-9 ,()'+-]{{0,{MAX_TITL
 WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")  # the words of a camel case key
 # Why an entry was dropped, in the words of the notes of a run: by the kind of entry, then the rule.
 WHY = {
-    "set": {"action": "the finding does not propose to reduce", "shape": "not an entry of the form", "handle": "a resource that the finding does not name", "name": "not a plain property name",
-            "shown": "a property that no tool showed", "number": "a value that is not one plain number", "count": "a property that is not a count or a size",
-            "from": "an old value that the tools did not show", "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice",
+    "set": {"action": "the finding is not a reduction", "shape": "not an entry of the form", "handle": "a resource that is not the finding's", "name": "not a plain property name",
+            "shown": "a property that no tool showed", "number": "a value that is not one plain number", "count": "a property that is not a count or a size", "period": "a period, not a count or a size",
+            "from": "an old value that no tool showed", "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice",
             "ratio": "numbers that differ from the change's own", "limit": "over the limit"},
-    "other": {"group": "a finding of more than one resource", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
-              "duplicate": "the same as the change or another way", "limit": "over the limit"},
+    "other": {"group": "a finding of several resources", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
+              "duplicate": "a repeat of the change or of a way", "limit": "over the limit"},
 }
 # Why Meternaut cannot make a change that a finding proposes. The family `change-setting` stores one key in the preconditions of the request that it makes instead (`cannotChange`), and the pages,
 # cards and letters say its sentence. The sentences are whole, plain and about this one request.
@@ -157,12 +157,22 @@ def _same(one: float, other: float) -> bool:
     return math.isclose(one, other, rel_tol=1e-6, abs_tol=0.0)
 
 
+def _refusal(path: object) -> str:
+    """Why the last key of a property path is no count, as a word of WHY, or "": the path must be a plain name of plain ASCII (pricing.NAME, which also bounds its length), and its last key must rank in
+    the toolbox's own order as a count or a size (COUNT_LIKE) or be a `numberOf...` key. The length of a list that the toolbox makes up (`<plural>Count`) is not a count, and a number of days,
+    hours or another period is a period of time and not a count of what the resource holds, with a reason of its own."""
+    leaf = path.rsplit(".", 1)[-1] if isinstance(path, str) and NAME.fullmatch(path) else ""
+    if not leaf or _rank(leaf) not in COUNT_LIKE or re.search(r"[^s]sCount$", leaf):
+        return "count"
+    return "period" if re.search(r"(?i)(?:day|hour|minute|second|week|month|year)s$", leaf) else ""
+
+
 def countlike(path: str) -> bool:
     """Whether the last key of a property path names a count or a size of what a resource holds (a count, units, replicas, cores, a size, a bandwidth, a capacity: the toolbox's own ranking of a key,
-    COUNT_LIKE, or a `numberOf...` key), the only kind of property that a setting may lower. A period, a version, a state, a flag and the length of a list that the toolbox makes up (`<plural>Count`) are not.
-    The last key decides, and the dotted path is the one that the tools showed, so the family that makes a change can apply the same gate when it plans."""
-    leaf = str(path).rsplit(".", 1)[-1]
-    return _rank(leaf) in COUNT_LIKE and not re.search(r"[^s]sCount$", leaf)  # a plural and `Count` is the length of a list, which the toolbox makes up from the key of the list
+    COUNT_LIKE, or a `numberOf...` key), the only kind of property that a setting may lower. A period (a retention in days, a `numberOf...` key that ends in days, hours or another period), a version, a
+    state, a flag and the length of a list that the toolbox makes up (`<plural>Count`) are not. The last key decides, and only a plain ASCII path is one: the function is pure and answers False for
+    anything that is not a path (it never raises). The dotted path is the one that the tools showed, so the family that makes a change can apply the same gate when it plans."""
+    return not _refusal(path)
 
 
 def _ratios(change: pricing.Change) -> dict:
@@ -177,8 +187,9 @@ def _ratios(change: pricing.Change) -> dict:
 
 
 def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Mapping) -> tuple[str, dict] | str:
-    """The handle and the entry of one setting, or the rule that it fails: a resource of the finding, a property that a tool showed under that name with one plain number, the old value that the
-    tool showed, a new value that is smaller and of the same kind (whole where the old one is whole) and, where the change states a ratio on the property, that ratio's numbers."""
+    """The handle and the entry of one setting, or the rule that it fails: a resource of the finding, a property that a tool showed under that name with one plain number and that is a count or a size
+    (`countlike`), the old value that the tool showed, a new value that is smaller and of the same kind (whole where the old one is whole) and, where the change states a ratio on the property, that
+    ratio's numbers."""
     if not isinstance(item, Mapping):
         return "shape"
     handle, name = item.get("handle"), item.get("property")
@@ -193,8 +204,8 @@ def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Ma
     now = _number(held[name])
     if now is None:
         return "number"
-    if not countlike(name):
-        return "count"
+    if why := _refusal(name):
+        return why
     start, to = _number(item.get("from")), _number(item.get("to"))
     if start is None or not _same(start, now):
         return "from"
