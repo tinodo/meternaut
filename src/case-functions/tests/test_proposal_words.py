@@ -82,6 +82,13 @@ SETTING = {"set": SET}
 BOTH = {"set": SET, "others": OTHERS}
 
 
+def gateways(count: int = 6, priced: int | None = None, number: int = 4):
+    """A finding about many gateways, with the figure that code worked out of them all: `combine` of the digests of `priced` identical ones, for `count` resources in all."""
+    one = gateway_facts()
+    group = {"count": count, "groups": 2, "type": TYPE, "names": ["lab-gw-2", "lab-gw-3"], "costUsd30d": 2400.0}
+    return gateway(facts={**one, pricing.KEY: pricing.combine([one[pricing.KEY]] * (priced or count), count), GROUP_FACT: group}, number=number)
+
+
 def brief_of(case, plan, **more):
     return brief_mod.build_brief(case, plan, None, (), now=NOW, may_answer=True, **more)
 
@@ -533,12 +540,24 @@ class EverySurfaceReadsAsSentences(unittest.TestCase):
     """The lint of the words (test_words) holds the new sentences too: voice, whole sentences, no abbreviated date and no repeated sentence."""
 
     def test_each_request_reads_as_sentences_on_the_page_the_card_and_the_letter(self):
-        group = {"count": 6, "groups": 2, "type": TYPE, "names": ["lab-gw-2", "lab-gw-3"], "costUsd30d": 2400.0}
-        for name, (case, plan) in {"cannot": gateway(BOTH, precondition="switch-off"), "no change yet": gateway(), "a change": a_change(),
-                                   "a group": gateway(facts={**gateway_facts(), GROUP_FACT: group}, number=4)}.items():
+        for name, (case, plan) in {"cannot": gateway(BOTH, precondition="switch-off"), "no change yet": gateway(), "a change": a_change(), "a group": gateways(), "part of a group": gateways(7, 3)}.items():
             for surface, shown in surfaces(case, plan).items():
                 with self.subTest(name, surface=surface):
                     self.assertEqual([], problems(dataclasses.replace(shown, name=f"{name}, {surface}")))
+
+    def test_a_request_about_many_resources_says_the_sum_and_what_each_has_on_the_page_the_card_and_the_letter(self):
+        for count, priced, said in ((6, 6, "At the rate of the last 7 days these 6 resources cost about $1,210 a month for what the change would shrink. The bill shows 8,640 hours of it in the last 30 days, "
+                                           "1,440 hours for each of them, and Meternaut checked that number against the bill. The AI says the change would lower that to 0 hours, which takes away all of it, "
+                                           "and Meternaut did not check that."),
+                                    (7, 3, "At the rate of the last 7 days, 3 of the 7 resources cost about $605 a month for what the change would shrink. The bill shows 4,320 hours of it in the last 30 days, "
+                                           "1,440 hours for each of them, and Meternaut checked that number against the bill.")):
+            case, plan = gateways(count, priced)
+            for surface, shown in surfaces(case, plan).items():
+                with self.subTest(count=count, priced=priced, surface=surface):
+                    text = read(shown)
+                    self.assertIn(said, text)
+                    self.assertNotIn("this gateway", text, "a request about many resources never says a singular of them")
+                    self.assertNotIn("1,440 hours of it", text, "the quantity of one resource is never said for all of them")
 
 
 class TheListsSayItInTheWordsOfNow(unittest.TestCase):
