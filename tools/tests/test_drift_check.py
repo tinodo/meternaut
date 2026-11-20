@@ -572,8 +572,9 @@ class WhatCannotBeReadIsUnknownAndNeverPass(unittest.TestCase):
             shutil.copy(ROOT / "src" / "case-functions" / "function_app.py", copy)
             results, _, _, _ = world(published, app_dir=str(copy))
             self.assertEqual(results["I-release"]["state"], "PASS", "a copy of the files as they are is the same app")
-            with (copy / "function_app.py").open("ab") as handle:
-                handle.write(b"\n# a comment that the release of main does not have\n")
+            source = (copy / "function_app.py").read_bytes()
+            self.assertIn(b"import azure.functions as func", source)
+            (copy / "function_app.py").write_bytes(source.replace(b"import azure.functions as func", b"import azure.functions as func  # a comment that the release of main does not have", 1))
             results, _, _, _ = world(published, app_dir=str(copy))
         self.assertEqual(results["I-release"]["state"], "FAIL", "a comment is part of the file that runs, so it is part of the digest: nothing is taken out of the files before they are compared")
 
