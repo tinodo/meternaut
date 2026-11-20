@@ -24,6 +24,7 @@ from test_words import Rendered, _letter, blocks_of_card, blocks_of_html, proble
 from cases import brief as brief_mod
 from cases import letters, pricing, proposals, upkeep
 from cases.families import gates, words
+from cases.models import NoteRecord
 from cases.runner import execute
 
 HOST, POOL = "microsoft.example/bastionhosts", "microsoft.example/workerpools"
@@ -221,9 +222,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                 expected.pop(name)
             expected["properties"].pop("provisioningState")
             expected["properties"]["scaleUnits"] = 2
-            expected["properties"]["ipConfigurations"][0].pop("etag")
-            expected["properties"]["ipConfigurations"][0]["properties"].pop("provisioningState")
-            self.assertEqual(body, expected, "the resource as it was read, with the one number lowered and nothing else touched")
+            self.assertEqual(body, expected, "the resource as it was read, with the one number lowered, the root fields that Azure fills in left out, and everything deeper (the etag and the state of a sub-resource) sent as it was read")
             self.assertEqual(world.arm.writes_of("PUT"), [f"https://management.azure.com{host()['id']}?api-version={API}"], "one write, to the exact address of the resource and the version that was chosen")
             self.assertEqual({method for method, _ in world.arm.writes()}, {"PUT"})
             puts = [headers for (method, _), headers in zip(world.arm.calls, world.arm.headers) if method == "PUT"]
@@ -353,6 +352,26 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertNotIn("request to look at a finding", feed, "a change that was taken back is a line of its own")
         asks = read(Rendered("page", "page", blocks_of_html(console.get(f"/ok/{new.plan_id}").text)))
         self.assertIn(f"Meternaut cannot make this change itself. {proposals.CANNOT['mismatch']} Your answer is recorded with your name.", asks)
+
+    def test_a_request_closed_for_a_do_not_touch_mark_is_a_row_of_the_history_in_the_words_of_a_request_and_its_page_says_left_alone(self):
+        with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
+            world, lead, case = world_of(host(), self.case)
+            old = world.approvals.plan_for(case, lead, (OID,))
+            world.store.note_put(NoteRecord(note_id="n", oid=OID, kind="do_not_touch", text="no", scope_resource_id=host()["id"], expires_at="2099-01-01T00:00:00Z"))
+            (taken, new, _), = world.approvals.upgrade((OID,))
+        self.assertEqual((taken.plan_id, new, taken.preconditions["takenBack"]), (old.plan_id, None, "left-alone"), "nobody is asked about it any more, and no request takes its place")
+        console = console_of(world, old, world.store.case_get(old.case_id))
+        request_words, note_words = brief_mod.TAKEN_BACK["left-alone-request"], brief_mod.TAKEN_BACK["left-alone"]
+        self.assertEqual(request_words, "Meternaut closed this request, because a person marked the resource do-not-touch.")
+        feed = console.get("/history").main.text()
+        self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", feed)
+        self.assertIn(request_words, feed, "people were asked about this request: its closing is a row, in the words of a request")
+        self.assertNotIn(note_words, feed, "and not in the words of the note of a held finding")
+        self.assertNotIn("request to look at a finding", feed)
+        page = console.get(f"/ok/{old.plan_id}").main.text()
+        self.assertIn("Left alone", page)
+        self.assertIn(request_words, page)
+        self.assertNotIn("The new request is", page, "nothing took its place")
 
     def test_a_setting_that_is_no_count_is_dropped_with_its_reason_in_the_notes_and_the_request_still_asks_and_says_what_is_true(self):
         change = reduction({"handle": "r1", "property": "retentionDays", "from": 30, "to": 7}, on="retentionDays", start=30, to=7, others=())
