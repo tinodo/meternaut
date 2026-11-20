@@ -2125,25 +2125,32 @@ def worked_of(case: CaseRecord | None, saving: Saving, whole: str, cost: float |
 
 COUNT_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")  # how many ways are said: the Investigator names at most three, and a count of things is a word in a sentence about them
 AI_WORD_REMAINS = "What would remain after each of them is the AI's word, and Meternaut did not check it."  # what the block of the other ways says once, above its table: the new quantity or share of a way is the AI's number even when the saving is worked out from the bill
+AI_WORD_REMAINS_ONE = "What would remain after it is the AI's word, and Meternaut did not check it."  # the same for a block of one way
 
 
 def _count_word(count: int) -> str:
     return COUNT_WORDS[count] if 0 <= count < len(COUNT_WORDS) else str(count)
 
 
+def _ways_by_figure(others: Sequence[proposals.Other]) -> tuple[int, int, int]:
+    """How many of the other ways are worked out from the bill, how many rest on a share that the AI assumed, and how many are not priced."""
+    bill = sum(other.low is not None and not other.estimate for other in others)
+    guess = sum(other.low is not None and other.estimate for other in others)
+    return bill, guess, len(others) - bill - guess
+
+
 def ways_said(others: Sequence[proposals.Other]) -> str:
     """How the figures of the other ways to save were made, as a clause that is true of each of them, the same on the page, the card and the letter: worked out from the bill (the new quantity or share in
     it is still the AI's word, which the sentence under it and the paragraph "How Meternaut worked it out" say), the AI's estimate (the saving rests on a share that the AI assumed and nothing checks) or not
-    priced. For one way the clause says it of that way: "one is worked out from the bill, one is the AI's estimate and one is not priced"."""
+    priced. For one way the clause says it of that way, for two or three that are alike it says "both" or "all three", and for a mix it counts: "one is worked out from the bill, one is the AI's estimate and
+    one is not priced"."""
     many = len(others)
-    bill = sum(other.low is not None and not other.estimate for other in others)
-    guess = sum(other.low is not None and other.estimate for other in others)
-    none = many - bill - guess
+    bill, guess, none = _ways_by_figure(others)
     if many == 1:
         return "its saving is worked out from the bill" if bill else "its saving is the AI's estimate" if guess else "it is not priced"
     if many in (bill, guess, none):
-        word = _count_word(many)
-        return f"all {word} are worked out from the bill" if bill else f"all {word} are the AI's estimates" if guess else "none of them is priced"
+        every = "both" if many == 2 else f"all {_count_word(many)}"
+        return f"{every} are worked out from the bill" if bill else f"{every} are the AI's estimates" if guess else "neither is priced" if many == 2 else "none of them is priced"
     return and_list([f"{_count_word(count)} {'is' if count == 1 else 'are'} {what}{'s' if count > 1 and what.endswith('estimate') else ''}"
                      for count, what in ((bill, "worked out from the bill"), (guess, "the AI's estimate"), (none, "not priced")) if count])
 
@@ -2154,9 +2161,10 @@ def ways_sentences(others: Sequence[proposals.Other], on: str, page: bool = True
     many = len(others)
     first = f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}."
     clause = ways_said(others)
-    if page:
-        return f"{first} {clause[:1].upper()}{clause[1:]}. {AI_WORD_REMAINS}" if many == 1 else f"{first} Of them, {clause}. {AI_WORD_REMAINS}"
-    return f"{first} The page shows {'it' if many == 1 else 'them'}: {clause}."
+    if not page:
+        return f"{first} The page shows {'it' if many == 1 else 'them'}: {clause}."
+    alike = many == 1 or many in _ways_by_figure(others)  # a mix is counted after "Of them,"; ways that are alike are said once, as a sentence of their own
+    return f"{first} {clause[:1].upper()}{clause[1:]}. {AI_WORD_REMAINS_ONE if many == 1 else AI_WORD_REMAINS}" if alike else f"{first} Of them, {clause}. {AI_WORD_REMAINS}"
 
 
 def others_line(brief: Brief) -> str:

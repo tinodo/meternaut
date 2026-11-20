@@ -541,15 +541,18 @@ class OtherWaysToSave(unittest.TestCase):
             return proposals.Other("x", "y", "reduce", None, low, low, estimate)
 
         said = {(way(1.0),): "Its saving is worked out from the bill.", (way(1.0, True),): "Its saving is the AI's estimate.", (way(),): "It is not priced.",
-                (way(1.0), way(2.0)): "Of them, all two are worked out from the bill.", (way(1.0, True), way(2.0, True)): "Of them, all two are the AI's estimates.",
-                (way(), way()): "Of them, none of them is priced.", (way(1.0), way(2.0, True), way(1.0, True), way(), way()): "Of them, one is worked out from the bill, two are the AI's estimates and two are not priced.",
+                (way(1.0), way(2.0)): "Both are worked out from the bill.", (way(1.0, True), way(2.0, True)): "Both are the AI's estimates.", (way(), way()): "Neither is priced.",
+                (way(1.0), way(2.0), way(3.0)): "All three are worked out from the bill.", (way(1.0, True), way(2.0, True), way(3.0, True)): "All three are the AI's estimates.", (way(), way(), way()): "None of them is priced.",
+                (way(1.0), way(2.0, True)): "Of them, one is worked out from the bill and one is the AI's estimate.", (way(1.0), way()): "Of them, one is worked out from the bill and one is not priced.",
+                (way(1.0), way(2.0, True), way(1.0, True), way(), way()): "Of them, one is worked out from the bill, two are the AI's estimates and two are not priced.",
                 (way(1.0), way(2.0), way(), way(1.0, True), way(1.0, True), way(1.0)): "Of them, three are worked out from the bill, two are the AI's estimates and one is not priced."}
         for ways, sentence in said.items():
             with self.subTest(sentence):
-                self.assertEqual(brief_mod.ways_sentences(ways, "this gateway"), f"The AI named {len(ways)} other way{'' if len(ways) == 1 else 's'} to save on this gateway. {sentence} {brief_mod.AI_WORD_REMAINS}")
+                remains = brief_mod.AI_WORD_REMAINS_ONE if len(ways) == 1 else brief_mod.AI_WORD_REMAINS
+                self.assertEqual(brief_mod.ways_sentences(ways, "this gateway"), f"The AI named {len(ways)} other way{'' if len(ways) == 1 else 's'} to save on this gateway. {sentence} {remains}")
                 short = brief_mod.ways_sentences(ways, "this gateway", False)
                 self.assertTrue(short.endswith("."))
-                self.assertNotIn(brief_mod.AI_WORD_REMAINS, short, "the card and the letter say that the page shows them, and the page says what remains")
+                self.assertNotIn(remains, short, "the card and the letter say that the page shows them, and the page says what remains")
 
     def test_the_card_and_the_letter_have_one_line_and_no_button(self):
         case, plan = gateway(BOTH)
@@ -574,21 +577,25 @@ class OtherWaysToSave(unittest.TestCase):
         priced = {"title": "Cut the extra units", "givesUp": "Fewer units.", "action": "reduce", "lowUsd": 50.0, "highUsd": 50.0}
         unpriced = {"title": "Remove the gateway", "givesUp": "Everything stops.", "action": "remove"}
         lists = {"worked out from the bill": [priced], "the AI's estimate": [free], "not priced": [unpriced], "bill and not priced": [priced, unpriced], "all three kinds": [priced, free, unpriced]}
-        sentence = "What would remain after each of them is the AI's word, and Meternaut did not check it."
+        many = "What would remain after each of them is the AI's word, and Meternaut did not check it."
+        one = "What would remain after it is the AI's word, and Meternaut did not check it."
         for name, ways in lists.items():
+            sentence, other = (one, many) if len(ways) == 1 else (many, one)
             case, plan = gateway({"set": SET, "others": ways})
             for surface, shown in surfaces(case, plan).items():
                 with self.subTest(name, surface=surface):
                     text = read(shown)
                     self.assertEqual(text.count(sentence), 1 if surface == "page" else 0, "the page says it once, above the table; a card and a letter say that the page shows the ways")
+                    self.assertNotIn(other, text, "one way is not 'each of them', and two or more are not 'it'")
             page = [block.text for block in surfaces(case, plan)["page"].blocks if not block.details]
             above = page.index(next(text for text in page if sentence in text))
             self.assertLess(above, page.index("Other way"), "above the table")
         case, plan = gateway(SETTING)
-        self.assertNotIn(sentence, read(surfaces(case, plan)["page"]), "no ways, no sentence")
+        self.assertNotIn(many, read(surfaces(case, plan)["page"]), "no ways, no sentence")
+        self.assertNotIn(one, read(surfaces(case, plan)["page"]), "no ways, no sentence")
         with mock.patch.object(brief_mod, "AI_WORD_REMAINS", ""):
             case, plan = gateway(BOTH)
-            self.assertNotIn(sentence, read(surfaces(case, plan)["page"]))
+            self.assertNotIn(many, read(surfaces(case, plan)["page"]))
 
     def test_what_the_ai_says_of_how_azure_does_it_is_said_as_the_ai_s_and_never_in_meternaut_s_voice(self):
         case, plan = gateway({"set": SET, "others": [OTHERS[0], {"title": "Lower it in place", "givesUp": "Nothing else.", "action": "reduce", "inPlace": True}]})
