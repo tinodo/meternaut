@@ -170,9 +170,9 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                     self.assertNotIn(stock, text)
                 self.assertEqual([], problems(replace(one, name=f"the line off, {surface}")))
         page = read(shown["page"])
-        self.assertIn("Of them, 1 is the AI's estimate and 1 is not priced.", page)
-        self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced.", read(shown["card"]))
-        self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced.", read(shown["letter"]))
+        self.assertIn("Of them, one is the AI's estimate and one is not priced.", page)
+        self.assertIn("The page shows them: one is the AI's estimate and one is not priced.", read(shown["card"]))
+        self.assertIn("The page shows them: one is the AI's estimate and one is not priced.", read(shown["letter"]))
         listed = [block.text for block in shown["page"].blocks if block.details and block.kind == "cell"]
         self.assertIn("proposal", listed, "the word of the finding's own proposal (change) is a typed fact, listed in the Details where it was")
         self.assertNotIn(proposals.KEY, listed, "and the ways, which the page says in its own words, are not")
@@ -182,10 +182,10 @@ class FromTheAnswerToTheChange(unittest.TestCase):
         self.assertNotIn("capacity units", page, "the words of the kind are those of its own property")
         table = cells(shown["page"])
         start = table.index("Saved, a month") + 1
-        for name, now, after, saved in (table[start + n:start + n + 4] for n in (0, 4)):
-            self.assertEqual((now, after, saved), ("$202", "$101", "$101"), name)
-            self.assertEqual(int(now[1:]) - int(after[1:]), int(saved[1:]), "what is paid now less what is paid after is what is saved, as it is printed")
-        self.assertEqual([name for name, *_ in (table[start + n:start + n + 4] for n in (0, 4))], ["Charges it would shrink", "The whole bastion host"])
+        name, now, after, saved = table[start:start + 4]
+        self.assertEqual((name, now, after, saved), ("Charges it would shrink (the whole bastion host)", "$202", "$101", "$101"), "the charges that go are the whole cost, so one row says it")
+        self.assertEqual(int(now[1:]) - int(after[1:]), int(saved[1:]), "what is paid now less what is paid after is what is saved, as it is printed")
+        self.assertNotIn("The whole bastion host", table, "and no second row repeats the same three amounts")
 
     def test_with_the_line_on_for_the_time_of_the_test_the_request_is_the_change_and_one_write_is_made_with_the_approvers_own_token(self):
         with mock.patch.object(gates, "REAL_CHANGES_ALLOWED", True):
@@ -200,8 +200,14 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                     self.assertIn("Scale down the bastion host bastion-one: scale units from 4 to 2", " ".join(b.text for b in one.blocks))
                     self.assertIn(f"You are asked whether to let Meternaut scale down the bastion host bastion-one in resource group {REAL_GROUP} by lowering scale units from 4 to 2.", text)
                     self.assertIn("At the rate of the last 7 days this bastion host costs about $202 a month for what the change would shrink.", text, "the figure says what it rests on, as the request that asked did")
-                    self.assertIn("The page shows them: 1 the AI's estimate and 1 not priced." if surface != "page" else "Of them, 1 is the AI's estimate and 1 is not priced.", text)
+                    self.assertIn("The page shows them: one is the AI's estimate and one is not priced." if surface != "page" else "Of them, one is the AI's estimate and one is not priced.", text)
                     self.assertIn(brief_mod.plain_sentences(said.undo if surface == "page" else said.short_undo, 200 if surface != "page" else 1000), text)
+                    if surface != "page":
+                        self.assertIn("It cannot promise that nothing else changes.", text, "the card and the letter keep the caveat: a cut by whole sentences never drops it")
+                    else:
+                        self.assertIn("Meternaut cannot promise that nothing else changes.", text)
+                        self.assertIn("Azure checks your rights, starts the change right then and may need a few minutes to finish it.", text)
+                        self.assertNotIn("makes the change right then", text)
                     for stock in OLD_STOCK + ("Meternaut cannot make this change itself",):
                         self.assertNotIn(stock, text)
                     self.assertEqual([], problems(replace(one, name=f"the line on, {surface}")))
@@ -243,7 +249,8 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             form = console.get(f"/ok/{plan.plan_id}").form(f"/ok/{plan.plan_id}", has_button="Approve")
             reply = console.submit(form, "Approve", confirm=False, note="Go on")
             self.assertEqual(reply.status, 200, "approving asks once more before anything is signed in")
-            self.assertTrue(reply.headings(1)[0].startswith("Confirm: Scale down the bastion host bastion-one: scale units from 4 to 2"), reply.headings(1))
+            self.assertEqual(reply.headings(1), ["Confirm this change"])
+            self.assertEqual([node.text() for node in reply.main.find_all("strong")], ["Scale down the bastion host bastion-one: scale units from 4 to 2"], "the title has its own line")
             self.assertIn("This changes a real resource. Nothing is changed until you confirm here.", reply.main.text())
             self.assertIn("Meternaut does not know what a lower number takes away from what uses the bastion host.", reply.main.find("div", class_="notice warning").text())
             self.assertEqual((console.delegate.begins, world.store.decisions_of_plan(plan.plan_id)), ([], []), "nothing is recorded and no sign-in starts at the first press")
@@ -262,13 +269,13 @@ class FromTheAnswerToTheChange(unittest.TestCase):
             kept = world.store.plan_get(plan.plan_id)
             b = tfs.shown(world, kept, done.action)
             self.assertEqual((b.outcome.title, b.outcome.result), ("Done, with a difference", "Done, with a difference"))
-            said = "Azure shows the bastion host with scale units at 2, and its last operation worked. Azure also changed: properties.retentionDays."
+            said = "Azure shows the bastion host with scale units at 2, and its last operation worked. Azure also changed the number or flag at properties.retentionDays."
             self.assertIn(said, b.outcome.lines)
             self.assertEqual(sum("Azure also changed" in line for line in b.outcome.lines), 1, "said once")
             self.assertNotIn("scale units at 2.", b.outcome.lines, "what Azure shows is said once, in the sentence of the result, and not again as a fragment")
             page = console_of(world, kept, case).get(f"/ok/{plan.plan_id}").text
             self.assertIn("Done, with a difference", page)
-            self.assertIn("Azure also changed: properties.retentionDays.", page)
+            self.assertIn("Azure also changed the number or flag at properties.retentionDays.", page)
             letter = letters.done_letter(kept, done.action, case, tfs.PERSON, tfs.BASE, tfs.NOW, tfs.CONTACTS)
             self.assertEqual(letter.subject, "[Meternaut] " + letters.DIFFERENT_SUBJECT)
             self.assertIn(said, letter.text)
@@ -298,7 +305,7 @@ class FromTheAnswerToTheChange(unittest.TestCase):
                     self.assertIn(title, letter.text, name)
                     self.assertNotRegex(letter.text, r"bastion-one in (resource )?group \S+: scale units", name)
                 rows = [link.text() for link in console_of(world, plan, mine).get("/").main.find_all("a") if link.attrs.get("href") == f"/ok/{plan.plan_id}"]
-                self.assertEqual([row.removeprefix("Review and decide: ").removeprefix("Review: ") for row in rows], [title], "the Decisions page")
+                self.assertEqual([row.removeprefix("Review and decide (").removeprefix("Review (").removesuffix(")") for row in rows], [title], "the Decisions page")
                 lane = console_of(world, plan, mine).get("/").main.text()
                 self.assertNotIn("proposes no change", lane, "the lane of a request that asks does not say that nothing is proposed, over a row that says what the AI proposes")
                 self.assertIn("Each of these is a change that Meternaut would make in Azure after you approve it." if on else "Meternaut makes no change for these. Your answer to each is recorded with your name.", lane)

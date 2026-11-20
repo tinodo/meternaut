@@ -326,7 +326,7 @@ class WithTheRealLoop(unittest.TestCase):
         main = self.form(button=APPROVE)
         self.console.now = self.console.now.replace(day=9)
         late = self.console.post(self.path, {**main.fields, "decision": "approve", "nonce": self.console.store.nonce_new(TINO, self.plan.plan_id)})
-        self.assertEqual((late.status, late.headings(1)), (200, ["Confirm: Delete the unattached disk planted-disk-1"]))
+        self.assertEqual((late.status, late.headings(1)), (200, ["Confirm this change"]))
         self.assertEqual(self.console.store.case_get("k1").status, "awaiting_ok")
         self.assertEqual((self.entra.asked, self.azure.calls), ([], []))
 

@@ -21,7 +21,7 @@ from . import costs as cost_words
 from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
-from .families.words import TYPE_WORDS, called_of, kinds, shown, type_noun, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
+from .families.words import TYPE_WORDS, also_changed, called_of, kinds, shown, type_noun, type_of, words_of  # called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
                      CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
 
@@ -134,6 +134,8 @@ SHARED_RISK = "Traffic that you cannot see from here may depend on it."
 RARE_USE = "Acting on it could break something that uses it less often than Meternaut measured."
 CHANGE_RISK = "If you act, what depends on it can slow down or stop."
 NOT_MEASURED_USE = "Nothing was measured of its use, and a read of Azure cannot see what depends on it."  # what could go wrong, for a finding of the investigation that nothing measured: said instead of a stock sentence
+NOT_KNOWN_DEPENDS = "Meternaut does not know what depends on it."  # what could go wrong begins with what is not known, and then says what was measured, which is no reassurance under a risk
+NOT_KNOWN_DEPENDS_MANY = "Meternaut does not know what depends on them."
 NO_FINDING = "Meternaut has no record of the finding behind this request, so it cannot say what could go wrong."  # for a request whose finding is not in the records
 COMMIT_RISK = "It commits you to pay for a term."  # the risk of a commitment that a finding names (a purchase, which no resource is changed or removed for)
 NOT_MEASURED = "The AI cited no measurement, so nothing shows whether anything uses it."
@@ -194,7 +196,7 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
 # The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
 # reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family, and a page says it
 # once, in these words: no button and no line of an approval repeats that the person signs in to Azure (the person does, when Azure asks).
-WHO_ACTS = ("You do it, with your own permissions. When you approve, Azure checks your rights and makes the change right then. "
+WHO_ACTS = ("You do it, with your own permissions. When you approve, Azure checks your rights, starts the change right then and may need a few minutes to finish it. "
             "Meternaut holds no right of its own to change anything.")
 TWO_PEOPLE = "Two people approve this. One confirms the request, and then another approves it."
 # What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
@@ -210,12 +212,15 @@ ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded wit
 ADVICE_WHO = "If you act, you do it yourself in Azure with your own rights."
 NO_HISTORY = "There is no history of cases like this yet."  # what the page and the card say when too few like it were answered; a letter, which is read once, leaves it out
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
-# What an answer does to advice that the investigation made, for the kind that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
-# proposals.CANNOT), or the AI named no setting, or only one that code dropped as no count, so there is nothing for Meternaut to change. A request of Azure Advisor and of an older check keeps
+# What an answer does to advice that the investigation made, for the kind of change that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
+# proposals.CANNOT); it is a reduction of a count and the AI named no setting, or only one that code dropped as no count, so there is nothing for Meternaut to change; it is a removal, a switch, a
+# schedule, a commitment or a deletion, which Meternaut cannot make at all (ADVICE_ONLY_COUNT); or it asks only for a look, and nothing changes. A request of Azure Advisor and of an older check keeps
 # ADVICE_CHANGE. Who acts is ADVICE_WHO for all of them.
 ADVICE_CANNOT = "Meternaut cannot make this change itself.{why} Your answer is recorded with your name."
-ADVICE_NONE = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."
+ADVICE_NONE = "The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name."  # only for a reduction of a count: the one kind of change that a setting could have been named for
 ADVICE_NOT_COUNT = "Meternaut only lowers a count of units, and {what} is not one, so it has nothing to change here. Your answer is recorded with your name."  # the change that the finding states is a ratio on a property that is no count
+ADVICE_ONLY_COUNT = "Meternaut cannot make this change itself, because it only lowers a count of units. Your answer is recorded with your name."  # a removal, a switch, a schedule, a commitment or a deletion: the AI was never asked for a setting for them
+ONLY_COUNT_VERBS = (VERBS["delete"], CHANGE_VERBS["remove"], CHANGE_VERBS["switch"], CHANGE_VERBS["schedule"], CHANGE_VERBS["commit"])  # the verbs of the changes that Meternaut cannot make at all
 # What a person who is asked about advice is asked, in one sentence that the page, the card and the letters all say as it is (asked_of): whether to do what the title names, with what changes from what
 # to what when the finding states it. It says it as a statement: a page, a letter and a card ask the reader nothing (no question mark, which the tests of each pin).
 ASKED = "You are asked whether to {what}."
@@ -485,6 +490,8 @@ class Brief:
     others: tuple[proposals.Other, ...] = ()
     # The change asks once more before the sign-in although it can be undone, because it changes a real resource (words.Words.confirm): False for every family that was before it.
     confirm: bool = False
+    # What a card and a letter say of the change, in whole short sentences that keep the one that says that nothing else is promised (words.Words.short_change): empty when `change` may be cut as it is.
+    change_short: str = ""
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -1017,7 +1024,8 @@ def acting_risk(case: CaseRecord | None) -> Risk:
         doubt = doubt_of(case)
         noun = kind_words(case.resource_type, case.resource_id)[1]
         reason = f"Other resources can depend on {'them' if group is not None else f'a {noun}'}." if level == "high" else ""  # the reason for the chip: the kind is one that others share, and no measurement shows that nothing uses it
-        return Risk(level, " ".join(part for part in (reason, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
+        unknown = (NOT_KNOWN_DEPENDS_MANY if group is not None else NOT_KNOWN_DEPENDS) if _metric_facts(case) else ""  # what a measurement of use cannot say, before what it says: a zero is no reassurance under "What could go wrong"
+        return Risk(level, " ".join(part for part in (reason or unknown, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
     parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
     return Risk(level, " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
 
@@ -1915,7 +1923,7 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
     if check.get("now"):
         lines.append(text_of(check["now"], 200))
     if check.get("differences"):
-        lines.append(f"Azure also changed: {text_of(check['differences'], 200).rstrip('.')}.")
+        lines.append(also_changed(text_of(check["differences"], 200)))
     after = _figure(check.get("costAfterUsd"))
     if after is not None and check.get("currency") in (None, "", "USD") and not (after == 0 and NO_COST_AFTER in said):
         lines.append(f"The bill since the change shows {usd_text(after)}.")
@@ -2070,8 +2078,10 @@ def _decided(outcome: Outcome, decisions: Sequence[DecisionRecord]) -> Outcome:
 
 
 def advice_words(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str, str]:
-    """What an answer does to advice, and who acts. For a finding of the investigation: that Meternaut cannot make the change that the finding proposes (with the reason that the request keeps, if it keeps
-    one: proposals.CANNOT), or that the AI named no setting, so there is nothing for Meternaut to change. For every other request: that nothing changes in Azure."""
+    """What an answer does to advice, and who acts, for the kind of change that the request is about. For a finding of the investigation that proposes a setting: that Meternaut cannot make the change (with
+    the reason that the request keeps, if it keeps one: proposals.CANNOT). For a reduction of a count with no setting: that the AI named none, so there is nothing for Meternaut to change (or that the
+    property is no count). For a removal, a switch, a schedule, a commitment or a deletion: that Meternaut cannot make it, because it only lowers a count of units. For a request that asks only for a
+    look, and for every request of Azure Advisor and of an older check: that nothing changes in Azure."""
     if case is None or case.detector != INVESTIGATION:
         return ADVICE_CHANGE, ADVICE_WHO
     from . import proposals
@@ -2079,6 +2089,11 @@ def advice_words(case: CaseRecord | None, plan: PlanRecord | None) -> tuple[str,
     why = proposals.cannot(plan.preconditions if plan is not None else None)
     if proposals.settings(case.facts):
         return ADVICE_CANNOT.format(why=f" {why}" if why else ""), ADVICE_WHO
+    verb = verb_of(case)
+    if verb in ONLY_COUNT_VERBS:
+        return ADVICE_ONLY_COUNT, ADVICE_WHO
+    if verb != CHANGE_VERBS["reduce"]:
+        return ADVICE_CHANGE, ADVICE_WHO
     price = _price(case)
     on = price.get("on") if price.get("form") == "ratio" else None  # the property that the change states a ratio on: a setting that code dropped as no count leaves this behind
     if isinstance(on, str) and pricing.NAME.fullmatch(on) and not proposals.countlike(on):
@@ -2100,14 +2115,26 @@ def worked_of(case: CaseRecord | None, saving: Saving, whole: str, cost: float |
     if found is None or saving.monthly is None or saving.level == "Verified" or abs(saving.monthly - found.low) > 0.005:
         return ()
     saved, shrunk = _rounded(found.low), _rounded(found.bill)
-    rows = [("Charges it would shrink", shrunk)] + ([(whole, _rounded(cost))] if cost is not None and _rounded(cost) >= shrunk else [])
+    whole_cost = _rounded(cost) if cost is not None else None
+    if whole_cost is not None and whole_cost == shrunk:  # the charges that the change shrinks are the whole cost: one row says it, and a second row would repeat the same three amounts
+        rows = [(f"Charges it would shrink ({whole[:1].lower()}{whole[1:]})", shrunk)]
+    else:
+        rows = [("Charges it would shrink", shrunk)] + ([(whole, whole_cost)] if whole_cost is not None and whole_cost > shrunk else [])
     return tuple((name, usd_text(now), "$0" if now <= saved else usd_text(round(now - saved, 2)), usd_text(saved)) for name, now in rows)
 
 
-def ways_said(others: Sequence[proposals.Other], short: bool = False) -> str:
-    """How the figures of the other ways to save were made, as a clause that is true of each of them: worked out from the bill (the new quantity or share in it is still the AI's word, which the paragraph
-    "How Meternaut worked it out" says), the AI's estimate (the saving rests on a share that the AI assumed and nothing checks) or not priced. For one way the clause says it of that way. `short` is the
-    list that a card and a letter have room for: "1 worked out from the bill, 1 the AI's estimate and 1 not priced"."""
+COUNT_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")  # how many ways are said: the Investigator names at most three, and a count of things is a word in a sentence about them
+AI_WORD_REMAINS = "What would remain after each of them is the AI's word, and Meternaut did not check it."  # what the block of the other ways says once, above its table: the new quantity or share of a way is the AI's number even when the saving is worked out from the bill
+
+
+def _count_word(count: int) -> str:
+    return COUNT_WORDS[count] if 0 <= count < len(COUNT_WORDS) else str(count)
+
+
+def ways_said(others: Sequence[proposals.Other]) -> str:
+    """How the figures of the other ways to save were made, as a clause that is true of each of them, the same on the page, the card and the letter: worked out from the bill (the new quantity or share in
+    it is still the AI's word, which the sentence under it and the paragraph "How Meternaut worked it out" say), the AI's estimate (the saving rests on a share that the AI assumed and nothing checks) or not
+    priced. For one way the clause says it of that way: "one is worked out from the bill, one is the AI's estimate and one is not priced"."""
     many = len(others)
     bill = sum(other.low is not None and not other.estimate for other in others)
     guess = sum(other.low is not None and other.estimate for other in others)
@@ -2115,19 +2142,20 @@ def ways_said(others: Sequence[proposals.Other], short: bool = False) -> str:
     if many == 1:
         return "its saving is worked out from the bill" if bill else "its saving is the AI's estimate" if guess else "it is not priced"
     if many in (bill, guess, none):
-        return (f"all {many} worked out from the bill" if bill else f"all {many} the AI's estimates" if guess else "none priced") if short else (
-            f"all {many} are worked out from the bill" if bill else f"all {many} are the AI's estimates" if guess else "none of them is priced")
-    return and_list([f"{count} {'' if short else 'is ' if count == 1 else 'are '}{what}{'s' if count > 1 and what.endswith('estimate') else ''}"
+        word = _count_word(many)
+        return f"all {word} are worked out from the bill" if bill else f"all {word} are the AI's estimates" if guess else "none of them is priced"
+    return and_list([f"{_count_word(count)} {'is' if count == 1 else 'are'} {what}{'s' if count > 1 and what.endswith('estimate') else ''}"
                      for count, what in ((bill, "worked out from the bill"), (guess, "the AI's estimate"), (none, "not priced")) if count])
 
 
 def ways_sentences(others: Sequence[proposals.Other], on: str, page: bool = True) -> str:
-    """The sentences about the other ways that the AI named: how many, and how each figure was made. The page says it above the table; a card and a letter, which have no table, say that the page shows them."""
+    """The sentences about the other ways that the AI named: how many, and how each figure was made. The page says it above the table, and says too that what would remain after each of them is the AI's
+    word; a card and a letter, which have no table, say that the page shows them."""
     many = len(others)
     first = f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}."
-    clause = ways_said(others, not page)
+    clause = ways_said(others)
     if page:
-        return f"{first} {clause[:1].upper()}{clause[1:]}." if many == 1 else f"{first} Of them, {clause}."
+        return f"{first} {clause[:1].upper()}{clause[1:]}. {AI_WORD_REMAINS}" if many == 1 else f"{first} Of them, {clause}. {AI_WORD_REMAINS}"
     return f"{first} The page shows {'it' if many == 1 else 'them'}: {clause}."
 
 
@@ -2200,7 +2228,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
             what=said.ask if said is not None and said.ask else f"{headline[:1].lower()}{headline[1:]}") if kind == "change" else "") if state == "open" else "",
         worked=worked_of(case, saving, whole, cost),
         others=proposals.others(case.facts) if case is not None and kind != "info" and state in ("open", HELD) else (),
-        confirm=said is not None and said.confirm)
+        confirm=said is not None and said.confirm, change_short=said.short_change if said is not None else "")
 
 
 def order_key(brief: Brief) -> tuple:

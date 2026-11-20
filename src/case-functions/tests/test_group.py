@@ -956,7 +956,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        self.assertIn("If you answer: The AI did not name a setting to change, so Meternaut has nothing to change here. Your answer is recorded with your name. If you act, you do it yourself in Azure with your own rights.", letter.text)
+        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you act, you do it yourself in Azure with your own rights.", letter.text)
         for repeated in ("Covers", "Together they cost", "Charges it would shrink", "Whose is it"):
             self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")

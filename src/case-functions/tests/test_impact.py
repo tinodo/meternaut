@@ -468,7 +468,7 @@ class WhatAPersonReads(unittest.TestCase):
                 b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
                 self.assertEqual((b.risk.level, b.risk.text, b.impact.verdict), (level, words, verdict))
                 self.assertEqual(stake.chips_of(b)[0], f"{level.capitalize()} risk{brief.IF_ACTED}")
-                self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_NONE))
+                self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", f'Other resources can depend on a private endpoint. {brief.NOT_MEASURED_USE} The second AI says: "Disconnected shows how it is now, not for how long."'))

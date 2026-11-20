@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Iterable, TypeVar
 
-from ..brief import ESCALATION_OFF, Brief, build_brief, needs as needs_two_people, taken_back  # the pages know the brief, and the brief knows when a change needs two people
+from ..brief import ESCALATION_OFF, Brief, also_changed, build_brief, needs as needs_two_people, taken_back  # the pages know the brief, and the brief knows when a change needs two people
 from ..models import ADVISE, SWITCH_NAMES, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord, Principal, Readiness, RunRecord, SwitchRecord, escalated_to, may_answer
 from . import words
 from .core import Ctx, Safe, esc, fmt, join, link_part, number, parse_time, usd
@@ -177,7 +177,7 @@ def verification_text(ctx: Ctx, data: object) -> Safe:
     if data.get("note"):
         lines.append(f"Note: {data['note']}")
     if data.get("differences"):
-        lines.append(f"Azure also changed: {data['differences']}.")
+        lines.append(also_changed(str(data["differences"])))
     elif data.get("compared") is False:
         lines.append("Meternaut could not compare the other numbers and flags with what it sent.")
     known = {"gone", "checkedAt", "costAfterUsd", "currency", "costLinesFrom", "costLinesTo", "costBeforeUsd30d", "costAskedOn", "costGaveUp", "note", "differences", "compared"}

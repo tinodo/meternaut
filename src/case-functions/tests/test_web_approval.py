@@ -66,7 +66,7 @@ class ThePage(unittest.TestCase):
         self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"])
         self.assertEqual(found["What changes"], "Azure deletes the disk planted-disk-1 in resource group meternaut-test-rg. Nothing else changes.")
         self.assertTrue(found["Who does it"].startswith("You do it, with your own permissions."), found["Who does it"])
-        self.assertIn("Azure checks your rights and makes the change right then.", found["Who does it"])
+        self.assertIn("Azure checks your rights, starts the change right then and may need a few minutes to finish it.", found["Who does it"])
         self.assertIn("Meternaut holds no right of its own to change anything.", found["Who does it"])
         self.assertNotIn("sign in", found["Who does it"].lower())
         self.assertNotIn("runner", found["Who does it"].lower())
@@ -855,8 +855,9 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
 
     def test_approving_a_delete_shows_a_page_that_asks_once_more_and_starts_no_sign_in(self):
         self.assertEqual(self.reply.status, 200)
-        self.assertEqual(self.reply.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
-        self.assertEqual(self.reply.root.find("title").text(), "Confirm: Delete the unattached disk planted-disk-1 - Meternaut")
+        self.assertEqual(self.reply.headings(1), ["Confirm this change"])
+        self.assertEqual([node.text() for node in self.reply.main.find_all("strong")], ["Delete the unattached disk planted-disk-1"], "the title has its own line under the heading")
+        self.assertEqual(self.reply.root.find("title").text(), "Confirm this change: Delete the unattached disk planted-disk-1 - Meternaut")
         self.assertNotIn("Location", self.reply.headers)
         self.assertEqual((self.delegate.begins, self.delegate.finishes), ([], []))
         self.assertEqual(self.console.store.plan_get("plan0001").state, "open")
@@ -907,7 +908,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
         for value in ("", "no", "true", "1", "YES"):
             with self.subTest(confirm=value):
                 reply = self.console.post("/ok/plan0001", {**self.form.fields, "decision": "approve", "confirm": value})
-                self.assertEqual(reply.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
+                self.assertEqual(reply.headings(1), ["Confirm this change"])
         self.assertEqual(self.delegate.begins, [])
 
     def test_a_change_that_can_be_undone_goes_straight_to_the_sign_in_and_every_delete_asks_first(self):
@@ -921,7 +922,7 @@ class TheConfirmationOfAChangeThatCannotBeUndone(unittest.TestCase):
                 reply = console.submit(form, APPROVE, confirm=False)
                 if asks:
                     self.assertEqual(reply.status, 200)
-                    self.assertTrue(reply.headings(1)[0].startswith("Confirm: "), reply.headings(1))
+                    self.assertEqual(reply.headings(1), ["Confirm this change"])
                     self.assertEqual(delegate.begins, [])
                 else:
                     self.assertEqual((reply.status, reply.headers["Location"]), (303, SIGNIN_URL))

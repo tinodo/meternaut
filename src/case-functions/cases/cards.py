@@ -176,7 +176,8 @@ def _decision_lines(brief: Brief) -> list[dict]:
     if brief.kind == "advice":
         return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, 300)}")] if brief.risk.acting else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
-    change = md(plain_sentences(brief.change, 300), 300) + ("" if "own permissions" in brief.change else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
+    said = brief.change_short or brief.change  # a family that has short words for a card keeps in them the sentence that says that nothing else is promised: it is never the one that a cut drops
+    change = md(plain_sentences(said, 300), 300) + ("" if "own permissions" in said else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
     return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(plain_sentences(brief.risk.text, 240), 240)}"), owner]
 
 
