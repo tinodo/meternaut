@@ -1060,7 +1060,7 @@ exec "$@"
 
 STUB_PYTHON = """#!/bin/bash
 # stand-in for python3. -c with sys.version_info says the version; -c with os.walk is the real Python (REAL_PYTHON), which counts the files of a folder; -c with sysconfig says where ensurepip put pip;
-# -c with import lzma or import bz2 works unless FAKE_PYTHON_MODULES_MISSING names the module (the names are separated by spaces).
+# any other -c that names lzma or bz2 fails when FAKE_PYTHON_MODULES_MISSING names that module (the names are separated by spaces), so that a check of them cannot come back unseen.
 # -m pip is FAKE_PIP: ok, missing (no pip, unless PYTHONPATH names the one that ensurepip made), strict-fails (the first attempt says Requires-Python and the one with --ignore-requires-python works),
 # hash, network, timeout (the exit code of timeout) or other (an error that nobody planned for). -m ensurepip is FAKE_ENSUREPIP: ok or disabled. Every -m call is logged with its arguments and PYTHONPATH,
 # and a call that finds the federated token in its environment says so.
@@ -1076,10 +1076,10 @@ case "$1" in
         if command -v cygpath > /dev/null 2>&1; then dir=$(cygpath -w "$3"); fi
         exec "$REAL_PYTHON" -c "$2" "$dir" ;;
       *sysconfig*) echo "$3/usr/lib/python3.12/site-packages"; exit 0 ;;
-      "import lzma" | "import bz2")
-        case " ${FAKE_PYTHON_MODULES_MISSING:-} " in
-          *" ${2#import } "*) echo "ModuleNotFoundError: No module named '_${2#import }'" >&2; exit 1 ;;
-        esac
+      *lzma* | *bz2*)
+        for module in ${FAKE_PYTHON_MODULES_MISSING:-}; do
+          case "$2" in *"$module"*) echo "ModuleNotFoundError: No module named '_$module'" >&2; exit 1 ;; esac
+        done
         exit 0 ;;
       *) echo 3.12.7; exit 0 ;;
     esac ;;
@@ -1202,7 +1202,6 @@ class ProbeScript(unittest.TestCase):
         self.assertEqual(self.without_seconds(lines), [
             "ok: az, curl, getent and python3 are in the image",
             "ok: python3 3.12.7",
-            "ok: python3 imports lzma and bz2",
             "ok: python3 -m pip 24.0",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az group show of the project group as the deploy identity",
@@ -1249,24 +1248,18 @@ class ProbeScript(unittest.TestCase):
         self.assertIn("ok: az login --identity", lines)
         self.assertIn("FAIL: az group show: ERROR: (AuthorizationFailed) The client does not have authorization", lines)
 
-    def test_a_python_that_cannot_import_lzma_or_bz2_is_one_FAIL_line_that_names_what_it_cannot_import_and_the_probe_goes_on(self):
-        # The sources that the workflow sends are one LZMA entry (tools/build-function-app.sh), so the container needs lzma; bz2 is the other compression that a zip can use
-        for missing, said in (("lzma", "FAIL: python3 cannot import: lzma"), ("bz2", "FAIL: python3 cannot import: bz2"), ("lzma bz2", "FAIL: python3 cannot import: lzma bz2")):
+    def test_a_python_without_lzma_and_bz2_is_not_a_failure_because_the_container_reads_only_deflate(self):
+        # The container reads the commit archive of GitHub (a zip, deflate) and the wheels of the lock (deflate too): it needs neither module. The probe once failed for them, for sources that were LZMA-compressed.
+        _, good = self.good_run()
+        for missing in ("lzma", "bz2", "lzma bz2"):
             done, lines = self.good_run(FAKE_PYTHON_MODULES_MISSING=missing)
             self.assertEqual((done.returncode, done.stderr), (0, ""), missing)
-            self.assertEqual(lines[1:3], ["ok: python3 3.12.7", said], missing)
-            self.assertNotIn("ok: python3 imports lzma and bz2", lines)
-            self.assertNotIn("ModuleNotFoundError", done.stdout, "what Python said is not printed")
-            self.assertIn("ok: python3 -m pip 24.0", lines, "the other checks go on")
-            self.assertEqual(lines[-1], "probe-done")
-        done, lines = self.good_run()
-        self.assertEqual(lines[1:3], ["ok: python3 3.12.7", "ok: python3 imports lzma and bz2"])
+            self.assertEqual(self.without_seconds(lines), self.without_seconds(good), f"{missing}: the same lines as for a Python that has them")
 
-    def test_a_python_that_does_not_run_is_said_once_and_its_modules_are_not_asked_about(self):
+    def test_a_python_that_does_not_run_is_said_once_and_the_probe_goes_on(self):
         broken = "#!/bin/bash\nexit 1\n"
         done, lines = self.run_probe({}, stubs={"python3": broken})
-        self.assertIn("FAIL: python3 does not run", lines)
-        self.assertEqual([line for line in lines if "lzma" in line or "bz2" in line], [])
+        self.assertEqual(lines.count("FAIL: python3 does not run"), 1)
         self.assertEqual(lines[-1], "probe-done")
 
     def test_a_secret_volume_without_the_file_that_was_to_be_sent_is_a_failure_and_without_a_size_it_is_only_said(self):
@@ -2463,6 +2456,16 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
             self.assertIn(words, self.section, words)
         self.assertNotIn("The first runs on the real estate are below: the usage app was published this way at the first attempt, and the cases app was not", self.section)
 
+    def test_it_says_at_the_top_that_the_request_way_is_gone_that_the_cap_stays_and_which_paragraphs_are_history(self):
+        note = self.section.strip().split("\n\n")[0]
+        for words in ("*Since 2026-11-20 the sources do not ride in the request.",
+                      "the container fetches the files of the commit from GitHub and stops before the sign-in unless their digest is the workflow's",
+                      "The cap itself and its evidence stay.", "The paragraphs on the build and on the container script say how it is now.",
+                      "The table of the steps and the paragraphs on the size of a request and on the packed sources keep what was true when they were written."):
+            self.assertIn(words, note, words)
+        self.assertNotIn("the order of the container's work stay", self.section, "the container's work starts with the fetch and the digest now")
+        self.assertIn("Since 2026-11-20 the container reads no LZMA, and the probe no longer asks whether `lzma` and `bz2` import.", self.section.split("**The sources, packed together**")[1].split("\n\n")[0])
+
     def test_it_lists_what_the_probe_of_phase_1_proved_and_that_the_two_other_facts_are_the_waits_and_the_five_minutes(self):
         paragraph = self.section.split("**What the probe of phase 1 proved, which this relies on**")[1].split("\n\n")[0]
         for words in ("The image's `python3` is 3.12.15 and has no pip, and `python3 -m ensurepip` makes pip 25.0.1 in a work folder", "The deploy identity signs in with the run's token inside the container and reads the project's group",
@@ -2494,19 +2497,28 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
             self.assertIn(words, self.section, words)
         self.assertNotIn("and the health check and the list move inside in phase 3", self.section, "the list of the functions did not have to move: it answered for the private usage app")
 
-    def test_it_says_that_the_build_is_one_script_in_three_modes_with_one_pip_command_and_a_test_that_pins_it(self):
+    def test_it_says_that_the_build_is_one_script_in_two_modes_with_one_pip_command_and_a_test_that_pins_it(self):
         paragraph = self.section.split("**One build, in two places.**")[1].split("\n\n")[0]
         for words in ("stays the one place that knows how a package is built", "`--only-binary=:all:`, `--require-hashes`, the three manylinux platform flags, `--implementation cp --python-version 3.13`",
-                      "By default it is the runner's build, with the guard that the running interpreter is Python 3.13, as before.",
-                      "`FUNCTION_APP_SOURCES_ONLY=1` copies the app's files, takes the comments and the text of the docstrings out of the Python files (`tools/strip-sources.py`, [proposal 27](27-package-without-comments.md)) and zips them", "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script, replaces the guard by two checks "
+                      "It has two modes. By default it is the runner's build, with the guard that the running interpreter is Python 3.13, as before.",
+                      "`FUNCTION_APP_BUILD_IN_OPERATOR=1`, set only by the container script, replaces the guard by two checks "
                       "(pip runs, and the lock carries hashes), makes the zip with Python, and fails the build when pip left a compiled module for another Python than 3.13",
-                      "The two switches cannot be set together, and any value but `1` is refused.", "pins that the pip words are identical and that the two zips hold the same files"):
+                      "Any value but `1` is refused.",
+                      "`FUNCTION_APP_SOURCE_DIR` says where the app's files are, in place of `src/<app>`: the container script sets it to the folder where it put the files that it fetched.",
+                      "Until 2026-11-20 there was a third mode, `FUNCTION_APP_SOURCES_ONLY=1`, that copied the app's files, took the comments and the text of the docstrings out of the Python files "
+                      "(`tools/strip-sources.py`, [proposal 27](27-package-without-comments.md)) and zipped them for the request; it went with the request way.",
+                      "pins that the pip words are identical and that the two zips hold the same files"):
             self.assertIn(words, paragraph, words)
+        for words in ("It has three modes", "The two switches cannot be set together", "the runner uses it for the sources of both apps"):
+            self.assertNotIn(words, paragraph, f"{words}: the sources-only mode is gone")
 
     def test_it_says_what_the_container_script_checks_in_which_order_and_what_its_exit_codes_mean(self):
         paragraph = self.section.split("**The container script.**")[1].split("\n\n")[0]
         for words in ("takes everything from its environment, checks it before anything runs (nothing is evaluated and no value is printed back)", "ends with `publish-done: exit code N`",
-                      "The container stays 20 seconds after the work", "the deploy identity signs in, which is the first `az` call (three tries)",
+                      "The container stays 20 seconds after the work",
+                      "In order: the container fetches the archive of the workflow's commit from GitHub, takes the app's files out of it and compares their digest with the one that the workflow sent, "
+                      "and stops before anything signs in when they differ",
+                      "the deploy identity signs in, which is the first `az` call (three tries)",
                       "the token that the publish needs is fetched at once, while the sign-in's assertion, which lives five minutes, is fresh",
                       "for the usage app a token for the App Service resource, because Flex Consumption's `config-zip` asks Microsoft Entra for one (read in the Azure CLI's development source, not in 2.92.0, and not run; "
                       "a failure is said and does not stop the run, and the first usage run had it and passed)",
@@ -2516,10 +2528,11 @@ class PublishingPhaseTwoRecord(unittest.TestCase):
                       "then the publish of its kind", "A string that looks like a token is hidden in anything a command said", "the work folder, with the state of the Azure CLI, is deleted at the end",
                       "The exit code is 0 when the code was published, 1 when the publish failed after its attempts, 2 when the input was refused and nothing was run, and 3 when the container could not do it"):
             self.assertIn(words, paragraph, words)
-        order = ("the size of the file in the volume is compared", "the deploy identity signs in", "the token that the publish needs is fetched at once", "**both names of the app must resolve",
+        order = ("the container fetches the archive of the workflow's commit from GitHub", "the deploy identity signs in", "the token that the publish needs is fetched at once", "**both names of the app must resolve",
                  "then the package is built from the sources", "then the publish of its kind")
         for earlier, later in zip(order, order[1:]):
             self.assertLess(paragraph.index(earlier), paragraph.index(later), f"{earlier} comes before {later}")
+        self.assertNotIn("the size of the file in the volume is compared", paragraph, "the container compares no size: the sources are not in its volume")
 
     def test_it_says_how_long_the_groups_are_given_and_why_and_what_the_first_run_on_an_estate_needs(self):
         time = self.section.split("**The time.**")[1].split("\n\n")[0]

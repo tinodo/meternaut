@@ -93,8 +93,8 @@ def code_tree(text: str) -> ast.AST:
 
 
 def code_form(text: str) -> str:
-    """Python source as it is hashed: its syntax tree without docstrings. A comment, white space, a line end and a docstring are not code, so the file of the repository and the file that is
-    shipped, which has none of them (tools/strip-sources.py), hash alike, and so do a checkout on Windows and one on Linux."""
+    """Python source as it is hashed: its syntax tree without docstrings. A comment, white space, a line end and a docstring are not code, so an edit of any of them leaves the hash as it was, and a
+    checkout on Windows and one on Linux hash alike."""
     return repr(code_shape(code_tree(text)))
 
 

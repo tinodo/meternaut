@@ -1012,6 +1012,13 @@ class TheRequestWayIsGone(unittest.TestCase):
             self.assertNotIn(name, tool, name)
         self.assertNotIn("as_held", tool, "there is one mode, and so no parameter for it")
 
+    def test_the_record_says_that_a_merge_shows_as_not_deployed_until_cases_has_run_once_because_the_digest_of_main_moves_with_any_edit_of_an_app_file(self):
+        record = text("docs/proposals/27-package-without-comments.md")
+        self.assertNotIn("so no drift shows", record)
+        self.assertIn("the digest of main moves with any edit of a file of the app, a comment too, and until the `cases` action has run once after a merge that makes such an edit, "
+                      "the check says that a merge has not been deployed yet", record)
+        self.assertIn("a merge has not been deployed yet", text("tools/drift-check.py"), "the check says what the record says that it says")
+
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
