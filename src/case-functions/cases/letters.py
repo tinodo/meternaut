@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Collection, Sequence
 
 from . import brief as brief_mod
-from .brief import Brief, contact_text, plain
+from .brief import Brief, contact_text, plain, plain_sentences
 from .models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord, started
 from .people import Person
 from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text, waited_line
@@ -271,7 +271,8 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     undo = (("Undo", _data(brief.undo.short or brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half
-    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), *undo, ("What could go wrong", _data(brief.risk.text, 200)))
+    return (owner, ("If you approve", _data(plain_sentences(brief.change, 200), 200) + ("" if "own permissions" in brief.change else " It runs with your own permissions.") + two), *undo,
+            ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200)))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:

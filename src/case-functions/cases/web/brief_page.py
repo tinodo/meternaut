@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, ways_sentences, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
@@ -182,26 +182,31 @@ def _happens(brief: Brief) -> Safe:
 
 
 def _others(brief: Brief) -> Safe:
-    """The other ways to save that the finding proposes, for information and not to answer: how many the AI named and how many Meternaut priced from the bill, and a table of what each saves a month, how
-    Azure does it when that is known and what it gives up. The titles, the words about how Azure does it and about what each gives up are the AI's."""
+    """The other ways to save that the finding proposes, for information and not to answer: how many the AI named and how each figure was made (worked out from the bill, the AI's estimate, or not
+    priced), and a table of what each saves a month, how Azure does it when that is known and what it gives up. The titles, the words about how Azure does it and about what each gives up are the AI's."""
     if not brief.others:
         return Safe("")
-    many = len(brief.others)
-    priced = sum(other.low is not None for other in brief.others)
-    done = ("priced it" if priced else "could not price it") if many == 1 else f"priced {priced or 'none'} of them"
     on = f"these {group_things(brief.group)}" if brief.group is not None else f"this {brief.where.noun}"
     rows = [[fmt('{title}<br><span class="muted">{place}</span>', title=other.title, place=IN_PLACE[other.in_place].format(noun=brief.where.noun)) if other.in_place is not None else other.title, _saves(other),
              other.gives_up or "Not said"] for other in brief.others]
-    return join([Safe("<h2>Other ways to save here</h2>"), paragraph(f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}, and Meternaut {done} from the bill."),
+    note = "The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them."
+    if any(other.estimate and other.low is not None for other in brief.others):
+        note += " A saving that is the AI's estimate rests on a share of the cost that the AI assumed, and Meternaut did not check that share."
+    return join([Safe("<h2>Other ways to save here</h2>"), paragraph(ways_sentences(brief.others, on)),
                  table("others", "Other ways to save here", ["Other way", "Saves a month", "What it gives up"], rows, row_header=True, quiet_caption=True),
-                 paragraph("The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them.", "m")])
+                 paragraph(note, "m")])
 
 
 def _saves(other) -> str:
-    """What another way (an `Other` of the brief) saves a month, as the page says other figures: a range, one amount, or that nothing priced it."""
+    """What another way (an `Other` of the brief) saves a month, as the page says other figures: a range, one amount, or that nothing priced it. A way whose saving rests on a share that the AI
+    assumed says so in the cell."""
     if other.low is None:
         return "Not priced"
-    return f"about {dollars(other.low)}" if other.high is None or other.high <= other.low else f"{dollars(other.low)} to {dollars(other.high)}"
+    ranged = other.high is not None and other.high > other.low
+    figure = f"{dollars(other.low)} to {dollars(other.high)}" if ranged else dollars(other.low)
+    if other.estimate:
+        return f"about {figure}, the AI's estimate"
+    return figure if ranged else f"about {figure}"
 
 
 def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:

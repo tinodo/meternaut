@@ -478,8 +478,9 @@ GREW = {  # the kinds whose letter is longer than it was on main, by how many wo
     "advice, commit": (6, RATE_AND_NO_SETTING),
     "advice, a group of many resources": (35, "the row that says why the finding is a lead, which rate the cost is, why the risk is high and what was measured of the use, and what an answer does for a finding that names no setting"),
     "change, stop-vm": (13, ASKS_WHAT_IT_DOES), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
-    "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, scale-vpn-gateway": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
-    "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES)}
+    "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
+    "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES),
+    "advice, a setting that Meternaut cannot change": (9, "the sentence about the other ways says how each figure was made: worked out from the bill, the AI's estimate or not priced")}
 
 
 class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.TestCase):

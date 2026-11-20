@@ -1342,7 +1342,8 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
         self.assertIn("Can be undone", letter.text)
         self.assertIn("Undo: Set capacity units to 4 again in the Azure portal. The page has the command.", letter.text)
-        self.assertIn("It runs with your own permissions.", letter.text)
+        self.assertIn("It uses your own permissions.", letter.text, "the words of the family say it once, and the letter does not add the sentence of the other families")
+        self.assertNotIn("It runs with your own permissions.", letter.text)
         self.assertIn("Review and decide: ", letter.text)
 
     def test_a_delete_that_cannot_be_undone_keeps_its_own_words_on_the_card_and_in_the_letter(self):
@@ -1536,7 +1537,8 @@ class TheOldFamiliesAreAsTheyWere(unittest.TestCase):
             self.assertEqual(registry.acts_on("meternaut-planted", SCOPES, (REAL,)), planted)
 
     def test_the_words_of_a_kind_come_from_the_type_segment_of_the_id(self):
-        for segment, said in (("bastionHosts", "bastion host"), ("gateways", "gateway"), ("publicIPAddresses", "public ip address"), ("databases", "database"), ("policies", "policy"), ("x", "resource")):
+        for segment, said in (("bastionHosts", "bastion host"), ("gateways", "gateway"), ("publicIPAddresses", "public IP address"), ("databases", "database"), ("policies", "policy"), ("signalR", "SignalR"),
+                              ("x", "resource")):
             self.assertEqual(words.kind_words(f"/subscriptions/{REAL_SUB}/resourceGroups/g/providers/Microsoft.X/{segment}/n"), said if segment != "x" else "resource")
         self.assertEqual(words.kind_words(""), "resource")
 

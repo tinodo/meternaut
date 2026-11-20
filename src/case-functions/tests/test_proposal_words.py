@@ -469,7 +469,7 @@ class OtherWaysToSave(unittest.TestCase):
         case, plan = gateway(BOTH, precondition="switch-off")
         page = surfaces(case, plan)["page"]
         text = read(page)
-        self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", text)
+        self.assertIn("The AI named 2 other ways to save on this gateway. Of them, 1 is worked out from the bill and 1 is not priced.", text)
         cells = [block.text for block in page.blocks if block.kind == "cell" and not block.details]
         self.assertTrue(any("Move to the Lite tier" in cell and "The AI says Azure only does this by making the gateway again." in cell for cell in cells), cells)
         self.assertIn("$150 to $202", cells)
@@ -478,6 +478,33 @@ class OtherWaysToSave(unittest.TestCase):
         self.assertIn("Not priced", cells)
         self.assertIn("Everything that connects through it stops.", cells)
         self.assertIn("The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them.", text)
+        self.assertNotIn("estimate", text, "no way here rests on a share that the AI assumed")
+
+    def test_a_way_whose_saving_rests_on_a_share_that_the_ai_assumed_says_so_in_the_sentence_the_cell_and_the_note(self):
+        free = {"title": "Use the free tier", "givesUp": "It is shared.", "action": "reduce", "inPlace": True, "lowUsd": 100.8, "highUsd": 151.2, "estimate": True}
+        case, plan = gateway({"set": SET, "others": [OTHERS[0], free, OTHERS[1]]})
+        shown = surfaces(case, plan)
+        text = read(shown["page"])
+        self.assertIn("The AI named 3 other ways to save on this gateway. Of them, 1 is worked out from the bill, 1 is the AI's estimate and 1 is not priced.", text)
+        cells = [block.text for block in shown["page"].blocks if block.kind == "cell" and not block.details]
+        start = cells.index("Saves a month")
+        self.assertEqual(cells[start + 3:start + 12:3], ["$150 to $202", "about $101 to $151, the AI's estimate", "Not priced"])
+        self.assertIn("A saving that is the AI's estimate rests on a share of the cost that the AI assumed, and Meternaut did not check that share.", text)
+        for surface in ("card", "letter"):
+            with self.subTest(surface):
+                self.assertIn("The AI named 3 other ways to save on this gateway. The page shows them: 1 worked out from the bill, 1 the AI's estimate and 1 not priced.", read(shown[surface]))
+
+    def test_the_sentence_counts_each_way_once_whatever_mix_of_figures_there_is(self):
+        def way(low=None, estimate=False):
+            return proposals.Other("x", "y", "reduce", None, low, low, estimate)
+
+        said = {(way(1.0),): "Its saving is worked out from the bill.", (way(1.0, True),): "Its saving is the AI's estimate.", (way(),): "It is not priced.",
+                (way(1.0), way(2.0)): "Of them, all 2 are worked out from the bill.", (way(1.0, True), way(2.0, True)): "Of them, all 2 are the AI's estimates.",
+                (way(), way()): "Of them, none of them is priced.", (way(1.0), way(2.0, True), way(1.0, True), way(), way()): "Of them, 1 is worked out from the bill, 2 are the AI's estimates and 2 are not priced."}
+        for ways, sentence in said.items():
+            with self.subTest(sentence):
+                self.assertEqual(brief_mod.ways_sentences(ways, "this gateway"), f"The AI named {len(ways)} other way{'' if len(ways) == 1 else 's'} to save on this gateway. {sentence}")
+                self.assertTrue(brief_mod.ways_sentences(ways, "this gateway", False).endswith("."))
 
     def test_the_card_and_the_letter_have_one_line_and_no_button(self):
         case, plan = gateway(BOTH)
@@ -485,7 +512,7 @@ class OtherWaysToSave(unittest.TestCase):
             with self.subTest(surface):
                 text = read(surfaces(case, plan)[surface])
                 self.assertEqual(text.count("other ways to save on this gateway"), 1)
-                self.assertIn("The AI named 2 other ways to save on this gateway. They are on the page.", text)
+                self.assertIn("The AI named 2 other ways to save on this gateway. The page shows them: 1 worked out from the bill and 1 not priced.", text)
                 self.assertNotIn("Lite is shared", text)
         buttons = [action["title"] for block in card_of(case, plan)["body"] if block.get("type") == "ActionSet" for action in block["actions"]]
         self.assertEqual(buttons, ["Review and decide"], "the other ways are information and make no button")
@@ -494,7 +521,7 @@ class OtherWaysToSave(unittest.TestCase):
         case, plan = a_change()
         case = dataclasses.replace(case, facts=gateway_facts(proposal=BOTH))
         page = surfaces(case, plan)["page"]
-        self.assertIn("The AI named 2 other ways to save on this gateway, and Meternaut priced 1 of them from the bill.", read(page))
+        self.assertIn("The AI named 2 other ways to save on this gateway. Of them, 1 is worked out from the bill and 1 is not priced.", read(page))
         self.assertIn("If you approve", [block.text for block in page.blocks if block.kind == "heading"])
 
     def test_what_the_ai_says_of_how_azure_does_it_is_said_as_the_ai_s_and_never_in_meternaut_s_voice(self):
@@ -529,6 +556,14 @@ class OtherWaysToSave(unittest.TestCase):
             self.assertIn(proposals.KEY, details())
             self.assertTrue([text for text in details() if "Lite is shared" in text])
         self.assertEqual(brief_mod.PROPOSED, proposals.KEY, "the brief says the key that the shape of the proposals keeps, and no other")
+
+    def test_the_word_of_the_finding_s_own_proposal_is_still_listed_and_the_ways_are_not(self):
+        case, plan = gateway(facts={**gateway_facts(proposal=BOTH), "proposal": "change"})
+        listed = [block.text for block in surfaces(case, plan)["page"].blocks if block.details and block.kind == "cell"]
+        self.assertNotEqual(proposals.KEY, "proposal", "the shape of what a finding proposes keeps its words under its own key")
+        self.assertIn("proposal", listed, "the word of what the finding proposes (change, delete, investigate) is a typed fact, listed where it always was")
+        self.assertNotIn(proposals.KEY, listed)
+        self.assertEqual(brief_mod.verb_of(case), "Scale down", "the verb of the title reads the ways, and the finding's own word is the proposal")
 
     def test_the_table_fails_when_the_readers_are_taken_out(self):
         case, plan = gateway(BOTH)

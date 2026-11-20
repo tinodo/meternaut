@@ -316,7 +316,7 @@ class ChangeSetting(Family):
                   "apiVersion": api, "location": clean_text(str(resource.get("location") or ""), 40)}
         group, name = clean_text(getattr(lead, "resource_group"), 90), clean_text(getattr(lead, "name"), 120)
         pre = {"family": self.name, "resourceType": getattr(lead, "resource_type").lower(), "resourceGroup": group.lower(), "measured": cited(getattr(lead, "facts", {}))}
-        kind = words.kind_words(getattr(lead, "resource_id"))
+        kind = words.kind_words(getattr(lead, "resource_id"), getattr(lead, "resource_type"))
         said = words.setting_words(kind, name, group, target, pre)  # the words that the pages show are the words of the record: one text
         reading = words.measured_text(pre)
         return Planned(
@@ -362,7 +362,7 @@ class ChangeSetting(Family):
         except Stop:
             return ""
         if provisioning_of(resource) in ("", "succeeded") and values_of(resource, aims) == [to for _, _, to in aims]:
-            return f"The {words.kind_words(plan.resource_id)} already showed {words.changes_text(plan.target, 'new')} when Meternaut looked. Nothing to change."
+            return f"The {words.plan_kind(plan)} already showed {words.changes_text(plan.target, 'new')} when Meternaut looked. Nothing to change."
         return ""
 
     # -- the change and the check after it ---------------------------------------------------------------------------------------------------------------------
@@ -384,7 +384,7 @@ class ChangeSetting(Family):
             answer = env.azure.write(self.call(), located.url(), body, {"If-Match": etag} if etag else None)  # the reading and the write are one: a change in between is refused (412), and so is a resource that is gone
         except HttpError as error:
             if error.status == 412:
-                raise Stop(f"the {words.kind_words(plan.resource_id)} changed while Meternaut was about to change it") from error
+                raise Stop(f"the {words.plan_kind(plan)} changed while Meternaut was about to change it") from error
             raise
         env.kept["sent"] = kept_of(body)
         return answer
@@ -402,7 +402,7 @@ class ChangeSetting(Family):
         if state in ("failed", "canceled"):
             return Verdict("failed", "Azure shows that the last operation on the resource did not work. The numbers that it shows may be the ones that were asked for, and the resource may keep running as it did.", evidence)
         if state in ("", "succeeded"):
-            kind = words.kind_words(plan.resource_id)
+            kind = words.plan_kind(plan)
             if shown == [to for _, _, to in aims]:
                 now = words.changes_text(plan.target, "new")
                 more = differences(resource, env.kept.get("sent"))

@@ -46,6 +46,7 @@ class Words:
     reversible: bool
     short_undo: str = ""  # the first sentence of the undo, for a card and a letter, which never cut a command in half: empty when the undo may be cut as it is
     confirm: bool = False  # the change asks once more before the sign-in, although it can be undone: it changes a real resource
+    ask: str = ""  # what the person is asked to let Meternaut do, as the end of "You are asked whether to let Meternaut ...": empty when the headline in lower case says it
 
 
 @dataclass(frozen=True)
@@ -229,25 +230,85 @@ def scale_vpn_gateway(plan: PlanRecord | None, rtype: str, name: str, group: str
         reversible=True)
 
 
+# resource type -> (what the resource is, in a sentence of a person)
+TYPE_WORDS = {
+    "microsoft.compute/disks": ("Managed disk", "disk"),
+    "microsoft.compute/snapshots": ("Snapshot", "snapshot"),
+    "microsoft.network/publicipaddresses": ("Public IP address", "public IP address"),
+    "microsoft.network/networkinterfaces": ("Network interface", "network interface"),
+    "microsoft.network/natgateways": ("NAT gateway", "NAT gateway"),
+    "microsoft.network/privateendpoints": ("Private endpoint", "private endpoint"),
+    "microsoft.network/loadbalancers": ("Load balancer", "load balancer"),
+    "microsoft.network/p2svpngateways": ("Point-to-site gateway", "point-to-site gateway"),
+    "microsoft.network/applicationgateways": ("Application gateway", "application gateway"),
+    "microsoft.network/azurefirewalls": ("Firewall", "firewall"),
+    "microsoft.web/serverfarms": ("App Service plan", "App Service plan"),
+    "microsoft.web/sites": ("App Service app", "app"),
+    "microsoft.compute/virtualmachines": ("Virtual machine", "virtual machine"),
+    "microsoft.compute/virtualmachinescalesets": ("Virtual machine scale set", "virtual machine scale set"),
+    "microsoft.storage/storageaccounts": ("Storage account", "storage account"),
+    "microsoft.sql/servers/databases": ("SQL database", "SQL database"),
+    "microsoft.sql/servers/elasticpools": ("SQL elastic pool", "SQL elastic pool"),
+    "microsoft.dbforpostgresql/flexibleservers": ("PostgreSQL server", "PostgreSQL server"),
+    "microsoft.dbformysql/flexibleservers": ("MySQL server", "MySQL server"),
+    "microsoft.documentdb/databaseaccounts": ("Cosmos DB account", "Cosmos DB account"),
+    "microsoft.cache/redis": ("Redis cache", "Redis cache"),
+    "microsoft.containerservice/managedclusters": ("Kubernetes cluster", "Kubernetes cluster"),
+    "microsoft.eventhub/namespaces": ("Event Hubs namespace", "Event Hubs namespace"),
+    "microsoft.servicebus/namespaces": ("Service Bus namespace", "Service Bus namespace"),
+    "microsoft.kusto/clusters": ("Data Explorer cluster", "Data Explorer cluster"),
+    "microsoft.recoveryservices/vaults": ("Recovery Services vault", "Recovery Services vault"),
+    "microsoft.operationalinsights/workspaces": ("Log Analytics workspace", "Log Analytics workspace"),
+    "microsoft.cognitiveservices/accounts": ("AI services account", "AI services account"),
+    "microsoft.subscriptions/subscriptions": ("Subscription", "subscription"),
+    "microsoft.resources/subscriptions/resourcegroups": ("Resource group", "resource group"),
+    "microsoft.resources/resourcegroups": ("Resource group", "resource group"),
+}
+PLAIN_WORD = re.compile(r"[A-Z]?[a-z]+")  # a plain word of a type segment, against an acronym ("IP") or a name that has a capital inside it ("SignalR"), which are kept as they are
+
+
 def _singular(word: str) -> str:
-    for tail, ending in (("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x")):
-        if word.endswith(tail):
-            return word[:-len(tail)] + ending
+    """The singular of the last word of a type segment: "hosts" is "host", "policies" is "policy", "addresses" is "address", "prefixes" is "prefix", "searches" is "search" and "caches" is "cache"; a word
+    that ends in ss, us or is stays as it is."""
+    if word.endswith(("sses", "xes")) or (word.endswith(("ches", "shes")) and not word.endswith("aches")):
+        return word[:-2]
+    if word.endswith("ies"):
+        return word[:-3] + "y"
     return word[:-1] if word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
 
 
-def kind_words(resource_id: object) -> str:
-    """The kind of the resource of an id in words of a person, from the type segment before its name: `bastionHosts` is "bastion host". "resource" when the id has no such segment."""
+def type_noun(segment: str) -> str:
+    """The noun that the type segment of an id says: its camel case in words, the last one in the singular, an acronym ("IP") and a name with a capital inside it ("signalR" is "SignalR") as they are."""
+    pieces = WORD.findall(segment)
+    if len(pieces) > 1 and len(pieces[-1]) == 1 and pieces[-1].isupper():
+        pieces[-2:] = [pieces[-2] + pieces[-1]]
+    names = [piece.lower() if PLAIN_WORD.fullmatch(piece) else piece[:1].upper() + piece[1:] for piece in pieces]
+    if PLAIN_WORD.fullmatch(pieces[-1]):
+        names[-1] = _singular(names[-1])
+    return " ".join(names)
+
+
+def kind_words(resource_id: object, resource_type: object = "") -> str:
+    """The kind of the resource of an id in words of a person: those of the table for a type that has them ("App Service plan"), else the type segment before its name (`bastionHosts` is "bastion host").
+    "resource" when the id has no such segment. The brief says a kind in these words too, so that a request of advice and the change that replaces it call a resource the same."""
+    known = TYPE_WORDS.get(resource_type.lower()) if isinstance(resource_type, str) else None
+    if known:
+        return known[1]
     parts = str(resource_id or "").split("/")
     segment = parts[-2] if len(parts) >= 9 else ""
-    names = [word.lower() for word in WORD.findall(segment)] if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else []
-    return " ".join([*names[:-1], _singular(names[-1])]) if names else "resource"
+    return type_noun(segment) if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else "resource"
+
+
+def plan_kind(plan: PlanRecord) -> str:
+    """The kind of the resource of a plan of `change-setting` in words of a person: the type that its preconditions keep, else its id."""
+    pre = plan.preconditions if isinstance(plan.preconditions, dict) else {}
+    return kind_words(plan.resource_id, pre.get("resourceType", ""))
 
 
 def plan_noun(plan: PlanRecord | None) -> str:
-    """The resource of a plan as a noun of a sentence: from the type segment of its id for the family that works on any kind, else the noun of its kind."""
+    """The resource of a plan as a noun of a sentence: from the type of its id for the family that works on any kind, else the noun of its kind."""
     if plan is not None and plan.family == "change-setting":
-        return kind_words(plan.resource_id)
+        return plan_kind(plan)
     return noun_of(type_of(plan.family, plan.preconditions)) if plan is not None else "resource"
 
 
@@ -333,11 +394,11 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
         level="medium",
         undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right. "
               "Setting it back does not bring back what the lower number cut off meanwhile."),
-        reversible=True, short_undo=short, confirm=True)
+        reversible=True, short_undo=short, confirm=True, ask=f"scale down the {kind} {thing} in resource group {group} by lowering {said}")
 
 
 def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
-    return setting_words(kind_words(plan.resource_id if plan is not None else ""), name or "this resource", group or "this group", _target(plan),
+    return setting_words(plan_kind(plan) if plan is not None else kind_words("", rtype), name or "this resource", group or "this group", _target(plan),
                          plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
 
 

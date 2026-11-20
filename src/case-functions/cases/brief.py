@@ -21,7 +21,7 @@ from . import costs as cost_words
 from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
-from .families.words import called_of, kinds, shown, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
+from .families.words import TYPE_WORDS, called_of, kinds, shown, type_noun, type_of, words_of  # called_of and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
                      CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
 
@@ -167,40 +167,6 @@ CHECK_FIRST = ("Open it in the Azure portal and read what it points at and what 
                "Read its metrics in Azure Monitor over a month or more, and ask what uses it only now and then.")
 CHECK_FIRST_SHORT = "Before you act, check what it connects to, who owns it and what its traffic looks like."
 
-# resource type -> (what the resource is, in a sentence of a person)
-TYPE_WORDS = {
-    "microsoft.compute/disks": ("Managed disk", "disk"),
-    "microsoft.compute/snapshots": ("Snapshot", "snapshot"),
-    "microsoft.network/publicipaddresses": ("Public IP address", "public IP address"),
-    "microsoft.network/networkinterfaces": ("Network interface", "network interface"),
-    "microsoft.network/natgateways": ("NAT gateway", "NAT gateway"),
-    "microsoft.network/privateendpoints": ("Private endpoint", "private endpoint"),
-    "microsoft.network/loadbalancers": ("Load balancer", "load balancer"),
-    "microsoft.network/p2svpngateways": ("Point-to-site gateway", "point-to-site gateway"),
-    "microsoft.network/applicationgateways": ("Application gateway", "application gateway"),
-    "microsoft.network/azurefirewalls": ("Firewall", "firewall"),
-    "microsoft.web/serverfarms": ("App Service plan", "App Service plan"),
-    "microsoft.web/sites": ("App Service app", "app"),
-    "microsoft.compute/virtualmachines": ("Virtual machine", "virtual machine"),
-    "microsoft.compute/virtualmachinescalesets": ("Virtual machine scale set", "virtual machine scale set"),
-    "microsoft.storage/storageaccounts": ("Storage account", "storage account"),
-    "microsoft.sql/servers/databases": ("SQL database", "SQL database"),
-    "microsoft.sql/servers/elasticpools": ("SQL elastic pool", "SQL elastic pool"),
-    "microsoft.dbforpostgresql/flexibleservers": ("PostgreSQL server", "PostgreSQL server"),
-    "microsoft.dbformysql/flexibleservers": ("MySQL server", "MySQL server"),
-    "microsoft.documentdb/databaseaccounts": ("Cosmos DB account", "Cosmos DB account"),
-    "microsoft.cache/redis": ("Redis cache", "Redis cache"),
-    "microsoft.containerservice/managedclusters": ("Kubernetes cluster", "Kubernetes cluster"),
-    "microsoft.eventhub/namespaces": ("Event Hubs namespace", "Event Hubs namespace"),
-    "microsoft.servicebus/namespaces": ("Service Bus namespace", "Service Bus namespace"),
-    "microsoft.kusto/clusters": ("Data Explorer cluster", "Data Explorer cluster"),
-    "microsoft.recoveryservices/vaults": ("Recovery Services vault", "Recovery Services vault"),
-    "microsoft.operationalinsights/workspaces": ("Log Analytics workspace", "Log Analytics workspace"),
-    "microsoft.cognitiveservices/accounts": ("AI services account", "AI services account"),
-    "microsoft.subscriptions/subscriptions": ("Subscription", "subscription"),
-    "microsoft.resources/subscriptions/resourcegroups": ("Resource group", "resource group"),
-    "microsoft.resources/resourcegroups": ("Resource group", "resource group"),
-}
 GUARD_WORDS = {
     "locked": "A management lock covers the resource.",
     "keep-tag": "A tag asks to keep the resource.",
@@ -544,6 +510,20 @@ def plain(value: object, limit: int = MAX_NAME) -> str:
 
 text_of = plain  # the name that the first modules of the decision brief use
 
+
+def plain_sentences(value: object, limit: int) -> str:
+    """Words that code wrote, as one safe line (plain) of at most `limit` characters, cut at the end of a sentence: the sentences that fit, and never half of one. A first sentence that is longer than the
+    limit is cut as `plain` cuts."""
+    whole = plain(value, 10_000)
+    if len(whole) <= limit:
+        return whole
+    kept = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", whole):
+        if len(kept) + len(sentence) + bool(kept) > limit:
+            break
+        kept = f"{kept} {sentence}".strip()
+    return kept or plain(whole, limit)
+
 # An id of the estate (a resource path or a GUID): the page "What the AI looked at" shows none.
 ID_TEXT = re.compile(r"(?i)/subscriptions/\S*|\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b")
 
@@ -670,42 +650,17 @@ def day_text(value: object, now: dt.datetime | None = None) -> str:
     return text if now is not None and day.year == _utc(now).year else f"{text} {day.year}"
 
 
-PLAIN_WORD = re.compile(r"[A-Z]?[a-z]+")  # a plain word of a type segment, against an acronym ("IP") or a name that has a capital inside it ("SignalR"), which are kept as they are
-
-
-def _singular(word: str) -> str:
-    """The singular of the last word of a type segment: "hosts" is "host", "policies" is "policy", "addresses" is "address", "prefixes" is "prefix", "searches" is "search" and "caches" is "cache"; a word
-    that ends in ss, us or is stays as it is."""
-    if word.endswith(("sses", "xes")) or (word.endswith(("ches", "shes")) and not word.endswith("aches")):
-        return word[:-2]
-    if word.endswith("ies"):
-        return word[:-3] + "y"
-    return word[:-1] if word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
-
-
-def _type_noun(segment: str) -> str:
-    """The noun that the type segment of an id says: its camel case in words, the last one in the singular, an acronym ("IP") and a name with a capital inside it ("signalR" is "SignalR") as they are."""
-    from . import proposals
-
-    pieces = proposals.WORD.findall(segment)
-    if len(pieces) > 1 and len(pieces[-1]) == 1 and pieces[-1].isupper():
-        pieces[-2:] = [pieces[-2] + pieces[-1]]
-    words = [piece.lower() if PLAIN_WORD.fullmatch(piece) else piece[:1].upper() + piece[1:] for piece in pieces]
-    if PLAIN_WORD.fullmatch(pieces[-1]):
-        words[-1] = _singular(words[-1])
-    return " ".join(words)
-
-
 def kind_words(resource_type: str, resource_id: str = "") -> tuple[str, str]:
     """What a resource is: the label of its kind ("Managed disk") and the noun of a sentence ("disk"). A kind that has no words here is said in those of the type segment of its id, when the id is that
-    of the type ("bastionHosts" is a "bastion host", "publicIPPrefixes" a "public IP prefix"); with no id to say it, a kind is shown as Azure names it and a sentence says "resource"."""
+    of the type ("bastionHosts" is a "bastion host", "publicIPPrefixes" a "public IP prefix"; cases/families/words.py holds the table and the rule, so that the change that replaces a request of advice
+    calls the resource the same); with no id to say it, a kind is shown as Azure names it and a sentence says "resource"."""
     found = TYPE_WORDS.get((resource_type or "").lower())
     if found:
         return found
     parts = resource_id.split("/") if isinstance(resource_id, str) else []
     segment = parts[-2] if len(parts) > 6 and "providers" in (part.lower() for part in parts[:-2]) else ""
     if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{2,40}", segment) and segment.lower() == (resource_type or "").lower().rpartition("/")[2]:
-        noun = _type_noun(segment)
+        noun = type_noun(segment)
         return noun[:1].upper() + noun[1:], noun
     return text_of(resource_type, 80) or "Resource", "resource"
 
@@ -1715,6 +1670,9 @@ def _saving(case: CaseRecord | None, plan: PlanRecord | None, action: ActionReco
         return Saving(round(figure, 2), fam.saving_level, fam.saving_basis, waiting, "")
     if priced is not None:
         return Saving(round(figure, 2), priced.level, priced.basis, waiting, "")
+    held = _priced(case) if fam is not None else None
+    if held is not None and abs(held.low - figure) <= 0.005:  # the plan of a change was made with the figure that the price of the finding still gives: the sentences say what it rests on, as for the request that asked
+        return Saving(round(figure, 2), held.level, held.basis, waiting, "")
     if fam is None and scenario is not None and abs(figure - scenario) < 0.005:
         return Saving(round(figure, 2), "Scenario", _advisor_basis(case), waiting, "")
     advisor = advisor_estimate(case)
@@ -2130,11 +2088,37 @@ def worked_of(case: CaseRecord | None, saving: Saving, whole: str, cost: float |
     return tuple((name, usd_text(now), "$0" if now <= saved else usd_text(round(now - saved, 2)), usd_text(saved)) for name, now in rows)
 
 
+def ways_said(others: Sequence[proposals.Other], short: bool = False) -> str:
+    """How the figures of the other ways to save were made, as a clause that is true of each of them: worked out from the bill (the new quantity or share in it is still the AI's word, which the paragraph
+    "How Meternaut worked it out" says), the AI's estimate (the saving rests on a share that the AI assumed and nothing checks) or not priced. For one way the clause says it of that way. `short` is the
+    list that a card and a letter have room for: "1 worked out from the bill, 1 the AI's estimate and 1 not priced"."""
+    many = len(others)
+    bill = sum(other.low is not None and not other.estimate for other in others)
+    guess = sum(other.low is not None and other.estimate for other in others)
+    none = many - bill - guess
+    if many == 1:
+        return "its saving is worked out from the bill" if bill else "its saving is the AI's estimate" if guess else "it is not priced"
+    if many in (bill, guess, none):
+        return (f"all {many} worked out from the bill" if bill else f"all {many} the AI's estimates" if guess else "none priced") if short else (
+            f"all {many} are worked out from the bill" if bill else f"all {many} are the AI's estimates" if guess else "none of them is priced")
+    return and_list([f"{count} {'' if short else 'is ' if count == 1 else 'are '}{what}{'s' if count > 1 and what.endswith('estimate') else ''}"
+                     for count, what in ((bill, "worked out from the bill"), (guess, "the AI's estimate"), (none, "not priced")) if count])
+
+
+def ways_sentences(others: Sequence[proposals.Other], on: str, page: bool = True) -> str:
+    """The sentences about the other ways that the AI named: how many, and how each figure was made. The page says it above the table; a card and a letter, which have no table, say that the page shows them."""
+    many = len(others)
+    first = f"The AI named {many} other way{'' if many == 1 else 's'} to save on {on}."
+    clause = ways_said(others, not page)
+    if page:
+        return f"{first} {clause[:1].upper()}{clause[1:]}." if many == 1 else f"{first} Of them, {clause}."
+    return f"{first} The page shows {'it' if many == 1 else 'them'}: {clause}."
+
+
 def others_line(brief: Brief) -> str:
-    """The one line of a card and of a letter about the other ways to save that the finding proposes: how many the AI named, and that the page has them."""
-    many = len(brief.others) != 1
+    """The sentences of a card and of a letter about the other ways to save that the finding proposes: how many the AI named, how each figure was made, and that the page shows them."""
     on = f"these {group_things(brief.group)}" if brief.group is not None else f"this {brief.where.noun}"
-    return f"The AI named {len(brief.others)} other way{'s' if many else ''} to save on {on}. {'They are' if many else 'It is'} on the page."
+    return ways_sentences(brief.others, on, False)
 
 
 # -- the whole -----------------------------------------------------------------------------------------------------------------------------
@@ -2196,8 +2180,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         check_first=check_first(case) if kind == "advice" else (), impact=impact_of(case, now) if kind == "advice" else None, advisor=advisor_of(case), by_code=_by_advisor(case),
         waiting=waiting_of(plan, saving, ladder, now) if plan is not None and state == "open" else None,
         hold=hold_of(plan, case, now), heads_up=heads_up_of(plan, now), verb=verb_of(case, recommendation),
-        asked=(asked_of(case, rtype, together) if kind == "advice" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE).format(what=f"{headline[:1].lower()}{headline[1:]}")
-               if kind == "change" else "") if state == "open" else "",
+        asked=(asked_of(case, rtype, together) if kind == "advice" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE).format(
+            what=said.ask if said is not None and said.ask else f"{headline[:1].lower()}{headline[1:]}") if kind == "change" else "") if state == "open" else "",
         worked=worked_of(case, saving, whole, cost),
         others=proposals.others(case.facts) if case is not None and kind != "info" and state in ("open", HELD) else (),
         confirm=said is not None and said.confirm)
