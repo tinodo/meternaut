@@ -34,7 +34,7 @@ from cases.families.gates import ChangeScope, Gates, parse_scopes
 from cases.families.setting import ChangeSetting, differences, kept_of, provisioning_of, put_body
 from cases.http import Client, HttpError, Refused
 from cases.memory_store import MemoryStore, stamp
-from cases.models import AUTOMATED, CaseRecord, DecisionRecord, NoteRecord, SwitchRecord
+from cases.models import AUTOMATED, HELD, CaseRecord, DecisionRecord, NoteRecord, SwitchRecord
 from cases.people import Person
 from cases.runner import RunnerServices, execute, read_calls, tick
 from test_runner import challenge
@@ -405,7 +405,7 @@ class ThePlan(unittest.TestCase):
 
 
 class TheBodyOfThePut(unittest.TestCase):
-    def test_it_is_the_resource_as_read_with_the_one_number_changed_and_what_azure_fills_in_itself_left_out(self):
+    def test_it_is_the_resource_as_read_with_the_one_number_changed_and_what_azure_fills_in_itself_at_the_root_left_out(self):
         world = Real()
         plan = world.plan()
         read = json.loads(json.dumps(world.arm.get(RID)))
@@ -418,9 +418,7 @@ class TheBodyOfThePut(unittest.TestCase):
             expected.pop(name)
         expected["properties"].pop("provisioningState")
         expected["properties"]["capacityUnits"] = 2
-        expected["properties"]["ipConfigurations"][0].pop("etag")
-        expected["properties"]["ipConfigurations"][0]["properties"].pop("provisioningState")
-        self.assertEqual(body, expected, "exactly the resource as read: only the number is changed, the keys that Azure fills in are out, the tags, the sku, the list and its child are as they were")
+        self.assertEqual(body, expected, "exactly the resource as read: only the number is changed and the keys that Azure fills in at the root are out; the tags, the sku, the list and its child (with its etag and its state) are as they were")
         self.assertIsInstance(body["properties"]["capacityUnits"], int)
         self.assertEqual(world.arm.writes_of("PUT"), [f"https://management.azure.com{RID}?api-version={API}"])
         self.assertEqual({method for method, _ in world.arm.writes()}, {"PUT"})
@@ -908,6 +906,27 @@ class TheRulesOfAskingApplyToAChange(unittest.TestCase):
         world.clock.advance(days=25)
         self.assertEqual(world.approvals.plan_for(case, lead, (OID,)).family, SETTING)
 
+    def test_the_quiet_days_count_from_the_answer_and_not_from_the_day_that_the_request_was_made(self):
+        for kind in ("change", "advice"):
+            with self.subTest(kind):
+                world = Real()
+                if kind == "advice":
+                    with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False):
+                        plan = world.plan_for()
+                    self.assertEqual(plan.family, "advise")
+                else:
+                    plan = world.plan()
+                world.clock.advance(days=40)  # it waited forty days, and then a person declined it
+                world.store.decision_put(DecisionRecord(plan_id=plan.plan_id, approver_oid=OID, approver_name="Tino", decision="decline", at=stamp(world.clock()), plan_code=plan.code))
+                world.store.plan_put(replace(world.store.plan_get(plan.plan_id), state="declined"))
+                lead, case = lead_of(world.resource), replace(world.store.case_get(plan.case_id), status="proposed")
+                world.clock.advance(days=5)
+                self.assertIsNone(world.approvals.plan_for(case, lead, (OID,)), "five days after the answer, though the request is forty-five days old: nothing is made")
+                world.clock.advance(days=24)
+                self.assertIsNone(world.approvals.plan_for(case, lead, (OID,)), "twenty-nine days after the answer is still within the quiet days")
+                world.clock.advance(days=2)
+                self.assertIsNotNone(world.approvals.plan_for(case, lead, (OID,)), "thirty-one days after the answer it is asked again")
+
     def test_a_resource_that_an_automation_changed_lately_gets_the_warning_on_the_change_request_on_the_page_the_card_and_the_letter(self):
         world = Real()
         lead = lead_of(world.resource)
@@ -989,18 +1008,34 @@ class ThePromiseAfterTheWrite(unittest.TestCase):
         self.assertEqual((verdict.state, verdict.evidence["compared"]), ("done", False))
         self.assertTrue(verdict.text.endswith("Meternaut could not compare the other properties with what it sent."), verdict.text)
 
-    def test_what_azure_adds_is_no_difference_and_what_it_changes_or_removes_is_and_whole_numbers_are_one_number(self):
-        body = {"location": "x", "tags": {"team": "blue"}, "sku": {"name": "Lite", "capacity": 1}, "properties": {"capacityUnits": 2, "label": "front", "list": [1, 2]}}
+    def test_only_numbers_and_booleans_are_kept_and_compared_so_a_rewritten_text_is_no_difference_and_a_changed_number_or_flag_is(self):
+        body = {"location": "x", "tags": {"team": "blue"}, "sku": {"name": "Lite", "capacity": 1},
+                "properties": {"capacityUnits": 2, "autoScale": False, "label": "front", "created": "2026-11-01T10:00:00Z", "list": [1, 2], "items": [{"port": 80, "name": "a"}, {"port": 443, "name": "b"}]}}
         kept = kept_of(body)
+        self.assertEqual(set(kept["hashes"]), {"sku.capacity", "properties.capacityUnits", "properties.autoScale", "properties.list", "properties.items"}, "no text of the reading is kept, not even as a hash")
         same = json.loads(json.dumps(body))
         added = {**same, "id": "i", "etag": "e", "systemData": {"a": 1}, "properties": {**same["properties"], "added": 5, "provisioningState": "Succeeded"}}
         self.assertEqual(differences(added, kept), [])
-        self.assertEqual(differences({**same, "tags": {"team": "red"}}, kept), ["tags.team"])
-        self.assertEqual(differences({k: v for k, v in same.items() if k != "location"}, kept), ["location"])
+        rewritten = {**same, "location": "y", "tags": {"team": "red"}, "properties": {**same["properties"], "created": "2026-11-20T21:55:00.1234567Z", "label": "back"}}
+        self.assertEqual(differences(rewritten, kept), [], "a timestamp or a text that Azure rewrites is no difference")
+        self.assertEqual(differences({**same, "sku": {"name": "Lite", "capacity": 2}}, kept), ["sku.capacity"], "a changed number is")
+        self.assertEqual(differences({**same, "properties": {**same["properties"], "autoScale": True}}, kept), ["properties.autoScale"], "a changed boolean is")
         self.assertEqual(differences({**same, "properties": {**same["properties"], "capacityUnits": 2.0}}, kept), [], "2 and 2.0 are one number")
-        self.assertEqual(differences({**same, "properties": {**same["properties"], "list": [1, 3]}}, kept), ["properties.list"])
+        self.assertEqual(differences({**same, "properties": {**same["properties"], "capacityUnits": True}}, kept), ["properties.capacityUnits"], "a flag is no number")
+        self.assertEqual(differences({**same, "properties": {**same["properties"], "capacityUnits": "2"}}, kept), ["properties.capacityUnits"], "a number that became a text is no number any more")
+        self.assertEqual(differences({**same, "properties": {k: v for k, v in same["properties"].items() if k != "capacityUnits"}}, kept), ["properties.capacityUnits"], "a number that is gone is")
         self.assertIsNone(differences(same, None))
         self.assertIsNone(differences(same, {"depth": 99, "hashes": {}}))
+
+    def test_a_list_that_azure_reorders_is_no_difference_and_a_changed_item_is(self):
+        body = {"properties": {"list": [3, 1, 2], "flags": [True, False], "items": [{"port": 80, "name": "a"}, {"port": 443, "name": "b"}]}}
+        kept = kept_of(body)
+        reordered = {"properties": {"list": [2, 3, 1], "flags": [False, True], "items": [{"port": 443, "name": "b"}, {"port": 80, "name": "a"}]}}
+        self.assertEqual(differences(reordered, kept), [], "the same numbers, flags and items in another order")
+        self.assertEqual(differences({"properties": {**reordered["properties"], "list": [2, 3, 4]}}, kept), ["properties.list"], "a changed item is a difference")
+        self.assertEqual(differences({"properties": {**reordered["properties"], "list": [2, 3]}}, kept), ["properties.list"], "and so is a missing one")
+        self.assertEqual(differences({"properties": {**reordered["properties"], "items": [{"port": 443, "name": "b"}, {"port": 81, "name": "a"}]}}, kept), ["properties.items"])
+        self.assertEqual(differences({"properties": {**reordered["properties"], "flags": [True, True]}}, kept), ["properties.flags"])
 
     def test_what_is_kept_of_a_large_body_is_small_and_still_compares(self):
         big = {"properties": {f"k{n}": {"a": n, "b": [n]} for n in range(400)}}
@@ -1032,22 +1067,59 @@ class ThePromiseAfterTheWrite(unittest.TestCase):
         self.assertEqual((done.kind, done.action.state), ("failed", "failed"))
         self.assertIn("neither the old value 4 nor the new value 2", done.action.result)
 
+    def test_with_no_state_shown_a_third_number_stays_pending_and_the_timer_reads_it_again_until_azure_shows_the_new_one(self):
+        world = Real()
+        plan = world.plan()
+        env = Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock)
+        world.arm.get(RID)["properties"].pop("provisioningState")
+        world.arm.get(RID)["properties"]["capacityUnits"] = 3
+        verdict = registry.get(SETTING).verify(env, plan)
+        self.assertEqual((verdict.state, verdict.text), ("pending", "Azure does not show the new numbers as made yet."), "no state is shown: Azure may still be at it, and the number may yet be the new one")
+        world.arm.get(RID)["properties"]["provisioningState"] = "Succeeded"
+        self.assertEqual(registry.get(SETTING).verify(env, plan).state, "failed", "the control: with a state that says it is done the same number is a failure")
+        world = Real()
+
+        def settled(found):
+            found["properties"].pop("provisioningState", None)
+            found["properties"]["capacityUnits"] = 3
+            return found
+        world.arm.settled = settled
+        plan = world.plan()
+        done = world.run(plan)
+        self.assertEqual(done.action.state, "running", done.action.result)
+        tick(world.timer)
+        self.assertEqual(world.store.action_get(plan.plan_id).state, "running", "the timer reads it again and it is still not the new number: it is not failed")
+        world.arm.get(RID)["properties"]["capacityUnits"] = 2
+        tick(world.timer)
+        self.assertEqual(world.store.action_get(plan.plan_id).state, "done", "and when Azure shows the new number the timer ends it")
+
 
 class TheBodyKeepsWhatIsNotAzuresOwn(unittest.TestCase):
-    def test_a_tag_called_etag_and_a_free_form_map_are_sent_as_they_are_and_only_a_part_of_the_resource_loses_its_etag(self):
+    def test_only_the_root_keys_and_the_provisioning_state_of_the_root_properties_are_left_out_and_everything_deeper_is_sent_as_it_was_read(self):
         resource = gateway(tags={"name": "front", "ETag": "mine", "provisioningState": "mine", "team": "blue"})
         resource["properties"]["settings"] = {"etag": "free", "provisioningState": "free", "other": 1}
+        resource["properties"]["headers"] = {"Name": "x-name", "ETag": "e-1"}
+        resource["properties"]["extra"] = {"properties": {"etag": "inner", "provisioningState": "inner"}, "name": "n", "etag": "e-2", "systemData": {"by": "free"}}
         resource["properties"]["ipConfigurations"][0]["etag"] = 'W/"x"'
+        resource["properties"]["ipConfigurations"][0]["systemData"] = {"createdBy": "somebody"}
         resource["provisioningState"] = "Succeeded"
         body = put_body(resource, [("capacityUnits", 4, 2)])
-        self.assertEqual(body["tags"], {"name": "front", "ETag": "mine", "provisioningState": "mine", "team": "blue"}, "a tag is never entered, whatever its name: a tag called name does not make the map a part of the resource")
+        self.assertEqual(body["tags"], {"name": "front", "ETag": "mine", "provisioningState": "mine", "team": "blue"}, "a tag is a value like any other, whatever its name")
         self.assertEqual(body["properties"]["settings"], {"etag": "free", "provisioningState": "free", "other": 1})
-        self.assertNotIn("etag", body["properties"]["ipConfigurations"][0], "a part of the resource has its own etag, which Azure fills in")
+        self.assertEqual(body["properties"]["headers"], {"Name": "x-name", "ETag": "e-1"}, "a map of headers with a Name and an ETag is no part of the resource")
+        self.assertEqual(body["properties"]["extra"], {"properties": {"etag": "inner", "provisioningState": "inner"}, "name": "n", "etag": "e-2", "systemData": {"by": "free"}},
+                         "a map under a key called properties, with a name and an etag, is sent whole")
+        child = body["properties"]["ipConfigurations"][0]
+        self.assertEqual((child["etag"], child["properties"]["provisioningState"], child["systemData"]), ('W/"x"', "Succeeded", {"createdBy": "somebody"}),
+                         "a part of the resource is sent back as it was read, with its etag, its state and its systemData, as az resource update does")
+        self.assertEqual(body["provisioningState"], "Succeeded", "Azure puts the state in properties: one that is at the root is a value like any other and stays")
         self.assertNotIn("provisioningState", body["properties"])
-        self.assertNotIn("provisioningState", body["properties"]["ipConfigurations"][0]["properties"])
-        self.assertEqual(body["provisioningState"], "Succeeded", "only a direct child of properties is Azure's own place for it")
         for key in ("id", "name", "type", "systemData", "etag"):
             self.assertNotIn(key, body)
+
+    def test_the_keys_of_the_root_are_found_in_any_case_and_nothing_else_is_taken_out(self):
+        stripped = setting_module._strip({"ETag": "x", "Id": "y", "NAME": "n", "Type": "t", "SystemData": {"a": 1}, "Properties": {"ProvisioningState": "Succeeded", "a": 1, "etag": "kept"}, "Tags": {"etag": "t"}})
+        self.assertEqual(stripped, {"Properties": {"a": 1, "etag": "kept"}, "Tags": {"etag": "t"}})
 
     def test_the_provisioning_state_is_found_in_any_case_under_properties_and_at_the_root_and_the_busy_guard_fires(self):
         for resource, wanted in (({"properties": {"provisioningState": "Updating"}}, "updating"), ({"properties": {"PROVISIONINGSTATE": "Updating"}}, "updating"),
@@ -1201,9 +1273,10 @@ class TheUndoIsExact(unittest.TestCase):
         plan = world.plan(facts=three)
         self.assertGreater(len(plan.undo), 300)
         command = "az resource update --ids <resource id> --set properties.capacityUnits=4 sku.capacity=2 properties.replicaCount=3 --api-version 2024-05-01"
-        short = "Set capacity units to 4, sku capacity to 2 and replica count to 3 again in the Azure portal. The page has the command."
+        short = "Set the numbers back to what they were in the Azure portal. It does not bring back what the lower number cut off meanwhile. The page has the command."
         b = shown(world, plan)
         self.assertEqual((b.undo.short, command in b.undo.how), (short, True))
+        self.assertLessEqual(len(b.undo.short), 150, "it fits a line of a letter (160 characters) and a card (200) whole")
         self.assertEqual(by_id(card_of(b))["undo"]["text"], f"**Undo:** {short}")
         case = world.store.case_get(plan.case_id)
         letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
@@ -1216,7 +1289,24 @@ class TheUndoIsExact(unittest.TestCase):
         self.assertIn(short, after.text)
         self.assertNotIn("az resource", after.text)
         wordy = self.target(*((f"{'a' * 40}{word}Units", 1, 0) for word in ("One", "Two", "Three")))
-        self.assertEqual(words.setting_words("gateway", "g", "rg", wordy, {}).short_undo, "Set the numbers back to what they were in the Azure portal. The page has the command.")
+        self.assertEqual(words.setting_words("gateway", "g", "rg", wordy, {}).short_undo, short)
+
+    def test_the_short_undo_of_a_card_and_a_letter_says_that_setting_it_back_does_not_bring_back_what_was_cut_off_and_stays_whole_in_each(self):
+        caveat = "It does not bring back what the lower number cut off meanwhile."
+        world = Real()
+        plan = world.plan()
+        b = shown(world, plan)
+        short = f"Set capacity units to 4 again in the Azure portal. {caveat} The page has the command."
+        self.assertEqual(b.undo.short, short, "one setting: its own first sentence, then the caveat, then where the command is")
+        self.assertEqual(by_id(card_of(b))["undo"]["text"], f"**Undo:** {short}")
+        case = world.store.case_get(plan.case_id)
+        letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
+        self.assertIn(f"Undo: {short}", letter.text, "the chip of the letter, which holds 160 characters")
+        for settings in ((("capacityUnits", 4, 2),), (("capacityUnits", 4, 2), ("scaleUnits", 8, 4)), tuple((f"{'a' * 40}{n}Units", 1, 0) for n in ("One", "Two", "Three"))):
+            said = words.setting_words("gateway", "g", "rg", {"set": [{"path": p, "from": a, "to": b_} for p, a, b_ in settings], "apiVersion": API}, {}).short_undo
+            self.assertTrue(said.endswith(f"{caveat} The page has the command."), said)
+            self.assertLessEqual(len(said), 150, said)
+        self.assertIn("Setting it back does not bring back what the lower number cut off meanwhile.", plan.undo, "the page says it in its own sentence")
 
 
 class TheCountGate(unittest.TestCase):
@@ -1253,6 +1343,23 @@ class TheCountGate(unittest.TestCase):
                 plan = world.plan_for(facts={proposals.KEY: {"set": [{"path": name, "from": now, "to": to}]}})
                 self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", key))
                 self.assertEqual(world.arm.calls, [], "nothing is read for a setting that Meternaut would not lower")
+
+    def test_a_key_that_decides_how_much_is_kept_is_refused_with_its_own_reason_and_a_count_or_a_size_is_still_accepted(self):
+        kept = ("retentionCount", "retentionSizeGB", "numberOfDaysToKeep", "keepCount", "backupCount", "snapshotCount", "backup.count", "numberOfBackups", "properties.retention.maxCount")
+        for path in (*kept, "ttl", "ttlSeconds"):
+            with self.subTest(path):
+                self.assertFalse(proposals.countlike(path), path)
+                self.assertFalse(setting_module._countlike(path), path)
+        for path in kept:
+            self.assertEqual(proposals._refusal(path), "kept", path)
+        for path in ("scaleUnits", "sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "dailyQuotaGb", "diskSizeGB"):
+            self.assertTrue(proposals.countlike(path), path)
+        self.assertEqual(proposals.WHY["set"]["kept"], "a setting that decides how much is kept, which a lower number deletes")
+        self.assertEqual(proposals._setting({"handle": "r1", "property": "retentionCount", "from": 30, "to": 7}, ["r1"], {"r1": {"properties": {"retentionCount": 30}}}, {}), "kept",
+                         "the AI side drops it by that rule")
+        for path in ("retentionCount", "keepCount", "backupCount"):
+            plan = Real().plan_for(facts={proposals.KEY: {"set": [{"path": path, "from": 30, "to": 7}]}})
+            self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", "not-a-count"), path)
 
     def test_a_setting_that_is_not_a_count_is_refused_at_the_plan_with_its_own_words_before_any_read(self):
         world = Real()
@@ -1341,7 +1448,7 @@ class TheRealChangeAsksOnceMore(unittest.TestCase):
         world, plan, case = self.made()
         letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS)
         self.assertIn("Can be undone", letter.text)
-        self.assertIn("Undo: Set capacity units to 4 again in the Azure portal. The page has the command.", letter.text)
+        self.assertIn("Undo: Set capacity units to 4 again in the Azure portal. It does not bring back what the lower number cut off meanwhile. The page has the command.", letter.text)
         self.assertIn("It runs with your own permissions.", letter.text)
         self.assertIn("Review and decide: ", letter.text)
 
@@ -1444,6 +1551,96 @@ class TheUpgradeAsksTheSameRules(unittest.TestCase):
         for _ in range(3):
             self.assertEqual(upkeep.upgrade(extras, history), [])
         self.assertEqual(len(announced), 1, "a request that holds is not announced again")
+
+    def test_a_change_request_stays_open_when_a_later_judgment_has_no_price_and_its_wait_is_not_restarted(self):
+        world = Real()
+        plan = world.plan()
+        self.assertEqual(plan.saving_usd_month, 201.6)
+        world.store.plan_put(replace(plan, waiting_since="2026-11-03T09:00:00Z"))
+        kept = world.store.plan_get(plan.plan_id)
+        case = world.store.case_get(plan.case_id)
+        world.store.case_put(replace(case, saving_usd_month=None))  # judged again, and nothing was priced this time
+        self.assertEqual(world.approvals.asked_saving(world.store.case_get(plan.case_id)), 201.6, "the case keeps what the open change request was asked with, as the case of an advice does")
+        for _ in range(2):
+            self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual(world.store.plan_get(plan.plan_id), kept, "open, with the start of its wait, and with no reason of being taken back")
+        self.assertNotIn("takenBack", world.store.plan_get(plan.plan_id).preconditions)
+        world.store.case_put(replace(world.store.case_get(plan.case_id), saving_usd_month=201.6))  # the finding comes back with its price
+        self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual([p.plan_id for p in world.store.plans_open() if p.state == "open"], [plan.plan_id], "the same request, and no new one that starts its wait again (rule 38)")
+
+    def test_a_change_request_is_left_alone_when_the_rules_of_making_a_plan_say_no_and_no_reason_says_that_the_change_is_gone(self):
+        world = Real()
+        plan = world.plan()
+        world.store.plan_put(approvals_module.build_advice(world.store.case_get(plan.case_id), (OID,), NOW, world.settings))  # another request is open for the resource
+        self.assertEqual(world.approvals.upgrade((OID,)), [])
+        self.assertEqual(world.store.plan_get(plan.plan_id).state, "open", "no reason is true here: nothing is taken back")
+
+    def test_each_true_reason_takes_a_change_request_back_with_a_word_that_is_true_whether_or_not_a_price_is_missing(self):
+        def mismatch(world, case):
+            world.arm.get(RID)["properties"]["capacityUnits"] = 5
+
+        def lock(world, case):
+            world.arm.locks[RID.lower()] = [{"name": "keep"}]
+
+        def mark(world, case):
+            world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+
+        def group_closed(world, case):
+            world.regroup(())
+
+        def not_a_count(world, case):
+            world.store.case_put(replace(case, facts={proposals.KEY: {"set": [{"path": "retentionDays", "from": 30, "to": 7}]}}))
+
+        reasons = (("mismatch", mismatch, "changed", "mismatch"), ("locked", lock, "changed", "locked"), ("do-not-touch", mark, "left-alone", None), ("outside", group_closed, "changed", "outside"),
+                   ("not-a-count", not_a_count, "changed", "not-a-count"), ("switch-off", None, "changed", "switch-off"))
+        for name, change, word, key in reasons:
+            for priced in (True, False):
+                with self.subTest(reason=name, priced=priced):
+                    world = Real()
+                    plan = world.plan()
+                    case = world.store.case_get(plan.case_id)
+                    if not priced:
+                        case = replace(case, saving_usd_month=None)
+                        world.store.case_put(case)
+                    with mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", name != "switch-off"):
+                        if change is not None:
+                            change(world, case)
+                        (taken, new, _), = world.approvals.upgrade((OID,))
+                    self.assertEqual((taken.plan_id, world.store.plan_get(plan.plan_id).state, world.store.plan_get(plan.plan_id).preconditions["takenBack"]), (plan.plan_id, "expired", word))
+                    if priced and key is not None:
+                        self.assertEqual((new.family, new.preconditions[proposals.CANNOT_KEY]), ("advise", key), "the request that asks instead says why")
+                    else:
+                        self.assertIsNone(new, "a person marked it, or nothing was priced: the rules of asking make no other request")
+
+    def test_a_finding_judged_again_with_other_numbers_replaces_the_request_only_when_the_rules_of_asking_let_it_through(self):
+        for priced in (True, False):
+            with self.subTest(priced=priced):
+                world = Real()
+                plan = world.plan()
+                case = world.store.case_get(plan.case_id)
+                world.store.case_put(replace(case, saving_usd_month=201.6 if priced else None, facts={**case.facts, proposals.KEY: {"set": [{"path": "capacityUnits", "from": 4, "to": 1}]}}))
+                (taken, new, _), = world.approvals.upgrade((OID,))
+                self.assertEqual(world.store.plan_get(plan.plan_id).preconditions["takenBack"], "changed")
+                if priced:
+                    self.assertEqual((new.family, new.target["set"][0]["to"]), (SETTING, 1))
+                else:
+                    self.assertIsNone(new, "nothing was priced for the new numbers: no request is made for them")
+                    self.assertEqual(world.store.plans_open(), [])
+
+    def test_a_request_that_was_closed_because_of_a_do_not_touch_mark_says_request_and_the_note_of_a_held_finding_keeps_the_words_that_say_note(self):
+        world = Real()
+        plan = world.plan()
+        world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+        world.approvals.upgrade((OID,))
+        closed = world.store.plan_get(plan.plan_id)
+        b = shown(world, closed)
+        self.assertEqual((b.outcome.title, b.outcome.lines), ("Left alone", ("Meternaut closed this request, because a person marked the resource do-not-touch.", "Nothing was changed in Azure.")))
+        note = replace(closed, family="advise", preconditions={**closed.preconditions, HELD: "unchecked"})  # the note of a held finding that was closed for the same reason keeps its reason that it was held
+        self.assertEqual(brief_mod.taken_back_words(note, "left-alone"), brief_mod.TAKEN_BACK["left-alone"])
+        self.assertIn("closed this note", brief_mod.TAKEN_BACK["left-alone"])
+        self.assertNotIn("note", brief_mod.TAKEN_BACK["left-alone-request"])
+        self.assertEqual(brief_mod.taken_back_words(closed, "changed"), brief_mod.TAKEN_BACK["changed"], "every other reason keeps its one sentence")
 
 
 class EveryReasonThatAChangeCannotBeMadeHasItsKeyAndItsWords(unittest.TestCase):

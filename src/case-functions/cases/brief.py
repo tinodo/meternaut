@@ -134,7 +134,8 @@ TAKEN_BACK = {"rules": "Meternaut took this request back because its rules chang
               "changed": "Meternaut took this request back, because it no longer matches the finding or the resource, which changed after the request was made.",
               "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
-              "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
+              "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it.",
+              "left-alone-request": "Meternaut closed this request, because a person marked the resource do-not-touch."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence; `left-alone` is stored for both, and taken_back_words says the sentence that is true for the one that it was
 # What a step of the ladder is, in words for "with whom it is now" (cases/escalation.py).
 TIMER_CLOSED = "A timer closed this request. Meternaut no longer closes requests by time."  # a request that the clock of before rule 38 closed: the page and the History say it the same way
 LOOK_IN_AZURE = "Look at the resource in Azure before anything else is done with it."  # what a change that did not complete asks of a person: the page, the card and the letter say it the same way
@@ -296,7 +297,7 @@ class Confidence:
 class Undo:
     reversible: bool
     how: str
-    short: str = ""  # the first sentence of `how`, for a card and a letter, which never cut a command in half; empty when `how` may be cut as it is
+    short: str = ""  # a short undo of whole sentences instead of `how`, for a card and a letter, which never cut a command in half; empty when `how` may be cut as it is
 
 
 @dataclass(frozen=True)
@@ -782,6 +783,13 @@ def taken_back(plan: PlanRecord | None, case: CaseRecord | None = None) -> str:
     learned = case.learned if case is not None and isinstance(case.learned, dict) else {}
     taken = pre.get("takenBack") or learned.get("taken")
     return taken if isinstance(taken, str) and taken in TAKEN_BACK else ""
+
+
+def taken_back_words(plan: PlanRecord | None, why: str) -> str:
+    """The sentence of TAKEN_BACK for a reason that `taken_back` gave: `left-alone` is the reason that closes the note of a held finding (the reason that it was held stays in its preconditions) and
+    the reason that takes back a request of a change when a person marked the resource do-not-touch, and each has the words that are true for it."""
+    pre = plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {}
+    return TAKEN_BACK["left-alone-request" if why == "left-alone" and not isinstance(pre.get(HELD), str) else why]
 
 
 def made_under_old_rules(case: CaseRecord | None, plan: PlanRecord) -> bool:
@@ -1894,7 +1902,7 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
         if why:  # Meternaut took it back itself, and says why: nobody was too late
             title = {"released": "No longer held back", "left-alone": "Left alone", "gone": "Taken back: the resource is gone", "verified": "Closed because the cost went down"}.get(why, "Taken back")
             verified = why == "verified"  # somebody changed something in Azure then: Meternaut did not, and the page says that and not that nothing was changed
-            return Outcome("expired", title, (TAKEN_BACK[why], "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
+            return Outcome("expired", title, (taken_back_words(plan, why), "Nothing was changed by Meternaut." if verified else "Nothing was changed in Azure.", *(_seen_line(plan) if verified else ())),
                            title if why in ("released", "left-alone", "gone", "verified") else "Taken back by Meternaut", "", plan.expires_at)
         return Outcome("expired", "Taken back", (TIMER_CLOSED, "Nothing changed."),
                        "Closed by a timer", "", plan.expires_at)
