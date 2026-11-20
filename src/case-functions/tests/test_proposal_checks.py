@@ -77,6 +77,23 @@ class TheKeyOfTheFacts(unittest.TestCase):
         self.assertNotIn(proposals.KEY, (*made, pricing.KEY, models.GROUP_FACT, brief.IMPACT, brief.ADVISOR_KEY))
 
 
+class WhatTheAnswerHolds(unittest.TestCase):
+    def test_the_change_keeps_the_entries_as_stated_up_to_the_cap_of_its_lists(self):
+        change = pricing.parse({"action": "reduce", "set": [GOOD] * 100, "others": [LITE] * 70})
+        self.assertEqual((len(change.settings), len(change.others)), (pricing.MAX_EFFECTS, pricing.MAX_EFFECTS))
+        self.assertEqual((change.settings[0], change.others[0]), (GOOD, LITE), "as stated: what is wrong with an entry is for the check to say")
+        for text in ("x", 4, {"a": 1}, None):
+            self.assertEqual(pricing.parse({"action": "reduce", "set": text, "others": text}).settings, ())
+        self.assertEqual((pricing.parse({"action": "reduce"}).settings, pricing.parse({"action": "reduce"}).others), ((), ()))
+
+    def test_nothing_that_a_model_writes_makes_the_check_raise_or_keep_anything(self):
+        junk = [None, 5, 1.5, True, "x", [], [1], {}, {"handle": []}, {"handle": "r1", "property": {}}, {"handle": "r1", "property": UNITS, "from": 10 ** 400, "to": 1},
+                {"handle": "r1", "property": UNITS, "from": 4, "to": 10 ** 400}, {"handle": "r1", "property": UNITS, "from": float("inf"), "to": float("-inf")},
+                {"title": [], "change": []}, {"title": "ok", "change": {"action": [], "effects": "x", "set": 5, "others": {"title": 1}}}, {"title": "x" * 10 ** 5, "change": 1}]
+        found = checked({"action": "reduce", "effects": [{"handle": "r1", "meters": [[]], "remains": {"form": "ratio", "on": [], "from": [], "to": {}}}], "set": junk, "others": junk})
+        self.assertEqual((found.ways, found.said, sum(found.dropped.values())), ({}, (len(junk), len(junk)), 2 * len(junk)))
+
+
 class WhatCodeKeepsOfTheSettings(unittest.TestCase):
     def test_a_setting_that_the_tools_showed_is_kept_in_the_shape_of_the_facts_and_read_back_by_the_readers(self):
         found = checked(reduce(set=[GOOD]))
