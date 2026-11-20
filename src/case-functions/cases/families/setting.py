@@ -288,8 +288,10 @@ class ChangeSetting(Family):
 
     # -- the facts and the plan ------------------------------------------------------------------------------------------------------------------------------
 
-    def facts(self, env: Env, lead: object, located: Located | None = None) -> dict:
-        """What the plan needs from Azure, in this order: the settings, the owner's gates, the do-not-touch note, the api-version that the provider lists, the resource and its locks. Raises Cannot."""
+    def closed(self, env: Env, lead: object) -> tuple[list[Aim], Located]:
+        """The checks that need no read, in the order that the plan is made in: the settings (the count gate), the resource in a group of the owner's list while his line is on, and the do-not-touch note.
+        Returns the settings and the located resource; raises Cannot with the key of the gate that is closed. `facts` runs it first, and so does the Watch, which takes a request back for a closed gate
+        whatever else stops it short of the family."""
         found = proposals.settings(getattr(lead, "facts", {}))
         if not found:
             raise Unreadable("the finding proposes no number to change")  # the family does not apply: nothing is said about it
@@ -300,6 +302,11 @@ class ChangeSetting(Family):
             raise Cannot(why, GATES[why])
         if located.path.lower() in env.do_not_touch():
             raise Cannot("do-not-touch")
+        return aims, located
+
+    def facts(self, env: Env, lead: object, located: Located | None = None) -> dict:
+        """What the plan needs from Azure, in this order: the settings, the owner's gates, the do-not-touch note (`closed`), the api-version that the provider lists, the resource and its locks. Raises Cannot."""
+        aims, located = self.closed(env, lead)
         try:
             listing = env.azure.get(f"https://{calls.ARM_HOST}/subscriptions/{located.scope.subscription}/providers/{located.kind.provider}?api-version={calls.PROVIDERS_API}").json()
             api = api_version(listing, located.kind.collection)

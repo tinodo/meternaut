@@ -298,13 +298,13 @@ def measured_text(pre: dict) -> str:
 
 
 def compared_text(check: object) -> str:
-    """What the check after a change of `change-setting` says of the other properties, from what it kept: which ones Azure also changed, or that they could not be compared; empty when they were
-    compared and none differs."""
+    """What the check after a change of `change-setting` says of the other numbers and flags that were sent, from what it kept: which ones Azure also changed, or that they could not be compared; empty when
+    they were compared and none differs. A text is not compared, and the plan says so."""
     if not isinstance(check, dict):
         return ""
     if isinstance(check.get("differences"), str) and check["differences"]:
         return f"Azure also changed: {check['differences']}."
-    return "Meternaut could not compare the other properties with what it sent." if check.get("compared") is False else ""
+    return "Meternaut could not compare the other numbers and flags with what it sent." if check.get("compared") is False else ""
 
 
 def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
@@ -325,7 +325,7 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
         headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
         change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change: {said}. It uses your own permissions. "
                 f"A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes. Afterwards it reads the {kind} again and checks "
-                "the number, and that every other property that it sent is still what it sent."),
+                "the number, and that every other number and flag that it sent is still what it sent. It does not compare texts, such as a tier or a name."),
         rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
                    f"note, and it is in a resource group on the owner's list for real changes.{again}"),
         risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "

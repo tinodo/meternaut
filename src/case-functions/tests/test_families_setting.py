@@ -952,7 +952,18 @@ class ThePromiseAfterTheWrite(unittest.TestCase):
         plan = Real().plan()
         self.assertNotIn("nothing else of the", " ".join((plan.what_changes, plan.could_go_wrong, plan.undo)).lower(), "the promise that was made before is gone")
         self.assertIn("A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes.", plan.what_changes)
-        self.assertIn("Afterwards it reads the gateway again and checks the number, and that every other property that it sent is still what it sent.", plan.what_changes)
+        self.assertIn("Afterwards it reads the gateway again and checks the number, and that every other number and flag that it sent is still what it sent. It does not compare texts, such as a tier or a name.", plan.what_changes)
+        self.assertNotIn("every other property", plan.what_changes, "the old promise covered more than the check holds")
+
+    def test_a_text_that_azure_rewrites_after_the_put_is_not_seen_and_the_plan_said_that_texts_are_not_compared(self):
+        world = Real()
+        world.arm.also = {"tier": "Free"}  # Azure rewrites a text (Lite to Free) when it carries out the update
+        plan = world.plan()
+        self.assertIn("It does not compare texts, such as a tier or a name.", plan.what_changes)
+        done = world.run(plan)
+        self.assertEqual((done.kind, done.action.state, done.action.verification["compared"], "differences" in done.action.verification), ("ran", "done", True, False))
+        self.assertNotIn("also changed", done.action.result)
+        self.assertEqual(world.live("tier"), "Free", "the text did change, and the check does not look at texts: what the plan said")
 
     def test_a_property_that_azure_changes_besides_the_number_is_said_and_the_request_is_done_with_a_difference_and_never_verified(self):
         world = Real()
@@ -1006,7 +1017,14 @@ class ThePromiseAfterTheWrite(unittest.TestCase):
         world.arm.get(RID)["properties"]["capacityUnits"] = 2
         verdict = registry.get(SETTING).verify(Env(world.reader, world.settings.gates, world.store.do_not_touch, world.clock), plan)
         self.assertEqual((verdict.state, verdict.evidence["compared"]), ("done", False))
-        self.assertTrue(verdict.text.endswith("Meternaut could not compare the other properties with what it sent."), verdict.text)
+        self.assertTrue(verdict.text.endswith("Meternaut could not compare the other numbers and flags with what it sent."), verdict.text)
+        clean = Real()
+        plan = clean.plan()
+        done = clean.run(plan)
+        clean.store.action_put(replace(done.action, verification={**done.action.verification, "compared": False}))
+        page = console_of(clean, plan, clean.store.case_get(plan.case_id)).get(f"/ok/{plan.plan_id}").main.text()
+        self.assertIn("Meternaut could not compare the other numbers and flags with what it sent.", page, "the page of the request says the same, in the same words")
+        self.assertNotIn("other properties", page)
 
     def test_only_numbers_and_booleans_are_kept_and_compared_so_a_rewritten_text_is_no_difference_and_a_changed_number_or_flag_is(self):
         body = {"location": "x", "tags": {"team": "blue"}, "sku": {"name": "Lite", "capacity": 1},
@@ -1345,7 +1363,10 @@ class TheCountGate(unittest.TestCase):
                 self.assertEqual(world.arm.calls, [], "nothing is read for a setting that Meternaut would not lower")
 
     def test_a_key_that_decides_how_much_is_kept_is_refused_with_its_own_reason_and_a_count_or_a_size_is_still_accepted(self):
-        kept = ("retentionCount", "retentionSizeGB", "numberOfDaysToKeep", "keepCount", "backupCount", "snapshotCount", "backup.count", "numberOfBackups", "properties.retention.maxCount")
+        kept = ("retentionCount", "retentionSizeGB", "numberOfDaysToKeep", "keepCount", "backupCount", "snapshotCount", "backup.count", "numberOfBackups", "properties.retention.maxCount",
+                "keepcount", "backupcount", "BACKUPCOUNT", "ttlcount", "retentionpolicy.count", "numberOfSnapShots", "maxHistoryCount", "maxVersionCount", "restorePointCount", "archiveCount", "purgeCount",
+                "maxThrottleCount")  # the last holds ttl inside another word: a name that merely contains one of the words is refused too
+        self.assertEqual(proposals.KEPT_WORDS, ("retention", "retain", "retained", "keep", "kept", "ttl", "backup", "snapshot", "history", "version", "restore", "archive", "purge"))
         for path in (*kept, "ttl", "ttlSeconds"):
             with self.subTest(path):
                 self.assertFalse(proposals.countlike(path), path)
@@ -1357,7 +1378,7 @@ class TheCountGate(unittest.TestCase):
         self.assertEqual(proposals.WHY["set"]["kept"], "a setting that decides how much is kept, which a lower number deletes")
         self.assertEqual(proposals._setting({"handle": "r1", "property": "retentionCount", "from": 30, "to": 7}, ["r1"], {"r1": {"properties": {"retentionCount": 30}}}, {}), "kept",
                          "the AI side drops it by that rule")
-        for path in ("retentionCount", "keepCount", "backupCount"):
+        for path in ("retentionCount", "keepCount", "backupCount", "keepcount", "maxHistoryCount", "BACKUPCOUNT"):
             plan = Real().plan_for(facts={proposals.KEY: {"set": [{"path": path, "from": 30, "to": 7}]}})
             self.assertEqual((plan.family, plan.preconditions[proposals.CANNOT_KEY]), ("advise", "not-a-count"), path)
 
@@ -1641,6 +1662,66 @@ class TheUpgradeAsksTheSameRules(unittest.TestCase):
         self.assertIn("closed this note", brief_mod.TAKEN_BACK["left-alone"])
         self.assertNotIn("note", brief_mod.TAKEN_BACK["left-alone-request"])
         self.assertEqual(brief_mod.taken_back_words(closed, "changed"), brief_mod.TAKEN_BACK["changed"], "every other reason keeps its one sentence")
+
+    def test_the_history_has_a_row_for_a_request_that_was_closed_for_a_mark_in_the_words_of_a_request_and_none_for_a_note_that_was_closed_the_same_way(self):
+        world = Real()
+        plan = world.plan()
+        world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+        world.approvals.upgrade((OID,))
+        closed = world.store.plan_get(plan.plan_id)
+        case = world.store.case_get(plan.case_id)
+        request_words = "Meternaut closed this request, because a person marked the resource do-not-touch."
+        self.assertEqual(closed.preconditions["takenBack"], "left-alone")
+        page = console_of(world, plan, case).get("/history").content
+        self.assertIn(request_words, page, "people were asked about the request: its closing is a row, in the words of a request")
+        self.assertNotIn("closed this note", page)
+        world.store.plan_put(replace(closed, family="advise", preconditions={**closed.preconditions, HELD: "unchecked"}))  # the note of a held finding, closed for the same mark
+        page = console_of(world, plan, case).get("/history").content
+        for words in (request_words, brief_mod.TAKEN_BACK["left-alone"], "request to look at a finding"):
+            self.assertNotIn(words, page, "nobody was asked about a note: it has no row")
+
+    def test_a_closed_gate_takes_a_change_request_back_whatever_else_stops_a_plan_short_of_the_family_a_second_open_request_or_no_reader(self):
+        def line_off(world, case):
+            return mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", False)
+
+        def group_off(world, case):
+            world.regroup(())
+            return mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", True)
+
+        def not_a_count(world, case):
+            world.store.case_put(replace(case, facts={proposals.KEY: {"set": [{"path": "retentionDays", "from": 30, "to": 7}]}}))
+            return mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", True)
+
+        def mark(world, case):
+            world.store.note_put(NoteRecord(**DO_NOT_TOUCH))
+            return mock.patch("cases.families.gates.REAL_CHANGES_ALLOWED", True)
+
+        gates = (("switch-off", line_off, "changed"), ("outside", group_off, "changed"), ("not-a-count", not_a_count, "changed"), ("do-not-touch", mark, "left-alone"))
+        for name, close, word in gates:
+            for stop in ("a second open request", "no reader"):
+                with self.subTest(gate=name, stop=stop):
+                    world = Real()
+                    plan = world.plan()
+                    case = world.store.case_get(plan.case_id)
+                    patch = close(world, case)
+                    other = None
+                    if stop == "no reader":
+                        world.approvals.reader = None
+                    else:
+                        other = approvals_module.build_advice(world.store.case_get(plan.case_id), (OID,), NOW, world.settings)
+                        world.store.plan_put(other)
+                    with patch:
+                        done = world.approvals.upgrade((OID,))
+                    mine = [(taken, new) for taken, new, _ in done if taken.plan_id == plan.plan_id]
+                    self.assertEqual(len(mine), 1, "the closed gate takes the request back")
+                    self.assertEqual((world.store.plan_get(plan.plan_id).state, world.store.plan_get(plan.plan_id).preconditions["takenBack"]), ("expired", word))
+                    new = mine[0][1]
+                    if stop == "a second open request" or name == "do-not-touch":
+                        self.assertIsNone(new, "another request is open, or a person marked it: no other request is made")
+                    else:
+                        self.assertEqual((new.family, new.preconditions[proposals.CANNOT_KEY]), ("advise", name), "with nothing in the way the request that asks instead says why")
+                    if other is not None:
+                        self.assertEqual(world.store.plan_get(other.plan_id).state, "open", "the other request is not touched")
 
 
 class EveryReasonThatAChangeCannotBeMadeHasItsKeyAndItsWords(unittest.TestCase):

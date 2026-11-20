@@ -861,6 +861,18 @@ class Approvals:
         except (Stop, Unreadable):
             return None
 
+    def _closed(self, case: CaseRecord, lead: Lead) -> str:
+        """The key of proposals.CANNOT of a gate that is closed for the change of a finding, from the checks that need no read (ChangeSetting.closed: the count gate, the owner's line and list of real groups,
+        the do-not-touch note), or "". Nothing here reads Azure, so it holds with no reader, with Azure unreadable and with another request open for the resource: a closed gate takes an open request
+        back whatever else stops a plan short of the family (`_make` can return nothing before the family judges)."""
+        try:
+            registry.get(SETTING).closed(Env(self.reader, self.settings.gates, self.store.do_not_touch, self.clock), lead)
+        except Cannot as error:
+            return error.key
+        except (Stop, Unreadable):
+            return ""
+        return ""
+
     def upgrade(self, approvers: tuple[str, ...]) -> list[tuple[PlanRecord, PlanRecord | None, CaseRecord]]:
         """Makes the open requests of findings that propose a change what Meternaut can make of them now, and takes back the ones that are not (no clock closes anything: AGENTS.md rule 38). A request
         that asks whether the change is worth it, for a case that proposes settings, is taken back, with the reason `upgraded`, when the plan of a change can be made for it now (the owner's line was
@@ -868,7 +880,8 @@ class Approvals:
         family that works on real resources whose case no longer holds, because the resource or the finding is not as the plan says, is taken back (`changed`, or `left-alone` when a person marked the
         resource do-not-touch), and the plan that can be made now takes its place, or else the advise plan, made as any other (advise: the rules of asking hold it back when they hold it back, and then
         nothing takes its place). A reading of Azure that fails, or a resource that is being changed right now, takes nothing back, and neither does a later judgment that has no price, or that a guard or a
-        full place holds back: nothing says that the change does not hold, and a request is taken back only for a reason that is true. A request that asks only keeps the reason why Meternaut cannot make the
+        full place holds back: nothing says that the change does not hold, and a request is taken back only for a reason that is true. A gate that is closed (the count gate, the owner's line or list of real
+        groups, a do-not-touch note) is checked first, with no read, and takes the request back whatever else stops a new plan (another request open for the resource, no reader). A request that asks only keeps the reason why Meternaut cannot make the
         change, brought up to date. A request that a person answered is never touched. Returns (the plan that was taken back, the plan that took its place or None, its case) for each."""
         done: list[tuple[PlanRecord, PlanRecord | None, CaseRecord]] = []
         try:
@@ -877,7 +890,9 @@ class Approvals:
                 if case is None or case.recommendation != "change" or case.status not in ("proposed", "awaiting_ok") or not proposals.settings(case.facts) or not approvers:
                     continue
                 view = _with(case, status="proposed")  # the case of an open request of a change waits for an OK, and the rules of making a plan ask for a proposal
-                made, cannot = self._make(view, _lead_of(case), approvers, replacing=plan.plan_id, asked=plan.family == SETTING)
+                lead = _lead_of(case)
+                closed = self._closed(view, lead) if plan.family == SETTING else ""  # a closed gate needs no read, and takes the request back whatever `_make` finds
+                made, cannot = (None, closed) if closed else self._make(view, lead, approvers, replacing=plan.plan_id, asked=plan.family == SETTING)
                 if plan.family == SETTING and (cannot in ("unreadable", "busy") or made is not None and made.target == plan.target or made is None and not cannot and not self._own_group(view)):
                     continue  # it still holds, Azure could not be read or is changing the resource, or nothing says that it does not hold (no price now, a guard, a place): nothing is taken back for that
                 if plan.family == ADVISE and made is None:
