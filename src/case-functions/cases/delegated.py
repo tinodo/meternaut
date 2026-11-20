@@ -23,7 +23,8 @@ Meternaut holds no right to change Azure. The flow is the OAuth 2.0 authorizatio
    the change once more. A second challenge is final, and a person who cancels the check ends the request: nothing was changed.
 
 The access token lives in memory for this one request. It is never stored, never logged and never put in a page, and what the code may do with it is the list of
-calls in runner.py (`change_calls`). Errors say what went wrong in plain words and never carry a token or the text of an error description. The claims request lives in the
+calls in runner.py (`change_calls`) or, for a change of a real resource (the family `change-setting`), the client of that one request, which holds one write: the plan's own PUT
+(families/calls.py `one_write`). Errors say what went wrong in plain words and never carry a token or the text of an error description. The claims request lives in the
 state of the second sign-in until it is used (ten minutes at most) and nowhere else: it is not in a record, a page, a log or a line of the History.
 """
 from __future__ import annotations
@@ -39,6 +40,7 @@ from urllib.parse import quote, urlencode
 
 from .approvals import Approvals
 from .families import digest as plan_digest
+from .families import registry
 from .http import Client, HttpError, Refused
 from .models import ActionRecord, Begun, DecideResult, MAX_SIGNIN_PATH, PlanRecord, Principal, Store, StoreError
 from .roles import clean_text
@@ -237,8 +239,10 @@ class Delegation:
 
     def __init__(self, store: Store, approvals: Approvals, signin: SigninSettings | None, redeem: Callable[..., Tokens],
                  run: Callable[[str], RunnerServices], *, emit: Callable[..., object] = lambda kind, **fields: None, pkce: Callable[[], tuple[str, str]] = new_pkce,
-                 token: Callable[[int], str] = secrets.token_urlsafe) -> None:
-        self.store, self.approvals, self.signin, self.redeem, self.run, self.emit, self.pkce, self.token = store, approvals, signin, redeem, run, emit, pkce, token
+                 token: Callable[[int], str] = secrets.token_urlsafe, run_one: Callable[[str, PlanRecord], RunnerServices] | None = None) -> None:
+        # `run` gives the services of the change of a plan of a family on Meternaut's own planted waste; `run_one` gives, for a plan of the family that works on real resources, the services of that one
+        # request, with a client of its own that holds one write, the plan's own (families/calls.py one_write). Without it such a plan is run with `run`, whose client holds no real group at all.
+        self.store, self.approvals, self.signin, self.redeem, self.run, self.emit, self.pkce, self.token, self.run_one = store, approvals, signin, redeem, run, emit, pkce, token, run_one
 
     def begin(self, principal: Principal, plan_id: str, code: str, nonce: str, note: str = "", hint: str = "") -> Begun:
         if self.signin is None:
@@ -305,8 +309,10 @@ class Delegation:
 
     def _change(self, principal: Principal, plan: PlanRecord, started: dict, action: ActionRecord, tokens: Tokens) -> DecideResult:
         """Makes the change with the person's token. When Azure asks for an extra sign-in check, the person is sent to Microsoft Entra once more (and only once)."""
+        family = registry.get(plan.family)
         try:
-            done = execute(self.run(tokens.access_token), action, approved_digest=started["digest"])
+            services = self.run_one(tokens.access_token, plan) if self.run_one is not None and family is not None and family.real else self.run(tokens.access_token)
+            done = execute(services, action, approved_digest=started["digest"])
         except StoreError:
             return DecideResult(False, "error", "Meternaut cannot reach its records right now. Look at the resource in Azure before anything is tried again.", plan)
         if done.kind == "step_up" and not started.get("stepup"):

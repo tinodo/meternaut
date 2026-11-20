@@ -1871,10 +1871,10 @@ class ThePurityOfTheModule(unittest.TestCase):
                             r"\brandom\b", r"\buuid\b"):
                 self.assertIsNone(re.search(pattern, source), (name, pattern))
 
-    def test_the_brief_and_the_prices_start_without_the_shape_of_what_a_finding_proposes_being_ready(self):
-        """cases/proposals.py reads this module, and may read the toolbox, which reads the approvals, which read the brief: while one of them starts, another must not use what it has not yet defined. Here
-        the module of the shape is an empty one, as it is for a module that is imported while it is still starting, and both must start all the same."""
-        code = "import sys, types; sys.modules['cases.proposals'] = types.ModuleType('cases.proposals'); import cases.brief, cases.pricing"
+    def test_the_prices_start_without_the_shape_of_what_a_finding_proposes_being_ready(self):
+        """cases/proposals.py reads this module at the top, so while it starts this module must not ask it for a name. Here the module of the shape is an empty one, as it is for a module that is imported
+        while it is still starting, and the prices must start all the same."""
+        code = "import sys, types; sys.modules['cases.proposals'] = types.ModuleType('cases.proposals'); import cases.pricing"
         started = subprocess.run([sys.executable, "-c", code], cwd=APP_ROOT, env={**os.environ, "PYTHONPATH": str(APP_ROOT), "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, timeout=300)
         self.assertEqual(started.returncode, 0, started.stderr[-1500:])
 

@@ -148,6 +148,8 @@ TAKEN_BACK = {"rules": "Meternaut took this request back because its rules chang
               "group": "Meternaut took this request back. It was one of several requests about single resources, and one request for the whole group waits now.",
               "nothing": "Meternaut took this request back, because the finding does not say what to look at.",
               "gone": "Meternaut took this request back, because the resource is not in Azure any more. There is nothing left to decide.",
+              "upgraded": "Meternaut took this request back, because it can make this change itself now. A new request asks you to approve the change.",
+              "changed": "Meternaut took this request back, because it no longer matches the finding or the resource, which changed after the request was made.",
               "verified": "The cost of this has gone down since the request was made, as it suggested. Meternaut closed the request.",
               "released": "Nothing holds this finding back any more, so Meternaut closed this note. It asks about the finding as it does about any other.",
               "left-alone": "A person asked Meternaut to leave this resource alone, so Meternaut closed this note and asks nothing more about it."}  # why Meternaut took a request back (cases/approvals.py hold_back_empty, cases/advisor.py), or closed the note of a held finding, in a sentence
@@ -319,6 +321,7 @@ class Confidence:
 class Undo:
     reversible: bool
     how: str
+    short: str = ""  # the first sentence of `how`, for a card and a letter, which never cut a command in half; empty when `how` may be cut as it is
 
 
 @dataclass(frozen=True)
@@ -511,6 +514,8 @@ class Brief:
     # The arithmetic under a figure that code worked out from the bill (worked_of), and the other ways to save that the finding proposes (cases/proposals.py): empty for every other request.
     worked: tuple[tuple[str, ...], ...] = ()
     others: tuple[proposals.Other, ...] = ()
+    # The change asks once more before the sign-in although it can be undone, because it changes a real resource (words.Words.confirm): False for every family that was before it.
+    confirm: bool = False
 
 
 # -- small helpers ------------------------------------------------------------------------------------------------------------------------------
@@ -819,8 +824,9 @@ def automation_note(case: CaseRecord | None, now: dt.datetime) -> str:
 
 
 def heads_up_of(plan: PlanRecord | None, now: dt.datetime) -> str:
-    """The warning of an open request of advice, from the time that it kept (automation_words), as one safe line; "" for any other request."""
-    pre = plan.preconditions if plan is not None and plan.family == ADVISE and plan.state == "open" and isinstance(plan.preconditions, dict) else {}
+    """The warning of an open request of advice, or of a change of the family that works on real resources, from the time that it kept (automation_words), as one safe line; "" for any other request."""
+    found = shown(plan.family) if plan is not None else None
+    pre = plan.preconditions if plan is not None and (plan.family == ADVISE or found is not None and found.real) and plan.state == "open" and isinstance(plan.preconditions, dict) else {}
     return plain(automation_words(pre.get(AUTOMATED), now), 300)
 
 
@@ -1940,6 +1946,8 @@ def check_lines(check: Mapping, said: str = "") -> list[str]:
         lines.append("Azure no longer lists the resource." if check["gone"] else "Azure still lists the resource.")
     if check.get("now"):
         lines.append(text_of(check["now"], 200))
+    if check.get("differences"):
+        lines.append(f"Azure also changed: {text_of(check['differences'], 200).rstrip('.')}.")
     after = _figure(check.get("costAfterUsd"))
     if after is not None and check.get("currency") in (None, "", "USD") and not (after == 0 and NO_COST_AFTER in said):
         lines.append(f"The bill since the change shows {usd_text(after)}.")
@@ -2080,7 +2088,9 @@ def _outcome(plan: PlanRecord | None, state: str, action: ActionRecord | None, d
                        "Running in Azure", who, at)
     if action.state in ("done", "unknown") and state == "consumed":
         lines = [f"Approved by {by}, and made with their own Azure rights.", *first, text_of(action.result, 300), *check_lines(check, action.result or "")]
-        return Outcome("done", "Done", tuple(line for line in lines if line), "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
+        differs = bool(check.get("differences"))  # Azure also changed something else than the numbers that were asked for: never a clean success
+        return Outcome("done", "Done, with a difference" if differs else "Done", tuple(line for line in lines if line),
+                       "Done, with a difference" if differs else "Done" if action.state == "done" else "Done, not confirmed yet", who, action.finished_at or at)
     detail = text_of(action.error or action.result, 300) or "The change could not be finished."
     return Outcome("failed", "Not made", (detail, LOOK_IN_AZURE), "Not made", who, action.finished_at or at)
 
@@ -2146,7 +2156,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
     if said is not None:
         change, who, rechecked = said.change, WHO_ACTS, said.rechecked
-        undo, risk = Undo(said.reversible, said.undo), Risk(said.level, said.risk)
+        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk)
     elif kind == "change":
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
@@ -2189,7 +2199,8 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         asked=(asked_of(case, rtype, together) if kind == "advice" else ASKED_BY_STAGE.get(second.stage if second is not None else "", ASKED_CHANGE).format(what=f"{headline[:1].lower()}{headline[1:]}")
                if kind == "change" else "") if state == "open" else "",
         worked=worked_of(case, saving, whole, cost),
-        others=proposals.others(case.facts) if case is not None and kind != "info" and state in ("open", HELD) else ())
+        others=proposals.others(case.facts) if case is not None and kind != "info" and state in ("open", HELD) else (),
+        confirm=said is not None and said.confirm)
 
 
 def order_key(brief: Brief) -> tuple:

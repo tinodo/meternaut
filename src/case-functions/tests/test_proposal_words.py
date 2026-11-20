@@ -22,6 +22,7 @@ from cases import brief as brief_mod
 from cases import cards, letters, pricing, proposals
 from cases.meters import Meter
 from cases.models import GROUP_FACT
+from cases.families.words import Words
 
 START = dt.date(2026, 10, 5)
 GROUP = "rg-lab"
@@ -448,8 +449,8 @@ class AChangeThatMeternautMakes(unittest.TestCase):
 
     def test_a_family_that_has_words_of_its_own_is_checked_again_before_what_could_go_wrong(self):
         case, plan = a_change()
-        with mock.patch.object(brief_mod, "words_of", lambda *found: SimpleNamespace(headline="Lower it", change="Azure lowers it.", rechecked="Right before it acts, Meternaut reads it again.", risk="It slows.",
-                                                                                       level="medium", undo="Raise it.", reversible=True)):
+        words = Words(headline="Lower it", change="Azure lowers it.", rechecked="Right before it acts, Meternaut reads it again.", risk="It slows.", level="medium", undo="Raise it.", reversible=True)
+        with mock.patch.object(brief_mod, "words_of", lambda *found: words):
             page = Rendered("page", "page", blocks_of_html(self.page_of(case, plan)))
         self.assertEqual([block.text for block in page.blocks if block.kind == "term" and not block.details], ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"])
 
@@ -635,14 +636,18 @@ class EachKeyCheckFailsWhenItsBehaviourIsTakenOut(unittest.TestCase):
             self.assertNotIn("Saves a month", words())
 
 
-class TheSharedShapeHoldsNoWayToReachAzure(unittest.TestCase):
-    def test_it_imports_only_the_standard_library(self):
+class TheSharedShapeIsALeafWhenItIsImported(unittest.TestCase):
+    def test_it_reads_at_the_top_only_the_standard_library_the_prices_and_the_roles(self):
         import ast
         from pathlib import Path
 
         tree = ast.parse((Path(support.APP_ROOT) / "cases" / "proposals.py").read_text(encoding="utf-8"))
-        found = {(node.level, (node.module or "").split(".")[0]) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)} | {(0, a.name.split(".")[0]) for node in ast.walk(tree) if isinstance(node, ast.Import) for a in node.names}
-        self.assertLessEqual(found, {(0, "__future__"), (0, "math"), (0, "re"), (0, "dataclasses"), (0, "typing")})
+        top = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+        found = {(0, alias.name.split(".")[0]) for node in top if isinstance(node, ast.Import) for alias in node.names}
+        found |= {(1, alias.name) for node in top if isinstance(node, ast.ImportFrom) and node.level and not node.module for alias in node.names}
+        found |= {(node.level, (node.module or "").split(".")[0]) for node in top if isinstance(node, ast.ImportFrom) and node.module}
+        standard = {(0, "__future__"), (0, "collections"), (0, "dataclasses"), (0, "math"), (0, "re"), (0, "typing")}
+        self.assertLessEqual(found, standard | {(1, "pricing"), (1, "roles")}, "the brief, the words of the families, the approvals and the agents import it at the top: it reaches nothing that reaches them")
 
 
 if __name__ == "__main__":

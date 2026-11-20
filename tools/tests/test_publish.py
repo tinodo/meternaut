@@ -176,7 +176,7 @@ echo "sleep $*" >> "$FAKE_LOG"
 
 STUB_PYTHON = """#!/bin/bash
 # stand-in for python3. -c with the guard of the build script exits as FAKE_PYTHON_VERSION says (3.13.x passes); -c with the version of the interpreter says FAKE_PYTHON_VERSION; -c with sysconfig says where
-# ensurepip put pip; -c with import lzma exits as FAKE_PYTHON_LZMA says (ok, or missing); -m pip --version is FAKE_PIP (ok, or missing: no pip unless PYTHONPATH names the one that ensurepip made); -m
+# ensurepip put pip; -m pip --version is FAKE_PIP (ok, or missing: no pip unless PYTHONPATH names the one that ensurepip made); -m
 # ensurepip is FAKE_ENSUREPIP (ok or disabled); -m pip install is a fake download that FAKE_PIP says how it ends (ok, foreign: it unpacks a compiled module of another Python, hash, network,
 # first-fails: the first attempt fails and the next works). Every other call is the real Python (REAL_PYTHON), with the paths that it is given turned into the paths that it understands.
 if [ -n "${FAKE_LOG:-}" ]; then
@@ -201,7 +201,6 @@ case "$1" in
       *"== (3, 13)"*) case "${FAKE_PYTHON_VERSION:-3.12.7}" in 3.13.*) exit 0 ;; *) exit 1 ;; esac ;;
       *'%d.%d.%d'*) echo "${FAKE_PYTHON_VERSION:-3.12.7}"; exit 0 ;;
       *sysconfig*) echo "$3/usr/lib/python3.12/site-packages"; exit 0 ;;
-      "import lzma") if [ "${FAKE_PYTHON_LZMA:-ok}" = missing ]; then echo "ModuleNotFoundError: No module named '_lzma'" >&2; exit 1; fi; exit 0 ;;
       *) real "$@" ;;
     esac ;;
   -m)
@@ -251,20 +250,53 @@ CASES_SOURCE_FILES = {"function_app.py": b"# the cases app\n", "host.json": b"{}
                       "cases/__init__.py": b"", "cases/loop.py": b"# loop\n", "cases/web/__init__.py": b"", "cases/web/home.py": b"# home\n"}
 
 
-FIXED_TIME = (2026, 11, 9, 12, 0, 0)  # an archive holds the time of each file, and LZMA can make two of them differ by a byte: the helper below is the same bytes every time it is called
+FIXED_TIME = (2026, 11, 9, 12, 0, 0)  # an archive holds the time of each file: fixed, so that two calls of the helper below make the same bytes
 
 
-def source_zip(files=None):
-    """The archive of the sources, as tools/build-function-app.sh makes it with FUNCTION_APP_SOURCES_ONLY=1: one LZMA entry, sources.zip, that holds the files at its root in a zip of their own, stored.
-    The times of the entries are fixed, so that two calls make the same bytes (a test compares the size that the script saw with the size of a second call)."""
-    inner = io.BytesIO()
-    with zipfile.ZipFile(inner, "w", zipfile.ZIP_STORED) as archive:
-        for name, content in (files or CASES_SOURCE_FILES).items():
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SOURCE_DIGEST = load_module("source_digest_of_the_publish_tests", ROOT / "tools" / "source-digest.py")
+RELEASE = load_module("release_of_the_publish_tests", ROOT / "src" / "case-functions" / "cases" / "release.py")
+THE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+THE_REPOSITORY = "some-owner/some-repo"
+THE_TOP = "some-owner-some-repo-0123456"
+THE_TOKEN_OF_THE_RUN = "fake-github-token-of-the-run-4kP8sD2mQ7zX"
+# What a repository holds besides the app, and what the app holds besides the code that runs: none of it is taken from the archive
+THE_REST_OF_THE_REPOSITORY = {"README.md": b"# a repository\n", "tools/build-function-app.sh": b"# a tool\n", "src/case-functions/tests/test_loop.py": b"# a test\n", "src/case-functions/.funcignore": b"tests\n",
+                              "src/case-functions/requirements.in": b"azure-functions\n", "docs/notes.md": b"notes\n"}
+
+
+def github_zip(files=None, rest=None, also=None, stored=None):
+    """The archive that GitHub makes of a commit (git archive, as a zip): one folder that holds the repository's files, the app in src/case-functions, an entry for each folder, every file deflated. `also` is
+    raw entries by their whole name, for the archives that a person who wants to hurt would make, and `stored` the same without compression (an archive that is too big)."""
+    entries = {f"{THE_TOP}/src/case-functions/{name}": content for name, content in (CASES_SOURCE_FILES if files is None else files).items()}
+    entries.update({f"{THE_TOP}/{name}": content for name, content in (THE_REST_OF_THE_REPOSITORY if rest is None else rest).items()})
+    folders = {f"{THE_TOP}/"} | {"/".join(name.split("/")[:depth]) + "/" for name in entries for depth in range(2, name.count("/") + 1)}
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for folder in sorted(folders):
+            info = zipfile.ZipInfo(folder, FIXED_TIME)
+            info.external_attr = 0o40755 << 16
+            archive.writestr(info, b"")
+        for name, content in sorted({**entries, **(also or {})}.items()):
+            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_DEFLATED)
+        for name, content in (stored or {}).items():
             archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_STORED)
-    outer = io.BytesIO()
-    with zipfile.ZipFile(outer, "w", zipfile.ZIP_LZMA) as archive:
-        archive.writestr(zipfile.ZipInfo("sources.zip", FIXED_TIME), inner.getvalue(), zipfile.ZIP_LZMA)
-    return outer.getvalue()
+    return out.getvalue()
+
+
+def held_digest(files):
+    """What the workflow works out over its own checkout: the digest of the files as they are held (tools/source-digest.py)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, content in files.items():
+            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
+            (Path(tmp) / name).write_bytes(content)
+        return SOURCE_DIGEST.digest(Path(tmp))
 
 
 class Ran:
@@ -292,9 +324,10 @@ class PublishScript(unittest.TestCase):
             env["PUBLISH_PLAN"] = "Flex"
         return env
 
-    def run_publish(self, env=None, kind="flex", package=None, files=None, stubs=None, sent=None, github=None):
-        """Runs the script. `package` is the main file that the secret volume carries (None: the usual one), `files` the other files, `sent` the size that the workflow sent it with. `github` is what the stand-in
-        of curl serves when the sources are fetched: {"archive": the bytes of the archive, "api": the statuses of the calls to the API host in turn, "codeload": the same for the other host}."""
+    def run_publish(self, env=None, kind="flex", files=None, stubs=None, archive=None, statuses=None, token=None, digest=None):
+        """Runs the script as the Hub starts it: the volume holds the build script, the digest tool, the lock and the host file, and the three variables name the commit, the repository and the digest of the
+        app's files in it. `files` replaces files of the volume (None removes one), `archive` is what the stand-in of curl serves as GitHub's archive of the commit (the files of CASES_SOURCE_FILES by default),
+        `statuses` the statuses that it gives the two hosts in turn ({"api": "503 000", "codeload": "200"}), `token` the token of the run (a private repository) and `digest` the one that the workflow made."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             bin_dir = tmp / "bin"
@@ -304,12 +337,9 @@ class PublishScript(unittest.TestCase):
                 (bin_dir / name).chmod(0o755)  # on Linux a file that is not executable is skipped in the search of the path, and the real program would answer
             volume = tmp / "op"
             volume.mkdir()
-            main_name = "cases-source.zip"
-            content = package if package is not None else source_zip(CASES_SOURCE_FILES)
-            if content is not False:
-                (volume / main_name).write_bytes(content)
             (volume / "build-function-app.sh").write_text(text("tools/build-function-app.sh"), encoding="utf-8", newline="\n")
-            for name, body in (files or {}).items():
+            for name, body in {"source-digest.py": (ROOT / "tools" / "source-digest.py").read_bytes(), "requirements.txt": CASES_SOURCE_FILES["requirements.txt"], "host.json": CASES_SOURCE_FILES["host.json"],
+                               **(files or {})}.items():
                 if body is None:
                     (volume / name).unlink(missing_ok=True)
                 else:
@@ -321,13 +351,11 @@ class PublishScript(unittest.TestCase):
             posted = tmp / "posted.zip"
             script = tmp / "publish.sh"
             script.write_text(text("operator/publish.sh"), encoding="utf-8", newline="\n")
-            size = len(content) if content is not False else 0
-            served = {}
-            if github is not None:
-                (tmp / "github.zip").write_bytes(github["archive"])
-                served = {"FAKE_GITHUB_ARCHIVE": posix(tmp / "github.zip"), "FAKE_GITHUB_API": github.get("api", "200"), "FAKE_GITHUB_CODELOAD": github.get("codeload", "200")}
+            (tmp / "github.zip").write_bytes(github_zip() if archive is None else archive)
+            served = {"FAKE_GITHUB_ARCHIVE": posix(tmp / "github.zip"), "FAKE_GITHUB_API": (statuses or {}).get("api", "200"), "FAKE_GITHUB_CODELOAD": (statuses or {}).get("codeload", "200")}
+            fetched = {"PUBLISH_SOURCES_COMMIT": THE_COMMIT, "PUBLISH_SOURCES_REPOSITORY": THE_REPOSITORY, "PUBLISH_SOURCES_DIGEST": held_digest(CASES_SOURCE_FILES) if digest is None else digest, "GITHUB_TOKEN": token}
             environment = {**os.environ, "STUBS": posix(bin_dir), "PUBLISH_VOLUME": posix(volume), "PUBLISH_TMP": posix(work_root), "FAKE_LOG": posix(log), "FAKE_POSTED": posix(posted),
-                           "REAL_PYTHON": posix(sys.executable), "PUBLISH_FILE_BYTES": str(sent if sent is not None else size), **served, **self.good_env(kind), **(env or {})}
+                           "REAL_PYTHON": posix(sys.executable), **served, **fetched, **self.good_env(kind), **(env or {})}
             for name in [name for name, value in environment.items() if value is None]:
                 del environment[name]
             done = subprocess.run([BASH, "-c", 'PATH="$STUBS:$PATH"; export PATH; exec bash "$0"', posix(script)], capture_output=True, text=True, env=environment, cwd=tmp)
@@ -390,46 +418,51 @@ class PublishScript(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             return sorted(archive.namelist())
 
+    @staticmethod
+    def posts(ran):
+        """The calls of curl that post the package to the deployment site: the other curl of a run is the download of the sources."""
+        return [call for call in ran.calls_of("curl ") if "zipdeploy" in call]
+
     def test_a_good_cases_run_signs_in_asks_for_the_token_of_resource_manager_builds_the_package_here_and_posts_the_built_package_with_the_bearer_on_standard_input(self):
         ran = self.run_publish(kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        size = len(source_zip(CASES_SOURCE_FILES))
-        self.assertEqual([re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line) for line in ran.lines], [
+        self.assertEqual([re.sub(r" in \d+ s$", " in N s", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
             "ok: python3 3.12.7",
-            f"ok: cases-source.zip is {size} bytes, as sent",
+            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(github_zip())} bytes in N s",
+            f"ok: the app's files are taken from it: {len(CASES_SOURCE_FILES) - 2} files",
+            f"ok: the files match the digest of the workflow's checkout ({held_digest(CASES_SOURCE_FILES)[:12]})",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az account set",
             "ok: az account get-access-token for Azure Resource Manager",
             f"ok: {CASES_APP}.scm.azurewebsites.net resolves to a private address",
             f"ok: {CASES_APP}.azurewebsites.net resolves to a private address",
             "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
-            f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
             f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
             f"ok: the cases package that is published has the SHA-256 {hashlib.sha256(ran.posted).hexdigest()}",
             "ok: the deployment site took the package (HTTP 200, attempt 1 of 5)",
             "publish-done: exit code 0",
         ])
-        (post,) = ran.calls_of("curl ")
+        (post,) = self.posts(ran)
         self.assertRegex(post, rf"--request POST --header Content-Type: application/zip --data-binary @/.+/publish-[^/]+/cases\.zip https://{CASES_APP}\.scm\.azurewebsites\.net/api/zipdeploy")
-        self.assertNotIn("cases-source.zip", post, "what is posted is the package that was built in the work folder, and not what came in the volume")
         for flag in ("--config -", "--silent", "--show-error", "--write-out %{http_code}", "--max-time 900"):
             self.assertIn(flag, post)
         self.assertNotIn(ARM_TOKEN, post, "the bearer is on no command line")
-        self.assertEqual(ran.calls_of("curl-stdin"), [f'curl-stdin header = "Authorization: Bearer {ARM_TOKEN}"'])
+        self.assertEqual([call for call in ran.calls_of("curl-stdin") if ARM_TOKEN in call], [f'curl-stdin header = "Authorization: Bearer {ARM_TOKEN}"'])
         self.assertEqual(ran.calls_of("curl-file"), [f"curl-file {len(ran.posted)} {hashlib.sha256(ran.posted).hexdigest()}"], "the package is posted whole, byte for byte")
-        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the sources that came in the volume, and the libraries that were built here")
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the files of the app that were fetched, the lock and the host file of the request, and the libraries built here")
         self.assertEqual(ran.calls_of("az functionapp"), [], "the cases are published with curl, as the runner did")
         self.assertEqual(len(ran.calls_of("python3 -m pip install")), 1, "the package is built here, once")
         self.assertEqual(ran.leftover, [])
         self.assertEqual(ran.calls[-1], "sleep 20")
 
-    def test_a_good_cases_run_on_flex_consumption_is_published_with_config_zip_and_curl_is_never_called(self):
+    def test_a_good_cases_run_on_flex_consumption_is_published_with_config_zip_and_the_only_curl_is_the_download_of_the_sources(self):
         ran = self.run_publish({"PUBLISH_PLAN": "Flex"}, kind="cases")
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
-        size = len(source_zip(CASES_SOURCE_FILES))
-        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line)) for line in ran.lines], [
+        self.assertEqual([re.sub(r" [0-9a-f]{64}$", " HASH", re.sub(r" in \d+ s$", " in N s", re.sub(r", \d+ s, hashes ok$", ", N s, hashes ok", line))) for line in ran.lines], [
             "ok: python3 3.12.7",
-            f"ok: cases-source.zip is {size} bytes, as sent",
+            f"ok: the sources of commit {THE_COMMIT[:12]} are fetched from GitHub: api, {len(github_zip())} bytes in N s",
+            f"ok: the app's files are taken from it: {len(CASES_SOURCE_FILES) - 2} files",
+            f"ok: the files match the digest of the workflow's checkout ({held_digest(CASES_SOURCE_FILES)[:12]})",
             "ok: az login as the deploy identity with the OpenID Connect token",
             "ok: az account set",
             "ok: az token for the App Service resource, fetched while the OpenID Connect token is fresh",
@@ -437,7 +470,6 @@ class PublishScript(unittest.TestCase):
             f"ok: {CASES_APP}.azurewebsites.net resolves to a private address",
             "ok: az 2.92.0",
             "ok: python3 -m ensurepip makes pip 25.0.1 in the work folder",
-            f"ok: the sources are unpacked: {len(CASES_SOURCE_FILES)} files",
             f"ok: the cases package is built: {len(CASES_SOURCE_FILES) + 3} files, 1.0 MB zipped, N s, hashes ok",
             "ok: the cases package that is published has the SHA-256 HASH",
             f"ok: the cases package is published to {CASES_APP} (attempt 1 of 3)",
@@ -450,20 +482,23 @@ class PublishScript(unittest.TestCase):
         self.assertRegex(ran.calls_of("az account")[0], rf"^az account set --subscription {SUBSCRIPTION} \[config=/.+/publish-[^/]+/azure\]$")
         (publish,) = ran.calls_of("az functionapp")
         self.assertRegex(publish, rf"^az functionapp deployment source config-zip --resource-group {GROUP} --name {CASES_APP} --src /.+/publish-[^/]+/cases\.zip --build-remote false --only-show-errors --output none ")
-        self.assertEqual(ran.calls_of("curl"), [], "a Flex Consumption app has no zip deployment that curl posts to: it is published with the Azure CLI's zip deployment command")
+        self.assertEqual(self.posts(ran), [], "a Flex Consumption app has no zip deployment that curl posts to: it is published with the Azure CLI's zip deployment command")
+        (download,) = ran.calls_of("curl ")
+        self.assertIn("https://api.github.com/repos/", download, "the one curl of a Flex run is the download of the sources, before the sign-in")
+        self.assertLess(ran.calls.index(download), min(i for i, call in enumerate(ran.calls) if call.startswith("az ")))
         (token,) = ran.calls_of("az account get-access-token")
         self.assertIn("--resource https://appservice.azure.com", token, "the token that config-zip asks Microsoft Entra for, fetched while the OpenID Connect token is fresh")
-        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the sources that came in the volume, and the libraries that were built here")
+        self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES), "the files that were fetched, and the libraries that were built here")
         self.assertEqual(ran.leftover, [], "the work folder, with the CLI's state of the deploy identity and what was built, is gone")
         self.assertEqual(ran.calls[-1], "sleep 20", "the container stays after the work so that the log can be read whole")
 
     def test_a_cases_run_with_no_plan_is_a_basic_run_and_a_plan_that_is_not_flex_or_basic_is_refused(self):
         ran = self.run_publish({"PUBLISH_PLAN": None}, kind="cases")
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
-        self.assertEqual(len(ran.calls_of("curl ")), 1, "no plan: Basic, as it was before the plan was a setting")
+        self.assertEqual(len(self.posts(ran)), 1, "no plan: Basic, as it was before the plan was a setting")
         self.assertEqual(ran.calls_of("az functionapp"), [])
         ran = self.run_publish({"PUBLISH_PLAN": "Basic"}, kind="cases")
-        self.assertEqual(len(ran.calls_of("curl ")), 1)
+        self.assertEqual(len(self.posts(ran)), 1)
         for value in ("flex", "basic", "Basic ", " Flex", "Premium", "FlexConsumption", "Flex; touch canary", "$(touch canary)", "Flex\nBasic"):
             self.refused({"PUBLISH_PLAN": value}, kind="cases")
         self.assertIn("PUBLISH_PLAN", self.refused({"PUBLISH_PLAN": "nope"}, kind="cases").lines[0])
@@ -471,7 +506,7 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(len(ran.calls_of("az functionapp")), 1)
 
-    def test_the_package_that_az_publishes_is_the_one_that_was_built_here_from_the_sources_in_the_volume(self):
+    def test_the_package_that_az_publishes_is_the_one_that_was_built_here_from_the_files_that_were_fetched(self):
         ran = self.run_publish()
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(self.members_of_bytes(ran.posted), sorted(list(CASES_SOURCE_FILES) + self.FAKE_LIBRARIES))
@@ -530,18 +565,15 @@ class PublishScript(unittest.TestCase):
             self.refused({"AZURE_FEDERATED_TOKEN": value})
         self.assertIn("AZURE_FEDERATED_TOKEN", self.refused({"AZURE_FEDERATED_TOKEN": "nope"}).lines[0])
 
-    def test_a_size_that_is_not_a_number_and_a_hold_that_is_not_from_0_to_60_are_refused(self):
-        for value in (None, "", "12a", "-1", "1e3", "1" * 10, "$(touch canary)"):
-            self.refused({"PUBLISH_FILE_BYTES": value})
+    def test_a_hold_that_is_not_from_0_to_60_is_refused(self):
         for value in ("61", "100", "-1", "abc", "1.5", "$(touch canary)"):
             self.refused({"PUBLISH_HOLD_SECONDS": value})
 
-    def test_a_volume_without_the_file_that_carries_the_code_or_without_the_build_script_is_refused(self):
+    def test_a_volume_that_lacks_a_file_of_the_request_is_refused_before_anything_runs(self):
         for kind in ("flex", "cases"):
-            ran = self.refused(None, kind=kind, package=False)
-            self.assertIn("cases-source.zip is not in the secret volume", ran.lines[0], kind)
-            ran = self.refused(None, kind=kind, files={"build-function-app.sh": None})
-            self.assertIn("build-function-app.sh is not in the secret volume", ran.lines[0], f"{kind}: the app is built here, from sources")
+            for name in ("build-function-app.sh", "source-digest.py", "requirements.txt", "host.json"):
+                ran = self.refused(None, kind=kind, files={name: None})
+                self.assertIn(f"{name} is not in the secret volume", ran.lines[0], f"{kind}: {name}")
             self.assertEqual(self.run_publish(None, kind=kind).done.returncode, 0, kind)
 
     # --- the token --------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -580,23 +612,14 @@ class PublishScript(unittest.TestCase):
         for secret in (FEDERATED_TOKEN, ARM_TOKEN, A_JWT, A_JWT.split(".")[1]):
             self.assertNotIn(secret, ran.done.stdout + ran.done.stderr)
 
-    # --- the sign-in, the size and the names ------------------------------------------------------------------------------------------------------------------------------------------
-
-    def test_a_package_that_arrived_short_is_never_published_and_nothing_is_called(self):
-        for kind in ("flex", "cases"):
-            ran = self.run_publish(kind=kind, sent=99999)
-            self.assertEqual(ran.done.returncode, 3)
-            self.assertRegex(ran.lines[1], r"^FAIL: cases-source\.zip is \d+ bytes, 99999 were sent$")
-            self.assertEqual(ran.lines[-1], "publish-done: exit code 3")
-            self.assertEqual(ran.calls, [], "not even a sign-in: the file is checked first")
-            self.assertEqual(ran.leftover, [])
+    # --- the sign-in, the names and the build -----------------------------------------------------------------------------------------------------------------------------------------
 
     def test_a_sign_in_that_fails_is_tried_three_times_ten_seconds_apart_and_then_stops_the_run_before_any_name_is_looked_up(self):
         ran = self.run_publish({"FAKE_AZ_LOGIN": "fail"})
         self.assertEqual(ran.done.returncode, 3)
         self.assertEqual(len(ran.calls_of("az login")), 3)
         self.assertEqual(ran.calls_of("sleep"), ["sleep 10", "sleep 10"], "a pause between the tries and none after the last one")
-        self.assertEqual([call for call in ran.calls if not call.startswith(("az login", "sleep"))], [])
+        self.assertEqual([call for call in ran.calls if not call.startswith(("az login", "sleep", "curl"))], [], "the download of the sources came first, and nothing else ran")
         self.assertEqual(ran.lines[-1], "publish-done: exit code 3")
         self.assertEqual(ran.leftover, [])
 
@@ -617,7 +640,7 @@ class PublishScript(unittest.TestCase):
             self.assertIn(f"FAIL: {host} {said}: the private endpoint's name is not registered (yet)", ran.lines)
             self.assertEqual(len([call for call in ran.calls if call.startswith("getent") and call.endswith(host)]), 3)
             self.assertEqual(ran.calls_of("sleep"), ["sleep 10", "sleep 10"])
-            self.assertEqual([call for call in ran.calls if call.startswith(("python3", "curl", "az functionapp"))], [])
+            self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m", "az functionapp")) or "zipdeploy" in call], [])
             self.assertEqual(ran.leftover, [])
 
     def test_a_name_that_the_landing_zone_registers_at_the_second_try_is_waited_for_ten_seconds(self):
@@ -634,33 +657,6 @@ class PublishScript(unittest.TestCase):
         self.assertTrue([line for line in ran.lines if line.startswith("FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled in this Python: install the python3-pip")], ran.lines)
         self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m pip install", "az functionapp"))], [])
         self.assertEqual(ran.leftover, [])
-
-    def test_sources_that_would_be_unpacked_outside_the_folder_are_refused(self):
-        evil = source_zip({"function_app.py": b"#\n", "../escape.txt": b"x"})
-        ran = self.run_publish(package=evil)
-        self.assertEqual(ran.done.returncode, 3)
-        self.assertIn("FAIL: the sources could not be unpacked: a file of the sources would be unpacked outside the folder", ran.lines)
-        self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m pip install", "az functionapp"))], [])
-
-    def test_sources_that_are_not_the_one_lzma_entry_that_holds_the_files_are_refused_in_plain_words_and_nothing_is_built(self):
-        files_at_the_root = io.BytesIO()
-        with zipfile.ZipFile(files_at_the_root, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name, content in CASES_SOURCE_FILES.items():
-                archive.writestr(name, content)
-        ran = self.run_publish(package=files_at_the_root.getvalue())
-        self.assertEqual(ran.done.returncode, 3)
-        self.assertTrue([line for line in ran.lines if line.startswith("FAIL: the sources could not be unpacked: ")], ran.lines)
-        self.assertEqual([call for call in ran.calls if call.startswith(("python3 -m pip install", "az functionapp", "curl"))], [])
-        self.assertEqual(ran.leftover, [])
-
-    def test_a_python_without_the_lzma_module_stops_the_run_before_the_sign_in_and_says_so_in_plain_words(self):
-        for kind in ("flex", "cases"):
-            ran = self.run_publish({"FAKE_PYTHON_LZMA": "missing"}, kind=kind)
-            self.assertEqual((ran.done.returncode, ran.done.stderr), (3, ""), kind)
-            self.assertEqual(ran.lines, ["ok: python3 3.12.7", "FAIL: python3 has no lzma module: the sources cannot be unpacked", "publish-done: exit code 3"], kind)
-            self.assertEqual(ran.calls, [], f"{kind}: no sign-in, no name, no build and no hold: the check comes first")
-            self.assertEqual(ran.leftover, [], "no work folder was made")
-            self.assertNotIn("ModuleNotFoundError", ran.done.stdout, "what Python said is not printed: the message is the script's own")
 
     def test_a_build_that_fails_is_tried_once_more_fifteen_seconds_later_and_a_second_failure_ends_the_run_without_a_publish(self):
         ran = self.run_publish({"FAKE_PIP": "hash"})
@@ -713,12 +709,12 @@ class PublishScript(unittest.TestCase):
             ran = self.run_publish({"FAKE_AZ_TOKEN": mode}, kind="cases")
             self.assertEqual(ran.done.returncode, 3, mode)
             self.assertTrue([line for line in ran.lines if line.startswith("FAIL: az account get-access-token")], mode)
-            self.assertEqual((ran.calls_of("curl"), ran.calls_of("getent"), ran.calls_of("python3 -m")), ([], [], []), f"{mode}: nothing is looked up, built or posted")
+            self.assertEqual((self.posts(ran), ran.calls_of("getent"), ran.calls_of("python3 -m")), ([], [], []), f"{mode}: nothing is looked up, built or posted")
             self.assertEqual(ran.leftover, [])
 
     def test_the_token_of_resource_manager_is_fetched_right_after_the_sign_in_while_the_assertion_is_fresh_before_the_names_and_the_build(self):
         ran = self.run_publish(kind="cases")
-        calls = [re.sub(r" \[config=.+\]$", "", call) for call in ran.calls if call.startswith(("az ", "getent", "python3 -m", "curl "))]
+        calls = [re.sub(r" \[config=.+\]$", "", call) for call in ran.calls if call.startswith(("az ", "getent", "python3 -m")) or "zipdeploy" in call]
         self.assertTrue(calls[0].startswith("az login --service-principal"))
         self.assertEqual(calls[1], f"az account set --subscription {SUBSCRIPTION}")
         self.assertEqual(calls[2], "az account get-access-token --resource https://management.azure.com --query accessToken --output tsv")
@@ -726,21 +722,20 @@ class PublishScript(unittest.TestCase):
         self.assertLess(max(i for i, call in enumerate(calls) if call.startswith("python3 -m pip install")), min(i for i, call in enumerate(calls) if call.startswith("curl ")), "the package is built before it is posted")
 
     def test_the_cases_app_on_a_basic_plan_is_built_here_and_nothing_is_posted_when_the_build_does_not_work(self):
-        for env, package, said in (({"FAKE_ENSUREPIP": "disabled"}, None, "FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled"),
-                                   ({"FAKE_PIP": "hash"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
-                                   ({"FAKE_PIP": "network"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
-                                   ({"FAKE_PIP": "foreign"}, None, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
-                                   (None, source_zip({"function_app.py": b"#\n", "../escape.txt": b"x"}), "FAIL: the sources could not be unpacked: a file of the sources would be unpacked outside the folder")):
-            ran = self.run_publish(env, kind="cases", package=package)
+        for env, said in (({"FAKE_ENSUREPIP": "disabled"}, "FAIL: python3 -m ensurepip: ERROR: ensurepip is disabled"),
+                          ({"FAKE_PIP": "hash"}, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
+                          ({"FAKE_PIP": "network"}, "FAIL: the build of the libraries failed (attempt 2 of 2)"),
+                          ({"FAKE_PIP": "foreign"}, "FAIL: the build of the libraries failed (attempt 2 of 2)")):
+            ran = self.run_publish(env, kind="cases")
             self.assertEqual(ran.done.returncode, 3, (env, ran.lines))
             self.assertTrue([line for line in ran.lines if line.startswith(said)], (said, ran.lines))
-            self.assertEqual(ran.calls_of("curl"), [], "nothing is posted that was not built")
+            self.assertEqual(self.posts(ran), [], "nothing is posted that was not built")
             self.assertEqual(ran.leftover, [])
         ran = self.run_publish({"FAKE_PIP": "first-fails"}, kind="cases")
         self.assertEqual(ran.done.returncode, 0, ran.done.stdout)
         self.assertEqual(len(ran.calls_of("python3 -m pip install")), 2, "a build that fails once is tried once more")
         self.assertIn("FAIL: the build of the libraries failed (attempt 1 of 2)", ran.lines)
-        self.assertEqual(len(ran.calls_of("curl ")), 1)
+        self.assertEqual(len(self.posts(ran)), 1)
 
     def test_a_site_that_answers_with_a_failure_is_tried_again_sixty_seconds_later_and_what_it_said_is_shown(self):
         ran = self.run_publish({"FAKE_CURL_CODES": "503 202"}, kind="cases")
@@ -748,12 +743,12 @@ class PublishScript(unittest.TestCase):
         self.assertEqual(ran.lines[-4:], ["FAIL: the publish was answered with HTTP 503 (attempt 1 of 5)", "  the site said nothing with HTTP 503",
                                          "ok: the deployment site took the package (HTTP 202, attempt 2 of 5)", "publish-done: exit code 0"])
         self.assertEqual(ran.calls_of("sleep"), ["sleep 60", "sleep 20"])
-        self.assertEqual(len(ran.calls_of("curl ")), 2)
+        self.assertEqual(len(self.posts(ran)), 2)
 
     def test_a_site_that_never_takes_the_package_ends_with_exit_code_1_after_five_attempts(self):
         ran = self.run_publish({"FAKE_CURL_CODES": "500", "FAKE_CURL_EXIT": "7"}, kind="cases")
         self.assertEqual(ran.done.returncode, 1)
-        self.assertEqual(len(ran.calls_of("curl ")), 5)
+        self.assertEqual(len(self.posts(ran)), 5)
         self.assertEqual(ran.calls_of("sleep"), ["sleep 60"] * 4 + ["sleep 20"], "four pauses and none after the last attempt, then the hold")
         self.assertEqual(ran.lines[-2:], [f"FAIL: the code could not be published to {CASES_APP}", "publish-done: exit code 1"])
 
@@ -785,7 +780,7 @@ class PublishScript(unittest.TestCase):
     def test_the_script_reads_only_the_variables_it_names_and_the_names_of_its_tests(self):
         source = text("operator/publish.sh")
         used = set(re.findall(r"\$\{?(AZURE_FEDERATED_\w+|PUBLISH_\w+|FUNCTION_APP_\w+|FAKE_\w+|GITHUB_\w+|OPERATOR_\w+)", source))
-        self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID", "PUBLISH_FILE_BYTES",
+        self.assertEqual(used, {"AZURE_FEDERATED_TOKEN", "PUBLISH_KIND", "PUBLISH_PLAN", "PUBLISH_APP", "PUBLISH_RESOURCE_GROUP", "PUBLISH_SUBSCRIPTION", "PUBLISH_CLIENT_ID", "PUBLISH_TENANT_ID",
                                 "PUBLISH_HOLD_SECONDS", "PUBLISH_VOLUME", "PUBLISH_TMP", "PUBLISH_SOURCES_COMMIT", "PUBLISH_SOURCES_REPOSITORY", "PUBLISH_SOURCES_DIGEST", "GITHUB_TOKEN"})
         self.assertEqual(set(re.findall(r"\b(FUNCTION_APP_[A-Z_]+)=", re.sub(r"(?m)^\s*#.*$", "", source))), {"FUNCTION_APP_SOURCE_DIR", "FUNCTION_APP_BUILD_IN_OPERATOR"},
                          "the two switches that the build script has for the Operator, and not the third")
@@ -818,19 +813,15 @@ class PublishScript(unittest.TestCase):
 
 
 def members_of(zip_path):
-    """The files of a zip, by name: Info-ZIP, which the runner has, also stores an entry for each folder, and Python's zipfile, which the container uses, does not. The archive of the sources holds its
-    files in the zip that is its one entry."""
+    """The files of a zip, by name: Info-ZIP, which the runner has, also stores an entry for each folder, and Python's zipfile, which the container uses, does not."""
     with zipfile.ZipFile(zip_path) as archive:
-        names = archive.namelist()
-        if names == ["sources.zip"]:
-            names = zipfile.ZipFile(io.BytesIO(archive.read("sources.zip"))).namelist()
-        return sorted(name for name in names if not name.endswith("/"))
+        return sorted(name for name in archive.namelist() if not name.endswith("/"))
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheBuildScriptInTheOperator(unittest.TestCase):
-    """tools/build-function-app.sh in its three modes against a stand-in for pip (the real Python does the rest): the sources that go to the Operator, the build there with the switches for the Operator,
-    and the build on the runner; the pip command is one and the layout is one."""
+    """tools/build-function-app.sh in its two modes against a stand-in for pip (the real Python does the rest): the build in the Operator with the switch for it, and the build on the runner; the pip command
+    is one and the layout is one."""
 
     def run_build(self, arguments=("case-functions", "cases"), env=None, python="3.13.0", source=None, zip_name="out.zip", prior=None):
         """Runs the script in a folder of its own. Returns the process, the calls that the stand-in logged, the members of the zip (or None), and the names that the build folder holds."""
@@ -868,142 +859,6 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         code = [f"{package}/{path.relative_to(root / package).as_posix()}" for path in sorted((root / package).rglob("*")) if path.is_file() and "__pycache__" not in path.parts]
         return sorted(["function_app.py", "host.json", "requirements.txt"] + code)
 
-    def test_the_sources_of_each_app_are_zipped_without_libraries_whatever_python_runs_the_script(self):
-        for kind, arguments in self.APPS.items():
-            done, calls, members, folder = self.run_build(arguments=arguments, env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7")
-            self.assertEqual(done.returncode, 0, (kind, done.stderr))
-            self.assertEqual(members, self.expected_sources(kind), f"{kind}: what the build copies, and nothing of the tests, the caches or the libraries")
-            self.assertEqual([call for call in calls if call.startswith("python3 -m pip")], [], "nothing is installed")
-            self.assertEqual(folder, sorted({name.split("/")[0] for name in self.expected_sources(kind)}))
-            self.assertEqual(done.stdout.strip().splitlines()[-1], f"{len(members)} files", f"{kind}: the last line that the script prints is the count of the files, as it was")
-            sent = len(self.last_zip) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-            self.assertLess(sent, 480_000, f"{kind}: the files of the group (the sources, the build script and the container script) are within the cap of tools/operator-run.py: "
-                                           "the libraries are made in the container")
-        self.assertTrue([name for name in self.expected_sources("cases") if name.startswith("cases/web/")], "the cases package has a sub-package, and the build copies it")
-
-    # What the archive of the sources measured on 2026-11-19, after the four changes of that night were merged (the words of phase 2 with the test that every request can be decided, the rule that nobody is asked about an Azure
-    # Advisor recommendation that counts no saving, the memory of what a run looked at, and the fetch of the sources by commit in the container script): 320,300 bytes, from one run of the real build script (the real strip and zip)
-    # on an LF copy (git archive with core.eol=lf; a run varies by about 80 bytes with the times that the copy gives the files); the request sent is 356,673 bytes (that archive, the build script of 9,431 bytes and the container
-    # script of 26,948, which grew by 6,054 with the fetch) and 123,327 stay free, which is 3,327 above the floor of 120,000 that the test after this one keeps. The same method gave 278,913 bytes on 2026-11-17, 255,610 bytes for the first measure of
-    # the sources with the comments and the text of the docstrings taken out (tools/strip-sources.py, docs/proposals/27-package-without-comments.md), and 388,401 the day before without that strip. The cap of the request is 480,000
-    # bytes (tools/operator-run.py), and the largest request that is known to work is 466,104. The margin below is the room for the code of the next days: an archive that is not stripped (about 133,000 bytes more) is far above it,
-    # and the floor of the test after it is what keeps the cap away: with the room that near to that floor, code that is added makes room first. Set the measure again, on purpose, when the margin is used up.
-    SOURCES_ARCHIVE_MEASURED = 320_300
-    SOURCES_ARCHIVE_MARGIN = 40_000
-
-    def sources_archive(self, fresh=False):
-        """The archive that the script makes of the real sources of the cases app, with the switch of the runner's pack step. It is made once for the tests of this class, and again when a fresh one is asked for."""
-        if fresh or TheBuildScriptInTheOperator.made_sources_archive is None:
-            done, _, _, _ = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7")
-            self.assertEqual(done.returncode, 0, done.stderr)
-            TheBuildScriptInTheOperator.made_sources_archive = self.last_zip
-        return TheBuildScriptInTheOperator.made_sources_archive
-
-    made_sources_archive = None
-
-    @staticmethod
-    def inner_zip(data):
-        """The zip of the files that the archive carries as its one entry."""
-        with zipfile.ZipFile(io.BytesIO(data)) as outer:
-            return zipfile.ZipFile(io.BytesIO(outer.read("sources.zip")))
-
-    def test_the_archive_of_the_sources_is_one_lzma_entry_that_holds_the_files_stored_in_a_zip_so_that_they_are_compressed_together(self):
-        data = self.sources_archive()
-        with zipfile.ZipFile(io.BytesIO(data)) as outer:
-            self.assertEqual([(info.filename, info.compress_type) for info in outer.infolist()], [("sources.zip", zipfile.ZIP_LZMA)], "every entry of the archive is LZMA, and there is one")
-            self.assertIsNone(outer.testzip())
-        inner = self.inner_zip(data)
-        self.assertEqual({info.compress_type for info in inner.infolist()}, {zipfile.ZIP_STORED}, "the files are stored: the LZMA of the entry that holds them compresses them, across the files")
-        names = inner.namelist()
-        self.assertEqual(sorted(names), self.expected_sources("cases"), "the layout of the package: the three files at the root and the code package")
-        self.assertEqual(names[:3], ["function_app.py", "host.json", "requirements.txt"], "the files of the root come first")
-        by_folder = {}
-        for name in names:
-            folder, _, base = name.rpartition("/")
-            by_folder.setdefault(folder, []).append(base)
-        self.assertEqual([folder for folder, bases in by_folder.items() if bases != sorted(bases)], [], "in each folder the files come by name")
-        self.assertEqual([name for name in names if "\\" in name or name.endswith("/") or "__pycache__" in name], [], "forward slashes, no entry for a folder and no compiled cache")
-        self.assertEqual(self.inner_zip(self.sources_archive(fresh=True)).namelist(), names, "the same order every time")
-
-    def test_the_archive_unpacks_with_zipfile_to_the_files_of_the_source_tree_with_the_python_files_stripped_of_their_comments_and_docstring_text(self):
-        data = self.sources_archive()
-        root = ROOT / "src" / "case-functions"
-        spec = importlib.util.spec_from_file_location("strip_sources_of_the_publish_tests", ROOT / "tools" / "strip-sources.py")
-        stripper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(stripper)
-        with tempfile.TemporaryDirectory() as tmp:
-            self.inner_zip(data).extractall(tmp)
-            unpacked = sorted(path.relative_to(tmp).as_posix() for path in Path(tmp).rglob("*") if path.is_file())
-            self.assertEqual(unpacked, self.expected_sources("cases"))
-            for name in unpacked:
-                original = (root / name).read_bytes()
-                self.assertEqual((Path(tmp) / name).read_bytes(), stripper.stripped(original) if name.endswith(".py") else original, name)
-
-    def test_the_archive_is_at_least_a_quarter_smaller_than_the_same_files_each_compressed_alone_and_stays_within_its_ceiling(self):
-        data = self.sources_archive()
-        inner = self.inner_zip(data)
-        one_by_one = io.BytesIO()
-        with zipfile.ZipFile(one_by_one, "w", zipfile.ZIP_LZMA) as archive:
-            for name in inner.namelist():
-                archive.writestr(name, inner.read(name))
-        self.assertLess(len(data), len(one_by_one.getvalue()) * 0.75, "LZMA for each file alone saves only about 4 percent against deflate, because the files share most of their text: the saving is in the whole")
-        self.assertLessEqual(len(data), self.SOURCES_ARCHIVE_MEASURED + self.SOURCES_ARCHIVE_MARGIN, "the sources have grown by more than the margin that was left, or the comments are not taken out any more: look at which, "
-                                                                                                    "and raise the ceiling on purpose, with the new measure, only for the first")
-
-    def test_the_archive_and_the_two_scripts_leave_at_least_120000_bytes_below_the_cap_of_the_request(self):
-        sent = len(self.sources_archive()) + (ROOT / "tools" / "build-function-app.sh").stat().st_size + (ROOT / "operator" / "publish.sh").stat().st_size
-        self.assertLessEqual(sent, 480_000 - 120_000, "480,000 is MAX_FILE_BYTES of tools/operator-run.py, which is not raised. The 120,000 that stay free are the room for the code that the app grows by, which the stripped "
-                                                      "sources (tools/strip-sources.py) make (the floor was 150,000, then 135,000, then 130,000, and is 120,000 since the container script grew by 6,054 bytes with the fetch of the sources and the request grew "
-                                                      "to about 357,000 bytes: docs/proposals/27-package-without-comments.md). The floor belongs to the request way, and goes with it when the fetch is the way: "
-                                                      "when this fails, no word is shortened to make room: look at what grew, at whether the strip still runs, and at what can leave the package, before the floor moves again")
-
-    @staticmethod
-    def sources_with_a_broken_file(tmp):
-        folder = tmp / "sources"
-        files = {"function_app.py": b"# the cases app\n", "host.json": b"{}\n", "requirements.txt": b"azure-functions==2.3.0 \\\n    --hash=sha256:" + b"cd" * 32 + b"\n", "cases/__init__.py": b"",
-                 "cases/broken.py": b"def broken(:\n"}
-        for name, data in files.items():
-            (folder / name).parent.mkdir(parents=True, exist_ok=True)
-            (folder / name).write_bytes(data)
-        return folder
-
-    @staticmethod
-    def sources_with_a_broken_file_and_an_older_archive(tmp):
-        folder = TheBuildScriptInTheOperator.sources_with_a_broken_file(tmp)
-        (tmp / "out.zip").write_bytes(source_zip())
-        return folder
-
-    def test_a_python_file_that_cannot_be_stripped_stops_the_pack_in_plain_words_and_no_archive_is_left(self):
-        done, calls, members, folder = self.run_build(env={"FUNCTION_APP_SOURCES_ONLY": "1"}, python="3.12.7", prior=self.sources_with_a_broken_file_and_an_older_archive)
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("error: cases/broken.py: it could not be stripped", done.stderr)
-        self.assertIn("The sources were not stripped and nothing is packed.", done.stderr)
-        self.assertEqual(done.stdout, "", "no count of files: nothing was packed")
-        self.assertIsNone(members, "the archive that an earlier run left in the place of the new one is gone, so that nothing can take it for the archive of this run")
-
-    def test_the_strip_is_a_step_of_the_pack_of_the_sources_after_the_old_archive_is_removed_and_before_the_zip_is_made_and_of_no_other_build_because_the_container_has_no_such_tool(self):
-        code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
-        sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
-        self.assertEqual(code.count("strip-sources.py"), 1)
-        self.assertLess(sources.index('rm -f "$zip_file"'), sources.index("strip-sources.py"), "under set -e a failed strip ends the script, so the old archive has to be removed before it runs")
-        self.assertLess(sources.index("strip-sources.py"), sources.index("import io, os, sys, zipfile"), "the files are stripped before the zip is made")
-        self.assertTrue((ROOT / "tools" / "strip-sources.py").is_file())
-        for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
-            done, calls, members, folder = self.run_build(env=env, python=python, prior=self.sources_with_a_broken_file)
-            self.assertEqual(done.returncode, 0, (label, done.stderr))
-            with zipfile.ZipFile(io.BytesIO(self.last_zip)) as package:
-                self.assertEqual(package.read("cases/broken.py"), b"def broken(:\n", f"{label}: the files are those that it was given")
-
-    def test_the_archive_that_the_script_makes_is_unpacked_by_the_code_of_the_container_script_to_the_files_that_it_was_made_of(self):
-        data = self.sources_archive()
-        unpack = re.search(r"python3 -c '\n(import io.+?)\n' \"\$main_file\"", text("operator/publish.sh"), re.S).group(1)
-        with tempfile.TemporaryDirectory() as tmp:
-            archive, target = Path(tmp) / "cases-source.zip", Path(tmp) / "source"
-            archive.write_bytes(data)
-            done = subprocess.run([sys.executable, "-c", unpack, str(archive), str(target)], capture_output=True, text=True)
-            self.assertEqual((done.returncode, done.stdout.strip()), (0, str(len(self.expected_sources("cases")))), done.stderr)
-            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()), self.expected_sources("cases"))
-
     def test_the_package_that_an_app_runs_from_is_deflate_in_each_build_that_makes_one_because_the_deployment_site_cannot_read_lzma(self):
         for label, env, python in (("the runner's build", {"FAKE_PIP": "ok"}, "3.13.0"), ("the build in the Operator", {"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, "3.12.7")):
             done, calls, members, folder = self.run_build(env=env, python=python)
@@ -1012,20 +867,13 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
                 methods = {info.compress_type for info in package.infolist()}
                 self.assertIn(zipfile.ZIP_DEFLATED, methods, label)
                 self.assertLessEqual(methods, {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}, f"{label}: only what the deployment site reads (Info-ZIP stores a file that is empty)")
-                self.assertNotIn("sources.zip", package.namelist(), f"{label}: the package holds the files and the libraries, and not the archive of the sources")
 
-    def test_the_sources_are_zipped_only_when_a_zip_file_is_named_and_the_two_switches_are_not_set_together_or_set_to_anything_but_1(self):
-        for env, said in (({"FUNCTION_APP_SOURCES_ONLY": "1", "FUNCTION_APP_BUILD_IN_OPERATOR": "1"}, "are not set together"), ({"FUNCTION_APP_SOURCES_ONLY": "yes"}, "are 1 or not set"),
-                          ({"FUNCTION_APP_BUILD_IN_OPERATOR": "true"}, "are 1 or not set")):
-            done, calls, members, folder = self.run_build(env=env)
-            self.assertEqual(done.returncode, 1, env)
-            self.assertIn(said, done.stderr)
+    def test_the_switch_for_the_operator_is_1_or_not_set_and_anything_else_is_refused_before_anything_is_copied(self):
+        for value in ("yes", "true", "0", "2"):
+            done, calls, members, folder = self.run_build(env={"FUNCTION_APP_BUILD_IN_OPERATOR": value})
+            self.assertEqual(done.returncode, 1, value)
+            self.assertIn("FUNCTION_APP_BUILD_IN_OPERATOR is 1 or not set", done.stderr)
             self.assertEqual((calls, folder), ([], []), "nothing is copied and nothing is installed")
-        with tempfile.TemporaryDirectory() as tmp:
-            done = subprocess.run([BASH, "-e", "-o", "pipefail", posix(ROOT / "tools" / "build-function-app.sh"), "case-functions", "cases", posix(Path(tmp) / "b")], capture_output=True, text=True,
-                                  env={**os.environ, "FUNCTION_APP_SOURCES_ONLY": "1"}, cwd=ROOT)
-        self.assertEqual(done.returncode, 1)
-        self.assertIn("the fourth argument is the zip file", done.stderr)
 
     def test_the_build_in_the_operator_runs_under_python_3_12_and_makes_the_zip_with_python_and_says_how_many_files(self):
         for kind, arguments in self.APPS.items():
@@ -1076,16 +924,18 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         for kind, arguments in self.APPS.items():
             runner, runner_calls, runner_members, _ = self.run_build(arguments=arguments, env={"FAKE_PIP": "ok"}, python="3.13.0")
             self.assertEqual(runner.returncode, 0, (kind, runner.stderr))
-            sources_zip = self.sources_archive()
-            sources_members = sorted(self.inner_zip(sources_zip).namelist())
+            sources_members = self.expected_sources(kind)
 
-            def unpacked(tmp, sources_zip=sources_zip):
-                self.inner_zip(sources_zip).extractall(tmp / "unpacked")
-                return tmp / "unpacked"
+            def copied(tmp, kind=kind, names=sources_members):
+                directory = ROOT / "src" / self.APPS[kind][0]
+                for name in names:
+                    (tmp / "copied" / name).parent.mkdir(parents=True, exist_ok=True)
+                    (tmp / "copied" / name).write_bytes((directory / name).read_bytes())
+                return tmp / "copied"
 
-            operator, operator_calls, operator_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=unpacked)
+            operator, operator_calls, operator_members, _ = self.run_build(arguments=arguments, env={"FUNCTION_APP_BUILD_IN_OPERATOR": "1", "FAKE_PIP": "ok"}, python="3.12.7", prior=copied)
             self.assertEqual(operator.returncode, 0, (kind, operator.stderr))
-            self.assertEqual(operator_members, runner_members, f"{kind}: the same files in the same places: the sources that went to the Operator are what the runner's build copies, and the libraries are "
+            self.assertEqual(operator_members, runner_members, f"{kind}: the same files in the same places: the files that the Operator fetched are what the runner's build copies, and the libraries are "
                                                                "made in the same folder")
             self.assertEqual(sorted(sources_members + self.EXPECTED_LIBRARIES), runner_members)
             self.assertEqual(words_of(operator_calls), words_of(runner_calls), f"{kind}: one pip command: every flag, in the same order")
@@ -1120,76 +970,59 @@ class TheBuildScriptInTheOperator(unittest.TestCase):
         self.assertTrue(all(hashes for _, hashes in cases.values()), "every library of the lock is checked against hashes")
 
 
-class TheCompressionOfTheArchivesIsChosenWhereTheyAreMade(unittest.TestCase):
-    """The text of the two scripts: LZMA is made in the branch of the build script that packs the sources and nowhere else, every branch that makes the package that an app runs from is deflate (the
-    deployment site cannot read LZMA), and the container script checks that Python has lzma before it uses the token of the run."""
+class TheRequestWayIsGone(unittest.TestCase):
+    """The sources reach the Operator by fetch and in no other way (docs/proposals/27-package-without-comments.md): no input of the Hub, no step of the workflow, no line of the container script, no switch of the
+    build script and no tool is left of the way that squeezed them into the request. A name of it that comes back in any of them fails here."""
 
-    def test_the_branch_of_the_sources_is_the_only_one_with_lzma_and_the_branches_of_the_packages_are_deflate(self):
-        code = re.sub(r"(?m)^\s*#.*$", "", text("tools/build-function-app.sh"))
-        sources, _, packages = code.partition('elif [ -n "$zip_file" ]; then')
-        self.assertIn("zipfile.ZIP_LZMA", sources)
-        self.assertEqual(code.count("LZMA"), 1)
-        self.assertNotIn("ZIP_DEFLATED", sources, "the archive of the sources is not a package")
-        self.assertIn("zipfile.ZIP_DEFLATED", packages, "the package that the container builds is made with Python, deflate")
-        self.assertIn('zip -qr "$zip_file" .', packages, "and the package of the runner is made by the zip program, deflate")
+    REMOVED = ("cases-source", "PUBLISH_FILE_BYTES", "FUNCTION_APP_SOURCES_ONLY", "strip-sources", "lzma", "LZMA", "inputs.sources", "zip_sha256", "ZIP_SHA256",
+               "steps.pack", "id: pack", "Pack the cases", "sources: request", "sources: fetch", "by request", "the request way")
+    REMOVED_OF_THE_WORKFLOW = (r"sources_digest", r"(?<![A-Z_])SOURCES_DIGEST", r"(?<![A-Z_])SOURCES:", r"\$\{SOURCES\b", r"sources\.zip")
 
-    def test_the_container_script_checks_for_lzma_before_the_sign_in_and_unpacks_the_sources_from_the_entry_that_holds_them(self):
-        code = re.sub(r"(?m)^\s*#.*$", "", text("operator/publish.sh"))
-        self.assertIn("python3 -c 'import lzma'", code)
-        self.assertLess(code.index("python3 -c 'import lzma'"), code.index("az login --service-principal"), "before the token of the run is used")
-        self.assertIn('zipfile.ZipFile(io.BytesIO(outer.read("sources.zip")))', code)
-        self.assertEqual(code.count("extractall"), 1, "the sources are unpacked in one place, with the check that no file leaves the folder before it")
+    @staticmethod
+    def steps_of_the_workflow():
+        return re.split(r"(?m)^      - ", text(".github/workflows/deploy-hub.yml").split("    steps:\n", 1)[1])[1:]
 
+    def test_no_step_of_the_workflow_and_no_line_of_the_container_script_mentions_the_removed_way(self):
+        steps = self.steps_of_the_workflow()
+        self.assertGreater(len(steps), 50, "the workflow was read in steps")
+        for step in steps:
+            title = step.split("\n", 1)[0]
+            for name in self.REMOVED:
+                self.assertNotIn(name, step, f"the step {title!r} still mentions {name!r}")
+            for pattern in self.REMOVED_OF_THE_WORKFLOW:
+                self.assertIsNone(re.search(pattern, step), f"the step {title!r} still mentions {pattern!r}")
+        for number, line in enumerate(text("operator/publish.sh").splitlines(), 1):
+            for name in self.REMOVED:
+                self.assertNotIn(name, line, f"line {number} of operator/publish.sh still mentions {name!r}")
+        inputs = text(".github/workflows/deploy-hub.yml").split("    inputs:\n", 1)[1].split("\npermissions:\n", 1)[0]
+        self.assertNotIn("\n      sources:", "\n" + inputs, "the Hub has no input for the way that the sources come")
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    def test_the_build_script_has_no_switch_for_the_sources_and_no_lzma_and_every_zip_that_it_makes_is_deflate(self):
+        script = text("tools/build-function-app.sh")
+        for name in ("SOURCES_ONLY", "LZMA", "strip-sources", "sources.zip"):
+            self.assertNotIn(name, script, name)
+        self.assertEqual(set(re.findall(r"\bFUNCTION_APP_[A-Z_]+\b", re.sub(r"(?m)^\s*#.*$", "", script))), {"FUNCTION_APP_BUILD_IN_OPERATOR", "FUNCTION_APP_SOURCE_DIR"}, "the two switches for the Operator and nothing else")
+        self.assertEqual(re.findall(r"zipfile\.ZIP_\w+", script), ["zipfile.ZIP_DEFLATED"], "the deployment site cannot read another compression")
 
+    def test_the_tools_of_the_way_are_gone_and_the_digest_tool_loads_nothing_but_the_standard_library(self):
+        for path in ("tools/strip-sources.py", "tools/tests/test_strip_sources.py"):
+            self.assertFalse((ROOT / path).exists(), path)
+        tool = text("tools/source-digest.py")
+        for name in ("stripper", "strip-sources", "importlib"):
+            self.assertNotIn(name, tool, name)
+        self.assertNotIn("as_held", tool, "there is one mode, and so no parameter for it")
 
-SOURCE_DIGEST = load_module("source_digest_of_the_publish_tests", ROOT / "tools" / "source-digest.py")
-RELEASE = load_module("release_of_the_publish_tests", ROOT / "src" / "case-functions" / "cases" / "release.py")
-THE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
-THE_REPOSITORY = "some-owner/some-repo"
-THE_TOP = "some-owner-some-repo-0123456"
-THE_TOKEN_OF_THE_RUN = "fake-github-token-of-the-run-4kP8sD2mQ7zX"
-# What a repository holds besides the app, and what the app holds besides the code that runs: none of it is taken from the archive
-THE_REST_OF_THE_REPOSITORY = {"README.md": b"# a repository\n", "tools/strip-sources.py": b"# a tool\n", "src/case-functions/tests/test_loop.py": b"# a test\n", "src/case-functions/.funcignore": b"tests\n",
-                              "src/case-functions/requirements.in": b"azure-functions\n", "docs/notes.md": b"notes\n"}
-
-
-def github_zip(files=None, rest=None, also=None, stored=None):
-    """The archive that GitHub makes of a commit (git archive, as a zip): one folder that holds the repository's files, the app in src/case-functions, an entry for each folder, every file deflated. `also` is
-    raw entries by their whole name, for the archives that a person who wants to hurt would make, and `stored` the same without compression (an archive that is too big)."""
-    entries = {f"{THE_TOP}/src/case-functions/{name}": content for name, content in (CASES_SOURCE_FILES if files is None else files).items()}
-    entries.update({f"{THE_TOP}/{name}": content for name, content in (THE_REST_OF_THE_REPOSITORY if rest is None else rest).items()})
-    folders = {f"{THE_TOP}/"} | {"/".join(name.split("/")[:depth]) + "/" for name in entries for depth in range(2, name.count("/") + 1)}
-    out = io.BytesIO()
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
-        for folder in sorted(folders):
-            info = zipfile.ZipInfo(folder, FIXED_TIME)
-            info.external_attr = 0o40755 << 16
-            archive.writestr(info, b"")
-        for name, content in sorted({**entries, **(also or {})}.items()):
-            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_DEFLATED)
-        for name, content in (stored or {}).items():
-            archive.writestr(zipfile.ZipInfo(name, FIXED_TIME), content, zipfile.ZIP_STORED)
-    return out.getvalue()
-
-
-def held_digest(files):
-    """What the workflow works out over its own checkout: the digest of the files as they are held (tools/source-digest.py --as-held)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        for name, content in files.items():
-            (Path(tmp) / name).parent.mkdir(parents=True, exist_ok=True)
-            (Path(tmp) / name).write_bytes(content)
-        return SOURCE_DIGEST.digest(Path(tmp), as_held=True)
+    def test_the_record_says_that_a_merge_shows_as_not_deployed_until_cases_has_run_once_because_the_digest_of_main_moves_with_any_edit_of_an_app_file(self):
+        record = text("docs/proposals/27-package-without-comments.md")
+        self.assertNotIn("so no drift shows", record)
+        self.assertIn("the digest of main moves with any edit of a file of the app, a comment too, and until the `cases` action has run once after a merge that makes such an edit, "
+                      "the check says that a merge has not been deployed yet", record)
+        self.assertIn("a merge has not been deployed yet", text("tools/drift-check.py"), "the check says what the record says that it says")
 
 
 @unittest.skipIf(BASH is None, "no bash on this machine")
 class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
-    """operator/publish.sh with PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY and PUBLISH_SOURCES_DIGEST: the Hub's `sources: fetch` (docs/proposals/07-private-by-default.md). The container downloads the archive
+    """operator/publish.sh with PUBLISH_SOURCES_COMMIT, PUBLISH_SOURCES_REPOSITORY and PUBLISH_SOURCES_DIGEST, which the Hub always sets (docs/proposals/07-private-by-default.md). The container downloads the archive
     of the commit, takes the files of the app out of it, holds their digest against the one that the workflow made over its own checkout, and stops before the sign-in when anything is wrong; the lock and the host
     file come in the request. The harness is the one of PublishScript, with a stand-in of curl that is GitHub too."""
 
@@ -1198,13 +1031,9 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
     members_of_bytes = PublishScript.members_of_bytes
     FAKE_LIBRARIES = PublishScript.FAKE_LIBRARIES
 
-    def fetch(self, env=None, archive=None, volume=None, kind="flex", statuses=None, token=None, digest=None, package=False):
-        """A run the way of the fetch: no archive of sources in the volume (unless `package` says so), the three variables, and in the volume the tool that makes the digest, the lock and the host file."""
-        archive = github_zip() if archive is None else archive
-        variables = {"PUBLISH_SOURCES_COMMIT": THE_COMMIT, "PUBLISH_SOURCES_REPOSITORY": THE_REPOSITORY, "PUBLISH_SOURCES_DIGEST": held_digest(CASES_SOURCE_FILES) if digest is None else digest,
-                     "PUBLISH_FILE_BYTES": None, "GITHUB_TOKEN": token, **(env or {})}
-        files = {"source-digest.py": (ROOT / "tools" / "source-digest.py").read_bytes(), "requirements.txt": CASES_SOURCE_FILES["requirements.txt"], "host.json": CASES_SOURCE_FILES["host.json"], **(volume or {})}
-        return self.run_publish(variables, kind=kind, package=package, files=files, github={"archive": archive, **(statuses or {})})
+    def fetch(self, env=None, archive=None, volume=None, kind="flex", statuses=None, token=None, digest=None):
+        """A run as the Hub starts it: the three variables, and in the volume the build script, the tool that makes the digest, the lock and the host file."""
+        return self.run_publish(env, kind=kind, files=volume, archive=archive, statuses=statuses, token=token, digest=digest)
 
     def stopped_before_the_sign_in(self, ran, said, code=3):
         fails = [line for line in ran.lines if line.startswith("FAIL: ")]
@@ -1269,7 +1098,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
         app = ROOT / "src" / "case-functions"
         files = {path.relative_to(app).as_posix(): path.read_bytes().replace(b"\r\n", b"\n") for path in sorted(app.rglob("*"))
                  if path.is_file() and "__pycache__" not in path.parts and path.relative_to(app).parts[0] != "tests"}
-        digest = SOURCE_DIGEST.digest(app, as_held=True)
+        digest = SOURCE_DIGEST.digest(app)
         ran = self.fetch(archive=github_zip(files), digest=digest, volume={"requirements.txt": files["requirements.txt"], "host.json": files["host.json"]})
         self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.done.stdout)
         with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(io.BytesIO(ran.posted)) as package:
@@ -1381,7 +1210,7 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
 
     # --- the input -------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-    def test_the_three_variables_are_set_together_and_checked_before_anything_runs(self):
+    def test_the_three_variables_are_always_set_and_checked_before_anything_runs(self):
         for name, bad in (("PUBLISH_SOURCES_COMMIT", (None, "", "abc", THE_COMMIT[:39], THE_COMMIT.upper(), THE_COMMIT + "0", f"{THE_COMMIT}; touch canary", "$(touch canary)")),
                           ("PUBLISH_SOURCES_REPOSITORY", (None, "", "owner", "owner/", "/name", "owner/name/extra", "owner/..", "owner/.", "ow ner/name", "-owner/name", "owner/name; touch canary",
                                                           "$(touch canary)/x", "a" * 40 + "/name", "owner/" + "n" * 101)),
@@ -1390,18 +1219,13 @@ class TheSourcesAreFetchedFromGitHub(unittest.TestCase):
                 self.refused({name: value})
             self.assertIn(name, self.refused({name: "not valid"}).lines[0])
 
-    def test_a_volume_that_holds_the_archive_of_sources_as_well_or_lacks_a_file_of_the_fetch_is_refused(self):
-        ran = self.refused(None, package=source_zip(CASES_SOURCE_FILES))
-        self.assertIn("the sources come in the volume and by fetch", ran.lines[0])
-        for name in ("source-digest.py", "requirements.txt", "host.json"):
-            self.assertIn(f"{name} is not in the secret volume", self.refused(None, volume={name: None}).lines[0])
-        self.assertIn("build-function-app.sh is not in the secret volume", self.refused(None, volume={"build-function-app.sh": None}).lines[0])
+    def test_none_of_the_three_variables_set_is_a_refusal_and_not_another_way(self):
+        ran = self.refused({"PUBLISH_SOURCES_COMMIT": None, "PUBLISH_SOURCES_REPOSITORY": None, "PUBLISH_SOURCES_DIGEST": None})
+        self.assertIn("PUBLISH_SOURCES_REPOSITORY is not owner/name", ran.lines[0], "the first of them that is wrong is said, and the run goes no further")
 
-    def test_the_size_of_a_file_that_was_sent_is_not_needed_when_nothing_was_sent_and_the_request_way_is_what_it_was_without_the_variables(self):
-        ran = self.fetch({"PUBLISH_FILE_BYTES": None})
-        self.assertEqual(ran.done.returncode, 0, ran.lines)
-        ran = self.run_publish({"GITHUB_TOKEN": THE_TOKEN_OF_THE_RUN}, kind="cases")
-        self.assertEqual(ran.done.returncode, 0, ran.lines)
-        self.assertEqual([call for call in ran.calls_of("curl ") if re.search(r"//(?:api|codeload)\.github\.com/", call)], [], "with no variable for the sources nothing is fetched, and a token in the environment is not used")
-        self.assertIn("ok: the sources are unpacked: 7 files", ran.lines)
-        self.assertEqual([call for call in ran.calls if THE_TOKEN_OF_THE_RUN in call], [])
+    def test_the_lock_and_the_host_file_need_not_be_in_the_archive_because_the_request_carries_them(self):
+        files = {name: content for name, content in CASES_SOURCE_FILES.items() if name not in ("requirements.txt", "host.json")}
+        ran = self.fetch(archive=github_zip(files))
+        self.assertEqual((ran.done.returncode, ran.done.stderr), (0, ""), ran.lines)
+        with zipfile.ZipFile(io.BytesIO(ran.posted)) as package:
+            self.assertEqual((package.read("requirements.txt"), package.read("host.json")), (CASES_SOURCE_FILES["requirements.txt"], CASES_SOURCE_FILES["host.json"]))

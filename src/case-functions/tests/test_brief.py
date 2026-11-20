@@ -994,7 +994,7 @@ class WhatTheModuleIs(unittest.TestCase):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
-                    self.assertEqual((node.level, node.module), (2, "models"))
+                    self.assertIn((node.level, node.module), ((2, "models"), (2, "proposals")), "the records, and the words of a setting, which cases/proposals.py holds and which imports the standard library only")
                 else:
                     self.assertIn((node.module or "").split(".")[0], allowed)
         for pattern in (r"\.(now|utcnow|today)\(", r"\bimport time\b", r"\bopen\(", r"\bprint\(", r"\bos\.", r"\bsys\.", r"\burlopen", r"\bsocket", r"\blogging", r"\brandom\b", r"\buuid\b",

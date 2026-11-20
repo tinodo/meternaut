@@ -163,10 +163,10 @@ def _impact(brief: Brief) -> list[dict]:
 
 
 def _undo(brief: Brief) -> dict:
-    """Whether a change can be undone: one bold line when it cannot, and nothing decorative."""
+    """Whether a change can be undone: one bold line when it cannot, and nothing decorative. A command is never cut in half here: a family that has one gives its first sentence (`undo.short`)."""
     if not brief.undo.reversible:
         return _block("undo", "Undo: This cannot be undone.", weight="Bolder")
-    return _block("undo", f"**Undo:** {md(brief.undo.how, 200)}")
+    return _block("undo", f"**Undo:** {md(brief.undo.short or brief.undo.how, 200)}")
 
 
 def _decision_lines(brief: Brief) -> list[dict]:
@@ -194,13 +194,13 @@ def _link_parts(brief: Brief, ctx: CardContext) -> list[dict]:
 
 def answers_of(brief: Brief) -> tuple[tuple[str, bool], ...]:
     """The answer buttons of this brief as (answer, whether the card asks twice first): "approve" (the first of two people: "confirm") and "decline", for a request that nothing holds and that this
-    person may answer. A change that cannot be undone asks twice: its "approve" opens the question and the link is on the "Yes"."""
+    person may answer. A change that cannot be undone, or that changes a real resource (`confirm`), asks twice: its "approve" opens the question and the link is on the "Yes"."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or brief.held:
         return ()
     first = "confirm" if "confirm" in brief.answers else "approve" if "approve" in brief.answers else ""
     if not first or "decline" not in brief.answers:
         return ()
-    return ((first, first == "approve" and brief.kind == "change" and not brief.undo.reversible), ("decline", False))
+    return ((first, first == "approve" and brief.kind == "change" and (not brief.undo.reversible or brief.confirm)), ("decline", False))
 
 
 def _open_url(id_: str, title: str, url: str, style: str = "") -> dict:
@@ -214,10 +214,12 @@ def _toggle(id_: str, title: str, tooltip: str, targets: Sequence[tuple[str, boo
 
 
 def _sure(brief: Brief, yes_url: str) -> dict:
-    """The question before a change that cannot be undone, hidden until "Approve" is pressed: what is lost and where, and two buttons, the safe "No, go back" first."""
+    """The question before a change that cannot be undone, or that changes a real resource, hidden until "Approve" is pressed: what is lost and where (or that nothing changes until "Yes"), and two
+    buttons, the safe "No, go back" first."""
     where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + (f" in resource group {md(brief.where.group, 90)}" if brief.where.group else "")
+    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}" if not brief.undo.reversible else f"This changes a real resource: {where}. Nothing is changed until you press Yes."
     return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
-        _block("sure-text", f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}", weight="Bolder"),
+        _block("sure-text", text, weight="Bolder"),
         {"type": "ActionSet", "id": "sure-actions", "actions": [
             _toggle("sure-back", cardlinks.BACK_LABEL, "Hides this question. Nothing is changed.", [("sure", False)], "positive"),
             _open_url("sure-yes", cardlinks.sure_label(called_of(brief.family)), yes_url, "destructive")]}]}
@@ -230,7 +232,7 @@ def _answer_parts(brief: Brief, ctx: CardContext, answers: Sequence[tuple[str, b
         title, style = cardlinks.LABEL[brief.kind][answer], "positive" if position == 0 else ""
         if twice:
             asks = answer
-            buttons.append(_toggle(answer, title, "Asks once more: this cannot be undone.", [("sure", True)], style))
+            buttons.append(_toggle(answer, title, "Asks once more: this cannot be undone." if not brief.undo.reversible else "Asks once more: this changes a real resource.", [("sure", True)], style))
         else:
             buttons.append(_open_url(answer, title, ctx.links[answer], style))
     buttons.append(_open_url("page", cardlinks.PAGE_LABEL, ctx.page_url))

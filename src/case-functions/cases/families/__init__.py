@@ -13,7 +13,9 @@ without loading the rest.
 - `words`: what a person reads of each family (the decision brief's fields).
 - `capacity`: what a scale unit of a point-to-site gateway carries (Microsoft's table), read by the words, the family and the decision brief.
 - `delete`, `disk`, `public_ip`, `vm`, `idle`, `gateway`, `machine`: the families themselves.
+- `setting`: the family `change-setting`, which lowers a number of a resource of any kind in a group that the owner listed (`REAL_CHANGE_SCOPES`), once the owner's line in `gates` is on. It is held by those two and not by the planted gates, and its change is made by a client built for the one request (`calls.one_write`) whose one write is the plan's own PUT (docs/proposals/32-real-changes.md).
 
 The table of the families, with their calls, their re-checks, their undo and their risk, is in docs/proposals/14-families-of-change.md. A change is made only on a resource inside the
-`CHANGE_SCOPES` that carries the planted tag and is on the planted list (gates), and only with the approver's own token.
+`CHANGE_SCOPES` that carries the planted tag and is on the planted list (gates), and only with the approver's own token; the one exception is `change-setting`, in a group of `REAL_CHANGE_SCOPES`
+while the owner's line is on.
 """

@@ -31,8 +31,7 @@ Facts that shaped it (Microsoft Learn; the Operator's record has the sources):
     read and removes at the end. Nothing secret is ever on a command line of az, and the values of --secure-env are never printed: they are taken out of every line
     that the tool prints, including what az and the container say.
   - A request takes only a few hundred kilobytes of files: the tool refuses more than MAX_FILE_BYTES (480,000, with the evidence next to it: a request with 466,104 bytes of
-    files was taken, and one with 632,656 was refused with an internal server error). What is bigger is fetched or built inside the container, from the sources and the
-    scripts that do ride in the request.
+    files was taken, and one with 632,656 was refused with an internal server error). What is bigger is fetched or built inside the container.
 
 The image is a reference that cannot change, registry/name@sha256:<64 hex characters>. A tag can move; --allow-tag accepts registry/name:tag for the probe only.
 """
@@ -84,7 +83,7 @@ MIN_SECRET_LENGTH = 8
 #   FILES_REFUSED_BYTES  632,656 bytes of files were refused, twice, with "(InternalServerError) Encountered an internal server error" when the group was made: the finished package of the cases app (614,068
 #                        bytes zipped) and the script of the container (18,588)
 # The real limit lies between the two and is not known. The cap is a round number just above the largest total that is known to work, so that the probe still runs, and no request is ever sent that
-# is not at most about that size. Anything bigger is built in the container from the sources and the scripts that do ride in the request (operator/publish.sh).
+# is not at most about that size. Anything bigger is fetched or built in the container (operator/publish.sh).
 FILES_TAKEN_BYTES = 466_104
 FILES_REFUSED_BYTES = 632_656
 MAX_FILE_BYTES = 480_000
@@ -346,7 +345,7 @@ def read_files(args) -> dict[str, bytes]:
             raise Problem(f"a file of the secret volume is named with letters, digits and . _ -, not {name!r}", 2)
     if sum(len(content) for content in files.values()) > MAX_FILE_BYTES:
         raise Problem(f"the files are more than {MAX_FILE_BYTES} bytes; this tool refuses that: a request with {FILES_TAKEN_BYTES} bytes of files was taken, and one with {FILES_REFUSED_BYTES} was refused "
-                      "with an internal server error (2026-11-06), so what is bigger has to be built in the container from sources", 2)
+                      "with an internal server error (2026-11-06), so what is bigger has to be fetched or built in the container", 2)
     return files
 
 

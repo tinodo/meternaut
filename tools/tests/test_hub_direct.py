@@ -91,10 +91,11 @@ class TheShapeOfTheHub(unittest.TestCase):
     def test_a_value_that_a_dispatch_input_of_the_type_choice_takes_is_held_by_github_so_no_step_checks_it_again(self):
         self.assertNotIn("Refuse a value that the Hub does not know", HUB)
         dispatch = section(section(HUB, "on", 0), "workflow_dispatch", 2)
-        for name in ("action", "evals_command", "evals_judge", "redteam_mode", "sources"):
+        for name in ("action", "evals_command", "evals_judge", "redteam_mode"):
             body = section(section(dispatch, "inputs", 4), name, 6)
             self.assertRegex(body, r"(?m)^        type: choice$", name)
             self.assertTrue(re.findall(r"(?m)^          - \S+$", body), f"{name} has options, and GitHub holds a run that is started by hand to them")
+        self.assertNotRegex(section(dispatch, "inputs", 4), r"(?m)^      sources:", "the sources reach the Operator by fetch in every run: no input chooses the way")
         options = re.findall(r"(?m)^          - (\S+)$", section(section(dispatch, "inputs", 4), "action", 6))
         used = set(re.findall(r"inputs\.action == '([a-z0-9-]+)'", HUB))
         self.assertEqual(sorted(used - set(options)), [], "a step that names an action that the input does not offer would never run")
@@ -139,6 +140,7 @@ EXAMPLE = {
     "CONSOLE_APP_CLIENT_ID": "12121212-3434-5656-7878-909090909090", "CONSOLE_HOST_NAME": "console.example.invalid", "MAIL_SENDER": "sender@example.invalid",
     "ENV_DNS_SERVERS": "10.99.1.4,10.99.1.5", "ENV_ALERT_EMAILS": "first@example.invalid, second@example.invalid",
     "DRIFT_ACCEPTED_EXEMPTIONS": "assignment-a/exemption-b, assignment-c/exemption-d", "DRIFT_ACCEPTED_DENY": "none",
+    "REAL_CHANGE_SCOPES": "dddddddd-4444-4555-8666-777777777777/rg-owner-real, eeeeeeee-4444-4555-8666-777777777777/rg-two",
     "CONSOLE_PEOPLE": '[{"oid":"abcdef12-0000-4000-8000-000000000001","name":"Ada Example","roles":["owner","approver"],"mail":"Ada@Example.invalid"},'
                       '{"oid":"abcdef12-0000-4000-8000-000000000002","name":"Bo Sample","roles":["ops"]}]',
 }
@@ -189,6 +191,13 @@ class TheMasks(unittest.TestCase):
         for word in ("none", "NONE", "None"):
             self.assertNotIn(word, masked)
         self.assertEqual(self.masked(DRIFT_ACCEPTED_EXEMPTIONS="NONE", DRIFT_ACCEPTED_DENY="None").isdisjoint({"NONE", "None", "none"}), True)
+
+    def test_the_real_groups_are_masked_whole_and_by_each_subscription_id_and_each_group_name(self):
+        masked = self.masked()
+        for value in (EXAMPLE["REAL_CHANGE_SCOPES"], "dddddddd-4444-4555-8666-777777777777", "DDDDDDDD-4444-4555-8666-777777777777", "rg-owner-real", "RG-OWNER-REAL", "eeeeeeee-4444-4555-8666-777777777777",
+                      "rg-two"):
+            self.assertIn(value, masked, value)
+        self.assertEqual(self.masked(REAL_CHANGE_SCOPES="").isdisjoint({"rg-owner-real", "rg-two"}), True, "an unset secret masks nothing")
 
     def test_the_people_of_the_console_are_masked_whole_and_by_their_object_id_their_name_and_their_address_and_not_by_their_roles(self):
         masked = self.masked()

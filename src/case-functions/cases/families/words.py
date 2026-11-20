@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..models import PlanRecord
+from ..proposals import WORD, label, shown as value
 
 # What a plan of a change of a gateway's scale units, and its re-check right before it acts, ask of the connection count: it is read for the last CONNECTION_DAYS closed days, it has to hold a
 # value for at least CONNECTION_MIN_DAYS of them (a count that was not recorded is not a count of nothing), and the most at one time in them has to be 0.
@@ -25,6 +26,11 @@ RE_CHECK = ("the resource is still unattached or unassigned, still carries the t
             "and has no management lock")
 SIZE_NAME = re.compile(r"[A-Za-z]{1,10}_[A-Za-z0-9_]{1,40}")
 RESOURCE_TYPE = re.compile(r"microsoft\.[a-z0-9]{2,30}/[a-z0-9]{2,40}")
+# The key path of a setting that `change-setting` changes (dotted words, the platform's own spelling, no list), and the name of a measurement that its plan cites (cases/investigate.py METRIC_NAME).
+SETTING_PATH = re.compile(r"[A-Za-z][A-Za-z0-9]{0,59}(?:\.[A-Za-z][A-Za-z0-9]{0,59}){0,5}")
+METRIC_WORDS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}")
+API_VERSION = re.compile(r"\d{4}-\d{2}-\d{2}", re.A)  # an api-version that is not a preview
+MEASURED_DAYS = 30  # the most days that a cited measurement covers: the toolbox looks back at most that far
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,8 @@ class Words:
     level: str  # low, medium or high
     undo: str
     reversible: bool
+    short_undo: str = ""  # the first sentence of the undo, for a card and a letter, which never cut a command in half: empty when the undo may be cut as it is
+    confirm: bool = False  # the change asks once more before the sign-in, although it can be undone: it changes a real resource
 
 
 @dataclass(frozen=True)
@@ -221,6 +229,118 @@ def scale_vpn_gateway(plan: PlanRecord | None, rtype: str, name: str, group: str
         reversible=True)
 
 
+def _singular(word: str) -> str:
+    for tail, ending in (("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x")):
+        if word.endswith(tail):
+            return word[:-len(tail)] + ending
+    return word[:-1] if word.endswith("s") and not word.endswith(("ss", "us", "is")) else word
+
+
+def kind_words(resource_id: object) -> str:
+    """The kind of the resource of an id in words of a person, from the type segment before its name: `bastionHosts` is "bastion host". "resource" when the id has no such segment."""
+    parts = str(resource_id or "").split("/")
+    segment = parts[-2] if len(parts) >= 9 else ""
+    names = [word.lower() for word in WORD.findall(segment)] if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,39}", segment) else []
+    return " ".join([*names[:-1], _singular(names[-1])]) if names else "resource"
+
+
+def plan_noun(plan: PlanRecord | None) -> str:
+    """The resource of a plan as a noun of a sentence: from the type segment of its id for the family that works on any kind, else the noun of its kind."""
+    if plan is not None and plan.family == "change-setting":
+        return kind_words(plan.resource_id)
+    return noun_of(type_of(plan.family, plan.preconditions)) if plan is not None else "resource"
+
+
+def _sets(target: dict) -> list[tuple[str, object, object]]:
+    """The settings that a plan of `change-setting` changes, as (path, from, to), from its target: a path of plain words and two numbers, at most three."""
+    items = target.get("set") if isinstance(target.get("set"), list) else []
+    return [(item["path"], item["from"], item["to"]) for item in items[:3] if isinstance(item, dict) and isinstance(item.get("path"), str) and SETTING_PATH.fullmatch(item["path"])
+            and all(isinstance(item.get(key), (int, float)) and not isinstance(item.get(key), bool) for key in ("from", "to"))]
+
+
+def _list(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+ROOT_KEYS = frozenset({"sku"})  # the keys of the root of a resource whose numbers are set there and not under `properties`: the body of the write and the command of the undo use this one test
+
+
+def at_root(path: str) -> bool:
+    """Whether the number of this key path is at the root of the resource (its first key is exactly one of ROOT_KEYS, in any case) and not under `properties`."""
+    return path.split(".", 1)[0].lower() in ROOT_KEYS
+
+
+def raw(number: object) -> str:
+    """A number exactly as a command takes it, as JSON writes it: no grouping and no rounding ("1440", "0.125")."""
+    return str(number)
+
+
+def changes_text(target: dict, how: str = "change") -> str:
+    """What a plan of `change-setting` changes, from its target: "scale units from 4 to 2 and sku capacity from 8 to 6"; `how` is `back` for how it is put back ("scale units to 4 and sku capacity to 8",
+    with the numbers exactly as they were), `now` for what it shows before the change ("scale units at 4") and `new` for what it shows after it ("scale units at 2")."""
+    sets = _sets(target)
+    say = {"back": lambda path, old, new: f"{label(path)} to {raw(old)}", "now": lambda path, old, new: f"{label(path)} at {value(old)}",
+           "new": lambda path, old, new: f"{label(path)} at {value(new)}"}.get(how, lambda path, old, new: f"{label(path)} from {value(old)} to {value(new)}")
+    return _list([say(*item) for item in sets]) if sets else "a number"
+
+
+def measured(pre: dict) -> list[tuple[str, int | float, int]]:
+    """The measurements that a plan of `change-setting` cites, from its preconditions, as (name, total, days): a plain metric name, a total that is not below nothing and a window of 1 to MEASURED_DAYS days,
+    at most three."""
+    items = pre.get("measured") if isinstance(pre.get("measured"), list) else []
+    return [(i["name"], i["total"], i["days"]) for i in items if isinstance(i, dict) and isinstance(i.get("name"), str) and METRIC_WORDS.fullmatch(i["name"])
+            and isinstance(i.get("total"), (int, float)) and not isinstance(i.get("total"), bool) and i["total"] >= 0 and isinstance(i.get("days"), int) and 0 < i["days"] <= MEASURED_DAYS][:3]
+
+
+def measured_text(pre: dict) -> str:
+    """The measurements that a plan cites, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
+    return f"Azure Monitor shows {_list([f'{name} at {value(total)} over {days} days' for name, total, days in measured(pre)])}" if measured(pre) else ""
+
+
+def compared_text(check: object) -> str:
+    """What the check after a change of `change-setting` says of the other properties, from what it kept: which ones Azure also changed, or that they could not be compared; empty when they were
+    compared and none differs."""
+    if not isinstance(check, dict):
+        return ""
+    if isinstance(check.get("differences"), str) and check["differences"]:
+        return f"Azure also changed: {check['differences']}."
+    return "Meternaut could not compare the other properties with what it sent." if check.get("compared") is False else ""
+
+
+def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) -> Words:
+    """The words of a plan of `change-setting`, from the kind of the resource, its name and group, and the target and the preconditions of the plan. The pages, the cards, the letters and the record of the
+    plan read this one text, so that what a person is shown is what is kept."""
+    said, cited = changes_text(target), measured_text(pre)
+    api = target.get("apiVersion")
+    again = f" It also reads {_list([name for name, _, _ in measured(pre)])} again over the same number of days, and stops if the reading is above what this request was made with." if cited else ""
+    command = " ".join(f"{path if at_root(path) else 'properties.' + path}={raw(old)}" for path, old, _ in _sets(target))
+    command = f"az resource update --ids <resource id> --set {command}{f' --api-version {api}' if isinstance(api, str) and API_VERSION.fullmatch(api) else ''}" if command else "az resource update"
+    back = changes_text(target, "back")
+    short = f"Set {back} again in the Azure portal. The page has the command."
+    if len(short) > 150:  # a card and a letter have room for one short sentence, and a sentence is never cut
+        short = "Set the numbers back to what they were in the Azure portal. The page has the command."
+    return Words(
+        headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
+        change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change: {said}. It uses your own permissions. "
+                f"A property that Azure does not show when it is read is not sent, so Meternaut cannot promise that nothing else changes. Afterwards it reads the {kind} again and checks "
+                "the number, and that every other property that it sent is still what it sent."),
+        rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
+                   f"note, and it is in a resource group on the owner's list for real changes.{again}"),
+        risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
+              + (f"What it checked: {cited}, and that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
+              + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
+              f"If your account may not change the {kind}, Azure refuses and nothing changes."),
+        level="medium",
+        undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right. "
+              "Setting it back does not bring back what the lower number cut off meanwhile."),
+        reversible=True, short_undo=short, confirm=True)
+
+
+def change_setting(plan: PlanRecord | None, rtype: str, name: str, group: str) -> Words:
+    return setting_words(kind_words(plan.resource_id if plan is not None else ""), name or "this resource", group or "this group", _target(plan),
+                         plan.preconditions if plan is not None and isinstance(plan.preconditions, dict) else {})
+
+
 @dataclass(frozen=True)
 class Shown:
     """How one family shows itself to a person. `words` takes the plan (None for a case that has none yet), the type of the resource that the caller knows, the name and the group."""
@@ -235,6 +355,7 @@ class Shown:
     # leaves the resource billing: for it a missing cost line is a line that is not in yet, never "no cost", and a family has to say so to be read the other way.
     cost_ends: bool = False
     summary: str = ""  # what the family does in one phrase, as the function app says it ("delete an unattached managed disk"); the registry checks that it is the family's own
+    real: bool = False  # the family changes the owner's real resources (a request about one carries the warning of an automation, and asks once more: `Words.confirm`)
 
 
 SHOWN: dict[str, Shown] = {
@@ -255,6 +376,8 @@ SHOWN: dict[str, Shown] = {
         scale_vpn_gateway, "scale-down", "microsoft.network/p2svpngateways", saving_level="Scenario",
         summary="lower the scale units of a point-to-site gateway by one step (never below 1) when nobody has been connected for days",
         saving_basis="It assumes that the cost falls with the share of scale units that is taken away. Meternaut did not read the price list, so this is an estimate."),
+    "change-setting": Shown(
+        change_setting, "change", summary="lower a number of a resource, in a group that the owner listed, to a smaller one that a finding proposes", real=True),
 }
 
 

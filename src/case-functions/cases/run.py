@@ -517,6 +517,15 @@ def _take_back_empty(s: Services, say: Callable[[str], None]) -> Counter:
         return Counter()
 
 
+def _upgrade(s: Services, say: Callable[[str], None]) -> None:
+    """Makes the open requests of findings that propose a change what Meternaut can make of them now (cases/upkeep.py upgrade), and says so in a note of the run. It never fails the run."""
+    try:
+        for text in upkeep.upgrade(s.extras, s.history):
+            say(text)
+    except Exception as error:  # noqa: BLE001 (this step never stops the run)
+        say(f"the requests for a change could not be brought up to date ({clean_text(s.redact(f'{type(error).__name__}: {error}'), 200)})")
+
+
 def _revive(s: Services, say: Callable[[str], None]) -> None:
     """Opens again the requests that a clock closed before requests were kept open, with their own start (cases/escalation.py revive), and says how many in the History. It never fails the run."""
     try:
@@ -735,6 +744,7 @@ def execute(s: Services, trigger: str) -> Summary:
         _keep_requests_up_to_date(s, ranked, say)  # what open requests show: the names, Advisor's words and the cost that this Watch read
         _revive(s, say)  # before the take-back: a request that comes back and that the rules hold back is taken back in the same Watch, and the ladder never chases it
         held.update(_take_back_empty(s, say))  # the requests that cannot say what to look at, that a rule holds back or that were made under rules that have changed, are taken back before the cost of the others is read
+        _upgrade(s, say)  # a request that only asks whether a change is worth it becomes the request of the change when Meternaut can make it, and a request of a change that does not hold any more is made again
         there = _take_back_gone(s, estate, say)  # after the revival: a request that comes back for a resource that is gone is taken back at once
         if not s.extras.escalating:
             h.emit("escalation.off", reason="no mail sender")  # a request that nobody answers is not passed on without one: the History says so at each Watch

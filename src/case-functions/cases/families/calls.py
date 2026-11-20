@@ -1,20 +1,25 @@
 """Every call that a family of change makes to Azure Resource Manager, in one place.
 
 This is the one module of the families that names a method that writes. A person who wants to know everything that Meternaut can do to an estate reads `WRITES` below: eleven calls,
-each on one kind of resource, each in a resource group of `CHANGE_SCOPES` (gates.py), each made with the token of the person who approved it and no other (AGENTS.md rule 29).
-`READS` are what the checks before and after a change read. The lists that the HTTP client holds (`patterns`) are built from these two tuples and from nothing else, so a call that is not
-here cannot leave the app: the client refuses it before it is sent.
+each on one kind of resource, each in a resource group of `CHANGE_SCOPES` (gates.py), each made with the token of the person who approved it and no other (AGENTS.md rule 29), and then one write more,
+`RESOURCE_PUT`: the PUT of the one resource that an approved plan of the family `change-setting` names, in a group of `REAL_CHANGE_SCOPES`, which is on no list of kinds. It is made only by the client of
+that one request (`one_write`), whose list holds no write and no other address than that resource's own, at the plan's own api-version, and which is never built while the owner's line in gates.py is off.
+`READS` are what the checks before and after a change read. The lists that the HTTP client holds (`patterns`) are built from these tuples and from nothing else, so a call that is not here
+cannot leave the app: the client refuses it before it is sent.
 
 The api-versions are the ones that the REST reference of each call shows (Microsoft Learn, read on 2026-11-08). A call that has not changed since the first family keeps the version that
-it had: the disk and the public IP address are deleted with the versions that were tested on a real estate on 2026-11-05.
+it had: the disk and the public IP address are deleted with the versions that were tested on a real estate on 2026-11-05. The api-version of `RESOURCE_PUT` is the one that the provider itself lists
+(Learn, "Providers - Get", api-version 2021-04-01), the newest that is not a preview, read when the plan is made.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Sequence
+from dataclasses import dataclass, replace
+from typing import Callable, Sequence
+from urllib.parse import urlsplit
 
-from .gates import ChangeScope
+from ..http import Client, Refused
+from .gates import ChangeScope, Gates
 
 ARM_HOST = "management.azure.com"
 ARM_RESOURCE = "https://management.azure.com/"
@@ -37,12 +42,13 @@ P2S_API = "2026-01-01"
 # Learn, "Metrics - List" (read on 2026-11-11): api-version 2023-10-01, `timespan` as start/end, `interval` as an ISO 8601 duration, `aggregation` a comma separated list.
 METRICS_API = "2023-10-01"
 
+IA = re.I | re.A  # no pattern of an address folds the case of a letter that is not ASCII: the Kelvin sign (U+212A) is a k and a long s (U+017F) an s to a Unicode match, and neither is in any name
 # A name of one or two dots would walk up the address once a server reads it, so it is not a name.
 NAME = r"(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]{1,80}"
 # The id of one resource in a resource group, as a plan holds it: every part is checked, and nothing may follow the name.
 RESOURCE_ID = re.compile(
     r"/subscriptions/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/resourceGroups/([A-Za-z0-9._()-]{1,90})"
-    rf"/providers/([A-Za-z0-9.]{{1,80}})/([A-Za-z0-9]{{1,40}})/({NAME})", re.I)
+    rf"/providers/([A-Za-z0-9.]{{1,80}})/([A-Za-z0-9]{{1,40}})/({NAME})", IA)
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,10 @@ WRITES = (
 )
 DELETES = tuple(call for call in WRITES if call.method == DELETE)
 
+# The one write that no list of kinds holds: Learn, "Resources - Create Or Update By Id" (the PUT of one resource, in the api-version that its provider lists). The body is the resource as it was read with
+# the numbers of an approved plan changed (setting.py). It is made only through `one_write` below.
+RESOURCE_PUT = Call(PUT, Kind("", "", "", ""))
+
 # The quota of a region (Learn: Usage - List): read to see that a larger size fits, never written.
 USAGE_API = VM_API
 
@@ -130,7 +140,7 @@ def _base(scope: ChangeScope) -> str:
 
 
 def _pattern(scope: ChangeScope, call: Call) -> "re.Pattern[str]":
-    return re.compile(_base(scope) + rf"/providers/{re.escape(call.kind.provider)}/{re.escape(call.kind.collection)}/{NAME}{re.escape(call.suffix)}", re.I)
+    return re.compile(_base(scope) + rf"/providers/{re.escape(call.kind.provider)}/{re.escape(call.kind.collection)}/{NAME}{re.escape(call.suffix)}", IA)
 
 
 def _locks(scope: ChangeScope) -> "re.Pattern[str]":
@@ -138,18 +148,18 @@ def _locks(scope: ChangeScope) -> "re.Pattern[str]":
     host = re.escape(f"https://{ARM_HOST}")
     covered = (host + re.escape(f"/subscriptions/{scope.subscription}") + rf"(?:/resourceGroups/{re.escape(scope.group)}"
                rf"(?:/providers/[A-Za-z0-9.]{{1,80}}/[A-Za-z0-9]{{1,40}}/{NAME})?)?")
-    return re.compile(covered + r"/providers/Microsoft\.Authorization/locks", re.I)
+    return re.compile(covered + r"/providers/Microsoft\.Authorization/locks", IA)
 
 
 def _operations(scope: ChangeScope) -> "re.Pattern[str]":
     """The status of an asynchronous operation of Compute or Network in the subscription (Learn, "Status of asynchronous operations": the address that the header Azure-AsyncOperation or
     Location of the answer gives, under /subscriptions/<id>/providers/<provider>/locations/<region>/). It reads a status and changes nothing."""
     return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/") + r"(?:Microsoft\.Compute|Microsoft\.Network)/locations/[A-Za-z0-9]{1,40}"
-                      r"/[A-Za-z]{3,30}/[A-Za-z0-9._~-]{1,100}", re.I)
+                      r"/[A-Za-z]{3,30}/[A-Za-z0-9._~-]{1,100}", IA)
 
 
 def _usage(scope: ChangeScope) -> "re.Pattern[str]":
-    return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{COMPUTE}/locations/") + r"[A-Za-z0-9]{1,40}/usages", re.I)
+    return re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{COMPUTE}/locations/") + r"[A-Za-z0-9]{1,40}/usages", IA)
 
 
 def _once(calls: Sequence[tuple[str, "re.Pattern[str]"]]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
@@ -163,19 +173,101 @@ def _once(calls: Sequence[tuple[str, "re.Pattern[str]"]]) -> tuple[tuple[str, "r
     return tuple(kept)
 
 
-def read_patterns(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
-    """(method, address without its query) of the reads that the checks make: each kind of resource in each scope, the sizes a machine can be resized to, the locks and the quota. No write."""
+def read_patterns(scopes: Sequence[ChangeScope], real: Sequence[ChangeScope] = ()) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
+    """(method, address without its query) of the reads that the checks make: each kind of resource in each scope, the sizes a machine can be resized to, the locks and the quota. No write.
+    `real` (REAL_CHANGE_SCOPES) adds, for the groups of the owner's real resources only, the reads that the family `change-setting` makes (`real_reads`)."""
     calls: list[tuple[str, "re.Pattern[str]"]] = []
     for scope in scopes:
         calls += [(call.method, _pattern(scope, call)) for call in READS]
         calls += [(GET, _locks(scope)), (GET, _usage(scope))]
-    return _once(calls)
+    return _once(calls + real_reads(real))
 
 
 def change_patterns(scopes: Sequence[ChangeScope]) -> tuple[tuple[str, "re.Pattern[str]"], ...]:
-    """(method, address without its query) of every call that a change makes with the approver's token: the reads, the writes of WRITES and the status of an asynchronous operation."""
+    """(method, address without its query) of every call that a change makes with the approver's token: the reads, the writes of WRITES and the status of an asynchronous operation. It holds
+    nothing of the real groups: the change of the family `change-setting` is made with a client of its own (`one_write`)."""
     calls = list(read_patterns(scopes))
     for scope in scopes:
         calls += [(call.method, _pattern(scope, call)) for call in WRITES]
         calls.append((GET, _operations(scope)))
     return _once(calls)
+
+
+# -- the family `change-setting`: reads in the groups of REAL_CHANGE_SCOPES, and the one write -----------------------------------------------------------------------------------------------------
+
+# A resource provider's namespace, a collection and the id of a resource of the top level of a group (a child resource has more segments and is not changed here); the name cannot walk up an address.
+PROVIDER = r"[A-Za-z][A-Za-z0-9]{0,39}(?:\.[A-Za-z][A-Za-z0-9]{0,39}){1,3}"
+COLLECTION = r"[A-Za-z][A-Za-z0-9]{0,39}"
+GUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+GROUP = r"[A-Za-z0-9._()-]{1,90}"
+GENERIC_ID = re.compile(rf"/subscriptions/({GUID})/resourceGroups/({GROUP})/providers/({PROVIDER})/({COLLECTION})/({NAME})", IA)
+RELEASED = re.compile(r"\d{4}-\d{2}-\d{2}", re.A)  # an api-version that is not a preview
+PROVIDERS_API = "2021-04-01"  # Learn, "Providers - Get": the api-versions of each resource type of a namespace
+
+
+def _in(scope: ChangeScope, tail: str) -> "re.Pattern[str]":
+    return re.compile(_base(scope) + tail, IA)
+
+
+def real_reads(scopes: Sequence[ChangeScope]) -> list[tuple[str, "re.Pattern[str]"]]:
+    """The reads of the groups of REAL_CHANGE_SCOPES: one resource of any provider of the group, its metrics, the locks of the subscription, the group and a resource, and the list of the resource
+    types of one provider in the subscription (their api-versions). No write: no pattern here has another method than GET."""
+    found: list[tuple[str, "re.Pattern[str]"]] = []
+    for scope in scopes:
+        one = rf"/providers/{PROVIDER}/{COLLECTION}/{NAME}"
+        found += [(GET, _in(scope, one)), (GET, _in(scope, one + "/providers/Microsoft\\.Insights/metrics")), (GET, _locks(scope)),
+                  (GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/") + PROVIDER, IA))]
+    return found
+
+
+def operation_reads(scope: ChangeScope, provider: str, collection: str, name: str) -> list[tuple[str, "re.Pattern[str]"]]:
+    """The status of an asynchronous operation of one provider in one subscription (Learn, "Status of asynchronous operations"): under the subscription's locations of that provider, or under the
+    resource itself. GET only."""
+    ident = r"(?!\.{1,2}$)[A-Za-z0-9._~-]{1,100}"
+    own = f"/providers/{re.escape(provider)}/{re.escape(collection)}/{re.escape(name)}"
+    return [(GET, re.compile(re.escape(f"https://{ARM_HOST}/subscriptions/{scope.subscription}/providers/{provider}/locations/") + rf"[A-Za-z0-9]{{1,40}}/[A-Za-z]{{3,30}}/{ident}", IA)),
+            (GET, _in(scope, own + rf"/(?:operationResults|operationStatuses|operations)/{ident}"))]
+
+
+def located_for(resource_id: str, gates: Gates) -> tuple[ChangeScope, Kind, str] | None:
+    """The scope, the kind (with no api-version yet) and the name of a resource of the top level of a group of REAL_CHANGE_SCOPES; None for an id or a group that is not one."""
+    found = GENERIC_ID.fullmatch(resource_id or "")
+    if found is None:
+        return None
+    subscription, group, provider, collection, name = found.groups()
+    scope = gates.real_scope_of(subscription, group)
+    return None if scope is None else (scope, Kind(f"{provider}/{collection}".lower(), provider, collection, ""), name)
+
+
+class OneWrite(Client):
+    """The client of the ONE request that makes an approved plan of the family `change-setting` (AGENTS.md rule 29, with the approver's own token). Its list holds reads only, and its one write is a PUT
+    to one address that is compared as a whole, the plan's own resource at the plan's own api-version: any other method, host, path, id or api-version is refused before it is sent. With no address
+    (the owner's line is off, or the plan does not name a resource of a real group) it makes no write at all."""
+
+    def __init__(self, put_url: str | None, allowed: Sequence[tuple[str, "re.Pattern[str]"]], redact: Callable[[str], str], **options) -> None:
+        if any(method != GET for method, _ in allowed):
+            raise ValueError("the list of the client of one change holds reads only")
+        super().__init__(tuple(allowed), redact, **options)
+        self.put_url = put_url
+
+    def check(self, method: str, url: str) -> None:
+        if method == PUT:
+            if self.put_url is None or url != self.put_url:
+                parts = urlsplit(url)
+                raise Refused(f"the app makes no {method} call to {parts.netloc}{parts.path[:80]}")
+            return
+        super().check(method, url)
+
+
+def one_write(resource_id: str, api: str, gates: Gates, redact: Callable[[str], str], **options) -> OneWrite:
+    """The client for the change of one approved plan: reads of the real groups, the status of that resource's operations, and the one PUT of `resource_id` at `api`, only while the owner's line is on
+    and the resource is in a real group (Gates.why_not_real). Otherwise it holds the reads and no write."""
+    found = located_for(resource_id, gates)
+    allowed = real_reads(gates.real_scopes)
+    put = None
+    if found is not None and RELEASED.fullmatch(api or ""):
+        scope, kind, name = found
+        allowed += operation_reads(scope, kind.provider, kind.collection, name)
+        if gates.why_not_real(scope.subscription, scope.group) is None:
+            put = Call(PUT, replace(kind, api=api)).url(scope, name)
+    return OneWrite(put, _once(allowed), redact, **options)
