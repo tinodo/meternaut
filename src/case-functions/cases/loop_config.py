@@ -11,7 +11,8 @@ never stops the loop.
 `CHANGE_SCOPES` is the list of Meternaut's OWN resource groups in which a change may be made: `<subscription id>/<resource group>`, separated by commas. The template gives it exactly the
 one group where Meternaut plants waste of its own. Reading more does not widen it (AGENTS.md rule 29), and nothing here lets a change reach a resource that Meternaut did not plant:
 cases/families/gates.py holds that second gate. An app that was deployed before the list existed has the two older settings `CHANGE_RESOURCE_GROUP` and `CHANGE_SUBSCRIPTION_ID`, which
-name the same one group: they are read only when `CHANGE_SCOPES` is not set.
+name the same one group: they are read only when `CHANGE_SCOPES` is not set. `REAL_CHANGE_SCOPES` is a list of its own, empty by default, of the groups of the owner's real resources in which the family
+`change-setting` may lower a number, once the owner's line in cases/families/gates.py is on; a group in both lists is refused.
 """
 from __future__ import annotations
 
@@ -23,6 +24,9 @@ from .families.gates import ChangeScope, Gates, parse_scopes
 
 STORE_ACCOUNT_NAME = "STORE_ACCOUNT_NAME"
 CHANGE_SCOPES = "CHANGE_SCOPES"
+# The groups of the owner's REAL resources, in which the family `change-setting` may lower a number of a resource once he has switched that on in cases/families/gates.py (the line is his alone): the same
+# syntax as CHANGE_SCOPES and a list of its own, empty by default. A group is in one of the two lists and never in both.
+REAL_CHANGE_SCOPES = "REAL_CHANGE_SCOPES"
 CHANGE_RESOURCE_GROUP = "CHANGE_RESOURCE_GROUP"
 CHANGE_SUBSCRIPTION_ID = "CHANGE_SUBSCRIPTION_ID"
 SIGNIN_TENANT_ID = "SIGNIN_TENANT_ID"
@@ -166,6 +170,7 @@ class LoopSettings:
     cards_queue: str | None = None  # the queue that the Teams cards are put on; None: no card is sent
     teams: TeamsWay = TeamsWay()  # how the cards go to Teams (TEAMS_DELIVERY): the queue, the bot, or off with the reason
     escalation: EscalationSettings = EscalationSettings()  # the ladder of a request that waits
+    real_change_scopes: tuple[ChangeScope, ...] = ()  # the groups of real resources in which `change-setting` may act, when the owner's line allows it (REAL_CHANGE_SCOPES)
 
     @property
     def base_url(self) -> str:
@@ -173,7 +178,7 @@ class LoopSettings:
 
     @property
     def gates(self) -> Gates:
-        return Gates(self.change_scopes, self.planted_tag)
+        return Gates(self.change_scopes, self.planted_tag, self.real_change_scopes)
 
 
 def _integer(env: Mapping[str, str], name: str, low: int, high: int, default: int, problems: list[str]) -> int:
@@ -209,6 +214,19 @@ def _scopes(env: Mapping[str, str], problems: list[str]) -> tuple[ChangeScope, .
     return (ChangeScope(subscription.lower(), group),) if group and subscription and GROUP.match(group) and GUID.match(subscription) else ()
 
 
+def _real_scopes(env: Mapping[str, str], own: tuple[ChangeScope, ...], problems: list[str]) -> tuple[ChangeScope, ...]:
+    """The groups of REAL_CHANGE_SCOPES: empty when it is not set (the default: nothing real can be changed). A group that is also one of Meternaut's own (CHANGE_SCOPES) is a problem: the rules of asking
+    leave a case alone in a group of its own, so a real group must never be listed there."""
+    listed = (env.get(REAL_CHANGE_SCOPES) or "").strip()
+    if not listed:
+        return ()
+    scopes, found = parse_scopes(listed)
+    problems += [f"{REAL_CHANGE_SCOPES}: {problem}" for problem in found]
+    both = [scope for scope in scopes if scope.key in {own_scope.key for own_scope in own}]
+    problems += [f"{REAL_CHANGE_SCOPES}: a group is also in {CHANGE_SCOPES}, which lists Meternaut's own groups" for _ in both[:1]]
+    return tuple(scope for scope in scopes if scope not in both)
+
+
 def load(env: Mapping[str, str]) -> LoopSettings | None:
     """None when the loop is not configured at all; the settings when it is; LoopConfigError when it is half configured."""
     if not (env.get(STORE_ACCOUNT_NAME) or "").strip():
@@ -221,6 +239,7 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
         if values[name] and not pattern.match(values[name]):
             problems.append(f"{name} is not {what}")
     scopes = _scopes(env, problems)
+    real = _real_scopes(env, scopes, problems)
     given = [name for name in SIGNIN if values[name]]
     if given and len(given) != len(SIGNIN):
         problems.append(f"{', '.join(SIGNIN)} are set together or not at all")
@@ -236,4 +255,4 @@ def load(env: Mapping[str, str]) -> LoopSettings | None:
         store_account=values[STORE_ACCOUNT_NAME], change_scopes=scopes, console_host=values[CONSOLE_HOST].lower(), mail_sender=values[MAIL_SENDER] or None,
         planted_tag=values[PLANTED_TAG] or "meternaut-planted", recheck_days=recheck, signin_tenant_id=values[SIGNIN_TENANT_ID].lower() or None,
         signin_client_id=values[SIGNIN_CLIENT_ID].lower() or None, signin_assertion_client_id=values[SIGNIN_ASSERTION_CLIENT_ID].lower() or None,
-        cards_queue=values[TEAMS_CARDS_QUEUE] or None, teams=_teams(env, values[SIGNIN_TENANT_ID].lower() or None), escalation=escalation)
+        cards_queue=values[TEAMS_CARDS_QUEUE] or None, teams=_teams(env, values[SIGNIN_TENANT_ID].lower() or None), escalation=escalation, real_change_scopes=real)

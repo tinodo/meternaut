@@ -18,7 +18,7 @@ from cases.models import GROUP_FACT, EscalationRecord
 from cases.web.figures import title_of
 from test_words import BASE, CONTACTS, FIREWALL_GROUP, PERSON, Rendered, _ai_account, _ai_plan, _card_of, _firewall, _group_finding, _held_finding, _letter, _page, blocks_of_card
 
-SWITCH = "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment."
+SWITCH = "You are asked whether to switch the firewall from Standard Deployment to Basic Deployment."
 
 
 def brief_of(case, plan):
@@ -45,27 +45,29 @@ class TheTitleOfASwitch(unittest.TestCase):
     def test_it_says_from_what_to_what_when_the_figure_keeps_the_names_of_both_ends(self):
         case, plan = _firewall()
         found = brief_of(case, plan)
-        self.assertEqual(found.headline, "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub from Standard Deployment to Basic Deployment")
-        self.assertEqual(title_of(found)[1], "Consider switching the firewall fabrikam-hub-fw from Standard Deployment to Basic Deployment", "the title of the page has no place: the line under it says it")
+        self.assertEqual(found.headline, "Switch the firewall fabrikam-hub-fw in group rg-fabrikam-hub from Standard Deployment to Basic Deployment")
+        self.assertEqual(title_of(found)[1], "Switch the firewall fabrikam-hub-fw from Standard Deployment to Basic Deployment", "the title of the page has no place: the line under it says it")
         page = _page("switch", case, plan)
-        self.assertIn("Consider switching the firewall fabrikam-hub-fw from Standard Deployment to Basic Deployment", [block.text for block in page.blocks if block.kind == "heading"])
+        self.assertIn("Switch the firewall fabrikam-hub-fw from Standard Deployment to Basic Deployment", [block.text for block in page.blocks if block.kind == "heading"])
 
     def test_the_request_made_for_it_keeps_the_same_title_in_its_record(self):
         case, _ = _firewall()
         self.assertEqual(brief_mod.headline_of("advise", "fabrikam-hub-fw", FIREWALL_GROUP, case.resource_type, case.recommendation, case=case),
-                         "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub from Standard Deployment to Basic Deployment")
+                         "Switch the firewall fabrikam-hub-fw in group rg-fabrikam-hub from Standard Deployment to Basic Deployment")
 
     def test_it_names_only_the_target_when_the_bill_has_no_plain_name_and_says_nothing_of_the_ends_for_a_digest_made_before_the_names(self):
         case, plan = _firewall(bill="Standard_Deployment")
-        self.assertEqual(brief_of(case, plan).headline, "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub to Basic Deployment")
+        self.assertEqual(brief_of(case, plan).headline, "Switch the firewall fabrikam-hub-fw in group rg-fabrikam-hub to Basic Deployment")
         old, _ = _firewall()
-        self.assertEqual(brief_of(without_names(old), plan).headline, "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
+        self.assertEqual(brief_of(without_names(old), plan).headline, "Switch the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
 
     def test_no_other_verb_names_ends_and_a_group_of_switches_keeps_its_title(self):
         case, plan = _firewall()
-        for action, verb in (("reduce", "Consider reducing"), ("remove", "Consider removing"), ("schedule", "Consider scheduling"), ("commit", "Consider a commitment for")):
+        for action, headline in (("reduce", "Scale down the firewall fabrikam-hub-fw in group rg-fabrikam-hub"), ("remove", "Remove part of the firewall fabrikam-hub-fw in group rg-fabrikam-hub"),
+                                 ("schedule", "Turn off the firewall fabrikam-hub-fw in group rg-fabrikam-hub when it is not needed"),
+                                 ("commit", "Buy a commitment for the firewall fabrikam-hub-fw in group rg-fabrikam-hub")):
             with self.subTest(action=action):
-                self.assertEqual(brief_of(with_action(case, action), plan).headline, f"{verb} the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
+                self.assertEqual(brief_of(with_action(case, action), plan).headline, headline)
         group, group_plan = _group_finding()
         self.assertEqual(brief_of(group, group_plan).headline, "Look at 50 private endpoints in 8 groups, starting with pe-fabrikam-1")
 
@@ -73,26 +75,26 @@ class TheTitleOfASwitch(unittest.TestCase):
 class TheSentenceOfWhatIsAsked(unittest.TestCase):
     def test_it_follows_the_verb_of_the_title_and_is_one_whole_sentence(self):
         case, plan = _firewall()
-        self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth switching the firewall from Standard Deployment to Basic Deployment.")
-        self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether to switch the firewall from Standard Deployment to Basic Deployment.")
+        self.assertEqual(brief_of(without_names(case), plan).asked, "You are asked whether to switch the firewall to another price of the same service.")
         for mixed in (dict(form="mixed"), dict(form="mixed", switched=1)):  # a mix of rules, or one price beside an assumed share of the AI: no one price is the target, and no price is counted
-            self.assertEqual(brief_of(with_words(case, **mixed), plan).asked, "You are asked whether it is worth switching the firewall.", mixed)
-        for action, said in (("reduce", "reducing the firewall"), ("remove", "removing the firewall"), ("schedule", "scheduling the firewall"), ("commit", "a commitment for the firewall")):
+            self.assertEqual(brief_of(with_words(case, **mixed), plan).asked, "You are asked whether to switch the firewall.", mixed)
+        for action, said in (("reduce", "scale down the firewall"), ("remove", "remove part of the firewall"), ("schedule", "turn off the firewall when it is not needed"), ("commit", "buy a commitment for the firewall")):
             with self.subTest(action=action):
-                self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether it is worth {said}.")
+                self.assertEqual(brief_of(with_action(case, action), plan).asked, f"You are asked whether to {said}.")
 
     def test_a_deletion_a_look_a_question_of_use_and_a_recommendation_of_advisor_each_have_their_own_words(self):
         disk = dict(detector="investigation", resource_type="microsoft.compute/disks", resource_name="d-1", recommendation="delete")
         zero = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 0.0}, "metricDaysWithData": {"M": 28}})
         used = make_advice_case(**disk, facts={"basis": "no-usage", "proposal": "delete", "metrics": {"M": 4.0}, "metricDaysWithData": {"M": 28}})
         advisor = make_advice_case(advice={"problem": "Buy a reservation", "solution": "Buy it"}, detector="advisor-cost")
-        for label, case, said in (("a deletion that a measured zero backs", zero, "You are asked whether it is worth deleting the disk."), ("a question of use", used, "You are asked to find out whether the disk is still used."),
-                                  ("a look", _ai_account(), "You are asked whether it is worth a closer look at the AI services account."),
-                                  ("a recommendation of Advisor", advisor, "You are asked whether it is worth acting on this recommendation of Azure Advisor.")):
+        for label, case, said in (("a deletion that a measured zero backs", zero, "You are asked whether to delete the disk."), ("a question of use", used, "You are asked to find out whether the disk is still used."),
+                                  ("a look", _ai_account(), "You are asked whether to look closer at the AI services account."),
+                                  ("a recommendation of Advisor", advisor, "You are asked whether to act on this recommendation of Azure Advisor.")):
             with self.subTest(label):
                 self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, said)
         group, plan = _group_finding()
-        self.assertEqual(brief_of(group, plan).asked, "You are asked whether it is worth a closer look at these 50 private endpoints.")
+        self.assertEqual(brief_of(group, plan).asked, "You are asked whether to look closer at these 50 private endpoints.")
 
     def test_only_a_request_of_advice_that_waits_is_asked_anything(self):
         case, plan = _firewall()
@@ -134,7 +136,7 @@ class TheSentenceOfWhatIsAsked(unittest.TestCase):
             case = with_action(firewall, action)
             asked = brief_of(case, plan).asked
             with self.subTest(action=action):
-                self.assertTrue(asked.startswith("You are asked whether it is worth ") and asked.endswith(".") and asked.count(".") == 1, asked)
+                self.assertTrue(asked.startswith("You are asked whether to ") and asked.endswith(".") and asked.count(".") == 1, asked)
                 self.assertIn(asked, [block.text for block in _page(action, case, plan).blocks])
                 self.assertIn(asked, [block.text for block in blocks_of_card(_card_of(case, plan))])
                 self.assertIn(asked, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text)
@@ -163,10 +165,10 @@ class TheFindingOfACheckOfMeternaut(unittest.TestCase):
 
     def test_every_check_says_what_it_found_whether_a_look_or_a_deletion_is_asked(self):
         for detector, rtype, thing, why in self.FOUND:
-            for recommendation, what in (("investigate", "a closer look at"), ("delete", "deleting")):
+            for recommendation, what in (("investigate", "look closer at"), ("delete", "delete")):
                 with self.subTest(detector=detector, recommendation=recommendation):
                     case, plan = self.request(detector, rtype, recommendation)
-                    self.assertEqual(brief_of(case, plan).asked, f"You are asked whether it is worth {what} the {thing}, {why}.")
+                    self.assertEqual(brief_of(case, plan).asked, f"You are asked whether to {what} the {thing}, {why}.")
 
     def test_the_page_the_card_and_the_letter_say_it_and_the_name_of_the_resource_is_not_in_it(self):
         for detector, rtype, _, _ in self.FOUND:
@@ -180,14 +182,14 @@ class TheFindingOfACheckOfMeternaut(unittest.TestCase):
 
     def test_what_the_investigation_asked_and_what_advisor_said_are_not_a_finding_of_a_check(self):
         case, plan = self.request("investigation", "microsoft.compute/disks")
-        self.assertEqual(brief_of(case, plan).asked, "You are asked whether it is worth a closer look at the disk.")
+        self.assertEqual(brief_of(case, plan).asked, "You are asked whether to look closer at the disk.")
         case, plan = self.request("advisor-cost", "microsoft.compute/disks")
         self.assertNotIn("which", brief_of(case, plan).asked)
 
     def test_many_resources_have_no_one_finding_to_say(self):
         group = {"count": 5, "groups": 2, "type": "microsoft.compute/disks", "names": ["d-1", "d-2"], "costUsd30d": 50.0}
         case = make_advice_case(detector="orphan-managed-disk", resource_type="microsoft.compute/disks", recommendation="investigate", facts={GROUP_FACT: group})
-        self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, "You are asked whether it is worth a closer look at these 5 disks.")
+        self.assertEqual(brief_of(case, make_advice(case_id=case.case_id)).asked, "You are asked whether to look closer at these 5 disks.")
 
 
 class TheWordsOfAPriceThatAnAiOrTheEstateCouldInfluence(unittest.TestCase):
@@ -209,8 +211,8 @@ class TheWordsOfAPriceThatAnAiOrTheEstateCouldInfluence(unittest.TestCase):
     def test_a_digest_that_was_changed_to_hold_markup_is_read_as_one_that_holds_no_name(self):
         case, plan = _firewall()
         hostile = with_words(case, to=self.HOSTILE, now=self.HOSTILE)
-        self.assertEqual(brief_of(hostile, plan).headline, "Consider switching the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
-        self.assertEqual(brief_of(hostile, plan).asked, "You are asked whether it is worth switching the firewall to another price of the same service.")
+        self.assertEqual(brief_of(hostile, plan).headline, "Switch the firewall fabrikam-hub-fw in group rg-fabrikam-hub")
+        self.assertEqual(brief_of(hostile, plan).asked, "You are asked whether to switch the firewall to another price of the same service.")
         for surface, shown in self.surfaces(hostile, plan).items():
             with self.subTest(surface):
                 self.assertFalse(any("alert(1)" in block.text for block in shown.blocks), [block.text for block in shown.blocks if "alert(1)" in block.text])
@@ -238,8 +240,8 @@ def _page_html(case, plan) -> str:
 
 
 class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
-    BASIS = ("Over the last 7 days this resource paid about $864 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $252 a month for the same use, "
-             "so it would save about $612 a month. Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs.")
+    BASIS = ("At the rate of the last 7 days this firewall costs about $864 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $252 a month for the same use, "
+             "so it would save about $612 a month. Meternaut did not check whether this firewall can be switched to it, or whether it has what this firewall needs.")
 
     def test_the_three_say_the_same_basis_in_plain_words(self):
         case, plan = _firewall()
@@ -249,11 +251,11 @@ class TheBasisOfASwitchOnThePageTheCardAndTheLetter(unittest.TestCase):
         letter = letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text
         self.assertIn(self.BASIS, letter)
         page = [block.text for block in _page("switch", case, plan).blocks]
-        self.assertTrue(any(text.startswith(self.BASIS) for text in page))
+        self.assertTrue(any(text.removeprefix("How Meternaut worked it out. ").startswith(self.BASIS) for text in page), "the page puts the words of the arithmetic before it")
 
     def test_the_amounts_of_the_sentence_add_up_to_the_dollar_and_its_saving_is_the_one_above_it_on_the_page_the_card_and_the_letter(self):
         case, plan = _firewall(usd=864.6)  # 864.60 are paid, 252.18 would remain and 612.42 would be saved: $865, $252 and $612 are what the money shows, and 865 less 612 is 253
-        said = ("paid about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
+        said = ("costs about $865 a month for Standard Deployment. At list prices, a switch to Basic Deployment would cost about $253 a month for the same use, so it would save about $612 a month.")
         for label, texts in (("page", [block.text for block in _page("switch", case, plan).blocks]), ("card", [block.text for block in blocks_of_card(_card_of(case, plan))]),
                              ("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text.splitlines())):
             with self.subTest(label):

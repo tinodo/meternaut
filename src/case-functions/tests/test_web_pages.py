@@ -8,6 +8,7 @@ from support import APP_ROOT
 from test_web_support import (MAYA, NOW, OPS, OWNER, SUB, TINO, VM, XSS, Console, FailingStore, at, make_action, make_advice, make_advice_case, make_case, make_decision, make_plan,
                               priced_facts, snapshot)
 
+from cases import proposals
 from cases.costs import analysis_url
 from cases.decide import NO_MEASUREMENT
 from cases.models import GROUP_FACT, SettingsRecord, StoreError
@@ -141,7 +142,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertEqual([dt.text() for dt in focus.find_all("dt")], ["What changes", "What the AI says", "Checked", "Undo"])
         self.assertEqual(chips(focus), ["Medium risk", "High confidence"])
         button = focus.find("a")
-        self.assertEqual((button.attrs["class"], button.attrs["href"], button.text()), ("btn primary", "/ok/plan0001", "Review and decide: Delete the unattached disk planted-disk-1"))
+        self.assertEqual((button.attrs["class"], button.attrs["href"], button.text()), ("btn primary", "/ok/plan0001", "Review and decide (Delete the unattached disk planted-disk-1)"))
         self.assertEqual(rows(reply, "ready"), [], "the one decision is in focus and not again in a row")
         self.assertEqual(reply.main.find("figure", class_="chart").find("p", class_="m").text(), f"{figures.READ_LATER} The chart fills in then.", "no series of daily costs is stored yet")
 
@@ -155,7 +156,7 @@ class TheDecisionsPage(unittest.TestCase):
         self.assertEqual(spans(first.find("span", class_="impact save")), ["Could save", "$360 a year", "$30.00 a month"])
         self.assertEqual(spans(last.find("span", class_="impact save")), ["Could save", "$86 a year", "$7.17 a month"])
         self.assertEqual(chips(first), ["Medium risk", "High confidence"])
-        self.assertEqual([(a.attrs["class"], a.attrs["href"], a.text()) for a in first.find_all("a")], [("btn sm primary", "/ok/plan1000", "Review: Delete the unattached disk disk-0")])
+        self.assertEqual([(a.attrs["class"], a.attrs["href"], a.text()) for a in first.find_all("a")], [("btn sm primary", "/ok/plan1000", "Review (Delete the unattached disk disk-0)")])
         self.assertIn("Managed disk · resource group meternaut-test-rg · found 3 days ago", first.text())
         self.assertIn("It is based on your bill for the last 30 days.", first.text())
 
@@ -535,7 +536,7 @@ class TheDecisionsPage(unittest.TestCase):
             console.store.decision_put(make_decision(plan_id=f"plan2{n:03d}", decision="decline", at=at(hours=-n - 1)))
         reply = console.get("/")
         listing = [spans(li) for li in reply.main.find("ul", class_="recent").find_all("li")]
-        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n} in group meternaut-test-rg: Declined", "Tino, 5 November"] for n in range(5)])
+        self.assertEqual(listing, [["Declined", f"Delete the unattached disk gone-{n}", "Tino, 5 November"] for n in range(5)], "the title is short, as the History's is (the place is on the page), and the state is no part of it: the chip says the state")
 
     def test_an_advice_that_nobody_answered_is_no_row_of_recently_decided_and_a_change_that_nobody_answered_is(self):
         console = seeded()
@@ -804,7 +805,8 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
     def test_the_figure_has_its_level_and_says_what_it_rests_on_and_whose_proposal_the_target_is(self):
         card = self.reply.main.find("section", class_="focus")
         sub = next(p for p in card.find_all("p") if "figsub" in p.classes()).text()
-        self.assertTrue(sub.startswith("Over the last 30 days this resource paid about $36.00 for what the change would shrink. The AI proposes a change from 3 to 2. That is the AI's own proposal"), sub)
+        self.assertTrue(sub.startswith("How Meternaut worked it out. Over the last 30 days this disk paid about $36.00 for what the change would shrink. The tools read one of its numbers as 3, and Meternaut checked that. "
+                                       "The AI says the change would lower it to 2, which takes away 33 percent of it. Meternaut did not check that. Nor did it check that the charge falls in step with it."), sub)
         lead = next(p for p in card.find_all("p") if "say" in p.classes()).text()
         self.assertEqual(lead, "Meternaut worked out that this could save about $144 a year ($12.00 a month).")
 
@@ -815,7 +817,7 @@ class TheBriefOfAFindingThatStatesItsChange(unittest.TestCase):
         labels = [p.text() for p in self.reply.main.find_all("p", class_="quote-label")]
         self.assertEqual(labels[:3], ["What the AI says. Meternaut did not check the wording.", "What the AI says you could do. Meternaut did not check the wording.", "What the second AI doubts."])
         self.assertIn("Take it down one size.", self.reply.content)
-        self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"})
+        self.assertEqual({row["Fact"] for row in self.reply.table("facts").rows}, {"basis", "costUsd30d", "finding", "metrics", "proposal"} - {proposals.KEY}, "the key of what a finding proposes is no typed fact")
 
     def test_a_finding_that_states_no_change_has_no_such_box(self):
         self.console.store.case_put(make_case(**INVESTIGATED))

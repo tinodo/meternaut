@@ -14,6 +14,10 @@ does not widen what may be changed. So every family of change (cases/families/) 
 
 The third gate is a person's do-not-touch note (store.do_not_touch). Each gate is checked at three places: when the plan is made, again right before the change with the
 approver's token (the family's `recheck`), and in the runner before any call is made.
+
+The family `change-setting` (setting.py) is held by neither of the first two: it changes a resource that Meternaut did not plant, and it does so only when `REAL_CHANGES_ALLOWED` (the owner's line
+below) is True and the resource is in a group of `REAL_CHANGE_SCOPES`, a list of its own. The groups of that list are the owner's real ones and never the groups of CHANGE_SCOPES, where Meternaut's own
+waste lives and where the rules of asking leave a case alone: a group in both lists is a problem of the settings (loop_config.py).
 """
 from __future__ import annotations
 
@@ -28,6 +32,11 @@ GROUP_NAME = re.compile(r"^[A-Za-z0-9._()-]{1,90}$")
 # of AGENTS.md in writing: ONLY THE OWNER MAY CHANGE THIS LINE, in a pull request that he reviews himself. It is not a setting and no environment variable reaches it, so no deployment, no
 # agent and no person at the console can turn it off. A test pins it True, and pins this comment.
 CHANGE_REQUIRES_PLANTED_TAG = True
+
+# Whether a resource that Meternaut did not plant may be changed at all, by the family `change-setting` (setting.py), in a group of REAL_CHANGE_SCOPES. It is False, and it stays False until the owner
+# turns it on. ONLY THE OWNER MAY CHANGE THIS LINE, in a pull request that he reviews himself. It is not a setting and no environment variable reaches it, so no deployment, no agent and no person at the
+# console can turn it on. While it is False no real resource can be changed, whatever the list of groups holds. A test pins it False, and pins this comment.
+REAL_CHANGES_ALLOWED = False
 
 # The planted list: the resource types that environment/cases/planted.bicep makes, with the shape of the name that the template gives each (`planted-<kind>-<id>`, the id being the word
 # of the planting, 1 to 12 lower-case letters or digits). A type that is not here has no planted resource, so no family changes it. tools/tests/test_environment_template.py holds this list
@@ -77,7 +86,10 @@ def parse_scopes(text: str) -> tuple[tuple[ChangeScope, ...], list[str]]:
 
 
 def scope_of(scopes: Sequence[ChangeScope], subscription_id: str | None, resource_group: str | None) -> ChangeScope | None:
-    """The scope that holds a resource of this subscription and this group, or None. Both have to match, without case: a group of the same name in another subscription is not it."""
+    """The scope that holds a resource of this subscription and this group, or None. Both have to match, without case: a group of the same name in another subscription is not it. Only ASCII
+    is compared, and it is the name as it was given that has to be ASCII: lower case folds the Kelvin sign (U+212A) into a k, so a name that is not ASCII is no name of a listed group."""
+    if not (subscription_id or "").isascii() or not (resource_group or "").isascii():
+        return None
     wanted = ((subscription_id or "").lower(), (resource_group or "").lower())
     if not wanted[0] or not wanted[1]:
         return None
@@ -120,10 +132,11 @@ def why_not_planted(tags: Mapping[str, object] | None, resource_type: str, name:
 
 @dataclass(frozen=True)
 class Gates:
-    """What a family needs to know about the places and the mark that a change may be made on: the scopes and the planted tag."""
+    """What a family needs to know about the places and the mark that a change may be made on: the scopes and the planted tag, and the groups of the owner's real resources (REAL_CHANGE_SCOPES)."""
 
     scopes: tuple[ChangeScope, ...]
     planted_tag: str = "meternaut-planted"
+    real_scopes: tuple[ChangeScope, ...] = ()
 
     def scope_of(self, subscription_id: str | None, resource_group: str | None) -> ChangeScope | None:
         return scope_of(self.scopes, subscription_id, resource_group)
@@ -133,3 +146,14 @@ class Gates:
 
     def why_not_planted(self, tags: Mapping[str, object] | None, resource_type: str, name: str) -> str | None:
         return why_not_planted(tags, resource_type, name, self.planted_tag)
+
+    def real_scope_of(self, subscription_id: str | None, resource_group: str | None) -> ChangeScope | None:
+        return scope_of(self.real_scopes, subscription_id, resource_group)
+
+    def why_not_real(self, subscription_id: str | None, resource_group: str | None) -> str | None:
+        """None only when REAL_CHANGES_ALLOWED is True and the resource is in a group of REAL_CHANGE_SCOPES; else the key of cases/proposals.py CANNOT that says which gate holds it: `outside`
+        (the group is not listed) or, when it is listed, `switch-off` (the line is False). The groups of CHANGE_SCOPES are Meternaut's own and are never real ones."""
+        if self.real_scope_of(subscription_id, resource_group) is None:
+            return "outside"
+        return None if REAL_CHANGES_ALLOWED else "switch-off"
+

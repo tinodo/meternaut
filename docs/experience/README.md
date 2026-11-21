@@ -32,7 +32,7 @@ People never see the system's internal names. The table is the bridge between th
 | Recommendation, Question | **Recommendation**, **Question** |
 | Lesson | **Note**: "what I know about your resources", with a scope, an expiry, and edit and delete |
 | Evidence levels | **From Microsoft's documentation**, **Price confirmed**, **Seen on your bills**, **Proven by a change here** |
-| Price basis | One plain sentence beside every saving figure, such as "It is based on your bill for the last 30 days." |
+| Price basis | Plain sentences beside every saving figure: what the bill shows and which number the AI chose |
 | Scenario, expected, verified saving | Kept in the records. A screen says each in that sentence and never as a label: an assumption nobody checked, what code worked out from the bill, or what Cost Management confirmed |
 | Stored quote | **Price check**; "quote" means only an offer from a partner or a billing owner |
 | Credential | **Standing permission**: an optional mode, not built; a customer grants it with its own role to an identity of its own choosing, and Meternaut holds none by default |

@@ -22,8 +22,9 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, parse_time, plain,
-                    shown_facts)
+from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, UNDO_CHARS, WHY_APPROVER, Brief, called_of, footer_line,
+                    others_line, parse_time, plain,
+                    plain_sentences, shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
 SENDER = "Meternaut (AI)"
@@ -124,7 +125,7 @@ def _chips(brief: Brief) -> dict:
 
 def _asked(brief: Brief) -> list[dict]:
     """What the person is asked about advice that waits, in the words that the page and the letters say (brief.asked)."""
-    return [_block("asked", md(brief.asked, 320))] if brief.asked else []
+    return [_block("asked", md(brief.asked, ASKED_CHARS))] if brief.asked else []
 
 
 def _learned(brief: Brief) -> list[dict]:
@@ -140,6 +141,11 @@ def _heads_up(brief: Brief) -> list[dict]:
 def _facts(brief: Brief) -> list[dict]:
     rows = [{"title": md(fact.label, 60), "value": f"{md(fact.value, 120).rstrip('.')}. Source: {md(fact.source, 80).rstrip('.')}."} for fact in shown_facts(brief.facts)]
     return [{"type": "FactSet", "id": "facts", "facts": rows}] if rows else []
+
+
+def _others(brief: Brief) -> list[dict]:
+    """One line about the other ways to save that the finding proposes: how many the AI named. The page has them, with what each saves and gives up, and they are information: no button."""
+    return [_block("others", md(others_line(brief), 300))] if brief.others else []
 
 
 def _advisor(brief: Brief) -> list[dict]:
@@ -158,10 +164,10 @@ def _impact(brief: Brief) -> list[dict]:
 
 
 def _undo(brief: Brief) -> dict:
-    """Whether a change can be undone: one bold line when it cannot, and nothing decorative."""
+    """Whether a change can be undone: one bold line when it cannot, and nothing decorative. A command is never cut in half here: a family that has one gives its first sentence (`undo.short`)."""
     if not brief.undo.reversible:
         return _block("undo", "Undo: This cannot be undone.", weight="Bolder")
-    return _block("undo", f"**Undo:** {md(brief.undo.how, 200)}")
+    return _block("undo", f"**Undo:** {md(brief.undo.short or brief.undo.how, UNDO_CHARS)}")
 
 
 def _decision_lines(brief: Brief) -> list[dict]:
@@ -169,10 +175,11 @@ def _decision_lines(brief: Brief) -> list[dict]:
     Azure and, when acting has a risk, what it is: one block each."""
     owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
     if brief.kind == "advice":
-        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", md(brief.risk.text, 300))] if brief.risk.acting else []), owner]
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, RISK_CHARS)}")] if brief.risk.acting else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
-    change = md(brief.change, 300) + " It runs with your own permissions." + (f" {md(two, 320)}" if two else "")
-    return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(brief.risk.text, 240)}"), owner]
+    said = brief.change_short or brief.change  # a family that has short words for a card keeps in them the sentence that says that nothing else is promised: it is never the one that a cut drops
+    change = md(plain_sentences(said, 300), 300) + ("" if "own permissions" in said else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
+    return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {md(plain_sentences(brief.risk.text, 240), 240)}"), owner]
 
 
 def _page_set(title: str, ctx: CardContext, *, positive: bool = False) -> dict:
@@ -189,13 +196,13 @@ def _link_parts(brief: Brief, ctx: CardContext) -> list[dict]:
 
 def answers_of(brief: Brief) -> tuple[tuple[str, bool], ...]:
     """The answer buttons of this brief as (answer, whether the card asks twice first): "approve" (the first of two people: "confirm") and "decline", for a request that nothing holds and that this
-    person may answer. A change that cannot be undone asks twice: its "approve" opens the question and the link is on the "Yes"."""
+    person may answer. A change that cannot be undone, or that changes a real resource (`confirm`), asks twice: its "approve" opens the question and the link is on the "Yes"."""
     if brief.kind not in ("change", "advice") or brief.state != "open" or brief.held:
         return ()
     first = "confirm" if "confirm" in brief.answers else "approve" if "approve" in brief.answers else ""
     if not first or "decline" not in brief.answers:
         return ()
-    return ((first, first == "approve" and brief.kind == "change" and not brief.undo.reversible), ("decline", False))
+    return ((first, first == "approve" and brief.kind == "change" and (not brief.undo.reversible or brief.confirm)), ("decline", False))
 
 
 def _open_url(id_: str, title: str, url: str, style: str = "") -> dict:
@@ -209,10 +216,14 @@ def _toggle(id_: str, title: str, tooltip: str, targets: Sequence[tuple[str, boo
 
 
 def _sure(brief: Brief, yes_url: str) -> dict:
-    """The question before a change that cannot be undone, hidden until "Approve" is pressed: what is lost and where, and two buttons, the safe "No, go back" first."""
-    where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + (f" in resource group {md(brief.where.group, 90)}" if brief.where.group else "")
+    """The question before a change that cannot be undone, or that changes a real resource, hidden until "Approve" is pressed: what is lost and where (or that nothing changes until "Yes"), and two
+    buttons, the safe "No, go back" first."""
+    place = f" in resource group {md(brief.where.group, 90)}" if brief.where.group else ""
+    where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + place
+    here = " ".join(bit for bit in (f"the {md(brief.where.noun, 40)}", md(brief.where.name, 120)) if bit) + place  # in words that go on after a colon, as a sentence does
+    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, UNDO_CHARS)}" if not brief.undo.reversible else f"This changes a real resource: {here}. Nothing is changed until you press Yes."
     return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
-        _block("sure-text", f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}", weight="Bolder"),
+        _block("sure-text", text, weight="Bolder"),
         {"type": "ActionSet", "id": "sure-actions", "actions": [
             _toggle("sure-back", cardlinks.BACK_LABEL, "Hides this question. Nothing is changed.", [("sure", False)], "positive"),
             _open_url("sure-yes", cardlinks.sure_label(called_of(brief.family)), yes_url, "destructive")]}]}
@@ -225,7 +236,7 @@ def _answer_parts(brief: Brief, ctx: CardContext, answers: Sequence[tuple[str, b
         title, style = cardlinks.LABEL[brief.kind][answer], "positive" if position == 0 else ""
         if twice:
             asks = answer
-            buttons.append(_toggle(answer, title, "Asks once more: this cannot be undone.", [("sure", True)], style))
+            buttons.append(_toggle(answer, title, "Asks once more: this cannot be undone." if not brief.undo.reversible else "Asks once more: this changes a real resource.", [("sure", True)], style))
         else:
             buttons.append(_open_url(answer, title, ctx.links[answer], style))
     buttons.append(_open_url("page", cardlinks.PAGE_LABEL, ctx.page_url))
@@ -277,7 +288,7 @@ def decision_card(brief: Brief, ctx: CardContext) -> dict:
     _check_context(ctx, brief)
     answers = answers_of(brief)
     buttons = _answer_parts(brief, ctx, answers) if answers and all(ctx.links.get(answer) for answer, _ in answers) else _link_parts(brief, ctx)
-    body = [*_place(brief), _chips(brief), *_asked(brief), _stake(brief), *_heads_up(brief), _block("confidence", md(brief.confidence.because, 400)), *_learned(brief),
+    body = [*_place(brief), _chips(brief), *_asked(brief), _stake(brief), *_others(brief), *_heads_up(brief), _block("confidence", md(brief.confidence.because, 400)), *_learned(brief),
             *_facts(brief), *_advisor(brief), *_check_first(brief), *_impact(brief), *_decision_lines(brief), *buttons]
     return _card(brief, ctx, brief.kind, body, "A decision waits for you.")
 

@@ -555,7 +555,7 @@ class ThePageOfAHeldFinding(unittest.TestCase):
             self.assertFalse(reply.has_button(label), label)
         for label in ("Not worth it", "Ask or tell", "Decide later", "This is not mine"):
             self.assertTrue(reply.has_button(label), label)
-        self.assertIn(f"{brief.ADVICE_CHANGE} {brief.ADVICE_WHO}", reply.main.text())
+        self.assertIn(f"{brief.ADVICE_ONLY_COUNT} {brief.ADVICE_WHO}", reply.main.text(), "a deletion is a change that Meternaut cannot make: it only lowers a count of units")
         self.assertIn("120", reply.main.text())
         self.assertIn("Held back. No request was made for the finding, and nothing changes in Azure.", reply.main.text())
 

@@ -19,8 +19,8 @@ from ..brief import IF_ACTED, NO_FIGURE, NOT_WORKED_OUT, UNCONFIRMED, UNMEASURED
 from ..models import ADVICE_QUIET_DAYS, ADVISE, ADVISOR, INVESTIGATION, ActionRecord, CaseRecord, PlanRecord
 from .common import answerable, brief_of, cases_by_id, closed_by_the_bill, counted as _count, cut_notice, decisions_for, measured_tile, off_notice, read, verified_brief
 from .core import Ctx, Response, Safe, esc, fmt, join, link_part, stamp
-from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, spark, summed, title_of, under,
-                      use_block)
+from .figures import (ADDED, RISKS, Figure, a_year, bar, chart, chip, cost_of, dollars, figure_for, ids_known, reason_of, risk_chip, says, says_many, series_of, short_of, short_title, spark, summed,
+                      title_of, under, use_block)
 from .layout import code, details, kpi, kpis, link, notice, page, paragraph, table
 
 ROWS_SHOWN = 12  # the rows of each lane that the page shows, unless a person asks for all of them
@@ -212,7 +212,7 @@ def _row(ctx: Ctx, unit: Unit, rank: int, top: float, primary: bool) -> Safe:
                 '<span class="below">{basis}<span class="chips">{chips}</span></span><span class="spark">{spark}</span>', rank=rank, title=markup, meta=_meta(ctx, unit), basis=basis,
                 chips=_chips(unit), impact=_impact(unit, top), spark=spark(unit.series, unit.reason))
     if len(unit.members) == 1 and unit.first.brief.group is None:
-        button = fmt('<span class="act"><a class="btn sm{primary}" href="{href}">Review<span class="visually-hidden">: {name}</span></a></span>',
+        button = fmt('<span class="act"><a class="btn sm{primary}" href="{href}">Review<span class="visually-hidden"> ({name})</span></a></span>',
                      primary=" primary" if primary else "", href=ctx.url(f"/ok/{link_part(unit.first.brief.plan_id)}"), name=name)
         return fmt('<li class="item">{parts}{button}</li>', parts=parts, button=button)
     count = unit.first.brief.group.count if unit.first.brief.group is not None else len(unit.members)
@@ -230,7 +230,7 @@ def _focus(ctx: Ctx, unit: Unit) -> Safe:
     facts = ([("What changes", brief.change)] if brief.kind != "advice" else []) + [("What the AI says", plain(brief.reasoning, 240)), ("Checked", brief.rechecked)] + ([("Undo", brief.undo.how)] if brief.kind == "change" else [])
     return fmt('<article class="focus" aria-labelledby="focus-title"><div><p class="eyebrow"><span class="rank first" aria-hidden="true">1</span>Start here</p>'
                '<h3 id="focus-title">{title}</h3><p class="m meta">{meta}</p>{big}{rest}{under}<p class="chips">{chips}</p><dl class="facts">{facts}</dl>'
-               '<p class="acts"><a class="btn primary" href="{href}">Review and decide<span class="visually-hidden">: {name}</span></a></p></div><div>{chart}</div></article>',
+               '<p class="acts"><a class="btn primary" href="{href}">Review and decide<span class="visually-hidden"> ({name})</span></a></p></div><div>{chart}</div></article>',
                title=markup, meta=_meta(ctx, unit), big=big, rest=fmt('<p class="figsub">{rest}</p>', rest=rest) if rest else Safe(""), under=under(figure), chips=_chips(unit),
                facts=join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=label, text=text) for label, text in facts if text), href=ctx.url(f"/ok/{link_part(brief.plan_id)}"), name=name,
                chart=join([chart(unit.series, unit.reason), use_block([(m.brief, m.case) for m in unit.members], ctx.now)]))
@@ -423,8 +423,8 @@ def _recently(ctx: Ctx, plans: Sequence[PlanRecord], ok: bool, actions: Mapping[
             continue
         label, kind, shape = OUTCOMES.get("cost-down" if taken_back(plan) == "verified" else outcome.state, (outcome.state.capitalize(), "", "square"))  # a request that the bill closed is good news, not a take-back
         who = fmt("{by}, {day}", by=outcome.by, day=ctx.day(outcome.at or plan.created_at)) if outcome.by else ctx.day(outcome.at or plan.created_at)
-        rows.append((outcome.at or plan.created_at, fmt('<li>{chip}<span>{headline}: {result}</span><span class="quiet">{who}</span></li>', chip=chip(label, kind, shape),
-                                                        headline=plan_headline(plan), result=outcome.result, who=who)))
+        said = fmt("{result}. {who}", result=outcome.result, who=who) if outcome.result.lower() != label.lower() else who  # the chip says the state: the quiet part says more only when the result is more than the chip
+        rows.append((outcome.at or plan.created_at, fmt('<li>{chip}<span>{headline}</span><span class="quiet">{said}</span></li>', chip=chip(label, kind, shape), headline=short_title(plan_headline(plan), plan.resource_group), said=said)))
     rows.sort(key=lambda item: item[0], reverse=True)
     if not rows:
         return join([heading, paragraph("Nothing was decided yet.")])
@@ -462,7 +462,7 @@ def home(ctx: Ctx) -> Response:
         more = paragraph(fmt('{n} more {waits}. <a href="{href}">Show all</a>.', n=rest, waits="decision waits" if rest == 1 else "decisions wait", href=ctx.url(f"/?sort={sort}&all=1"))) if rest else Safe("")
         top = join([_head(ctx, units, sort), walk_start(ctx, walk_ids(ctx, rows)), _summary(units, _measured(ctx, plans, actions)) if units else Safe(""),
                     _lane(ctx, "ready", "Ready to decide", f"Each of these is a change that Meternaut would make in Azure after you approve it. {order}", ready, largest, show, True),
-                    _lane(ctx, "look", "Worth a closer look", "Meternaut proposes no change for these yet. A saving here is an estimate. Where a row shows only a cost, "
+                    _lane(ctx, "look", "Worth a closer look", "Meternaut makes no change for these. Your answer to each is recorded with your name. A saving here is an estimate. Where a row shows only a cost, "
                           f"nobody has worked out what a change would save. {order}", look, largest, show, False),
                     more, _longest(ctx, rows), off_notice(ctx) if rows else Safe(""), cut_notice(ctx), _held(ctx)])
     return page(ctx, "Decisions", join([top, _recently(ctx, plans, plans_ok, actions)]), current="/", ai=True, why="you are signed in and listed as a person who may use this page", wide=True)

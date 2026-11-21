@@ -4,6 +4,7 @@ AGENTS.md rules 26, 29 and 30: no AI makes, sees or argues the verdict; the app 
 """
 import dataclasses
 import datetime as dt
+import json
 import re
 import unittest
 from pathlib import Path
@@ -20,7 +21,7 @@ from test_missing_data import ABSENT, DISK, ENDPOINTS, PE, endpoint_case, endpoi
 from test_run_loop import Moving, loop_for
 from test_web_support import NOW as WEB_NOW, SUB, make_advice, make_advice_case, page_of, walk_blocks
 
-from cases import brief, cards, evidence, impact, investigate, learning, letters, stake
+from cases import brief, cards, evidence, impact, investigate, learning, letters, proposals, stake
 from cases.approvals import IMPACT_NOT_CHECKED
 from cases.arm import MetricPoint
 from cases.http import HttpError
@@ -431,9 +432,10 @@ class AFigureFromTheBillNeverSwitchesOffTheCheckOfWhatDependsOnAResource(unittes
                     self.assertEqual((b.impact.verdict if b.impact is not None else None, brief.still_used(case), b.risk.level), (verdict, True, level))
                 self.assertEqual(brief.acting_risk(plain), brief.acting_risk(priced))
 
-    def test_the_unproven_sentence_of_the_risk_stays_and_the_figure_is_shown_beside_it(self):
+    def test_what_could_go_wrong_stays_and_the_figure_is_shown_beside_it(self):
         plain, priced = self.pair("check")
-        self.assertIn(brief.UNPROVEN, brief.acting_risk(priced).text)
+        self.assertNotIn(brief.NOT_MEASURED_USE, brief.acting_risk(priced).text, "an impact check looked (traffic, Resource Graph): its block says what, and 'nothing was measured' would be false")
+        self.assertTrue(brief.acting_risk(priced).text.startswith("Other resources can depend on a private endpoint."), "what could go wrong stays")
         b = brief.build_brief(priced, endpoint_plan(priced, saving_usd_month=None), now=WEB_NOW, may_answer=True)
         self.assertEqual((b.saving.monthly, b.saving.level), (80.0, "Expected"))
         self.assertEqual(b.check_first, brief.build_brief(plain, endpoint_plan(plain, saving_usd_month=None), now=WEB_NOW, may_answer=True).check_first)
@@ -471,8 +473,7 @@ class WhatAPersonReads(unittest.TestCase):
                 self.assertEqual((b.check_first, b.change), ((), brief.ADVICE_CHANGE))
         case = case_with(digest_of("check"))
         b = brief.build_brief(case, endpoint_plan(case, saving_usd_month=None), now=WEB_NOW, may_answer=True)
-        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", "Nothing proves that it is unused, so acting on it could break something that still uses it. "
-                                                                                          "Traffic that you cannot see from here may depend on it."))
+        self.assertEqual((b.impact.verdict, b.risk.level, b.risk.text), ("check", "high", 'Other resources can depend on a private endpoint. The second AI says: "Disconnected shows how it is now, not for how long."'))
 
     def test_the_card_and_the_letter_carry_the_verdict_and_its_first_reason_in_one_line(self):
         for verdict, says in (("safe", "It looks safe to remove."), ("keep", "Do not remove it."), ("check", "Check what depends on it before you remove it.")):
@@ -506,7 +507,7 @@ class WhatAPersonReads(unittest.TestCase):
         case = case_with(digest_of("safe"))
         case = dataclasses.replace(case, facts={**case.facts, "change": {"action": "remove", "how": "Remove it.", "missing": "none"}})
         reply, _ = page_of(case, endpoint_plan(case, saving_usd_month=None))
-        self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"})
+        self.assertEqual({row["Fact"] for row in reply.table("facts").rows}, {"asked", "basis", "finding", "metrics", "proposal"} - {proposals.KEY})
         self.assertNotIn("readAt", reply.content, "the digest is not printed as a row of raw JSON anywhere on the page")
         self.assertEqual(sorted(case.facts), ["asked", "basis", "change", "finding", "impact", "metrics", "proposal"], "the case keeps the digest all the same")
 
@@ -552,6 +553,37 @@ class WhatAPersonReads(unittest.TestCase):
         found = {"verdict": "keep", "complete": True, "reasons": ["a\u202eb", 5, "  "], "rows": [["x", "y\u0007", "z"], ["bad"], "no"], "removal": "text", "undo": None, "unchecked": ["q\u202e"]}
         shown = brief.impact_of(case_with(found))
         self.assertEqual((shown.reasons, shown.rows, shown.removal, shown.undo, shown.unchecked), (("ab",), (("x", "y", "z"),), (), "", "Meternaut could not check q."))
+
+
+class TheUseRowDoesNotContradictTheCheckOfWhatDependsOnTheResource(unittest.TestCase):
+    """The row "Use, last 30 days" says that the AI cited no measurement, so that nothing shows whether anything uses the resource. After the check of what depends on the resource ran, its block says what
+    was looked at (the traffic, the reads of Resource Graph), and that row beside a verdict that the resource is in use would contradict it: it stays only where nothing at all was looked at."""
+
+    @staticmethod
+    def shown(case):
+        plan = endpoint_plan(case, saving_usd_month=None)
+        b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
+        _, page = page_of(case, plan)
+        card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))
+        return b, {"page": page, "card": card, "letter": letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS).text}
+
+    def test_after_a_check_that_ran_the_row_is_not_shown_on_the_page_the_card_or_the_letter(self):
+        for verdict in ("keep", "safe", "check"):
+            b, texts = self.shown(case_with(digest_of(verdict)))
+            self.assertNotIn(brief.NOT_MEASURED, [fact.value for fact in b.facts], verdict)
+            for surface, text in texts.items():
+                with self.subTest(verdict=verdict, surface=surface):
+                    self.assertNotIn(brief.NOT_MEASURED, text)
+        b, _ = self.shown(case_with(digest_of("keep")))
+        self.assertEqual(b.risk.text, brief.KEEP_RISK, "the verdict 'keep' says that it is in use, and no row beside it says that nothing shows whether anything uses it")
+
+    def test_where_nothing_at_all_was_looked_at_the_row_stays(self):
+        b, texts = self.shown(case_with(None))
+        self.assertIn(brief.NOT_MEASURED, [fact.value for fact in b.facts])
+        for surface in ("page", "letter"):
+            with self.subTest(surface=surface):
+                self.assertIn(brief.NOT_MEASURED, texts[surface])
+        self.assertEqual(brief.NOT_MEASURED in texts["card"], any(fact.value == brief.NOT_MEASURED for fact in brief.shown_facts(b.facts)), "the card has room for three rows, and shows the row when it is one of them")
 
 
 def watch_endpoint(azure, **options):

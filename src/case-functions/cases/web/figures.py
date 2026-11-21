@@ -15,7 +15,7 @@ from typing import Callable, Sequence
 
 from .. import costs as cost_words
 from .. import estimate as estimates
-from ..brief import NOT_WORKED_OUT, Brief, Saving, from_advisor, group_things, number_text, things
+from ..brief import NOT_WORKED_OUT, Brief, Saving, from_advisor, group_things, number_text, things, verb_tail
 from ..models import GROUP_FACT, HELD, CaseRecord
 from ..usage import DAYS as USE_DAYS
 from ..usage import MIN_DAYS as USE_MIN_DAYS
@@ -229,16 +229,19 @@ def series_reason(brief: Brief, case: CaseRecord | None) -> str:
 
 
 def short_title(headline: str, group: str = "") -> str:
-    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place)."""
-    place = f" in group {group}" if group else ""
-    return headline.replace(place, "", 1) if place and place in headline else headline
+    """A headline as the title of a row, of a page and of a line of the history: without its place (the line under it says the place), whether the headline says "in group g" (a finding) or "in
+    resource group g" (a change that Meternaut makes)."""
+    for place in (f" in group {group}", f" in resource group {group}") if group else ():
+        if place in headline:
+            return headline.replace(place, "", 1)
+    return headline
 
 
 def title_of(brief: Brief) -> tuple[Safe, str]:
     """The title of one request as markup and as plain text: its verb and how many of what and where when it stands for many resources ("Look at 50 private endpoints in 8 resource groups"), else
     the headline without its place (the line under it says the place), with the name of the resource in code type."""
     if brief.group is not None:
-        text = f"{brief.verb} {things(brief.group.count, brief.group.kind, brief.group.groups)}"
+        text = f"{brief.verb} {things(brief.group.count, brief.group.kind, brief.group.groups)}{verb_tail(brief.verb)}"
         return esc(text), text
     text = short_title(brief.headline, brief.where.group)
     name = brief.where.name

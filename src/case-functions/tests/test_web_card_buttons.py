@@ -219,7 +219,7 @@ class WhatFollowsThePage(unittest.TestCase):
         self.assertEqual(reply.form("/ok/plan0001").buttons, [("", "", "Approve")])
         asked = console.post("/ok/plan0001", reply.form("/ok/plan0001").fields)
         self.assertEqual(asked.status, 200)
-        self.assertEqual(asked.headings(1), ["Confirm: Delete the unattached disk planted-disk-1"])
+        self.assertEqual(asked.headings(1), ["Confirm this change"])
         self.assertTrue(any(label == "Yes, delete it" for _, _, label in asked.form("/ok/plan0001").buttons))
 
     def test_declining_is_recorded_at_once_and_the_page_says_so(self):

@@ -1,6 +1,6 @@
 # Families of change: what an approval can do to Azure, and what stops it — a decision record
 
-**What this document answers.** What a person's OK can change in Azure now that it is more than a delete: the seven families of change, the two gates that every change passes, how the approved plan is the plan that runs, what happens when Azure takes minutes, what each family costs on planted waste, how a family is added, and what is not built. A change is still made by the approver, with the approver's own rights ([run as the approver](05-run-as-the-approver.md)), and only on waste that Meternaut planted itself.
+**What this document answers.** What a person's OK can change in Azure now that it is more than a delete: the seven families of change, the two gates that every change passes, how the approved plan is the plan that runs, what happens when Azure takes minutes, what each family costs on planted waste, how a family is added, and what is not built. A change is still made by the approver, with the approver's own rights ([run as the approver](05-run-as-the-approver.md)), and only on waste that Meternaut planted itself. *Added on 2026-11-20:* an eighth family, `change-setting`, lowers a number of a real resource and is held by other gates ([real changes](32-real-changes.md)); the seven here and their two gates are as they were.
 
 ## The decision
 

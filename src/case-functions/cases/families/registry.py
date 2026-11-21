@@ -7,14 +7,15 @@ from __future__ import annotations
 
 from .base import Family
 from .disk import ChangeDiskTier, DeleteDisk
-from .gates import ChangeScope
+from .gates import ChangeScope, Gates
 from .gateway import ScaleVpnGateway
 from .idle import DeleteIdleResource
 from .public_ip import DeletePublicIp
+from .setting import ChangeSetting
 from .vm import ResizeVm, StopVm
 from .words import SHOWN
 
-REGISTRY: tuple[Family, ...] = (DeleteDisk(), DeletePublicIp(), StopVm(), ResizeVm(), ChangeDiskTier(), DeleteIdleResource(), ScaleVpnGateway())
+REGISTRY: tuple[Family, ...] = (DeleteDisk(), DeletePublicIp(), StopVm(), ResizeVm(), ChangeDiskTier(), DeleteIdleResource(), ScaleVpnGateway(), ChangeSetting())
 BY_NAME = {family.name: family for family in REGISTRY}
 # The older detectors lead to a family by their own name; they stay only for waste that Meternaut plants itself (AGENTS.md rule 30 (c)).
 DETECTOR_FAMILY = {detector: family.name for family in REGISTRY for detector in family.detectors}
@@ -46,8 +47,12 @@ def candidates(detector: str, resource_type: str, recommendation: str | None) ->
     return [family] if family is not None and family.selects(recommendation) else []
 
 
-def acts_on(planted_tag: str, scopes: tuple[ChangeScope, ...]) -> str:
-    """What the function app says that Meternaut changes, in one sentence, made from the registry and the scopes so that it is never typed by hand a second time."""
+def acts_on(planted_tag: str, scopes: tuple[ChangeScope, ...], real_scopes: tuple[ChangeScope, ...] = ()) -> str:
+    """What the function app says that Meternaut changes, in one sentence, made from the registry and the scopes so that it is never typed by hand a second time. The family that works on the owner's
+    real resources is in it only while the owner's line allows it and a group is listed, and then it is said apart from the planted waste."""
     groups = " and ".join(scope.group for scope in scopes)
-    kinds = "; ".join(family.summary for family in REGISTRY)
-    return (f"one of these, on a resource that Meternaut planted itself, that carries the tag {planted_tag} and is in resource group {groups}, and nowhere else: {kinds}")
+    kinds = "; ".join(family.summary for family in REGISTRY if not family.real)
+    said = f"one of these, on a resource that Meternaut planted itself, that carries the tag {planted_tag} and is in resource group {groups}, and nowhere else: {kinds}"
+    open_ = Gates((), real_scopes=real_scopes)
+    real = [family.summary for family in REGISTRY if family.real]
+    return said + (f"; or, in a resource group that the owner listed for real changes, {'; '.join(real)}" if real and any(open_.why_not_real(s.subscription, s.group) is None for s in real_scopes) else "")

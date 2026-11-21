@@ -16,7 +16,7 @@ from test_investigate import OID, SAFE, FakeFoundry, FakeToolbox, Harness, Movin
 from test_letters import BASE, CONTACTS, MOST_WORDS, PERSON, word_count
 from test_web_support import NOW as WEB_NOW, SUB, TINO, Console, make_advice_case, page_of, walk_blocks
 
-from cases import approvals, brief, cards, investigate, learning, letters
+from cases import approvals, brief, cards, investigate, learning, letters, proposals
 from cases.approvals import UNMEASURED, UNPRICED, why_not_ask
 from cases.decide import NO_MEASUREMENT
 from cases.memory_store import stamp
@@ -796,7 +796,10 @@ class TheBriefOfAGroup(unittest.TestCase):
     def test_the_answers_are_those_of_a_request_about_one_resource_and_the_figure_is_the_sum_of_the_resources_that_code_priced(self):
         one = watch(raw_of(1), endpoints(1, cost=lambda n: 100.0))
         single = brief.build_brief(only_case(one), one.store.plans_open()[0], now=WEB_NOW, may_answer=True)
-        self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk), (single.answers, single.change, single.who_acts, single.undo, single.risk))
+        self.assertEqual((self.b.answers, self.b.change, self.b.who_acts, self.b.undo, self.b.risk.level), (single.answers, single.change, single.who_acts, single.undo, single.risk.level))
+        reason, _, rest = single.risk.text.partition(". ")
+        self.assertEqual(self.b.risk.text, "Other resources can depend on them. For the first of them, t" + rest[1:].replace("does not show what depends on it", "does not show what depends on them", 1),
+                         "the measurement that a case keeps is that of the first resource, and the risk says so")
         self.assertEqual((self.b.saving.monthly, self.b.saving.level, self.b.saving.waiting_per_day), (1830.0, "Expected", 61.0))
         self.assertIn("60 resources", self.b.saving.basis)
         self.assertEqual(self.b.options, ())
@@ -922,7 +925,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_details_do_not_say_that_an_ai_saw_the_group_that_code_made(self):
         facts = {row["Fact"] for row in self.reply.table("facts").rows}
-        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metrics", "proposal"})
+        self.assertEqual(facts, {"basis", "citedMetrics", "costUsd30d", "finding", "metricDays", "metricDaysWithData", "metrics", "proposal"} - {proposals.KEY})
         self.assertIn(GROUP_FACT, self.case.facts)
 
     def test_the_start_page_lists_the_one_decision_with_the_headline_of_the_group(self):
@@ -954,7 +957,7 @@ class WhatAPersonSees(unittest.TestCase):
 
     def test_the_decision_letter_has_the_title_the_figure_and_what_an_answer_does_and_stays_within_the_words_of_a_letter(self):
         letter = letters.approval_letter(self.plan, self.case, PERSON, BASE, WEB_NOW, CONTACTS)
-        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you decide to act, you do it yourself in Azure with your own rights.", letter.text)
+        self.assertIn("If you answer: Meternaut changes nothing in Azure. Your answer is recorded with your name. If you act, you do it yourself in Azure with your own rights.", letter.text)
         for repeated in ("Covers", "Together they cost", "Charges it would shrink", "Whose is it"):
             self.assertNotIn(repeated, letter.text, "the title counts the resources and their groups, the figure says what they cost or save, and nobody is named as the owner of the first of them")
         self.assertEqual(letter.text.splitlines()[0], "Look at 60 private endpoints in 14 resource groups", "the title of the page: it counts the resources and their groups")

@@ -331,7 +331,7 @@ class AtTheSignIn(unittest.TestCase):
         self.assertEqual(self.world.store.plan_get(self.plan.plan_id).state, "failed")
 
     def test_every_family_of_the_registry_binds_its_plan_the_same_way(self):
-        for name in sorted(registry.names()):
+        for name in sorted(name for name in registry.names() if not registry.get(name).real):  # the family that works on real resources needs a world of its own (a real group, the owner's line, a fake of its provider): its plan is bound by the same digest in test_families_setting.py (WhenThePutFails.test_a_plan_that_was_changed_after_the_approval_is_refused_and_nothing_is_written)
             with self.subTest(name):
                 world, resource, kind, recommendation, detector = world_with(name)
                 plan, _ = world.approved(resource, kind, recommendation, 50.0, detector)

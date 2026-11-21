@@ -655,6 +655,22 @@ def escalate_to(env: dict) -> str:
     return raw or ESCALATE_WORDS[0]
 
 
+def real_change_scopes(env: dict, subscription: str, group: str) -> str:
+    """The secret REAL_CHANGE_SCOPES of the environment hub: the groups of the owner's real resources in which the family `change-setting` may lower a number once the owner's line in the app is on
+    (docs/proposals/32-real-changes.md), each as <subscription id>/<resource group>, separated by commas. Not set (or empty): nothing is written, and the parameter file is what it was. A value that is
+    wrong, repeats a group, or names the project's own group, which is Meternaut's own planted-waste group and never a real one, is refused and never echoed: the log is public."""
+    raw = (env.get("REAL_CHANGE_SCOPES") or "").strip()
+    if not raw:
+        return ""
+    entries = [part.strip() for part in raw.split(",")]
+    wrong = [e for e in entries if not (GUID.match(e.partition("/")[0]) and re.fullmatch(r"[A-Za-z0-9._()-]{1,90}", e.partition("/")[2]))]
+    own = f"{subscription}/{group}".lower()
+    if wrong or len({e.lower() for e in entries}) != len(entries) or own in {e.lower() for e in entries}:
+        raise Problem("REAL_CHANGE_SCOPES is <subscription id>/<resource group>, separated by commas, each once and none of them the project's own group, or not set: the secret of the environment hub "
+                      "holds something else. Nothing was changed.")
+    return ",".join(entries)
+
+
 def ai_gateway_host(env: dict, preview: bool) -> str:
     """The host name of the AI Gateway: AIGATEWAY_HOST, trimmed and in lower case, or empty when it is not set.
 
@@ -1096,6 +1112,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
     if package_sha256 and not SHA256.match(package_sha256):
         raise Problem("PACKAGE_SHA256 is a SHA-256 digest: 64 hexadecimal digits")
     release = {**({"buildCommit": build_commit} if build_commit else {}), **({"packageSha256": package_sha256} if package_sha256 else {})}
+    real = real_change_scopes(env, subscription, group)  # written only when the secret is set, so that no other file changes
     teams_values = teams_settings(env, preview)
     study = study_switch(env, foundry_exists, preview)
     escalate = escalate_to(env)
@@ -1176,6 +1193,7 @@ def build(env, models: list[dict], preview: bool = False, aigateway_policies: li
             **console_parameters(env),
             **routed,
             **release,
+            **({"realChangeScopes": real} if real else {}),
             **teams_cases_parameters(subscription, group, teams_values),
         }),
     }

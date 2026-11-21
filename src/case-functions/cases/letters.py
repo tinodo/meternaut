@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Collection, Sequence
 
 from . import brief as brief_mod
-from .brief import Brief, contact_text, plain
+from .brief import Brief, contact_text, plain, plain_sentences
 from .models import ActionRecord, CaseRecord, DecisionRecord, PlanRecord, started
 from .people import Person
 from .stake import LINE_CHARS, Stake, chips_of, decisions_of, place_of, stake_of, title_text, waited_line
@@ -46,6 +46,7 @@ DARK = {"background": "#1e1e1e", "text": "#f2f2f2", "muted": "#c8c8c8", "link": 
 DONE_SUBJECTS = {"done": "A change to Azure has run", "verified": "A change to Azure has run", "failed": "A change to Azure did not run",
                  "unknown": "The result of a change to Azure is not known"}
 UNCHANGED_SUBJECT = "Nothing had to change in Azure"
+DIFFERENT_SUBJECT = "A change to Azure has run, and Azure also changed something else"
 BASE = re.compile(r"(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:localhost|127\.0\.0\.1)(?::[0-9]{1,5})?)(?:/(?!\.+(?:/|$))[A-Za-z0-9._~-]+)*")
 OPAQUE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -251,12 +252,9 @@ def _page(subject: str, blocks: list[object]) -> str:
 
 # ---- what the letters say -------------------------------------------------------------------------------------------------------------------------
 
-COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
-
-
 def _read(value: str) -> str:
-    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
-    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+    """A measurement says on how many of its days it had a value only when that is not every one of them (brief.covered): a zero over 30 days may be a zero of 20."""
+    return brief_mod.covered(value)
 
 
 def _fact_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
@@ -270,10 +268,12 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     owner = ("Whose is it", _data(brief.owner.text, 200))
     if brief.kind == "advice":
         risk = brief.risk.text
-        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
+        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, brief_mod.RISK_CHARS)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    undo = (("Undo", _data(brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips
-    return (owner, ("If you approve", _data(brief.change, 200) + " It runs with your own permissions." + two), *undo, ("What could go wrong", _data(brief.risk.text, 200)))
+    undo = (("Undo", _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half, and no undo of a family is cut at all
+    said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
+    return (owner, ("If you approve", _data(plain_sentences(said, 200), 200) + ("" if "own permissions" in said else " It runs with your own permissions.") + two), *undo,
+            ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200)))
 
 
 def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
@@ -317,11 +317,13 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     if brief.asked:
-        doc.paragraph(_data(brief.asked, 320))
+        doc.paragraph(_data(brief.asked, brief_mod.ASKED_CHARS))
     doc.figure(stake_of(brief))
+    if brief.others:
+        doc.paragraph(brief_mod.others_line(brief))
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
-    for line in (brief.past, brief.access):
+    for line in (brief.past if brief.past != brief_mod.NO_HISTORY else "", brief.access):
         if line:
             doc.paragraph(_data(line, 240))
     if brief.by_code:
@@ -356,7 +358,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
     brief = brief_mod.build_brief(case, plan, action, decisions, now=now)
     unchanged = brief.outcome.state == "unchanged"
     ran = action.state in ("done", "verified") and not unchanged
-    doc = _Doc(UNCHANGED_SUBJECT if unchanged else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
+    doc = _Doc(UNCHANGED_SUBJECT if unchanged else DIFFERENT_SUBJECT if brief.outcome.title == "Done, with a difference" else DONE_SUBJECTS.get(action.state, "The state of a change to Azure"))
     doc.heading(_data(title_text(brief), 200))
     _place(doc, brief)
     if unchanged:
@@ -369,7 +371,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
             doc.paragraph(_data(line, 300))
         stake = stake_of(brief)
         doc.figure(stake, then="Cost Management confirms it 8 to 72 hours after the change." if stake.state == "save" and stake.level != "Verified" else "")
-        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.how, 200))
+        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS))
     else:
         doc.paragraph({"failed": "The change was tried and did not complete.", "unknown": "The change was started, and its result is not known."}.get(action.state, "The change is in progress."))
         detail = _data(action.error or action.result, 240)
@@ -495,7 +497,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     if brief.asked and not brief.two_people:  # this brief is built without the decisions: it cannot tell whether the reader confirmed already, so a change of two people is not asked here
-        doc.paragraph(_data(brief.asked, 320))
+        doc.paragraph(_data(brief.asked, brief_mod.ASKED_CHARS))
     doc.figure(stake)
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))

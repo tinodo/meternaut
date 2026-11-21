@@ -329,7 +329,7 @@ def _begin(ctx: Ctx, plan_id: str, nonce: str) -> Response:
 
 
 def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str, note: str) -> Response:
-    """The second step before a change that cannot be undone: what would be lost, who does it and with whose rights, and two buttons, of which the safe one is the main one. Nothing is
+    """The second step before a change that cannot be undone, or that changes a real resource (`Brief.confirm`): what would be lost, who does it and with whose rights, and two buttons, of which the safe one is the main one. Nothing is
     recorded and nothing is changed until the person confirms here and then signs in to Azure. The form carries what the first form carried (the plan code, the one-time token and the
     note) and the word that says that the person saw this page."""
     called = called_of(plan.family)
@@ -341,16 +341,18 @@ def confirm_page(ctx: Ctx, plan: PlanRecord, brief: Brief, code: str, nonce: str
     rows = [(name, value) for name, value in brief_page.consequences(brief) if name not in ("Undo", "What could go wrong")]  # the notice says both
     place = f" in resource group {brief.where.group}" if brief.where.group else ""
     named = f", subscription {brief.where.subscription_name or brief.where.subscription}" if (brief.where.subscription_name or brief.where.subscription) else ""
-    body = join([head(f"Confirm: {title}", "This change cannot be undone. Nothing is changed until you confirm here."),
-                 notice("warning", "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
+    real = brief.undo.reversible and brief.confirm  # a change that can be undone and changes a real resource: the words say what is true, and the old words stay for what cannot be undone
+    body = join([head("Confirm this change", "This changes a real resource. Nothing is changed until you confirm here." if real else "This change cannot be undone. Nothing is changed until you confirm here."),
+                 paragraph(fmt("<strong>{title}</strong>", title=title if title.endswith((".", "!", "?")) else f"{title}.")),  # the title has its own line and ends it: a heading with a colon in it and a title with one made two
+                 notice("warning", "This changes a real resource" if real else "This cannot be undone", brief.risk.text, paragraph(risk_chip(brief.risk.level))), summary(rows),
                  fmt('<p class="m">{where}</p>', where=f"This is the {brief.where.noun} {brief.where.name}{place}{named}."),
                  answer])
-    return page(ctx, f"Confirm: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
+    return page(ctx, f"Confirm this change: {title}", body, ai=True, models=brief.models or None, why=CONFIRM_WHY)
 
 
 def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
-    """One answer of the form, after the checks that every answer shares. A change is approved at the sign-in to Azure, and one that cannot be undone asks once more first; every other
-    answer is the decider's."""
+    """One answer of the form, after the checks that every answer shares. A change is approved at the sign-in to Azure, and one that cannot be undone, or that changes a real resource, asks once more
+    first; every other answer is the decider's."""
     plan_id = plan.plan_id
     form_data = ctx.request.form
     note, reason = form_data.get("note", ""), form_data.get("reason", "")
@@ -367,7 +369,7 @@ def _answer(ctx: Ctx, plan: PlanRecord, nonce: str, decision: str) -> Response:
             if brief.ready is not None and brief.ready.state == REFUSED:
                 # The page that this person pressed Approve on is older than the look: the checks of the runner would refuse the change now. They are not sent to the sign-in to Azure for it.
                 return render_plan(ctx, plan, ready=brief.ready, status=409)
-            if "approve" in brief.answers and not brief.undo.reversible:  # a request that cannot be approved now (paused, closed) is refused by `begin`, in its own words
+            if "approve" in brief.answers and (not brief.undo.reversible or brief.confirm):  # a request that cannot be approved now (paused, closed) is refused by `begin`, in its own words
                 return confirm_page(ctx, plan, brief, form_data.get("code", ""), nonce, note)
         return _begin(ctx, plan_id, nonce)
     return outcome(ctx, _call(lambda: ctx.services.decider.decide(ctx.principal, plan_id, decision, form_data.get("code", ""), nonce, note, reason)), plan_id)  # type: ignore[arg-type]

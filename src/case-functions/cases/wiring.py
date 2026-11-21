@@ -45,7 +45,7 @@ class Extras:
 
 
 def approval_settings(settings: LoopSettings) -> ApprovalSettings:
-    return ApprovalSettings(change_scopes=settings.change_scopes, planted_tag=settings.planted_tag)
+    return ApprovalSettings(change_scopes=settings.change_scopes, planted_tag=settings.planted_tag, real_change_scopes=settings.real_change_scopes)
 
 
 def build_store(settings: LoopSettings, token: Callable[[str], str], redact: Callable[[str], str], *, transport, sleep, monotonic,
@@ -64,7 +64,7 @@ def build_extras(env: Mapping[str, str], token: Callable[[str], str], redact: Ca
     store = build_store(settings, token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)
     # The reader of the plans: the Watch's own token and a list of calls that holds reads only, and only in the resource groups of the change scopes. A family reads the machine, the sizes
     # or the disk that its plan is about with it, never anything else.
-    reader = Azure(Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic), token)
+    reader = Azure(Client(read_calls(settings.change_scopes, settings.real_change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic), token)
     extras = Extras(settings, store, people, Approvals(store, approval_settings(settings), clock, reader=reader))
     if settings.mail_sender:
         from .notify import alert_hook, hooks, waiting_hook  # imported only when a sender is set

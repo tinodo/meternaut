@@ -305,6 +305,14 @@ def _stop_machine():
     return case, plan
 
 
+def _gateway(kind: str):
+    """A finding about an invented gateway (a kind of resource that does not exist, from test_proposal_words), as a request of each kind: Meternaut cannot make the change that the finding proposes
+    (with another way to save), Meternaut makes no change for this kind of finding yet, or Meternaut would make the change after an approval."""
+    from test_proposal_words import BOTH, a_change, gateway
+
+    return {"cannot": lambda: gateway(BOTH, precondition="switch-off"), "none": gateway, "change": a_change}[kind]()
+
+
 def _group_finding():
     group = {"count": 50, "groups": 8, "type": "microsoft.network/privateendpoints", "names": ["pe-fabrikam-2", "pe-fabrikam-3", "pe-fabrikam-4"], "costUsd30d": 345.0}
     case = make_advice_case(case_id="case0104", resource_id=PE, resource_name="pe-fabrikam-1", resource_type="microsoft.network/privateendpoints", resource_group="rg-fabrikam-net",
@@ -470,6 +478,8 @@ def cases() -> dict[str, Rendered]:
     found["advice, nothing priced (the owner's example)"] = _page("advice, nothing priced (the owner's example)", _ai_account(), _ai_plan())
     found["advice, with the heads-up"] = _page("advice, with the heads-up", machine[0], _machine_plan(preconditions={"family": "advise", "caseStatus": "proposed", AUTOMATED: at(days=-2)}))
     found["advice, a switch (the firewall)"] = _page("advice, a switch (the firewall)", *_firewall())
+    for kind, label in (("cannot", "a change that Meternaut cannot make"), ("none", "no change made yet"), ("change", "a change that Meternaut makes")):
+        found[f"advice, a gateway, {label}"] = _page(f"advice, a gateway, {label}", *_gateway(kind))
     found["advice, the cost is not visible"] = _page("advice, the cost is not visible", _ai_account(case_id="case0107", plan_id="plan0107", cost_usd_30d=None, cost_state="failed"),
                                                      _ai_plan(plan_id="plan0107", case_id="case0107"))
     found["advice, one request for many resources"] = _page("advice, one request for many resources", *_group_finding())
@@ -488,8 +498,10 @@ def cases() -> dict[str, Rendered]:
         PERSON, BASE, NOW + dt.timedelta(days=9), [(plan, case, "same"), (_machine_plan(), _priced_machine(), "manager")], CONTACTS))
     found["approval letter"] = _letter("approval letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS))
     found["approval letter, a switch"] = _letter("approval letter, a switch", letters.approval_letter(*reversed(_firewall()), PERSON, BASE, NOW, CONTACTS))
+    found["approval letter, a gateway"] = _letter("approval letter, a gateway", letters.approval_letter(*reversed(_gateway("cannot")), PERSON, BASE, NOW, CONTACTS))
     found["Teams card, advice"] = Rendered("Teams card, advice", "card", blocks_of_card(_card_of(case, plan)))
     found["Teams card, a switch"] = Rendered("Teams card, a switch", "card", blocks_of_card(_card_of(*_firewall())))
+    found["Teams card, a gateway"] = Rendered("Teams card, a gateway", "card", blocks_of_card(_card_of(*_gateway("cannot"))))
     found["Teams card, change"] = Rendered("Teams card, change", "card", blocks_of_card(_card_of(make_case(plan_id="plan0001"), make_plan())))
     found["Decisions page"] = _decisions()
     found["Savings page"] = _savings()
@@ -566,7 +578,7 @@ SPEAKS_AS_I = {"first-contact letter", "Teams card, the first one"}  # the two t
 ABBREVIATED = re.compile(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}\b|\b\d{1,2} (?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\b")  # "Wed 4 Nov", "5 Nov 10:30 UTC": outside the Details a day is "4 November"
 LOWER_AFTER_STOP = re.compile(r"[.?!]\s+([a-z]+)(?![\w.\-/@])")
 PUNCTUATION = re.compile(r"\s[.,;:!?]|\.\.|,,|,\s*\.|;\s*\.|:\s*\.")
-ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details
+ISO_DATE = re.compile(r"(?<!--api-version )(?<!api-version=)\b\d{4}-\d{2}-\d{2}\b")  # a day is said as "2 November", and an ISO date belongs in the Details (the version of the interface in a command is no day)
 OLD_MONEY = re.compile(r"\b(?:saves|could save|costs),\s+(?:scenario|expected|verified)\b|\bbased on the \d+ (?:bill )?lines?\b|\ba year is twelve times the month\b", re.IGNORECASE)  # the money line of the old pages: a level as a label, "Based on the 2 bill lines" and the note that a year is twelve months
 OLD_RISK = re.compile(r"(?:^|[.!?]\s+)risk[:,]\s+(?:low|medium|high)\b", re.IGNORECASE)  # the risk of the old pages said as a label that starts a sentence ("Risk: high.", "Risk, medium:"); the chip says "Medium risk, High confidence"
 DOUBLED = re.compile(r"\b([A-Za-z]{3,})\s+\1\b", re.IGNORECASE)
@@ -671,6 +683,8 @@ class TheWordsReadAsSentences(unittest.TestCase):
     def test_the_gallery_holds_the_pages_and_messages_that_the_owner_named(self):
         self.assertGreaterEqual(len(cases()), 40)
         for wanted in ("advice, priced", "advice, nothing priced (the owner's example)", "advice, with the heads-up", "advice, a switch (the firewall)", "advice, one request for many resources", "change, delete a disk",
+                       "advice, a gateway, a change that Meternaut cannot make", "advice, a gateway, no change made yet", "advice, a gateway, a change that Meternaut makes",
+                       "approval letter, a gateway", "Teams card, a gateway",
                        "held finding", "request taken back", "escalation letter, one request", "digest letter", "Teams card, advice", "approval letter, a switch", "Teams card, a switch",
                        "History page", "Decisions page, cannot be read", "Savings page, cannot be read", "advice, answered: worth acting on", "advice, answered: not worth it",
                        "change, made and checked", "change, not made", "change, nothing to change", "Teams card, a change: not made", "Teams card, a change: nothing to change",

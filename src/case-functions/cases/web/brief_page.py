@@ -15,12 +15,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, not_now_reason, taken_back, text_of, times_text, waited_text, why_a_person, Brief
+from ..brief import ADVISOR_KEY, CHANGE, COULD_NOT_LOOK, GUID, HEADS_UP, IF_ACTED, IMPACT, IMPACT_VERDICTS, IN_PLACE, LOOKS_AGAIN, NOT_MADE_BEFORE, NOT_NOW_NEXT, NOT_NOW_TITLE, OPTIONS_END, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, ago_text, group_things, not_now_reason, plan_headline, taken_back, text_of, times_text, waited_text, why_a_person, ways_sentences, Brief
 from ..models import ADVISE, GROUP_FACT, HELD, READY, REFUSED, UNKNOWN, ActionRecord, CaseRecord, DecisionRecord, PlanRecord
 from . import words
 from .common import action_block, confidence, detector_cell, kind_text, off_notice, read
 from .core import MAX_NOTE, Ctx, Response, Safe, esc, fmt, join, link_part, number
-from .figures import Figure, chart, chip, cost_of, figure_for, risk_chip, says, series_of, series_reason, title_of, under, use_block, waiting_words
+from .figures import Figure, chart, chip, cost_of, dollars, figure_for, risk_chip, says, series_of, series_reason, short_title, title_of, under, use_block, waiting_words
 from .layout import block, button, code, details, error_summary, form, hidden, items, link, notice, page, paragraph, quoted, select, summary, table, textarea
 
 INVESTIGATION = "investigation"  # the detector of the cases that the Watch's own investigation opens (cases/investigate.py)
@@ -86,6 +86,17 @@ def _outcome(ctx: Ctx, brief: Brief) -> Safe:
     return notice(kind, outcome.title, join(paragraph(line) for line in outcome.lines), when)
 
 
+def _replaced(ctx: Ctx, case: CaseRecord | None, plan: PlanRecord | None) -> Safe:
+    """The request that took the place of this one when Meternaut took it back because it could make the change itself (`upgraded`) or because the finding or the resource changed (`changed`): its
+    title, as a link to it. Nothing for any other request, and nothing when no other request was made (a request that a guard holds back has none)."""
+    if case is None or plan is None or taken_back(plan, case) not in ("upgraded", "changed") or not case.plan_id or case.plan_id == plan.plan_id:
+        return Safe("")
+    new, ok = read(lambda: ctx.store.plan_get(case.plan_id), None)
+    if new is None or not ok:
+        return Safe("")
+    return paragraph(join([Safe("The new request is "), link(ctx.url(f"/ok/{new.plan_id}"), short_title(plan_headline(new), new.resource_group)), Safe(".")]))
+
+
 def _hold(brief: Brief) -> Safe:
     """Why no request was made, at the top of the page of a finding that a guard holds back: the guard's sentence and what it still needs. Nothing asks the person to approve anything here."""
     found = brief.hold
@@ -123,26 +134,35 @@ def _analysis(brief: Brief) -> Safe:
     return fmt('<p class="m"><a href="{href}" rel="noopener" aria-label="Open in Cost analysis for {scope}">Open in Cost analysis</a></p>', href=brief.cost_url, scope=brief.cost_scope)
 
 
+def _worked(brief: Brief) -> Safe:
+    """The arithmetic under the figure, as a small table in whole amounts that add up (brief.worked_of): what is paid now, what would be paid after the change and what is saved, a month."""
+    if not brief.worked:
+        return Safe("")
+    return table("worked", "What the change does to the cost", ["What", "Now, a month", "After, a month", "Saved, a month"], [list(row) for row in brief.worked], row_header=True, quiet_caption=True)
+
+
 def _stake(brief: Brief, figure: Figure) -> Safe:
-    """What is at stake, in whole sentences (figures.says): the one that opens it, large (green for a saving), then what the figure rests on and what waiting costs, what the cost is made of and
-    the estimate when there are any, the heads-up about a resource that something that runs by itself changes (when there is one) and the link to Cost analysis."""
+    """What is at stake, in whole sentences (figures.says): the one that opens it, large (green for a saving), the arithmetic of a figure that code worked out as a small table, then what the figure
+    rests on (under the words "How Meternaut worked it out" when there is arithmetic) and what waiting costs, what the cost is made of and the estimate when there are any, the heads-up about a
+    resource that something that runs by itself changes (when there is one) and the link to Cost analysis."""
     lead, rest = says(brief, figure)
-    rest = " ".join(part for part in (rest, waiting_words(brief, figure)) if part)
+    waiting = waiting_words(brief, figure)
     heads = fmt('<p class="m"><strong>{label}:</strong> {text}</p>', label=HEADS_UP, text=brief.heads_up) if brief.heads_up else Safe("")
     first = fmt('<p class="say{save}">{lead}</p>', save=" save" if figure.state == "save" else "", lead=lead)
-    return join([first, fmt('<p class="figsub">{rest}</p>', rest=rest) if rest else Safe(""), under(figure), heads, _analysis(brief)])
+    rest = rest if brief.worked else " ".join(part for part in (rest, waiting) if part)  # what waiting costs follows the basis in the same paragraph, unless the basis is the one of the arithmetic
+    how = fmt('<p class="figsub">{label}{rest}</p>', label=Safe("<strong>How Meternaut worked it out.</strong> ") if brief.worked else "", rest=rest) if rest else Safe("")
+    return join([first, _worked(brief), how, paragraph(waiting, "figsub") if waiting and brief.worked else Safe(""), under(figure), heads, _analysis(brief)])
 
 
 def consequences(brief: Brief) -> list[tuple[str, object]]:
-    """What happens if the person approves a change, as names and values: what changes, who does it with whose rights, what is read again, whether it can be undone and what could go wrong, each in
-    whole sentences. Advice has no such rows: it is one short paragraph (_happens)."""
+    """What happens if the person approves a change, as names and values, in the order of a decision: what changes, who does it with whose rights, what is read again right before, what could go
+    wrong and whether it can be undone, each in whole sentences. Advice has no such rows: it is one short paragraph (_happens)."""
     if brief.kind == "info":
         return [("What changes", brief.change)]
     rows: list[tuple[str, object]] = [("What changes", brief.change), ("Who does it", brief.who_acts)]
     if brief.rechecked:
         rows.append(("Checked again", brief.rechecked))
-    rows.append(("Undo", Safe("<strong>This cannot be undone.</strong>") if not brief.undo.reversible else brief.undo.how))
-    rows.append(("What could go wrong", brief.risk.text))
+    rows += [("What could go wrong", brief.risk.text), ("Undo", Safe("<strong>This cannot be undone.</strong>") if not brief.undo.reversible else brief.undo.how)]
     if brief.second is not None:
         rows.append(("Who approves", brief.second.line))
     elif brief.two_people:
@@ -150,20 +170,54 @@ def consequences(brief: Brief) -> list[tuple[str, object]]:
     return rows
 
 
+def _here(brief: Brief) -> bool:
+    """Whether the block "What happens if you answer" of the page is for advice that waits: it then says what a person would do, and what could go wrong."""
+    return brief.kind == "advice" and brief.state in ("open", HELD)
+
+
 def _happens(brief: Brief) -> Safe:
-    """What happens if the person answers: for advice that waits, one short paragraph (nothing changes in Azure, the answer is recorded, and a person who acts does it themselves) and, when acting has
-    a risk, the sentence that says it; for a change, the blocks of what changes, who does it, what is read again, whether it can be undone and what could go wrong; for a finding with no request,
-    what changes. The heading says what the person is about to do."""
+    """What happens if the person answers: for advice that waits, what an answer does for the kind of request that it is (brief.advice_words), who acts, what the AI says that a person could do
+    (a quote: Meternaut did not check the wording) and what could go wrong, from the facts of the finding; for a change, the blocks of what changes, who does it, what is read again, what could go wrong
+    and whether it can be undone; for a finding with no request, what changes. The heading says what the person is about to do."""
     if brief.kind == "advice":
-        if brief.state not in ("open", HELD):
+        if not _here(brief):
             return Safe("")  # nobody can answer it any more: what became of it is said above
-        risk = [paragraph(brief.risk.text)] if brief.risk.acting else []
-        return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">What happens if you answer</h2>{lines}</section>', lines=join([paragraph(f"{brief.change} {brief.who_acts}"), *risk]))
+        how = [quoted(f"What the AI says you could do. {UNCHECKED}", brief.how)] if brief.how else []
+        risk = [fmt("<p><strong>What could go wrong.</strong> {text}</p>", text=brief.risk.text)] if brief.risk.acting else []
+        return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">What happens if you answer</h2>{lines}</section>', lines=join([paragraph(f"{brief.change} {brief.who_acts}"), *how, *risk]))
     heading = ("If you approve" if brief.state == "open" else "What the change is") if brief.kind == "change" else "What changes"
     if brief.ready is not None and brief.ready.state == REFUSED and brief.kind == "change":
         heading = "What the change would do"  # the form has no answer that approves: the card says what the request is, not what an approval would do
     facts = join(fmt("<dt>{name}</dt><dd>{text}</dd>", name=name, text=text) for name, text in consequences(brief))
     return fmt('<section aria-labelledby="happens-title"><h2 id="happens-title">{heading}</h2><dl class="facts">{facts}</dl></section>', heading=heading, facts=facts)
+
+
+def _others(brief: Brief) -> Safe:
+    """The other ways to save that the finding proposes, for information and not to answer: how many the AI named and how each figure was made (worked out from the bill, the AI's estimate, or not
+    priced), and a table of what each saves a month, how Azure does it when that is known and what it gives up. The titles, the words about how Azure does it and about what each gives up are the AI's."""
+    if not brief.others:
+        return Safe("")
+    on = f"these {group_things(brief.group)}" if brief.group is not None else f"this {brief.where.noun}"
+    rows = [[fmt('{title}<br><span class="muted">{place}</span>', title=other.title, place=IN_PLACE[other.in_place].format(noun=brief.where.noun)) if other.in_place is not None else other.title, _saves(other),
+             other.gives_up or "Not said"] for other in brief.others]
+    note = "The titles, how Azure would do each and what each gives up are the AI's words, and Meternaut did not check them."
+    if any(other.estimate and other.low is not None for other in brief.others):
+        note += " A saving that is the AI's estimate rests on a share of the cost that the AI assumed, and Meternaut did not check that share."
+    return join([Safe("<h2>Other ways to save here</h2>"), paragraph(ways_sentences(brief.others, on)),
+                 table("others", "Other ways to save here", ["Other way", "Saves a month", "What it gives up"], rows, row_header=True, quiet_caption=True),
+                 paragraph(note, "m")])
+
+
+def _saves(other) -> str:
+    """What another way (an `Other` of the brief) saves a month, as the page says other figures: a range, one amount, or that nothing priced it. A way whose saving rests on a share that the AI
+    assumed says so in the cell."""
+    if other.low is None:
+        return "Not priced"
+    ranged = other.high is not None and other.high > other.low
+    figure = f"{dollars(other.low)} to {dollars(other.high)}" if ranged else dollars(other.low)
+    if other.estimate:
+        return f"about {figure}, the AI's estimate"
+    return figure if ranged else f"about {figure}"
 
 
 def _decision(brief: Brief, case: CaseRecord | None, now: dt.datetime) -> Safe:
@@ -197,13 +251,15 @@ def _measured(brief: Brief) -> Safe:
 
 def _why(brief: Brief) -> Safe:
     """What the AI saw, in its own words (a labelled quote for each, which says that Meternaut did not check the wording), and how sure it is and why: the sentences of code, the second AI's doubt in
-    its own quote, and how past requests like this were answered. A request that no AI looked at has no quote and says how sure it is, and nothing of an AI."""
+    its own quote, and how past requests like this were answered. A request that no AI looked at has no quote and says how sure it is, and nothing of an AI. What the AI says that a person could do, and
+    what the second AI doubts, are said under "What happens if you answer" when the request waits (_happens), and not again here."""
+    here = _here(brief)
     said = [quoted(f"What the AI says. {UNCHECKED}", brief.reasoning)] if brief.reasoning else []
-    said += [quoted(f"What the AI says you could do. {UNCHECKED}", brief.how)] if brief.how else []
+    said += [quoted(f"What the AI says you could do. {UNCHECKED}", brief.how)] if brief.how and not here else []
     parts: list[object] = [Safe("<h2>What the AI saw</h2>"), *said] if said else []
     parts += [Safe("<h2>Why it is not sure</h2>" if brief.confidence.level == "Low" else "<h2>How sure it is</h2>"), paragraph(brief.confidence.because)]
     parts += [paragraph(line) for line in (brief.past, brief.access) if line]  # how past requests like this were answered, and what the access cannot see when that matters
-    if brief.doubt:
+    if brief.doubt and not (here and brief.doubt in brief.risk.text):
         parts.append(quoted("What the second AI doubts.", brief.doubt))
     return join(block(part) for part in parts)
 
@@ -365,7 +421,9 @@ def _details(ctx: Ctx, brief: Brief, case: CaseRecord | None, plan: PlanRecord |
         by_code = brief.by_code  # Azure Advisor's own recommendation, made into a request by code: no AI looked at it
         parts += [paragraph("No AI looked at this finding. It is Azure Advisor's own recommendation, which Meternaut's code made into a request.")] if by_code else [
             _ai_words(case), Safe("<h3>Steps</h3>"), _steps(case)]
-        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE)}  # what code made of the estate is in the evidence above, and no AI saw it
+        from ..brief import PROPOSED  # read here and not at the top: the key is kept by cases/proposals.py, which reads more than a page may load when it starts
+
+        typed = {name: value for name, value in (case.facts if isinstance(case.facts, dict) else {}).items() if name not in (GROUP_FACT, IMPACT, ADVISOR_KEY, CHANGE, PROPOSED)}  # what code made of the estate is in the evidence above, and no AI saw it
         parts.append(table("facts", "The typed facts that Meternaut recorded" if by_code else "The typed facts that the AIs saw", ["Fact", "Value"],
                            [[code(name), _fact(value)] for name, value in sorted(typed.items())], row_header=False)
                      if typed else paragraph("No typed fact is recorded for this finding."))
@@ -388,7 +446,7 @@ def render(ctx: Ctx, brief: Brief, *, case: CaseRecord | None, plan: PlanRecord 
         parts.append(banner)
     if errors:
         parts.append(error_summary(list(errors.items())))
-    parts += [_asked(brief), _look(brief), _outcome(ctx, brief), _hold(brief), _decision(brief, case, ctx.now), _happens(brief), _waiting(ctx, brief)]
+    parts += [_asked(brief), _look(brief), _outcome(ctx, brief), _replaced(ctx, case, plan), _hold(brief), _decision(brief, case, ctx.now), _others(brief), _happens(brief), _waiting(ctx, brief)]
     side: Safe | None = None
     if answer is not None:
         side = fmt('<section class="panel" aria-labelledby="answer-title"><h2 id="answer-title">Your answer</h2>{earlier}{answer}</section>', earlier=_own_answers(ctx, decisions), answer=answer)

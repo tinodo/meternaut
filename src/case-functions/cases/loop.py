@@ -84,7 +84,7 @@ def tick(env: Mapping[str, str] | None = None, *, transport=default_transport, s
         if extras is None:
             return None
         _say_why_teams_is_off(settings.teams, monotonic(), redact)
-        check_client = Client(read_calls(settings.change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
+        check_client = Client(read_calls(settings.change_scopes, settings.real_change_scopes), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         reader_client = Client(allowed_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic)
         history = History(uuid.uuid4().hex, None, clock, redact)
         services = RunnerServices(extras.store, check_client, reader.token, wiring.approval_settings(settings),

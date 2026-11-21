@@ -113,8 +113,9 @@ def texts_of(card) -> dict[str, str]:
 
 class TheRegistryFeedsTheBrief(unittest.TestCase):
     def test_every_family_of_the_registry_is_shown_here_and_a_new_one_cannot_be_forgotten(self):
-        self.assertEqual(set(MAKERS), set(registry.names()))
-        self.assertEqual(set(REVERSIBLE), set(registry.names()))
+        planted = {name for name in registry.names() if not registry.get(name).real}  # the family that works on real resources says no planted tag and no planted group, so the words below do not fit it; its brief, page, card and letter are tested in test_families_setting.py (TheRealChangeAsksOnceMore, TheUndoIsExact, ThePromiseAfterTheWrite)
+        self.assertEqual(set(MAKERS), planted)
+        self.assertEqual(set(REVERSIBLE), planted)
 
     def test_each_family_feeds_every_field_of_the_brief_that_a_decision_needs(self):
         for name in MAKERS:
@@ -166,8 +167,8 @@ class TheRegistryFeedsTheBrief(unittest.TestCase):
         self.assertEqual(plan.family, "advise")
         b = a_brief(plan, case)
         self.assertEqual((b.kind, b.who_acts), ("advice", brief.ADVICE_WHO))
-        self.assertEqual(b.who_acts, "If you decide to act, you do it yourself in Azure with your own rights.")
-        self.assertEqual((b.change, b.rechecked), (brief.ADVICE_CHANGE, ""))
+        self.assertEqual(b.who_acts, "If you act, you do it yourself in Azure with your own rights.")
+        self.assertEqual((b.change, b.rechecked), (brief.ADVICE_CHANGE, ""), "nothing in the finding proposes a change that a typed action or a setting names: it asks for a look, and nothing changes in Azure")
 
 
 class ThePageIsARenderOfTheBrief(unittest.TestCase):
@@ -181,7 +182,7 @@ class ThePageIsARenderOfTheBrief(unittest.TestCase):
                 self.assertEqual(reply.status, 200)
                 self.assertEqual(reply.headings(1), [figures.title_of(expected)[1]])
                 found = approve_rows(reply)
-                self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "Undo", "What could go wrong"])
+                self.assertEqual(list(found), ["What changes", "Who does it", "Checked again", "What could go wrong", "Undo"], "in the order of a decision: what is done, what is read again, what could go wrong, how to undo it")
                 self.assertEqual(found["What changes"], expected.change)
                 self.assertEqual(found["Who does it"], expected.who_acts)
                 self.assertEqual(found["Checked again"], expected.rechecked)
@@ -220,16 +221,16 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(letter.subject, "[Meternaut] A change to Azure waits for your OK")
                 self.assertIn(brief.plain(figures.title_of(b)[1], 200), letter.text)
                 self.assertIn(f"{b.where.kind}, resource group {fs.GROUP}", letter.text, "the place is on the line under the title")
-                self.assertIn(brief.plain(b.change, 200), letter.text)
+                self.assertIn(brief.plain_sentences(b.change, 200), letter.text)
                 self.assertIn("It runs with your own permissions.", letter.text)
                 self.assertNotIn("sign in", letter.text.lower())
                 if REVERSIBLE[name]:
-                    self.assertIn(brief.plain(b.undo.how, 160), letter.text)
+                    self.assertIn(brief.plain(b.undo.how, brief.UNDO_CHARS), letter.text)
                 else:
                     self.assertNotIn("Undo:", letter.text, "the chips say it once, and a letter does not say it twice")
                 self.assertIn("Cannot be undone" if not REVERSIBLE[name] else "Can be undone", letter.text)
                 self.assertIn("What could go wrong: ", letter.text)
-                self.assertIn(brief.plain(b.risk.text, 200), letter.text)
+                self.assertIn(brief.plain_sentences(b.risk.text, 200), letter.text)
                 self.assertIn("Review and decide: ", letter.text)
 
     def test_the_letter_about_a_change_that_ran_says_what_the_brief_says_and_how_to_undo_it(self):
@@ -244,7 +245,7 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(letter.subject, "[Meternaut] A change to Azure has run")
                 self.assertIn(f"{brief.plain(figures.title_of(b)[1], 200)}\n=", letter.text)
                 self.assertIn("Azure shows the change.\n\nAzure shows the new state.", letter.text)
-                self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, 200), letter.text)
+                self.assertIn("This cannot be undone." if not REVERSIBLE[name] else brief.plain(b.undo.how, brief.UNDO_CHARS), letter.text)
 
     def test_the_card_of_the_decision_is_the_brief_cut_short_for_each_family(self):
         for name in MAKERS:
@@ -257,9 +258,9 @@ class TheLettersAndTheCardsAreRendersOfTheBrief(unittest.TestCase):
                 self.assertEqual(found["headline"], cards.md(figures.title_of(b)[1], 200))
                 self.assertEqual(found["place"], f"{b.where.kind}, resource group {fs.GROUP}")
                 self.assertEqual(found["chips"], ", ".join((figures.RISKS[b.risk.level][0], f"{b.confidence.level} confidence", "Can be undone" if REVERSIBLE[name] else "Cannot be undone")))
-                self.assertIn(cards.md(b.change, 300), found["change"])
-                self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, 200)}")
-                self.assertEqual(found["risk"], f"**What could go wrong:** {cards.md(b.risk.text, 240)}")
+                self.assertIn(cards.md(brief.plain_sentences(b.change, 300), 300), found["change"])
+                self.assertEqual(found["undo"], "Undo: This cannot be undone." if not REVERSIBLE[name] else f"**Undo:** {cards.md(b.undo.how, brief.UNDO_CHARS)}")
+                self.assertEqual(found["risk"], f"**What could go wrong:** {cards.md(brief.plain_sentences(b.risk.text, 240), 240)}")
                 self.assertEqual({a["url"] for a in _actions(card) if "url" in a}, {f"{BASE}/ok/{b.plan_id}"})
                 self.assertEqual([a["type"] for a in _actions(card)], ["Action.OpenUrl"], "a card made without link tokens has the page link only; no card approves a change in Azure")
                 json.dumps(card)

@@ -188,7 +188,7 @@ class CaseRecord(Record):
     guards: tuple[str, ...] = ()
     models: dict = field(default_factory=dict)  # {"detective": name, "skeptic": name or None}
     steps: tuple[dict, ...] = ()  # one dict per step: step, model, promptTokens, completionTokens, ms, ok, note
-    facts: dict = field(default_factory=dict)  # the typed facts that the models saw; for a person to read and never for a model it can also hold `change` (what the finding would change and what code worked out from the bill lines), `group` (many resources) and `advisor`
+    facts: dict = field(default_factory=dict)  # the typed facts that the models saw; for a person to read and never for a model it can also hold `change` (what the finding would change and what code worked out from the bill lines), `ways` (the settings to lower and the other ways to save that code kept: cases/proposals.py), `group` (many resources) and `advisor`
     plan_id: str | None = None
     first_seen_at: str = ""
     updated_at: str = ""

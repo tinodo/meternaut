@@ -81,7 +81,8 @@ class TheFamilyIsInTheRegistry(unittest.TestCase):
     def test_it_matches_the_one_type_and_leads_from_a_recommendation_to_change_only(self):
         self.assertIsInstance(FAMILY, ScaleVpnGateway)
         self.assertEqual(FAMILY.kinds, (calls.P2S_GATEWAY,))
-        self.assertEqual([family.name for family in registry.candidates("investigation", TYPE, "change")], ["scale-vpn-gateway"])
+        self.assertEqual([family.name for family in registry.candidates("investigation", TYPE, "change")], ["scale-vpn-gateway", "change-setting"],
+                         "the family that works on any kind of resource, in a group that the owner listed, matches it too, and is held by gates of its own")
         for recommendation in ("delete", "keep", "investigate", None):
             self.assertEqual(registry.candidates("investigation", TYPE, recommendation), [], recommendation)
         self.assertEqual(registry.candidates("orphan-managed-disk", TYPE, "change"), [], "no older detector leads to it: it is no detector's waste")

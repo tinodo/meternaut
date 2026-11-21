@@ -10,8 +10,8 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from ..brief import TAKEN_BACK, TIMER_CLOSED, because_text, plan_headline, taken_back
-from ..models import TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
+from ..brief import TIMER_CLOSED, because_text, plan_headline, taken_back, taken_back_words
+from ..models import HELD, TWO_PEOPLE_CLASS, ActionRecord, DecisionRecord, PlanRecord
 from .common import answerable, closed_by_the_bill, read
 from .core import Ctx, Response, Safe, fmt, join, link_part, stamp
 from .figures import chip, short_title
@@ -105,9 +105,10 @@ def _events(ctx: Ctx, since: str) -> Feed:
     bill = {plan.plan_id for plan in closed}
     for plan in [*closed, *(plan for plan in plans if plan.plan_id not in bill)]:  # a request that the bill closed is listed on the day that it was closed, however old it is, and only in the window of the feed
         if answerable(ctx, plan) and (plan.expires_at >= since if plan.plan_id in bill else plan.created_at >= old):
-            if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone"):
-                continue  # the note of a finding that was held back, closed because nothing holds it back any more: nobody was asked, so nobody failed to answer
-            if plan.family == "advise" and plan.state == "expired" and taken_back(plan) != "verified":
+            held = (plan.preconditions or {}).get(HELD)
+            if (plan.preconditions or {}).get("takenBack") in ("released", "left-alone") and isinstance(held, str):
+                continue  # the note of a finding that was held back, closed because nothing holds it back any more or a person marked the resource do-not-touch: nobody was asked, so nobody failed to answer. A request that was asked of people and closed for the same mark has its row
+            if plan.family == "advise" and plan.state == "expired" and taken_back(plan) not in ("verified", "upgraded"):  # one that a change took the place of is a line of its own: the change is what happened to it
                 quiet.setdefault(ctx.day_key(plan.expires_at), []).append(plan.expires_at)
             else:
                 mine.append(plan)
@@ -135,7 +136,7 @@ def _events(ctx: Ctx, since: str) -> Feed:
             events += _action_events(ctx, plan, actions[plan.plan_id])
         if plan.state == "expired":
             why = taken_back(plan)
-            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), TAKEN_BACK[why] if why else TIMER_CLOSED))
+            events.append(Event(plan.expires_at, "closed" if why == "verified" else "expired", _headline(ctx, plan), taken_back_words(plan, why) if why else TIMER_CLOSED))
     for found in quiet.values():
                     events.append(Event(max(found), "expired", f"{len(found)} request{'' if len(found) == 1 else 's'} to look at a finding",
                             "Meternaut took it back, and it says why." if len(found) == 1 else "Meternaut took them back, and each says why."))

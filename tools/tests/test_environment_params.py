@@ -1543,5 +1543,47 @@ class TheEscalationSwitch(unittest.TestCase):
             self.assertEqual((bool(problems), settings.to if not problems else ""), (word == "off", "" if word == "off" else word), word)
 
 
+class TheRealChangeScopes(unittest.TestCase):
+    """The groups of the owner's real resources in which the family change-setting may lower a number (docs/proposals/32-real-changes.md): the secret REAL_CHANGE_SCOPES of the environment hub. Unset, the
+    cases file is exactly what it was and the template writes no setting; set, it is checked, never echoed and never the project's own group."""
+
+    CASES_TEMPLATE = TheStudySwitch.CASES_TEMPLATE
+    REAL = "dddddddd-4444-4555-8666-777777777777/rg-owner-real"
+
+    def build(self, **changes):
+        return run({**SETTINGS, **changes})
+
+    def test_unset_or_empty_it_changes_nothing_and_set_only_the_cases_file_carries_it(self):
+        _, _, _, plain = self.build()
+        for changes in ({"REAL_CHANGE_SCOPES": ""}, {"REAL_CHANGE_SCOPES": "   "}):
+            code, out, err, files = self.build(**changes)
+            self.assertEqual((code, err, files), (0, "", plain), "no file is different from what it was")
+        code, out, err, files = self.build(REAL_CHANGE_SCOPES=f" {self.REAL}, eeeeeeee-4444-4555-8666-777777777777/rg-two ")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(values(files["cases.parameters.json"])["realChangeScopes"], f"{self.REAL},eeeeeeee-4444-4555-8666-777777777777/rg-two")
+        for name, document in files.items():
+            if name != "cases.parameters.json":
+                self.assertNotIn("realChangeScopes", document.get("parameters", {}), name)
+        self.assertNotIn("dddddddd", out, "no output of the workflow carries it")
+
+    def test_a_wrong_value_a_repeated_group_or_the_projects_own_group_is_refused_before_anything_is_written_and_never_echoed(self):
+        own = f"{SETTINGS['ENV_SUBSCRIPTION_ID']}/{SETTINGS['ENV_RESOURCE_GROUP']}"
+        for bad in ("not-a-scope", "dddddddd-4444-4555-8666-777777777777", "*/rg-x", f"{self.REAL},{self.REAL.upper()}", own, own.upper(), f"{self.REAL},{own}", f"{self.REAL}/extra/x", f"{self.REAL},"):
+            code, out, err, files = self.build(REAL_CHANGE_SCOPES=bad)
+            self.assertEqual((code, out, files), (2, "", {}), bad)
+            self.assertIn("REAL_CHANGE_SCOPES is <subscription id>/<resource group>", err)
+            self.assertIn("Nothing was changed.", err)
+            self.assertNotIn("dddddddd", err, "the log of the Hub is public")
+
+    def test_the_template_has_the_parameter_with_an_empty_default_and_writes_the_setting_only_when_it_is_given(self):
+        self.assertEqual(bicep_params(self.CASES_TEMPLATE)["realChangeScopes"], ("string", True))
+        self.assertRegex(self.CASES_TEMPLATE, r"@maxLength\(2000\)\nparam realChangeScopes string = ''\n")
+        self.assertEqual(self.CASES_TEMPLATE.count("{ name: 'REAL_CHANGE_SCOPES', value: realChangeScopes }"), 1)
+        self.assertIn("empty(realChangeScopes) ? [] : [", self.CASES_TEMPLATE)
+        workflow = (ROOT / ".github" / "workflows" / "deploy-hub.yml").read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("REAL_CHANGE_SCOPES: ${{ secrets.REAL_CHANGE_SCOPES }}"), 1, "a secret of the environment: it names subscriptions")
+        self.assertNotIn("vars.REAL_CHANGE_SCOPES", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
