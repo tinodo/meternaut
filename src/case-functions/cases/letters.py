@@ -268,7 +268,7 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     owner = ("Whose is it", _data(brief.owner.text, 200))
     if brief.kind == "advice":
         risk = brief.risk.text
-        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, 240)),) if brief.risk.acting else ()))
+        return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, brief_mod.RISK_CHARS)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
     undo = (("Undo", _data(brief.undo.short or brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half
     said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
@@ -317,7 +317,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     if brief.asked:
-        doc.paragraph(_data(brief.asked, 320))
+        doc.paragraph(_data(brief.asked, brief_mod.ASKED_CHARS))
     doc.figure(stake_of(brief))
     if brief.others:
         doc.paragraph(brief_mod.others_line(brief))
@@ -497,7 +497,7 @@ def escalation_letter(plan: PlanRecord, case: CaseRecord | None, person: Person,
     _place(doc, brief)
     doc.paragraph(", ".join(chips_of(brief)), strong=True, label=True)
     if brief.asked and not brief.two_people:  # this brief is built without the decisions: it cannot tell whether the reader confirmed already, so a change of two people is not asked here
-        doc.paragraph(_data(brief.asked, 320))
+        doc.paragraph(_data(brief.asked, brief_mod.ASKED_CHARS))
     doc.figure(stake)
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))

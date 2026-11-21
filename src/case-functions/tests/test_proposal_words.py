@@ -661,6 +661,48 @@ class OtherWaysToSave(unittest.TestCase):
         self.assertEqual(len(brief_of(case, plan).others), 2)
 
 
+class NoTextOfACardOrALetterIsCutShort(unittest.TestCase):
+    """A card and a letter have room for the longest text that code can make for them: a cut leaves "may connec..." and nobody can tell what was left out. A text is cut only at the end of a sentence, so
+    that none of these ends in "..."."""
+
+    FIRST = "Number of bytes read by clients from the private link service"[:60]  # the longest label of a metric that a brief shows is 60 characters
+    SECOND = "Percentage of the provisioned throughput that was in use at all"[:60]
+    DOUBT = ("A monthly job that runs for two hours on the first Sunday of every month and the backup of the neighbouring production workload may connect through it, and nobody has written either of them "
+             "down anywhere, which is why the second AI could not rule out that something still depends on it.")[:240]  # the most that a brief shows of what an AI wrote is 240 characters
+    TWO = {"metrics": {FIRST: 0.0, SECOND: 123456789012345.5}, "metricUnits": {FIRST: "Count", SECOND: "Operations per hour used"}, "metricDays": {FIRST: 30, SECOND: 30},
+           "metricDaysWithData": {FIRST: 28, SECOND: 27}, "citedMetrics": 2}
+
+    def fixtures(self):
+        free = {"title": "Use the free tier", "givesUp": "It is shared and carries no promise of uptime.", "action": "reduce", "inPlace": True, "lowUsd": 100.8, "highUsd": 151.2, "estimate": True}
+        ways = {"set": SET, "others": [*OTHERS, free]}  # three other ways beside the setting
+        facts = {**gateway_facts(proposal=ways), **self.TWO}
+        found = {"two measurements, an objection and three ways": gateway(ways, facts=facts, objections=(self.DOUBT,)),
+                 "the same where others share the kind": gateway(ways, facts=facts, objections=(self.DOUBT,), resource_type="microsoft.network/privateendpoints"),
+                 "the same and a reason that Meternaut cannot make it": gateway(ways, "not-a-count", facts=facts, objections=(self.DOUBT,))}
+        many, plan = gateways()
+        found["a group"] = (dataclasses.replace(many, facts={**many.facts, **self.TWO}, objections=(self.DOUBT,)), plan)
+        case, plan = a_change()
+        found["a change with a long risk"] = (dataclasses.replace(case, facts=facts), dataclasses.replace(
+            plan, could_go_wrong="Connections that need more than 2 units are refused for the whole of the month, and nothing else was checked. Meternaut does not know what depends on the gateway lab-gw-1 or on "
+                                 "the other gateways that it shares a network with. A job that runs only on the first Sunday of a month would be refused as well. Everything that connects through it slows down."))
+        return found
+
+    def test_the_longest_texts_that_code_can_make_are_not_cut_on_a_card_or_in_a_letter(self):
+        for name, (case, plan) in self.fixtures().items():
+            if name != "a change with a long risk":
+                self.assertGreater(len(brief_of(case, plan).risk.text), 240, f"{name}: the fixture holds a risk longer than the limit that was in force when the letter cut it")
+            self.assertLessEqual(len(brief_of(case, plan).risk.text), brief_mod.RISK_CHARS, f"{name}: the room that a card and a letter have is the most that code makes")
+            shown = {"card": Rendered("card", "card", blocks_of_card(card_of(case, plan))), "letter": _letter("letter", letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS))}
+            for surface, one in shown.items():
+                for block in one.blocks:
+                    with self.subTest(name, surface=surface, block=block.text[:40]):
+                        self.assertNotIn("...", block.text, "a text that code makes is cut only at the end of a sentence, and these are all shorter than their room")
+        case, plan = self.fixtures()["a change with a long risk"]
+        for surface, text in (("card", " ".join(block["text"] for block in card_of(case, plan)["body"] if block.get("id") == "risk")), ("letter", read(surfaces(case, plan)["letter"]))):
+            self.assertIn("Connections that need more than 2 units are refused", text, surface)
+            self.assertNotIn("Everything that connects through it slows down", text, f"{surface}: a long risk of a change is cut at the end of a sentence, and the page has all of it")
+
+
 class EverySurfaceReadsAsSentences(unittest.TestCase):
     """The lint of the words (test_words) holds the new sentences too: voice, whole sentences, no abbreviated date and no repeated sentence."""
 
