@@ -486,7 +486,11 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
         halve = {"title": "Halve the hours", "gives_up": "Half of the hours.", "in_place": True,
                  "change": {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "quantity", "from": 720, "to": 360}}], "how": "Halve them."}}
         lower = {"title": "Lower the units to one", "gives_up": "Three of the four units.", "in_place": True, "change": reduce(to=1)}
-        for way, estimate in ((LITE, True), (REMOVE, False), (halve, False), (lower, False)):
+        gone = {"title": "Use the free tier", "gives_up": "Everything that the free tier does not have.", "in_place": False,
+                "change": {"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "Make it again on the free tier."}}
+        # A switch whose effect says `none` (the new price has no counterpart for the charge) is priced as an assumed share with nothing remaining, so it is an estimate; a removal, which says the same of the
+        # bill, is not: there it is the bill alone that says so.
+        for way, estimate in ((LITE, True), (REMOVE, False), (halve, False), (lower, False), (gone, True)):
             with self.subTest(way["title"]):
                 (kept,) = checked(reduce(others=[way]), price=priced_by_the_bill()).ways["r1"]["others"]
                 self.assertEqual(("lowUsd" in kept, kept.get("estimate", False)), (True, estimate))

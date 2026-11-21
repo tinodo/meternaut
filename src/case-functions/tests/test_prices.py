@@ -811,14 +811,15 @@ class TheEmptyRegion(unittest.TestCase):
 
 
 class TheOffers(unittest.TestCase):
-    def test_the_register_names_the_prices_that_were_shown_for_the_meter_and_for_no_other(self):
-        estate, box = priced(also=(meter(name="Light Hours"),))
+    def test_the_register_names_the_prices_that_were_shown_for_the_meter_and_for_the_meters_that_share_its_list_and_for_no_other(self):
+        estate, box = priced(also=(meter(name="Light Hours"), meter(name="Data Units", unit="1 GB")))
         self.assertEqual(box.offers, {})
-        ask(box, "price_alternatives", meter="m1")
-        self.assertEqual(box.offers, {"m1": {"p1", "p2", "p3", "p4"}}, "the rows of the answer, and nothing for m2, which was not asked about")
+        ask(box, "price_alternatives", meter="m2")
+        # Light Hours (m3) shares the product and the unit of Fixed Hours (m2), so the list that was shown for the one is the list of the other; Data Units (m1) is billed in another unit.
+        self.assertEqual(box.offers, {"m2": {"p1", "p2", "p3", "p4"}, "m3": {"p1", "p2", "p3", "p4"}}, "the rows of the answer, for the meter and for the one that shares its list, and nothing for m1, which is in another unit")
         estate.failure = 500
-        ask(box, "price_alternatives", meter="m2", within="service")
-        self.assertEqual(sorted(box.offers), ["m1"], "a read that failed offers nothing")
+        ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertEqual(sorted(box.offers), ["m2", "m3"], "a read that failed offers nothing")
 
     def test_only_the_prices_of_the_pages_that_were_shown_are_offered_and_a_price_with_steps_is_never_one(self):
         estate, box = priced()
@@ -832,6 +833,89 @@ class TheOffers(unittest.TestCase):
         while offset is not None:
             offset = ask(box, "price_alternatives", meter="m1", offset=offset).get("next_offset")
         self.assertEqual((box.offers["m1"], len(box.offers["m1"])), (set(box.prices), 100), "every price of the table, and none of the price with steps")
+
+
+def handle_of(box, name):
+    """The handle of the meter that the bill names `name`: the handles follow the order of the cost, and meters that cost the same follow the order of their words."""
+    return next(handle for handle, held in box.meters.items() if held.words[2] == name)
+
+
+class TheMetersThatShareAList(unittest.TestCase):
+    """The prices that were shown for one meter are the prices of its product in its unit, and so they are the prices of every other meter of the same resource that has the same service, product and unit.
+    The registers of the run (offers, retail and ages) say so; the answer of the tool does not change."""
+
+    def two_resources(self):
+        """Two resources, each billed for Fixed Hours and for Light Hours over the 7 days of priced()."""
+        estate = PricedEstate()
+        found = widgets(2)
+        estate.rows, estate.cost_rows, estate.definitions = found.rows, found.cost_rows, found.definitions
+        for resource in estate.rows:
+            for words in (FIXED, meter(name="Light Hours")):
+                for n in range(7):
+                    estate.bill.append((SUB, dt.date(2026, 10, 28) + dt.timedelta(days=n), resource["id"].lower(), "Example Service", words, 10.0, 24.0))
+        box = toolbox(estate)
+        ask(box, "list_resources", type=WIDGET)
+        for handle in ("r1", "r2"):
+            ask(box, "cost_meters", handle=handle, days=7)
+        return estate, box
+
+    def test_what_was_shown_for_one_meter_counts_for_the_meters_of_its_resource_that_share_its_list_each_with_the_list_price_of_its_own_line(self):
+        estate, box = priced(also=(meter(name="Light Hours"), meter(name="Heavy Hours")))
+        fixed, light, heavy = (handle_of(box, name) for name in ("Fixed Hours", "Light Hours", "Heavy Hours"))
+        ask(box, "price_alternatives", meter=heavy)
+        self.assertEqual(box.offers, dict.fromkeys((fixed, light, heavy), {"p1", "p2", "p3", "p4"}), "the four lines in the unit of the meters, for the meter that was asked and for the two that were not")
+        self.assertEqual(box.retail, {fixed: 0.5, light: 0.25, heavy: 1.0}, "the list price of the line of each meter, as an ask for that meter would have found it")
+        self.assertEqual((len(estate.price_calls), box.ages), (1, {}), "no second read of the list, and a read of the list has no age")
+        ask(box, "price_alternatives", meter=fixed)
+        self.assertEqual((len(estate.price_calls), sorted(box.offers), box.retail), (1, sorted((fixed, light, heavy)), {fixed: 0.5, light: 0.25, heavy: 1.0}), "an ask for a meter that was registered for changes nothing")
+
+    def test_the_answer_for_the_meter_that_was_asked_is_the_same_with_or_without_the_meters_that_share_its_list(self):
+        alone = ask(priced()[1], "price_alternatives", meter="m1")
+        estate, box = priced(also=(meter(name="Light Hours"),))
+        self.assertEqual(ask(box, "price_alternatives", meter="m1"), alone)
+
+    def test_a_meter_of_another_unit_another_product_or_another_service_is_never_touched(self):
+        others = (meter(name="Data Units", unit="1 GB"), meter(subcategory="Premium Tier", name="Elite Hours"), meter(category="Other Compute", name="Spare Hours"))
+        estate, box = priced(also=(meter(name="Light Hours"), *others))
+        fixed, light = handle_of(box, "Fixed Hours"), handle_of(box, "Light Hours")
+        ask(box, "price_alternatives", meter=fixed)
+        self.assertEqual((sorted(box.offers), sorted(box.retail), box.ages), (sorted((fixed, light)), sorted((fixed, light)), {}), "the unit, the product and the service are the words of the list")
+        self.assertEqual(sorted(box.meters), sorted(("m1", "m2", "m3", "m4", "m5")), "the other meters are known to the run, and no register of theirs was made")
+
+    def test_a_meter_of_another_resource_is_never_touched_and_what_was_shown_for_it_is_registered_when_it_is_asked(self):
+        estate, box = self.two_resources()
+        mine = {name: next(handle for handle, held in box.meters.items() if held.scope == "r1" and held.words[2] == name) for name in ("Fixed Hours", "Light Hours")}
+        theirs = {name: next(handle for handle, held in box.meters.items() if held.scope == "r2" and held.words[2] == name) for name in ("Fixed Hours", "Light Hours")}
+        ask(box, "price_alternatives", meter=mine["Fixed Hours"])
+        self.assertEqual((sorted(box.offers), sorted(box.retail)), (sorted(mine.values()),) * 2, "the other resource has the same words and the same list, and no register")
+        ask(box, "price_alternatives", meter=theirs["Fixed Hours"])
+        self.assertEqual((sorted(box.offers), sorted(box.retail), len(estate.price_calls)), (sorted((*mine.values(), *theirs.values())),) * 2 + (1,), "asked, it registers for its own resource, from the same list")
+
+    def test_a_meter_that_shares_the_list_but_has_no_one_list_price_loses_the_one_that_it_had_and_the_meter_that_was_asked_keeps_its_own(self):
+        for name, more in (("lines that disagree", line("Plus", "Light Hours", 0.6)), ("steps", line("Basic", "Light Hours", 0.2, tier=100))):
+            with self.subTest(name):
+                estate, box = priced(also=(meter(name="Light Hours"),))
+                ask(box, "price_alternatives", meter="m1")
+                self.assertEqual(box.retail, {"m1": 0.5, "m2": 0.25})
+                estate.lines.append(more)  # a read of the whole service finds it, and the read of the product that was kept does not
+                ask(box, "price_alternatives", meter="m1", within="service")
+                self.assertEqual(box.retail, {"m1": 0.5}, "the list itself says that the other meter has no one price to compare with, as it does when that meter is asked")
+
+    def test_a_meter_that_shares_the_list_and_whose_line_a_read_did_not_find_keeps_the_list_price_that_it_had(self):
+        estate, box = priced(also=(meter(name="Light Hours"),))
+        ask(box, "price_alternatives", meter="m1")
+        estate.page_size = 1
+        estate.lines.insert(0, estate.lines.pop())  # the other product first: a read of the whole service that ends at its first page does not reach the lines of the meters
+        with mock.patch.object(prices, "MAX_PAGES", 1):
+            answer = ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertEqual((answer["match"], answer["complete"], box.retail), ("none", False, {"m1": 0.5, "m2": 0.25}), "a read that was cut says nothing against the price of a meter")
+
+    def test_the_line_of_a_meter_that_shares_the_list_is_offered_for_it_whether_or_not_the_page_that_was_shown_holds_it(self):
+        estate, box = priced(also=(meter(name="Light Hours"),))
+        answer = ask(box, "price_alternatives", meter="m1", offset=2)
+        self.assertEqual([found["price"] for found in prices_of(answer)] + [answer["current"]["line"]], ["p1", "p2", "p3"], "the page shows the two dearest lines, and the line of the meter itself as its current line")
+        self.assertEqual(box.offers, {"m1": {"p1", "p2", "p3"}, "m2": {"p1", "p2", "p3", "p4"}}, "the page and the line of the meter that was asked are shown for both, and p4 is the line of the other meter")
+        self.assertEqual(box.prices["p4"].meter, "Light Hours")
 
 
 class TheArguments(unittest.TestCase):
