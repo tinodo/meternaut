@@ -630,7 +630,7 @@ def _price_alternatives(row: dict, arguments: dict) -> dict:
     page = PRICE_LIST[offset:offset + 40]
     more = offset + len(page) < len(PRICE_LIST)
     return {"meter": "m1", "service": _service(row), "region": REGION, "within": arguments["within"] or "product", "unit": METER[-1], "match": "found", "lines": len(PRICE_LIST), "other_units": 0,
-            "complete": True, "offset": offset, "returned": len(page), **({"next_offset": offset + len(page)} if more else {}), "same": {"product": METER[0], "region": REGION}, "cols": list(PRICE_COLUMNS),
+            "complete": True, "source": "list", "offset": offset, "returned": len(page), **({"next_offset": offset + len(page)} if more else {}), "same": {"product": METER[0], "region": REGION}, "cols": list(PRICE_COLUMNS),
             "rows": [[f"p{offset + place + 1}", sku, name, _number(price)] for place, (sku, name, price) in enumerate(page)],
             "current": {"line": "p2", "retail": _number(retail), **({"paid": _number(paid)} if paid is not None else {}), "rate_ratio": None if paid is None else round(paid / retail, 4)}}
 

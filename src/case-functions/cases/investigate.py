@@ -856,6 +856,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.owners = out.owners or OwnerReader(s.arm, s.clock())
         toolbox.owners = out.owners.sharing(max_reads=OWNER_READS * len(plan), seconds=OWNER_SECONDS * len(plan))
     toolbox.window, toolbox.backfill = looked, assumed
+    toolbox.emit = h.emit  # a line of the History for each try that reaches the price list (events.PRICE_KINDS)
     out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
@@ -884,6 +885,17 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
            **({"beats": len(plan)} if focused else {}))
     if remembered is None:
         note(activity.UNREADABLE)
+    # The price book is filled before the first question: the list is read for the products of the dearest meters that it does not hold fresh, with no model call and no call of a tool of the run
+    # (Toolbox.warm_prices). It never fails the run, and it has no effect when the store has no book.
+    warm = getattr(toolbox, "warm_prices", None)
+    if warm is not None:
+        try:
+            warmed_up = warm()
+        except Exception as error:  # noqa: BLE001 (a warm-up never fails the run)
+            note(f"the price book could not be warmed ({type(error).__name__})")
+        else:
+            if warmed_up is not None:
+                note(f"the price book: {warmed_up[0]} products read from the price list, {warmed_up[1]} already in the book, {warmed_up[2]} not read")
 
     def finished(ok: bool, **fields: object) -> None:
         out.seconds = int(s.monotonic() - began)

@@ -869,7 +869,8 @@ class TheSource(unittest.TestCase):
         source = (support.APP_ROOT / "cases" / "prices.py").read_text(encoding="utf-8")
         self.assertEqual([word for word in FORBIDDEN_WORDS if word in source.lower()], [])
         self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", source.lower()), [])
-        self.assertEqual(sorted(re.findall(r"^(?:from|import) ([\w.]+)", source, re.M)), [".http", "__future__", "dataclasses", "math", "re", "time", "typing", "urllib.parse"])
+        self.assertEqual(sorted(re.findall(r"^(?:from|import) ([\w.]+)", source, re.M)), [".http", "__future__", "base64", "dataclasses", "json", "math", "re", "time", "typing", "urllib.parse", "zlib"],
+                         "base64, json and zlib are the standard library: the text that the price book keeps (pack, unpack) is made here")
 
 
 if __name__ == "__main__":
