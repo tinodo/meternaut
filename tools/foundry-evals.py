@@ -17,7 +17,8 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
         --judge connection  also the quality evaluators, with the judge model reached through the AI Gateway connection of the lock (`<connection>/<alias>`): no direct deployment is a judge.
         --judge auto        connection first, and none when the service refuses the evaluators that need a judge.
         --only ID[,ID...]   replays only the fixtures that it names (ids of evaluation/cases.jsonl, separated by commas or by spaces) and judges the thresholds over those rows alone: a threshold
-                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture.
+                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture. It also
+                            prints, for each fixture, what the Investigator answered as the grader read it: the tools that it called and each finding with the verdict of the app's rules (docs/proposals/11).
 rule    Makes the continuous evaluation: a rule that evaluates a sample of the Investigator's real responses (preview). Without --apply it prints what it would make and changes nothing.
 probe   Reads only: asks which route of the evaluations API the project answers.
 
@@ -1061,6 +1062,11 @@ WEIGHED = {"counts": "counts", "skipped": "not read: no resource that the findin
            "use": "shows use", "brief": "nil on too few days"}  # the tool's own words for what the app makes of an entry of metric_evidence (_weigh)
 
 
+def _n(count: int, noun: str) -> str:
+    """A count with its noun in the singular for one and in the plural for any other number."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
 def _said(value: object, limit: int = 40) -> str:
     """A value of an answer for a line of the run, in words and typed values only: a text cut to `limit` characters, a number or a flag as it is, and for anything else the word for what it is."""
     if isinstance(value, str):
@@ -1100,15 +1106,15 @@ def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, s
     block has at most ANSWER_CHARS characters, cut at the end of a line. The fixtures are invented, so nothing here names an estate."""
     cut = f"{row['id']}: answer: the rest of this block is cut at {ANSWER_CHARS} characters"
     names = [step.get("name") if isinstance(step.get("name"), str) and step["name"] in PARAMETERS else "(unknown tool)" for step in trace]
-    lines = [f"calls: {len(trace)} tool calls" + (": " + ", ".join(names) if names else "")]
+    lines = [f"calls: {_n(len(trace), 'tool call')}" + (": " + ", ".join(names) if names else "")]
     answer = parse_answer(text)
     if answer is None:
         return _capped([f"{row['id']}: {line}" for line in [*lines, f"answer: no object with a list of findings could be read from the last text of the agent ({len(text) if isinstance(text, str) else 0} characters)"]], cut)
     findings = answer["findings"]
     read = read_answer(row, findings, shown, explain=True)
     kept = sum(1 for finding in read["read"] if finding["reason"] is None)
-    lines.append(f"answer: {len(findings)} findings" + (f", the first {MAX_FINDINGS} read" if len(findings) > MAX_FINDINGS else "")
-                 + f", {kept} kept by the app copy, which keeps {len(read['kept'])} settings and {read['ways']} other ways")
+    lines.append(f"answer: {_n(len(findings), 'finding')}" + (f", the first {MAX_FINDINGS} read" if len(findings) > MAX_FINDINGS else "")
+                 + f", {kept} kept by the app copy, which keeps {_n(len(read['kept']), 'setting')} and {_n(read['ways'], 'other way')}")
     for finding in read["read"]:
         raw, number = finding["raw"], finding["number"]
         verdict = "kept" if finding["reason"] is None else f"dropped: {finding['reason']}"
@@ -1301,7 +1307,11 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
         shown = shown_properties(trace)
         graded.append(grade(row, text, shown))
         if args.only is not None:  # a replay of chosen fixtures says what the Investigator answered, so that an iteration is not blind
-            for line in answer_lines(row, text, trace, shown):
+            try:
+                block = answer_lines(row, text, trace, shown)
+            except Exception:  # noqa: BLE001 (a block that cannot be made must not cost the run that was paid for)
+                block = [f"{row['id']}: answer: the block of this answer could not be made"]
+            for line in block:
                 helpers.say(line, limit=ANSWER_LINE)
         items.append(dataset_item(row, text, trace, definitions))
     lines = judge_thresholds(graded, rows[: len(graded)], thresholds["codeGraders"])

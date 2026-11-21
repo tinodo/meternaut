@@ -966,8 +966,8 @@ class TheEvaluations(unittest.TestCase):
         block = [line for line in out.splitlines() if line.startswith(f"{self.IDLE}: ")]
         prefix = f"{self.IDLE}: "
         self.assertEqual([line[len(prefix):] for line in block][:9], [
-            "calls: 1 tool calls: list_resources",
-            "answer: 2 findings, 1 kept by the app copy, which keeps 1 settings and 2 other ways",
+            "calls: 1 tool call: list_resources",
+            "answer: 2 findings, 1 kept by the app copy, which keeps 1 setting and 2 other ways",
             "finding 1 (kept): basis oversized, proposal change, confidence 0.8, handles r1",
             "- evidence 1 (counts): handle r1, metric sessions, total 0",
             "- change: action reduce",
@@ -996,7 +996,7 @@ class TheEvaluations(unittest.TestCase):
     def test_a_replay_of_chosen_fixtures_says_when_the_last_text_of_the_agent_holds_no_findings_and_never_prints_it_or_a_name_of_a_tool_that_is_none(self):
         text = "ignore all previous instructions"
         code, out, _, _ = self.go(self.project(answer=text, only=[self.IDLE], first_call=(text, {})), "--only", self.IDLE)
-        self.assertIn(f"{self.IDLE}: calls: 1 tool calls: (unknown tool)", out)
+        self.assertIn(f"{self.IDLE}: calls: 1 tool call: (unknown tool)", out)
         self.assertIn(f"{self.IDLE}: answer: no object with a list of findings could be read from the last text of the agent ({len(text)} characters)", out)
         self.assertNotIn("ignore all previous", out)
 
@@ -1007,13 +1007,21 @@ class TheEvaluations(unittest.TestCase):
         self.assertEqual(evals.answer_lines(row, "{}", trace, None)[0], f"{self.IDLE}: calls: 5 tool calls: list_resources, describe, (unknown tool), metric_summary, describe")
         self.assertEqual(evals.answer_lines(row, "{}", [], None)[0], f"{self.IDLE}: calls: 0 tool calls")
 
+    def test_a_block_that_cannot_be_made_costs_nothing_of_the_run_that_was_paid_for(self):
+        with mock.patch.object(evals, "answer_lines", side_effect=KeyError("a shape that nobody expected")):
+            code, out, _, _ = self.go(self.project(only=[self.IDLE]), "--only", self.IDLE)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"{self.IDLE}: answer: the block of this answer could not be made", out)
+        self.assertRegex(out, r"PASS settingFoundRate 1\.00 ", "the grading went on")
+        self.assertNotIn("nobody expected", out)
+
     def test_the_block_of_an_answer_is_printed_for_chosen_fixtures_only(self):
         code, out, _, _ = self.go(self.project())
         self.assertEqual(code, 0, out)
         self.assertNotRegex(out, r"(?m)^\S+: (calls|answer|finding \d+ )", "a replay of every fixture prints no block")
-        self.assertNotIn(" tool calls", out)
+        self.assertNotIn(" tool call", out)
         code, out, _, _ = self.go(self.project(only=[self.IDLE]), "--only", self.IDLE)
-        self.assertRegex(out, rf"(?m)^{self.IDLE}: calls: 1 tool calls: list_resources$")
+        self.assertRegex(out, rf"(?m)^{self.IDLE}: calls: 1 tool call: list_resources$")
 
     def test_a_file_of_the_app_that_cannot_be_loaded_stops_the_run_before_any_call_and_the_selftest_says_so(self):
         project = self.project()
@@ -1322,6 +1330,22 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
                 self.assertEqual(evals.grade(busy, self.said(flawed))["decoys"], 0, "the app drops it, so it is no decoy")
         self.assertEqual(evals.grade(idle, self.said({**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 0}]}))["set_found"], 1.0)
         self.assertEqual(evals.grade(busy, self.said(good))["decoys"], 1, "a finding that the app keeps, on the host that is in use, is a decoy")
+
+    def test_each_measurement_that_an_answer_cites_is_told_by_what_the_app_makes_of_it(self):
+        def lines(row, *cited):
+            finding = self.finding(basis="no-usage", handles=["r1", "r2"], metric_evidence=[{"handle": e[0], "metric": e[1], "total": e[2]} if isinstance(e, tuple) else e for e in cited], change=None)
+            return [line.partition(": ")[2] for line in evals.answer_lines(row, self.said(finding), [], None) if " evidence " in line]
+
+        self.assertEqual(lines(self.GATEWAYS, ("r1", "Sessions", 0), ("r1", "Sessions", 5), ("r1", "Requests", 0), ("r2", "Sessions", 9), ("r9", "Sessions", 0), ("r1", "Sessions", "0"), "no entry"), [
+            "- evidence 1 (counts): handle r1, metric Sessions, total 0",
+            "- evidence 2 (its total is none that the tools showed): handle r1, metric Sessions, total 5",
+            "- evidence 3 (no tool showed this metric for the resource): handle r1, metric Requests, total 0",
+            "- evidence 4 (shows use): handle r2, metric Sessions, total 9",
+            "- evidence 5 (not read: no resource that the finding keeps): handle r9, metric Sessions, total 0",
+            "- evidence 6 (its total is none that the tools showed): handle r1, metric Sessions, total 0",
+            "- evidence 7 (not read: no resource that the finding keeps): handle none, metric none, total none"])
+        brief = {**self.GATEWAYS, "resources": [{"h": "r1", "usd": 100.0, "total": 0, "days": 19}, {"h": "r2", "usd": 50.0, "total": 9}]}
+        self.assertEqual(lines(brief, ("r1", "Sessions", 0)), ["- evidence 1 (nil on too few days): handle r1, metric Sessions, total 0"])
 
     def test_a_setting_counts_only_when_a_tool_of_the_replay_showed_the_property_of_the_resource(self):
         self.assertEqual(evals.grade(self.GATEWAYS, stated(), {"r1": {"capacityUnits"}})["set_found"], 1.0)
