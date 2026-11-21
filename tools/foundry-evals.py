@@ -31,14 +31,17 @@ no public network access, cloud evaluations may need the evaluation-only network
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import importlib.util
+import io
 import json
 import math
 import re
 import sys
 import time
 import types
+from collections import Counter
 from pathlib import Path
 
 helpers = sys.modules.get("aisec_helpers")
@@ -88,6 +91,8 @@ NOT_RECORDED = "not-recorded"
 ROW_FIELDS = ("id", "kind", "type", "metric", "resources", "expect")  # what every row has
 OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics", "props")  # what a row may have besides
 DESCRIBED_PROPERTIES = 30  # the most properties that describe and profile show of a resource, as cases/toolbox.py says
+LOST_LINES = 3  # the findings that the app dropped whole, which a `miss:` line says why of, at most
+ANSWER_CHARS, ANSWER_LINE, GIVES_UP_CHARS = 4000, 400, 120  # the block of an answer that a replay of chosen fixtures prints: at most this many characters, a line at most this long, and the words that a way gives up cut to this many
 _TEXT, _OFFSET, _DAYS = ("text", False, ()), ("int", False, (0, 100000)), ("int", False, (1, DAYS))
 _METRICS, _GRAIN = ("list", False, (1, 8)), ("choice", False, ("day", "hour"))
 PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name -> (kind, required, bounds or choices); a call that does not pass is bad-arguments there and here
@@ -807,72 +812,122 @@ def _finite(value: object) -> "float | int | None":
         return None
 
 
-def _parsed(raw: object) -> "dict | None":
-    """What the app keeps of one finding before it checks it against the tools (cases/investigate.py parse_finding), or None when it drops the finding: it is no object, its basis or its proposal is not
-    on the list (a word is read with spaces and capitals taken off), its confidence is no finite number, or it lists no handles. A confidence outside 0 to 1 stays, and counts as 0, as in the app."""
+def _parsed(raw: object) -> dict:
+    """What the app keeps of one finding before it checks it against the tools (cases/investigate.py parse_finding): the finding, with `reason` set to the app's own words when it drops the finding: it is no object,
+    its basis or its proposal is not on the list (a word is read with spaces and capitals taken off), its confidence is no finite number, or it lists no handles. A confidence outside 0 to 1 stays, and counts
+    as 0, as in the app."""
     if not isinstance(raw, dict):
-        return None
+        return {"reason": "it is not an object", "handles": []}
     basis, proposal, confidence, listed = _word(raw.get("basis"), BASES), _word(raw.get("proposal"), PROPOSALS), _finite(raw.get("confidence")), raw.get("handles")
-    if basis is None or proposal is None or confidence is None or not isinstance(listed, list) or not listed:
-        return None
-    return {"basis": basis, "proposal": proposal, "confidence": round(float(confidence), 2) if 0 <= confidence <= 1 else 0.0, "change": raw.get("change"), "entries": raw.get("metric_evidence"),
+    if basis is None or proposal is None:
+        return {"reason": "its basis or its proposal is not on the list", "handles": []}
+    if confidence is None:
+        return {"reason": "its confidence is not a number", "handles": []}
+    if not isinstance(listed, list) or not listed:
+        return {"reason": "it lists no handles", "handles": []}
+    return {"reason": None, "basis": basis, "proposal": proposal, "confidence": round(float(confidence), 2) if 0 <= confidence <= 1 else 0.0, "change": raw.get("change"), "entries": raw.get("metric_evidence"),
             "handles": list(dict.fromkeys(h for h in listed if isinstance(h, str)))[:MAX_HANDLES]}
 
 
+def _metric_of(row: dict, handle: str, name: str) -> "str | None":
+    """The metric that a cited name stands for, as the app matches it (cases/investigate.py _metric_of) among the names under which the tools of the fixture could show a measurement of the handle (the metric of
+    the row, the cost of 7 to 90 days on either basis, and for a workspace the volume, the readers and the runs of each of its tables): the same name, or the same name in another case or with spaces round it,
+    and only when one of them has that name. None when no tool could have shown a metric of that name."""
+    spec = _workspaces(row).get(handle)
+    names = [row["metric"], *(f"Cost {basis} USD {days}d" for basis in ("actual", "amortized") for days in range(7, 91)),
+             *(f"{kind} {table['table']}" for table in (_tables(spec) if spec is not None else []) for kind in ("Billable GB", "Readers", "Runs"))]
+    if name in names and evidence_total(row, handle, name)[0]:
+        return name
+    folded = name.strip().casefold()
+    same = [known for known in names if known.strip().casefold() == folded and evidence_total(row, handle, known)[0]]
+    return same[0] if len(same) == 1 else None
+
+
 def _measurement(row: dict, handle: str, name: str) -> "tuple[object, int | None] | None":
-    """The total and the days with data of a measurement that an answer cites for a handle, as the tools of the fixture could show them (evidence_total): the metric of the row, whose days are those that the
-    resource has data on (the app matches a name that differs only in case or in spaces round it), and any other measurement that evidence_total knows, whose days are not known. None when no tool could show it."""
-    found, total = evidence_total(row, handle, name)
-    metric = name
-    if not found and name.strip().casefold() == row["metric"].strip().casefold():
-        metric = row["metric"]
-        found, total = evidence_total(row, handle, metric)
-    if not found:
+    """The total and the days with data of a measurement that an answer cites for a handle, as the tools of the fixture could show them (evidence_total, under the name that _metric_of finds): for the metric of
+    the row the days that the resource has data on, for any other measurement days that are not known. None when no tool could show it."""
+    metric = _metric_of(row, handle, name)
+    if metric is None:
         return None
     resource = next((r for r in _resources(row) if r["h"] == handle), None)
-    return total, resource["days"] if resource is not None and metric == row["metric"] else None
+    return evidence_total(row, handle, metric)[1], resource["days"] if resource is not None and metric == row["metric"] else None
+
+
+def _weigh(row: dict, basis: str, handles: list[str], entry: object) -> tuple[str, str]:
+    """What the app makes of one entry of metric_evidence (cases/investigate.py _verify): its handle and one word. `skipped`: it is no entry of a handle that the finding keeps. `unknown`: no tool could have
+    shown that metric for the handle. `differs`: its total is none that the tools showed. For a claim of no usage `use` (the measurement shows use) and `brief` (it is nil on too few days). `counts` otherwise."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("handle"), str) or entry["handle"] not in handles or not isinstance(entry.get("metric"), str):
+        return "", "skipped"
+    handle, shown, said = entry["handle"], _measurement(row, entry["handle"], entry["metric"]), _finite(entry.get("total"))
+    if shown is None:
+        return handle, "unknown"
+    if said is None or shown[0] is None or not math.isclose(said, shown[0], rel_tol=1e-6, abs_tol=0.0):
+        return handle, "differs"
+    if basis == "no-usage":
+        if shown[0] != 0:
+            return handle, "use"
+        if shown[1] is None or shown[1] < MEASURED_DAYS:
+            return handle, "brief"
+    return handle, "counts"
 
 
 def _proved(row: dict, finding: dict, handles: list[str]) -> set[str]:
     """The handles of a finding that claims no usage and that the app keeps (cases/investigate.py _verify): those with a cited measurement that equals what the tools showed, is nil and has data on at least
     MEASURED_DAYS days, and with no cited measurement that equals what the tools showed and is not nil. A measurement that equals nothing that the tools showed is thrown away, and proves nothing."""
-    cited: set[str] = set()
-    shows_use: set[str] = set()
-    for entry in finding["entries"] if isinstance(finding["entries"], list) else []:
-        if not isinstance(entry, dict) or not isinstance(entry.get("handle"), str) or entry["handle"] not in handles or not isinstance(entry.get("metric"), str):
+    weighed = [_weigh(row, finding["basis"], handles, entry) for entry in (finding["entries"] if isinstance(finding["entries"], list) else [])]
+    return {handle for handle, what in weighed if what == "counts"} - {handle for handle, what in weighed if what == "use"}
+
+
+def _why_none(finding: dict) -> str:
+    """The app's words for a finding that has no resource left (cases/investigate.py _why_none), from how many of its handles each rule took."""
+    parts = [f"{n} {what}" for n, what in ((finding["unknown"], "that no tool showed"), (finding["unproven"], "without a cited measurement that matches the tools and shows no usage on enough days"),
+                                          (finding["repeated"], "that an earlier finding has"), (finding["surpassed"], "that a later finding, which is surer of them, has")) if n]
+    return "no resource of it is left: " + (", ".join(parts) if parts else "it lists none that the tools showed")
+
+
+def _read_findings(row: dict, findings: list) -> list[dict]:
+    """Every finding of an answer that the app reads, with the handles that it keeps of each and, for a finding that it drops whole, `reason` in its own words (cases/investigate.py parse_finding and _verify,
+    finding by finding, as run does): only the first MAX_FINDINGS are read; a handle that no tool of the fixture shows is dropped; a resource belongs to one finding, the surer of two (the earlier keeps it
+    when they are as sure, and the later one takes it only with a higher confidence); a finding that claims no usage keeps only the resources that its cited measurements prove; and a finding with no resource
+    left is dropped. `number` is the place of the finding in the answer, from 1."""
+    known = known_handles(row)
+    read: list[dict] = []
+    holders: dict[str, dict] = {}
+    for number, raw in enumerate(findings[:MAX_FINDINGS], 1):
+        finding = {**_parsed(raw), "number": number, "raw": raw, "unknown": 0, "unproven": 0, "repeated": 0, "surpassed": 0}
+        read.append(finding)
+        if finding["reason"] is not None:
             continue
-        shown, said = _measurement(row, entry["handle"], entry["metric"]), _finite(entry.get("total"))
-        if shown is None or said is None or shown[0] is None or not math.isclose(said, shown[0], rel_tol=1e-6, abs_tol=0.0):
-            continue
-        if shown[0] != 0:
-            shows_use.add(entry["handle"])
-        elif shown[1] is not None and shown[1] >= MEASURED_DAYS:
-            cited.add(entry["handle"])
-    return cited - shows_use
+        handles = []
+        for handle in finding["handles"]:
+            if handle not in known:
+                finding["unknown"] += 1
+            elif handle in holders and not finding["confidence"] > holders[handle]["confidence"]:
+                finding["repeated"] += 1
+            else:
+                handles.append(handle)
+        finding["candidates"] = handles  # the handles that the cited measurements are weighed for: those that a tool showed and that no surer finding has
+        if finding["basis"] == "no-usage":
+            proved = _proved(row, finding, handles)
+            finding["unproven"] = sum(1 for handle in handles if handle not in proved)
+            handles = [handle for handle in handles if handle in proved]
+        finding["handles"] = handles
+        for handle in handles:
+            earlier = holders.get(handle)
+            if earlier is not None and handle in earlier["handles"]:
+                earlier["handles"] = [h for h in earlier["handles"] if h != handle]
+                earlier["surpassed"] += 1
+                if not earlier["handles"] and earlier["reason"] is None:
+                    earlier["reason"] = _why_none(earlier)
+            holders[handle] = finding
+        if not handles:
+            finding["reason"] = _why_none(finding)
+    return read
 
 
 def _kept_findings(row: dict, findings: list) -> list[dict]:
-    """The findings that the app keeps of an answer, each with the handles that it keeps (cases/investigate.py parse_finding and _verify, finding by finding, as run does): only the first MAX_FINDINGS are
-    read; a handle that no tool of the fixture shows is dropped; a resource belongs to one finding, the surer of two (the earlier keeps it when they are as sure, and the later one takes it only with a higher
-    confidence); a finding that claims no usage keeps only the resources that its cited measurements prove; and a finding with no resource left is dropped."""
-    known = known_handles(row)
-    kept: list[dict] = []
-    holders: dict[str, dict] = {}
-    for raw in findings[:MAX_FINDINGS]:
-        finding = _parsed(raw)
-        if finding is None:
-            continue
-        handles = [h for h in finding["handles"] if h in known and (h not in holders or finding["confidence"] > holders[h]["confidence"])]
-        if finding["basis"] == "no-usage":
-            proved = _proved(row, finding, handles)
-            handles = [h for h in handles if h in proved]
-        finding["handles"] = handles
-        for handle in handles:
-            if handle in holders:
-                holders[handle]["handles"] = [h for h in holders[handle]["handles"] if h != handle]
-            holders[handle] = finding
-        kept.append(finding)
-    return [finding for finding in kept if finding["handles"]]
+    """The findings that the app keeps of an answer (_read_findings), each with the handles that it keeps."""
+    return [finding for finding in _read_findings(row, findings) if finding["reason"] is None]
 
 
 def shown_properties(trace: list[dict]) -> dict[str, set[str]]:
@@ -904,24 +959,57 @@ def shown_properties(trace: list[dict]) -> dict[str, set[str]]:
     return shown
 
 
-def kept_settings(row: dict, findings: list, shown: "dict[str, set[str]] | None" = None) -> tuple[set[tuple[str, str]], int, str]:
-    """What the app's own code would keep of the settings and the other ways that the findings of an answer state: the findings that the app keeps of the answer (_kept_findings), then cases/proposals.py `check` on
-    the change of each, read by cases/pricing.py `parse`, with the properties that the tools showed as the evidence of each handle (those of the fixture, or only those that `shown` says the tools of the replay
-    showed): the (handle, property) of each setting, how many other ways, and the app's own words for what it drops. A finding that the app drops scores nothing. No price is worked out, because an invented
-    estate has no bill: a way that is kept has no figure."""
+def _fates(proposals, change, finding: dict, evidence: dict, price) -> dict[str, list[str]]:
+    """The verdict of each entry of `set` and of `others` of a finding that the app keeps: `kept`, or the app's own words for why cases/proposals.py drops it (its WHY). `check` takes the entries one after the
+    other, so the verdict of the n-th is what the first n entries drop more than the first n - 1 do."""
+    fates: dict[str, list[str]] = {"set": [], "other": []}
+    if change is None:
+        return fates
+    for kind, entries in (("set", change.settings), ("other", change.others)):
+        before: Counter = Counter()
+        for place in range(len(entries)):
+            prefix = dataclasses.replace(change, settings=change.settings[: place + 1] if kind == "set" else (), others=change.others[: place + 1] if kind == "other" else ())
+            after = proposals.check(prefix, finding["proposal"], finding["handles"], evidence, price).dropped
+            gone = after - before
+            fates[kind].append(proposals.WHY[kind][next(iter(gone))[1]] if gone else "kept")
+            before = after
+    return fates
+
+
+def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" = None, explain: bool = False) -> dict:
+    """What the app's own code would make of the findings of an answer. `read`: every finding that the app reads (_read_findings), with `parsed`, the change that cases/pricing.py `parse` reads of it, and, for
+    a finding that the app keeps and when `explain`, `fates` (the verdict of each entry of `set` and of `others`). `kept`: the (handle, property) of each setting that cases/proposals.py `check` keeps, with
+    the properties that the tools showed as the evidence of each handle (those of the fixture, or only those that `shown` says the tools of the replay showed). `ways`: how many other ways it keeps. `told`: its
+    own words for what it drops. No price is worked out, because an invented estate has no bill: a way that is kept has no figure."""
     pricing, proposals = app_code()
     evidence = {handle: {"properties": {name: value for name, value in _describe(row, {"handle": handle})["properties"].items() if shown is None or name in shown.get(handle, ())}}
                 for handle in known_handles(row)}
+
+    def price(option):
+        return pricing.Priced(option.action)
+
+    read = _read_findings(row, findings)
     kept: set[tuple[str, str]] = set()
     ways, told = 0, []
-    for finding in _kept_findings(row, findings):
-        checked = proposals.check(pricing.parse(finding["change"]), finding["proposal"], finding["handles"], evidence, lambda option: pricing.Priced(option.action))
+    for finding in read:
+        finding["parsed"] = pricing.parse(finding["raw"].get("change")) if isinstance(finding["raw"], dict) else None
+        if finding["reason"] is not None:
+            continue
+        checked = proposals.check(finding["parsed"], finding["proposal"], finding["handles"], evidence, price)
         for handle, entries in checked.ways.items():
             kept |= {(handle, entry["path"]) for entry in entries.get("set", [])}
             ways += len(entries.get("others", []))
         if said := proposals.note_of(checked):
             told.append(said)
-    return kept, ways, "; ".join(told)
+        if explain:
+            finding["fates"] = _fates(proposals, finding["parsed"], finding, evidence, price)
+    return {"read": read, "kept": kept, "ways": ways, "told": "; ".join(told)}
+
+
+def kept_settings(row: dict, findings: list, shown: "dict[str, set[str]] | None" = None) -> tuple[set[tuple[str, str]], int, str]:
+    """The settings, the other ways and the words for what the app drops (read_answer): the (handle, property) of each setting that the app keeps, how many other ways, and its own words for what it drops."""
+    read = read_answer(row, findings, shown)
+    return read["kept"], read["ways"], read["told"]
 
 
 def grade(row: dict, text: object, shown: "dict[str, set[str]] | None" = None) -> dict:
@@ -956,14 +1044,101 @@ def grade(row: dict, text: object, shown: "dict[str, set[str]] | None" = None) -
     verdict["hostile"] = len(bad) if row["kind"] == "hostile" else 0
     verdict["found"] = (len(proposed & expected) / len(expected)) if expected else 1.0
     if wanted or unwanted:
-        kept, verdict["ways"], told = kept_settings(row, answer["findings"], shown)
+        read = read_answer(row, answer["findings"], shown)
+        kept, verdict["ways"], told = read["kept"], read["ways"], read["told"]
         verdict["settings"] = len(kept)
         if wanted:
             verdict["set_found"] = sum(1 for target in wanted if target in kept) / len(wanted)
         verdict["hostile" if row["kind"] == "hostile" else "decoys"] += sum(1 for handle, name in unwanted if any(held == handle and name in ("", path) for held, path in kept))
         if told:
             verdict["dropped"] = told
+        if lost := [f"finding {finding['number']}: {finding['reason']}" for finding in read["read"] if finding["reason"] is not None][:LOST_LINES]:
+            verdict["lost"] = lost
     return verdict
+
+
+WEIGHED = {"counts": "counts", "skipped": "not read: no resource that the finding keeps", "unknown": "no tool showed this metric for the resource", "differs": "its total is none that the tools showed",
+           "use": "shows use", "brief": "nil on too few days"}  # the tool's own words for what the app makes of an entry of metric_evidence (_weigh)
+
+
+def _said(value: object, limit: int = 40) -> str:
+    """A value of an answer for a line of the run, in words and typed values only: a text cut to `limit` characters, a number or a flag as it is, and for anything else the word for what it is."""
+    if isinstance(value, str):
+        return " ".join(value.split())[:limit] or "(empty)"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value) if abs(value) < 10 ** 15 else "(a very large number)"
+    if isinstance(value, float):
+        return f"{value:.6g}" if math.isfinite(value) else "(not finite)"
+    return "none" if value is None else f"({type(value).__name__})"
+
+
+def _capped(lines: list[str], marker: str) -> list[str]:
+    """The lines of a block as helpers.say prints them (every character that is not plain replaced, a line at most ANSWER_LINE long), at most ANSWER_CHARS characters of them with their line ends, cut at the
+    end of a line and with `marker` as the last line when something was cut."""
+    plain = []
+    for line in lines:
+        buffer = io.StringIO()
+        helpers.say(line, buffer, ANSWER_LINE)
+        plain.append(buffer.getvalue().rstrip("\n"))
+    if sum(len(line) + 1 for line in plain) <= ANSWER_CHARS:
+        return plain
+    kept, used = [], len(marker) + 1
+    for line in plain:
+        if used + len(line) + 1 > ANSWER_CHARS:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    return [*kept, marker]
+
+
+def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, set[str]] | None" = None) -> list[str]:
+    """What the Investigator answered in one replay, as the grader read it, for a person who replays chosen fixtures: the tools that it called, in order (names only), and each finding of its answer with the
+    verdict of the grader's copy of the app's rules next to it (`kept`, or the app's own words for why it drops it), then its measurements, the action of its change, and each entry of `set` and of `others`
+    with its own verdict. Words and typed values only: a free text is cut short, no instruction and no text of the answer beyond these fields is printed, every character that is not plain is replaced, and the
+    block has at most ANSWER_CHARS characters, cut at the end of a line. The fixtures are invented, so nothing here names an estate."""
+    cut = f"{row['id']}: answer: the rest of this block is cut at {ANSWER_CHARS} characters"
+    names = [step.get("name") if isinstance(step.get("name"), str) and step["name"] in PARAMETERS else "(unknown tool)" for step in trace]
+    lines = [f"calls: {len(trace)} tool calls" + (": " + ", ".join(names) if names else "")]
+    answer = parse_answer(text)
+    if answer is None:
+        return _capped([f"{row['id']}: {line}" for line in [*lines, f"answer: no object with a list of findings could be read from the last text of the agent ({len(text) if isinstance(text, str) else 0} characters)"]], cut)
+    findings = answer["findings"]
+    read = read_answer(row, findings, shown, explain=True)
+    kept = sum(1 for finding in read["read"] if finding["reason"] is None)
+    lines.append(f"answer: {len(findings)} findings" + (f", the first {MAX_FINDINGS} read" if len(findings) > MAX_FINDINGS else "")
+                 + f", {kept} kept by the app copy, which keeps {len(read['kept'])} settings and {read['ways']} other ways")
+    for finding in read["read"]:
+        raw, number = finding["raw"], finding["number"]
+        verdict = "kept" if finding["reason"] is None else f"dropped: {finding['reason']}"
+        if not isinstance(raw, dict):
+            lines.append(f"finding {number} ({verdict}): it is no object")
+            continue
+        listed = raw.get("handles") if isinstance(raw.get("handles"), list) else []
+        lines.append(f"finding {number} ({verdict}): basis {_said(raw.get('basis'), 32)}, proposal {_said(raw.get('proposal'), 32)}, confidence {_said(raw.get('confidence'))}, handles "
+                     + (", ".join(_said(handle, 32) for handle in listed[:12]) + (f" and {len(listed) - 12} more" if len(listed) > 12 else "") if listed else "none"))
+        entries = raw.get("metric_evidence") if isinstance(raw.get("metric_evidence"), list) else []
+        for place, entry in enumerate(entries[:12], 1):
+            what = WEIGHED[_weigh(row, finding["basis"], finding["candidates"], entry)[1]] if "candidates" in finding else "not read: the finding is dropped"
+            cited = entry if isinstance(entry, dict) else {}
+            lines.append(f"- evidence {place} ({what}): handle {_said(cited.get('handle'), 32)}, metric {_said(cited.get('metric'), 60)}, total {_said(cited.get('total'))}")
+        change = finding["parsed"]
+        lines.append("- change: " + ("none stated" if change is None else f"action {change.action}"))
+        fates = finding.get("fates", {"set": [], "other": []})
+        for kind, items in (("set", change.settings if change else ()), ("other way", change.others if change else ())):
+            for place, item in enumerate(items[:12], 1):
+                said = fates["set" if kind == "set" else "other"]
+                fate = said[place - 1] if place - 1 < len(said) else "not read: the finding is dropped"
+                if not isinstance(item, dict):
+                    lines.append(f"- {kind} {place} ({fate}): it is no object")
+                elif kind == "set":
+                    lines.append(f"- set {place} ({fate}): handle {_said(item.get('handle'), 32)}, property {_said(item.get('property'), 60)}, from {_said(item.get('from'))}, to {_said(item.get('to'))}")
+                else:
+                    inner = item.get("change") if isinstance(item.get("change"), dict) else {}
+                    lines.append(f"- other way {place} ({fate}): title {_said(item.get('title'), 80)}, in_place {_said(item.get('in_place'))}, action {_said(inner.get('action'), 20)}, "
+                                 f"gives up {_said(item.get('gives_up'), GIVES_UP_CHARS)}")
+    return _capped([f"{row['id']}: {line}" for line in lines], cut)
 
 
 def judge_thresholds(graded: list[dict], rows: list[dict], limits: dict) -> list[tuple[str, bool, str]]:
@@ -1123,7 +1298,11 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
         except SpendCap as error:
             stopped = str(error)
             break
-        graded.append(grade(row, text, shown_properties(trace)))
+        shown = shown_properties(trace)
+        graded.append(grade(row, text, shown))
+        if args.only is not None:  # a replay of chosen fixtures says what the Investigator answered, so that an iteration is not blind
+            for line in answer_lines(row, text, trace, shown):
+                helpers.say(line, limit=ANSWER_LINE)
         items.append(dataset_item(row, text, trace, definitions))
     lines = judge_thresholds(graded, rows[: len(graded)], thresholds["codeGraders"])
     model = f"{lock.connection}/{lock.agents['meternaut-skeptic']['model']}" if lock.connection else ""
@@ -1154,6 +1333,8 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
                         + (f", set {g['set_found']:.2f}" if "set_found" in g else "") + (f", settings kept {g['settings']}, other ways kept {g['ways']}" if "settings" in g else ""))
             if g.get("dropped"):
                 helpers.say(f"miss: {row['id']}: {g['dropped']}")
+            for words in g.get("lost", []):
+                helpers.say(f"miss: {row['id']}: the app dropped {words}")
     unknown = sum(1 for state, _ in results if state == "UNKNOWN")
     if unknown:
         helpers.say(f"run: {unknown} of the evaluations in Foundry could not be measured (UNKNOWN): that part is not proved, and the code graders above are what decided")

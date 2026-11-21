@@ -697,22 +697,28 @@ class TheChecksOfAFinding(unittest.TestCase):
                          {"h": "r5", "usd": 95.0, "total": 0, "days": 20}]}
 
     @staticmethod
-    def app_keeps(row, findings):
-        """The findings that the app keeps, by its own parse_finding and _verify, on a toolbox that shows what the tools of the fixture could show: the metric of the row and the cost of each resource."""
+    def app_reads(row, findings):
+        """Every finding that the app reads, by its own parse_finding and _verify, on a toolbox that shows what the tools of the fixture could show: the metric of the row and the cost of each resource on
+        either basis."""
         evidence = {}
         for resource in evals._resources(row):
             handle, cost = resource["h"], evals.evidence_total(row, resource["h"], "Cost actual USD 30d")[1]
             evidence[handle] = {"metrics": {row["metric"]: {"total": resource["total"], "max": resource["total"], "average": resource["total"], "days_with_data": resource["days"], "days": 30, "unit": None,
                                                            "totals": [resource["total"]]},
-                                            "Cost actual USD 30d": {"total": cost, "max": None, "average": None, "days_with_data": None, "days": 30, "unit": None, "totals": [cost]}}}
+                                            **{f"Cost {basis} USD 30d": {"total": cost, "max": None, "average": None, "days_with_data": None, "days": 30, "unit": None, "totals": [cost]}
+                                               for basis in ("actual", "amortized")}}}
         box = types.SimpleNamespace(handles=dict.fromkeys(evals.known_handles(row)), evidence=evidence)
-        taken, holders, kept = set(), {}, []
+        taken, holders, read = set(), {}, []
         for number, raw in enumerate(findings[:agents.MAX_FINDINGS], 1):
             finding, handles, entries = investigate.parse_finding(number, raw)
             if finding.reason is None:
                 investigate._verify(finding, handles, entries, box, taken, holders)
-            kept.append(finding)
-        return [(finding.basis, finding.proposal, finding.confidence, finding.handles) for finding in kept if finding.reason is None and finding.handles]
+            read.append(finding)
+        return read
+
+    @classmethod
+    def app_keeps(cls, row, findings):
+        return [(finding.basis, finding.proposal, finding.confidence, finding.handles) for finding in cls.app_reads(row, findings) if finding.reason is None and finding.handles]
 
     def test_the_lists_and_the_caps_that_the_tool_repeats_are_the_apps_own(self):
         self.assertEqual((evals.BASES, evals.PROPOSALS, evals.MAX_HANDLES, evals.MAX_FINDINGS, evals.MEASURED_DAYS), (agents.BASES, agents.PROPOSALS, agents.MAX_HANDLES, agents.MAX_FINDINGS, brief.MEASURED_DAYS))
@@ -724,13 +730,14 @@ class TheChecksOfAFinding(unittest.TestCase):
         for value in (0, 1, 0.5, -1, 85, True, False, None, "0.5", float("nan"), float("inf"), -float("inf"), 10 ** 400, [1], {"a": 1}):
             self.assertEqual(evals._finite(value), investigate._number(value), repr(value))
 
-    def test_what_is_kept_of_the_findings_of_an_answer_is_what_the_app_keeps(self):
+    def answers(self):
+        """Answers of the Investigator that exercise every rule of the checks: what the app keeps of each is compared with what the tool keeps."""
         def finding(handles, *cited, basis="no-usage", proposal="delete", confidence=0.9, **more):
             return {"handles": handles, "basis": basis, "proposal": proposal, "confidence": confidence, "metric_evidence": [{"handle": h, "metric": m, "total": t} for h, m, t in cited], **more}
 
         zero, metric = ("r1", "Day Metric", 0), "Day Metric"
         cost = evals.evidence_total(self.ROW, "r1", "Cost actual USD 30d")[1]
-        answers = [
+        return [
             [finding(["r1"], zero)], [finding(["r1", "r2"], zero, ("r2", metric, 0))], [finding(["r2"], ("r2", metric, 3))], [finding(["r3"], ("r3", metric, 0))], [finding(["r4"], ("r4", metric, None))],
             [finding(["r5"], ("r5", metric, 0))], [finding(["r1"], zero, ("r1", "Cost actual USD 30d", cost))], [finding(["r1"], ("r1", " day metric ", 0))], [finding(["r1"], ("r1", "Other", 0))],
             [finding(["r1"], ("r1", metric, "0"))], [finding(["r1"], ("r1", metric, False))], [finding(["r1"], ("r1", metric, 0.0000001))], [finding(["r2"], ("r2", metric, 3.0000001))], [finding(["r1"])],
@@ -747,12 +754,31 @@ class TheChecksOfAFinding(unittest.TestCase):
             [finding(["r1", "r5"], zero, ("r5", metric, 0)), finding(["r5"], ("r5", metric, 0), confidence=0.95, proposal="investigate")],
             [finding(["r1", "r5"], zero, ("r5", metric, 0)), finding(["r2"], ("r2", metric, 3)), finding(["r1"], zero, basis="oversized", confidence=0.95, proposal="investigate")],
             [finding(["r2"], basis="duplicate")] * 7 + [finding(["r1"], zero)], [finding(["r2"], basis="duplicate")] * 8 + [finding(["r1"], zero)],
+            [finding(["r1"], zero, ("r1", "cost actual usd 30d", cost))], [finding(["r1"], zero, ("r1", "  COST ACTUAL USD 30D ", cost))], [finding(["r1"], zero, ("r1", "cost amortized usd 30d", cost))],
+            [finding(["r1"], zero, ("r1", "Cost  actual USD 30d", cost))], [finding(["r1"], ("r1", " DAY METRIC ", 0), ("r1", "cost actual usd 30d", cost))], [finding([5, None], zero)],
+            [finding(["r1"], zero, ("r1", "Cost actual USD 30d", cost), basis="oversized", proposal="change")], [finding(["r2"], ("r2", "cost actual usd 30d", 3), ("r2", "day metric", 3))],
         ]
+
+    def test_what_is_kept_of_the_findings_of_an_answer_is_what_the_app_keeps(self):
+        answers = self.answers()
         for number, answer in enumerate(answers):
             with self.subTest(answer=number):
                 kept = [(f["basis"], f["proposal"], f["confidence"], f["handles"]) for f in evals._kept_findings(self.ROW, answer)]
                 self.assertEqual(kept, self.app_keeps(self.ROW, answer), json.dumps(answer)[:300])
         self.assertTrue(any(self.app_keeps(self.ROW, answer) for answer in answers) and not all(self.app_keeps(self.ROW, answer) for answer in answers), "the answers keep some findings and drop others")
+
+    def test_the_reason_for_dropping_a_finding_whole_is_the_apps_own_words(self):
+        reasons = set()
+        for number, answer in enumerate(self.answers()):
+            with self.subTest(answer=number):
+                read = evals._read_findings(self.ROW, answer)
+                app = self.app_reads(self.ROW, answer)
+                self.assertEqual([(f["number"], f["reason"]) for f in read], [(f.number, f.reason) for f in app], json.dumps(answer)[:300])
+                reasons |= {f.reason for f in app if f.reason}
+        for words in ("it is not an object", "its basis or its proposal is not on the list", "its confidence is not a number", "it lists no handles", "no resource of it is left: 1 that no tool showed",
+                      "no resource of it is left: 1 without a cited measurement that matches the tools and shows no usage on enough days", "no resource of it is left: 1 that an earlier finding has",
+                      "no resource of it is left: 1 that a later finding, which is surer of them, has", "no resource of it is left: it lists none that the tools showed"):
+            self.assertIn(words, reasons, "the answers make the app drop a finding for each of its reasons")
 
 
 if __name__ == "__main__":
