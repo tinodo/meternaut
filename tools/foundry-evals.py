@@ -1160,11 +1160,19 @@ def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.Si
               for handle, (scope, days) in shown.items() if handle in numbered}
     prices = {handle: types.SimpleNamespace(service=_service(row), product=lines[0]["words"][1], sku=line["sku"], meter=line["meter"], unit=line["unit"], usd=line["usd"], region=REGION, tiers=1)
               for handle, line in listed}
-    if bill is not None:
-        return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, retail=bill["retail"], offers=bill["offers"], ages={})
     own = {handle: _own(listed, line["words"]) for handle, line in numbered.items()}
+    own_usd = {handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1}  # the list price of the line of a meter, when its line has one price
+    if bill is not None:
+        offers, retail = {handle: set(found) for handle, found in bill["offers"].items()}, dict(bill["retail"])
+        for asked in (handle for handle in bill["offers"] if handle in meters):
+            for other, kin in meters.items():  # what a tool showed for a meter counts for the meters of its resource that share its service, product and unit, each with its own line (cases/toolbox.py)
+                if other != asked and kin.scope == meters[asked].scope and (kin.words[0], kin.words[1], kin.words[5]) == (meters[asked].words[0], meters[asked].words[1], meters[asked].words[5]):
+                    offers.setdefault(other, set()).update(bill["offers"][asked], [min(own[other], key=lambda item: item[1]["sku"])[0]] if other in own_usd else ())
+                    if other in own_usd:
+                        retail[other] = own_usd[other]
+        return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, retail=retail, offers=offers, ages={})
     return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, ages={}, offers={handle: {name for name, line in listed if line["unit"] == numbered[handle]["words"][5]} for handle in numbered},
-                                 retail={handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1})
+                                 retail=own_usd)
 
 
 def _why(pricing, priced, handle: str) -> str:

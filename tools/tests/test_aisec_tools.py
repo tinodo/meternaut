@@ -1917,16 +1917,26 @@ class ThePricedCheck(unittest.TestCase):
         only_alternative = switching("Use the Basic tier for the base charge", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
         self.assertEqual(self.priced(lowering(others=[only_alternative]))["others"], [{"low": 72.0, "high": 72.0}], "a price of the list is no estimate: 208.8 less 208.8 x 0.19 over 0.29")
 
-    def test_a_switch_is_priced_only_from_a_price_that_a_tool_showed_for_that_meter_and_what_could_not_be_counted_is_said(self):
-        for label, calls in (("no list was read", [("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"})]),
-                             ("the list of another meter was read", [("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m2"})])):
-            with self.subTest(label=label):
-                got = self.priced(lowering(others=[BASIC, FREE]), traced(self.row, *calls))
-                self.assertEqual(got["others"], [{"low": 201.6, "high": 201.6, "estimate": True, "skipped": 1}, {"low": 410.4, "high": 410.4, "estimate": True}],
-                                 "the price of the Basic tier is not offered for the base charge, so that part is not counted, and the figure is the rest")
+    def test_a_switch_is_priced_only_from_a_price_that_a_tool_showed_for_that_meter_or_for_a_meter_that_shares_its_list_and_what_could_not_be_counted_is_said(self):
+        # The list of the additional charge (m2) is the list of the base charge (m1): the same product and the same unit of the same resource. It once counted for the meter that was asked about alone.
+        got = self.priced(lowering(others=[BASIC, FREE]), traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"})))
+        self.assertEqual(got["others"], [{"low": 201.6, "high": 201.6, "estimate": True, "skipped": 1}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                         "no list was read, so the price of the Basic tier is not offered for the base charge, that part is not counted, and the figure is the rest")
+        other = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m2"}))
+        self.assertEqual(self.priced(lowering(others=[BASIC, FREE]), other)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                         "the list was read for the additional charge: it is the list of the base charge, which is priced with the list price of its own line")
         self.assertEqual(self.priced(lowering(others=[BASIC]), self.full)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}])
         unlisted = switching("Use a tier that nobody listed", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p9"}}])
         self.assertEqual(self.priced(lowering(others=[unlisted]), self.full)["others"], [self.not_priced("alternative")], "kept, and with no figure")
+
+    def test_a_charge_that_the_answer_says_is_gone_in_a_switch_is_priced_as_a_share_that_the_ai_assumes_and_a_whole_switch_to_nothing_is_the_whole_cost(self):
+        stated = switching("Recreate as the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}, {"meters": ["m2"], "remains": {"form": "none"}}])
+        free = switching("Use the free tier", [{"meters": ["m1", "m2"], "remains": {"form": "none"}}])
+        for label, trace in (("every meter of the row counts as shown", None), ("the list was read for the additional charge only", traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}),
+                                                                                                                                              ("price_alternatives", {"meter": "m2"})))):
+            with self.subTest(label=label):
+                self.assertEqual(self.priced(lowering(others=[stated, free]), trace)["others"], [{"low": 273.6, "high": 273.6, "estimate": True}, {"low": 410.4, "high": 410.4, "estimate": True}],
+                                 "the base charge at 0.19 over 0.29 and the additional charge that the answer says is gone; and the whole of both charges for the switch to nothing: both rest on what the AI says")
 
     def test_only_what_the_tools_of_the_replay_showed_is_priced(self):
         nothing = {"set": None, "others": [self.not_priced("lines"), self.not_priced("lines")]}

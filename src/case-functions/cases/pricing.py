@@ -16,11 +16,16 @@ forms that code can check against what the tools showed in the same run:
                  each end (`now`, `to`) and, when the list prices came from a copy of the price book that is at least a day old, how many days old it is (`listAge`: the sentence of the figure says it), and
                  a switch whose alternative cannot be named in plain words is not priced
 
+In a switch the form `none` says that the new price has no counterpart for those charges. Nothing in the bill checks that, so it is read as the form `assumed` with nothing remaining (Scenario, and
+never Expected); under every action but `remove` it is still no form. A switch that has some of its charges on a price of the list and the others gone has the form `mixed`: its digest says how many
+bill lines rest on a price of the list (`switched`) and how many the AI says go away in full (`gone`), and the words of the figure of one resource say so.
+
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
 share that remains is one number for every rate: the price of the alternative per unit over the list price of the meter's own line, like for like (the rate that the bill pays against list is carried over),
 and over what the bill paid per unit over the window for the other end of the range (list prices alone); both must save, and a meter whose own list price the tool did not find is not priced. The price must be
-one that the tool showed in this run for that meter, in its unit, one price for the whole quantity, and above nothing.
+one that the tool showed in this run for that meter, or for a meter of the same resource that has its service, product and unit (the list of a product in a unit is theirs too: the toolbox registers it
+for each of them, cases/toolbox.py), in its unit, one price for the whole quantity, and above nothing.
 
 A meter that no tool showed, that belongs to another resource or to a whole type, or that gives no rate (a read of under 7 days, or fewer than 3 days of cost) is not counted; a bill line is counted
 once in a finding; what could not be checked is said, and no figure is made of it. The point that a case keeps is the low end. The digest is numbers and closed words, which the brief reads again.
@@ -43,7 +48,7 @@ LIST_AGE = "listAge"  # the key of a digest that says how many days old the copy
 MAX_LIST_AGE = 366  # the days of a copy that a digest may say: a number above it is not an age that the app keeps (a copy is shown for 45 days at most)
 ACTIONS = ("remove", "reduce", "switch", "schedule", "commit", "none")
 FORMS = ("none", "quantity", "ratio", "share_of_days", "assumed", "alternative")
-ALLOWED = {"remove": ("none",), "reduce": ("quantity", "ratio", "assumed"), "schedule": ("share_of_days", "quantity", "assumed"), "switch": ("alternative", "assumed"), "commit": ("assumed",)}
+ALLOWED = {"remove": ("none",), "reduce": ("quantity", "ratio", "assumed"), "schedule": ("share_of_days", "quantity", "assumed"), "switch": ("alternative", "assumed", "none"), "commit": ("assumed",)}
 SHOWN = ("none", "quantity", "ratio", "share_of_days", "assumed", "alternative", "mixed")  # the forms that a digest may have: mixed is a sum of resources whose rules differ
 MAX_EFFECTS, MAX_METERS, MAX_HOW = 60, 40, 300
 UNEVEN = 1.0  # a meter whose daily cost spreads by more than its mean is uneven: a rate worked out from it is a rough guide (a statistic about the bill, not a rule about what is waste)
@@ -110,6 +115,7 @@ class Row(NamedTuple):
     steady: float | None
     alts: tuple = ()  # for a switch, what the Skeptic is shown of the alternative: the meter, the words of the price, its list price, the rate that the bill pays against list and the shares that remain
     after: float | None = None  # for a switch, what the same use costs a month on the alternative at the rate of `low`: the lowest rate of each meter times the larger share that remains
+    gone: int | None = None  # for a mix, how many of its bill lines the AI says go away in full (the form assumed, with nothing remaining): the words of the figure say it
 
     @property
     def level(self) -> str:
@@ -124,7 +130,7 @@ class Row(NamedTuple):
         if self.away is not None and self.form == "assumed":
             out["away"] = list(self.away)
         for key, value in (("sinceUsd", self.since), ("steadyUsd", self.steady), ("life", self.life), ("uneven", self.uneven or None), ("skipped", self.skipped or None),
-                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("afterUsd", self.after), ("advisorUsd", advisor)):
+                           ("switched", (len(self.alts) or None) if self.form == "mixed" else None), ("gone", self.gone), ("afterUsd", self.after), ("advisorUsd", advisor)):
             if value is not None:
                 out[key] = value
         return out
@@ -215,7 +221,7 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
     if form not in FORMS or form not in ALLOWED.get(action, ()):
         return "remains"
     if form == "none":
-        return form, 0.0, 0.0, {}
+        return "assumed" if action == "switch" else form, 0.0, 0.0, {}  # in a switch it says that the new price has no counterpart: nothing in the bill checks that, so it is a share that the AI assumes
     if form == "alternative":
         offer = said.get("price")
         return (form, 0.0, 0.0, {"offer": offer}) if isinstance(offer, str) else "alternative"
@@ -267,7 +273,7 @@ class Part(NamedTuple):
 
 class Market(NamedTuple):
     """What the run showed of the price list (the registers `prices`, `retail`, `offers` and `ages` of cases/toolbox.py): the lines by price handle, the list price of the line of each meter, the price
-    handles that were shown for each meter, and how many days old the copy of the price book was that showed a meter or a price, when it was a copy of at least a day. Read, never written."""
+    handles that were shown for each meter (or for a meter of its resource that shares its list), and how many days old the copy of the price book was that showed a meter or a price, when it was a copy of at least a day. Read, never written."""
 
     prices: Mapping
     retail: Mapping
@@ -413,7 +419,8 @@ def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: t
     return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, said, away,
                failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
                sum(part.uneven for part in parts), round(steady, 2) if steady < min(week, week if since is None else since) - 0.005 else None, tuple(alt for part in parts for alt in part.alts),
-               round(math.fsum(part.low * part.most for part in parts), 2) if alike and form == "alternative" else None)
+               round(math.fsum(part.low * part.most for part in parts), 2) if alike and form == "alternative" else None,
+               (sum(len(part.names) for part in parts if part.form == "assumed" and part.most == 0) or None) if form == "mixed" else None)
 
 
 def _held(toolbox: object, name: str) -> Mapping:
@@ -661,6 +668,14 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
                            if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays" + (f", as they were {was}" if was else "") + ".")
         text += " Meternaut did not check whether " + (f"this {noun} can be switched to it, or whether it has what this {noun} needs." if many == 1
                                                       else "these resources can be switched to it, or whether it has what they need.")
+    elif form == "mixed" and many == 1 and 0 < (hit := _whole(found.get("switched")) or 0) <= (lines := _whole(found.get("lines")) or 0):  # one resource: what each part of it rests on
+        rest, gone, named = lines - hit, _whole(found.get("gone")) or 0, "those prices" if hit > 1 else "that price"
+        which = f"{hit if hit > 1 else 'One'} of its {lines} charges" if rest else f"Each of its {lines} charges"
+        text = paid + f" {which} would be switched to another price. Meternaut took {named} from the price list and compared {'each' if hit > 1 else 'it'} with the bill like for like."
+        if rest:
+            others, they = ("charge", "it") if rest == 1 else (f"{rest} charges", "they")
+            text += f" For the other {others}, the AI " + (f"says that {they} would go away in full" if gone == rest else "assumes how much would go away") + ", and Meternaut did not check that."
+        text += f" Meternaut did not check whether this {noun} can be switched to {named}, or whether {'they have' if hit > 1 else 'it has'} what this {noun} needs."
     elif form == "mixed":
         text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
         text += " Meternaut did not check whether the resources can be switched to the alternatives, or whether those have what the resources need." if (_whole(found.get("switched")) or 0) > 0 else ""

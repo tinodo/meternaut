@@ -23,6 +23,7 @@ from test_prices import OTHER_PRODUCT, PRODUCT, SERVICE, priced, prices_of, swal
 from test_prices import line as list_line
 from test_store import ACCOUNT, FakeTables
 from test_toolbox import Clock, ask
+from test_toolbox_meters import meter
 
 REGION = "swedencentral"
 COPY = (prices.Line(SERVICE, PRODUCT, "Basic", "Fixed Hours", "1 Hour", 0.9, REGION, 1), prices.Line(SERVICE, PRODUCT, "Basic", "Light Hours", "1 Hour", 0.45, REGION, 1),
@@ -309,6 +310,14 @@ class TheAgeThatReachesTheOwner(unittest.TestCase):
         answer = ask(box, "price_alternatives", meter="m1")
         self.assertEqual((answer["source"], answer["age_days"], estate.price_calls), ("book", 9, []))
         self.assertEqual((sorted(box.prices), box.ages), (["p1", "p2", "p3", "p4"], dict.fromkeys(["m1", "p1", "p2", "p3", "p4"], 9)), "the price with steps has no handle, and no age")
+
+    def test_the_age_of_a_copy_is_registered_for_the_meters_that_share_its_list_and_taken_away_for_all_of_them_by_a_read_of_the_list(self):
+        estate, box, store, tables = booked(also=(meter(name="Light Hours"),))
+        keep(store, 9)
+        ask(box, "price_alternatives", meter="m1")
+        self.assertEqual(box.ages, dict.fromkeys(["m1", "m2", "p1", "p2", "p3", "p4"], 9), "the copy showed the line of Light Hours too, and a price list that may have moved is said of it as of Fixed Hours")
+        answer = ask(box, "price_alternatives", meter="m1", within="service")
+        self.assertEqual((answer["source"], box.ages), ("list", {}), "the list showed both meters and their lines again: nothing of the copy is left to say")
 
     def test_a_stale_copy_that_stands_in_for_a_list_that_cannot_be_read_registers_its_age_too(self):
         estate, box, store, tables = booked()
