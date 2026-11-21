@@ -2302,6 +2302,18 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
         self.assertEqual([line for line in lines if line.startswith("- change effect")], [
             f"- change effect 1: r1, meter m1, form alternative p1; offered for m1 no such call; price list read for m3; {self.ALL_OK}; not priced alone, key alternative"], "a meter that shares no list with the one that was asked about")
 
+    def test_a_meter_that_the_tool_was_asked_about_is_offered_what_its_own_read_showed_and_the_line_names_no_sibling_for_it(self):
+        both = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"}), ("price_alternatives", {"meter": "m2"}))
+        # m1 and m2 share a list and both were asked about, so neither is offered the price through the other: the line says plain yes, and not "it shares the list of m1" for the second
+        second = switching("Use the Basic tier", [{"meters": ["m2"], "remains": {"form": "alternative", "price": "p2"}}])
+        self.assertEqual(self.of(self.block(lowering(others=[second]), both), "other way 1"), [
+            "- other way 1 not priced, app key: dearer",
+            f"- other way 1 effect 1: r1, meter m2, form alternative p2; offered for m2 yes; price list read for m1, m2; {self.ALL_OK}; not priced alone, key dearer"])
+        pair = switching("Use the Basic tier", [{"meters": ["m1", "m2"], "remains": {"form": "alternative", "price": "p2"}}])
+        self.assertEqual(self.of(self.block(lowering(others=[pair]), both), "other way 1"), [
+            "- other way 1 not priced, app key: remains",
+            "- other way 1 effect 1: r1, meters m1, m2, form alternative p2; offered for m1 yes, m2 yes; price list read for m1, m2; one meter differs, price ok, tiers ok; not priced alone, key remains"])
+
     def test_the_other_ways_are_priced_without_the_hold_back_of_the_change_so_a_ranged_setting_leaves_a_way_priced(self):
         way = switching("Use the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
         block = self.block(lowering(to=1, others=[way]))
