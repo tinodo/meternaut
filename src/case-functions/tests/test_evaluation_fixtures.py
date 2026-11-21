@@ -15,13 +15,15 @@ import unittest
 from unittest import mock
 
 from support import NOW, REPO_ROOT
-from cases import agents, brief, deeper, investigate, library, models, toolbox as tb
+from cases import agents, brief, deeper, dossier, investigate, library, models, toolbox as tb
+from cases.http import Client, allowed_calls
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ClaimRecord
 from cases.ranges import Range
+from cases.redact import Redactor
 from cases.toolbox import Toolbox
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
-from test_prices import priced
+from test_prices import PricedEstate, line as price_line, priced
 from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
 from test_toolbox_depth import DepthEstate, profiled
 from test_toolbox_limits import Fake
@@ -30,6 +32,7 @@ from test_toolbox_meters import FIXED, WIDGET, at, billed, day, widgets
 METRIC = "Processed Prompt Tokens"
 SKIPPED = {"rows", "cols", "same", "properties", "cost_by_service"}  # the cells of a table, and keys that are the data: the tests of the columns and of the cells look at them
 WORKSPACE_ROW, ACCOUNT_ROW, MACHINE_ROW, DISK_ROW = "workspaces-one-used-one-empty", "ai-account-with-two-deployments", "busy-machine-under-a-savings-plan", "idle-and-busy-disks"
+STORY_ROW = "bastion-four-units-full-story"
 
 
 def load_evals():
@@ -837,7 +840,148 @@ class TheLimits(Base):
             for path in {path for held in (spec.get("limits") or {}).values() for path in held}:
                 self.assertEqual(len({json.dumps(held[path], sort_keys=True) for held in (spec.get("limits") or {}).values() if path in held}), 1, "a page is the page of a type: one range for a name")
         self.assertEqual(ROWS["lightly-used-bastion-with-four-units"]["limits"], {"r1": {"scaleUnits": {"lowest": 2, "highest": 50}}}, "what the reference page of the type says of its property")
-        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units"])
+        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units", "bastion-four-units-full-story"])
+
+
+class StoryEstate(PricedEstate, DepthEstate):
+    """The fake estate of the list of prices and the fake estate of the references and the Activity Log in one: a resource whose bill, list and profile the real toolbox can all read."""
+
+
+class TheStory(Base):
+    """What a row that gives `meters` and `prices` shows of its bill and of the list of its product, and its SKU: the tools of the fixtures show them where and as the real toolbox shows what a resource is billed
+    for (cost_meters, and the dearest of them in profile) and the prices of the list (price_alternatives), held to the real toolbox on the same data: a bill that has a line for each of the 30 days, and a list that
+    the fake host of test_prices gives. The row of the whole story has the words and the prices that the public list gave on 2026-11-21; the other row here is INVENTED."""
+
+    @staticmethod
+    def item(name, per_day, rate, unit="1 Hour"):
+        return {"subcategory": "Standard Tier", "name": name, "pricing": "OnDemand", "charge": "Usage", "unit": unit, "per_day": per_day, "usd_per_unit": rate}
+
+    @staticmethod
+    def listed(sku, name, usd, unit="1 Hour"):
+        return {"sku": sku, "meter": name, "usd": usd, "unit": unit}
+
+    def invented(self):
+        return {"id": "invented", "kind": "clean", "type": WIDGET, "metric": "Day Metric", "service": "Example Service", "resources": [{"h": "r1", "usd": 1410.0, "total": 3, "sku": "Standard"}],
+                "meters": [self.item("Small Units", 1, 1.0), self.item("Big Units", 10, 2.0), self.item("Alpha Units", 10, 2.0), self.item("Per GB", 2, 3.0, "1 GB")],
+                "prices": [self.listed("Plus", "Big Units", 3.0), self.listed("Basic", "Alpha Units", 2.0), self.listed("Basic", "Small Units", 0.5), self.listed("Plus", "Small Units", 0.75),
+                           self.listed("Basic", "Per GB Lite", 1.0, "1 GB")], "expect": {"propose": [], "never": []}}
+
+    @staticmethod
+    def real(spec):
+        """The real toolbox on an estate of the one resource of a row, billed for the meters of the row on each of its 30 days, with the list that the row gives on the fake host of the list. Its listing has been read."""
+        estate = StoryEstate()
+        resource = spec["resources"][0]
+        properties, sku = nested((spec.get("props") or {}).get(resource["h"], {}))
+        estate.rows.append(row(spec["type"], "n1", properties=properties, sku={"name": resource["sku"]} if resource.get("sku") else sku))
+        resource_id = estate.rows[0]["id"].lower()
+        estate.cost_rows.append((SUB, resource["usd"], resource_id, spec["service"]))
+        for item in spec["meters"]:
+            words = (spec["service"], *(item[name] for name in evals.METER_FIELDS[:5]))
+            for n in range(evals.DAYS):
+                estate.bill.append((SUB, dt.date(2026, 10, 5) + dt.timedelta(days=n), resource_id, spec["service"], words, round(item["per_day"] * item["usd_per_unit"], 2), item["per_day"]))
+        estate.definitions[spec["type"]] = [definition(spec["metric"], "Count", "Total")]
+        estate.lines = [price_line(line["sku"], line["meter"], line["usd"], line["unit"], product=spec["meters"][0]["subcategory"], service=spec["service"]) for line in spec.get("prices") or []]
+        box = toolbox(estate)
+        ask(box, "list_resources", type=spec["type"])
+        box.arm.activity_events = mock.Mock(side_effect=tb.HttpError(403, "no"))  # a Watch whose identity cannot read the Activity Log: nothing is known of the age, like an invented resource
+        return box
+
+    def specs(self):
+        return (ROWS[STORY_ROW], self.invented())
+
+    def test_what_a_resource_and_a_type_are_billed_for_is_shown_as_the_real_toolbox_shows_it_in_every_window(self):
+        for spec in self.specs():
+            for arguments in ({"handle": "r1"}, {"handle": "r1", "days": 7}, {"type": spec["type"]}, {"type": spec["type"], "days": 14}, {"handle": "r1", "service": spec["service"]},
+                              {"type": spec["type"], "service": "Another Service"}):
+                with self.subTest(row=spec["id"], arguments=arguments):
+                    real, fake = ask(self.real(spec), "cost_meters", **arguments), self.fixture(spec, "cost_meters", **arguments)
+                    self.assertEqual(real, fake, "the same answer, value for value: the handles in the order of the cost, the words that every line shares once, the daily shape of a meter that costs the same every day")
+
+    def test_a_later_page_of_the_meters_is_shown_as_the_real_toolbox_shows_it_once_the_first_page_has_given_the_handles(self):
+        for spec in self.specs():
+            box = self.real(spec)
+            ask(box, "cost_meters", handle="r1")  # a real run gives a meter its handle the first time that it shows it: the second page of a call after the first page keeps the handles
+            with self.subTest(row=spec["id"]):
+                real, fake = ask(box, "cost_meters", handle="r1", offset=1), self.fixture(spec, "cost_meters", handle="r1", offset=1)
+                self.assertEqual(real, fake)
+                self.assertEqual((fake["offset"], fake["returned"], "same" in fake, fake["rows"][0][0]), (1, len(spec["meters"]) - 1, len(spec["meters"]) > 2, "m2"))
+
+    def test_a_page_of_forty_ends_with_the_offset_of_the_next_and_the_words_that_the_lines_of_a_page_share_are_those_of_that_page_alone_as_the_real_toolbox_gives_them(self):
+        spec = self.big()
+        box = self.real(spec)
+        first = ask(box, "cost_meters", handle="r1")
+        self.assertEqual(first, self.fixture(spec, "cost_meters", handle="r1"))
+        self.assertEqual((first["meters"], first["returned"], first["next_offset"]), (42, 40, 40))
+        real, fake = ask(box, "cost_meters", handle="r1", offset=40), self.fixture(spec, "cost_meters", handle="r1", offset=40)
+        self.assertEqual(real, fake)
+        self.assertEqual((fake["returned"], "next_offset" in fake, fake["same"].get("unit"), "unit" in fake["cols"]), (2, False, "1 GB", False), "the two lines of the last page share a unit that the first page does not")
+        for offset in (0, 40):
+            real, fake = ask(box, "price_alternatives", meter="m1", offset=offset), self.fixture(spec, "price_alternatives", meter="m1", offset=offset)
+            self.assertEqual(real, fake, f"offset {offset}")
+        self.assertEqual((ask(box, "price_alternatives", meter="m1")["lines"], ask(box, "price_alternatives", meter="m1")["next_offset"]), (45, 40))
+
+    def big(self):
+        meters = [self.item(f"Unit {place:02d}", 1, 2.0 + place / 100) for place in range(40)] + [self.item("Gb A", 1, 0.5, "1 GB"), self.item("Gb B", 1, 0.4, "1 GB")]
+        cost = round(sum(round(item["per_day"] * item["usd_per_unit"], 2) for item in meters) * evals.DAYS, 2)
+        return {**self.invented(), "meters": meters, "prices": [self.listed("Basic", f"Unit {place:02d}", 1.0 + place / 100) for place in range(45)], "resources": [{"h": "r1", "usd": cost, "total": 3, "sku": "Standard"}]}
+
+    def test_the_dearest_six_meters_of_a_resource_and_its_sku_are_shown_by_a_profile_as_the_real_toolbox_shows_them(self):
+        many = {**self.invented(), "meters": [self.item(f"Unit {name}", 1, 1 + place / 10) for place, name in enumerate("ABCDEFGH")], "prices": [], "resources": [{"h": "r1", "usd": 297.0, "total": 3, "sku": "Standard"}]}
+        for spec in (*self.specs(), many):
+            with self.subTest(row=spec["id"], meters=len(spec["meters"])):
+                real = ask(self.real(spec), "profile", handles=["r1"])["profiles"][0]
+                fake = self.fixture(spec, "profile", handles=["r1"])["profiles"][0]
+                self.assertEqual((real["sku"], real["meters"]), (fake["sku"], fake["meters"]))
+                self.assertLessEqual(len(fake["meters"]["rows"]), evals.DOSSIER_METERS)
+        self.assertEqual(len(self.fixture(many, "profile", handles=["r1"])["profiles"][0]["meters"]["rows"]), 6)
+        self.assertEqual(evals.DOSSIER_METERS, dossier.METER_ROWS)
+
+    def test_the_sku_of_a_resource_is_shown_by_the_listing_and_by_a_description_as_the_real_toolbox_shows_it(self):
+        spec = self.invented()
+        box = self.real(spec)
+        self.assertEqual(ask(box, "list_resources", type=spec["type"]), self.fixture(spec, "list_resources", type=spec["type"]))
+        self.assertEqual(ask(box, "describe", handle="r1")["sku"], self.fixture(spec, "describe", handle="r1")["sku"])
+        bare = {**spec, "resources": [{"h": "r1", "usd": 1410.0, "total": 3}]}
+        self.assertEqual((self.fixture(bare, "describe", handle="r1")["sku"], "sku" in self.fixture(bare, "list_resources", type=spec["type"])["cols"]), (None, False))
+
+    def test_the_prices_of_the_list_and_the_line_of_each_meter_are_shown_as_the_real_toolbox_shows_them_for_every_meter_of_a_row(self):
+        for spec in self.specs():
+            box = self.real(spec)
+            ask(box, "cost_meters", handle="r1")  # the meters get their handles, the way that a run gets them
+            for number in range(1, len(spec["meters"]) + 1):
+                with self.subTest(row=spec["id"], meter=f"m{number}"):
+                    real, fake = ask(box, "price_alternatives", meter=f"m{number}"), self.fixture(spec, "price_alternatives", meter=f"m{number}")
+                    self.assertEqual(real, fake, "the same answer, value for value: the lines in the unit of the meter, the line that has its name as current, the rate that the bill paid against it, and the handles")
+        real_box = self.real(self.specs()[0])
+        ask(real_box, "cost_meters", handle="r1")
+        real = ask(real_box, "price_alternatives", meter="m1")
+        self.assertEqual((real["match"], real["current"]["retail"], real["lines"], real["other_units"]), ("found", 0.29, 6, 1), "the shipped row: the base charge against the list of its product")
+
+    def test_a_meter_with_no_line_of_its_name_and_lines_that_disagree_say_none_and_several_in_the_real_tool_too_and_a_page_past_the_end_is_empty(self):
+        spec = self.invented()
+        box = self.real(spec)
+        ask(box, "cost_meters", handle="r1")
+        ask(box, "price_alternatives", meter="m1")  # the first read of the list gives the lines of the unit of the first meter their handles, as it does in a run
+        for meter_handle, match in (("m3", "none"), ("m4", "several")):
+            real, fake = ask(box, "price_alternatives", meter=meter_handle), self.fixture(spec, "price_alternatives", meter=meter_handle)
+            self.assertEqual((real["match"], fake["match"], "current" in real, "current" in fake), (match, match, False, False))
+        real, fake = ask(box, "price_alternatives", meter="m1", offset=4), self.fixture(spec, "price_alternatives", meter="m1", offset=4)
+        self.assertEqual(real, fake)
+        self.assertEqual((fake["rows"], fake["cols"], fake["returned"]), ([], ["price"], 0))
+        self.assertEqual(ask(box, "price_alternatives", meter="m9"), {"error": "unknown-handle"})
+        self.assertEqual(self.fixture(spec, "price_alternatives", meter="m9"), {"error": "unknown-handle"})
+
+    def test_the_shipped_row_gives_a_list_that_the_real_reader_keeps_whole_and_prices_nothing_that_is_free(self):
+        from cases import prices as app
+
+        spec = ROWS[STORY_ROW]
+        lines = [price_line(line["sku"], line["meter"], line["usd"], line["unit"], product="Azure Bastion", service="Azure Bastion") for line in spec["prices"]]
+        estate = PricedEstate()
+        estate.lines = lines
+        client = Client(allowed_calls(), Redactor(), transport=estate, sleep=lambda s: None, jitter=lambda: 0.5)
+        book = app.read(client, "Azure Bastion", "swedencentral", "Azure Bastion")
+        self.assertEqual((book.complete, len(book.lines), sorted(line.meter for line in book.lines)), (True, len(spec["prices"]), sorted(line["meter"] for line in spec["prices"])), "the reader of the app keeps every line")
+        self.assertTrue(all(line.usd > 0 and line.tiers == 1 for line in book.lines), "a price of nothing and a price with steps are no line of the real reader, and the row gives none")
 
 
 class TheChecksOfAFinding(unittest.TestCase):
@@ -874,6 +1018,23 @@ class TheChecksOfAFinding(unittest.TestCase):
 
     def test_the_lists_and_the_caps_that_the_tool_repeats_are_the_apps_own(self):
         self.assertEqual((evals.BASES, evals.PROPOSALS, evals.MAX_HANDLES, evals.MAX_FINDINGS, evals.MEASURED_DAYS), (agents.BASES, agents.PROPOSALS, agents.MAX_HANDLES, agents.MAX_FINDINGS, brief.MEASURED_DAYS))
+
+    @staticmethod
+    def bare(function):
+        """The syntax tree of a function without its docstring: the tool's copy is written with a shorter one."""
+        tree = ast.parse(inspect.getsource(function))
+        body = tree.body[0].body
+        if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant) and isinstance(body[0].value.value, str):
+            tree.body[0].body = body[1:]
+        return ast.dump(tree)
+
+    def test_the_check_that_the_tool_repeats_of_a_word_of_a_meter_is_the_toolboxs_own(self):
+        self.assertEqual((evals.METER_FORM.pattern, evals.VERSIONED.pattern), (tb.METER_FORM.pattern, tb.VERSIONED.pattern))
+        for name in ("_titled", "meter_word"):
+            self.assertEqual(self.bare(getattr(evals, name)), self.bare(getattr(tb, name)), f"{name} in tools/foundry-evals.py is the toolbox's own, written again for the Operator's volume: change both")
+        for word in ("Standard Gateway", "Standard Additional Gateway", "1 Hour", "100 GB/Month", "lower case words", "Azure Bastion", "v2 Pro", "A - B", "x" * 64, "x" * 65, "", " ", "a;b", "Two  spaces",
+                     "(Preview) Unit", "Unit-Hours", "An of the", None, 5, ["Unit"]):
+            self.assertEqual(evals.meter_word(word), tb.meter_word(word), repr(word))
 
     def test_the_words_and_the_numbers_are_read_as_the_app_reads_them(self):
         for value in ("change", " Change ", "CHANGE\n", "banana", "", None, 5, True, ["change"], "no-usage", "no usage"):

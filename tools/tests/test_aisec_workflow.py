@@ -304,8 +304,16 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
             spec.loader.exec_module(module)
             rows = {row["id"]: row for row in (json.loads(line) for line in Path("cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())}
             answer = sys.stdin.read()
+            change = {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m2"], "remains": {"form": "quantity", "from": 1440, "to": 0}}], "how": "Take the extra units away.",
+                      "set": [{"handle": "r1", "property": "scaleUnits", "from": 4, "to": 2}]}
+            story = json.dumps({"findings": [{"handles": ["r1"], "basis": "oversized", "proposal": "change", "metric_evidence": [], "change": change, "confidence": 0.8, "summary": "x"}], "examined": []})
+
+            def lowered(to):
+                lowering = {**change, "set": [{"handle": "r1", "property": "scaleUnits", "from": 4, "to": to}]}
+                return json.dumps({"findings": [{"handles": ["r1"], "basis": "oversized", "proposal": "change", "metric_evidence": [], "change": lowering, "confidence": 0.8, "summary": "x"}], "examined": []})
             print(json.dumps({"light": module.grade(rows["lightly-used-bastion-with-four-units"], answer), "busy": module.grade(rows["busy-bastion-with-four-units"], answer),
-                              "toolbox": hasattr(sys.modules.get("cases_flat.toolbox"), "__file__")}))
+                              "story": module.grade(rows["bastion-four-units-full-story"], story).get("priced"), "toolbox": hasattr(sys.modules.get("cases_flat.toolbox"), "__file__"),
+                              "floor": [module.grade(rows["bastion-four-units-floor-in-docs"], lowered(to)).get("set_found") for to in (1, 2, 3)]}))
         """)
         change = {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "ratio", "on": "scaleUnits", "from": 4, "to": 2}}], "how": "Fewer units.",
                   "set": [{"handle": "r1", "property": "scaleUnits", "from": 4, "to": 2}], "others": [{"title": "Use a smaller tier", "gives_up": "Fewer features.", "in_place": False, "change": {
@@ -322,7 +330,9 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
         found = json.loads(done.stdout.splitlines()[-1])
         self.assertEqual((found["light"]["set_found"], found["light"]["settings"], found["light"]["ways"], found["light"]["decoys"]), (1.0, 1, 1, 0))
         self.assertEqual((found["busy"]["settings"], found["busy"]["decoys"]), (1, 1), "the same answer on the host that is in use is a decoy")
+        self.assertEqual(found["story"], {"set": {"low": 201.6, "high": 201.6}, "others": []}, "the price of the change is the app's own pricing.py over the meters of the row, with no toolbox in the folder")
         self.assertFalse(found["toolbox"], "what stands in for the toolbox is made by the tool and is no file")
+        self.assertEqual(found["floor"], [0.0, 1.0, 1.0], "the floor of the row of the documentation is held in the flat folder too: 1 is below it, 2 and 3 are not")
 
     def test_the_two_that_spend_are_given_their_caps_and_the_container_outlives_the_cap_on_seconds(self):
         tool = operator_run()
