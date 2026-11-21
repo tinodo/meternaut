@@ -1153,7 +1153,9 @@ def _own(listed: list[tuple[str, dict]], words: tuple) -> list[tuple[str, dict]]
 def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.SimpleNamespace:
     """What the code that prices a change reads of a run (the registers of cases/toolbox.py that cases/pricing.py `price` takes: `meters`, `evidence`, `prices`, `retail`, `offers` and `ages`), made from the meters
     and the list of a row, which has one resource, and from the `evidence` of the properties that the tools showed. `bill` (shown_bill of a replay's trace) says which meters and which price handles the tools of
-    the replay showed, over how many days; without it all of them count, for the resource of the row and over the 30 days."""
+    the replay showed, over how many days; without it all of them count, for the resource of the row and over the 30 days. The registers also hold the meters of the resource that share the service, product and
+    unit of a meter that was asked about, as the toolbox's do, so `asked` says which meters the tool for alternatives was asked about (every meter without a replay) and `shares`, for each of the others, the
+    meters that were asked about whose list it shares."""
     resource, lines, listed = _resources(row)[0]["h"], _billed(row), _price_lines(row)
     numbered = {f"m{number}": line for number, line in enumerate(lines, 1)}
     shown = bill["meters"] if bill is not None else {handle: (resource, DAYS) for handle in numbered}
@@ -1162,11 +1164,20 @@ def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.Si
               for handle, (scope, days) in shown.items() if handle in numbered}
     prices = {handle: types.SimpleNamespace(service=_service(row), product=lines[0]["words"][1], sku=line["sku"], meter=line["meter"], unit=line["unit"], usd=line["usd"], region=REGION, tiers=1)
               for handle, line in listed}
-    if bill is not None:
-        return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, retail=bill["retail"], offers=bill["offers"], ages={})
     own = {handle: _own(listed, line["words"]) for handle, line in numbered.items()}
+    own_usd = {handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1}  # the list price of the line of a meter, when its line has one price
+    if bill is not None:
+        offers, retail, shares = {handle: set(found) for handle, found in bill["offers"].items()}, dict(bill["retail"]), {}
+        for asked in (handle for handle in bill["offers"] if handle in meters):
+            for other, kin in meters.items():  # what a tool showed for a meter counts for the meters of its resource that share its service, product and unit, each with its own line (cases/toolbox.py)
+                if other != asked and kin.scope == meters[asked].scope and (kin.words[0], kin.words[1], kin.words[5]) == (meters[asked].words[0], meters[asked].words[1], meters[asked].words[5]):
+                    offers.setdefault(other, set()).update(bill["offers"][asked], [min(own[other], key=lambda item: item[1]["sku"])[0]] if other in own_usd else ())
+                    shares.setdefault(other, set()).add(asked)
+                    if other in own_usd:
+                        retail[other] = own_usd[other]
+        return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, retail=retail, offers=offers, ages={}, asked=frozenset(bill["offers"]), shares={name: sorted(found) for name, found in shares.items()})
     return types.SimpleNamespace(meters=meters, evidence=evidence, prices=prices, ages={}, offers={handle: {name for name, line in listed if line["unit"] == numbered[handle]["words"][5]} for handle in numbered},
-                                 retail={handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1})
+                                 retail=own_usd, asked=frozenset(numbered), shares={})
 
 
 def _key(priced, handle: str) -> str:
@@ -1451,14 +1462,24 @@ def _values(pricing, market, effect, form: "str | None") -> str:
     return ""
 
 
+def _offered(market, name: str, offer: object) -> str:
+    """Whether the price handle was among those that the tool for alternatives showed for a meter: `yes`, `no`, or `no such call` when it was asked about neither that meter nor a meter that shares its list. A meter
+    that was not asked about is offered what was shown for the meters whose list it shares (cases/toolbox.py), and the words name them."""
+    held = market.offers.get(name)
+    if not isinstance(held, (set, frozenset, list, tuple)):
+        return "no such call"
+    through = market.shares.get(name) if name not in market.asked else None
+    return ("yes" if isinstance(offer, str) and offer in held else "no") + (f" (it shares the list of {', '.join(through)})" if through else "")
+
+
 def _alternative_words(pricing, market, effect) -> str:
     """Six of the tests that cases/pricing.py `_switch` makes of an alternative, each as ok or differs (one meter, a price above nothing, one step, the service and the unit against the meter's own words, and a plain
     name that is not the bill's own), and what the tool for alternatives showed: whether the price handle was among those that it showed for each meter of the effect (yes, no, or no such call when it was not asked
-    about that meter) and the meters that it was asked about. The other tests of `_switch` (the list price of the meter's own line, a cost per unit, an alternative that costs as much or more) show only as the
-    app's key, which is printed after. The tests are the app's, written again for what they print."""
+    about that meter nor about a meter that shares its list: _offered) and the meters that it was asked about. The other tests of `_switch` (the list price of the meter's own line, a cost per unit, an alternative
+    that costs as much or more) show only as the app's key, which is printed after. The tests are the app's, written again for what they print."""
     offer = effect.remains.get("price")
-    named = [f"{_handle_word(name, 'meter', {})} " + ("no such call" if not isinstance(market.offers.get(name), (set, frozenset, list, tuple)) else "yes" if isinstance(offer, str) and offer in market.offers[name] else "no") for name in effect.meters]
-    asked = sorted(name for name in market.offers if isinstance(name, str) and HANDLE_SHAPES["meter"].fullmatch(name))
+    named = [f"{_handle_word(name, 'meter', {})} " + _offered(market, name, offer) for name in effect.meters]
+    asked = sorted(name for name in market.asked if isinstance(name, str) and HANDLE_SHAPES["meter"].fullmatch(name))
     words = [f"offered for {', '.join(named) if named else 'no meter'}", f"price list read for {', '.join(asked) if asked else 'no meter'}"]
     line = market.prices.get(offer) if isinstance(offer, str) else None
     one = len(effect.meters) == 1

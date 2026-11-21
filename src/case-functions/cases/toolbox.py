@@ -68,10 +68,12 @@ What the investigation may rely on after a run (it reads these and changes none)
                         must still refuse tiers > 1 and a price of nothing, a unit that is not the meter's and a service that is not the meter's: the register does not know the meter.
   Toolbox.retail[m]     the list price of one unit of the line that the words of the meter handle m name, as price_alternatives showed it (its `retail`): the like-for-like price against which the code that prices a
                         switch compares an alternative, whatever the bill pays. It depends on the words of the meter and not on its window or on the ask, so a longer window does not drop it and neither does a
-                        later ask that did not reach the line (a cap may have cut the read before it). A meter has none when it was not asked about, when no line has its words so far, or when an ask found that its
-                        list price has steps or that several lines with its words disagree (which takes it away). No list price, no switch is priced.
+                        later ask that did not reach the line (a cap may have cut the read before it). A meter has none when neither it nor a meter that shares its list was asked about, when no line has its words
+                        so far, or when an ask found that its list price has steps or that several lines with its words disagree (which takes it away). No list price, no switch is priced.
   Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps or of nothing). The
                         form `alternative` of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
+                        The prices of one product in one unit are the prices of every meter of the same resource that has the same service, product and unit, so an ask for one of them registers `offers`, `retail`
+                        and `ages` for each of the others too: the same rows and current line, and the line that the words of that meter name. The answer of the tool is the same.
   Toolbox.ages[h]       how many whole days old the copy of the price book was that last showed the handle h, a meter handle m (for its `retail`) or a price handle p (for its line), when it was a copy of at least
                         a day: a handle that a read of the list showed, or a copy of today, has no entry. The code that prices a switch (cases/pricing.py) says it to the owner with the figure, so that a list price
                         that may be weeks old is never shown as if it were today's.
@@ -1051,8 +1053,8 @@ class Toolbox:
         self.meters: dict[str, Meter] = {}  # every meter that cost_meters has shown, by its handle (m1, m2, ...): the numbers of the last call that showed it
         self._meter_keys: dict[tuple, str] = {}  # (scope, service, the six words of the meter) -> its handle, so that the same meter of the same scope keeps its handle
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
-        self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing); only an ask that finds that the line has steps, or that lines disagree, takes it away
-        self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
+        self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it, for the meter or for a meter of its resource that shares its list (a line with one price, above nothing); only an ask that finds that the line has steps, or that lines disagree, takes it away
+        self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run, or for a meter of its resource with the same service, product and unit: the rows of the pages that it showed, and its current line
         self.ages: dict[str, int] = {}  # meter handle or price handle -> how many whole days old the copy of the price book was that last showed it, when it was a copy of at least a day: a read of the list, or a copy of today, leaves none
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it (or a copy of the price book), or the failure: a price list is read once in a run
@@ -3040,22 +3042,32 @@ class Toolbox:
                                  **({"steps": current.tiers} if current.tiers > 1 else {})}
         _page(answer, table, offset, len(same))
         aged = book.aged  # how old the copy is that shows these prices, when it is at least a day: kept with the handles, for the owner
-        offered = self.offers.setdefault(name, set())
+        shown: set[str] = set()
         for row, line in zip(table, window):
             row[0] = self._price_handle(line, aged)
             if row[0] is not None:
-                offered.add(row[0])
+                shown.add(row[0])
         if current is not None:
             answer["current"]["line"] = self._price_handle(current, aged)
             if answer["current"]["line"] is not None:
-                offered.add(answer["current"]["line"])
+                shown.add(answer["current"]["line"])
+        self._keep_prices(name, shown, current, how, aged)
+        for other, kin in self.meters.items():  # the prices of a product in a unit are the prices of every meter of the resource with the same service, product and unit, each with its own line
+            if other != name and kin.scope == held.scope and (kin.words[0], kin.words[1], kin.words[5]) == (held.words[0], subcategory, unit):
+                own, found = prices.match(book.lines, subcategory, kin.words[2], unit, region)
+                handle = self._price_handle(own, aged) if own is not None else None
+                self._keep_prices(other, shown | {handle} if handle is not None else shown, own, found, aged)
+        return answer
+
+    def _keep_prices(self, name: str, shown: set[str], current: "prices.Line | None", how: str, aged: int | None) -> None:
+        """What an ask leaves in the registers for the meter `name`: the price handles that were shown for it, and the list price of its own line, with the age of the copy that showed it, when the line has one price."""
+        self.offers.setdefault(name, set()).update(shown)
         if current is not None and current.tiers == 1:
             self.retail[name] = current.usd
             self._dated(name, aged)
         elif how != "none":  # this ask found the line and it has steps, or found lines that disagree: the list says that the meter has no one list price. A line that this ask did not find says nothing (a cap may have cut the read before it)
             self.retail.pop(name, None)
             self.ages.pop(name, None)
-        return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------
     def _load_edges(self) -> nb.Edges:
