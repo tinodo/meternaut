@@ -5,7 +5,7 @@ anything else is refused before it leaves the app, so a mistake in the code cann
 retried a bounded number of times. Two exceptions: the Foundry project of the app, where the app makes and reads its own agents and makes and deletes its own conversations
 (foundry_calls), and the AI Gateway, which every model call goes through and which has the one POST of a chat completion (ai_gateway_calls). No chat completion goes to the Foundry
 resource or its project: there is no direct path to a model (AGENTS.md rule 15 (c)). The Study (cases/study.py) has one list more, of public documentation pages that it reads with no
-token (docs_calls), on a client of its own. Its one call to the public price list is also on the Watch's list, for the tool that shows the prices of alternatives (cases/prices.py): a GET, with no token.
+token (docs_calls), on a client of its own; the investigation reads the reference page of a kind of resource with the same list, on a client of its own (cases/ranges.py). Its one call to the public price list is also on the Watch's list, for the tool that shows the prices of alternatives (cases/prices.py): a GET, with no token.
 """
 from __future__ import annotations
 

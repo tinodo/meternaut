@@ -41,6 +41,10 @@ What the investigation may rely on after a run (it reads these and changes none)
       "costLines"                         [{"service", "usd"}], the lines that cost_lines showed
       "properties"                        {key path: bool | number | word}: every property that an answer showed. The value is a list of up to three of those when the items
                                           of a list under that key differ in it
+      "limits"                            {key path: {"lowest": a whole number, "highest": a whole number}}: for a count or a size among the properties, the range that Microsoft's reference
+                                          page of the type documents for the last key of its path (cases/ranges.py), a bound that the page does not give left out. It is there only when the toolbox
+                                          has a reader (`Toolbox.ranges`) that read the page, and holds no path that "properties" does not: a property with no entry has no range that was read, which is
+                                          not the same as none
       "metrics"                           {metric name, exactly as metric_summary or measure showed it: {"total", "max", "average": a number, or None when the
                                           measurement was absent; "days_with_data": int; "days": int; "unit": a word or None; "totals": [a number or None]}}. "total" and
                                           the others are those of the last measurement, and "total" is the number that the answer carried. "totals" holds the total of every
@@ -89,7 +93,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, TypeVar
 
-from . import capability, deeper, dossier, learning, library, prices
+from . import capability, deeper, dossier, learning, library, prices, ranges
 from . import metrics as mx
 from . import neighbors as nb
 from . import ownership
@@ -726,7 +730,7 @@ TOOLS = {tool.name: tool for tool in (
          "the fields that have the same value in every row. The fields are usd30d (the cost of the last 30 days, in dollars), service (the dearest service), sub "
          "(the subscription, when there are several), sku, kind, region, managed (true when another resource manages it) and a few properties, named by their key "
          "path, that are numbers, flags or words; the length of a list is given as <key>Count. A text that is not a short word of the platform is shown as other. The "
-         "answer carries no names, tags or other text of the resources. Take the type from estate_overview. When has_more is true, read the next page with next_offset.",
+         "answer carries no names, tags or other text of the resources. limits is the same as in describe, one mapping for the whole table. When has_more is true, read the next page with next_offset.",
          (Param("type", "type", _TYPE, required=True),
           Param("order_by", "choice", "cost: the dearest first. count: the largest count, size or capacity property first. Null for cost.", choices=("cost", "count")),
           Param("limit", "integer", "How many resources to return, 1 to 40. Null for 40.", low=1, high=MAX_LISTED), _OFFSET)),
@@ -770,7 +774,9 @@ TOOLS = {tool.name: tool for tool in (
     Tool("describe",
          "Describes one resource by its handle: its type, SKU, kind, region, cost of the last 30 days, the cost by service and up to 30 properties that are numbers, flags "
          "or words. A property is shown only where the platform lists it for the type; property_list says unavailable or not-offered when that list could not be read or is none, and then few "
-         "properties are shown. When the type has deeper reads, reads names them. The answer carries no names, tags or other text of the resource.",
+         "properties are shown. When the type has deeper reads, reads names them. limits gives, for a count or a size among the properties, the lowest and highest number that Microsoft's "
+         "reference page of the type documents for it, and leaves out a bound that the page does not give. A property with no limits entry has none that was read, which is not the same as none. "
+         "The answer carries no names, tags or other text of the resource.",
          (Param("handle", "handle", "The handle of a resource that an earlier answer showed.", required=True),)),
     Tool("data_volume",
          "Reads what a resource records about the data written to it, over the closed days of a window, as a table: for each kind of data its plan, how long it is kept, the "
@@ -856,11 +862,11 @@ TOOLS = {tool.name: tool for tool in (
           Param("direction", "choice", "refers_to: what it refers to. referred_by: what refers to it. Null for both; with an offset, null means referred_by.", choices=("refers_to", "referred_by")),
           _OFFSET)),
     Tool("profile",
-         "Gives the whole picture of 1 to 5 resources, named by handle, in one call: facts and typed properties; meters (the dearest 6 of what it is billed for); metrics (every platform metric that has data, "
+         "Gives the whole picture of 1 to 5 resources, named by handle, in one call: facts, typed properties and their limits; meters (the dearest 6 of what it is billed for); metrics (every platform metric that has data, "
          "as rows of metric, unit, total, max, avg and days, read at the grain that it offers, and with grain hour also peak and p95, for the 20 with the greatest daily maximum if it offers more (at_hour; with_data counts all); the metrics with no data are listed by name); links (what it "
          "refers to and what refers to it, as count and usd30d for each type and relation: neighbors shows the handles); Advisor items; history (age_days, changed_days and written_14d, "
          "and created_by and changed_by as a kind of identity); its parts; and where it sends its own data. A part that was not read in time is in unread, by handle, and is not none; a "
-         "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited like those of the other tools.",
+         "part that failed says unavailable; no-metrics says that the type keeps none. It shows no name, tag or text. Its numbers can be cited as any tool's.",
          (Param("handles", "handles", "Handles of 1 to 5 resources that earlier answers showed.", required=True, high=dossier.MAX_HANDLES),
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=dossier.MIN_DAYS, high=MAX_DAYS), _GRAIN)),
     Tool("changes",
@@ -995,6 +1001,8 @@ class Toolbox:
     def __init__(self, arm: Arm, subscriptions: tuple[str, ...], now: dt.datetime, notes: list[str]) -> None:
         self.arm, self.subscriptions, self.now, self.notes = arm, subscriptions, now, notes
         self.memory: object | None = None  # the store of the loop, which the tools that recall read; the investigation sets it, and a run that keeps no memory has none
+        self.ranges: ranges.Reader | None = None  # the reader of the documented limits of the numbers of a type (cases/ranges.py): the investigation sets it, and with none the tools show no limits
+        self._unlimited: set[str] = set()  # the types whose limits were not read and that a note has said so for
         self.profile: object | None = None  # what the identity can see (cases/capability.py): the investigation sets it, and `commitments` shows its four words
         self.handles: dict[str, Resource] = {}  # every resource that an answer has shown, by handle
         self.evidence: dict[str, dict] = {}  # handle -> what the answers showed about it so far (metric aggregates, cost lines, typed properties)
@@ -1395,7 +1403,36 @@ class Toolbox:
         facts.update(sku=entry.sku, kind=entry.kind, location=entry.location, managed=bool(entry.resource.managed_by), properties=dict(entry.properties[:shown]))
         if entry.property_list:
             facts["property_list"] = entry.property_list
+        if limits := self._limits_of(type_word(entry.resource.resource_type), facts["properties"].items()):
+            facts["limits"] = limits
         return facts
+
+    def _limits_of(self, kind: str | None, shown: "Iterable[tuple[str, object]]") -> dict[str, dict[str, int]]:
+        """The limits of the properties that an answer shows (path, value): for each count or size that is a number and whose last key the reference page of the type bounds (cases/ranges.py),
+        {"lowest": N, "highest": M} with a bound that the page does not give left out. Nothing when the toolbox has no reader, when no such number is shown (no page is read for it), for a path that the
+        page does not bound, and when the page was not read: a note says so once for the type, and the answer says nothing, because a page that was not read is not a type with no limits."""
+        counts = [path for path, value in shown if isinstance(value, (int, float)) and not isinstance(value, bool) and _rank(path.rsplit(".", 1)[-1]) in COUNT_LIKE]
+        if self.ranges is None or kind is None or not counts:
+            return {}
+        try:
+            found = self.ranges.limits(kind)
+        except Exception:  # noqa: BLE001 (a reader that fails is a page that was not read, and it never costs an answer)
+            found = None
+        if found is None:
+            if kind not in self._unlimited:
+                self._unlimited.add(kind)
+                self.notes.append(f"the documented limits of {kind} were not read, so no tool shows any for it")
+            return {}
+        return {path: bounds for path in counts if (known := ranges.find(found, path)) is not None and (bounds := known.bounds())}
+
+    @staticmethod
+    def _unlimit(holder: dict, path: str) -> None:
+        """Takes the limits of a property out of the part of an answer that holds both, when the property was cut from it to make the answer fit."""
+        held = holder.get("limits")
+        if isinstance(held, dict):
+            held.pop(path, None)
+            if not held:
+                del holder["limits"]
 
     def _cells(self, entry: _Entry) -> dict:
         """The fields of one resource in a table, named as the table names them. A field that the resource lacks is not there."""
@@ -1436,6 +1473,8 @@ class Toolbox:
             record["costByService"] = dict(shown["cost_by_service"])
         if shown.get("properties"):
             record.setdefault("properties", {}).update(shown["properties"])
+        if shown.get("limits"):
+            record.setdefault("limits", {}).update(shown["limits"])
         return resource.handle
 
     def _within_handles(self, page: list[_Entry]) -> int:
@@ -1687,8 +1726,9 @@ class Toolbox:
         def table(count: int) -> tuple[dict, list[list], set[str]]:
             same, columns, rows, visible = _layout([(PLACEHOLDER, cell) for cell in cells[:count]])
             more = offset + count < len(entries)
+            limits = self._limits_of(kind, ((name, cell[name]) for name in sorted(visible, key=_order) for cell in cells[:count] if name in cell))
             answer = {"type": kind, "total": len(entries), "offset": offset, "has_more": more, **({"next_offset": offset + count} if more else {}), **caveats,
-                      **({"reads": deeper.offered(kind)} if deeper.offered(kind) else {}), **({"same": same} if same else {}), "cols": columns, "rows": rows}
+                      **({"reads": deeper.offered(kind)} if deeper.offered(kind) else {}), **({"same": same} if same else {}), **({"limits": limits} if limits else {}), "cols": columns, "rows": rows}
             return answer, rows, visible
 
         count = len(page)
@@ -1699,6 +1739,7 @@ class Toolbox:
         for row, entry, cell in zip(rows, page, cells):
             shown: dict = {"managed": cell["managed"], "properties": {name: cell[name] for name in visible if name in cell}}
             shown.update({key: cell[name] for key, name in (("cost30d", "usd30d"), ("sku", "sku"), ("kind", "kind"), ("location", "region")) if name in cell})
+            shown["limits"] = {name: answer["limits"][name] for name in shown["properties"] if name in answer.get("limits", {})}
             row[0] = self._show(entry, shown)
         return answer
 
@@ -2142,7 +2183,7 @@ class Toolbox:
         kind = type_word(entry.resource.resource_type)
         answer = {"handle": args["handle"], "type": kind, **({"reads": deeper.offered(kind)} if deeper.offered(kind) else {}), **facts}
         while len(_dump(answer)) > MAX_RESULT_CHARS and answer["properties"]:
-            answer["properties"].popitem()
+            self._unlimit(answer, answer["properties"].popitem()[0])
         self._show(entry, facts)
         return answer
 
@@ -2237,7 +2278,9 @@ class Toolbox:
             if longest is None:
                 raise TooLarge()
             rows, holder, key = longest
-            rows.popitem() if isinstance(rows, dict) else rows.pop()
+            gone = rows.popitem() if isinstance(rows, dict) else rows.pop()
+            if key == "properties":
+                Toolbox._unlimit(holder, gone[0])
             holder[f"{key}_not_shown"] = holder.get(f"{key}_not_shown", 0) + 1
 
     def _tool_data_volume(self, args: dict) -> dict:

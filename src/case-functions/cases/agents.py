@@ -126,6 +126,8 @@ INVESTIGATOR_INSTRUCTIONS = (
     'When the change is a smaller count or size for a property that a tool showed, state it inside the change too, as "set":'
     '[{"handle":"r3","property":"<named exactly as a tool returned it>","from":<its number exactly as the tool returned it>,"to":<a smaller number of the same kind>}] '
     f"(the action reduce, at most {MAX_SETTINGS}). Only a setting stated there can be approved and made: name nothing in it that your tools did not show. "
+    "A number in a setting must be one that the platform takes, so it lies within the limits that an answer shows for that property. "
+    "Where no limits are shown for a property, the lowest number that the platform takes is not known to you: say so in how, and do not claim that the smaller number is allowed. "
     f'For a finding of one resource, list every other way that you found to save on it inside the change as "others", at most {MAX_OTHERS}: '
     f'{{"title":"<at most {MAX_TITLE} characters of letters, digits, spaces and the marks , ( ) + - only, with no run of three digits>","gives_up":"<at most {MAX_GIVES_UP} characters: what it costs in features, limits and availability, as far as your tools and the documentation show>",'
     '"in_place":<true or false as the documentation says that it can be altered where it is or must be made again, else left out>,"change":<its own change, in the forms above>}.'

@@ -36,7 +36,9 @@ WHY = {
             "shown": "a property that no tool showed", "number": "a value that is not one plain number", "count": "a property that is not a count or a size", "period": "a period, not a count or a size",
             "kept": "a setting that decides how much is kept, which a lower number deletes",
             "from": "an old value that no tool showed", "to": "a new value that is not a smaller number of the same kind", "duplicate": "a property listed twice",
-            "ratio": "numbers that differ from the change's own", "limit": "over the limit"},
+            "ratio": "numbers that differ from the change's own", "limit": "over the limit",
+            "lowest": "a new value below {}, the lowest that Microsoft's reference page gives for the setting",
+            "highest": "a new value above {}, the highest that Microsoft's reference page gives for the setting"},
     "other": {"group": "a finding of several resources", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
               "duplicate": "a repeat of the change or of a way", "limit": "over the limit"},
 }
@@ -202,8 +204,9 @@ def _ratios(change: pricing.Change) -> dict:
 
 def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Mapping) -> tuple[str, dict] | str:
     """The handle and the entry of one setting, or the rule that it fails: a resource of the finding, a property that a tool showed under that name with one plain number and that is a count or a size
-    (`countlike`), the old value that the tool showed, a new value that is smaller and of the same kind (whole where the old one is whole) and, where the change states a ratio on the property, that
-    ratio's numbers."""
+    (`countlike`), the old value that the tool showed, a new value that is smaller and of the same kind (whole where the old one is whole), inside the range that the tools showed for the property
+    (`limits` of the evidence: the lowest and highest number that Microsoft's reference page gives, cases/ranges.py; outside it the rule is `lowest 2` or `highest 50`, with the page's number, and
+    with no range shown nothing changes) and, where the change states a ratio on the property, that ratio's numbers."""
     if not isinstance(item, Mapping):
         return "shape"
     handle, name = item.get("handle"), item.get("property")
@@ -225,6 +228,8 @@ def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Ma
         return "from"
     if to is None or not 0 <= to < now or (now == int(now) and to != int(to)):
         return "to"
+    if (beyond := pricing.outside(block, name, to)) is not None:
+        return f"{beyond[0]} {beyond[1]}"
     if any(not (_same(one, now) and _same(other, to)) for one, other in ratios.get((handle, name), ())):
         return "ratio"
     return handle, {"path": name, "from": held[name], "to": int(to) if now == int(now) else to}
@@ -295,13 +300,19 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
     return Checked(ways, dropped, (len(change.settings), len(change.others)))
 
 
+def reason(kind: str, why: str) -> str:
+    """The words for the rule that dropped an entry (a word of WHY[kind]): the two rules of the documented range carry the number that the page gives, as `lowest 2` or `highest 50`, and say it."""
+    word, _, number = why.partition(" ")
+    return WHY[kind][word].format(shown(int(number))) if number.lstrip("-").isdigit() else WHY[kind][why]
+
+
 def note_of(checked: Checked) -> str:
     """The sentence for the notes of a run about the entries that code dropped (how many of those that the answer listed, and why), or "" when it dropped none."""
     parts = []
     for place, (kind, noun) in enumerate((("set", "setting"), ("other", "other way"))):
         gone = {why: count for (what, why), count in checked.dropped.items() if what == kind}
         if gone:
-            parts.append(f"{sum(gone.values())} of {checked.said[place]} {noun}{'' if checked.said[place] == 1 else 's'} ({', '.join(f'{WHY[kind][why]}: {count}' for why, count in gone.items())})")
+            parts.append(f"{sum(gone.values())} of {checked.said[place]} {noun}{'' if checked.said[place] == 1 else 's'} ({', '.join(f'{reason(kind, why)}: {count}' for why, count in gone.items())})")
     return "code dropped " + " and ".join(parts) if parts else ""
 
 

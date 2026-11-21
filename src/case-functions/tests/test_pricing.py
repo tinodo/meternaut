@@ -253,6 +253,33 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
                 found = priced(block("reduce", effect("r1", ("m1",), remains)))
                 self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
+    def test_a_ratio_to_a_number_outside_the_range_that_the_tools_showed_for_the_property_makes_no_figure_and_says_why(self):
+        box = shown(evidence={"r1": {"properties": {"units": 12}, "limits": {"units": {"lowest": 5, "highest": 40}}}, "r2": {"properties": {"units": 4}}})
+
+        def ratio(handle, target, start=12):
+            return pricing.price(pricing.parse(block("reduce", effect(handle, ("m1" if handle == "r1" else "m3",), {"form": "ratio", "on": "units", "from": start, "to": target}))), (handle,), box,
+                                 COSTS, None)
+
+        for target in (4, 0):
+            with self.subTest(target=target):
+                found = ratio("r1", target)
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "range"}), "the saving of a number below the lowest that the platform takes is not worked out")
+        self.assertEqual(ratio("r1", 5).rows["r1"].low, 35.0, "the lowest number itself is a number that the platform takes")
+        self.assertEqual(ratio("r1", 6).rows["r1"].said, {"from": 12.0, "to": 6.0, "on": "units", "lowest": 5, "highest": 40}, "the range that the tools showed is kept with the numbers that the figure rests on")
+        self.assertEqual(ratio("r1", 6).rows["r1"].digest()["highest"], 40)
+        box.evidence["r1"]["properties"]["units"] = 60
+        self.assertEqual(ratio("r1", 45, 60).why, {"r1": "range"}, "above the highest")
+        self.assertEqual(ratio("r1", 40, 60).rows["r1"].form, "ratio")
+        self.assertEqual(ratio("r2", 1, 4).rows["r2"].form, "ratio", "a resource whose range was not shown is priced as it was")
+        box.evidence["r1"]["limits"] = {"tier": {"lowest": 99}, "units": {"lowest": True, "highest": 1.5}}
+        self.assertEqual(ratio("r1", 4, 60).rows["r1"].form, "ratio", "a range that is not in the shape bounds nothing")
+        self.assertEqual(ratio("r1", 4, 60).rows["r1"].said, {"from": 60.0, "to": 4.0, "on": "units"}, "and is not kept")
+        box.evidence["r1"]["limits"] = {"units": {"lowest": 5}}
+        self.assertEqual(ratio("r1", 6, 60).rows["r1"].said, {"from": 60.0, "to": 6.0, "on": "units", "lowest": 5}, "a bound that the page does not give is not kept")
+        self.assertTrue(pricing.WHY["range"].startswith("No saving was worked out") and pricing.WHY["range"].endswith("."))
+        refused = {pricing.KEY: {"action": "reduce", "missing": "range"}}
+        self.assertEqual((pricing.missing(refused), pricing.refused(refused)), (pricing.WHY["range"], True))
+
     def test_a_ratio_of_numbers_that_are_not_a_reduction_makes_no_figure(self):
         for start, target in ((12, 12), (12, 13), (12, -1), (0, 0), (True, 4), (12, True), ("12", 4), (12, "4"), (12, None), (float("nan"), 4), (12, float("inf")), (10 ** 400, 4)):
             with self.subTest(start=start, target=target):

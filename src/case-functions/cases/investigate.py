@@ -34,7 +34,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, roles, upkeep, wiring
+from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, ranges, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -848,6 +848,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
         toolbox.memory = s.extras.store if s.extras is not None else None  # what the tools that recall read: the lessons, the claims and the open questions of the store of the loop
+        if getattr(s, "docs", None) is not None:
+            s.docs.deadline = deadline
+            toolbox.ranges = ranges.Reader(s.docs, s.monotonic)  # the limits that the tools show for a count or a size: the reference page of a kind of resource, read once in the run
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))

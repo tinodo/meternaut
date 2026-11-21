@@ -341,6 +341,29 @@ class WhatItIsWorth(unittest.TestCase):
                     with self.subTest(action, surface=surface, sentence=sentence[:30]):
                         self.assertIn(sentence, read(shown))
 
+    def test_a_ratio_says_which_range_the_reference_page_gives_when_the_figure_holds_one_and_that_the_number_is_inside_it(self):
+        for bounds, said in (({"lowest": 2, "highest": 50}, "Microsoft's reference page gives 2 as the lowest and 50 as the highest number for capacity units, and Meternaut checked that 2 is inside that range."),
+                             ({"lowest": 2}, "Microsoft's reference page gives 2 as the lowest number for capacity units, and Meternaut checked that 2 is inside that range."),
+                             ({"highest": 1000}, "Microsoft's reference page gives 1,000 as the highest number for capacity units, and Meternaut checked that 2 is inside that range.")):
+            facts = gateway_facts("reduce", {"form": "ratio", "from": 4, "to": 2, "on": "capacityUnits"})
+            facts[pricing.KEY]["price"].update(bounds)
+            case, plan = gateway(facts=facts)
+            for surface, shown in surfaces(case, plan).items():
+                with self.subTest(surface=surface, bounds=bounds):
+                    self.assertIn(said, read(shown))
+        plain = gateway_facts("reduce", {"form": "ratio", "from": 4, "to": 2, "on": "capacityUnits"})
+        for surface, shown in surfaces(*gateway(facts=plain)).items():
+            self.assertNotIn("reference page", read(shown), "a figure with no range says nothing of one")
+
+    def test_a_range_that_is_not_a_whole_number_or_belongs_to_another_form_is_not_said(self):
+        for form, remains in (("ratio", {"form": "ratio", "from": 4, "to": 2, "on": "capacityUnits"}), ("quantity", None)):
+            facts = gateway_facts("reduce", remains)
+            facts[pricing.KEY]["price"].update({"lowest": "2", "highest": 50.5})
+            self.assertNotIn("reference page", brief_of(*gateway(facts=facts)).saving.basis, form)
+        quantity = gateway_facts("reduce")
+        quantity[pricing.KEY]["price"].update({"lowest": 0, "highest": 5})
+        self.assertNotIn("reference page", brief_of(*gateway(facts=quantity)).saving.basis, "a bound that is no bound of a property is not a bound of a quantity of hours")
+
     def test_the_arithmetic_is_taken_out_when_the_figure_is_not_code_s(self):
         advisor = make_advice_case(detector="advisor-cost", models={}, recommendation="change", facts={"category": "cost", "advisor": {"type": "x", "sub": "x", "n": 1, "usd": 120.0, "rows": [["Standard_D2s_v6", 1, "swedencentral", "", 120.0, "USD", 60, ""]]}})
         self.assertEqual(brief_of(advisor, make_advice()).worked, ())

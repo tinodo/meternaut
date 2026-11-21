@@ -90,7 +90,7 @@ METRIC_COLUMNS = ("metric", "unit", "total", "max", "avg", "days")  # what a pro
 HISTORY = ("age_days", "created_by", "changed_days", "changed_by", "written_14d")  # what changes tells of a resource: an invented one has no source that says it
 NOT_RECORDED = "not-recorded"
 ROW_FIELDS = ("id", "kind", "type", "metric", "resources", "expect")  # what every row has
-OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics", "props", "knowledge")  # what a row may have besides
+OPTIONAL_FIELDS = ("inject", "service", "unit", "dimensions", "unavailable", "history", "workspaces", "parts", "commitments", "no_metrics", "props", "knowledge", "limits")  # what a row may have besides
 DESCRIBED_PROPERTIES = 30  # the most properties that describe and profile show of a resource, as cases/toolbox.py says
 KNOWLEDGE_READ = "2026-11-01"  # the day on which the invented documentation was read: recall_knowledge shows it on each claim, and as the day on which the type was studied
 KNOWLEDGE_SHOWN = 8  # the most claims of one type that recall_knowledge shows, as cases/library.py SHOWN says
@@ -138,7 +138,9 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
 # handle: its pricing, tables with their volume and readers, the sources that were read, collection rules and the writers of a table), parts (the deployments of an account, with their
 # traffic), commitments (how the cost was paid for, and the recommendations of the platform), no_metrics (the type offers no platform metrics: the tools that read a metric say so) and props (by
 # handle: the properties that the tools show of the resource, as the real ones show them, that is with dotted keys relative to its properties and `sku.*` at the root, a number, a flag or a word
-# under a key that the toolbox itself would show: it is what the grader holds a setting that the answer states to) and knowledge (the claims that recall_knowledge shows for the type of the row: a kind of
+# under a key that the toolbox itself would show: it is what the grader holds a setting that the answer states to), limits (by handle and key path of a property that props gives it: the lowest and the
+# highest number that Microsoft's reference page of the type documents for it, as {"lowest": N, "highest": M} with a bound that the page does not give left out; the tools show it for a count or a size
+# as the real ones do, and the grader refuses a setting whose new number is outside it, as the app does) and knowledge (the claims that recall_knowledge shows for the type of the row: a kind of
 # the closed list of the Study, the address of a page of Microsoft's documentation and a quote that the page holds, as the Study keeps them).
 
 # The ranking of a key that cases/proposals.py reads from cases/toolbox.py (what the toolbox orders its properties by, and which of its suffixes name a count or a size), written again here because the
@@ -242,6 +244,13 @@ def _props(row: dict, handle: str) -> dict:
     return dict(sorted(((row.get("props") or {}).get(handle) or {}).items(), key=lambda item: _order(item[0]))[:DESCRIBED_PROPERTIES])
 
 
+def _limits(row: dict, handle: str, shown: dict) -> dict:
+    """The limits that the tools show of the properties of a resource that they show (`shown`), as the real ones show them (cases/toolbox.py `_limits_of`): for a count or a size that is a number and that
+    the row gives a range for in `limits`, its lowest and highest number."""
+    given = (row.get("limits") or {}).get(handle) or {}
+    return {path: dict(given[path]) for path, value in shown.items() if path in given and isinstance(value, (int, float)) and not isinstance(value, bool) and _rank(path.rsplit(".", 1)[-1]) in COUNT_LIKE}
+
+
 def known_handles(row: dict) -> dict[str, str]:
     """Every handle that the tools of a fixture may show, with the type of what it stands for: its resources, the deployments of an account, and the collection rules and the writers of a
     workspace."""
@@ -299,8 +308,9 @@ def _list_resources(row: dict, arguments: dict) -> dict:
     same, columns, rows = _layout([(r["h"], {"usd30d": _cents(r["usd"]), "service": _service(row), "region": REGION, "managed": False, **_noted(row, r["h"]), **_props(row, r["h"])}) for r in page])
     more = offset + len(page) < len(found)
     reads = list(OFFERS.get(arguments["type"], ()))
+    limits = dict(sorted(((path, bounds) for r in page for path, bounds in _limits(row, r["h"], _props(row, r["h"])).items()), key=lambda item: _order(item[0])))
     return {"type": arguments["type"], "total": len(found), "offset": offset, "has_more": more, **({"next_offset": offset + len(page)} if more else {}),
-            **({"reads": reads} if reads else {}), **({"same": same} if same else {}), "cols": columns, "rows": rows}
+            **({"reads": reads} if reads else {}), **({"same": same} if same else {}), **({"limits": limits} if limits else {}), "cols": columns, "rows": rows}
 
 
 def _describe(row: dict, arguments: dict) -> dict:
@@ -318,6 +328,8 @@ def _describe(row: dict, arguments: dict) -> dict:
         resource = next((r for r in _resources(row) if r["h"] == handle), None)
         found = {"cost30d": round(resource["usd"], 2), "cost_by_service": {_service(row): round(resource["usd"], 2)}, "sku": None, "kind": None, "location": REGION, "managed": False,
                  "properties": _props(row, handle)} if resource else {"sku": None, "kind": None, "location": REGION, "managed": False, "properties": {}}
+        if limits := _limits(row, handle, found["properties"]):
+            found["limits"] = limits
     return {"handle": handle, "type": kind, **({"reads": reads} if reads else {}), **found}
 
 
@@ -679,7 +691,7 @@ def _profile(row: dict, arguments: dict) -> dict:
     for handle in handles:
         described = _describe(row, {"handle": handle})
         kind = described["type"]
-        part: dict = {"handle": handle, "type": kind, "region": REGION, "managed": False, **{key: described[key] for key in ("cost30d", "cost_by_service", "part_of") if key in described},
+        part: dict = {"handle": handle, "type": kind, "region": REGION, "managed": False, **{key: described[key] for key in ("cost30d", "cost_by_service", "part_of", "limits") if key in described},
                       "properties": described["properties"]}
         resource = resources.get(handle)
         if resource is not None:
@@ -982,7 +994,7 @@ def _fates(proposals, change, finding: dict, evidence: dict, price) -> dict[str,
             prefix = dataclasses.replace(change, settings=change.settings[: place + 1] if kind == "set" else (), others=change.others[: place + 1] if kind == "other" else ())
             after = proposals.check(prefix, finding["proposal"], finding["handles"], evidence, price).dropped
             gone = after - before
-            fates[kind].append(proposals.WHY[kind][next(iter(gone))[1]] if gone else "kept")
+            fates[kind].append(proposals.reason(kind, next(iter(gone))[1]) if gone else "kept")
             before = after
     return fates
 
@@ -993,8 +1005,10 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
     the properties that the tools showed as the evidence of each handle (those of the fixture, or only those that `shown` says the tools of the replay showed). `ways`: how many other ways it keeps. `told`: its
     own words for what it drops. No price is worked out, because an invented estate has no bill: a way that is kept has no figure."""
     pricing, proposals = app_code()
-    evidence = {handle: {"properties": {name: value for name, value in _describe(row, {"handle": handle})["properties"].items() if shown is None or name in shown.get(handle, ())}}
-                for handle in known_handles(row)}
+    evidence = {}
+    for handle in known_handles(row):
+        properties = {name: value for name, value in _describe(row, {"handle": handle})["properties"].items() if shown is None or name in shown.get(handle, ())}
+        evidence[handle] = {"properties": properties, **({"limits": limits} if (limits := _limits(row, handle, properties)) else {})}
 
     def price(option):
         return pricing.Priced(option.action)

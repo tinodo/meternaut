@@ -216,7 +216,8 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
         handle, kind = entry.resource.handle, kinds[entry.resource.handle]
         facts = box._facts(entry, tb.DESCRIBED_PROPERTIES)
         part: dict = {"handle": handle, "type": kind, **{name: facts[key] for name, key in (("sku", "sku"), ("kind", "kind"), ("region", "location")) if facts.get(key) is not None},
-                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of", "property_list") if key in facts}, "properties": dict(facts["properties"])}
+                      "managed": facts["managed"], **{key: facts[key] for key in ("cost30d", "cost_by_service", "part_of", "property_list") if key in facts}, "properties": dict(facts["properties"]),
+                      **({"limits": dict(facts["limits"])} if "limits" in facts else {})}
         lists.append((part["properties"], part, "properties"))
         if entry.part_of is None:
             word, _ = _outcome(tb, (handle, "meters"), done, left)
@@ -252,7 +253,7 @@ def build_dossier(box: "Toolbox", handles: list[str], days: int = 30, grain: str
     box._fit(answer, lists, max(tb.MAX_RESULT_CHARS, PER_HANDLE * len(entries)))
     for entry, facts, part, measured, advice in shown:
         handle = entry.resource.handle
-        box._show(entry, {**facts, "properties": dict(part["properties"])})
+        box._show(entry, {**facts, "properties": dict(part["properties"]), "limits": part.get("limits", {})})
         for row in part["metrics"]["rows"] if isinstance(part["metrics"], dict) else []:
             box._record_metric(handle, row[0], measured[row[0]][0], days, measured[row[0]][1])
             box._count_read(kinds[handle], handle, row[0], days, measured[row[0]][0])

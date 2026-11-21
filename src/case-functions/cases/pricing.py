@@ -57,6 +57,7 @@ WHY = {
     "none": "No saving was worked out, because the AI did not say which charges on the bill the change would shrink.",
     "lines": f"No saving was worked out. The charges that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to work from.",
     "remains": "No saving was worked out, because the AI did not say what would remain of those charges in a form that Meternaut can check.",
+    "range": "No saving was worked out, because the number that the AI proposes is outside the range that Microsoft's reference page gives for the setting.",
     "currency": "No saving was worked out, because the cost is not in US dollars.",
     "nothing": f"No saving was worked out, because the charges that the AI named cost nothing in the last {WEEK} days.",
     "credit": "No saving was worked out, because what the resource gets back on its bill is as much as the charges that the AI named cost.",
@@ -182,6 +183,23 @@ def _cited(block: Mapping, name: object, said: float) -> bool:
     return any(number is not None and math.isclose(said, number, rel_tol=1e-6, abs_tol=0.0) for number in map(_number, found))
 
 
+def bounds_of(block: object, name: object) -> dict[str, int]:
+    """The documented range that the tools showed for a property of a resource (the `limits` of its evidence block, from the reference page of its type: cases/ranges.py), as {"lowest": 2, "highest": 50}:
+    a bound that is no whole number, and one that the page does not give, is left out."""
+    limits = block.get("limits") if isinstance(block, Mapping) else None
+    found = limits.get(name) if isinstance(limits, Mapping) else None
+    return {side: bound for side in ("lowest", "highest") if isinstance(found, Mapping) and (bound := _whole(found.get(side))) is not None}
+
+
+def outside(block: object, name: object, number: float) -> tuple[str, int] | None:
+    """The side of the documented range that a number lies beyond, and that bound: ("lowest", 2) or ("highest", 50). None when the number is inside the range, and when the tools showed none for the
+    property."""
+    found = bounds_of(block, name)
+    if "lowest" in found and number < found["lowest"]:
+        return "lowest", found["lowest"]
+    return ("highest", found["highest"]) if "highest" in found and number > found["highest"] else None
+
+
 def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, float, dict] | str:
     """(the form, the smallest and the largest share that remains, the numbers that the AI stated) or the word of WHY."""
     form = said.get("form")
@@ -199,7 +217,9 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
         start, target, name = _number(said.get("from")), _number(said.get("to")), said.get("on")
         if start is None or target is None or not 0 <= target < start or not _cited(block, name, start) or not NAME.fullmatch(str(name)):
             return "remains"
-        return form, target / start, target / start, {"from": start, "to": target, "on": name}
+        if outside(block, name, target) is not None:
+            return "range"
+        return form, target / start, target / start, {"from": start, "to": target, "on": name, **bounds_of(block, name)}
     if form == "share_of_days":
         days, span = _whole(said.get("days")), _whole(said.get("of"))
         if days is None or span is None or not 1 <= days < span <= 31:
@@ -593,6 +613,10 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
         text = paid + (f" The tools read {name or ('one of its numbers' if many == 1 else 'one of their numbers')} as {start:g}{each}, and Meternaut checked that. The AI says the change would lower it to {target:g}{each}, "
                        f"which takes away {_gone(1 - target / start)}. Meternaut did not check that. Nor did it check that the charge falls in step with {name or ('it' if many == 1 else 'them')}."
                        if numbers else " The AI proposes a change, and Meternaut did not check it.")
+        lowest, highest = _whole(found.get("lowest")), _whole(found.get("highest"))
+        if numbers and many == 1 and (lowest is not None or highest is not None):
+            gives = " and ".join(f"{bound:,} as the {side}" for bound, side in ((lowest, "lowest"), (highest, "highest")) if bound is not None)
+            text += f" Microsoft's reference page gives {gives} number for {name or 'it'}, and Meternaut checked that {target:g} is inside that range."
     elif form == "share_of_days":
         text = paid + (f" The AI says {one} is needed {days} days of every {span}, so the change would turn {one} off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "
                        "Those days are the AI's own, and Meternaut did not check them." if _whole(days) and _whole(span) else f" The AI says {one} is needed only on some days, and Meternaut did not check that.")
