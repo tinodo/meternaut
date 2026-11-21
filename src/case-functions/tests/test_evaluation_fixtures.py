@@ -641,7 +641,7 @@ class TheProperties(Base):
         return [name for name in (*answer.get("same", {}), *answer["cols"][1:]) if name not in tb.FIXED_FIELDS], shown
 
     def test_the_properties_of_a_row_are_shown_by_describe_by_profile_and_by_the_listing_as_the_real_toolbox_shows_them(self):
-        for spec in (ROWS["idle-bastion-with-four-units"], ROWS["busy-bastion-with-four-units"], self.INVENTED):
+        for spec in (*(r for r in ROWS.values() if r.get("props")), self.INVENTED):
             with self.subTest(row=spec["id"]):
                 box, handles = real_of(spec), [r["h"] for r in spec["resources"]]
                 for handle in handles:

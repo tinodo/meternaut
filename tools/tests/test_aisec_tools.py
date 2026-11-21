@@ -920,6 +920,16 @@ class TheEvaluations(unittest.TestCase):
         self.assertIn("a fixture that is not a row of cases.jsonl: no-such-fixture", err)
         self.assertEqual(client.calls, [])
 
+    def test_a_file_of_the_app_that_cannot_be_loaded_stops_the_run_before_any_call_and_the_selftest_says_so(self):
+        project = self.project()
+        with mock.patch.object(evals, "app_code", side_effect=helpers.Problem("pricing.py is missing", 2)):
+            code, out, err, client = self.go(project)
+            self.assertEqual((code, client.calls, project.methods), (2, [], []))
+            self.assertIn("pricing.py is missing", err)
+            code, out, _ = run(evals.main, ["--selftest"])
+        self.assertEqual(code, 1)
+        self.assertIn("selftest FAIL: pricing.py is missing", out)
+
     def test_the_thresholds_are_judged_over_the_fixtures_that_were_replayed_alone_and_one_that_none_of_them_asks_for_is_not_judged(self):
         code, out, _, _ = self.go(self.project(only=["all-disks-busy"]), "--only", "all-disks-busy")
         self.assertEqual(code, 0, out)
@@ -1017,6 +1027,10 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
         self.assertEqual(evals.grade(two, stated())["set_found"], 0.5)
         both = json.dumps({"findings": [stated(as_finding=True), stated("r2", "capacityUnits", 2, 1, as_finding=True)], "examined": []})
         self.assertEqual(evals.grade(two, both)["set_found"], 1.0)
+
+    def test_a_setting_that_the_app_keeps_on_another_resource_than_the_expected_one_finds_nothing(self):
+        got = evals.grade(self.GATEWAYS, stated("r2", "capacityUnits", 2, 1, handles=["r2"]))
+        self.assertEqual((got["set_found"], got["settings"]), (0.0, 1))
 
     def test_a_row_that_expects_no_setting_counts_a_decoy_when_the_app_would_keep_one_on_it_and_not_when_it_would_drop_it(self):
         decoy = self.decoy()
