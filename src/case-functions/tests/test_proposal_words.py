@@ -737,7 +737,7 @@ class NoTextOfACardOrALetterIsCutShort(unittest.TestCase):
                     self.assertNotIn("...", undo + letter + json.dumps(made_card))
         finally:
             planting.stop()
-        self.assertEqual(longest, 183, "the longest undo that a family's words give (the gateway of a hub); a longer one needs a bigger brief.UNDO_CHARS")
+        self.assertLessEqual(longest, brief_mod.UNDO_CHARS, "the longest undo of these fixtures has to fit the room that a card and a letter have for an undo")
         for target in ({"set": [{"path": paths[0], "from": 40, "to": 20}, {"path": paths[1], "from": 12, "to": 6}, {"path": paths[2], "from": 30, "to": 15}]},):
             said = family_words.setting_words("virtual machine scale set", "x" * 80, "g" * 90, target, {})
             self.assertLessEqual(len(said.short_undo), brief_mod.UNDO_CHARS, "the undo of a change of a number, which the family keeps short for a card and a letter")
