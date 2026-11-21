@@ -92,7 +92,7 @@ PYTHON = '#!/bin/bash\n{ echo "python3"; printf \'arg:%s\\n\' "$@"; } >> "$FAKE_
 
 ENV = {"ENV_SUBSCRIPTION_ID": SUBSCRIPTION, "ENV_RESOURCE_GROUP": GROUP, "GITHUB_RUN_ID": "12345", "ACTION": "agents-drift", "FOUNDRY_ENDPOINT": ENDPOINT, "FOUNDRY_ACCOUNT": ACCOUNT,
        "GATEWAY_HOST": GATEWAY_HOST, "GATEWAY_NAME": "aigw-meternaut-0123abcd", "OPERATOR_IDENTITY_ID": IDENTITY, "OPERATOR_CLIENT_ID": OPERATOR_CLIENT, "OPERATOR_SUBNET_ID": SUBNET,
-       "OPERATOR_IMAGE": IMAGE, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "EVALS_COMMAND": "probe", "EVALS_JUDGE": "none", "REDTEAM_MODE": "auto"}
+       "OPERATOR_IMAGE": IMAGE, "ENV_DNS_SERVERS": "10.20.0.4,10.20.0.5", "EVALS_COMMAND": "probe", "EVALS_JUDGE": "none", "EVALS_ONLY": "", "REDTEAM_MODE": "auto"}
 
 FIND_AZ = """#!/bin/bash
 echo "az $*" >> "$FAKE_LOG"
@@ -139,6 +139,16 @@ class TheActionsAreOfferedAndTheStepsFollowTheOrder(unittest.TestCase):
             self.assertIn(f"        default: {default}\n", block, name)
             self.assertEqual(re.findall(r"^          - (\S+)$", block, re.M), options, name)
             self.assertIn("Every other action ignores it.", block, name)
+
+    def test_the_input_evals_only_is_an_optional_string_that_names_cases_for_the_command_run_and_every_other_action_ignores_it(self):
+        block = re.search(r"(?ms)^      evals_only:\n(.*?)(?=^      \w|^\w)", WORKFLOW).group(1)
+        for line in ("        type: string\n", "        required: false\n", '        default: ""\n'):
+            self.assertIn(line, block)
+        self.assertNotIn("options:", block, "the ids are free text, so the step checks them (a choice would hold only the ids that the workflow lists, and the set of cases is the file's)")
+        for words in ("Only with foundry-evals and evals_command run", "separated by commas", "letters, digits and hyphens", "at most 80 characters", "Every other action ignores it."):
+            self.assertIn(words, block)
+        self.assertIn("EVALS_ONLY: ${{ inputs.evals_only }}", step(EVALS), "the value reaches the script through the environment, never through an expression in the script")
+        self.assertEqual(WORKFLOW.count("inputs.evals_only"), 1)
 
     def test_the_steps_come_in_the_order_of_the_checks_and_before_the_summary(self):
         names = re.findall(r"(?m)^      - name: (.*)$", WORKFLOW)
@@ -205,6 +215,7 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
         for command in ("probe", "run", "rule", "rule-apply"):
             for judge in ("none", "connection", "auto"):
                 yield EVALS, {"EVALS_COMMAND": command, "EVALS_JUDGE": judge}
+        yield EVALS, {"EVALS_COMMAND": "run", "EVALS_JUDGE": "none", "EVALS_ONLY": "idle-disk-1,idle-bastion-with-four-units"}
         for mode in ("auto", "cloud", "dataset"):
             yield REDTEAM, {"REDTEAM_MODE": mode}
         yield AGENT365, {}
@@ -247,6 +258,71 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
         done, _, _ = run_script(EVALS, {"python3": PYTHON}, {**ENV, "EVALS_COMMAND": "delete-everything"})
         self.assertEqual(done.returncode, 1, "a command that is not one of the four is refused before anything is started")
         self.assertIn("::error::evals_command is probe, run, rule or rule-apply. Nothing was changed.", done.stdout)
+
+    def test_the_ids_of_evals_only_reach_the_tool_as_words_of_its_arguments_and_no_comma_reaches_the_container(self):
+        run_tool = (ROOT / "operator" / "run-tool.sh").read_text(encoding="utf-8")
+        self.assertNotIn(",", re.search(r"argument_characters='\^\[(.*?)\]\+\$'", run_tool).group(1), "the script of the container takes no comma in the arguments, so the step turns the commas into spaces")
+        text = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_JUDGE="none", EVALS_ONLY="idle-disk-1,idle-bastion-with-four-units") if a.startswith("TOOL_ARGS="))
+        self.assertEqual(text, f"TOOL_ARGS=run --endpoint {ENDPOINT} --judge none --wait-seconds 900 --only idle-disk-1 idle-bastion-with-four-units")
+        self.assertRegex(text, r"^TOOL_ARGS=[A-Za-z0-9 ./:_=-]+$")
+        one = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_JUDGE="connection", EVALS_ONLY="idle-disk-1") if a.startswith("TOOL_ARGS="))
+        self.assertEqual(one, f"TOOL_ARGS=run --endpoint {ENDPOINT} --judge connection --wait-seconds 900 --only idle-disk-1")
+        plain = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_JUDGE="none", EVALS_ONLY="") if a.startswith("TOOL_ARGS="))
+        self.assertNotIn("--only", plain, "an empty input is every case")
+
+    def test_a_value_of_evals_only_that_is_not_ids_is_refused_before_anything_is_started_and_the_other_commands_ignore_it(self):
+        message = "::error::The input evals_only is the ids of invented cases, separated by commas: letters, digits and hyphens, and every id starts and ends with a letter or a digit, at most 80 characters. Nothing was changed."
+        for bad in ("idle disk-1", "idle-disk-1;x", "$(id)", "`id`", "idle-disk-1,,idle-addresses", ",idle-disk-1", "idle-disk-1,", ",", "a" * 81, "idle_disk", "idle/disk", "idle.disk",
+                    "--judge", "x,--judge,connection", "idle-disk-1,--judge,connection", "-a", "a,-b", "-", "a,-", "a-,b", "a,b-", "--lock,x", "a,--wait-seconds,5", "a,--only"):
+            with self.subTest(bad=bad):
+                done, lines, _ = run_script(EVALS, {"python3": PYTHON}, {**ENV, "EVALS_COMMAND": "run", "EVALS_ONLY": bad})
+                self.assertEqual(done.returncode, 1, done.stdout)
+                self.assertIn(message, done.stdout)
+                self.assertEqual([line for line in lines if line.startswith("arg:")], [], "nothing was started")
+        for good in ("a", "idle-disk-1,idle-addresses", "a" * 80, "A1-b2,C3", "a-b", "a1,b2-c3-d4"):
+            with self.subTest(good=good):
+                text = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_ONLY=good) if a.startswith("TOOL_ARGS="))
+                self.assertTrue(text.endswith(" --only " + good.replace(",", " ")), text)
+        for command in ("probe", "rule", "rule-apply"):
+            with self.subTest(command=command):
+                args = self.started(EVALS, EVALS_COMMAND=command, EVALS_ONLY="whatever it is; it is ignored")
+                self.assertTrue(all("--only" not in a and "whatever" not in a for a in args))
+
+    def test_no_value_of_evals_only_can_set_another_option_of_the_tool_through_the_words_that_it_becomes(self):
+        for sneaky in ("idle-disk-1,--judge,connection", "--judge,connection", "idle-disk-1,--lock,x", "idle-disk-1,--wait-seconds,1", "idle-disk-1,--summary,x"):
+            with self.subTest(sneaky=sneaky):
+                done, lines, _ = run_script(EVALS, {"python3": PYTHON}, {**ENV, "EVALS_COMMAND": "run", "EVALS_JUDGE": "none", "EVALS_ONLY": sneaky})
+                self.assertEqual((done.returncode, [line for line in lines if line.startswith("arg:")]), (1, []), "the step stops before the container is started")
+
+    def test_the_grader_of_the_settings_runs_in_the_flat_folder_of_the_secret_volume_where_the_toolbox_is_not(self):
+        tool = operator_run()
+        code = textwrap.dedent("""
+            import importlib.util, json, sys
+            from pathlib import Path
+            spec = importlib.util.spec_from_file_location("tool", Path.cwd() / "foundry-evals.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            rows = {row["id"]: row for row in (json.loads(line) for line in Path("cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())}
+            answer = sys.stdin.read()
+            print(json.dumps({"idle": module.grade(rows["idle-bastion-with-four-units"], answer), "busy": module.grade(rows["busy-bastion-with-four-units"], answer),
+                              "toolbox": hasattr(sys.modules.get("cases_flat.toolbox"), "__file__")}))
+        """)
+        change = {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "ratio", "on": "scaleUnits", "from": 4, "to": 2}}], "how": "Fewer units.",
+                  "set": [{"handle": "r1", "property": "scaleUnits", "from": 4, "to": 2}], "others": [{"title": "Use a smaller tier", "gives_up": "Fewer features.", "in_place": False, "change": {
+                      "action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.2, "high": 0.4}}]}}]}
+        answer = json.dumps({"findings": [{"handles": ["r1"], "basis": "oversized", "proposal": "change", "metric_evidence": [], "change": change, "confidence": 0.8, "summary": "x"}], "examined": []})
+        parsed = tool.build_parser().parse_args(self.started(EVALS, EVALS_COMMAND="run", EVALS_JUDGE="none")[1:])
+        with tempfile.TemporaryDirectory() as tmp:
+            for pair in parsed.secret_file:
+                file_name, path = pair.split("=", 1)
+                shutil.copyfile(ROOT / path, Path(tmp) / file_name)
+            self.assertFalse((Path(tmp) / "toolbox.py").exists(), "the volume does not hold the toolbox: it is 230 KB and reads half of the app")
+            done = subprocess.run([sys.executable, "-c", code], cwd=tmp, input=answer, capture_output=True, text=True, env={**os.environ, "GITHUB_ACTIONS": "true"})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        found = json.loads(done.stdout.splitlines()[-1])
+        self.assertEqual((found["idle"]["set_found"], found["idle"]["settings"], found["idle"]["ways"], found["idle"]["decoys"]), (1.0, 1, 1, 0))
+        self.assertEqual((found["busy"]["settings"], found["busy"]["decoys"]), (1, 1), "the same answer on the host that is in use is a decoy")
+        self.assertFalse(found["toolbox"], "what stands in for the toolbox is made by the tool and is no file")
 
     def test_the_two_that_spend_are_given_their_caps_and_the_container_outlives_the_cap_on_seconds(self):
         tool = operator_run()

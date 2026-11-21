@@ -3,20 +3,23 @@
 The fixtures (evaluation/cases.jsonl, answered by tools/foundry-evals.py) are a copy of what the tools show, so a change of a tool is a change that the copy does not know. Here the real toolbox
 runs on the fake estates of its own tests and the fixtures answer the same call: the two answers must have the same keys, the same columns and the same kinds of value, apart from what is
 declared here to come and go with the data. A tool that is changed or added fails here until `answers_of` in tools/foundry-evals.py follows it. Every name, id and number is INVENTED."""
+import ast
 import datetime as dt
 import importlib.util
+import inspect
 import json
 import re
 import sys
+import types
 import unittest
 from unittest import mock
 
 from support import REPO_ROOT
-from cases import deeper, toolbox as tb
+from cases import agents, brief, deeper, investigate, toolbox as tb
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
 from test_prices import priced
 from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
-from test_toolbox_depth import profiled
+from test_toolbox_depth import DepthEstate, profiled
 from test_toolbox_meters import FIXED, WIDGET, at, billed, day, widgets
 
 METRIC = "Processed Prompt Tokens"
@@ -591,6 +594,191 @@ class TheEvidence(Base):
         self.assertEqual(evals.evidence_total(row_of, "r2", "Billable GB AzureDiagnostics"), (False, None))
         self.assertEqual(evals.evidence_total(ROWS[ACCOUNT_ROW], "r2", METRIC), (True, 912000))
         self.assertEqual(evals.evidence_total(row_of, ["r1"], "Heartbeat"), (False, None))
+
+
+def nested(props):
+    """The properties and the sku of a resource that hold what a fixture lists as dotted keys: `sku.*` is the root's sku, and any other key is relative to the properties of the resource."""
+    properties, sku = {}, {}
+    for path, value in props.items():
+        keys = path.split(".")
+        node, rest = (sku, keys[1:]) if keys[0] == "sku" else (properties, keys)
+        for key in rest[:-1]:
+            node = node.setdefault(key, {})
+        node[rest[-1]] = value
+    return properties, sku or None
+
+
+def real_of(spec):
+    """The real toolbox on an estate of the resources that a row of the fixtures says it has: the properties and the cost of each, and the one metric of its type. Its listing has been read."""
+    estate = DepthEstate()
+    for resource in spec["resources"]:
+        properties, sku = nested((spec.get("props") or {}).get(resource["h"], {}))
+        estate.rows.append(row(spec["type"], f"n{resource['h']}", properties=properties, sku=sku))
+        estate.cost_rows.append((SUB, resource["usd"], estate.rows[-1]["id"].lower(), spec.get("service") or "Storage"))
+    estate.definitions[spec["type"]] = [definition(spec["metric"], "Count", "Total")]
+    box = toolbox(estate)
+    ask(box, "list_resources", type=spec["type"])
+    box.arm.activity_events = mock.Mock(side_effect=tb.HttpError(403, "no"))  # a Watch whose identity cannot read the Activity Log: nothing is known of the age, like an invented resource
+    return box
+
+
+class TheProperties(Base):
+    """The properties that a row gives its resources (`props`): the tools of the fixtures show them with the keys, the values, the order and in the places where the real toolbox shows the properties of
+    a resource, and the ranking of a key that the tool hands to the app's own check of a setting is the toolbox's own. Every kind, property and number is INVENTED."""
+
+    PROPS = {"r1": {"scaleUnits": 4, "provisioningState": "Succeeded", "sku.capacity": 2, "networkAcls.defaultAction": "Deny", "numberOfSites": 3, "zoneRedundant": False, "retentionDays": 30},
+             "r2": {"scaleUnits": 2, "provisioningState": "Succeeded", "sku.capacity": 2, "networkAcls.defaultAction": "Deny", "numberOfSites": 3, "zoneRedundant": False, "retentionDays": 30}}
+    INVENTED = {"id": "invented", "kind": "clean", "type": WIDGET, "metric": "Day Metric", "service": "Example Service", "resources": [{"h": "r1", "usd": 99.0, "total": 3}, {"h": "r2", "usd": 98.0, "total": 3}],
+                "props": PROPS, "expect": {"propose": [], "never": []}}
+
+    @staticmethod
+    def cells(answer):
+        """The properties of a listing: the names of its property columns and of its `same` block in the order of the answer, and the value of each for each handle."""
+        shown = {name: {line[0]: value for line in answer["rows"]} for name, value in answer.get("same", {}).items() if name not in tb.FIXED_FIELDS}
+        for line in answer["rows"]:
+            for name, value in zip(answer["cols"][1:], line[1:]):
+                if name not in tb.FIXED_FIELDS:
+                    shown.setdefault(name, {})[line[0]] = value
+        return [name for name in (*answer.get("same", {}), *answer["cols"][1:]) if name not in tb.FIXED_FIELDS], shown
+
+    def test_the_properties_of_a_row_are_shown_by_describe_by_profile_and_by_the_listing_as_the_real_toolbox_shows_them(self):
+        for spec in (*(r for r in ROWS.values() if r.get("props")), self.INVENTED):
+            with self.subTest(row=spec["id"]):
+                box, handles = real_of(spec), [r["h"] for r in spec["resources"]]
+                for handle in handles:
+                    real, fake = ask(box, "describe", handle=handle)["properties"], self.fixture(spec, "describe", handle=handle)["properties"]
+                    self.assertTrue(real, "the real tool shows these properties of a resource that has them")
+                    self.assertEqual(list(real.items()), list(fake.items()), f"{handle}: the same keys, the same values and the same order")
+                real_parts, fake_parts = ask(box, "profile", handles=handles)["profiles"], self.fixture(spec, "profile", handles=handles)["profiles"]
+                self.assertEqual([list(part["properties"].items()) for part in real_parts], [list(part["properties"].items()) for part in fake_parts])
+                real_list, fake_list = ask(box, "list_resources", type=spec["type"]), self.fixture(spec, "list_resources", type=spec["type"])
+                self.assertTrue(self.cells(real_list)[1], "the real listing shows the properties of a resource")
+                self.assertEqual(self.cells(real_list), self.cells(fake_list), "a property that varies is a column and one that is the same in every row is in `same`, in the toolbox's order")
+
+    def test_a_row_without_props_shows_no_property_and_a_handle_that_has_none_shows_none(self):
+        self.assertEqual(self.fixture(DISK_ROW, "describe", handle="r1")["properties"], {})
+        self.assertEqual(self.fixture(self.INVENTED, "describe", handle="r2")["properties"], dict(sorted(self.PROPS["r2"].items(), key=lambda item: evals._order(item[0]))))
+        without = {**self.INVENTED, "props": {"r1": self.PROPS["r1"]}}
+        self.assertEqual(self.fixture(without, "describe", handle="r2")["properties"], {})
+        self.assertEqual(self.fixture(without, "profile", handles=["r2"])["profiles"][0]["properties"], {})
+
+    def test_what_the_tool_shows_of_a_resource_is_at_most_what_the_toolbox_shows(self):
+        many = {f"count{n:02d}Count": n for n in range(40)}
+        properties, sku = nested(many)
+        real = tb.typed_properties(properties, sku, tb.Listing(frozenset((key,) for key in many)))
+        self.assertEqual(len(real), tb.DESCRIBED_PROPERTIES)
+        shown = self.fixture({**self.INVENTED, "props": {"r1": many}}, "describe", handle="r1")["properties"]
+        self.assertEqual(list(shown.items()), real, "the same thirty, the most informative first")
+
+    def test_the_ranking_of_a_key_that_the_tool_gives_the_apps_check_of_a_setting_is_the_toolboxs_own(self):
+        self.assertEqual((evals.SUFFIXES, evals.COUNT_LIKE, evals.DESCRIBED_PROPERTIES), (tb.SUFFIXES, tb.COUNT_LIKE, tb.DESCRIBED_PROPERTIES))
+        for name in ("_rank", "_order"):
+            self.assertEqual(ast.dump(ast.parse(inspect.getsource(getattr(evals, name)))), ast.dump(ast.parse(inspect.getsource(getattr(tb, name)))),
+                             f"{name} in tools/foundry-evals.py is the toolbox's own, written again for the Operator's volume, which cannot hold the toolbox: change both")
+
+    def test_the_apps_own_gate_on_a_count_that_the_tool_loads_answers_as_the_real_one_does(self):
+        from cases import proposals as app
+
+        pricing, proposals = evals.app_code()
+        for path in ("scaleUnits", "capacityUnits", "sku.capacity", "numberOfSites", "numberOfDaysToKeep", "retentionDays", "retentionCount", "backupCount", "keepAliveCount", "maxThrottleCount",
+                     "ipConfigurationsCount", "rulesCount", "provisioningState", "zoneRedundant", "diskSizeGB", "maxThroughputMbps", "replicas", "x", "", "scale Units", "ünitsUnits", 7, None):
+            self.assertEqual(proposals.countlike(path), app.countlike(path), path)
+        self.assertTrue(proposals.countlike("scaleUnits") and not proposals.countlike("retentionDays"))
+        self.assertIsNot(proposals, app, "the tool loads the app's own file under the name of the flat package, so that the Operator's volume and the repository give the same code")
+        self.assertIs(pricing.parse(None), None)
+
+
+class TheChecksOfAFinding(unittest.TestCase):
+    """What the grader of tools/foundry-evals.py repeats of the checks that the investigation makes of each finding before it asks about a setting (cases/investigate.py parse_finding and _verify): the lists
+    and the caps, and what is kept of each finding of an answer, each held to the app's own code on the same answers, so that a rule of the app that changes fails here until the tool follows it."""
+
+    ROW = {"id": "invented", "kind": "clean", "type": WIDGET, "metric": "Day Metric", "service": "Example Service", "expect": {"propose": [], "never": []},
+           "resources": [{"h": "r1", "usd": 99.0, "total": 0}, {"h": "r2", "usd": 98.0, "total": 3}, {"h": "r3", "usd": 97.0, "total": 0, "days": 19}, {"h": "r4", "usd": 96.0, "total": None},
+                         {"h": "r5", "usd": 95.0, "total": 0, "days": 20}]}
+
+    @staticmethod
+    def app_reads(row, findings):
+        """Every finding that the app reads, by its own parse_finding and _verify, on a toolbox that shows what the tools of the fixture could show: the metric of the row and the cost of each resource on
+        either basis."""
+        evidence = {}
+        for resource in evals._resources(row):
+            handle, cost = resource["h"], evals.evidence_total(row, resource["h"], "Cost actual USD 30d")[1]
+            evidence[handle] = {"metrics": {row["metric"]: {"total": resource["total"], "max": resource["total"], "average": resource["total"], "days_with_data": resource["days"], "days": 30, "unit": None,
+                                                           "totals": [resource["total"]]},
+                                            **{f"Cost {basis} USD 30d": {"total": cost, "max": None, "average": None, "days_with_data": None, "days": 30, "unit": None, "totals": [cost]}
+                                               for basis in ("actual", "amortized")}}}
+        box = types.SimpleNamespace(handles=dict.fromkeys(evals.known_handles(row)), evidence=evidence)
+        taken, holders, read = set(), {}, []
+        for number, raw in enumerate(findings[:agents.MAX_FINDINGS], 1):
+            finding, handles, entries = investigate.parse_finding(number, raw)
+            if finding.reason is None:
+                investigate._verify(finding, handles, entries, box, taken, holders)
+            read.append(finding)
+        return read
+
+    @classmethod
+    def app_keeps(cls, row, findings):
+        return [(finding.basis, finding.proposal, finding.confidence, finding.handles) for finding in cls.app_reads(row, findings) if finding.reason is None and finding.handles]
+
+    def test_the_lists_and_the_caps_that_the_tool_repeats_are_the_apps_own(self):
+        self.assertEqual((evals.BASES, evals.PROPOSALS, evals.MAX_HANDLES, evals.MAX_FINDINGS, evals.MEASURED_DAYS), (agents.BASES, agents.PROPOSALS, agents.MAX_HANDLES, agents.MAX_FINDINGS, brief.MEASURED_DAYS))
+
+    def test_the_words_and_the_numbers_are_read_as_the_app_reads_them(self):
+        for value in ("change", " Change ", "CHANGE\n", "banana", "", None, 5, True, ["change"], "no-usage", "no usage"):
+            self.assertEqual(evals._word(value, evals.PROPOSALS), investigate._word(value, agents.PROPOSALS), repr(value))
+            self.assertEqual(evals._word(value, evals.BASES), investigate._word(value, agents.BASES), repr(value))
+        for value in (0, 1, 0.5, -1, 85, True, False, None, "0.5", float("nan"), float("inf"), -float("inf"), 10 ** 400, [1], {"a": 1}):
+            self.assertEqual(evals._finite(value), investigate._number(value), repr(value))
+
+    def answers(self):
+        """Answers of the Investigator that exercise every rule of the checks: what the app keeps of each is compared with what the tool keeps."""
+        def finding(handles, *cited, basis="no-usage", proposal="delete", confidence=0.9, **more):
+            return {"handles": handles, "basis": basis, "proposal": proposal, "confidence": confidence, "metric_evidence": [{"handle": h, "metric": m, "total": t} for h, m, t in cited], **more}
+
+        zero, metric = ("r1", "Day Metric", 0), "Day Metric"
+        cost = evals.evidence_total(self.ROW, "r1", "Cost actual USD 30d")[1]
+        return [
+            [finding(["r1"], zero)], [finding(["r1", "r2"], zero, ("r2", metric, 0))], [finding(["r2"], ("r2", metric, 3))], [finding(["r3"], ("r3", metric, 0))], [finding(["r4"], ("r4", metric, None))],
+            [finding(["r5"], ("r5", metric, 0))], [finding(["r1"], zero, ("r1", "Cost actual USD 30d", cost))], [finding(["r1"], ("r1", " day metric ", 0))], [finding(["r1"], ("r1", "Other", 0))],
+            [finding(["r1"], ("r1", metric, "0"))], [finding(["r1"], ("r1", metric, False))], [finding(["r1"], ("r1", metric, 0.0000001))], [finding(["r2"], ("r2", metric, 3.0000001))], [finding(["r1"])],
+            [finding(["r1"], zero, ("r2", metric, 3))], [finding(["r1"], metric_evidence=[{"handle": "r1", "metric": metric, "total": 0}, "not an entry", {"handle": ["r1"], "metric": metric, "total": 0},
+                                                                                           {"handle": "r1", "metric": 5, "total": 0}])], [finding(["r1"], metric_evidence="nothing")],
+            [finding(["r1"], basis=" No-Usage ", proposal=" Delete ")], [finding(["r1"], zero, basis="oversized", proposal="change")], [finding(["r1", "r2"], basis="oversized", proposal="change")],
+            [finding(["r1"], zero, basis="banana")], [finding(["r1"], zero, proposal="banana")], [finding(["r1"], zero, confidence="high")], [finding(["r1"], zero, confidence=True)],
+            [finding(["r1"], zero, confidence=float("nan"))], [finding(["r1"], zero, confidence=85)], [finding(["r1"], zero, confidence=-1)], [finding(["r1"], zero, confidence=0.123456)],
+            [{"handles": ["r1"], "proposal": "delete", "metric_evidence": []}], ["r1", 5, None], [finding([])], [finding("r1")], [finding(["r9"], zero)], [finding(["r9", "r1"], zero)],
+            [finding(["r1", "r1", "r1"], zero)], [finding(["r1", 5, None, "r1"], zero)], [finding([f"x{n}" for n in range(59)] + ["r1"], zero)], [finding([f"x{n}" for n in range(60)] + ["r1"], zero)],
+            [finding(["r1"], zero, confidence=0.8), finding(["r1"], zero, confidence=0.8, proposal="investigate")], [finding(["r1"], zero, confidence=0.8), finding(["r1"], zero, confidence=0.9, proposal="investigate")],
+            [finding(["r1"], zero, confidence=0.9), finding(["r1"], zero, confidence=0.8, proposal="investigate")], [finding(["r1"], zero, confidence=85), finding(["r1"], zero, confidence=0.1, proposal="investigate")],
+            [finding(["r1"], zero, confidence=0.8), finding(["r1", "r5"], zero, ("r5", metric, 0), confidence=0.9, proposal="investigate")],
+            [finding(["r1", "r5"], zero, ("r5", metric, 0)), finding(["r5"], ("r5", metric, 0), confidence=0.95, proposal="investigate")],
+            [finding(["r1", "r5"], zero, ("r5", metric, 0)), finding(["r2"], ("r2", metric, 3)), finding(["r1"], zero, basis="oversized", confidence=0.95, proposal="investigate")],
+            [finding(["r2"], basis="duplicate")] * 7 + [finding(["r1"], zero)], [finding(["r2"], basis="duplicate")] * 8 + [finding(["r1"], zero)],
+            [finding(["r1"], zero, ("r1", "cost actual usd 30d", cost))], [finding(["r1"], zero, ("r1", "  COST ACTUAL USD 30D ", cost))], [finding(["r1"], zero, ("r1", "cost amortized usd 30d", cost))],
+            [finding(["r1"], zero, ("r1", "Cost  actual USD 30d", cost))], [finding(["r1"], ("r1", " DAY METRIC ", 0), ("r1", "cost actual usd 30d", cost))], [finding([5, None], zero)],
+            [finding(["r1"], zero, ("r1", "Cost actual USD 30d", cost), basis="oversized", proposal="change")], [finding(["r2"], ("r2", "cost actual usd 30d", 3), ("r2", "day metric", 3))],
+        ]
+
+    def test_what_is_kept_of_the_findings_of_an_answer_is_what_the_app_keeps(self):
+        answers = self.answers()
+        for number, answer in enumerate(answers):
+            with self.subTest(answer=number):
+                kept = [(f["basis"], f["proposal"], f["confidence"], f["handles"]) for f in evals._kept_findings(self.ROW, answer)]
+                self.assertEqual(kept, self.app_keeps(self.ROW, answer), json.dumps(answer)[:300])
+        self.assertTrue(any(self.app_keeps(self.ROW, answer) for answer in answers) and not all(self.app_keeps(self.ROW, answer) for answer in answers), "the answers keep some findings and drop others")
+
+    def test_the_reason_for_dropping_a_finding_whole_is_the_apps_own_words(self):
+        reasons = set()
+        for number, answer in enumerate(self.answers()):
+            with self.subTest(answer=number):
+                read = evals._read_findings(self.ROW, answer)
+                app = self.app_reads(self.ROW, answer)
+                self.assertEqual([(f["number"], f["reason"]) for f in read], [(f.number, f.reason) for f in app], json.dumps(answer)[:300])
+                reasons |= {f.reason for f in app if f.reason}
+        for words in ("it is not an object", "its basis or its proposal is not on the list", "its confidence is not a number", "it lists no handles", "no resource of it is left: 1 that no tool showed",
+                      "no resource of it is left: 1 without a cited measurement that matches the tools and shows no usage on enough days", "no resource of it is left: 1 that an earlier finding has",
+                      "no resource of it is left: 1 that a later finding, which is surer of them, has", "no resource of it is left: it lists none that the tools showed"):
+            self.assertIn(words, reasons, "the answers make the app drop a finding for each of its reasons")
 
 
 if __name__ == "__main__":
