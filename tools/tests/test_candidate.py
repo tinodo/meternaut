@@ -26,8 +26,8 @@ import test_aisec_workflow as flow
 helpers, evals, redteam, ROOT, APP = aisec.helpers, aisec.evals, aisec.redteam, aisec.ROOT, aisec.APP
 FOLDER = ROOT / "evaluation" / "candidates"
 FIRST = "others-research"
-ADDED = ("A smaller number of units is only one way to save on something that comes in tiers, sizes or numbers of units. Before you answer for one resource, look for the others: read what the "
-         "documentation was read to say about its other tiers or sizes and about its free or shared offers, price each one that can be priced with the tool for alternatives, and state each in others "
+ADDED = ("A smaller number of units is only one way to save on something that comes in tiers, sizes or numbers of units. Before you answer for one resource, and within your budget of calls, look for the "
+         "others: read what the documentation was read to say about its other tiers or sizes, price each one that can be priced with the tool for alternatives, and state each in others "
          "with what it gives up and whether it can be altered in place. Say in examined when you looked and found none.")
 PRODUCTION = "meternaut-investigator"
 IDLE = "idle-disk-1"
@@ -129,7 +129,7 @@ class TheCandidateFiles(unittest.TestCase):
         names = sorted(path.name for path in FOLDER.iterdir())
         self.assertIn(f"{FIRST}.txt", names)
         for name in names:
-            self.assertRegex(name, r"^[a-z0-9][a-z0-9-]{0,59}\.txt$", f"{name}: only a file that --candidate can name travels to the Operator")
+            self.assertRegex(name, r"^[a-z0-9][a-z0-9-]{0,49}\.txt$", f"{name}: only a file that --candidate can name travels to the Operator")
 
     def test_every_candidate_is_text_that_the_tool_accepts_and_is_not_the_production_text(self):
         for path in FOLDER.iterdir():
@@ -336,6 +336,52 @@ class TheCandidateReplay(unittest.TestCase):
         self.assertRegex(out, r"(?m)^PASS groundedRate ")
         self.assertRegex(out, rf"(?m)^WARNING the temporary agent {left} is still in the project")
 
+    def together(self, project, *argv):
+        """The whole text of a run, standard output and standard error in one stream as the log of the Operator has them, and what main returned ('interrupted' for a run that was stopped by hand, 'raised' for one
+        that an unexpected error ended)."""
+        client, clock, text = aisec.evals_client(project), aisec.FakeTime(), io.StringIO()
+        with contextlib.redirect_stdout(text), contextlib.redirect_stderr(text), mock.patch.dict(os.environ, aisec.ACTIONS):
+            try:
+                code = evals.main(["run", "--endpoint", aisec.ENDPOINT, "--only", IDLE, *argv], client=client, spend=helpers.Spend(aisec.LIMITS), sleep=clock.sleep, clock=clock)
+            except KeyboardInterrupt:
+                code = "interrupted"
+            except RuntimeError:
+                code = "raised"
+        return code, [line for line in text.getvalue().splitlines() if line.strip()]
+
+    def test_the_last_line_of_every_run_that_leaves_an_agent_behind_is_the_warning_that_names_it_the_paths_of_an_error_too(self):
+        def fails():
+            return 500, {"error": {"code": "server_error"}}
+
+        def interrupts():
+            raise KeyboardInterrupt
+
+        def raises():
+            raise RuntimeError("an error that nobody expected")
+
+        for label, options, expected in (("the replay ends", {}, 1), ("the replay fails", {"answer_with": fails}, 1), ("the run is stopped by hand", {"answer_with": interrupts}, "interrupted"),
+                                         ("the replay raises an error", {"answer_with": raises}, "raised"), ("the answer to the creation is lost", {"lost": True}, 1)):
+            with self.subTest(path=label):
+                project = self.project(delete=403, **options)
+                with candidate_file("A text.") as name:
+                    code, lines = self.together(project, "--candidate", name)
+                (left,) = project.agents
+                self.assertEqual(code, expected)
+                self.assertEqual(lines[-1], f"WARNING the temporary agent {left} is still in the project: delete it by hand in the portal under Build, Agents")
+                self.assertEqual(sum(line.startswith("WARNING") for line in lines), 1, "once, and nothing comes after it")
+                self.assertEqual(sum(f"candidate: the temporary agent {left} was NOT deleted" in line for line in lines), 1, "it is said when the block ends, and the warning says it again at the end")
+                if label == "the replay fails":
+                    self.assertTrue(any(line.startswith("error: a response of the agent could not be had (500 server_error)") for line in lines[:-1]), "the error comes first and the warning after it")
+
+    def test_a_run_that_deleted_its_agent_ends_with_no_warning_and_a_second_run_does_not_repeat_the_warning_of_the_first(self):
+        with candidate_file("A text.") as name:
+            code, lines = self.together(self.project(delete=403), "--candidate", name)
+            self.assertTrue(lines[-1].startswith("WARNING"))
+            code, lines = self.together(self.project(), "--candidate", name)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(line.startswith("WARNING") for line in lines), "the agent that the first run left is not the second run's")
+        self.assertTrue(lines[-1].startswith("run: ") and "calls to the project in all" in lines[-1])
+
     def test_an_agent_that_was_made_when_the_answer_was_lost_is_deleted_too_and_a_refusal_leaves_nothing_to_delete(self):
         project = self.project(lost=True)
         with candidate_file("A text.") as name:
@@ -365,14 +411,18 @@ class TheCandidateReplay(unittest.TestCase):
         self.assertEqual(out, "")
 
     def test_a_name_that_is_not_the_name_of_a_candidate_is_refused_before_any_call(self):
-        for bad in ("", "-x", "--judge", "A", "Others", "a_b", "a.b", "a/b", "a\\b", "a b", "a,b", "a;b", "$(id)", "a" * 61, "\u043ethers", "\uff41bc", "a\u2010b", "k\u212a", "a\nb", "\u0131x"):
+        for bad in ("", "-x", "--judge", "A", "Others", "a_b", "a.b", "a/b", "a\\b", "a b", "a,b", "a;b", "$(id)", "a" * 51, "\u043ethers", "\uff41bc", "a\u2010b", "k\u212a", "a\nb", "\u0131x"):
             with self.subTest(name=bad):
                 self.refused(f"--candidate={bad}", fragment="--candidate names a file of evaluation/candidates")
 
     def test_the_longest_name_and_the_shortest_are_accepted_by_the_pattern_and_then_found_missing(self):
-        for good in ("a", "0", "a-", "others-research-2", "a" * 60):
+        for good in ("a", "0", "a-", "others-research-2", "a" * 50):
             with self.subTest(name=good):
                 self.refused("--candidate", good, fragment=f"there is no candidate {good}")
+
+    def test_a_name_of_51_characters_is_refused_in_plain_words_that_give_the_limit_and_one_of_50_is_taken_as_far_as_the_file(self):
+        self.refused("--candidate", "a" * 51, fragment="lower-case letters, digits and hyphens, starting with a letter or a digit, at most 50 characters")
+        self.refused("--candidate", "a" * 50, fragment=f"there is no candidate {'a' * 50}")
 
     def test_a_file_that_is_not_there_is_refused_before_any_call_and_the_name_of_a_file_of_another_folder_cannot_be_given(self):
         self.refused("--candidate", "no-such-candidate", fragment="there is no candidate no-such-candidate")
@@ -453,7 +503,7 @@ class TheCandidateReplay(unittest.TestCase):
 
     def test_a_label_is_one_line_of_plain_words_for_a_name_of_any_length_that_is_allowed(self):
         project = self.project()
-        with candidate_file(instructions_of(project) + " More.", name="a" * 60) as name:
+        with candidate_file(instructions_of(project) + " More.", name="a" * 50) as name:
             code, out, err, client = go(project, "--only", IDLE, "--candidate", name)
         self.assertEqual(code, 0, out + err)
         self.assertEqual(out.splitlines()[0].count("\n"), 0)
@@ -539,7 +589,7 @@ def started(**changes):
 class TheHubInputsOfACandidate(unittest.TestCase):
     TAIL = f"--endpoint {flow.ENDPOINT} --judge none --wait-seconds 900"
     NAME_MESSAGE = ("::error::The input evals_candidate is the name of a file of evaluation/candidates, without .txt: lower-case letters, digits and hyphens, starting with a letter or a digit, "
-                    "at most 60 characters. Nothing was changed.")
+                    "at most 50 characters. Nothing was changed.")
 
     def block(self, name):
         return re.search(rf"(?ms)^      {name}:\n(.*?)(?=^      \w|^\w)", flow.WORKFLOW).group(1)
@@ -549,11 +599,17 @@ class TheHubInputsOfACandidate(unittest.TestCase):
         for line in ("        type: string\n", "        required: false\n", '        default: ""\n'):
             self.assertIn(line, block)
         self.assertNotIn("options:", block, "the name is free text, so the step checks it")
-        for words in ("Only with foundry-evals and evals_command run", "evaluation/candidates/NAME.txt", "lower-case letters, digits and hyphens", "at most 60 characters", "a temporary agent",
+        for words in ("Only with foundry-evals and evals_command run", "evaluation/candidates/NAME.txt", "lower-case letters, digits and hyphens", "at most 50 characters", "a temporary agent",
                       "deletes it at the end, whatever happened", "never written", "nothing is promoted", "Empty replays the production Investigator", "Every other action ignores it."):
             self.assertIn(words, block)
         self.assertIn("EVALS_CANDIDATE: ${{ inputs.evals_candidate }}", flow.step(flow.EVALS), "the value reaches the script through the environment, never through an expression in the script")
         self.assertEqual(flow.WORKFLOW.count("inputs.evals_candidate"), 1)
+
+    def test_the_description_says_that_a_candidate_run_is_never_the_test_of_a_release_which_runs_with_this_input_empty(self):
+        block = self.block("evals_candidate")
+        for words in ("A candidate run is never the test of a release", "rule 40", "runs this action with this input empty", "exits 0 with the same PASS lines"):
+            self.assertIn(words, block)
+        self.assertLess(block.index("A candidate run is never the test of a release"), block.index("Empty replays the production Investigator"))
 
     def test_evals_effort_is_a_choice_with_the_safe_default_and_every_other_action_ignores_it(self):
         block = self.block("evals_effort")
@@ -614,7 +670,7 @@ class TheHubInputsOfACandidate(unittest.TestCase):
                 self.assertEqual([pair for pair in parsed.secret_file if "candidate" in pair], [], "an effort alone sends no file")
 
     def test_a_name_that_is_not_the_name_of_a_candidate_is_refused_before_anything_is_started_and_is_never_printed_back(self):
-        sneaky = ("-x", "--judge", "--judge,connection", "a,b", "a/b", "a\\b", "a.b", "../x", "a b", "$(id)", "`id`", "a;b", "A", "Others-research", "a_b", "a" * 61, "\u043ethers-research",
+        sneaky = ("-x", "--judge", "--judge,connection", "a,b", "a/b", "a\\b", "a.b", "../x", "a b", "$(id)", "`id`", "a;b", "A", "Others-research", "a_b", "a" * 51, "\u043ethers-research",
                   "others\u2010research", "\uff41bc", "k\u212a", "\u0131x", "a\nb", "a\n::add-mask::x", "x\r", "-", "--", "a--judge ")
         for bad in sneaky:
             with self.subTest(name=bad):
@@ -625,12 +681,53 @@ class TheHubInputsOfACandidate(unittest.TestCase):
                 self.assertNotIn("::add-mask::x", done.stdout.replace(self.NAME_MESSAGE, ""), "a value is never printed back")
 
     def test_a_name_that_the_pattern_allows_but_that_has_no_file_in_this_commit_is_refused_with_its_own_words(self):
-        for good in ("a", "0a", "a-", "others-research-2", "a" * 60):
+        for good in ("a", "0a", "a-", "others-research-2", "a" * 50):
             with self.subTest(name=good):
                 done, args = started(EVALS_CANDIDATE=good)
                 self.assertEqual(done.returncode, 1, done.stdout)
                 self.assertIn(f"::error::There is no file evaluation/candidates/{good}.txt in this commit. Nothing was changed.", done.stdout)
                 self.assertEqual(args, [])
+
+    def test_the_longest_name_gives_a_file_name_that_operator_run_takes_and_one_more_character_is_what_it_refuses(self):
+        tool = flow.operator_run()
+        done, args = started(EVALS_CANDIDATE=FIRST)
+        parsed = tool.build_parser().parse_args(args[1:])
+        pair = next(p for p in parsed.secret_file if p.startswith(f"candidate-{FIRST}.txt="))
+        path = pair.split("=", 1)[1]
+        for length, taken in ((50, True), (51, False)):
+            name = f"candidate-{'a' * length}.txt"
+            parsed.secret_file = [f"{name}={path}" if p == pair else p for p in parsed.secret_file]
+            pair = f"{name}={path}"
+            with self.subTest(length=length):
+                if taken:
+                    self.assertIn(name, tool.read_files(parsed), "a name of the longest length that the step lets through is a file name that the request takes")
+                else:
+                    with self.assertRaises(tool.Problem):
+                        tool.read_files(parsed)
+
+    def test_the_limit_of_the_name_is_the_same_in_the_step_the_tool_and_the_check_of_the_file_name_of_operator_run(self):
+        tool = flow.operator_run()
+        longest = int(re.search(r"\{0,(\d+)\}", tool.FILE_NAME.pattern).group(1)) + 1 - len("candidate-") - len(".txt")
+        in_the_step = int(re.search(r"\{0,(\d+)\}\$ \]\]", flow.step(flow.EVALS)).group(1)) + 1
+        in_the_tool = int(re.search(r"\{0,(\d+)\}", evals.CANDIDATE_NAME.pattern).group(1)) + 1
+        self.assertEqual((in_the_step, in_the_tool, 50), (longest, longest, longest), "the name, with candidate- before it and .txt after it, fits the longest name of a file that operator-run takes")
+
+    def test_the_notes_of_the_summary_say_what_is_true_of_a_candidate_run_and_the_note_of_a_failure_keeps_the_words_of_main(self):
+        failed, ended = re.findall(r'(?m)^ +foundry-evals\) echo "(.*)" ;;$', flow.WORKFLOW)
+        for note in (failed, ended):
+            self.assertIn("evals_candidate", note)
+            self.assertIn("temporary agent", note)
+            self.assertIn("WARNING", note, "the last line of a run that could not delete the agent says so, and the note says where to look")
+        self.assertTrue(failed.startswith("The evaluations stopped or failed."))
+        self.assertIn("(nothing was run: run \\`agents-ready\\` first, which makes the version from the lock)", failed, "the words that rule 40 added are kept, and the sentence about the candidate is added to them")
+        self.assertIn("The production Investigator was never written.", failed)
+        self.assertIn("or the last line that the tool printed is a WARNING that names it", failed)
+        self.assertIn("through the Investigator, or, with the input evals_candidate, through a temporary agent", ended)
+        self.assertIn("a WARNING that names it is the last line that the tool prints when it was not", ended)
+        self.assertIn("A run with a candidate is never the test of a release", ended)
+        self.assertIn("with evals_candidate empty", ended)
+        self.assertTrue(ended.endswith("The production agents were not changed."))
+        self.assertNotIn("The agents were not changed.", ended, "a candidate run makes a temporary agent, so the note says which agents were not changed")
 
     def test_an_effort_that_is_not_none_low_medium_or_high_is_refused_before_anything_is_started(self):
         for bad in ("extreme", "LOW", "low;x", "--judge", "low high", "$(id)"):
@@ -689,6 +786,37 @@ class TheHubInputsOfACandidate(unittest.TestCase):
             missing = subprocess.run([sys.executable, "-c", code, "run", "--candidate", FIRST], cwd=folder, capture_output=True, text=True, env=env)
             self.assertIn(f"there is no candidate {FIRST}", missing.stdout + missing.stderr)
             self.assertNotIn("STOP", missing.stdout + missing.stderr, "no call was made")
+
+
+class TheRecordOfTheCandidates(unittest.TestCase):
+    """What proposal 11 says to the person who promotes a candidate: the order, what a candidate run is not, and the limit of the rows."""
+
+    PROPOSAL = (ROOT / "docs" / "proposals" / "11-agent-harness-and-evaluation.md").read_text(encoding="utf-8")
+    SECTION = re.search(r"(?ms)^## Trying a change of the instructions before it is made.*?(?=^## )", PROPOSAL).group(0)
+
+    def test_the_order_of_a_promotion_is_the_order_of_rule_40_after_one_commit_that_changes_the_instructions_and_the_lock(self):
+        item = self.SECTION[self.SECTION.index("5. When the candidate is better"):]
+        places = [item.index(words) for words in ("`INVESTIGATOR_INSTRUCTIONS` and the lock in one commit", "the order of rule 40", "`cases`", "`agents-ready`", "`foundry-evals` with no candidate", "a real run that a person starts")]
+        self.assertEqual(places, sorted(places))
+        self.assertLess(self.SECTION.index("1. Write the candidate"), self.SECTION.index("3. Start the Hub action `foundry-evals`"), "the candidate is written, and replayed, before anything of the release")
+        self.assertLess(self.SECTION.index("3. Start the Hub action `foundry-evals`"), self.SECTION.index("5. When the candidate is better"))
+
+    def test_it_says_that_a_candidate_run_is_not_the_test_of_a_release_and_that_the_candidate_file_is_rewritten_or_dropped_after_a_promotion(self):
+        for words in ("**A candidate run is not the test of a release.**", "with `evals_candidate` empty", "exits 0 with the same PASS lines", "It must never be taken for the test of a release",
+                      "**After a promotion the candidate file is rewritten or dropped.**", "Any edit of the instructions makes that test fail", "also rewrites the candidate file against the new production text, or drops it"):
+            self.assertIn(words, self.SECTION)
+
+    def test_it_says_plainly_that_there_is_no_held_out_set_and_that_only_the_replay_tool_promotes_nothing(self):
+        self.assertIn("There is no held-out set. A candidate is tuned and judged on the same rows", self.SECTION)
+        self.assertIn("A replay tool may suggest, test and measure. It never promotes.", self.SECTION)
+        self.assertIn("**Nothing is promoted by the replay tool.** No replay tool writes the production agent, the lock or the instructions, or decides a release", self.SECTION)
+        self.assertNotIn("A tool may suggest", self.SECTION, "agents-lock writes the lock and the instructions, and agents-ready makes versions: it is the replay tool that promotes nothing")
+
+    def test_the_size_of_the_first_candidate_that_the_proposal_gives_is_the_size_of_the_file(self):
+        text = (FOLDER / f"{FIRST}.txt").read_text(encoding="utf-8")
+        self.assertIn(f"the first candidate is {len(text):,} characters", self.SECTION)
+        self.assertIn(f"{len(text.encode('utf-8')):,} bytes for the first candidate", self.SECTION)
+        self.assertNotIn("free or shared", self.SECTION, "the paragraph no longer names a kind of offer")
 
 
 if __name__ == "__main__":

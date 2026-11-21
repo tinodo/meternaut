@@ -24,7 +24,8 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
                             prints, for each fixture, what the Investigator answered as the grader read it: the tools that it called and each finding with the verdict of the app's rules (docs/proposals/11).
         --candidate NAME    replays against a candidate of the instructions and never against the production agent: a temporary agent `meternaut-candidate-...` in the project, with the production definition and the
                             instructions of evaluation/candidates/NAME.txt (plain UTF-8 text of 1 to 20,000 characters, not the production text), graded and capped as the production agent is. It is deleted when the
-                            replay ends, whatever happened, and the result says so; the first line names the candidate and the baseline version. Nothing is promoted (docs/proposals/11).
+                            replay ends, whatever happened, and the result says so; if it cannot be deleted, the last line that the tool prints is a WARNING that names it, an error or an interrupt included. The first line
+                            names the candidate and the baseline version. This tool promotes nothing, and a run with a candidate is never the test of a release (docs/proposals/11).
         --effort EFFORT     low, medium or high: the reasoning effort of the temporary agent. Alone, it makes a candidate named effort-EFFORT with the production instructions. Neither option goes with a command other
                             than run.
 rule    Makes the continuous evaluation: a rule that evaluates a sample of the Investigator's real responses (preview). Without --apply it prints what it would make and changes nothing.
@@ -68,9 +69,10 @@ PREVIEW = {"Foundry-Features": "Evaluations=V1Preview"}  # the header that the e
 INVESTIGATOR = "meternaut-investigator"
 CANDIDATES = "candidates"  # the folder of evaluation/ that holds the files of the candidates of the instructions
 CANDIDATE_PREFIX = "meternaut-candidate-"  # the temporary agent of a candidate is named so (helpers.TEMPORARY)
-CANDIDATE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,59}")
+CANDIDATE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,49}")  # 50 at most: the file travels as candidate-NAME.txt, and the request of the Operator takes a file name of 64 characters at most
 MAX_CANDIDATE = 20_000  # the most characters that the instructions of a candidate have
 EFFORTS = ("low", "medium", "high")
+LEFT: list[str] = []  # the temporary agents that this run could not delete: the last line that the tool prints names them, whatever way the run ends
 ROUTES = helpers.ROUTES  # the SDK's base, and the route of the REST reference of the preview
 MAX_ROUNDS = 12
 TOOL_BUDGET = 20
@@ -1624,7 +1626,7 @@ def candidate_of(args) -> "Candidate | None":
     if args.candidate is None and args.effort is None:
         return None
     if args.candidate is not None and not CANDIDATE_NAME.fullmatch(args.candidate):
-        raise Problem("--candidate names a file of evaluation/candidates: lower-case letters, digits and hyphens, starting with a letter or a digit, at most 60 characters", 2)
+        raise Problem("--candidate names a file of evaluation/candidates: lower-case letters, digits and hyphens, starting with a letter or a digit, at most 50 characters", 2)
     return Candidate(args.candidate or f"effort-{args.effort}", None if args.candidate is None else read_candidate(args.candidate), args.effort)
 
 
@@ -1663,6 +1665,8 @@ class TemporaryAgent:
         except Exception:  # noqa: BLE001 (a sign-in that fails now must not hide what the run found)
             gone = False
         self.left = not gone
+        if self.left:
+            LEFT.append(self.name)
         if self.version or self.left:
             helpers.say(f"candidate: the temporary agent {self.name} " + ("was deleted and is gone" if gone else "was NOT deleted: delete it by hand in the portal under Build, Agents"))
 
@@ -1763,8 +1767,6 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     only = f" (only: {', '.join(row['id'] for row in rows)})" if args.only is not None else ""
     versus = f"candidate {candidate.name}" if candidate else f"version {reference['version']} of the Investigator"
     helpers.say(f"run: {len(graded)} of {len(everything)} fixtures replayed{only} against {versus}; judge {judge}")
-    if candidate and scope.left:
-        helpers.say(f"WARNING the temporary agent {scope.name} is still in the project: delete it by hand in the portal under Build, Agents")
     helpers.say(spend.line())
     helpers.say(f"run: {len(client.calls)} calls to the project in all")
     return 0 if not stopped and not (candidate and scope.left) and all(state != "FAIL" for state, _ in results) else 1
@@ -1855,6 +1857,7 @@ def main(argv=None, client=None, spend=None, sleep=time.sleep, clock=time.monoto
         if name == "rule":
             command.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
+    del LEFT[:]
     try:
         if args.selftest:
             return selftest()
@@ -1874,6 +1877,9 @@ def main(argv=None, client=None, spend=None, sleep=time.sleep, clock=time.monoto
     except Problem as error:
         helpers.say(f"error: {error}", sys.stderr)
         return error.code
+    finally:  # the last line that the tool prints, whatever way the run ends: a temporary agent that is still in the project, with its name
+        for name in LEFT:
+            helpers.say(f"WARNING the temporary agent {name} is still in the project: delete it by hand in the portal under Build, Agents")
 
 
 if __name__ == "__main__":
