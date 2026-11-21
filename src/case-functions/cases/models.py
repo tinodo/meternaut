@@ -22,6 +22,7 @@ not drawn (cases/web/figures.py), so a record of before that holds thirty zeros 
 The page "What the AI looked at" added InvestigationRecord (its own table) and no field of an older record.
 The escalation of a request that waits (docs/proposals/30-escalation.md) added EscalationRecord (its own table) and the role `escalation`. A request no longer expires: `PlanRecord.expires_at` stays,
 because the digest of a plan covers every field, and is empty in a request made now; a plan of before keeps its value, which nothing reads as a deadline.
+The price book (docs/proposals/28-alternative-prices.md) added PriceBookRecord (its own table, in the Table store only) and no field of an older record.
 """
 from __future__ import annotations
 
@@ -500,6 +501,20 @@ class CapabilityRecord(Record):
     reservations: str = "unknown"
     savings_plans: str = "unknown"
     price_sheet: str = "unknown"
+
+
+@dataclass(frozen=True)
+class PriceBookRecord(Record):
+    """What one complete read of the public price list gave (cases/prices.py): the lines of a service in a region, or of one product of it (`product` is empty for the whole service), as the text
+    that prices.pack makes, and when it was read. Only prices of the platform: nothing of an estate, and nothing that a model wrote."""
+
+    service: str
+    region: str
+    product: str
+    read_at: str
+    lines: str
+    count: int = 0  # how many lines the text holds: a text that unpacks to another number is no copy
+    complete: bool = True
 
 
 @dataclass(frozen=True)

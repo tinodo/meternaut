@@ -72,6 +72,9 @@ What the investigation may rely on after a run (it reads these and changes none)
                         list price has steps or that several lines with its words disagree (which takes it away). No list price, no switch is priced.
   Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps or of nothing). The
                         form `alternative` of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
+  Toolbox.ages[h]       how many whole days old the copy of the price book was that last showed the handle h, a meter handle m (for its `retail`) or a price handle p (for its line), when it was a copy of at least
+                        a day: a handle that a read of the list showed, or a copy of today, has no entry. The code that prices a switch (cases/pricing.py) says it to the owner with the figure, so that a list price
+                        that may be weeks old is never shown as if it were today's.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -102,8 +105,9 @@ from .detectors import some
 from .foundry import FunctionTool
 from .http import HttpError, Refused
 from .identity import IdentityError
+from .memory_store import parse, stamp
 from .meters import Meter, fold, shape
-from .models import CapabilityRecord, StoreError
+from .models import CapabilityRecord, PriceBookRecord, StoreError
 from .roles import MAX_CITED_NAME
 
 MAX_RESULT_CHARS = 6000
@@ -111,6 +115,11 @@ MEASURE_RESULT_CHARS = 12000  # for measure and metric_summary, which answer for
 MAX_CALLS = 40  # calls of one Toolbox; the next ones answer "limit"
 MAX_LISTED = 40  # resources or cost lines in one answer
 TRIAL_LINES = 200  # the most lines of a price list that a trial read keeps for the run: a product has a few dozen, and a whole service is never kept from a trial
+WARM_PRODUCTS = 12  # the dearest meters of the last 30 days that the warm-up of the price book reads the products of (cases/investigate.py asks for it before the first beat)
+WARM_RESOURCES = 24  # the dearest resources, by the cost lines, whose meters it asks about, in one query for each subscription: no meter costs more than its resource
+WARM_SECONDS = 180.0  # what the whole warm-up may take: the reads, the gaps between them and the waits that the list asks for
+WARM_GAP = 6.0  # seconds between two reads of the list in the warm-up: the list showed a window of 60 seconds and ten requests, and one read of a product is one request
+WARM_WAIT = 60.0  # the longest wait that the warm-up takes for a list that asks to wait: the window that the list showed
 MAX_MEASURE_ROWS = 80  # resources in one measure answer
 DEFAULT_LISTED = 40  # resources in a list or a measurement when the agent gives no limit
 DEFAULT_LINES = 20  # cost lines when the agent gives no limit
@@ -843,12 +852,13 @@ TOOLS = {tool.name: tool for tool in (
           Param("service", "service", "A service name, as estate_overview shows it, to keep one service of a type. Null for any service."),
           Param("days", "integer", "How many closed days to look back, 7 to 30. Null for 30.", low=7, high=MAX_DAYS), _OFFSET)),
     Tool("price_alternatives",
-         "Shows prices from Azure's public price list for the service of one meter (meter: a handle from cost_meters), in the region of its resource, as a table of pay-as-you-go prices in US dollars "
-         "with the unit of the meter, the lowest first and those with steps last. The lines are those of the meter's product, or of the whole service (within). cols names the "
-         "columns and each array in rows holds the values in that order: a price handle for this run only (none for a price with steps), its words, usd (the price of one unit) and steps (above 1: the price "
-         "changes with quantity); same holds a field with one value in every row. current is the line that the words of the meter name: retail (its price), paid (what the bill paid for one unit) and "
-         "rate_ratio (paid divided by retail); match says found, none or several. other_units counts the lines with another unit; complete says whether the whole list was read (ended: a failure "
-         "cut it short). It shows prices only. A failed read says unavailable.",
+         "Shows Azure's public pay-as-you-go prices in US dollars for the service of one meter (meter: a handle from cost_meters), in its resource's region and the meter's unit, as a table, "
+         "the lowest first, those with steps last. Lines: the meter's product, or the whole service (within). cols names the columns of each array in rows: a price handle for this "
+         "run (none for a price with steps), its words, usd (price of a unit) and steps (above 1: the price changes with quantity); same holds what every row shares. current is the line of the "
+         "meter's words: retail (its price), paid (what the bill paid for a unit) and rate_ratio (paid divided by retail); match says found, none or several. other_units counts the lines with another "
+         "unit; complete says whether the whole list was read (ended: a failure cut it short). "
+         f"source says list (read now) or book (a copy, age_days old; over {prices.FRESH_DAYS} days it is stale, shown because the list could not be read). "
+         "It shows prices only. A failed read says unavailable.",
          (Param("meter", "meter", "The handle of a meter of one resource, as cost_meters showed it (m1, m2, ...). The meter of a whole type has no region and is not offered.", required=True),
           Param("within", "choice", "product: the lines of the product that the meter belongs to. service: every product of the service, which can be long, so read it page by page. Null for product.",
                 choices=("product", "service")), _OFFSET)),
@@ -1043,9 +1053,12 @@ class Toolbox:
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
         self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing); only an ask that finds that the line has steps, or that lines disagree, takes it away
         self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
+        self.ages: dict[str, int] = {}  # meter handle or price handle -> how many whole days old the copy of the price book was that last showed it, when it was a copy of at least a day: a read of the list, or a copy of today, leaves none
         self._price_keys: dict[tuple, str] = {}
-        self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it, or the failure: a price list is read once in a run
+        self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it (or a copy of the price book), or the failure: a price list is read once in a run
         self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
+        self._hold = prices.Hold()  # what the list asked for in this run that was not waited for, and the reads that waited (cases/prices.py)
+        self.emit: Callable[..., object] | None = None  # the `emit` of the History, which the investigation sets: a line `prices.read` for each try that reaches the list. A run that keeps no History has none
         self.trial = False  # True while a call is a trial: a read that code makes for a beat, which leaves no failure and no list that is not whole or is larger than a product behind (cases/investigate.py sets it)
         self.window: frozenset[str] = frozenset()  # the hashes (seen_hash) of the resources that the runs of the last days looked at, from the records of the investigations (cases/investigate.py sets it)
         self.rotate = False  # True while a call is a read that code makes for a beat: `list_resources` by cost then puts what the window does not hold first (cases/investigate.py sets it, as it sets `trial`)
@@ -2813,9 +2826,10 @@ class Toolbox:
                 row[0] = self._meter_handle(line)
         return answer
 
-    def _price_handle(self, line: prices.Line) -> str | None:
+    def _price_handle(self, line: prices.Line, old: int | None = None) -> str | None:
         """The handle of a line of the price list that has one price: the same one whenever the line is shown again in the run, and None when the handles are used up. A line with price steps has none, so
-        that no code can take the price of its first step for the price of a quantity."""
+        that no code can take the price of its first step for the price of a quantity. `old` is how many days old the copy was that showed it (`Book.aged`): it is kept with the handle, and a later ask that
+        showed the line from a read of the list or from a copy of today takes it away."""
         if line.tiers > 1:
             return None
         key = (line.service, line.product, line.sku, line.meter, line.unit, line.region)
@@ -2823,8 +2837,17 @@ class Toolbox:
             if len(self._price_keys) >= HANDLE_LIMIT:
                 return None
             self._price_keys[key] = f"p{len(self._price_keys) + 1}"
-        self.prices[self._price_keys[key]] = line
-        return self._price_keys[key]
+        handle = self._price_keys[key]
+        self.prices[handle] = line
+        self._dated(handle, old)
+        return handle
+
+    def _dated(self, handle: str, old: int | None) -> None:
+        """Keeps how old the copy was that showed a handle, or forgets it when the handle was shown from a read of the list or from a copy of today (`old` is None)."""
+        if old is not None:
+            self.ages[handle] = old
+        else:
+            self.ages.pop(handle, None)
 
     @staticmethod
     def _ended(book: prices.Book) -> dict:
@@ -2833,6 +2856,126 @@ class Toolbox:
             return {}
         code = token_word(getattr(book.error, "code", None), 40)
         return {"ended": "unavailable", **({"code": code} if code else {})}
+
+    def _copy(self, key: tuple, fresh: bool) -> "prices.Book | None":
+        """The price book's copy of a read of the list for `key` (service, region, product or None), and the run keeps it: None when the store has no book (the Table store has one, the memory store of the
+        tests has none), has no copy, has one that is broken or not complete, has one that is not younger than FRESH_DAYS (`fresh`) or STALE_DAYS, or has one that was written more than a day ahead of
+        the clock of the run (a copy of the future would count as fresh for ever, and a day between two clocks is no reason to refuse one). It never raises."""
+        get = getattr(self.memory, "book_get", None)
+        if get is None:
+            return None
+        service, region, scope = key
+        try:
+            record = get(service, region, scope or "")
+            if record is None or not record.complete or (record.service, record.region, record.product) != (service, region, scope or ""):
+                return None
+            age, lines = self._moment() - parse(record.read_at), prices.unpack(service, record.lines, record.count)
+        except Exception:  # noqa: BLE001 (the book never costs a call its answer)
+            return None
+        if not lines or not (-dt.timedelta(days=1) <= age < dt.timedelta(days=prices.FRESH_DAYS if fresh else prices.STALE_DAYS)):
+            return None
+        book = prices.Book(lines, True, None, "book", max(0, age.days))
+        if not self.trial or len(lines) <= TRIAL_LINES:
+            self._books[key] = book  # the copy answers the rest of the run
+        return book
+
+    def _keep(self, key: tuple, book: "prices.Book") -> None:
+        """Writes a complete read of the list to the price book, when the store has one. A write that fails is a note and never costs a call its answer."""
+        put = getattr(self.memory, "book_put", None)
+        if put is None or not book.complete or not book.lines:
+            return
+        service, region, scope = key
+        try:
+            put(PriceBookRecord(service, region, scope or "", stamp(self._moment()), prices.pack(book.lines), len(book.lines)))
+        except Exception as error:  # noqa: BLE001 (a write that fails never costs a call its answer)
+            self.notes.append(f"price_alternatives: the price book could not keep this read ({str(error)[:200]})")
+
+    def _tried(self, key: tuple, status: int, took: float, asked: float | None) -> None:
+        """One line of the History for a try that reached the price list (events.PRICE_KINDS): typed words and numbers only, and never an address."""
+        if self.emit is not None:
+            service, region, scope = key
+            try:
+                self.emit("prices.read", service=service, region=region, **({"product": scope} if scope else {}), status=status, ms=round(took * 1000), **({"retryAfter": round(asked, 1)} if asked is not None else {}))
+            except Exception:  # noqa: BLE001 (a line of the History never costs a call its answer)
+                pass
+
+    def _read_list(self, key: tuple, seconds: float, room: float, gap: float = 0.0) -> "prices.Book | Failed":
+        """One read of the price list, for a call of a tool and for the warm-up: it waits as the Hold of the run allows (`room` is the longest wait that the caller can afford, `gap` the least pause between
+        two of its requests), tells the History of each try, and writes a complete read to the price book."""
+        service, region, scope = key
+        book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, seconds, self._hold, room, lambda *tried: self._tried(key, *tried), gap))
+        if isinstance(book, prices.Book):
+            self._keep(key, book)
+        return book
+
+    def _warm_keys(self) -> list[tuple]:
+        """The (service, region, product) of the dearest meters of the last 30 days, for the warm-up. The cost lines that the run holds (the Watch read them and the same client keeps them) say which resources cost
+        most, and they hold no meters: one query for each subscription that has some of the WARM_RESOURCES dearest names what they were billed for, by the category and the subcategory of the meter, and the region
+        of a resource is the region of its meters. The WARM_PRODUCTS dearest meters that have a product give the keys, each once. A meter with no product would ask for a whole service, which is up to five requests."""
+        subs = [sub for sub in self.subscriptions if sub not in self._unlisted]
+        self._prefetch_costs(subs)
+        ranked = sorted(((sum(lines.values()), key, sub) for sub in subs if (costs := self._costs.get(sub)) is not None for key, lines in costs.by_resource.items() if key), reverse=True)[:WARM_RESOURCES]
+        self._resolve_quietly([key for _, key, _ in ranked])
+        wanted: dict[str, list[str]] = {}
+        for _, key, sub in ranked:
+            if key in self._entries:
+                wanted.setdefault(sub, []).append(self._entries[key].resource.resource_id)
+        today = self._today()
+        start, end = today - dt.timedelta(days=MAX_DAYS), today - dt.timedelta(days=1)
+        meters = []
+        for sub, rows in self._pool(list(wanted), lambda sub: self.arm.meter_totals(sub, start, end, tuple(wanted[sub]))).items():
+            if isinstance(rows, Failed):
+                self._note(sub, "what the dearest resources are billed for", rows.error)
+                continue
+            for key, category, subcategory, amount, code in rows:
+                entry = self._entries.get(key)
+                region = prices.region_of(entry.location) if entry is not None and entry.part_of is None and entry.location != OTHER else None
+                service, product = meter_word(category), meter_word(subcategory)
+                if code == "USD" and amount > 0 and service and product and region:
+                    meters.append((-amount, service, region, product))
+        return list(dict.fromkeys(meter[1:] for meter in sorted(meters)[:WARM_PRODUCTS]))
+
+    def warm_prices(self, seconds: float = WARM_SECONDS) -> tuple[int, int, int] | None:
+        """For code (cases/investigate.py), before the first beat, and never for an agent: reads the public price list for the products of the dearest meters of the estate (`_warm_keys`) that the price book
+        does not hold fresh, one read at a time with WARM_GAP seconds between two requests, so that the book has them when the questions come. A list that asks to wait is waited for up to WARM_WAIT
+        seconds, and the whole of it, the reads for the products included, ends after `seconds`. It ends at once when the list says no: no answer at all, or a 429 that a wait did not change or that
+        asked for more than the warm-up may wait (the list is not asked again, and the questions of the run read it as they need). It makes no call of a tool of a run and no model call, and never raises.
+        (products read, products that the book held fresh, products not read: the list could not be read or the time ran out), or None when the store has no book."""
+        if getattr(self.memory, "book_get", None) is None or getattr(self.memory, "book_put", None) is None:
+            return None
+        client = self.arm.client
+        before, limit = client.deadline, client.monotonic() + seconds
+        client.deadline = limit if before is None else min(limit, before)  # the reads of the warm-up end with it, whatever they wait for
+        read = fresh = made = 0
+        keys: list[tuple] = []
+        try:
+            with self._lock:
+                stop = self.monotonic() + seconds
+                keys = self._warm_keys()
+                for key in keys:
+                    if self._copy(key, True) is not None:
+                        fresh += 1
+                        continue
+                    pause = max(WARM_GAP if made else 0.0, self._hold.until - self.monotonic())
+                    left = stop - self.monotonic() - pause
+                    if left < 2.0:
+                        break  # no time for the wait and a try
+                    if pause > 0:
+                        client.sleep(pause)
+                    spare = min(prices.SECONDS, left / 2)
+                    book = self._read_list(key, spare, min(WARM_WAIT, left - spare), WARM_GAP)
+                    made += 1
+                    if isinstance(book, prices.Book):
+                        read += int(book.complete and bool(book.lines))  # a list with no line for these words gives the book nothing
+                    else:
+                        self._fail("the price book", "the price list", book)
+                    if getattr(book.error, "status", None) in (0, 429):
+                        break  # no answer at all, or the list says no: after the wait that it asked for, or for a wait that is more than the warm-up takes
+        except Exception as error:  # noqa: BLE001 (a warm-up never fails the run)
+            self.notes.append(f"the price book could not be warmed ({type(error).__name__})")
+        finally:
+            client.deadline = before
+        return read, fresh, len(keys) - read - fresh
 
     def _tool_price_alternatives(self, args: dict) -> dict:
         name, within, offset = args["meter"], args["within"] or "product", args["offset"] or 0
@@ -2847,26 +2990,37 @@ class Toolbox:
             raise NotOffered(name)  # a meter of a whole type has no region, and a word that is no word of the platform is never sent anywhere
         scope = product if within == "product" else None
         key = (service, region, scope)
-        book = self._books.get(key, self._prices_down)
+        book = self._books.get(key)
+        new = book is None  # no answer for this key in this run yet: a fresh copy of the price book, then the list, then an old copy of the book
+        if new:
+            book = self._copy(key, True) or self._prices_down
         if book is None and self.trial and len(self._trials) >= 2:
             book = self._trials[-1]  # two reads that code made did not get the list: code asks no more, and the Investigator's own call is not held by it
         if book is None:
             if sum(len(held_book.lines) for held_book in self._books.values() if isinstance(held_book, prices.Book)) >= prices.MAX_HELD:
                 self.notes.append(f"price_alternatives: the run holds {prices.MAX_HELD} prices of the list already, and the app keeps no more")
                 return {"error": "unavailable"}
-            book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, min(prices.SECONDS, self.read_seconds)))
+            seconds = min(prices.SECONDS, self.read_seconds)
+            book = self._read_list(key, seconds, min(prices.WAIT, max(0.0, self.read_seconds - seconds)))
             if isinstance(book, prices.Book):
                 self._trials.clear()  # the host answered, to the Investigator or to code: the failures of the trials before it say nothing of the next one
+            waiting = isinstance(book, Failed) and getattr(book.error, "retry_after", None) is not None  # the list asked to wait: the Hold of the run keeps its time, and it is asked again when that has passed
             if not self.trial:
-                self._books[key] = book
+                if not waiting:
+                    self._books[key] = book
                 if isinstance(book, Failed) and getattr(book.error, "status", None) == 0:
                     self._prices_down = book  # no answer at all: the host is not asked again in this run
                 elif isinstance(book, prices.Book) and book.error is not None:
                     self.notes.append(f"price_alternatives: the price list was read in part only ({str(book.error)[:200]})")
             elif isinstance(book, prices.Book) and book.complete and len(book.lines) <= TRIAL_LINES:
                 self._books[key] = book  # a whole list of the size of a product: the Investigator's own call for it is answered from it
-            elif isinstance(book, Failed):
+            elif isinstance(book, Failed) and not waiting:
                 self._trials.append(book)
+        cut = book.error if isinstance(book, prices.Book) else None  # a read that a failure cut short after some pages is not whole: an old copy of the whole list serves better
+        if new and (isinstance(book, Failed) or cut is not None) and (old := self._copy(key, False)) is not None:
+            self._fail("price_alternatives", "the price list", book if isinstance(book, Failed) else Failed(cut))
+            self.notes.append(f"price_alternatives: a copy of the price book, {old.age} days old, is shown instead")
+            book = old
         if isinstance(book, Failed):
             self._fail("price_alternatives", "the price list", book)
             return self._why(book.error)
@@ -2879,25 +3033,28 @@ class Toolbox:
                   "global" if line.region == prices.GLOBAL else _shown(region_word, line.region), line.tiers if line.tiers > 1 else None] for line in window]
         shared, columns, table = prices.layout(("price", "product", "sku", "meter", "usd", "region", "steps"), cells)
         answer: dict = {"meter": name, "service": service, "region": entry.location, "within": "product" if scope else "service", "unit": _shown(meter_word, unit), "match": how, "lines": len(same),
-                        "other_units": len(book.lines) - len(same), "complete": book.complete, **self._ended(book), "offset": offset, "returned": 0, "next_offset": None,
-                        **({"same": shared} if shared else {}), "cols": columns, "rows": table}
+                        "other_units": len(book.lines) - len(same), "complete": book.complete, "source": book.source, **({"age_days": book.age} if book.source == "book" else {}),
+                        **self._ended(book), "offset": offset, "returned": 0, "next_offset": None, **({"same": shared} if shared else {}), "cols": columns, "rows": table}
         if current is not None:
             answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
                                  **({"steps": current.tiers} if current.tiers > 1 else {})}
         _page(answer, table, offset, len(same))
+        aged = book.aged  # how old the copy is that shows these prices, when it is at least a day: kept with the handles, for the owner
         offered = self.offers.setdefault(name, set())
         for row, line in zip(table, window):
-            row[0] = self._price_handle(line)
+            row[0] = self._price_handle(line, aged)
             if row[0] is not None:
                 offered.add(row[0])
         if current is not None:
-            answer["current"]["line"] = self._price_handle(current)
+            answer["current"]["line"] = self._price_handle(current, aged)
             if answer["current"]["line"] is not None:
                 offered.add(answer["current"]["line"])
         if current is not None and current.tiers == 1:
             self.retail[name] = current.usd
+            self._dated(name, aged)
         elif how != "none":  # this ask found the line and it has steps, or found lines that disagree: the list says that the meter has no one list price. A line that this ask did not find says nothing (a cap may have cut the read before it)
             self.retail.pop(name, None)
+            self.ages.pop(name, None)
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------
