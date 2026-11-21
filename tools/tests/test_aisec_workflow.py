@@ -304,7 +304,7 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
             spec.loader.exec_module(module)
             rows = {row["id"]: row for row in (json.loads(line) for line in Path("cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())}
             answer = sys.stdin.read()
-            print(json.dumps({"idle": module.grade(rows["idle-bastion-with-four-units"], answer), "busy": module.grade(rows["busy-bastion-with-four-units"], answer),
+            print(json.dumps({"light": module.grade(rows["lightly-used-bastion-with-four-units"], answer), "busy": module.grade(rows["busy-bastion-with-four-units"], answer),
                               "toolbox": hasattr(sys.modules.get("cases_flat.toolbox"), "__file__")}))
         """)
         change = {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "ratio", "on": "scaleUnits", "from": 4, "to": 2}}], "how": "Fewer units.",
@@ -320,7 +320,7 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
             done = subprocess.run([sys.executable, "-c", code], cwd=tmp, input=answer, capture_output=True, text=True, env={**os.environ, "GITHUB_ACTIONS": "true"})
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         found = json.loads(done.stdout.splitlines()[-1])
-        self.assertEqual((found["idle"]["set_found"], found["idle"]["settings"], found["idle"]["ways"], found["idle"]["decoys"]), (1.0, 1, 1, 0))
+        self.assertEqual((found["light"]["set_found"], found["light"]["settings"], found["light"]["ways"], found["light"]["decoys"]), (1.0, 1, 1, 0))
         self.assertEqual((found["busy"]["settings"], found["busy"]["decoys"]), (1, 1), "the same answer on the host that is in use is a decoy")
         self.assertFalse(found["toolbox"], "what stands in for the toolbox is made by the tool and is no file")
 

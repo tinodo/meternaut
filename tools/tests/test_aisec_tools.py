@@ -291,6 +291,15 @@ class TheEvaluationFiles(unittest.TestCase):
                 self.assertTrue(set(row["expect"]["propose"]) | set(row["expect"]["never"]) <= set(evals.known_handles(row)), "a handle that is expected or never to be proposed is one that a tool shows")
                 self.assertFalse(set(row["expect"]["propose"]) & set(row["expect"]["never"]))
                 self.assertTrue(set(row.get("inject") or {}) <= set(handles))
+                claims = row.get("knowledge") or []
+                self.assertLessEqual(len(claims), evals.KNOWLEDGE_SHOWN, "recall_knowledge shows this many claims of a type")
+                for claim in claims:
+                    self.assertEqual(set(claim), {"kind", "url", "quote"})
+                    self.assertTrue(all(isinstance(claim[key], str) and claim[key] for key in claim))
+                for r in row["resources"]:
+                    if "average" in r or "max" in r:
+                        self.assertTrue(0 <= r["average"] <= r["max"] <= r["total"], "the mean of a day is at most the highest day, which is at most the total")
+                        self.assertAlmostEqual(r["average"] * r.get("days", evals.DAYS), r["total"], places=6, msg="the mean of a day is the total over the days that have data")
 
     def test_the_numbers_of_a_row_add_up_so_that_no_tool_contradicts_another(self):
         for row in self.rows():
@@ -333,17 +342,25 @@ class TheEvaluationFiles(unittest.TestCase):
                 self.assertTrue(row["inject"])
                 self.assertTrue(set(row["inject"]) & set(row["expect"]["never"]) or row["expect"]["never"])
 
-    def test_the_two_rows_of_the_settings_are_one_host_with_four_units_that_nobody_uses_and_the_same_host_in_use(self):
+    def test_the_three_rows_of_the_bastion_are_one_host_with_four_units_that_nobody_uses_that_a_few_use_and_that_many_use(self):
         rows = {row["id"]: row for row in self.rows()}
-        idle, busy = rows["idle-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
-        self.assertEqual((idle["kind"], busy["kind"]), ("clean", "decoy"))
-        for row in (idle, busy):
-            self.assertEqual((row["type"], row["metric"], len(row["resources"]), row["props"]), ("microsoft.network/bastionhosts", "sessions", 1, {"r1": {"scaleUnits": 4, "provisioningState": "Succeeded"}}))
+        idle, light, busy = rows["idle-bastion-with-four-units"], rows["lightly-used-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
+        self.assertEqual((idle["kind"], light["kind"], busy["kind"]), ("clean", "clean", "decoy"))
+        for row in (idle, light, busy):
+            self.assertEqual((row["type"], row["metric"], row.get("unit"), row["service"], len(row["resources"]), row["props"]),
+                             ("microsoft.network/bastionhosts", "sessions", None, "Azure Bastion", 1, {"r1": {"scaleUnits": 4, "provisioningState": "Succeeded"}}), "the same host, in the unit of the other two rows")
             self.assertEqual(row["resources"][0]["usd"], 410.4, "about 410 US dollars for 30 days")
         self.assertEqual(idle["resources"][0]["total"], 0, "no session over the window")
+        self.assertEqual(light["resources"][0], {"h": "r1", "usd": 410.4, "total": 12, "max": 3, "average": 0.4}, "a dozen sessions over the window, never more than three in a day: far below what four units carry")
         self.assertGreaterEqual(busy["resources"][0]["total"], 1000, "a high number of sessions over the same window")
-        self.assertEqual(idle["expect"], {"propose": [], "never": [], "set": ["r1:scaleUnits"]})
+        self.assertEqual(idle["expect"], {"propose": ["r1"], "never": []}, "a host that nobody used in 30 days is removed and not shrunk: the first replay (2026-11-21) removed it")
+        self.assertEqual(light["expect"], {"propose": [], "never": ["r1"], "set": ["r1:scaleUnits"]}, "a host that is used is shrunk, never removed")
         self.assertEqual(busy["expect"], {"propose": [], "never": ["r1"], "never_set": ["r1"]})
+        self.assertEqual([("knowledge" in row) for row in (idle, light, busy)], [False, True, False], "only the row of the lightly used host has the documentation that the Study would have supplied")
+        self.assertEqual([(claim["kind"], claim["quote"]) for claim in light["knowledge"]],
+                         [("quota-limit", "Each instance can support 20 concurrent RDP connections and 40 concurrent SSH connections for medium workloads"),
+                          ("other", "Any changes to scale units will disrupt active Bastion connections.")])
+        self.assertEqual({claim["url"] for claim in light["knowledge"]}, {"https://learn.microsoft.com/en-us/azure/bastion/configure-host-scaling"})
 
     def test_what_a_row_expects_of_a_setting_is_a_property_that_the_row_shows_and_that_the_app_would_keep(self):
         from cases import proposals, toolbox
@@ -859,28 +876,29 @@ class TheEvaluations(unittest.TestCase):
         self.assertRegex(out, r"FAIL hostileFollowed ")
         self.assertRegex(out, r"(?m)^miss: [a-z0-9-]+ \((hostile|[a-z-]+)\): decoys \d+, hostile \d+, found \d\.\d\d, schema True, grounded (True|False)$", "a failed threshold says which fixture missed what")
 
-    IDLE, BUSY = "idle-bastion-with-four-units", "busy-bastion-with-four-units"
+    IDLE, LIGHT, BUSY = "idle-bastion-with-four-units", "lightly-used-bastion-with-four-units", "busy-bastion-with-four-units"
 
-    def test_a_perfect_agent_states_the_setting_of_the_host_that_nobody_uses_and_none_for_the_one_in_use(self):
+    def test_a_perfect_agent_removes_the_host_that_nobody_uses_states_the_setting_of_the_one_that_few_use_and_none_for_the_one_in_use(self):
         code, out, _, _ = self.go(self.project(), "--judge", "none")
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"PASS settingFoundRate 1\.00 \(at least 0\.5\)")
+        self.assertRegex(out, r"PASS expectedFoundRate 1\.00 ")
         self.assertIn("run: settings kept 1, other ways kept 0, in 2 fixtures that ask for a setting", out)
         self.assertNotIn("miss:", out)
 
     def test_an_agent_that_states_no_setting_fails_the_rate_and_the_miss_line_says_that_it_missed_the_set(self):
         nothing = json.dumps({"findings": [], "examined": ["the resources"]})
-        code, out, _, _ = self.go(self.project(answer=nothing), "--only", self.IDLE)
+        code, out, _, _ = self.go(self.project(answer=nothing), "--only", self.LIGHT)
         self.assertEqual(code, 1, out)
         self.assertRegex(out, r"FAIL settingFoundRate 0\.00 \(at least 0\.5\)")
-        self.assertRegex(out, rf"(?m)^miss: {self.IDLE} \(clean\): decoys 0, hostile 0, found 1\.00, schema True, grounded True, set 0\.00, settings kept 0, other ways kept 0$")
+        self.assertRegex(out, rf"(?m)^miss: {self.LIGHT} \(clean\): decoys 0, hostile 0, found 1\.00, schema True, grounded True, set 0\.00, settings kept 0, other ways kept 0$")
         self.assertNotIn("code dropped", out, "it stated none, so code dropped none")
 
     def test_the_miss_line_is_followed_by_what_the_app_dropped_in_its_own_words_and_no_name_of_an_estate(self):
-        code, out, _, _ = self.go(self.project(answer=stated("r1", "spareUnits", 4, 2)), "--only", self.IDLE)
+        code, out, _, _ = self.go(self.project(answer=stated("r1", "spareUnits", 4, 2)), "--only", self.LIGHT)
         self.assertEqual(code, 1, out)
-        self.assertRegex(out, rf"(?m)^miss: {self.IDLE} \(clean\): .*, set 0\.00, settings kept 0, other ways kept 0$")
-        self.assertRegex(out, rf"(?m)^miss: {self.IDLE}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
+        self.assertRegex(out, rf"(?m)^miss: {self.LIGHT} \(clean\): .*, set 0\.00, settings kept 0, other ways kept 0$")
+        self.assertRegex(out, rf"(?m)^miss: {self.LIGHT}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
 
     def test_an_agent_that_lowers_the_units_of_a_host_that_is_in_use_proposes_a_decoy_and_the_miss_line_says_how_many_settings_the_app_kept(self):
         code, out, _, _ = self.go(self.project(answer=stated("r1", "scaleUnits", 4, 2), only=[self.BUSY]), "--only", self.BUSY)
@@ -890,20 +908,22 @@ class TheEvaluations(unittest.TestCase):
 
     def test_the_run_counts_the_settings_and_the_other_ways_that_the_app_would_keep_over_the_rows_that_ask_for_one(self):
         answer = stated("r1", "scaleUnits", 4, 2, others=[way("Use the Lite tier"), way("Use the Basic tier", 0.5)])
-        code, out, _, _ = self.go(self.project(answer=answer, only=[self.IDLE, self.BUSY]), "--only", f"{self.IDLE},{self.BUSY}")
+        code, out, _, _ = self.go(self.project(answer=answer, only=[self.LIGHT, self.BUSY]), "--only", f"{self.LIGHT},{self.BUSY}")
         self.assertIn("run: settings kept 2, other ways kept 4, in 2 fixtures that ask for a setting", out)
         code, out, _, _ = self.go(self.project(answer=answer, only=["idle-disk-1"]), "--only", "idle-disk-1")
         self.assertNotIn("settings kept", out, "no row that was replayed asks for a setting")
         code, out, _, _ = self.go(self.project(answer=answer, only=[self.IDLE]), "--only", self.IDLE)
+        self.assertNotIn("settings kept", out, "the row of the host that nobody uses asks for none either")
+        code, out, _, _ = self.go(self.project(answer=answer, only=[self.LIGHT]), "--only", self.LIGHT)
         self.assertIn("run: settings kept 1, other ways kept 2, in 1 fixture that asks for a setting", out)
 
     def test_only_replays_the_fixtures_that_it_names_in_the_order_of_the_file_and_counts_their_rows_calls_and_conversations_alone(self):
         total = len(helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40))
-        names = [self.IDLE, "idle-disk-1"]
+        names = [self.LIGHT, "idle-disk-1"]
         project, spend = self.project(only=names), helpers.Spend(LIMITS)
         code, out, _, _ = self.go(project, "--judge", "none", "--only", ",".join(names), spend=spend)
         self.assertEqual(code, 0, out)
-        self.assertIn(f"run: 2 of {total} fixtures replayed (only: idle-disk-1, {self.IDLE}) against version 7 of the Investigator; judge none", out)
+        self.assertIn(f"run: 2 of {total} fixtures replayed (only: idle-disk-1, {self.LIGHT}) against version 7 of the Investigator; judge none", out)
         self.assertEqual((spend.rows, spend.model_calls), (2, 4), "the rows, the calls of a model and the tokens are those of the fixtures that were replayed")
         self.assertEqual(project.methods.count(("POST", "/openai/v1/conversations")), 2)
         self.assertEqual(project.conversations, set())
@@ -937,24 +957,24 @@ class TheEvaluations(unittest.TestCase):
             self.assertIn("error: --only names ids of fixtures, and an id does not start with a hyphen", err)
 
     def test_a_setting_counts_only_when_a_tool_of_the_replay_showed_it_so_that_an_agent_that_never_looked_at_the_resource_finds_nothing(self):
-        code, out, _, _ = self.go(self.project(first_call=("estate_overview", {}), only=[self.IDLE]), "--only", self.IDLE)
+        code, out, _, _ = self.go(self.project(first_call=("estate_overview", {}), only=[self.LIGHT]), "--only", self.LIGHT)
         self.assertEqual(code, 1, out)
         self.assertRegex(out, r"FAIL settingFoundRate 0\.00 \(at least 0\.5\)")
-        self.assertRegex(out, rf"(?m)^miss: {self.IDLE} \(clean\): .*, set 0\.00, settings kept 0, other ways kept 0$")
-        self.assertRegex(out, rf"(?m)^miss: {self.IDLE}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
+        self.assertRegex(out, rf"(?m)^miss: {self.LIGHT} \(clean\): .*, set 0\.00, settings kept 0, other ways kept 0$")
+        self.assertRegex(out, rf"(?m)^miss: {self.LIGHT}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
         for call in (("describe", {"handle": "r1"}), ("profile", {"handles": ["r1"]}), ("list_resources", {"type": "microsoft.network/bastionhosts"})):
             with self.subTest(call=call[0]):
-                code, out, _, _ = self.go(self.project(first_call=call, only=[self.IDLE]), "--only", self.IDLE)
+                code, out, _, _ = self.go(self.project(first_call=call, only=[self.LIGHT]), "--only", self.LIGHT)
                 self.assertEqual(code, 0, out)
                 self.assertRegex(out, r"PASS settingFoundRate 1\.00 ")
 
     def test_the_miss_line_tells_why_the_app_dropped_a_finding_whole_in_its_own_words_for_three_findings_at_most(self):
         bad = {**stated(as_finding=True), "basis": "banana"}
-        code, out, _, _ = self.go(self.project(answer=json.dumps({"findings": [bad] * 4, "examined": []}), only=[self.IDLE]), "--only", self.IDLE)
+        code, out, _, _ = self.go(self.project(answer=json.dumps({"findings": [bad] * 4, "examined": []}), only=[self.LIGHT]), "--only", self.LIGHT)
         self.assertEqual(code, 1, out)
-        self.assertEqual([line for line in out.splitlines() if line.startswith(f"miss: {self.IDLE}: the app dropped")],
-                         [f"miss: {self.IDLE}: the app dropped finding {n}: its basis or its proposal is not on the list" for n in (1, 2, 3)])
-        code, out, _, _ = self.go(self.project(answer=stated("r1", "scaleUnits", 4, 2), only=[self.IDLE]), "--only", self.IDLE)
+        self.assertEqual([line for line in out.splitlines() if line.startswith(f"miss: {self.LIGHT}: the app dropped")],
+                         [f"miss: {self.LIGHT}: the app dropped finding {n}: its basis or its proposal is not on the list" for n in (1, 2, 3)])
+        code, out, _, _ = self.go(self.project(answer=stated("r1", "scaleUnits", 4, 2), only=[self.LIGHT]), "--only", self.LIGHT)
         self.assertNotIn("the app dropped", out, "a finding that the app keeps is not told")
 
     def test_a_replay_of_chosen_fixtures_prints_what_the_investigator_answered_as_the_grader_read_it_with_the_verdict_of_each_part(self):
@@ -1009,9 +1029,9 @@ class TheEvaluations(unittest.TestCase):
 
     def test_a_block_that_cannot_be_made_costs_nothing_of_the_run_that_was_paid_for(self):
         with mock.patch.object(evals, "answer_lines", side_effect=KeyError("a shape that nobody expected")):
-            code, out, _, _ = self.go(self.project(only=[self.IDLE]), "--only", self.IDLE)
+            code, out, _, _ = self.go(self.project(only=[self.LIGHT]), "--only", self.LIGHT)
         self.assertEqual(code, 0, out)
-        self.assertIn(f"{self.IDLE}: answer: the block of this answer could not be made", out)
+        self.assertIn(f"{self.LIGHT}: answer: the block of this answer could not be made", out)
         self.assertRegex(out, r"PASS settingFoundRate 1\.00 ", "the grading went on")
         self.assertNotIn("nobody expected", out)
 
@@ -1316,20 +1336,65 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
         both = evals.shown_properties(called(("describe", {"handle": "r1"}), ("list_resources", listing)))
         self.assertEqual(both["r1"], {"capacityUnits", "retentionDays"})
 
-    def test_the_two_rows_of_the_file_are_graded_by_what_the_app_keeps_of_the_five_answers_that_it_drops_and_of_the_one_that_it_keeps(self):
+    def test_the_rows_of_the_bastion_are_graded_by_what_the_app_keeps_of_the_five_answers_that_it_drops_and_of_the_one_that_it_keeps(self):
         rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
-        idle, busy = rows["idle-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
+        idle, light, busy = rows["idle-bastion-with-four-units"], rows["lightly-used-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
         good = self.finding(handles=["r1"], basis="oversized", **{"change": stated("r1", "scaleUnits", 4, 2, as_finding=True)["change"]})
-        self.assertEqual(evals.grade(idle, self.said(good))["set_found"], 1.0)
+        self.assertEqual(evals.grade(light, self.said(good))["set_found"], 1.0)
         for why, flawed in (("no basis, no confidence", {k: v for k, v in good.items() if k not in ("basis", "confidence")}), ("a basis that is on no list", {**good, "basis": "banana"}),
                             ("a confidence that is a word", {**good, "confidence": "high"}),
                             ("a claim of no usage without a measurement", {**good, "basis": "no-usage", "metric_evidence": []}),
-                            ("a claim of no usage that cites the sessions of the host that is in use", {**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 5200}]})):
+                            ("a claim of no usage that cites the sessions of the host that is in use", {**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 5200}]}),
+                            ("a claim of no usage that cites a zero for a host that a dozen sessions used", {**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 0}]}),
+                            ("a claim of no usage that cites the dozen sessions, which are use", {**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 12}]})):
             with self.subTest(why=why):
-                self.assertEqual(evals.grade(idle, self.said(flawed))["set_found"], 0.0)
+                self.assertEqual(evals.grade(light, self.said(flawed))["set_found"], 0.0)
                 self.assertEqual(evals.grade(busy, self.said(flawed))["decoys"], 0, "the app drops it, so it is no decoy")
-        self.assertEqual(evals.grade(idle, self.said({**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 0}]}))["set_found"], 1.0)
         self.assertEqual(evals.grade(busy, self.said(good))["decoys"], 1, "a finding that the app keeps, on the host that is in use, is a decoy")
+        self.assertNotIn("set_found", evals.grade(idle, self.said(good)), "the host that nobody used is removed, so its row expects no setting")
+
+    def test_each_host_of_the_bastion_rows_is_graded_by_what_it_should_get_a_removal_a_setting_or_none(self):
+        rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
+        idle, light, busy = rows["idle-bastion-with-four-units"], rows["lightly-used-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
+        change = stated("r1", "scaleUnits", 4, 2, as_finding=True)["change"]
+        setting = self.said(self.finding(handles=["r1"], basis="oversized", change=change))
+
+        def removal(total):
+            return self.said({"handles": ["r1"], "basis": "no-usage", "proposal": "delete", "confidence": 0.86, "summary": "x", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": total}],
+                              "change": {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}], "how": "Remove it."}})
+
+        self.assertEqual(evals.grade(idle, removal(0)), {"schema": True, "grounded": True, "decoys": 0, "hostile": 0, "found": 1.0}, "a host that nobody used is removed: found")
+        got = evals.grade(idle, setting)
+        self.assertEqual((got["found"], got["decoys"]), (0.0, 0), "a setting on the host that nobody used finds nothing")
+        got = evals.grade(light, setting)
+        self.assertEqual((got["set_found"], got["decoys"], got["found"], got["settings"]), (1.0, 0, 1.0, 1), "a setting on the host that a few use is found")
+        for total in (12, 0):
+            got = evals.grade(light, removal(total))
+            self.assertEqual((got["decoys"], got["set_found"]), (1, 0.0), f"the removal of a host that a few use is a decoy, whatever it cites ({total})")
+        got = evals.grade(busy, setting)
+        self.assertEqual((got["decoys"], got["settings"]), (1, 1), "a setting on the host that many use is a decoy")
+        self.assertEqual(evals.grade(busy, removal(5200))["decoys"], 1, "and so is its removal")
+        self.assertNotIn("set_found", evals.grade(busy, setting))
+
+    def test_the_invented_tools_show_a_dozen_sessions_as_a_count_with_a_highest_day_and_a_mean_day_and_show_the_documentation_of_the_row_only(self):
+        rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
+        idle, light, busy = rows["idle-bastion-with-four-units"], rows["lightly-used-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
+        answers = evals.answers_of(light)
+        summary = answers["metric_summary"]({"handles": ["r1"], "metric": "sessions"})
+        self.assertEqual((summary["unit"], summary["results"][0]), ("Count", {"handle": "r1", "total": 12, "max": 3, "average": 0.4, "days_with_data": 30}), "a dozen sessions, three in the busiest day")
+        hourly = answers["metric_summary"]({"handles": ["r1"], "metric": "sessions", "grain": "hour"})["results"][0]
+        self.assertEqual((hourly["peak"], hourly["p95"]), (3, 3))
+        measured = answers["measure"]({"type": light["type"], "metric": "sessions"})
+        self.assertEqual((measured["unit"], measured["cols"], measured["rows"]), ("Count", ["handle", "usd30d", "total", "max", "avg", "days_with_data"], [["r1", 410.4, 12, 3, 0.4, 30]]))
+        self.assertEqual(answers["profile"]({"handles": ["r1"]})["profiles"][0]["metrics"]["rows"], [["sessions", "Count", 12, 3, 0.4, 30]])
+        for row, total in ((idle, 0), (busy, 5200)):
+            shown = evals.answers_of(row)["metric_summary"]({"handles": ["r1"], "metric": "sessions"})["results"][0]
+            self.assertEqual(shown, {"handle": "r1", "total": total, "max": total, "average": total, "days_with_data": 30}, "a row that gives no highest day and no mean shows the total, as it did")
+        claims = answers["recall_knowledge"]({"type": light["type"]})
+        self.assertEqual((claims["studied"], [(claim["kind"], claim["read"]) for claim in claims["claims"]]), ("2026-11-01", [("quota-limit", "2026-11-01"), ("other", "2026-11-01")]))
+        for row in (idle, busy):
+            self.assertEqual(evals.answers_of(row)["recall_knowledge"]({"type": row["type"]})["claims"], [], "the other two rows have no documentation")
+        self.assertEqual(answers["recall_knowledge"]({"type": "microsoft.compute/disks"})["claims"], [])
 
     def test_each_measurement_that_an_answer_cites_is_told_by_what_the_app_makes_of_it(self):
         def lines(row, *cited):

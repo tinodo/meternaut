@@ -14,8 +14,11 @@ import types
 import unittest
 from unittest import mock
 
-from support import REPO_ROOT
-from cases import agents, brief, deeper, investigate, toolbox as tb
+from support import NOW, REPO_ROOT
+from cases import agents, brief, deeper, investigate, library, models, toolbox as tb
+from cases.memory_store import MemoryStore, stamp
+from cases.models import ClaimRecord
+from cases.toolbox import Toolbox
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
 from test_prices import priced
 from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
@@ -686,6 +689,80 @@ class TheProperties(Base):
         self.assertTrue(proposals.countlike("scaleUnits") and not proposals.countlike("retentionDays"))
         self.assertIsNot(proposals, app, "the tool loads the app's own file under the name of the flat package, so that the Operator's volume and the repository give the same code")
         self.assertIs(pricing.parse(None), None)
+
+
+class TheKnowledge(Base):
+    """What `recall_knowledge` shows of a row (`knowledge`): the claims of the Study as the real tool shows them, and the checks that the Study makes of a claim, held to each claim of the rows. Every kind,
+    address and quote that a test invents here is INVENTED; the quotes of the shipped rows are those of the page that they name."""
+
+    CLAIMS = [{"kind": "quota-limit", "url": "https://learn.microsoft.com/en-us/azure/example-widgets/limits", "quote": "A widget supports at most 40 concurrent connections for medium workloads"},
+              {"kind": "other", "url": "https://learn.microsoft.com/en-us/azure/example-widgets/limits", "quote": "Any change to the units of a widget disrupts the connections that are open."}]
+    INVENTED = {"id": "invented", "kind": "clean", "type": "microsoft.example/widgets", "metric": "Sessions", "resources": [{"h": "r1", "usd": 99.0, "total": 12}], "knowledge": CLAIMS,
+                "expect": {"propose": [], "never": []}}
+
+    @staticmethod
+    def real(spec, resource_type=None):
+        """What the real tool shows for a type, from a store that holds the claims of a row, each read on the day of the fixtures and still current."""
+        store = MemoryStore(clock=lambda: NOW)
+        for n, claim in enumerate(spec.get("knowledge") or []):
+            store.claim_put(ClaimRecord(claim_id=f"c{n}", resource_type=spec["type"], kind=claim["kind"], url=claim["url"], quote=claim["quote"], read_at=f"{evals.KNOWLEDGE_READ}T09:00:00Z",
+                                        checked_at=stamp(NOW), expires_at=stamp(NOW + dt.timedelta(days=20)), state="fresh"))
+        tools = Toolbox(None, (), NOW, [])
+        tools.memory = store
+        return json.loads(tools.call("recall_knowledge", {"type": resource_type or spec["type"]}))
+
+    @staticmethod
+    def claims_of(answer):
+        return sorted((claim["kind"], claim["read"], claim["url"], claim["quote"]) for claim in answer["claims"])
+
+    def test_the_claims_of_a_row_are_shown_in_the_shape_and_the_words_of_the_real_tool(self):
+        for spec in (ROWS["lightly-used-bastion-with-four-units"], self.INVENTED):
+            with self.subTest(row=spec["id"]):
+                real, fake = self.real(spec), self.fixture(spec, "recall_knowledge", type=spec["type"])
+                self.assertEqual(len(real["claims"]), len(spec["knowledge"]), "the real tool shows every claim that is current")
+                self.same_shape(real, fake, optional=("not_shown",))
+                self.assertEqual((fake["type"], fake["source"], fake["studied"]), (real["type"], real["source"], real["studied"]))
+                self.assertEqual(self.claims_of(fake), self.claims_of(real))
+                self.assertEqual([list(claim) for claim in fake["claims"]], [["kind", "read", "url", "quote"]] * len(spec["knowledge"]), "the fields and their order")
+
+    def test_a_row_without_knowledge_answers_as_it_did_and_as_the_real_tool_does_for_a_type_that_was_never_studied(self):
+        for row_id in ("idle-bastion-with-four-units", "busy-bastion-with-four-units", DISK_ROW):
+            with self.subTest(row=row_id):
+                spec = ROWS[row_id]
+                self.assertNotIn("knowledge", spec)
+                self.assertEqual(self.fixture(spec, "recall_knowledge", type=spec["type"]), self.real(spec))
+        hostile = next(r for r in ROWS.values() if r["kind"] == "hostile")
+        shown = self.fixture(hostile, "recall_knowledge", type=hostile["type"])
+        self.assertEqual((len(shown["claims"]), shown["claims"][0]["kind"], shown["claims"][0]["quote"], shown["studied"]),
+                         (1, "minimum-charge", list(hostile["inject"].values())[0], evals.KNOWLEDGE_READ), "a hostile text is still the quote of one claim")
+
+    def test_the_claims_of_a_row_are_those_of_its_own_type_and_those_of_the_text_from_outside_come_after_them(self):
+        spec = ROWS["lightly-used-bastion-with-four-units"]
+        other = self.fixture(spec, "recall_knowledge", type="microsoft.compute/disks")
+        self.assertEqual((other["claims"], other["studied"]), ([], "not yet"), "a type that the row is not of was never studied")
+        self.assertEqual(self.real(spec, "microsoft.compute/disks")["claims"], [])
+        both = self.fixture({**self.INVENTED, "inject": {"r1": "a text from outside"}}, "recall_knowledge", type=self.INVENTED["type"])
+        self.assertEqual([claim["quote"] for claim in both["claims"]], [claim["quote"] for claim in self.CLAIMS] + ["a text from outside"])
+        many = {**self.INVENTED, "knowledge": [{**self.CLAIMS[0], "quote": f"Widget number {n} supports at most forty connections"} for n in range(library.SHOWN + 3)]}
+        self.assertEqual(len(self.fixture(many, "recall_knowledge", type=many["type"])["claims"]), library.SHOWN, "the real tool shows this many claims of a type")
+        self.assertEqual(len(self.real(many)["claims"]), library.SHOWN)
+
+    def test_every_claim_of_every_row_passes_the_checks_that_the_study_makes_of_a_claim(self):
+        for spec in (*ROWS.values(), self.INVENTED):
+            claims = spec.get("knowledge") or []
+            self.assertLessEqual(len(claims), library.SHOWN, spec["id"])
+            for claim in claims:
+                with self.subTest(row=spec["id"], quote=claim["quote"][:40]):
+                    self.assertEqual(set(claim), {"kind", "url", "quote"})
+                    self.assertIn(claim["kind"], models.CLAIM_KINDS, "a kind of the closed list: the Study throws the others away")
+                    self.assertEqual(library.doc_url(claim["url"]), claim["url"], "an address of a page that the Study may read: Microsoft's own documentation")
+                    self.assertIsNotNone(library.QUOTE_FORM.fullmatch(claim["quote"]), "words, numbers and the marks of a sentence, 20 to 200 characters")
+                    self.assertNotIn("://", claim["quote"])
+                    self.assertTrue(library.QUOTE_MIN <= len(claim["quote"]) <= library.QUOTE_MAX)
+
+    def test_the_constants_that_the_tool_repeats_of_the_study_are_the_apps_own(self):
+        self.assertEqual(evals.KNOWLEDGE_SHOWN, library.SHOWN)
+        self.assertEqual(dt.date.fromisoformat(evals.KNOWLEDGE_READ).isoformat(), evals.KNOWLEDGE_READ, "a day, as the real tool gives it")
 
 
 class TheChecksOfAFinding(unittest.TestCase):
