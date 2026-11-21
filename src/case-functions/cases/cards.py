@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, others_line, parse_time, plain,
+from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, UNDO_CHARS, WHY_APPROVER, Brief, called_of, footer_line,
+                    others_line, parse_time, plain,
                     plain_sentences, shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
@@ -166,7 +167,7 @@ def _undo(brief: Brief) -> dict:
     """Whether a change can be undone: one bold line when it cannot, and nothing decorative. A command is never cut in half here: a family that has one gives its first sentence (`undo.short`)."""
     if not brief.undo.reversible:
         return _block("undo", "Undo: This cannot be undone.", weight="Bolder")
-    return _block("undo", f"**Undo:** {md(brief.undo.short or brief.undo.how, 200)}")
+    return _block("undo", f"**Undo:** {md(brief.undo.short or brief.undo.how, UNDO_CHARS)}")
 
 
 def _decision_lines(brief: Brief) -> list[dict]:
@@ -220,7 +221,7 @@ def _sure(brief: Brief, yes_url: str) -> dict:
     place = f" in resource group {md(brief.where.group, 90)}" if brief.where.group else ""
     where = " ".join(bit for bit in (md(brief.where.kind, 40), md(brief.where.name, 120)) if bit) + place
     here = " ".join(bit for bit in (f"the {md(brief.where.noun, 40)}", md(brief.where.name, 120)) if bit) + place  # in words that go on after a colon, as a sentence does
-    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, 200)}" if not brief.undo.reversible else f"This changes a real resource: {here}. Nothing is changed until you press Yes."
+    text = f"This cannot be undone: {where} is lost. {md(brief.undo.how, UNDO_CHARS)}" if not brief.undo.reversible else f"This changes a real resource: {here}. Nothing is changed until you press Yes."
     return {"type": "Container", "id": "sure", "isVisible": False, "style": "attention", "items": [
         _block("sure-text", text, weight="Bolder"),
         {"type": "ActionSet", "id": "sure-actions", "actions": [
