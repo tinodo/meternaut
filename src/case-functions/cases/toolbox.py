@@ -3055,8 +3055,8 @@ class Toolbox:
         for other, kin in self.meters.items():  # the prices of a product in a unit are the prices of every meter of the resource with the same service, product and unit, each with its own line
             if other != name and kin.scope == held.scope and (kin.words[0], kin.words[1], kin.words[5]) == (held.words[0], subcategory, unit):
                 own, found = prices.match(book.lines, subcategory, kin.words[2], unit, region)
-                line = self._price_handle(own, aged) if own is not None else None
-                self._keep_prices(other, shown | {line} if line is not None else shown, own, found, aged)
+                handle = self._price_handle(own, aged) if own is not None else None
+                self._keep_prices(other, shown | {handle} if handle is not None else shown, own, found, aged)
         return answer
 
     def _keep_prices(self, name: str, shown: set[str], current: "prices.Line | None", how: str, aged: int | None) -> None:
