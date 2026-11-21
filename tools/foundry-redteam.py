@@ -33,7 +33,6 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
-import secrets
 import sys
 import time
 from pathlib import Path
@@ -46,7 +45,6 @@ if helpers is None:  # a test has loaded it already; a tool run on its own loads
     _spec.loader.exec_module(helpers)
 Problem, SpendCap = helpers.Problem, helpers.SpendCap
 
-API = "api-version=v1"
 INVESTIGATOR = "meternaut-investigator"
 COPY_PREFIX = "meternaut-redteam-copy-"
 ROUTES = helpers.ROUTES
@@ -70,7 +68,7 @@ def find(name: str) -> Path:
 
 
 def copy_name(now: dt.datetime, token: str | None = None) -> str:
-    return f"{COPY_PREFIX}{now:%Y%m%d%H%M}-{token or secrets.token_hex(2)}"
+    return helpers.temporary_name(COPY_PREFIX, now, token)
 
 
 def synthetic_definition(instructions: str, model: str) -> dict:
@@ -81,22 +79,12 @@ def synthetic_definition(instructions: str, model: str) -> dict:
 def make_copy(client, name: str, definition: dict) -> str:
     if not name.startswith(COPY_PREFIX) or name == INVESTIGATOR or "tools" in definition:
         raise Problem("the copy is named so that nobody mistakes it for production, and has no tools", 2)
-    status, document = client.request("POST", f"/agents?{API}", {"name": name, "definition": definition, "description": "A synthetic copy for red teaming, made and deleted by tools/foundry-redteam.py. It has no tools.",
-                                                              "metadata": {"meternaut_redteam_copy": "true"}})
-    version = ((document.get("versions") or {}).get("latest") or {}).get("version") if isinstance(document, dict) and isinstance(document.get("versions"), dict) else None
-    version = version if version is not None else document.get("version") if isinstance(document, dict) else None
-    if status not in (200, 201) or version is None:
-        raise Problem(f"the synthetic copy could not be made ({status} {helpers.error_words(document)})")
-    return str(version)
+    return helpers.make_agent(client, name, definition, "A synthetic copy for red teaming, made and deleted by tools/foundry-redteam.py. It has no tools.", {"meternaut_redteam_copy": "true"}, "the synthetic copy")
 
 
 def delete_copy(client, name: str) -> bool:
     """Deletes the copy and makes sure that it is gone. Only a name that starts with COPY_PREFIX is ever deleted."""
-    if not name.startswith(COPY_PREFIX):
-        return False
-    client.request("DELETE", f"/agents/{name}?{API}")
-    status, _ = client.request("GET", f"/agents/{name}?{API}")
-    return status == 404
+    return name.startswith(COPY_PREFIX) and helpers.delete_agent(client, name)
 
 
 def attack(client, spend, account: str, project: str, name: str, version: str, thresholds: dict, wait: float, sleep=time.sleep, clock=time.monotonic) -> tuple[str, int, int]:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""What the AI-security tools share: the Azure CLI token, one HTTP client that goes only to a Foundry project, the spend cap, plain printing, and the code of the app that they hold
-the agents against (standard library only).
+"""What the AI-security tools share: the Azure CLI token, one HTTP client that goes only to a Foundry project, the spend cap, plain printing, the agents that a tool makes for one run and deletes at its
+end, and the code of the app that they hold the agents against (standard library only).
 
 The tools agents-drift.py, foundry-evals.py, foundry-redteam.py and agent365-check.py run inside the network (operator/run-tool.sh) with the Operator's identity. Each of them loads this
 file from its own folder, as cases-check.py loads check-helpers.py, so the Hub workflow sends both to the Operator. The code of the app that they need (lockfile.py, plaintext.py and
@@ -14,6 +14,7 @@ import importlib
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -322,3 +323,39 @@ def submit_evaluation(client, spend: "Spend", *, name: str, run_name: str, label
         return label, "UNKNOWN", f"{label}: the run completed with no result to count: look at it in the portal, Build, Evaluations"
     rate = passed / total
     return label, "PASS" if rate >= floor else "FAIL", f"{label}: {passed} of {total} results passed ({rate:.2f}, at least {floor:.2f}); the run is in the portal under Build, Evaluations"
+
+
+# -- the agents that a tool makes for one run and deletes at its end ---------------------------------------------------------------------------------
+
+AGENT_API = "api-version=v1"
+TEMPORARY = ("meternaut-redteam-copy-", "meternaut-candidate-")  # the only names that a tool makes and deletes: no agent of the project starts with either
+TEMPORARY_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,61}[a-z0-9]")  # at most 63 characters, and nothing that an address could read as another place
+
+
+def temporary_name(prefix: str, now: dt.datetime, token: str | None = None) -> str:
+    return f"{prefix}{now:%Y%m%d%H%M}-{token or secrets.token_hex(2)}"
+
+
+def is_temporary(name: object) -> bool:
+    return isinstance(name, str) and name.startswith(TEMPORARY) and TEMPORARY_NAME.fullmatch(name) is not None
+
+
+def make_agent(client, name: str, definition: dict, description: str, metadata: dict, what: str = "the temporary agent") -> str:
+    """Makes an agent that lives for one run and returns its version. The name is checked first and no agent of the project is ever written: it has to be a temporary one."""
+    if not is_temporary(name):
+        raise Problem("a temporary agent is named so that nobody mistakes it for an agent of the project", 2)
+    status, document = client.request("POST", f"/agents?{AGENT_API}", {"name": name, "definition": definition, "description": description, "metadata": metadata})
+    version = ((document.get("versions") or {}).get("latest") or {}).get("version") if isinstance(document, dict) and isinstance(document.get("versions"), dict) else None
+    version = version if version is not None else document.get("version") if isinstance(document, dict) else None
+    if status not in (200, 201) or version is None:
+        raise Problem(f"{what} could not be made ({status} {error_words(document)})")
+    return str(version)
+
+
+def delete_agent(client, name: str) -> bool:
+    """Deletes a temporary agent and makes sure that it is gone (the project answers 404). Only a temporary name is ever deleted."""
+    if not is_temporary(name):
+        return False
+    client.request("DELETE", f"/agents/{name}?{AGENT_API}")
+    status, _ = client.request("GET", f"/agents/{name}?{AGENT_API}")
+    return status == 404
