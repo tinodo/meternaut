@@ -154,11 +154,12 @@ def shown(value: object) -> str:
 
 class Checked(NamedTuple):
     """What code made of the settings and the other ways that an answer proposed: for each handle the entry of facts[KEY] that was kept, how many entries were dropped for each (kind, rule) of WHY,
-    and how many settings and other ways the answer listed."""
+    how many settings and other ways the answer listed, and the handles that had a setting dropped because its new number lies outside the documented range (`lowest` or `highest`)."""
 
     ways: dict
     dropped: Counter
     said: tuple[int, int]
+    ranged: frozenset = frozenset()
 
 
 def _same(one: float, other: float) -> bool:
@@ -205,7 +206,7 @@ def _ratios(change: pricing.Change) -> dict:
 def _setting(item: object, handles: Sequence[str], evidence: Mapping, ratios: Mapping) -> tuple[str, dict] | str:
     """The handle and the entry of one setting, or the rule that it fails: a resource of the finding, a property that a tool showed under that name with one plain number and that is a count or a size
     (`countlike`), the old value that the tool showed, a new value that is smaller and of the same kind (whole where the old one is whole), inside the range that the tools showed for the property
-    (`limits` of the evidence: the lowest and highest number that Microsoft's reference page gives, cases/ranges.py; outside it the rule is `lowest 2` or `highest 50`, with the page's number, and
+    (`limits` of the evidence: the lowest and highest number that Microsoft's reference page gives, cases/ranges.py; outside it the rule is `lowest N` or `highest M`, with the page's number, and
     with no range shown nothing changes) and, where the change states a ratio on the property, that ratio's numbers."""
     if not isinstance(item, Mapping):
         return "shape"
@@ -263,9 +264,10 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
     """What code keeps of the settings and the other ways that the change of a finding states. `proposal` is the finding's, `handles` the resources that it covers, `evidence` what the tools showed
     for each handle (Toolbox.evidence) and `price` the price of a change from the bill (cases/pricing.py price, for those handles). An entry that fails a rule is dropped by itself and counted, and
     the finding is never dropped for it. Settings are kept only for a finding that proposes a change by the action reduce, and other ways only for a finding of one resource. A way that cannot be
-    priced is kept with no figure, and no way ever becomes a setting."""
+    priced is kept with no figure, and no way ever becomes a setting. A resource that had a setting dropped for lying outside the documented range is in `ranged`: the caller holds back its figure."""
     dropped: Counter = Counter()
     ways: dict[str, dict] = {}
+    ranged: set[str] = set()
     if change is None:
         return Checked(ways, dropped, (0, 0))
     ratios, seen = _ratios(change), set()
@@ -275,6 +277,8 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
             found = "duplicate" if (found[0], found[1]["path"]) in seen else "limit" if len(seen) >= MAX_SETTINGS else found
         if isinstance(found, str):
             dropped["set", found] += 1
+            if found.partition(" ")[0] in ("lowest", "highest"):
+                ranged.add(item["handle"])
         else:
             seen.add((found[0], found[1]["path"]))
             ways.setdefault(found[0], {}).setdefault("set", []).append(found[1])
@@ -297,11 +301,11 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
             titles.add(entry["title"].casefold())
         if kept:
             ways.setdefault(handles[0], {})["others"] = kept
-    return Checked(ways, dropped, (len(change.settings), len(change.others)))
+    return Checked(ways, dropped, (len(change.settings), len(change.others)), frozenset(ranged))
 
 
 def reason(kind: str, why: str) -> str:
-    """The words for the rule that dropped an entry (a word of WHY[kind]): the two rules of the documented range carry the number that the page gives, as `lowest 2` or `highest 50`, and say it."""
+    """The words for the rule that dropped an entry (a word of WHY[kind]): the two rules of the documented range carry the number that the page gives, as `lowest N` or `highest M`, and say it."""
     word, _, number = why.partition(" ")
     return WHY[kind][word].format(shown(int(number))) if number.lstrip("-").isdigit() else WHY[kind][why]
 

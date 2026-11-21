@@ -896,6 +896,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 note(activity.looked_note(*counts, assumed))
                 notes.insert(0, notes.pop())  # first, so that the cap on the notes that a run keeps never takes it
             fields.update(zip(("profiled", "firstTime", "inWindow"), counts[:1] if remembered is None or assumed else counts))
+        if (unread := getattr(toolbox, "limits_note", None)) is not None and (said := unread()):
+            note(said)  # one note for the run, however many kinds of resource had no documented limits read (cases/ranges.py)
         h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **({"beats": len(out.beats)} if focused else {}), **fields)
 
     def step(name: str, model: str, started: float, ok: bool, tokens: tuple[int, int] | None, text: str | None) -> dict:
@@ -1156,9 +1158,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
         states = {handle: _cost_state(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower()), costs[handle]) for handle in finding.handles}
         blocked = {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY}
-        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, blocked, meter_word)
         finding.ways = proposals.check(finding.change, finding.proposal, finding.handles, toolbox.evidence,
                                        lambda option: pricing.price(option, finding.handles, toolbox, costs, blocked, meter_word))
+        # A resource whose setting the documented range refused has no figure either: its number is one that the platform does not take, and the figure that the AI states for it may rest on the same number.
+        blocked |= {handle: "range" for handle in finding.ways.ranged if handle not in blocked}
+        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, blocked, meter_word)
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)

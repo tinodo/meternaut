@@ -818,6 +818,10 @@ class TheLimits(Base):
         self.assertNotIn("limits", self.fixture(elsewhere, "describe", handle="r1"))
         self.assertNotIn("limits", self.fixture({**self.INVENTED, "limits": {"r2": {"scaleUnits": {"lowest": 2}}}}, "describe", handle="r1"), "the limits of another handle are not this one's")
         self.assertNotIn("limits", self.fixture(ROWS[DISK_ROW], "describe", handle="r1"))
+        bare = ROWS["lightly-used-bastion-without-limits"]
+        for answer in (self.fixture(bare, "describe", handle="r1"), self.fixture(bare, "list_resources", type=bare["type"]), *self.fixture(bare, "profile", handles=["r1"])["profiles"]):
+            self.assertNotIn("limits", answer, "the row of the same host with no limits shows none, as a toolbox whose reader read no page does")
+            self.assertIn("scaleUnits", json.dumps(answer), "and it shows the property that a setting would lower")
 
     def test_every_limit_of_every_row_is_a_range_of_a_whole_number_of_a_property_that_the_row_shows(self):
         for spec in ROWS.values():

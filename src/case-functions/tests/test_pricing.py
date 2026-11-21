@@ -1684,6 +1684,16 @@ class WhenAnInvestigationPricesAChange(unittest.TestCase):
         self.assertEqual(self.figures(h), {"thing-1": None, "thing-2": None})
         self.assertEqual(self.facts(h)["thing-1"]["missing"], "currency")
 
+    def test_a_cost_that_is_not_in_dollars_keeps_its_own_word_when_a_setting_was_refused_for_its_range_too(self):
+        change = {**block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.3, "high": 0.5})), "set": [{"handle": "r1", "property": "units", "from": 12, "to": 1}]}
+        evidence = {"r1": {**metrics(MetricA=0), "properties": {"units": 12}, "limits": {"units": {"lowest": 2}}}, "r2": metrics(MetricA=0)}
+        h = self.go(change, holding(evidence=evidence), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual((self.figures(h)["thing-1"], self.facts(h)["thing-1"]["missing"]), (None, "range"), "the resource whose setting the range refused has no figure, whatever the form")
+        h = Harness(FakeFoundry(answer(finding(change=change, proposal="change", basis="oversized", handles=["r1"]))), holding(evidence=evidence, costs=(None, None)), with_store=True)
+        h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs={resource(1).resource_id.lower(): 5.0}, currency="EUR")}
+        h.go()
+        self.assertEqual(self.facts(h)["thing-1"]["missing"], "currency", "the cost that is not in dollars is the first reason, as it was")
+
     def test_the_skeptic_is_shown_the_model_in_typed_form_and_neither_the_words_of_the_ai_for_a_person_nor_a_name(self):
         seen = {}
 

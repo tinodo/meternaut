@@ -1,7 +1,7 @@
 """The documented range of the numbers of a resource type: the lowest and the highest that Microsoft's reference page of the type gives, read by code (docs/proposals/31-proposals.md).
 
 The reference page of a resource type (Learn, `/azure/templates/<the type in lower case>`, the address that library.reference_url makes) lists the properties of the type in tables of Name,
-Description and Value, and a number that has bounds says so in its Value cell: `int`, `Constraints:`, `Min value = 2`, `Max value = 50`. `parse` reads those cells and nothing else, for any type and
+Description and Value, and a number that has bounds says so in its Value cell: `int`, `Constraints:`, `Min value = N`, `Max value = M`. `parse` reads those cells and nothing else, for any type and
 with no knowledge of any: no kind, property or number is named here. A name that two rows of a page give different bounds, or that one row bounds and another does not, has no range, because the
 page does not say which object a name belongs to. `Reader` reads the page of a type once in a run, with the docs client of the app (the list of calls of the Study: GET only, no token, pages of
 Microsoft's documentation only) and within the caps below, and says None for a page that it did not read, which is never the same as a type that has no range.
@@ -43,7 +43,7 @@ class Range:
 
 
 class _Tables(HTMLParser):
-    """The tables of a page as rows of the text of their cells, with a space for each line break or block inside a cell, so that `Min value = 2<br>Max value = 50` reads as it looks."""
+    """The tables of a page as rows of the text of their cells, with a space for each line break or block inside a cell, so that `Min value = N<br>Max value = M` reads as it looks."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

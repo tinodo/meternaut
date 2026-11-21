@@ -184,7 +184,7 @@ def _cited(block: Mapping, name: object, said: float) -> bool:
 
 
 def bounds_of(block: object, name: object) -> dict[str, int]:
-    """The documented range that the tools showed for a property of a resource (the `limits` of its evidence block, from the reference page of its type: cases/ranges.py), as {"lowest": 2, "highest": 50}:
+    """The documented range that the tools showed for a property of a resource (the `limits` of its evidence block, from the reference page of its type: cases/ranges.py), as {"lowest": N, "highest": M}:
     a bound that is no whole number, and one that the page does not give, is left out."""
     limits = block.get("limits") if isinstance(block, Mapping) else None
     found = limits.get(name) if isinstance(limits, Mapping) else None
@@ -192,7 +192,7 @@ def bounds_of(block: object, name: object) -> dict[str, int]:
 
 
 def outside(block: object, name: object, number: float) -> tuple[str, int] | None:
-    """The side of the documented range that a number lies beyond, and that bound: ("lowest", 2) or ("highest", 50). None when the number is inside the range, and when the tools showed none for the
+    """The side of the documented range that a number lies beyond, and that bound: ("lowest", N) or ("highest", M). None when the number is inside the range, and when the tools showed none for the
     property."""
     found = bounds_of(block, name)
     if "lowest" in found and number < found["lowest"]:

@@ -21,7 +21,8 @@ GATEWAYS = "microsoft.example/gateways"
 THINGS = "microsoft.example/things"
 RANGES = {"capacityUnits": Range(2, 50), "capacity": Range(1, None), "maxReplicas": Range(None, 30), "tier": Range(1, 3), "zoneRedundant": Range(0, 1), "provisioningState": Range(1, 2)}
 SAID = {"capacityUnits": {"lowest": 2, "highest": 50}, "sku.capacity": {"lowest": 1}, "maxReplicas": {"highest": 30}}
-NOTE = "the documented limits of microsoft.example/gateways were not read, so no tool shows any for it"
+NOTE = "the documented limits of 1 kind of resource were not read, so no tool shows any for it"
+NOTE_TWO = "the documented limits of 2 kinds of resource were not read, so no tool shows any for them"
 
 
 class Fake:
@@ -170,19 +171,23 @@ class WhenThereIsNoReaderOrThePageWasNotRead(unittest.TestCase):
         for block in box.evidence.values():
             self.assertNotIn("limits", block)
         self.assertEqual(notes, [])
+        self.assertEqual(box.limits_note(), "", "no reader, no page that was not read")
         self.assertEqual(self.tools(lambda: read_by({}))[1], answers, "a reader that has read a page with no bounded number changes nothing in an answer")
+        self.assertEqual(self.tools(lambda: read_by({}))[0].limits_note(), "", "a page that was read and bounds nothing is not a page that was not read")
 
-    def test_a_page_that_was_not_read_says_nothing_in_the_answer_and_one_note_for_the_type_in_the_run(self):
+    def test_a_page_that_was_not_read_says_nothing_in_the_answer_and_is_counted_once_for_the_one_note_of_the_run(self):
         notes: list[str] = []
         box, answers = self.tools(lambda: read_by(None, notes))
         for shown in answers:
             self.assertNotIn("limits", shown)
-        self.assertEqual([note for note in notes if "limits" in note], [NOTE], "said once, not for each call")
+        self.assertEqual([note for note in notes if "limits" in note], [], "the toolbox writes no note of its own: the investigation says the one note of the run when it ends")
+        self.assertEqual(box.limits_note(), NOTE, "counted once for the type, not for each call")
+        self.assertNotIn(GATEWAYS, box.limits_note(), "it counts kinds of resource and names none")
         for block in box.evidence.values():
             self.assertNotIn("limits", block)
         self.assertEqual(answers, self.tools(lambda: toolbox(gateways()))[1], "the answers are those of a toolbox with no reader")
 
-    def test_another_type_that_was_not_read_has_a_note_of_its_own(self):
+    def test_another_type_that_was_not_read_is_counted_in_the_same_note_and_so_are_many(self):
         estate = gateways()
         estate.rows.append(row(THINGS, "t1", properties={"instanceCount": 3}))
         estate.cost_rows.append((SUB, 5.0, estate.rows[-1]["id"].lower(), "Example Service"))
@@ -192,7 +197,11 @@ class WhenThereIsNoReaderOrThePageWasNotRead(unittest.TestCase):
         ask(box, "list_resources", type=GATEWAYS)
         ask(box, "list_resources", type=THINGS)
         ask(box, "list_resources", type=THINGS)
-        self.assertEqual([note for note in notes if "limits" in note], [NOTE, NOTE.replace("gateways", "things")])
+        self.assertEqual(box.limits_note(), NOTE_TWO)
+        self.assertEqual([note for note in notes if "limits" in note], [], "one note for the run, however many kinds: a run keeps a few of its notes")
+        for n in range(28):
+            box._limits_of(f"microsoft.example/kind{n}", [("instanceCount", 3)])
+        self.assertEqual(box.limits_note(), "the documented limits of 30 kinds of resource were not read, so no tool shows any for them")
 
     def test_a_reader_that_raises_is_a_page_that_was_not_read_and_stops_no_answer(self):
         class Breaks:
@@ -204,7 +213,7 @@ class WhenThereIsNoReaderOrThePageWasNotRead(unittest.TestCase):
         box.ranges = Breaks()
         shown = ask(box, "list_resources", type=GATEWAYS)
         self.assertEqual(("error" in shown, "limits" in shown), (False, False))
-        self.assertEqual([note for note in notes if "limits" in note], [NOTE])
+        self.assertEqual((box.limits_note(), [note for note in notes if "limits" in note]), (NOTE, []))
 
 
 class WhenAnAnswerIsCut(unittest.TestCase):
@@ -259,7 +268,7 @@ class WithTheRealReader(unittest.TestCase):
         self.assertEqual(len(web.calls), 1, "one page for one type in one run")
         self.assertEqual(box.evidence["r1"]["limits"], {"capacityUnits": {"lowest": 2, "highest": 50}, "maxReplicas": {"highest": 30}})
 
-    def test_a_page_that_cannot_be_read_is_one_note_and_no_field(self):
+    def test_a_page_that_cannot_be_read_is_counted_for_the_note_of_the_run_and_gives_no_field(self):
         web = Web({})
         client = Client(http.docs_calls(), lambda text: text, transport=web, sleep=lambda s: None)
         notes: list[str] = []
@@ -267,7 +276,7 @@ class WithTheRealReader(unittest.TestCase):
         box.ranges = Reader(client)
         self.assertNotIn("limits", ask(box, "list_resources", type=GATEWAYS))
         ask(box, "describe", handle="r1")
-        self.assertEqual([note for note in notes if "limits" in note], [NOTE])
+        self.assertEqual(([note for note in notes if "limits" in note], box.limits_note()), ([], NOTE))
         self.assertEqual(len(web.calls), 1)
 
 
@@ -311,6 +320,37 @@ class TheInvestigationGivesTheToolboxItsReader(unittest.TestCase):
         reader = getattr(fake, "ranges", None)
         self.assertIsNotNone(reader, summary.note)
         self.assertIs(reader.monotonic, harness.s.monotonic)
+
+
+class TheNoteOfTheRun(unittest.TestCase):
+    """The investigation says what the toolbox counted of the limits that were not read once, as a note of the run, whichever way it ends."""
+
+    TEXT = "the documented limits of 3 kinds of resource were not read, so no tool shows any for them"
+
+    class Unread(FakeToolbox):
+        def limits_note(self):
+            return TheNoteOfTheRun.TEXT
+
+    def said(self, foundry, toolbox):
+        harness = Harness(foundry, toolbox)
+        harness.go()
+        return [text for text in harness.notes if "documented limits" in text], [event["note"] for event in harness.of("run.note") if "documented limits" in event["note"]]
+
+    def test_the_note_is_said_once_when_the_investigation_ends_with_an_answer(self):
+        kept, logged = self.said(FakeFoundry(answer(finding(handles=["r1"]))), self.Unread([resource(1)], {"r1": metrics(MetricA=0)}))
+        self.assertEqual((kept, logged), ([self.TEXT], [self.TEXT]))
+
+    def test_the_note_is_said_once_too_when_no_beat_gave_an_answer_that_could_be_read(self):
+        kept, logged = self.said(FakeFoundry("I think we should look at the biggest cost."), self.Unread([resource(1)], {"r1": metrics(MetricA=0)}))
+        self.assertEqual((kept, logged), ([self.TEXT], [self.TEXT]))
+
+    def test_a_toolbox_that_counted_none_or_that_has_no_note_says_nothing(self):
+        class Read(FakeToolbox):
+            def limits_note(self):
+                return ""
+
+        for toolbox in (Read([resource(1)], {"r1": metrics(MetricA=0)}), FakeToolbox([resource(1)], {"r1": metrics(MetricA=0)})):
+            self.assertEqual(self.said(FakeFoundry(answer(finding(handles=["r1"]))), toolbox), ([], []))
 
 
 if __name__ == "__main__":

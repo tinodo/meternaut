@@ -1002,7 +1002,7 @@ class Toolbox:
         self.arm, self.subscriptions, self.now, self.notes = arm, subscriptions, now, notes
         self.memory: object | None = None  # the store of the loop, which the tools that recall read; the investigation sets it, and a run that keeps no memory has none
         self.ranges: ranges.Reader | None = None  # the reader of the documented limits of the numbers of a type (cases/ranges.py): the investigation sets it, and with none the tools show no limits
-        self._unlimited: set[str] = set()  # the types whose limits were not read and that a note has said so for
+        self._unlimited: set[str] = set()  # the types whose limits were not read: `limits_note` counts them, for the one note of the run
         self.profile: object | None = None  # what the identity can see (cases/capability.py): the investigation sets it, and `commitments` shows its four words
         self.handles: dict[str, Resource] = {}  # every resource that an answer has shown, by handle
         self.evidence: dict[str, dict] = {}  # handle -> what the answers showed about it so far (metric aggregates, cost lines, typed properties)
@@ -1410,7 +1410,8 @@ class Toolbox:
     def _limits_of(self, kind: str | None, shown: "Iterable[tuple[str, object]]") -> dict[str, dict[str, int]]:
         """The limits of the properties that an answer shows (path, value): for each count or size that is a number and whose last key the reference page of the type bounds (cases/ranges.py),
         {"lowest": N, "highest": M} with a bound that the page does not give left out. Nothing when the toolbox has no reader, when no such number is shown (no page is read for it), for a path that the
-        page does not bound, and when the page was not read: a note says so once for the type, and the answer says nothing, because a page that was not read is not a type with no limits."""
+        page does not bound, and when the page was not read: the type is counted for the one note of the run (`limits_note`), and the answer says nothing, because a page that was not read is not a type
+        with no limits."""
         counts = [path for path, value in shown if isinstance(value, (int, float)) and not isinstance(value, bool) and _rank(path.rsplit(".", 1)[-1]) in COUNT_LIKE]
         if self.ranges is None or kind is None or not counts:
             return {}
@@ -1419,11 +1420,15 @@ class Toolbox:
         except Exception:  # noqa: BLE001 (a reader that fails is a page that was not read, and it never costs an answer)
             found = None
         if found is None:
-            if kind not in self._unlimited:
-                self._unlimited.add(kind)
-                self.notes.append(f"the documented limits of {kind} were not read, so no tool shows any for it")
+            self._unlimited.add(kind)
             return {}
         return {path: bounds for path in counts if (known := ranges.find(found, path)) is not None and (bounds := known.bounds())}
+
+    def limits_note(self) -> str:
+        """The one note of a run about the limits that were not read: how many kinds of resource asked for a page of the documentation that was not read (cases/ranges.py), or "" when none did. The
+        investigation says it once, when it ends: a note for each kind would be as many as the kinds, and the run keeps a few of its notes."""
+        count = len(self._unlimited)
+        return f"the documented limits of {count} kind{'' if count == 1 else 's'} of resource were not read, so no tool shows any for {'it' if count == 1 else 'them'}" if count else ""
 
     @staticmethod
     def _unlimit(holder: dict, path: str) -> None:
