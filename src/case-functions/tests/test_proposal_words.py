@@ -701,6 +701,46 @@ class NoTextOfACardOrALetterIsCutShort(unittest.TestCase):
         for surface, text in (("card", " ".join(block["text"] for block in card_of(case, plan)["body"] if block.get("id") == "risk")), ("letter", read(surfaces(case, plan)["letter"]))):
             self.assertIn("Connections that need more than 2 units are refused", text, surface)
             self.assertNotIn("Everything that connects through it slows down", text, f"{surface}: a long risk of a change is cut at the end of a sentence, and the page has all of it")
+        self.question_and_undo_are_shown_whole()
+
+    def question_and_undo_are_shown_whole(self):
+        """The question that is longer than the room that it once had (320) and shorter than the room that it has, and the undo of every family that has one, in the letter and on the card."""
+        import json
+
+        import familysupport as fs
+        from test_families_briefs import MAKERS, REVERSIBLE, made, texts_of
+
+        paths = ("properties.networkProfile.virtualNetworkConfiguration.maximumNumberOfInstancesPerScaleSet", "properties.sku.capacityOfTheDedicatedHostGroupInThisRegion",
+                 "properties.autoScaleSettings.maximumNumberOfWorkersPerNode")
+        case, plan = gateway({"set": [{"path": path, "from": 40, "to": 20} for path in paths]})
+        question = brief_of(case, plan).asked
+        self.assertTrue(320 < len(question) < brief_mod.ASKED_CHARS, f"the question has {len(question)} characters: longer than 320 and shorter than the room that it has")
+        card = texts_of(card_of(case, plan))
+        self.assertEqual(card["asked"], cards.md(question, brief_mod.ASKED_CHARS), "the card has the whole question")
+        self.assertIn(question, letters.approval_letter(plan, case, PERSON, BASE, NOW, CONTACTS).text, "and so has the letter")
+        planting = fs.as_if_gateways_were_planted()
+        planting.start()
+        try:
+            longest = 0
+            for name in MAKERS:
+                if not REVERSIBLE[name]:
+                    continue
+                _, plan, case = made(name)
+                b = brief_mod.build_brief(case, plan, None, [], now=fs.NOW, may_answer=True)
+                undo = b.undo.short or b.undo.how
+                longest = max(longest, len(undo))
+                letter = letters.approval_letter(plan, case, PERSON, BASE, fs.NOW, CONTACTS).text
+                made_card = cards.card_for(b, cards.CardContext(page_url=f"{BASE}/ok/{b.plan_id}", contacts=CONTACTS))
+                with self.subTest(name):
+                    self.assertIn(f"Undo: {undo}", letter.splitlines(), "the letter has the whole undo of the family")
+                    self.assertEqual(texts_of(made_card)["undo"], f"**Undo:** {cards.md(undo, brief_mod.UNDO_CHARS)}", "and so has the card")
+                    self.assertNotIn("...", undo + letter + json.dumps(made_card))
+        finally:
+            planting.stop()
+        self.assertEqual(longest, 183, "the longest undo that a family's words give (the gateway of a hub); a longer one needs a bigger brief.UNDO_CHARS")
+        for target in ({"set": [{"path": paths[0], "from": 40, "to": 20}, {"path": paths[1], "from": 12, "to": 6}, {"path": paths[2], "from": 30, "to": 15}]},):
+            said = family_words.setting_words("virtual machine scale set", "x" * 80, "g" * 90, target, {})
+            self.assertLessEqual(len(said.short_undo), brief_mod.UNDO_CHARS, "the undo of a change of a number, which the family keeps short for a card and a letter")
 
 
 class EverySurfaceReadsAsSentences(unittest.TestCase):

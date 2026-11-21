@@ -32,6 +32,7 @@ MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
 RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: a reason (at most 100), two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
 ASKED_CHARS = 480  # the room that a card and a letter have for the question ("You are asked whether to let Meternaut scale down the virtual machine scale set x in resource group g by lowering ..."): a name of 80 characters, a group of 90 and three settings need about 360
+UNDO_CHARS = 260  # the room that a card and a letter have for an undo: the longest that a family's words give is 183 characters (the gateway of a hub) and the longest that a plan keeps is 235; the brief holds at most 300 of a plan's
 MAX_NAME = 120
 MAX_GROUP_NAMES = 12  # the names of the other resources that a case which stands for many resources keeps (cases/investigate.py keeps the same number)
 MAX_GROUP = 100000  # the most resources that the digest of such a case may count and still be believed
@@ -1820,7 +1821,7 @@ def facts_of(case: CaseRecord | None, now: dt.datetime | None = None) -> tuple[F
     if guards:
         head.append(Fact("Held back by", " ".join(GUARD_WORDS.get(g, text_of(g, 40)) for g in guards[:2]), CHECKED))
     head += rows if group is None else []
-    head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, CHECKED)] if group is None and _idle(case) else [])
+    head += _metric_facts(case) or ([Fact("Use, last 30 days", NOT_MEASURED, CHECKED)] if group is None and _idle(case) and _impact_digest(case.facts) is None else [])  # a check of what depends on it that ran says what was looked at (the block "Impact"): "the AI cited no measurement" beside a verdict that it is in use would contradict it
     typed = _typed_facts(case)
     tail: list[Fact] = []
     owner = case.owner if isinstance(case.owner, dict) else {}

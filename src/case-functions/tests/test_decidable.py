@@ -479,7 +479,7 @@ GREW = {  # the kinds whose letter is longer than it was on main, by how many wo
     "advice, schedule": (41, f"the figure says which kind of resource it is about, which rate the cost is, on how many days of how many the change turns the resource off and which numbers are the AI's; what an answer does says that Meternaut cannot make a schedule because it only lowers a count of units, and {NOT_KNOWN_FIRST}"),
     "advice, commit": (4, RATE_AND_ONLY_COUNT),
     "advice, a group of many resources": (24, "the row that says why the finding is a lead, which rate the cost is, and what could go wrong says why the risk is high and that nothing was measured of their use"),
-    "change, stop-vm": (13, ASKS_WHAT_IT_DOES), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
+    "change, stop-vm": (15, f"{ASKS_WHAT_IT_DOES}, and the Undo row says all of the undo of the family (a start can fail when the region has no room for the size), which it cut in the middle of a word"), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
     "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
     "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES),
     "advice, a setting that Meternaut cannot change": (19, f"the sentence about the other ways says how each figure was made: worked out from the bill, the AI's estimate or not priced; {NOT_KNOWN_FIRST}"),

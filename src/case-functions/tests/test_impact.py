@@ -4,6 +4,7 @@ AGENTS.md rules 26, 29 and 30: no AI makes, sees or argues the verdict; the app 
 """
 import dataclasses
 import datetime as dt
+import json
 import re
 import unittest
 from pathlib import Path
@@ -552,6 +553,37 @@ class WhatAPersonReads(unittest.TestCase):
         found = {"verdict": "keep", "complete": True, "reasons": ["a\u202eb", 5, "  "], "rows": [["x", "y\u0007", "z"], ["bad"], "no"], "removal": "text", "undo": None, "unchecked": ["q\u202e"]}
         shown = brief.impact_of(case_with(found))
         self.assertEqual((shown.reasons, shown.rows, shown.removal, shown.undo, shown.unchecked), (("ab",), (("x", "y", "z"),), (), "", "Meternaut could not check q."))
+
+
+class TheUseRowDoesNotContradictTheCheckOfWhatDependsOnTheResource(unittest.TestCase):
+    """The row "Use, last 30 days" says that the AI cited no measurement, so that nothing shows whether anything uses the resource. After the check of what depends on the resource ran, its block says what
+    was looked at (the traffic, the reads of Resource Graph), and that row beside a verdict that the resource is in use would contradict it: it stays only where nothing at all was looked at."""
+
+    @staticmethod
+    def shown(case):
+        plan = endpoint_plan(case, saving_usd_month=None)
+        b = brief.build_brief(case, plan, now=WEB_NOW, may_answer=True)
+        _, page = page_of(case, plan)
+        card = json.dumps(cards.decision_card(b, cards.CardContext(page_url=f"https://meternaut.example/ok/{plan.plan_id}")))
+        return b, {"page": page, "card": card, "letter": letters.approval_letter(plan, case, PERSON, BASE, WEB_NOW, CONTACTS).text}
+
+    def test_after_a_check_that_ran_the_row_is_not_shown_on_the_page_the_card_or_the_letter(self):
+        for verdict in ("keep", "safe", "check"):
+            b, texts = self.shown(case_with(digest_of(verdict)))
+            self.assertNotIn(brief.NOT_MEASURED, [fact.value for fact in b.facts], verdict)
+            for surface, text in texts.items():
+                with self.subTest(verdict=verdict, surface=surface):
+                    self.assertNotIn(brief.NOT_MEASURED, text)
+        b, _ = self.shown(case_with(digest_of("keep")))
+        self.assertEqual(b.risk.text, brief.KEEP_RISK, "the verdict 'keep' says that it is in use, and no row beside it says that nothing shows whether anything uses it")
+
+    def test_where_nothing_at_all_was_looked_at_the_row_stays(self):
+        b, texts = self.shown(case_with(None))
+        self.assertIn(brief.NOT_MEASURED, [fact.value for fact in b.facts])
+        for surface in ("page", "letter"):
+            with self.subTest(surface=surface):
+                self.assertIn(brief.NOT_MEASURED, texts[surface])
+        self.assertEqual(brief.NOT_MEASURED in texts["card"], any(fact.value == brief.NOT_MEASURED for fact in brief.shown_facts(b.facts)), "the card has room for three rows, and shows the row when it is one of them")
 
 
 def watch_endpoint(azure, **options):

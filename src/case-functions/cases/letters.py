@@ -270,7 +270,7 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
         risk = brief.risk.text
         return (owner, ("If you answer", _data(f"{brief.change} {brief.who_acts}", 300)), *((("What could go wrong", _data(risk, brief_mod.RISK_CHARS)),) if brief.risk.acting else ()))
     two = f" {brief_mod.TWO_PEOPLE}" if brief.kind == "change" and brief.two_people else ""
-    undo = (("Undo", _data(brief.undo.short or brief.undo.how, 160)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half
+    undo = (("Undo", _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half, and no undo of a family is cut at all
     said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
     return (owner, ("If you approve", _data(plain_sentences(said, 200), 200) + ("" if "own permissions" in said else " It runs with your own permissions.") + two), *undo,
             ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200)))
@@ -371,7 +371,7 @@ def done_letter(plan: PlanRecord, action: ActionRecord, case: CaseRecord | None,
             doc.paragraph(_data(line, 300))
         stake = stake_of(brief)
         doc.figure(stake, then="Cost Management confirms it 8 to 72 hours after the change." if stake.state == "save" and stake.level != "Verified" else "")
-        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.short or brief.undo.how, 200))
+        doc.paragraph("This cannot be undone." if not brief.undo.reversible else _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS))
     else:
         doc.paragraph({"failed": "The change was tried and did not complete.", "unknown": "The change was started, and its result is not known."}.get(action.state, "The change is in progress."))
         detail = _data(action.error or action.result, 240)
