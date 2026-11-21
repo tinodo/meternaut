@@ -44,7 +44,7 @@ The **second reader** is [`tools/agents-drift.py`](../../tools/agents-drift.py),
 
 ## Evaluations and red teaming
 
-Thresholds and spend caps were written before the first measurement ([`evaluation/thresholds.json`](../../evaluation/thresholds.json), [`evaluation/limits.json`](../../evaluation/limits.json): rows, calls of a model, tokens and seconds). The set is [`evaluation/cases.jsonl`](../../evaluation/cases.jsonl): 30 invented fixtures, in four kinds (clean, decoys that look idle and are used, hostile texts, an empty estate).
+Thresholds and spend caps were written before the first measurement ([`evaluation/thresholds.json`](../../evaluation/thresholds.json), [`evaluation/limits.json`](../../evaluation/limits.json): rows, calls of a model, tokens and seconds). The set is [`evaluation/cases.jsonl`](../../evaluation/cases.jsonl): 31 invented fixtures, in four kinds (clean, decoys that look idle and are used, hostile texts, an empty estate).
 
 | What runs | How | Threshold |
 |---|---|---|
