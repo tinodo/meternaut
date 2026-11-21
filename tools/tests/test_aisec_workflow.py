@@ -334,7 +334,7 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
         self.assertEqual(found["story"], {"set": {"low": 201.6, "high": 201.6}, "others": []}, "the price of the change is the app's own pricing.py over the meters of the row, with no toolbox in the folder")
         self.assertFalse(found["toolbox"], "what stands in for the toolbox is made by the tool and is no file")
         self.assertEqual(found["floor"], [0.0, 1.0, 1.0], "the floor of the row of the documentation is held in the flat folder too: 1 is below it, 2 and 3 are not")
-        self.assertEqual(found["effects"], ["bastion-four-units-full-story: - change effect 1: r1, meter m2, form quantity from 1440 to 0; priced"], "the block lists the effects there too, with the app's pricing.py and no toolbox")
+        self.assertEqual(found["effects"], ["bastion-four-units-full-story: - change effect 1: r1, meter m2, form quantity from 1440 to 0; priced alone"], "the block lists the effects there too, with the app's pricing.py and no toolbox")
 
     def test_the_two_that_spend_are_given_their_caps_and_the_container_outlives_the_cap_on_seconds(self):
         tool = operator_run()

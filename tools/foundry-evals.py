@@ -1452,17 +1452,18 @@ def _values(pricing, market, effect, form: "str | None") -> str:
 
 
 def _alternative_words(pricing, market, effect) -> str:
-    """What cases/pricing.py `_switch` tests of an alternative, each as ok or differs, with what the tool for alternatives showed: whether the price handle was among those that it showed for each meter of the
-    effect (yes, no, or no such call when it was not asked about that meter), the meters that it was asked about, and, for the line of the price handle, its price, steps, service and unit against the meter's own
-    words and whether a plain name remains for it. The tests are the app's, written again for what they print; the key that the app answers is printed after them."""
+    """Six of the tests that cases/pricing.py `_switch` makes of an alternative, each as ok or differs (one meter, a price above nothing, one step, the service and the unit against the meter's own words, and a plain
+    name that is not the bill's own), and what the tool for alternatives showed: whether the price handle was among those that it showed for each meter of the effect (yes, no, or no such call when it was not asked
+    about that meter) and the meters that it was asked about. The other tests of `_switch` (the list price of the meter's own line, a cost per unit, an alternative that costs as much or more) show only as the
+    app's key, which is printed after. The tests are the app's, written again for what they print."""
     offer = effect.remains.get("price")
     named = [f"{_handle_word(name, 'meter', {})} " + ("no such call" if not isinstance(market.offers.get(name), (set, frozenset, list, tuple)) else "yes" if isinstance(offer, str) and offer in market.offers[name] else "no") for name in effect.meters]
     asked = sorted(name for name in market.offers if isinstance(name, str) and HANDLE_SHAPES["meter"].fullmatch(name))
     words = [f"offered for {', '.join(named) if named else 'no meter'}", f"price list read for {', '.join(asked) if asked else 'no meter'}"]
     line = market.prices.get(offer) if isinstance(offer, str) else None
-    if line is None:
-        return "; ".join([*words, "the price handle is none of the lines of this run"])
     one = len(effect.meters) == 1
+    if line is None:
+        return "; ".join([*words, "the price handle is none of the lines of this run", f"one meter {'ok' if one else 'differs'}"])
     meter = market.meters.get(effect.meters[0]) if one else None
     usd, tiers = getattr(line, "usd", None), getattr(line, "tiers", None)
     checks = [("one meter", one), ("price", isinstance(usd, (int, float)) and not isinstance(usd, bool) and usd > 0), ("tiers", tiers == 1)]
@@ -1475,27 +1476,46 @@ def _alternative_words(pricing, market, effect) -> str:
     return "; ".join([*words, ", ".join(f"{name} {'ok' if good else 'differs'}" for name, good in checks)])
 
 
+def _places(places: list[int]) -> str:
+    """The places of effects, as numbers in words: `1 and 2`, `1, 2 and 3`."""
+    return str(places[0]) if len(places) == 1 else ", ".join(str(place) for place in places[:-1]) + f" and {places[-1]}"
+
+
+def _shared_meters(option, handles: list, blocked: "dict | None") -> str:
+    """When a meter handle is named by more than one effect for the same resource that the app reads, the words that say it, as handles and numbers, else nothing: the app counts a bill line once for a change
+    (cases/pricing.py `price` keeps `seen` across the effects, and `_part` adds a line to it before a switch can fail), so what an effect says alone is not what the change counts."""
+    named: dict[tuple[str, str], list[int]] = {}
+    for place, effect in enumerate(option.effects, 1):
+        if effect.handle in handles and not (blocked and effect.handle in blocked):
+            for name in effect.meters:
+                if HANDLE_SHAPES["meter"].fullmatch(name):
+                    named.setdefault((effect.handle, name), []).append(place)
+    shared = [f"meter {name} is named by effects {_places(places)}" for (_, name), places in named.items() if len(places) > 1]
+    return ", ".join(shared) + ": the app counts a bill line once" if shared else ""
+
+
 def _effect_lines(pricing, market, costs: dict, known: dict, where: str, option, handles: list, blocked: "dict | None") -> list[str]:
     """One short line for each effect of a change, in typed words only, under a line that says the action of the change (one of the app's own, cases/pricing.py ACTIONS) and how many effects it has: the resource, the
     meters, the form that the answer picked and the numbers or the price handle that it took, whether the app allows that form for the action, for an alternative what the tool for alternatives showed of it
-    (_alternative_words), and what the app's own `price` makes of that effect alone: priced, or not priced with its key (a key of
-    cases/pricing.py WHY), or not read when its resource is not one of the finding's. A handle that has not the shape of one, a form that is not on the app's list and any other text of the answer is a word of the
-    tool's own, never printed. At most EFFECTS_LISTED effects are listed."""
+    (_alternative_words), and what the app's own `price` makes of that effect ALONE: priced alone, or not priced alone with its key (a key of cases/pricing.py WHY), or not read when its resource is not one of
+    the finding's. The app counts a bill line once for the whole change, so when a meter is named by more than one effect a last line says so (_shared_meters). A handle that has not the shape of one, a form that is
+    not on the app's list and any other text of the answer is a word of the tool's own, never printed. At most EFFECTS_LISTED effects are listed."""
     if option is None:
         return []
     lines = [f"- {where} action {option.action}, {_n(len(option.effects), 'effect')}"]
     for place, effect in enumerate(option.effects[:EFFECTS_LISTED], 1):
         form = effect.remains.get("form") if effect.remains.get("form") in pricing.FORMS else None
         words = f"form {form}" if form else "form unreadable"
-        if form and form not in pricing.ALLOWED.get(option.action, ()):
-            words += f", not allowed for the action {option.action}"
+        allowed = f", not allowed for the action {option.action}" if form and form not in pricing.ALLOWED.get(option.action, ()) else ""
         probe = pricing.price(dataclasses.replace(option, effects=(effect,)), handles, market, costs, blocked or None, meter_word)
         key = probe.why.get(effect.handle)
-        result = "priced" if effect.handle in probe.rows else f"not priced, key {key if key in pricing.WHY else 'other'}" if effect.handle in probe.why else "not read, its resource is not in the finding"
-        lines.append(f"- {where} effect {place}: {_handle_word(effect.handle, 'resource', known)}, {_meters_word(effect.meters)}, {words}{_values(pricing, market, effect, form)}"
+        result = "priced alone" if effect.handle in probe.rows else f"not priced alone, key {key if key in pricing.WHY else 'other'}" if effect.handle in probe.why else "not read, its resource is not in the finding"
+        lines.append(f"- {where} effect {place}: {_handle_word(effect.handle, 'resource', known)}, {_meters_word(effect.meters)}, {words}{_values(pricing, market, effect, form)}{allowed}"
                      + (f"; {_alternative_words(pricing, market, effect)}" if form == "alternative" else "") + f"; {result}")
     if len(option.effects) > EFFECTS_LISTED:
         lines.append(f"- {where} effects: {len(option.effects) - EFFECTS_LISTED} more not listed")
+    if shared := _shared_meters(option, handles, blocked):
+        lines.append(f"- {where} {shared}")
     return lines
 
 
