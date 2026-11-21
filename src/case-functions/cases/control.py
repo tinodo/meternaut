@@ -3,10 +3,12 @@
 The message sits in the Storage queue of the app's host storage account. It carries the job name and a request id and nothing else, so it cannot choose a scope, a model, a
 budget or a detector. A message that is older than 15 minutes (by the time the queue says that it was inserted), names another job or has no valid request id is refused and the
 History says so; a refusal is an answer, so the message is consumed and does not go back to the queue. The Functions host base64-decodes the message text before it gets here. The job
-`teams-card-test` (cases/offers.card_test) sends one test card to the owner through the bot and replaces it with a closing card, and writes only plain outcomes to the History.
+`teams-card-test` (cases/offers.card_test) sends one test card to the owner through the bot and replaces it with a closing card, and writes only plain outcomes to the History. The job `ready`
+(cases/ready.py) makes the stored version of each agent from the lock and calls no model.
 A function that raises is tried again, five times in all (the first try included), and the message then goes to the poison queue of the same name with the suffix -poison
 (https://learn.microsoft.com/azure/azure-functions/functions-bindings-storage-queue-trigger, "Poison messages"). The host also hands a message over again when the run that had it was cut off. A Watch or a
 Study costs money, so a message that the queue says it has handed over before (`dequeue_count` above 1) is refused and recorded, whatever its age: the run that had it was begun, and a new one is started by hand.
+The card test and the job `ready` cost no model call, so the count does not hold them; the job makes the same versions again, and finds them made.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import uuid
 from typing import Callable
 
 from .events import History
+from .ready import run_ready
 from .redact import Redactor
 from .roles import clean_text
 from .run import run_watch, utc_now
@@ -25,6 +28,7 @@ from .study import run_study
 
 JOB = "watch"
 STUDY_JOB = "study"  # one Study now (cases/study.py), started by the same message: the job name and the request id, and nothing that chooses a scope, a model or a budget
+READY_JOB = "ready"  # the three agents made ready from the lock (cases/ready.py): the same two fields, so nothing chooses an agent, a model or a version, and it calls no model
 TEAMS_JOB = "teams-card-test"  # one test card to the owner through the bot, replaced at once by a closing card (cases/offers.card_test): no recipient is in the message either
 STALE_SECONDS = 900
 REQUEST_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -35,7 +39,7 @@ def refuse(reason: str, request_id: str | None, clock: Callable[[], dt.datetime]
 
 
 def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Callable[..., object] = run_watch, study: Callable[..., object] = run_study,
-                   teams: Callable[[str], object] | None = None) -> bool:
+                   teams: Callable[[str], object] | None = None, ready: Callable[..., object] = run_ready) -> bool:
     """Reads one control message and starts the run. Returns whether a run was started."""
     try:
         document = json.loads(message.get_body().decode("utf-8"))
@@ -47,12 +51,12 @@ def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Cal
         refuse("the control message has no valid request id", None, clock)
         return False
     job = document.get("job")
-    if job not in (JOB, STUDY_JOB, TEAMS_JOB):
+    if job not in (JOB, STUDY_JOB, READY_JOB, TEAMS_JOB):
         refuse(f"the control message names a job that the app does not know: {clean_text(document.get('job'), 40)}", request_id, clock)
         return False
     inserted = getattr(message, "insertion_time", None)
     delivered = getattr(message, "dequeue_count", None)
-    if job != TEAMS_JOB and isinstance(delivered, int) and not isinstance(delivered, bool) and delivered > 1:
+    if job not in (TEAMS_JOB, READY_JOB) and isinstance(delivered, int) and not isinstance(delivered, bool) and delivered > 1:
         # The host hands a message over again when the run that had it was cut off (a recycled worker, the time of the function) and not deleted. A Watch or a Study that was begun costs money, so it is
         # never begun again: the owner starts a new one.
         refuse(f"the control message was delivered {delivered} times: a run that was begun is never begun again, because each run costs money; start a new one", request_id, clock)
@@ -67,5 +71,5 @@ def handle_message(message, clock: Callable[[], dt.datetime] = utc_now, run: Cal
         from .offers import card_test  # only this message needs the cards
         (teams or (lambda request: card_test(os.environ, request, clock=clock)))(request_id)
         return True
-    (study if job == STUDY_JOB else run)("control", request_id)
+    (ready if job == READY_JOB else study if job == STUDY_JOB else run)("control", request_id)
     return True

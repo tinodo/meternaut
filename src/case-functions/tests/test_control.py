@@ -129,6 +129,26 @@ class Control(unittest.TestCase):
         self.assertTrue(control.handle_message(FakeMessage({"job": "teams-card-test", "requestId": "a" * 32}, NOW, 3), fixed_clock, Recorder(), study, sent.append))
         self.assertEqual(sent, ["a" * 32])
 
+    def test_the_job_ready_makes_the_agents_ready_for_its_request_and_nothing_in_the_message_chooses_what_it_makes(self):
+        ready, other = Recorder(), Recorder()
+        with LogCapture() as capture:
+            started = control.handle_message(FakeMessage({"job": "ready", "requestId": "a" * 32, "agent": "x", "model": "y", "version": 9}, NOW), fixed_clock, other, other, None, ready)
+        self.assertEqual((started, ready.calls, other.calls, capture.events()), (True, [("control", "a" * 32)], [], []))
+        self.assertEqual(control.READY_JOB, "ready")
+        for job in ("Ready", "ready ", "agents-ready", "ready; study"):
+            self.assertFalse(control.handle_message(FakeMessage({"job": job, "requestId": "a" * 32}), fixed_clock, other, other, None, ready), job)
+        self.assertEqual(ready.calls, [("control", "a" * 32)])
+
+    def test_the_job_ready_costs_no_model_call_so_the_count_of_deliveries_does_not_hold_it_and_the_age_of_the_message_still_does(self):
+        ready = Recorder()
+        for count in (1, 2, 5, None):
+            self.assertTrue(control.handle_message(FakeMessage({"job": "ready", "requestId": "a" * 32}, NOW - dt.timedelta(seconds=5), count), fixed_clock, Recorder(), Recorder(), None, ready), str(count))
+        self.assertEqual(len(ready.calls), 4)
+        with LogCapture() as capture:
+            self.assertFalse(control.handle_message(FakeMessage({"job": "ready", "requestId": "a" * 32}, NOW - dt.timedelta(seconds=901)), fixed_clock, Recorder(), Recorder(), None, ready))
+        self.assertEqual([(e["type"], e["reason"]) for e in capture.events()], [("run.failed", "stale control message")])
+        self.assertEqual(len(ready.calls), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
