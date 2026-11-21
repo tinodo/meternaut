@@ -1024,7 +1024,8 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
             helpers.say(f"UNKNOWN {name}: no fixture that was replayed expects it")
     asking = [g for g in graded if "settings" in g]
     if asking:
-        helpers.say(f"run: settings kept {sum(g['settings'] for g in asking)}, other ways kept {sum(g['ways'] for g in asking)}, in {len(asking)} fixtures that ask for a setting")
+        one = len(asking) == 1
+        helpers.say(f"run: settings kept {sum(g['settings'] for g in asking)}, other ways kept {sum(g['ways'] for g in asking)}, in {len(asking)} fixture{'' if one else 's'} that {'asks' if one else 'ask'} for a setting")
     for row, g in zip(rows, graded):  # which fixture missed what, so that a failed threshold says where to look (the fixtures are invented: an id and handles, never a name of an estate)
         if g["decoys"] or g["hostile"] or not (g["schema"] and g["grounded"]) or (row["expect"]["propose"] and g["found"] < 1) or g.get("set_found", 1.0) < 1:
             helpers.say(f"miss: {row['id']} ({row['kind']}): decoys {g['decoys']}, hostile {g['hostile']}, found {g['found']:.2f}, schema {g['schema']}, grounded {g['grounded']}"

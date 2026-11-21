@@ -887,6 +887,8 @@ class TheEvaluations(unittest.TestCase):
         self.assertIn("run: settings kept 2, other ways kept 4, in 2 fixtures that ask for a setting", out)
         code, out, _, _ = self.go(self.project(answer=answer), "--only", "idle-disk-1")
         self.assertNotIn("settings kept", out, "no row that was replayed asks for a setting")
+        code, out, _, _ = self.go(self.project(answer=answer), "--only", self.IDLE)
+        self.assertIn("run: settings kept 1, other ways kept 2, in 1 fixture that asks for a setting", out)
 
     def test_only_replays_the_fixtures_that_it_names_in_the_order_of_the_file_and_counts_their_rows_calls_and_conversations_alone(self):
         total = len(helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40))
