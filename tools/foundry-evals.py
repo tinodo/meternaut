@@ -2,7 +2,7 @@
 """Evaluations of the Investigator in the Foundry project, from inside the network (standard library only).
 
     python tools/foundry-evals.py probe --endpoint <project endpoint>
-    python tools/foundry-evals.py run   --endpoint <project endpoint> [--judge none|connection|auto] [--wait-seconds 600] [--only ID[,ID...]] [--summary FILE]
+    python tools/foundry-evals.py run   --endpoint <project endpoint> [--judge none|connection|auto] [--wait-seconds 600] [--only ID[,ID...]] [--candidate NAME] [--effort low|medium|high] [--summary FILE]
     python tools/foundry-evals.py rule  --endpoint <project endpoint> [--apply]
     python tools/foundry-evals.py --selftest
 
@@ -22,6 +22,11 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
         --only ID[,ID...]   replays only the fixtures that it names (ids of evaluation/cases.jsonl, separated by commas or by spaces) and judges the thresholds over those rows alone: a threshold
                             that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture. It also
                             prints, for each fixture, what the Investigator answered as the grader read it: the tools that it called and each finding with the verdict of the app's rules (docs/proposals/11).
+        --candidate NAME    replays against a candidate of the instructions and never against the production agent: a temporary agent `meternaut-candidate-...` in the project, with the production definition and the
+                            instructions of evaluation/candidates/NAME.txt (plain UTF-8 text of 1 to 20,000 characters, not the production text), graded and capped as the production agent is. It is deleted when the
+                            replay ends, whatever happened, and the result says so; the first line names the candidate and the baseline version. Nothing is promoted (docs/proposals/11).
+        --effort EFFORT     low, medium or high: the reasoning effort of the temporary agent. Alone, it makes a candidate named effort-EFFORT with the production instructions. Neither option goes with a command other
+                            than run.
 rule    Makes the continuous evaluation: a rule that evaluates a sample of the Investigator's real responses (preview). Without --apply it prints what it would make and changes nothing.
 probe   Reads only: asks which route of the evaluations API the project answers.
 
@@ -35,6 +40,7 @@ no public network access, cloud evaluations may need the evaluation-only network
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import datetime as dt
 import importlib.util
@@ -45,7 +51,8 @@ import re
 import sys
 import time
 import types
-from collections import Counter
+import unicodedata
+from collections import Counter, namedtuple
 from pathlib import Path
 
 helpers = sys.modules.get("aisec_helpers")
@@ -59,6 +66,11 @@ Problem, SpendCap = helpers.Problem, helpers.SpendCap
 API = "api-version=v1"
 PREVIEW = {"Foundry-Features": "Evaluations=V1Preview"}  # the header that the evaluation rules of the preview need
 INVESTIGATOR = "meternaut-investigator"
+CANDIDATES = "candidates"  # the folder of evaluation/ that holds the files of the candidates of the instructions
+CANDIDATE_PREFIX = "meternaut-candidate-"  # the temporary agent of a candidate is named so (helpers.TEMPORARY)
+CANDIDATE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,59}")
+MAX_CANDIDATE = 20_000  # the most characters that the instructions of a candidate have
+EFFORTS = ("low", "medium", "high")
 ROUTES = helpers.ROUTES  # the SDK's base, and the route of the REST reference of the preview
 MAX_ROUNDS = 12
 TOOL_BUDGET = 20
@@ -1523,15 +1535,16 @@ def dataset_item(row: dict, text: str, trace: list[dict], definitions: list[dict
     return {"query": query, "response": response, "messages": query + response, "tool_definitions": definitions}
 
 
-def evaluate_in_foundry(client, spend, items: list[dict], thresholds: dict, judge: str, judge_model: str, wait: float, sleep=time.sleep, clock=time.monotonic) -> list[tuple[str, str, str]]:
+def evaluate_in_foundry(client, spend, items: list[dict], thresholds: dict, judge: str, judge_model: str, wait: float, sleep=time.sleep, clock=time.monotonic, subject: str = INVESTIGATOR) -> list[tuple[str, str, str]]:
     """The evaluation runs in the project, one for the evaluators that need no judge and, with a judge, one for the quality evaluators (helpers.submit_evaluation). Returns plain lines
-    (label, PASS, FAIL or UNKNOWN, words): what the project did not offer or did not finish is UNKNOWN and fails nothing by itself, and a judge that was demanded and is refused fails."""
+    (label, PASS, FAIL or UNKNOWN, words): what the project did not offer or did not finish is UNKNOWN and fails nothing by itself, and a judge that was demanded and is refused fails. `subject` is
+    the name that the runs carry in the portal: the Investigator's, or the candidate's."""
     safety = thresholds["foundryEvaluators"]["safety"]
     quality = thresholds["foundryEvaluators"]["quality"]
     plan = [("safety", safety["evaluators"], None, 1.0 - safety["maxFlaggedRate"])]
     if judge in ("connection", "auto"):
         plan.append(("quality", quality["evaluators"], judge_model, quality["minPassRate"]))
-    return [helpers.submit_evaluation(client, spend, name=f"meternaut-investigator-{label}", run_name=f"replay-{len(items)}-rows", label=label, evaluators=evaluators, model=model, items=items,
+    return [helpers.submit_evaluation(client, spend, name=f"{subject}-{label}", run_name=f"replay-{len(items)}-rows", label=label, evaluators=evaluators, model=model, items=items,
                                       item_schema=ITEM_SCHEMA, floor=floor, wait=wait, demanded=judge == "connection" and model is not None, sleep=sleep, clock=clock)
             for label, evaluators, model, floor in plan]
 
@@ -1578,8 +1591,85 @@ def chosen_rows(rows: list[dict], only: "list[str] | None") -> list[dict]:
     return [row for row in rows if row["id"] in wanted]
 
 
+# -- a candidate of the instructions ---------------------------------------------------------------------------------------------------------------
+
+Candidate = namedtuple("Candidate", "name text effort")  # what a replay tries instead of the production agent: the name that its result carries, the text of its instructions (None: the production ones) and its reasoning effort (None: the production one)
+
+
+def find_candidate(name: str) -> Path:
+    """The file of a candidate: the one that travelled with the tool, in its flat folder, and else the one of the repository."""
+    for path in (helpers.HERE / f"candidate-{name}.txt", helpers.EVALUATION / CANDIDATES / f"{name}.txt"):
+        if path.is_file():
+            return path
+    raise Problem(f"there is no candidate {name}: evaluation/{CANDIDATES}/{name}.txt is not in this commit, and nothing was run", 2)
+
+
+def read_candidate(name: str) -> str:
+    """The instructions of a candidate: plain UTF-8 text of at most MAX_CANDIDATE characters. A control character is refused, and so is one that hides (a mark of the order of bytes, a space of no width)."""
+    try:
+        text = find_candidate(name).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise Problem(f"the candidate {name} is not UTF-8 text, and nothing was run", 2) from None
+    if not text.strip():
+        raise Problem(f"the candidate {name} is empty, and nothing was run", 2)
+    if len(text) > MAX_CANDIDATE:
+        raise Problem(f"the candidate {name} is longer than {MAX_CANDIDATE} characters, and nothing was run", 2)
+    if any(unicodedata.category(char).startswith("C") and char not in "\n\t" for char in text):
+        raise Problem(f"the candidate {name} holds a character that is not plain text, and nothing was run", 2)
+    return text
+
+
+def candidate_of(args) -> "Candidate | None":
+    """The candidate that a run is asked for, or None for a replay of the production agent. Whatever can be refused is refused here, before any call is made."""
+    if args.candidate is None and args.effort is None:
+        return None
+    if args.candidate is not None and not CANDIDATE_NAME.fullmatch(args.candidate):
+        raise Problem("--candidate names a file of evaluation/candidates: lower-case letters, digits and hyphens, starting with a letter or a digit, at most 60 characters", 2)
+    return Candidate(args.candidate or f"effort-{args.effort}", None if args.candidate is None else read_candidate(args.candidate), args.effort)
+
+
+def candidate_definition(production: dict, candidate: Candidate, keys) -> dict:
+    """The definition of the temporary agent: what the lock reads of the production definition (`keys`), with the instructions and the reasoning effort of the candidate where it has some."""
+    definition = {key: production[key] for key in keys if key in production}
+    if candidate.text is not None:
+        definition["instructions"] = candidate.text
+    if candidate.effort:
+        reasoning = definition.get("reasoning")
+        definition["reasoning"] = {**(reasoning if isinstance(reasoning, dict) else {}), "effort": candidate.effort}
+    return definition
+
+
+class TemporaryAgent:
+    """The agent of a candidate replay: made when the block begins and deleted when it ends, whatever happened, and the result says so. `left` is True when the project still has it."""
+
+    DESCRIPTION = "A temporary candidate of the Investigator's instructions, made and deleted by tools/foundry-evals.py for one replay of invented cases. It is no agent of the project."
+
+    def __init__(self, client, label: str, definition: dict) -> None:
+        self.client, self.label, self.definition, self.version, self.left = client, label, definition, "", False
+        self.name = helpers.temporary_name(CANDIDATE_PREFIX, dt.datetime.now(dt.timezone.utc))
+
+    def __enter__(self) -> dict:
+        try:
+            self.version = helpers.make_agent(self.client, self.name, self.definition, self.DESCRIPTION, {"meternaut_candidate": self.label})
+        except BaseException:  # the answer to the creation may have been lost, so the agent is looked for and deleted
+            self.__exit__()
+            raise
+        helpers.say(f"candidate: made the temporary agent {self.name} (version {self.version})")
+        return {"type": "agent_reference", "name": self.name, "version": self.version}
+
+    def __exit__(self, *_error) -> None:
+        try:
+            gone = helpers.delete_agent(self.client, self.name)
+        except Exception:  # noqa: BLE001 (a sign-in that fails now must not hide what the run found)
+            gone = False
+        self.left = not gone
+        if self.version or self.left:
+            helpers.say(f"candidate: the temporary agent {self.name} " + ("was deleted and is gone" if gone else "was NOT deleted: delete it by hand in the portal under Build, Agents"))
+
+
 def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> int:
     lockfile, _, _ = helpers.load_cases()
+    candidate = candidate_of(args)  # a candidate that cannot be tried is refused before the first call
     thresholds = load_thresholds()
     app_code()  # the checks of the app that grade a setting load before any call is made: a file that is missing is found here, and not after the spend
     everything = helpers.read_jsonl(find("cases.jsonl"), spend.limits["maxRows"])
@@ -1598,26 +1688,36 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     differences = [d for d in lockfile.compare(entry, lockfile.facts_of(latest["definition"], lock.ignored)) if d.certain]
     if differences:
         raise Problem("the stored Investigator is not what the lock says (" + ", ".join(sorted({d.control for d in differences})) + "): nothing was run")
+    if candidate and candidate.text is not None and candidate.effort is None and candidate.text.strip() == latest["definition"]["instructions"].strip():
+        raise Problem(f"the candidate {candidate.name} holds the production instructions: there is nothing to compare, and nothing was run", 2)
     reference = {"type": "agent_reference", "name": INVESTIGATOR, "version": str(latest["version"])}
     definitions = [{"name": t["name"], "description": t.get("description", ""), "parameters": t.get("parameters", {})} for t in latest["definition"].get("tools") or [] if isinstance(t, dict) and t.get("name")]
     spend.take(rows=len(rows))
+    scope = contextlib.nullcontext()
+    if candidate:
+        instructions = latest["definition"]["instructions"] if candidate.text is None else candidate.text
+        words = [f"instructions sha256 {lockfile.sha256_text(instructions)[:12]}, {len(instructions)} characters"] + (["the production text"] if candidate.text is None else []) + ([f"reasoning effort {candidate.effort}"] if candidate.effort else [])
+        helpers.say(f"run: candidate {candidate.name} ({', '.join(words)}) against baseline version {latest['version']}")
+        scope = TemporaryAgent(client, candidate.name, candidate_definition(latest["definition"], candidate, lockfile.READ_KEYS))
     graded, items, stopped = [], [], ""
-    for row in rows:
-        try:
-            text, trace, _ = replay(client, spend, reference, row)
-        except SpendCap as error:
-            stopped = str(error)
-            break
-        shown, bill = shown_properties(trace), shown_bill(trace)
-        graded.append(grade(row, text, shown, bill))
-        if args.only is not None:  # a replay of chosen fixtures says what the Investigator answered, so that an iteration is not blind
+    with scope as made:  # the temporary agent of a candidate lives while the fixtures are replayed, and is deleted when they are, whatever happened
+        reference = made or reference
+        for row in rows:
             try:
-                block = answer_lines(row, text, trace, shown, bill)
-            except Exception:  # noqa: BLE001 (a block that cannot be made must not cost the run that was paid for)
-                block = [f"{row['id']}: answer: the block of this answer could not be made"]
-            for line in block:
-                helpers.say(line, limit=ANSWER_LINE)
-        items.append(dataset_item(row, text, trace, definitions))
+                text, trace, _ = replay(client, spend, reference, row)
+            except SpendCap as error:
+                stopped = str(error)
+                break
+            shown, bill = shown_properties(trace), shown_bill(trace)
+            graded.append(grade(row, text, shown, bill))
+            if args.only is not None:  # a replay of chosen fixtures says what the Investigator answered, so that an iteration is not blind
+                try:
+                    block = answer_lines(row, text, trace, shown, bill)
+                except Exception:  # noqa: BLE001 (a block that cannot be made must not cost the run that was paid for)
+                    block = [f"{row['id']}: answer: the block of this answer could not be made"]
+                for line in block:
+                    helpers.say(line, limit=ANSWER_LINE)
+            items.append(dataset_item(row, text, trace, definitions))
     lines = judge_thresholds(graded, rows[: len(graded)], thresholds["codeGraders"])
     model = f"{lock.connection}/{lock.agents['meternaut-skeptic']['model']}" if lock.connection else ""
     judge = args.judge
@@ -1627,7 +1727,7 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     foundry_lines: list[tuple[str, str, str]] = []
     if items and not stopped:
         try:
-            foundry_lines = evaluate_in_foundry(client, spend, items, thresholds, judge, model, args.wait_seconds, sleep, clock)
+            foundry_lines = evaluate_in_foundry(client, spend, items, thresholds, judge, model, args.wait_seconds, sleep, clock, f"{CANDIDATE_PREFIX}{candidate.name[:30]}" if candidate else INVESTIGATOR)
         except SpendCap as error:
             stopped = str(error)
     results = [("PASS" if passed else "FAIL", words) for _, passed, words in lines] + [(state, words) for _, state, words in foundry_lines]
@@ -1661,10 +1761,13 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
     if stopped:
         helpers.say(f"STOPPED {stopped}")
     only = f" (only: {', '.join(row['id'] for row in rows)})" if args.only is not None else ""
-    helpers.say(f"run: {len(graded)} of {len(everything)} fixtures replayed{only} against version {reference['version']} of the Investigator; judge {judge}")
+    versus = f"candidate {candidate.name}" if candidate else f"version {reference['version']} of the Investigator"
+    helpers.say(f"run: {len(graded)} of {len(everything)} fixtures replayed{only} against {versus}; judge {judge}")
+    if candidate and scope.left:
+        helpers.say(f"WARNING the temporary agent {scope.name} is still in the project: delete it by hand in the portal under Build, Agents")
     helpers.say(spend.line())
     helpers.say(f"run: {len(client.calls)} calls to the project in all")
-    return 0 if not stopped and all(state != "FAIL" for state, _ in results) else 1
+    return 0 if not stopped and not (candidate and scope.left) and all(state != "FAIL" for state, _ in results) else 1
 
 
 def command_rule(args, client) -> int:
@@ -1747,6 +1850,8 @@ def main(argv=None, client=None, spend=None, sleep=time.sleep, clock=time.monoto
             command.add_argument("--wait-seconds", type=float, default=600)
             command.add_argument("--lock")
             command.add_argument("--only", nargs="+", metavar="ID", help="replay only these fixtures (ids of evaluation/cases.jsonl, separated by commas or by spaces)")
+        command.add_argument("--candidate", metavar="NAME", help="replay a candidate of the instructions, the file evaluation/candidates/NAME.txt, against a temporary agent (only with the command run)")
+        command.add_argument("--effort", choices=EFFORTS, help="the reasoning effort of the temporary agent; alone, it makes a candidate with the production instructions (only with the command run)")
         if name == "rule":
             command.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
@@ -1755,6 +1860,8 @@ def main(argv=None, client=None, spend=None, sleep=time.sleep, clock=time.monoto
             return selftest()
         if not args.command:
             parser.error("name a command, or give --selftest")
+        if args.command != "run" and (args.candidate is not None or args.effort is not None):
+            raise Problem("--candidate and --effort go with the command run alone", 2)
         helpers.check_endpoint(args.endpoint)
         if args.command != "probe":
             helpers.require_actions(args.command == "run" or getattr(args, "apply", False))

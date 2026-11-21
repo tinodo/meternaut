@@ -846,9 +846,10 @@ class TheHubAction(unittest.TestCase):
 
     def test_no_new_input_is_added_for_it(self):
         inputs = re.findall(r"^      ([a-z_]+):$", WORKFLOW[WORKFLOW.index("    inputs:\n"):WORKFLOW.index("\npermissions:\n")], re.M)
-        self.assertEqual(inputs, ["action", "minutes", "public_ai_gateway_requested", "plant_public_ip", "plant_vm", "evals_command", "evals_judge", "evals_only", "redteam_mode"],
-                         "minutes is the input of page-latency; plant_vm is an input of plant (2026-11-08, the families of change); the next four are the inputs of the checks of the agents (evals_only, "
-                         "2026-11-21: the ids of the cases that a replay of the Investigator is limited to): retire-old has none")
+        self.assertEqual(inputs, ["action", "minutes", "public_ai_gateway_requested", "plant_public_ip", "plant_vm", "evals_command", "evals_judge", "evals_only", "evals_candidate", "evals_effort", "redteam_mode"],
+                         "minutes is the input of page-latency; plant_vm is an input of plant (2026-11-08, the families of change); the next six are the inputs of the checks of the agents (evals_only, "
+                         "2026-11-21: the ids of the cases that a replay of the Investigator is limited to; evals_candidate and evals_effort, 2026-11-21: a candidate of the instructions that a replay tries instead of "
+                         "the production agent, and its reasoning effort): retire-old has none")
         self.assertNotIn("inputs.minutes", step("Delete what Meternaut does not use any more, in the project's resource group"))
 
     def test_one_step_runs_the_tool_with_the_workflows_own_group_and_subscription_and_nothing_else(self):
