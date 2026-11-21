@@ -7,6 +7,8 @@
                                     [--minutes 30] [--summary <file>] [--query-via arm|data-plane] [--counts-only]
     python tools/cases-check.py study --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
                                       [--minutes 20] [--summary <file>] [--query-via arm|data-plane]
+    python tools/cases-check.py ready --storage-account <storage account of the base> --insights <resource id of the cases app's Application Insights>
+                                      [--minutes 10] [--summary <file>] [--query-via arm|data-plane]
 
 It uses the helpers of tools/check-helpers.py, which it loads from its own folder: the same Azure CLI, which the workflow has signed in, and tokens that are used and never printed.
 
@@ -28,6 +30,11 @@ study      Puts the control message of the job study in the control queue the wa
            a name or a warning of the app. It fails when the Study did not end well (it is off, held or failed, or it ran and read no page although a kind of resource waited), when the app refused the message
            and when no line of the Study arrived in time, and it says in plain words what to check. It changes nothing in the estate: the Study reads public documentation and the estate's kinds of resource,
            keeps its claims in the app's own store and makes its own agent and conversations in the app's own Foundry project.
+ready      Puts the control message of the job ready in the control queue the way `study` does, waits for the lines agents.ready and agents.ready.finished of that request, and prints for each of the
+           three agents its name, its version, the first 12 hex digits of the lock's digest of its definition and whether the job made the version or found it (cases/ready.py, the order of a release in
+           docs/proposals/11-agent-harness-and-evaluation.md). It prints for a public log: counts, the names of the three agents and the words of code, nothing else. It fails when an agent was
+           refused (with the reason word and what to check), when the job could not begin, when the app refused the message and when no end arrived in time, and when it passes it says what comes next
+           (foundry-evals on this version, then cases-run). The job calls no model and reads nothing of the estate; it makes only the versions of the app's own agents in the app's own Foundry project.
 
 --query-via (run) How the History is read from the telemetry: arm (the default, through Azure Resource Manager, which needs a component that accepts queries
            from public networks) or data-plane (through https://api.applicationinsights.io with a Microsoft Entra token, for a component that is private; run it
@@ -62,6 +69,10 @@ SECTION_TITLE = "### The Watch, started once, and what it said"
 STUDY_JOB = "study"
 STUDY_ENDS = ("study.finished", "run.failed")  # run.failed is how the app refuses a control message
 STUDY_TITLE = "### The Study, started once, and what it said"
+READY_JOB = "ready"
+READY_ENDS = ("agents.ready.finished", "run.failed")  # run.failed is how the app refuses a control message
+READY_TITLE = "### The agents, made ready from the lock, and what the app said"
+AGENTS = ("meternaut-investigator", "meternaut-skeptic", "meternaut-scholar")  # the names that a line may show: the three agents, and no other text
 
 
 def clean(value, limit: int = 300) -> str:
@@ -519,6 +530,94 @@ def study_lines(request_id: str, events: list[dict], minutes: float) -> tuple[li
     return lines, not passed
 
 
+# What a person checks for each word that says why an agent was refused or failed, or why the job could not begin: the words of cases/ready.py.
+READY_ADVICE = {
+    "lock": "The app cannot use the lock of the agents, which is a file of its package: run cases, which publishes the package again.",
+    "no-store": "The app has no store for its switches, so it counts them as pulled: run cases, which gives the app its storage settings.",
+    "switch": "A switch stops the agents: the switch all or the switch investigation is pulled, by a person or by the safeguards (a stored definition that differs pulls it), or it could not be read. Release it, or find out why it was pulled.",
+    "lock-differs": "The definition that the app's code and settings give is not the one in the lock, so nothing was made from it. Check that the app was given the models of the lock (run cases), and that the code and the lock were released together.",
+    "stored-unreadable": "The agent was made and could not be read back: check that the app's identity holds Foundry User on the project (agents-drift says).",
+    "stored-missing": "The agent was not in the project after it was made: run agents-ready again, and if it is missing again, look at the project in the Foundry portal.",
+    "version-moved": "A newer version appeared while the job ran: somebody or another run made it. Run agents-ready again.",
+    "definition": "The stored definition differs from the lock: somebody changed the agent outside a release, or the service stores another definition than the app sent. The switch investigation was pulled and the owner got one letter. Run agents-drift to see which control differs.",
+    "service": "The Foundry project gave no answer, or refused: check that the project is there (run foundry first), that the app's identity holds Foundry User on it and that the app's network reaches it.",
+    "other": "The app refused with a word that this check does not know: the History in the app's telemetry has it.",
+    "no-endpoint": "The app has no Foundry project: run foundry and then cases.",
+    "setup": "The app could not set the job up: a setting or the loop is not valid. The warning of the app in its telemetry says which. Run cases.",
+    "error": "The job broke where nobody foresaw: the warning of the app in its telemetry says the kind of error.",
+}
+READY_NOT_ARRIVED = ("that the message was put in the queue (the lines above say so); that the cases app is running and has the code of this job (run cases); that the queue cases-control-poison holds no message; "
+                     "and that its telemetry reaches its Application Insights.")
+DIGEST = re.compile(r"[0-9a-f]{12}")
+
+
+def ready_missing(events: list[dict]) -> list[str]:
+    """The agent lines that the end counts and the telemetry has not delivered yet."""
+    ends = [e for e in events if e["type"] == "agents.ready.finished"]
+    counts = [whole(ends[-1].get(name)) for name in ("made", "existing", "refused", "failed")] if ends else []
+    have = len({e.get("agent") for e in events if e["type"] == "agents.ready" and e.get("agent") in AGENTS})
+    return [f"agents.ready: {have} of {sum(counts)}"] if counts and None not in counts and have < sum(counts) else []
+
+
+def ready_lines(request_id: str, events: list[dict], minutes: float) -> tuple[list[str], bool]:
+    """What the job that makes the agents ready came to, in plain words for a public log, and whether the check fails: the names of the three agents, numbers, 12 hex digits and the words of
+    code, and nothing else of a line; what to check for each word that says why an agent was not made ready. When an agent has more than one line (the host handed the message over again), the last wins."""
+    ends = [e for e in events if e["type"] == "agents.ready.finished"]
+    refused = next((e for e in events if e["type"] == "run.failed"), None)
+    lines = [f"Request {request_id}:"]
+    if not ends:
+        if refused:
+            reason = public(refused.get("reason"), 200)
+            lines.append(f"  The app refused the message: {reason}.")
+            lines.append("  What to check: " + ("the app is older than this change: run cases to publish the current code, and run agents-ready again." if "does not know" in reason
+                                                else "the app read the message too late (it waited more than 15 minutes in the queue): run agents-ready again." if "stale" in reason
+                                                else "the reason above says why."))
+        else:
+            seen = count(events, "agents.ready")
+            lines.append(f"  {seen} lines of the job arrived in the telemetry within {minutes:g} minutes, and its end did not." if seen else f"  No line of the job arrived in the telemetry within {minutes:g} minutes.")
+            lines.append("  What to check: " + READY_NOT_ARRIVED)
+        lines.append("  The agents were not made ready: the check did not pass.")
+        return lines, True
+    end, said = ends[-1], {}
+    for e in events:
+        if e["type"] == "agents.ready" and e.get("agent") in AGENTS:
+            said[e["agent"]] = e
+    reasons: list[str] = []
+    for name in AGENTS:
+        e = said.get(name)
+        outcome = word(e.get("outcome"), 12) if e else ""
+        if outcome in ("made", "existing"):
+            digest = e["definition"] if isinstance(e.get("definition"), str) and DIGEST.fullmatch(e["definition"]) else ""
+            lines.append(f"  {name}: version {figure(e.get('version'))}, {outcome}" + (f" (definition {digest})." if digest else "."))
+        elif outcome in ("refused", "failed"):
+            reason = word(e.get("reason"), 20)
+            reason = reason if reason in READY_ADVICE else "other"
+            status = whole(e.get("status"))
+            lines.append(f"  {name}: {outcome} ({reason}{f', HTTP {status}' if status else ''}).")
+            reasons.append(reason)
+        else:
+            lines.append(f"  {name}: no line arrived" + (" (the end of the job counts it)." if end.get("ok") is True else "."))
+    why = word(end.get("why"), 12)
+    why = why if why in READY_ADVICE else ""
+    lines.append(f"  The job ended after {figure(end.get('seconds'))} seconds: {figure(end.get('made'))} made, {figure(end.get('existing'))} existing, {figure(end.get('refused'))} refused, "
+                 f"{figure(end.get('failed'))} failed. It called no model and read nothing of the estate.")
+    late = ready_missing(events)
+    if late:
+        lines.append(f"  Lines that the end counts and the telemetry has not delivered: {', '.join(late)}.")
+    if why:
+        lines.append(f"  The job could not begin: {why}.")
+        reasons.append(why)
+    if end.get("ok") is True and not why and not reasons:
+        lines.append("  All three agents are ready: passed. That proves that the versions are stored and equal the lock, and nothing about how they answer.")
+        lines.append("  What comes next: run foundry-evals on this version, then cases-run.")
+        return lines, False
+    lines.append("  The agents were not made ready: the check did not pass.")
+    lines.extend(f"  What to check: {READY_ADVICE[reason]}" for reason in dict.fromkeys(reasons))
+    if not reasons:
+        lines.append("  What to check: the end of the job does not say that all three agents are ready, and no line says which was not; the History in the app's telemetry has the rest.")
+    return lines, True
+
+
 def command_functions(args, azure: Azure) -> int:
     names = wait_for_functions(azure, rc.check_site(args.site), args.minutes)
     print(f"The cases app lists {len(names)} functions:")
@@ -567,6 +666,22 @@ def command_study(args, azure: Azure) -> int:
     return 1 if bad else 0
 
 
+def command_ready(args, azure: Azure) -> int:
+    rc.only_in_actions()
+    insights = rc.check_insights(args.insights)
+    rc.choose_query_path(azure, args.query_via, insights)
+    request_id = uuid.uuid4().hex
+    rc.send_control_message(azure, args.storage_account, READY_JOB, request_id, queue=CONTROL_QUEUE)
+    print(f"Put the control message for making the agents ready in the queue (request {request_id}); waiting for the lines of the job in the telemetry.", flush=True)
+    events = wait_for_run(azure, insights, request_id, args.minutes, counts_only=True, ends=READY_ENDS, late=ready_missing, strict=False)
+    lines, bad = ready_lines(request_id, events, args.minutes)
+    print("\n".join(lines))
+    if args.summary:
+        with open(args.summary, "a", encoding="utf-8") as summary:
+            summary.write(READY_TITLE + "\n\n```\n" + "\n".join(lines) + "\n```\n")
+    return 1 if bad else 0
+
+
 def main(argv=None, azure: Azure | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -587,10 +702,16 @@ def main(argv=None, azure: Azure | None = None) -> int:
     study.add_argument("--minutes", type=float, default=20)
     study.add_argument("--summary")
     rc.add_query_via(study)
+    ready = commands.add_parser("ready", help="put the control message of the job ready in the queue and read the lines of the job from the telemetry; prints counts and plain words only")
+    ready.add_argument("--storage-account", required=True)
+    ready.add_argument("--insights", required=True)
+    ready.add_argument("--minutes", type=float, default=10)
+    ready.add_argument("--summary")
+    rc.add_query_via(ready)
     args = parser.parse_args(argv)
     azure = azure or Azure()
     try:
-        return {"whoami": rc.command_whoami, "functions": command_functions, "run": command_run, "study": command_study}[args.command](args, azure)
+        return {"whoami": rc.command_whoami, "functions": command_functions, "run": command_run, "study": command_study, "ready": command_ready}[args.command](args, azure)
     except Problem as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

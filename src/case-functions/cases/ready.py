@@ -1,12 +1,9 @@
 """The job `ready`: makes the stored version of each of the three agents from the lock, before any run (docs/proposals/11-agent-harness-and-evaluation.md, "The order of a release").
 
-A control message with the job `ready` (cases/control.py) makes the Investigator, the Skeptic and the Scholar ready through the harness that every run uses (cases/harness.py): the same lock,
-the same switches, the same stored definition read back, and the same refusals with the same words. It calls no model, makes no investigation and reads nothing of the estate: its client may only
-read an agent and make one (the first three calls of http.foundry_calls). Each agent gets one line `agents.ready` and the end gets `agents.ready.finished` (events.READY_KINDS), with typed values
-only: the name of one of the three agents, its version, 12 hex digits of the lock's digest of its definition, and `made` (this job made the version), `existing` (the stored latest version was
-the one of the lock), `refused` (the harness said no) or `failed` (the service gave no answer), with one word for the reason.
-
-What it does not say: that the version works (that is `foundry-evals`), or that a run will use it as it is (a run uses the latest version of each agent; nothing splits the traffic).
+The control message with the job `ready` (cases/control.py) makes the three agents ready through the harness that every run uses (cases/harness.py): the same lock, switches, read back and refusals.
+It calls no model and reads nothing of the estate: its client may only read an agent and make one. It writes a line `agents.ready` for each agent and `agents.ready.finished` (events.READY_KINDS),
+with typed values only: the agent's name, its version, 12 hex digits of the lock's digest of its definition, `made`, `existing`, `refused` or `failed`, and one word for the reason.
+It does not say that a version works (`foundry-evals` does) or that a run uses it as it is: a run uses the latest version of each agent.
 """
 from __future__ import annotations
 
@@ -64,8 +61,7 @@ def make_ready(h: History, harness: "harness_module.Harness", spec) -> str:
 
 
 def execute(h: History, settings: "cfg.Settings | None", harness: "harness_module.Harness | None", monotonic: Callable[[], float] = time.monotonic, why: str = "") -> Counter:
-    """Makes the three agents ready, one line for each, and writes the end line. It never raises: `why` or the end line says how it ended. A harness of None means that there is no Foundry
-    project, and `why` is given by a caller that could not set the job up."""
+    """Makes the three agents ready, a line for each, and writes the end line. It never raises. A harness of None is no Foundry project; a caller that could not set the job up gives `why`."""
     began, done = monotonic(), Counter()
     why = why or ("" if harness is not None else "no-endpoint")
     try:
@@ -85,8 +81,8 @@ def execute(h: History, settings: "cfg.Settings | None", harness: "harness_modul
 def run_ready(trigger: str, request_id: str | None, env: Mapping[str, str] | None = None, *, clock=utc_now, monotonic: Callable[[], float] = time.monotonic,
               sleep: Callable[[float], None] = time.sleep, transport=default_transport, fetch=None, new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
               extras: "wiring.Extras | None" = None) -> Counter:
-    """The whole job. It never raises: the end line says how it ended. `trigger` is what started it (the control message) and is not recorded: nothing else starts it. `extras` is the loop, whose
-    store keeps the switches; None builds it from the settings. The agents are made through the client of the Foundry project that this builds, and through no other."""
+    """The whole job. It never raises: the end line says how it ended. `trigger` is not recorded (nothing but the control message starts the job). `extras` is the loop, whose store keeps the
+    switches; None builds it from the settings. The agents are made through the client of the Foundry project that this builds, and through no other."""
     env = os.environ if env is None else env
     redact = Redactor()
     history = History(new_id(), request_id, clock, redact)
@@ -95,7 +91,7 @@ def run_ready(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
         settings = cfg.load(env)
         if settings.foundry_endpoint:
             identity = Identity(env, sleep=sleep, **({"fetch": fetch} if fetch else {}))
-            client = Client(foundry_calls(settings.foundry_endpoint)[:3], redact, transport=transport, sleep=sleep, monotonic=monotonic)
+            client = Client(foundry_calls(settings.foundry_endpoint)[:3], redact, transport=transport, sleep=sleep, monotonic=monotonic)  # the first three calls read an agent and make one; the rest run one
             client.deadline = monotonic() + SECONDS
             if extras is None:
                 extras = wiring.build_extras(env, identity.token, redact, transport=transport, sleep=sleep, monotonic=monotonic, clock=clock)

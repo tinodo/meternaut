@@ -770,6 +770,7 @@ class TheEvaluations(unittest.TestCase):
         code, out, err, client = self.go(project, "--judge", "none")
         self.assertEqual(code, 1)
         self.assertIn("is not what the lock says", err)
+        self.assertIn("Run the Hub action agents-ready first", err, "the replay cannot make the version: the job ready does, with no model call, and the replay then tests that exact version")
         self.assertEqual([m for m, _ in project.methods if m != "GET"], [], "nothing was sent: no conversation, no response")
 
     def test_the_selftest_and_the_probe_make_no_model_call(self):

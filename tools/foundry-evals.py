@@ -1317,7 +1317,7 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
         raise Problem(f"the Investigator could not be read ({status} {helpers.error_words(document)}): nothing was run")
     differences = [d for d in lockfile.compare(entry, lockfile.facts_of(latest["definition"], lock.ignored)) if d.certain]
     if differences:
-        raise Problem("the stored Investigator is not what the lock says (" + ", ".join(sorted({d.control for d in differences})) + "): nothing was run")
+        raise Problem("the stored Investigator is not what the lock says (" + ", ".join(sorted({d.control for d in differences})) + "): nothing was run. Run the Hub action agents-ready first: it makes the version from the lock and calls no model")
     reference = {"type": "agent_reference", "name": INVESTIGATOR, "version": str(latest["version"])}
     definitions = [{"name": t["name"], "description": t.get("description", ""), "parameters": t.get("parameters", {})} for t in latest["definition"].get("tools") or [] if isinstance(t, dict) and t.get("name")]
     spend.take(rows=len(rows))

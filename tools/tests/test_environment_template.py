@@ -389,7 +389,7 @@ class Workflow(unittest.TestCase):
                 self.assertIsNotNone(condition, block[:80])
                 self.assertNotIn("what-if", condition.group(1))
                 self.assertNotIn("always()", condition.group(1))
-        self.assertEqual(found, 12, "(12: the Study's run is the twelfth, 2026-11-17; it was 11, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams test is the eleventh; it was 10) one publish and nine job starts, all in the Operator's container: the publish of the cases app, the check tool that sends the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, the check of the AI Gateway, and the four checks of the AI security (the second reader of the drift of the agents, the evaluations, the red team and the Agent 365 check)")
+        self.assertEqual(found, 13, "(13: the run that makes the agents ready is the thirteenth, 2026-11-21; it was 12, the Study's run is the twelfth, 2026-11-17; it was 11, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams test is the eleventh; it was 10) one publish and twelve job starts, all in the Operator's container: the publish of the cases app, the check tool that sends the control event, the health check of the cases app, the measurement of the web page's answering time, the check of the web page's front door, the check of the AI Gateway, and the four checks of the AI security (the second reader of the drift of the agents, the evaluations, the red team and the Agent 365 check)")
         for block in self.steps:
             for word in ("az functionapp deployment source config-zip", "/api/zipdeploy", "az webapp deploy", "az webapp deployment"):
                 self.assertNotIn(word, block, f"no step publishes from the runner: {word} is in {block[:80]!r}")
@@ -1460,7 +1460,7 @@ class CasesWorkflow(unittest.TestCase):
         self.assertNotIn("--namespace", block)
         self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', block)
         self.assertNotIn("listSecrets", block)
-        self.assertEqual(self.text.count('--env "TOOL_NAME=cases-check"'), 2, "the step of the Watch and the step of the Study (tools/tests/test_study_hub.py): one tool, two commands")
+        self.assertEqual(self.text.count('--env "TOOL_NAME=cases-check"'), 3, "the step of the Watch, the step of the Study and the step of the agents (tools/tests/test_study_hub.py, tools/tests/test_ready_hub.py): one tool, three commands")
         self.assertNotRegex(self.text, r"(?m)^\s*python3 tools/cases-check\.py run\b", "the runner starts no Watch and sends no event: the Operator runs the tool")
 
     def test_the_preview_of_the_cases_waits_for_the_base_instead_of_failing(self):
@@ -2548,7 +2548,7 @@ class OperatorWorkflow(unittest.TestCase):
         digest = re.search(r"OPERATOR_IMAGE: (mcr\.microsoft\.com/azure-cli@sha256:[0-9a-f]{64})", self.text).group(1)
         self.assertIn(digest, text("docs/proposals/07-private-by-default.md"))
         self.assertEqual(len(re.findall(r"OPERATOR_IMAGE: ", self.text)), 1, "the pin is made once")
-        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 13, "(13: the Study's run is the thirteenth, 2026-11-17; it was 12, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams test is the twelfth; it was 11) and used by the probe, by the check that starts a Watch, by the health check of the cases app, by the measurement of the web page's answering time, by the check of the web page's front door, by the check of the AI Gateway, by the publish and by the four checks of the AI security")
+        self.assertEqual(len(re.findall(r'--image "\$OPERATOR_IMAGE"', self.text)), 14, "(14: the run that makes the agents ready is the fourteenth, 2026-11-21; it was 13, the Study's run is the thirteenth, 2026-11-17; it was 12, replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Teams test is the twelfth; it was 11) and used by the probe, by the check that starts a Watch, by the health check of the cases app, by the measurement of the web page's answering time, by the check of the web page's front door, by the check of the AI Gateway, by the publish and by the four checks of the AI security")
         self.assertNotIn("az container", self.text, "the tool makes, reads and deletes the group")
 
     def test_the_cleanup_deletes_only_groups_of_the_probe_through_the_tool_and_a_failure_is_a_warning(self):
@@ -2620,7 +2620,7 @@ class OperatorChecksWorkflow(unittest.TestCase):
             self.assertIn(f"if: inputs.action == '{action}'\n", self.step(listing))
             self.assertIn(f"if: inputs.action == '{action}'\n", self.step(check))
         # teams-test: replaced by the owner's ruling of 2026-11-13 (his plain yes of 2026-11-13): the Operator is found for the Teams test too.
-        self.assertIn("if: inputs.action == 'cases-run' || inputs.action == 'page-latency' || inputs.action == 'teams-test' || inputs.action == 'study-run'\n", self.step(self.FIND))
+        self.assertIn("if: inputs.action == 'cases-run' || inputs.action == 'page-latency' || inputs.action == 'teams-test' || inputs.action == 'study-run' || inputs.action == 'agents-ready'\n", self.step(self.FIND))
         self.assertIn("id: operator\n", self.step(self.FIND))
         self.assertIn("id: watch\n", self.step(self.CASES))
         self.assertNotIn("copy_jobs", self.text, "the copy jobs of the usage recording were removed on 2026-11-07")
@@ -2632,7 +2632,8 @@ class OperatorChecksWorkflow(unittest.TestCase):
         code = "\n".join(line for block in self.steps if "run:" in block for line in block.split("run:", 1)[1].splitlines() if not line.strip().startswith("#"))
         self.assertNotRegex(code, r"tools/(check-helpers|cases-check)\.py run\b", "no `run` of a check tool on the runner")
         self.assertNotIn("recording-check", code)
-        self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions", "functions", "whoami"], "the object id of the identity, and the list of the functions three times (cases, cases-run and study-run)")
+        self.assertEqual(sorted(re.findall(r"python3 tools/cases-check\.py (\w+)", code)), ["functions", "functions", "functions", "functions", "whoami"],
+                         "the object id of the identity, and the list of the functions four times (cases, cases-run, study-run and agents-ready)")
         for word in ("eventhubs.azure.net", "servicebus.windows.net", "storage.azure.com", "/messages?"):
             self.assertNotIn(word, code, f"{word}: the runner takes no token for Storage and posts nothing to a queue")
         self.assertNotRegex(code, r"https?://[^\s\"']*queue\.core\.windows\.net", "the probe is given the name of the queue to see that it resolves to a private address, and nothing is sent to it from the runner")
