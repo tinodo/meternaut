@@ -94,7 +94,7 @@ class TheActionIsOfferedOnceAndRunsInTheOperatorAfterTheFunctionsAreListed(unitt
         self.assertLess(names().index("Work out the settings"), order[0], "after the settings, whose outputs the steps use")
         self.assertLess(order[-1], names().index("What was done"))
         self.assertLess(names().index(WATCH_CLEANUP), order[1], "the steps of the Watch are where they were, and the Study's follow them")
-        self.assertIn("if: inputs.action == 'cases-run' || inputs.action == 'page-latency' || inputs.action == 'teams-test' || inputs.action == 'study-run'\n", step(FIND))
+        self.assertIn("if: inputs.action == 'cases-run' || inputs.action == 'page-latency' || inputs.action == 'teams-test' || inputs.action == 'study-run' || inputs.action == 'agents-ready'\n", step(FIND))
         self.assertIn("if: inputs.action == 'study-run'\n", step(LISTING))
         self.assertIn("if: inputs.action == 'study-run'\n", step(STUDY))
         self.assertIn("id: study\n", step(STUDY))
