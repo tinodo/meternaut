@@ -271,13 +271,15 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
         self.assertNotIn("--only", plain, "an empty input is every case")
 
     def test_a_value_of_evals_only_that_is_not_ids_is_refused_before_anything_is_started_and_the_other_commands_ignore_it(self):
-        for bad in ("idle disk-1", "idle-disk-1;x", "$(id)", "`id`", "idle-disk-1,,idle-addresses", ",idle-disk-1", "idle-disk-1,", ",", "a" * 81, "idle_disk", "idle/disk", "idle.disk"):
+        message = "::error::The input evals_only is the ids of invented cases, separated by commas: letters, digits and hyphens, and every id starts and ends with a letter or a digit, at most 80 characters. Nothing was changed."
+        for bad in ("idle disk-1", "idle-disk-1;x", "$(id)", "`id`", "idle-disk-1,,idle-addresses", ",idle-disk-1", "idle-disk-1,", ",", "a" * 81, "idle_disk", "idle/disk", "idle.disk",
+                    "--judge", "x,--judge,connection", "idle-disk-1,--judge,connection", "-a", "a,-b", "-", "a,-", "a-,b", "a,b-", "--lock,x", "a,--wait-seconds,5", "a,--only"):
             with self.subTest(bad=bad):
                 done, lines, _ = run_script(EVALS, {"python3": PYTHON}, {**ENV, "EVALS_COMMAND": "run", "EVALS_ONLY": bad})
                 self.assertEqual(done.returncode, 1, done.stdout)
-                self.assertIn("::error::The input evals_only is the ids of invented cases, separated by commas: letters, digits and hyphens, at most 80 characters. Nothing was changed.", done.stdout)
+                self.assertIn(message, done.stdout)
                 self.assertEqual([line for line in lines if line.startswith("arg:")], [], "nothing was started")
-        for good in ("a", "idle-disk-1,idle-addresses", "a" * 80, "A1-b2,C3"):
+        for good in ("a", "idle-disk-1,idle-addresses", "a" * 80, "A1-b2,C3", "a-b", "a1,b2-c3-d4"):
             with self.subTest(good=good):
                 text = next(a for a in self.started(EVALS, EVALS_COMMAND="run", EVALS_ONLY=good) if a.startswith("TOOL_ARGS="))
                 self.assertTrue(text.endswith(" --only " + good.replace(",", " ")), text)
@@ -285,6 +287,12 @@ class TheOperatorIsFoundAndTheToolsAreStartedInIt(unittest.TestCase):
             with self.subTest(command=command):
                 args = self.started(EVALS, EVALS_COMMAND=command, EVALS_ONLY="whatever it is; it is ignored")
                 self.assertTrue(all("--only" not in a and "whatever" not in a for a in args))
+
+    def test_no_value_of_evals_only_can_set_another_option_of_the_tool_through_the_words_that_it_becomes(self):
+        for sneaky in ("idle-disk-1,--judge,connection", "--judge,connection", "idle-disk-1,--lock,x", "idle-disk-1,--wait-seconds,1", "idle-disk-1,--summary,x"):
+            with self.subTest(sneaky=sneaky):
+                done, lines, _ = run_script(EVALS, {"python3": PYTHON}, {**ENV, "EVALS_COMMAND": "run", "EVALS_JUDGE": "none", "EVALS_ONLY": sneaky})
+                self.assertEqual((done.returncode, [line for line in lines if line.startswith("arg:")]), (1, []), "the step stops before the container is started")
 
     def test_the_grader_of_the_settings_runs_in_the_flat_folder_of_the_secret_volume_where_the_toolbox_is_not(self):
         tool = operator_run()

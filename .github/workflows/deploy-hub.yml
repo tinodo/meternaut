@@ -96,7 +96,7 @@ on:
           - connection
           - auto
       evals_only:
-        description: "Only with foundry-evals and evals_command run: the ids of the invented cases to replay, separated by commas (for example idle-disk-1,idle-bastion-with-four-units), when not every case is to be replayed. The thresholds are then judged over those cases alone, and each case costs about 60,000 tokens of the cap of evaluation/limits.json. The ids are letters, digits and hyphens with commas between them, at most 80 characters; an id that is not a case stops the run before any call is made. Empty replays every case. Every other action ignores it."
+        description: "Only with foundry-evals and evals_command run: the ids of the invented cases to replay, separated by commas (for example idle-disk-1,idle-bastion-with-four-units), when not every case is to be replayed. The thresholds are then judged over those cases alone, and each case costs about 60,000 tokens of the cap of evaluation/limits.json. The ids are letters, digits and hyphens with commas between them, and an id starts and ends with a letter or a digit, at most 80 characters; an id that is not a case stops the run before any call is made. Empty replays every case. Every other action ignores it."
         type: string
         required: false
         default: ""
@@ -2793,8 +2793,8 @@ jobs:
               # The ids of the cases to replay are checked here and handed to the tool as words, because the script of the container takes no comma in the arguments (operator/run-tool.sh): the tool reads
               # them as it reads a list with commas. An empty input replays every case, and only the command run reads it.
               if [ -n "$EVALS_ONLY" ]; then
-                if ! [[ "$EVALS_ONLY" =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]] || [ "${#EVALS_ONLY}" -gt 80 ]; then
-                  echo "::error::The input evals_only is the ids of invented cases, separated by commas: letters, digits and hyphens, at most 80 characters. Nothing was changed."
+                if ! [[ "$EVALS_ONLY" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(,[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || [ "${#EVALS_ONLY}" -gt 80 ]; then
+                  echo "::error::The input evals_only is the ids of invented cases, separated by commas: letters, digits and hyphens, and every id starts and ends with a letter or a digit, at most 80 characters. Nothing was changed."
                   exit 1
                 fi
                 args="$args --only ${EVALS_ONLY//,/ }"

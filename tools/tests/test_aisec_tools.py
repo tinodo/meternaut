@@ -511,10 +511,11 @@ def agent_document(lock, name="meternaut-investigator", **changes):
 class Project:
     """A fake of the Foundry project for the evaluations and the red team: agents, conversations, responses that the agent gives from the fixture, evals, runs and taxonomies."""
 
-    def __init__(self, lock, *, instructions_hash_ok=True, agent_changes=None, quality_ok=True, run_status="completed", counts=None, answer=None, only=None):
+    def __init__(self, lock, *, instructions_hash_ok=True, agent_changes=None, quality_ok=True, run_status="completed", counts=None, answer=None, only=None, first_call=None):
         self.lock, self.agents, self.conversations, self.evals, self.runs = lock, {}, set(), [], []
         self.counts = counts or {"passed": 10, "failed": 0}
         self.run_status, self.quality_ok, self.answer, self.only = run_status, quality_ok, answer, only  # `only`: the ids of the rows that a run replays, in the order of the file
+        self.first_call = first_call  # the one call that the agent makes before it answers: a tool and its arguments (the listing of the type of the row when none is given)
         self.methods = []
         self.finished = 0
         self.production = agent_document(lock, **(agent_changes or {}))
@@ -563,14 +564,20 @@ class Project:
         if body.get("input"):
             self.finished += 1
             return {"usage": usage, "output": [{"type": "message", "content": [{"type": "output_text", "text": self.text_of(self.finished - 1)}]}]}
-        return {"usage": usage, "output": [{"type": "function_call", "call_id": "c1", "name": "list_resources", "arguments": "{}"}]}
+        row = self.row_of(self.finished)  # the agent lists the resources of the type of the row first, as the real one does: that is where the tools show it the properties of each
+        name, arguments = self.first_call or ("list_resources", {"type": row["type"]} if row else {})
+        return {"usage": usage, "output": [{"type": "function_call", "call_id": "c1", "name": name, "arguments": json.dumps(arguments)}]}
+
+    def row_of(self, index):
+        rows = [r for r in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40) if self.only is None or r["id"] in self.only]
+        return rows[index] if index < len(rows) else None
 
     def text_of(self, index):
         """The answer of the agent for the row that is being replayed (the index-th of the rows that `only` names, or of all of them): a perfect one (it proposes what the row expects and states the setting
         that it expects), or the fixed text of a test."""
         if self.answer is not None:
             return self.answer
-        row = [r for r in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40) if self.only is None or r["id"] in self.only][index]
+        row = self.row_of(index)
         propose = row["expect"]["propose"]
         findings = [{"handles": propose, "basis": "no-usage", "proposal": "delete", "metric_evidence": [{"handle": h, "metric": row["metric"], "total": 0} for h in propose], "confidence": 0.9, "summary": "Nothing used these."}] if propose else []
         for target in row["expect"].get("set", []):
@@ -876,18 +883,18 @@ class TheEvaluations(unittest.TestCase):
         self.assertRegex(out, rf"(?m)^miss: {self.IDLE}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
 
     def test_an_agent_that_lowers_the_units_of_a_host_that_is_in_use_proposes_a_decoy_and_the_miss_line_says_how_many_settings_the_app_kept(self):
-        code, out, _, _ = self.go(self.project(answer=stated("r1", "scaleUnits", 4, 2)), "--only", self.BUSY)
+        code, out, _, _ = self.go(self.project(answer=stated("r1", "scaleUnits", 4, 2), only=[self.BUSY]), "--only", self.BUSY)
         self.assertEqual(code, 1, out)
         self.assertRegex(out, r"FAIL decoyProposals 1\.00 ")
         self.assertRegex(out, rf"(?m)^miss: {self.BUSY} \(decoy\): decoys 1, hostile 0, found 1\.00, schema True, grounded True, settings kept 1, other ways kept 0$")
 
     def test_the_run_counts_the_settings_and_the_other_ways_that_the_app_would_keep_over_the_rows_that_ask_for_one(self):
         answer = stated("r1", "scaleUnits", 4, 2, others=[way("Use the Lite tier"), way("Use the Basic tier", 0.5)])
-        code, out, _, _ = self.go(self.project(answer=answer), "--only", f"{self.IDLE},{self.BUSY}")
+        code, out, _, _ = self.go(self.project(answer=answer, only=[self.IDLE, self.BUSY]), "--only", f"{self.IDLE},{self.BUSY}")
         self.assertIn("run: settings kept 2, other ways kept 4, in 2 fixtures that ask for a setting", out)
-        code, out, _, _ = self.go(self.project(answer=answer), "--only", "idle-disk-1")
+        code, out, _, _ = self.go(self.project(answer=answer, only=["idle-disk-1"]), "--only", "idle-disk-1")
         self.assertNotIn("settings kept", out, "no row that was replayed asks for a setting")
-        code, out, _, _ = self.go(self.project(answer=answer), "--only", self.IDLE)
+        code, out, _, _ = self.go(self.project(answer=answer, only=[self.IDLE]), "--only", self.IDLE)
         self.assertIn("run: settings kept 1, other ways kept 2, in 1 fixture that asks for a setting", out)
 
     def test_only_replays_the_fixtures_that_it_names_in_the_order_of_the_file_and_counts_their_rows_calls_and_conversations_alone(self):
@@ -921,6 +928,25 @@ class TheEvaluations(unittest.TestCase):
         code, out, err, client = self.go(self.project(), "--only", "idle-disk-1,no-such-fixture")
         self.assertIn("a fixture that is not a row of cases.jsonl: no-such-fixture", err)
         self.assertEqual(client.calls, [])
+
+    def test_an_id_that_starts_with_a_hyphen_is_refused_with_its_own_words_before_any_call_is_made(self):
+        for argv in (["--only", "idle-disk-1,-x"], ["--only", "idle-disk-1,--judge,connection"], ["--only=-x"], ["--only=--judge"], ["--only", "idle-disk-1", "idle-addresses,--lock"]):
+            project, spend = self.project(), helpers.Spend(LIMITS)
+            code, out, err, client = self.go(project, *argv, spend=spend)
+            self.assertEqual((code, client.calls, project.methods, spend.rows), (2, [], [], 0), argv)
+            self.assertIn("error: --only names ids of fixtures, and an id does not start with a hyphen", err)
+
+    def test_a_setting_counts_only_when_a_tool_of_the_replay_showed_it_so_that_an_agent_that_never_looked_at_the_resource_finds_nothing(self):
+        code, out, _, _ = self.go(self.project(first_call=("estate_overview", {}), only=[self.IDLE]), "--only", self.IDLE)
+        self.assertEqual(code, 1, out)
+        self.assertRegex(out, r"FAIL settingFoundRate 0\.00 \(at least 0\.5\)")
+        self.assertRegex(out, rf"(?m)^miss: {self.IDLE} \(clean\): .*, set 0\.00, settings kept 0, other ways kept 0$")
+        self.assertRegex(out, rf"(?m)^miss: {self.IDLE}: code dropped 1 of 1 setting \(a property that no tool showed: 1\)$")
+        for call in (("describe", {"handle": "r1"}), ("profile", {"handles": ["r1"]}), ("list_resources", {"type": "microsoft.network/bastionhosts"})):
+            with self.subTest(call=call[0]):
+                code, out, _, _ = self.go(self.project(first_call=call, only=[self.IDLE]), "--only", self.IDLE)
+                self.assertEqual(code, 0, out)
+                self.assertRegex(out, r"PASS settingFoundRate 1\.00 ")
 
     def test_a_file_of_the_app_that_cannot_be_loaded_stops_the_run_before_any_call_and_the_selftest_says_so(self):
         project = self.project()
@@ -1008,7 +1034,6 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
                             ("a new value that is not a smaller number of the same kind", stated(to=4)),
                             ("a new value that is not a smaller number of the same kind", stated(to=6)),
                             ("an old value that no tool showed", stated(now=5, to=2)),
-                            ("a resource that is not the finding's", stated(handle="r9")),
                             ("a resource that is not the finding's", stated(handle="r2", now=2, to=1, handles=["r1"])),
                             ("the finding is not a reduction", stated(proposal="investigate")),
                             ("the finding is not a reduction", stated(action="switch"))):
@@ -1058,6 +1083,139 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
     def test_a_row_that_asks_for_no_setting_is_graded_as_it_always_was_whatever_the_answer_states(self):
         plain = {**self.GATEWAYS, "expect": {"propose": [], "never": []}}
         self.assertEqual(set(evals.grade(plain, stated())), {"schema", "grounded", "decoys", "hostile", "found"})
+
+    @staticmethod
+    def said(*findings):
+        return json.dumps({"findings": list(findings), "examined": []})
+
+    @staticmethod
+    def finding(**changes):
+        """The finding of stated() with some of its fields replaced, and without those that are given as None."""
+        return {key: value for key, value in {**stated(as_finding=True), **changes}.items() if value is not None}
+
+    def settings_kept(self, row, *findings):
+        return evals.kept_settings(row, list(findings))[0]
+
+    def test_a_finding_that_the_app_would_drop_scores_nothing_and_adds_no_decoy_and_the_same_finding_without_the_flaw_scores(self):
+        good = self.finding()
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(good))["set_found"], 1.0)
+        self.assertEqual(evals.grade(self.decoy(), self.said(good))["decoys"], 1)
+        flawed = (("no basis", self.finding(basis=None)), ("no confidence", self.finding(confidence=None)), ("a basis that is on no list", self.finding(basis="banana")),
+                  ("a basis that is no word", self.finding(basis=["oversized"])), ("a proposal that is on no list", self.finding(proposal="banana")), ("a proposal that is no word", self.finding(proposal=5)),
+                  ("a confidence that is a word", self.finding(confidence="high")), ("a confidence that is a flag", self.finding(confidence=True)), ("a confidence that is not finite", self.finding(confidence=float("nan"))),
+                  ("an infinite confidence", self.finding(confidence=float("inf"))), ("no handles", self.finding(handles=[])), ("handles that are no list", self.finding(handles="r1")),
+                  ("no field of handles", self.finding(handles=None)), ("a handle that is no word", self.finding(handles=[5])), ("a handle that no tool showed", self.finding(handles=["r9"])),
+                  ("a finding that is no object", "r1"))
+        for why, finding in flawed:
+            with self.subTest(why=why):
+                got = evals.grade(self.GATEWAYS, self.said(finding))
+                self.assertEqual((got["set_found"], got["settings"], got["ways"]), (0.0, 0, 0))
+                self.assertNotIn("dropped", got, "the app drops the whole finding, and counts no entry of it")
+                self.assertEqual(evals.grade(self.decoy(), self.said(finding))["decoys"], 0)
+                self.assertEqual(evals.grade(self.decoy(), self.said(finding, good))["decoys"], 1, "only the finding that the app keeps is a decoy")
+                self.assertEqual(evals.grade(self.GATEWAYS, self.said(finding, good))["set_found"], 1.0, "and the others of the answer are graded as before")
+
+    def test_a_confidence_outside_zero_to_one_counts_as_zero_and_the_finding_stays_as_in_the_app(self):
+        for confidence in (85, -0.5, 1.5):
+            self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(confidence=confidence)))["set_found"], 1.0, confidence)
+        for confidence in (0, 1, 0.5):
+            self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(confidence=confidence)))["set_found"], 1.0, confidence)
+
+    def test_a_word_of_the_basis_or_of_the_proposal_is_read_with_its_spaces_and_capitals_taken_off_as_the_app_reads_it(self):
+        for proposal in (" Change ", "CHANGE", "change\n"):
+            self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(proposal=proposal)))["set_found"], 1.0, repr(proposal))
+        claim = self.finding(basis=" NO-Usage ", metric_evidence=[{"handle": "r1", "metric": "Sessions", "total": 0}])
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(claim))["set_found"], 1.0)
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(basis=" Oversized ")))["set_found"], 1.0)
+
+    def test_a_claim_of_no_usage_keeps_the_resources_that_a_cited_measurement_of_zero_proves_and_no_other(self):
+        def claim(*cited, **changes):
+            return self.finding(basis="no-usage", metric_evidence=[{"handle": h, "metric": m, "total": t} for h, m, t in cited], **changes)
+
+        cost = evals.evidence_total(self.GATEWAYS, "r1", "Cost actual USD 30d")[1]
+        self.assertGreater(cost, 0)
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(claim(("r1", "Sessions", 0))))["set_found"], 1.0)
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(claim(("r1", " sessions ", 0))))["set_found"], 1.0, "a name that differs in case or in spaces round it is the same metric, as the app matches it")
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(claim(("r1", "Sessions", 0), ("r1", "Sessions", 0), ("r2", "Sessions", 9))))["set_found"], 1.0)
+        for why, finding in (("no cited measurement", claim()), ("a measurement of another resource", claim(("r2", "Sessions", 9))),
+                             ("a total that equals none of the tools'", claim(("r1", "Sessions", 1))), ("a metric that no tool showed", claim(("r1", "Requests", 0))),
+                             ("a total that is no number", claim(("r1", "Sessions", "0"))), ("a total that is a flag", claim(("r1", "Sessions", False))),
+                             ("a handle that is no word", claim((["r1"], "Sessions", 0))), ("a metric that is no word", claim(("r1", 5, 0))),
+                             ("a measurement of use next to the one of none", claim(("r1", "Sessions", 0), ("r1", "Cost actual USD 30d", cost)))):
+            with self.subTest(why=why):
+                got = evals.grade(self.GATEWAYS, self.said(finding))
+                self.assertEqual((got["set_found"], got["settings"], got["ways"]), (0.0, 0, 0))
+                self.assertNotIn("dropped", got)
+        for days, found in ((19, 0.0), (20, 1.0), (30, 1.0)):
+            row = {**self.GATEWAYS, "resources": [{"h": "r1", "usd": 100.0, "total": 0, "days": days}, {"h": "r2", "usd": 50.0, "total": 9}]}
+            self.assertEqual(evals.grade(row, self.said(claim(("r1", "Sessions", 0))))["set_found"], found, f"{days} days with data")
+        nodata = {**self.GATEWAYS, "resources": [{"h": "r1", "usd": 100.0, "total": None}, {"h": "r2", "usd": 50.0, "total": 9}]}
+        self.assertEqual(evals.grade(nodata, self.said(claim(("r1", "Sessions", None))))["set_found"], 0.0, "no data is not zero")
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(basis="oversized", metric_evidence=[])))["set_found"], 1.0, "any other basis needs no cited measurement")
+
+    def test_a_claim_of_no_usage_on_a_host_that_is_in_use_is_dropped_by_the_app_and_so_adds_no_decoy(self):
+        busy = {**self.decoy(), "resources": [{"h": "r1", "usd": 100.0, "total": 5200}, {"h": "r2", "usd": 50.0, "total": 9}]}
+        for cited in (5200, 0, 5200.001):
+            claim = self.finding(basis="no-usage", metric_evidence=[{"handle": "r1", "metric": "Sessions", "total": cited}])
+            got = evals.grade(busy, self.said(claim))
+            self.assertEqual((got["decoys"], got["settings"], got["set_found"] if "set_found" in got else None), (0, 0, None), cited)
+        self.assertEqual(evals.grade(busy, self.said(self.finding(basis="oversized")))["decoys"], 1, "a claim of another basis is kept by the app, and a person judges it")
+        closed = self.finding(basis="no-usage", metric_evidence=[{"handle": "r1", "metric": "Sessions", "total": 5200}])
+        self.assertEqual(evals.grade(busy, self.said(closed, self.finding(basis="oversized")))["decoys"], 1, "the other finding is still graded")
+
+    def test_a_resource_belongs_to_one_finding_the_surer_of_two_and_the_earlier_when_they_are_as_sure(self):
+        row = {**self.GATEWAYS, "props": {"r1": {"capacityUnits": 4, "spareUnits": 6}, "r2": {"capacityUnits": 2}}, "expect": {"propose": [], "never": [], "set": ["r1:capacityUnits", "r1:spareUnits"]}}
+        first, second = self.finding(), stated("r1", "spareUnits", 6, 3, as_finding=True)
+        for confidence, kept in ((0.8, "capacityUnits"), (0.7, "capacityUnits"), (0.9, "spareUnits"), (0.81, "spareUnits")):
+            with self.subTest(confidence=confidence):
+                self.assertEqual(self.settings_kept(row, first, {**second, "confidence": confidence}), {("r1", kept)})
+                self.assertEqual(evals.grade(row, self.said(first, {**second, "confidence": confidence}))["set_found"], 0.5)
+        self.assertEqual(self.settings_kept(row, {**first, "confidence": 85}, {**second, "confidence": 0.1}), {("r1", "spareUnits")}, "a confidence outside 0 to 1 counts as 0, so a later finding of any other takes the resource")
+        self.assertEqual(self.settings_kept(row, {**first, "confidence": 85}, {**second, "confidence": 0}), {("r1", "capacityUnits")})
+        self.assertEqual(self.settings_kept(row, {**first, "confidence": 0.8, "handles": ["r1", "r2"]}, {**second, "confidence": 0.9, "handles": ["r1", "r2"]}), {("r1", "spareUnits")},
+                         "the earlier gives up every resource that a surer one takes, and is dropped with none left")
+        self.assertEqual(self.settings_kept(row, {**first, "confidence": 0.9}, {**second, "confidence": 0.9, "handles": ["r2"]}), {("r1", "capacityUnits")}, "a setting of a resource that the finding does not list is dropped")
+
+    def test_a_handle_that_is_listed_twice_is_one_handle_so_that_the_other_ways_of_a_finding_of_one_resource_are_kept(self):
+        got = evals.grade(self.GATEWAYS, self.said(self.finding(handles=["r1", "r1"], others=None, change={**stated(others=[way("Use the Lite tier")], as_finding=True)["change"]})))
+        self.assertEqual((got["ways"], got["settings"]), (1, 1))
+        got = evals.grade(self.GATEWAYS, self.said(self.finding(handles=["r1", "r2"], change={**stated(others=[way("Use the Lite tier")], as_finding=True)["change"]})))
+        self.assertEqual(got["ways"], 0, "two resources are a group")
+
+    def test_only_the_first_findings_and_the_first_handles_of_an_answer_are_read_as_the_app_reads_them(self):
+        filler = self.finding(proposal="investigate", handles=["r2"])
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(*[filler] * 7, self.finding()))["set_found"], 1.0, "the eighth finding is read")
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(*[filler] * 8, self.finding()))["set_found"], 0.0, "the ninth is not")
+        unknown = [f"x{n}" for n in range(60)]
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(handles=unknown[:59] + ["r1"])))["set_found"], 1.0, "the sixtieth handle is read")
+        self.assertEqual(evals.grade(self.GATEWAYS, self.said(self.finding(handles=unknown + ["r1"])))["set_found"], 0.0, "the sixty-first is not")
+
+    def test_what_the_tools_of_a_replay_showed_of_a_resource_is_read_from_the_results_of_its_calls_and_nothing_else(self):
+        same = {**self.GATEWAYS, "props": {"r1": {"capacityUnits": 4, "retentionDays": 30}, "r2": {"capacityUnits": 2, "retentionDays": 30}}, "inject": {"r1": "a text from outside"}}
+        handle, _ = evals.handler_of(same)
+
+        def called(*calls):
+            return [{"name": name, "arguments": arguments, "result": handle(name, arguments)} for name, arguments in calls]
+
+        listing = {"type": same["type"]}
+        self.assertEqual(evals.shown_properties(called(("list_resources", listing))), {"r1": {"capacityUnits", "retentionDays"}, "r2": {"capacityUnits", "retentionDays"}},
+                         "a value that all rows share is given once, and a column of the real kind (a cost, a note) is no property")
+        self.assertEqual(evals.shown_properties(called(("describe", {"handle": "r1"}))), {"r1": {"capacityUnits", "retentionDays"}})
+        self.assertEqual(evals.shown_properties(called(("profile", {"handles": ["r2"]}))), {"r2": {"capacityUnits", "retentionDays"}})
+        self.assertEqual(evals.shown_properties(called(("estate_overview", {}), ("metric_summary", {"handles": ["r1"], "metric": "Sessions"}), ("describe", {"handle": "r9"}))), {})
+        self.assertEqual(evals.shown_properties([{"name": "describe", "result": "not json"}, {"name": "describe", "result": "[1]"}, {"result": "{}"}, {}]), {})
+        both = evals.shown_properties(called(("describe", {"handle": "r1"}), ("list_resources", listing)))
+        self.assertEqual(both["r1"], {"capacityUnits", "retentionDays"})
+
+    def test_a_setting_counts_only_when_a_tool_of_the_replay_showed_the_property_of_the_resource(self):
+        self.assertEqual(evals.grade(self.GATEWAYS, stated(), {"r1": {"capacityUnits"}})["set_found"], 1.0)
+        self.assertEqual(evals.grade(self.GATEWAYS, stated(), None)["set_found"], 1.0, "without the replay's trace the properties of the fixture count")
+        for shown in ({}, {"r1": set()}, {"r1": {"retentionDays"}}, {"r2": {"capacityUnits"}}):
+            with self.subTest(shown=shown):
+                got = evals.grade(self.GATEWAYS, stated(), shown)
+                self.assertEqual((got["set_found"], got["settings"]), (0.0, 0))
+                self.assertIn("a property that no tool showed", got["dropped"])
+                self.assertEqual(evals.grade(self.decoy(), stated(), shown)["decoys"], 0)
 
     def test_the_rate_of_the_rows_that_got_a_setting_is_judged_over_the_rows_that_expect_one_only(self):
         thresholds = json.loads((ROOT / "evaluation" / "thresholds.json").read_text(encoding="utf-8"))["codeGraders"]
