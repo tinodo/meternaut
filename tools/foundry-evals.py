@@ -118,6 +118,8 @@ KNOWLEDGE_READ = "2026-11-01"  # the day on which the invented documentation was
 KNOWLEDGE_SHOWN = 8  # the most claims of one type that recall_knowledge shows, as cases/library.py SHOWN says
 LOST_LINES = 3  # the findings that the app dropped whole, which a `miss:` line says why of, at most
 ANSWER_CHARS, ANSWER_LINE, GIVES_UP_CHARS = 4000, 400, 120  # the block of an answer that a replay of chosen fixtures prints: at most this many characters, a line at most this long, and the words that a way gives up cut to this many
+HANDLE_SHAPES = {"resource": re.compile(r"[a-z][0-9]{1,4}"), "meter": re.compile(r"m[0-9]{1,4}"), "price": re.compile(r"p[0-9]{1,4}")}  # the shapes of the handles that the tools give: the only words of an answer that a line of the effects prints
+EFFECTS_LISTED = 6  # the effects of one change that the block lists
 _TEXT, _OFFSET, _DAYS = ("text", False, ()), ("int", False, (0, 100000)), ("int", False, (1, DAYS))
 _METRICS, _GRAIN = ("list", False, (1, 8)), ("choice", False, ("day", "hour"))
 PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name -> (kind, required, bounds or choices); a call that does not pass is bad-arguments there and here
@@ -1167,9 +1169,14 @@ def _market(row: dict, pricing, bill: "dict | None", evidence: dict) -> types.Si
                                  retail={handle: found[0][1]["usd"] for handle, found in own.items() if found and len({line["usd"] for _, line in found}) == 1})
 
 
+def _key(priced, handle: str) -> str:
+    """The app's word for why a change has no figure for a resource (a key of cases/pricing.py WHY): the rule that code stopped at, or `none` when the change names no meter of the resource."""
+    return priced.why.get(handle) or "none"
+
+
 def _why(pricing, priced, handle: str) -> str:
     """The app's own words for why a change has no figure for a resource (cases/pricing.py WHY): the rule that code stopped at, or that the change names no meter of the resource."""
-    return pricing.WHY[priced.why.get(handle) or "none"]
+    return pricing.WHY[_key(priced, handle)]
 
 
 def _figure(pricing, change, priced, handle: str, cost: float) -> dict:
@@ -1187,8 +1194,10 @@ def _left_out(priced, handle: str) -> dict:
 
 def _fates(proposals, change, finding: dict, evidence: dict, price) -> dict[str, list[str]]:
     """The verdict of each entry of `set` and of `others` of a finding that the app keeps: `kept`, or the app's own words for why cases/proposals.py drops it (its WHY). `check` takes the entries one after the
-    other, so the verdict of the n-th is what the first n entries drop more than the first n - 1 do."""
+    other, so the verdict of the n-th is what the first n entries drop more than the first n - 1 do. The word of WHY that dropped each (the rule, as the app names it) is kept in `finding["rules"]`, None for an
+    entry that is kept."""
     fates: dict[str, list[str]] = {"set": [], "other": []}
+    finding["rules"] = {"set": [], "other": []}
     if change is None:
         return fates
     for kind, entries in (("set", change.settings), ("other", change.others)):
@@ -1197,7 +1206,9 @@ def _fates(proposals, change, finding: dict, evidence: dict, price) -> dict[str,
             prefix = dataclasses.replace(change, settings=change.settings[: place + 1] if kind == "set" else (), others=change.others[: place + 1] if kind == "other" else ())
             after = proposals.check(prefix, finding["proposal"], finding["handles"], evidence, price).dropped
             gone = after - before
-            fates[kind].append(proposals.reason(kind, next(iter(gone))[1]) if gone else "kept")
+            rule = next(iter(gone))[1] if gone else None
+            fates[kind].append(proposals.reason(kind, rule) if rule else "kept")
+            finding["rules"][kind].append(rule)
             before = after
     return fates
 
@@ -1210,7 +1221,8 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
     app's own `price` over the meters and the list prices that the tools of the replay showed (`bill`, shown_bill: without it all of them count). Each kept finding then has `saves`, the figure of its change for each
     of its resources, and, when it keeps other ways, `others_priced`, the figure of each in order: a figure is {"low", "high"} in US dollars a month (an other way adds `estimate` when its saving rests on a share
     that the AI states) or {"why"}, the app's own words for why it has none. `priced` is the figure of the first setting that is kept and of each other way that is kept. `to` is the new number of each setting
-    that is kept, by (handle, property)."""
+    that is kept, by (handle, property). `market` and `costs` are what the app's `price` was given, and each kept finding of a row that gives a bill also has `blocked` (the resources whose figure is held back for
+    a number outside the documented range), `keys` (the app's key for each resource of its change that has no figure) and `others_keys` (the same for each other way that it keeps, None for one that has a figure)."""
     pricing, proposals = app_code()
     evidence = {}
     for handle in known_handles(row):
@@ -1238,8 +1250,10 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
 
         checked = proposals.check(finding["parsed"], finding["proposal"], finding["handles"], evidence, price)
         if market is not None and finding["parsed"] is not None:
-            main = pricing.price(finding["parsed"], finding["handles"], market, costs, {handle: "range" for handle in checked.ranged}, meter_word)
+            finding["blocked"] = {handle: "range" for handle in checked.ranged}
+            main = pricing.price(finding["parsed"], finding["handles"], market, costs, finding["blocked"], meter_word)
             finding["saves"] = {handle: _figure(pricing, finding["parsed"], main, handle, costs[handle]) for handle in finding["handles"]}
+            finding["keys"] = {handle: _key(main, handle) for handle, figure in finding["saves"].items() if "why" in figure}
         for handle, entries in checked.ways.items():
             kept |= {(handle, entry["path"]) for entry in entries.get("set", [])}
             to |= {(handle, entry["path"]): entry["to"] for entry in entries.get("set", [])}
@@ -1251,11 +1265,12 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
                     finding["others_priced"] = [{"low": entry["lowUsd"], "high": entry["highUsd"], **({"estimate": True} if entry.get("estimate") else {}), **_left_out(tried_one, handle)} if "lowUsd" in entry
                                                 else {"why": _why(pricing, tried_one, handle)} for entry, tried_one in zip(entries["others"], tried)]
                     priced["others"] += finding["others_priced"]
+                    finding["others_keys"] = [None if "lowUsd" in entry else _key(tried_one, handle) for entry, tried_one in zip(entries["others"], tried)]
         if said := proposals.note_of(checked):
             told.append(said)
         if explain:
             finding["fates"] = _fates(proposals, finding["parsed"], finding, evidence, nothing)
-    return {"read": read, "kept": kept, "to": to, "ways": ways, "told": "; ".join(told), "priced": priced}
+    return {"read": read, "kept": kept, "to": to, "ways": ways, "told": "; ".join(told), "priced": priced, "market": market, "costs": costs}
 
 
 def kept_settings(row: dict, findings: list, shown: "dict[str, set[str]] | None" = None) -> tuple[set[tuple[str, str]], int, str]:
@@ -1400,12 +1415,117 @@ def _rests_on(pricing, change, handle: str) -> str:
     return f", {'form' if len(forms) == 1 else 'forms'} {spoken}, {_n(len({meter for effect in effects for meter in effect.meters}), 'meter')}"
 
 
+def _num(value: object) -> str:
+    """A number of an answer as a typed value, or the word that says that it is none."""
+    return _said(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else "(not a number)"
+
+
+def _handle_word(value: object, kind: str, known: dict) -> str:
+    """A handle that an answer names, in the tool's own words: the handle itself when it has the shape of one (and, for a resource, when a tool showed it), else a word that says what it is. No other text enters."""
+    if not isinstance(value, str) or HANDLE_SHAPES[kind].fullmatch(value) is None:
+        return f"(no {kind} handle)"
+    return value if kind != "resource" or value in known else f"{value} (no tool showed it)"
+
+
+def _meters_word(meters: tuple) -> str:
+    """The meter handles that an effect names, as handles, and how many names it holds that are none."""
+    valid = [name for name in meters if _handle_word(name, "meter", {}) == name]
+    bad = len(meters) - len(valid)
+    if not meters:
+        return "no meter"
+    return (f"{'meter' if len(valid) == 1 else 'meters'} {', '.join(valid)}" if valid else "") + (f"{' and ' if valid else ''}{bad} that {'is' if bad == 1 else 'are'} no meter handle" if bad else "")
+
+
+def _values(pricing, market, effect, form: "str | None") -> str:
+    """The typed values that the form of an effect takes, as numbers, handles and a flag: what the answer stated, never its words."""
+    said = effect.remains
+    if form in ("quantity", "ratio"):
+        names = market.evidence.get(effect.handle, {}).get("properties", {})
+        return f" from {_num(said.get('from'))} to {_num(said.get('to'))}" + (f", on a property that a tool showed: {'yes' if isinstance(said.get('on'), str) and said['on'] in names else 'no'}" if form == "ratio" else "")
+    if form == "share_of_days":
+        return f" days {_num(said.get('days'))} of {_num(said.get('of'))}"
+    if form == "assumed":
+        return f" low {_num(said.get('low'))}, high {_num(said.get('high'))}"
+    if form == "alternative":
+        return " " + _handle_word(said.get("price"), "price", {})
+    return ""
+
+
+def _alternative_words(pricing, market, effect) -> str:
+    """Six of the tests that cases/pricing.py `_switch` makes of an alternative, each as ok or differs (one meter, a price above nothing, one step, the service and the unit against the meter's own words, and a plain
+    name that is not the bill's own), and what the tool for alternatives showed: whether the price handle was among those that it showed for each meter of the effect (yes, no, or no such call when it was not asked
+    about that meter) and the meters that it was asked about. The other tests of `_switch` (the list price of the meter's own line, a cost per unit, an alternative that costs as much or more) show only as the
+    app's key, which is printed after. The tests are the app's, written again for what they print."""
+    offer = effect.remains.get("price")
+    named = [f"{_handle_word(name, 'meter', {})} " + ("no such call" if not isinstance(market.offers.get(name), (set, frozenset, list, tuple)) else "yes" if isinstance(offer, str) and offer in market.offers[name] else "no") for name in effect.meters]
+    asked = sorted(name for name in market.offers if isinstance(name, str) and HANDLE_SHAPES["meter"].fullmatch(name))
+    words = [f"offered for {', '.join(named) if named else 'no meter'}", f"price list read for {', '.join(asked) if asked else 'no meter'}"]
+    line = market.prices.get(offer) if isinstance(offer, str) else None
+    one = len(effect.meters) == 1
+    if line is None:
+        return "; ".join([*words, "the price handle is none of the lines of this run", f"one meter {'ok' if one else 'differs'}"])
+    meter = market.meters.get(effect.meters[0]) if one else None
+    usd, tiers = getattr(line, "usd", None), getattr(line, "tiers", None)
+    checks = [("one meter", one), ("price", isinstance(usd, (int, float)) and not isinstance(usd, bool) and usd > 0), ("tiers", tiers == 1)]
+    if isinstance(meter, pricing.Meter) and meter.scope == effect.handle:
+        listed = tuple(getattr(line, key, "") for key in ("product", "sku", "meter"))
+        target = next((text for text in (listed[2], listed[1]) if pricing._name(text, meter_word) and text != meter.words[2]), "") if len(meter.words) == 6 else ""
+        checks += [("service", len(meter.words) == 6 and getattr(line, "service", None) == meter.words[0]), ("unit", len(meter.words) == 6 and getattr(line, "unit", None) == meter.words[5]), ("name", bool(target))]
+    elif one:
+        words.append("the meter is not one that a tool showed for the resource")
+    return "; ".join([*words, ", ".join(f"{name} {'ok' if good else 'differs'}" for name, good in checks)])
+
+
+def _places(places: list[int]) -> str:
+    """The places of effects, as numbers in words: `1 and 2`, `1, 2 and 3`."""
+    return str(places[0]) if len(places) == 1 else ", ".join(str(place) for place in places[:-1]) + f" and {places[-1]}"
+
+
+def _shared_meters(option, handles: list, blocked: "dict | None") -> str:
+    """When a meter handle is named by more than one effect for the same resource that the app reads, the words that say it, as handles and numbers, else nothing: the app counts a bill line once for a change
+    (cases/pricing.py `price` keeps `seen` across the effects, and `_part` adds a line to it before a switch can fail), so what an effect says alone may differ from what the change counts: an effect that fails before it
+    takes the line leaves it to the next one, and an effect that takes the line and then fails keeps the next one from it."""
+    named: dict[tuple[str, str], list[int]] = {}
+    for place, effect in enumerate(option.effects, 1):
+        if effect.handle in handles and not (blocked and effect.handle in blocked):
+            for name in effect.meters:
+                if HANDLE_SHAPES["meter"].fullmatch(name):
+                    named.setdefault((effect.handle, name), []).append(place)
+    shared = [f"meter {name} is named by effects {_places(places)}" for (_, name), places in named.items() if len(places) > 1]
+    return ", ".join(shared) + ": the app counts a bill line once, so what each effect says alone may differ from what the change counts" if shared else ""
+
+
+def _effect_lines(pricing, market, costs: dict, known: dict, where: str, option, handles: list, blocked: "dict | None") -> list[str]:
+    """One short line for each effect of a change, in typed words only, under a line that says the action of the change (one of the app's own, cases/pricing.py ACTIONS) and how many effects it has: the resource, the
+    meters, the form that the answer picked and the numbers or the price handle that it took, whether the app allows that form for the action, for an alternative what the tool for alternatives showed of it
+    (_alternative_words), and what the app's own `price` makes of that effect ALONE: priced alone, or not priced alone with its key (a key of cases/pricing.py WHY), or not read when its resource is not one of
+    the finding's. The app counts a bill line once for the whole change, so when a meter is named by more than one effect a last line says so (_shared_meters). A handle that has not the shape of one, a form that is
+    not on the app's list and any other text of the answer is a word of the tool's own, never printed. At most EFFECTS_LISTED effects are listed."""
+    if option is None:
+        return []
+    lines = [f"- {where} action {option.action}, {_n(len(option.effects), 'effect')}"]
+    for place, effect in enumerate(option.effects[:EFFECTS_LISTED], 1):
+        form = effect.remains.get("form") if effect.remains.get("form") in pricing.FORMS else None
+        words = f"form {form}" if form else "form unreadable"
+        allowed = f", not allowed for the action {option.action}" if form and form not in pricing.ALLOWED.get(option.action, ()) else ""
+        probe = pricing.price(dataclasses.replace(option, effects=(effect,)), handles, market, costs, blocked or None, meter_word)
+        key = probe.why.get(effect.handle)
+        result = "priced alone" if effect.handle in probe.rows else f"not priced alone, key {key if key in pricing.WHY else 'other'}" if effect.handle in probe.why else "not read, its resource is not in the finding"
+        lines.append(f"- {where} effect {place}: {_handle_word(effect.handle, 'resource', known)}, {_meters_word(effect.meters)}, {words}{_values(pricing, market, effect, form)}{allowed}"
+                     + (f"; {_alternative_words(pricing, market, effect)}" if form == "alternative" else "") + f"; {result}")
+    if len(option.effects) > EFFECTS_LISTED:
+        lines.append(f"- {where} effects: {len(option.effects) - EFFECTS_LISTED} more not listed")
+    if shared := _shared_meters(option, handles, blocked):
+        lines.append(f"- {where} {shared}")
+    return lines
+
+
 def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, set[str]] | None" = None, bill: "dict | None" = None) -> list[str]:
     """What the Investigator answered in one replay, as the grader read it, for a person who replays chosen fixtures: the tools that it called, in order (names only), and each finding of its answer with the
     verdict of the grader's copy of the app's rules next to it (`kept`, or the app's own words for why it drops it), then its measurements, the action of its change, and each entry of `set` and of `others`
     with its own verdict. For a row that gives `meters` the line of the change says what the app would show as its saving (or why it has none), the form that the answer picked for it and how many meters
     its effect names, and each other way says whether it names a price of the list and,
-    when the app keeps it, its saving. Words and typed values only: a free text is cut short, no instruction and no text of the answer beyond these fields is printed, every character that is not plain is
+    when the app keeps it, its saving, and lists the effects of the change and of every other way, kept or dropped, with the app's own key for what it could not price and for the rule that dropped an entry (_effect_lines). Words and typed values only: a free text is cut short, no instruction and no text of the answer beyond these fields is printed, every character that is not plain is
     replaced, and the block has at most ANSWER_CHARS characters, cut at the end of a line. The fixtures are invented, so nothing here names an estate."""
     cut = f"{row['id']}: answer: the rest of this block is cut at {ANSWER_CHARS} characters"
     names = [step.get("name") if isinstance(step.get("name"), str) and step["name"] in PARAMETERS else "(unknown tool)" for step in trace]
@@ -1415,6 +1535,8 @@ def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, s
         return _capped([f"{row['id']}: {line}" for line in [*lines, f"answer: no object with a list of findings could be read from the last text of the agent ({len(text) if isinstance(text, str) else 0} characters)"]], cut)
     findings = answer["findings"]
     read = read_answer(row, findings, shown, explain=True, bill=bill)
+    market, known = read["market"], known_handles(row)
+    pricing = app_code()[0] if market is not None else None
     floors = _floors(row["expect"].get("set_floor"))
     kept = sum(1 for finding in read["read"] if finding["reason"] is None)
     lines.append(f"answer: {_n(len(findings), 'finding')}" + (f", the first {MAX_FINDINGS} read" if len(findings) > MAX_FINDINGS else "")
@@ -1434,22 +1556,28 @@ def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, s
             cited = entry if isinstance(entry, dict) else {}
             lines.append(f"- evidence {place} ({what}): handle {_said(cited.get('handle'), 32)}, metric {_said(cited.get('metric'), 60)}, total {_said(cited.get('total'))}")
         change, saves = finding["parsed"], finding.get("saves", {})
-        pricing = app_code()[0] if saves else None
         lines.append("- change: " + ("none stated" if change is None else f"action {change.action}"
                                      + "".join(f", {handle + ' ' if len(saves) > 1 else ''}{_saves(figure)}{_rests_on(pricing, change, handle)}" for handle, figure in saves.items())))
         lines += [f"- change not priced{' for ' + handle if len(saves) > 1 else ''}: {figure['why']}" for handle, figure in saves.items() if "why" in figure]
+        lines += [f"- change not priced{' for ' + handle if len(saves) > 1 else ''}, app key: {key}" for handle, key in finding.get("keys", {}).items()]
+        if market is not None and finding["reason"] is None:
+            lines += _effect_lines(pricing, market, read["costs"], known, "change", change, finding["handles"], finding.get("blocked"))
         fates = finding.get("fates", {"set": [], "other": []})
         for kind, items in (("set", change.settings if change else ()), ("other way", change.others if change else ())):
             for place, item in enumerate(items[:12], 1):
                 said = fates["set" if kind == "set" else "other"]
                 fate = said[place - 1] if place - 1 < len(said) else "not read: the finding is dropped"
+                rules = finding.get("rules", {}).get("set" if kind == "set" else "other", [])
+                ruled = [f"- {kind} {place} dropped, rule key: {rules[place - 1]}"] if market is not None and place - 1 < len(rules) and rules[place - 1] else []
                 if not isinstance(item, dict):
                     lines.append(f"- {kind} {place} ({fate}): it is no object")
+                    lines += ruled
                 elif kind == "set":
                     handle, name = item.get("handle"), item.get("property")
                     floor = floors.get((handle, name)) if isinstance(handle, str) and isinstance(name, str) else None
                     under = f", below the floor of {_said(floor)}" if fate == "kept" and floor is not None and not _reaches(read["to"].get((handle, name)), floor) else ""
                     lines.append(f"- set {place} ({fate}): handle {_said(item.get('handle'), 32)}, property {_said(item.get('property'), 60)}, from {_said(item.get('from'))}, to {_said(item.get('to'))}{under}")
+                    lines += ruled
                 else:
                     inner = item.get("change") if isinstance(item.get("change"), dict) else {}
                     words = ""
@@ -1458,8 +1586,12 @@ def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, s
                         words = f"{_names_price(item)}, " + (f"{_saves(done[before])}, " if fate == "kept" and before < len(done) else "")
                     lines.append(f"- other way {place} ({fate}): title {_said(item.get('title'), 80)}, in_place {_said(item.get('in_place'))}, action {_said(inner.get('action'), 20)}, "
                                  f"{words}gives up {_said(item.get('gives_up'), GIVES_UP_CHARS)}")
+                    lines += ruled
                     if row.get("meters") and fate == "kept" and before < len(done) and "why" in done[before]:
                         lines.append(f"- other way {place} not priced: {done[before]['why']}")
+                        lines.append(f"- other way {place} not priced, app key: {finding['others_keys'][before]}")
+                    if market is not None and finding["reason"] is None:
+                        lines += _effect_lines(pricing, market, read["costs"], known, f"other way {place}", pricing.parse(item.get("change")), finding["handles"], None)
     return _capped([f"{row['id']}: {line}" for line in lines], cut)
 
 
