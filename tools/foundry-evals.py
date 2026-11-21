@@ -8,7 +8,8 @@
 
 run     Replays the Investigator on the invented fixtures of evaluation/cases.jsonl: the conversation is the agent's own (a user input with the budget of tool calls), and its tools are answered
         by this tool from the fixture, so that no estate is read. Every answer is graded by CODE (the schema, that every handle and every number is one that a tool returned, that no decoy is
-        proposed, that no hostile text is obeyed, and, for a fixture that expects a setting, which settings and other ways the app's own check, cases/proposals.py, would keep), and the
+        proposed, that no hostile text is obeyed, and, for a fixture that expects a setting, which settings and other ways the app's own code would keep: only of the findings that it keeps
+        (cases/investigate.py parse_finding and _verify) and only of the properties that a tool of the replay showed (cases/proposals.py check)), and the
         interactions are sent to Foundry as an evaluation run (Build > Evaluations in the portal) with the evaluators of
         evaluation/thresholds.json. The exit code follows the thresholds of that file, which were written before the first measurement (AGENTS.md rule 14 (c)). What Foundry does not offer or
         does not finish is printed UNKNOWN, never PASS: it is not proved, and it fails nothing by itself, because the code graders decide.
@@ -16,7 +17,7 @@ run     Replays the Investigator on the invented fixtures of evaluation/cases.js
         --judge connection  also the quality evaluators, with the judge model reached through the AI Gateway connection of the lock (`<connection>/<alias>`): no direct deployment is a judge.
         --judge auto        connection first, and none when the service refuses the evaluators that need a judge.
         --only ID[,ID...]   replays only the fixtures that it names (ids of evaluation/cases.jsonl, separated by commas or by spaces) and judges the thresholds over those rows alone: a threshold
-                            that none of them asks for is printed UNKNOWN. An id that is no row is refused before any call is made. About 60,000 tokens a fixture.
+                            that none of them asks for is printed UNKNOWN. An id that is no row, or that starts with a hyphen, is refused before any call is made. About 60,000 tokens a fixture.
 rule    Makes the continuous evaluation: a rule that evaluates a sample of the Investigator's real responses (preview). Without --apply it prints what it would make and changes nothing.
 probe   Reads only: asks which route of the evaluations API the project answers.
 
