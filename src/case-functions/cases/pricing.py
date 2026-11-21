@@ -17,8 +17,9 @@ forms that code can check against what the tools showed in the same run:
                  a switch whose alternative cannot be named in plain words is not priced
 
 In a switch the form `none` says that the new price has no counterpart for those charges. Nothing in the bill checks that, so it is read as the form `assumed` with nothing remaining (Scenario, and
-never Expected); under every action but `remove` it is still no form. A switch that has some of its charges on a price of the list and the others gone has the form `mixed`: its digest says how many
-bill lines rest on a price of the list (`switched`) and how many the AI says go away in full (`gone`), and the words of the figure of one resource say so.
+never Expected). Under `reduce`, `schedule` and `commit` it is still no form, and under `remove` it keeps its old meaning: everything goes away, which the bill alone says (Expected). A switch that has some
+of its charges on a price of the list and the others gone has the form `mixed`: its digest says how many bill lines rest on a price of the list (`switched`) and how many the AI says go away in full
+(`gone`), and the words of the figure of one resource say so.
 
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
@@ -498,7 +499,7 @@ def _switched(price: Mapping) -> int:
 
 def combine(digests: Sequence[object], members: int) -> dict | None:
     """The `change` of the case of a group from those of its resources: the sums of the figures, and the rule only when it is the same for all of them (for a switch: the same price, whatever rate of
-    the bill each carried over, which is kept when it is the same). A figure that is a sum of rules says how many of its bill lines rest on an alternative. None when there is none."""
+    the bill each carried over, which is kept when it is the same). A figure that is a sum of rules says how many of its bill lines rest on an alternative and how many the AI says go away in full. None when there is none."""
     kept = [item for item in digests if isinstance(item, Mapping)]
     if not kept:
         return None
@@ -526,6 +527,8 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
         price[LIST_AGE] = oldest  # the resources of a group may rest on copies of different ages: the figure says the oldest
     if price["form"] == "mixed" and (switched := sum(_switched(item) for item in prices)):
         price["switched"] = switched
+    if price["form"] == "mixed" and (gone := sum(_whole(item.get("gone")) or 0 for item in prices)):
+        price["gone"] = gone
     skipped = sum(price.get("skipped") or 0 for price in prices)
     return {**out, "price": {**price, **({"skipped": skipped} if skipped else {})}}
 
@@ -675,7 +678,7 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
         if rest:
             others, they = ("charge", "it") if rest == 1 else (f"{rest} charges", "they")
             text += f" For the other {others}, the AI " + (f"says that {they} would go away in full" if gone == rest else "assumes how much would go away") + ", and Meternaut did not check that."
-        text += f" Meternaut did not check whether this {noun} can be switched to {named}, or whether {'they have' if hit > 1 else 'it has'} what this {noun} needs."
+        text += f" Meternaut did not check whether this {noun} can be switched to what {named} {'are' if hit > 1 else 'is'} for, or whether {'those have' if hit > 1 else 'that has'} what this {noun} needs."
     elif form == "mixed":
         text = paid + " Each part of it has its own rule for what would remain. Part of it rests on the AI's own proposals, and Meternaut did not check them."
         text += " Meternaut did not check whether the resources can be switched to the alternatives, or whether those have what the resources need." if (_whole(found.get("switched")) or 0) > 0 else ""
@@ -770,7 +773,8 @@ def refused(facts: object) -> bool:
 def view(change: Change | None, priced: Priced, registry: Mapping, word: Callable[[object], str | None], limit: int, skip: Collection[str]) -> dict | None:
     """The change in typed form for the Skeptic: for each resource its rule, what the bill lines that it rests on cost a month at the lower of their two rates (`usd`) and at each of them, and at most
     `limit` of them with their words (as the tools show them: `word` is the check of the tools), what each cost in its window, what it costs a month at the rate of its last 7 days and at the mean since
-    its first day (None when its read cannot say it), the days of life and how steady it was; or the word that says why it has no figure. Not the AI's words for a person."""
+    its first day (None when its read cannot say it), the days of life and how steady it was; or the word that says why it has no figure. In a switch whose other lines the AI says all go away in full, each of those
+    lines also says `remains` [0.0, 0.0], as an alternative does, because the figure rests on the AI's word for them and on nothing in the bill. Not the AI's words for a person."""
     if change is None:
         return None
     effects: list[dict] = []
@@ -796,5 +800,10 @@ def view(change: Change | None, priced: Priced, registry: Mapping, word: Callabl
         if row.alts:  # a switch: the words of the price (through the same check), its list price, the rate of the bill against list and the shares that remain
             more["alternatives"] = [{"meter": alt["meter"], "words": [_plain(text, word) for text in alt["words"]], "list": alt["list"], "ratio": alt["ratio"],
                                      "remains": [round(alt["remains"][0], 4), round(alt["remains"][1], 4)]} for alt in row.alts]
+            if row.gone == len(row.meters) - len(row.alts):  # every line that no alternative covers is one that the AI says goes away in full: nothing but its word says so
+                switched = {alt["meter"] for alt in row.alts}
+                for line in lines:
+                    if line["meter"] not in switched:
+                        line["remains"] = [0.0, 0.0]
         effects.append({"handle": handle, "form": row.form, "usd": round(row.base, 2), "week": row.week, "since": row.since, "lines": lines, **said, **more})
     return {"action": change.action, "effects": effects}

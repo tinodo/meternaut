@@ -1229,7 +1229,7 @@ class TheAlternative(unittest.TestCase):
                 if form == "alternative":
                     self.assertEqual((row.said, row.away), ({"offer": "p1", "list": 0.0625}, (0.375, 0.5)), "no one rate and no one name for the target, and the widest range of what goes away")
                 # A figure of one resource says "this resource" and "those prices", as the figure of one alternative says "this resource" and "it" (it said "the resources" and "the alternatives" of a resource that is one).
-                said = "Meternaut did not check whether this resource can be switched to it" if form == "alternative" else "Meternaut did not check whether this resource can be switched to those prices"
+                said = "Meternaut did not check whether this resource can be switched to it" if form == "alternative" else "Meternaut did not check whether this resource can be switched to what those prices are for"
                 self.assertIn(said, pricing.saved({pricing.KEY: digest}).basis)
 
     def test_the_skeptic_is_shown_the_alternative_by_its_words_after_the_check_of_the_tools_its_prices_and_what_remains_and_never_a_word_that_fails_the_check(self):
@@ -1412,17 +1412,53 @@ class TheSwitchThatDropsACharge(unittest.TestCase):
         self.assertEqual((row.low, row.form, len(row.alts), row.gone), (129.6, "mixed", 2, None))
         self.assertEqual({key: pricing.digest(change, found, "r1")["price"].get(key) for key in ("switched", "gone")}, {"switched": 2, "gone": None})
 
+    def seen(self, *effects, box=None, limit=6):
+        """The one effect that the second AI is shown for the figure of these effects, with its lines by meter."""
+        change, found = self.priced(*effects, box=box)
+        (one,) = pricing.view(change, found, (box or self.box()).meters, lambda word: word, limit, ())["effects"]
+        return one, {line["meter"]: line for line in one["lines"]}
+
+    def test_the_second_ai_is_shown_that_the_line_which_no_alternative_covers_goes_away_only_by_the_word_of_the_first(self):
+        one, by = self.seen(self.BASE_TO_LITE, self.EXTRA_GONE)
+        self.assertEqual((one["form"], one["usd"], [alt["meter"] for alt in one["alternatives"]], one["alternatives"][0]["remains"]), ("mixed", 410.4, ["m1"], [0.6552, 0.6552]))
+        self.assertEqual(by["m2"]["remains"], [0.0, 0.0], "the same shape as the share that remains of an alternative: nothing of the extra charge remains, and the AI says so")
+        self.assertNotIn("remains", by["m1"], "the line that is switched has its share in the alternative that names it")
+        spare_gone = effect("r1", ("m3",), {"form": "none"})
+        both = self.box(spare=True)
+        one, by = self.seen(self.BASE_TO_LITE, self.EXTRA_GONE, spare_gone, box=both)
+        self.assertEqual({meter: line.get("remains") for meter, line in by.items()}, {"m1": None, "m2": [0.0, 0.0], "m3": [0.0, 0.0]}, "every line that is not switched is gone")
+
+    def test_a_line_that_is_only_partly_assumed_to_go_away_says_nothing_more_than_before_and_no_line_does_when_the_others_are_not_all_gone(self):
+        both = self.box(spare=True)
+        half = effect("r1", ("m3",), {"form": "assumed", "low": 0.5, "high": 0.5})
+        for name, effects in (("one gone and one half", (self.BASE_TO_LITE, self.EXTRA_GONE, half)), ("one half", (self.BASE_TO_LITE, effect("r1", ("m2",), {"form": "assumed", "low": 0.0, "high": 0.4})))):
+            with self.subTest(name):
+                one, by = self.seen(*effects, box=both)
+                self.assertEqual((one["form"], [line for line in by.values() if "remains" in line]), ("mixed", []), "the share that the AI assumes is not all of it, so the lines are shown as they were")
+        one, by = self.seen(self.BASE_TO_LITE, self.EXTRA_TO_LITE, box=self.box(retail={"m1": 0.29, "m2": 0.14}, offers={"m1": {"p1"}, "m2": {"p2"}}))
+        self.assertEqual((one["form"], len(one["alternatives"]), [line for line in by.values() if "remains" in line]), ("mixed", 2, []), "two switched lines and none that goes away")
+        one, by = self.seen(effect("r1", ("m1", "m2"), {"form": "none"}))
+        self.assertEqual((one["form"], one["remains"], [line for line in by.values() if "remains" in line]), ("assumed", [0.0, 0.0], []), "a switch to nothing has the share on the figure and not on the lines")
+
+    def test_a_line_that_is_cut_from_what_the_second_ai_is_shown_is_not_marked_and_the_marks_keep_to_the_lines_that_are_shown(self):
+        both = self.box(spare=True)
+        spare_gone = effect("r1", ("m3",), {"form": "none"})
+        one, by = self.seen(self.BASE_TO_LITE, self.EXTRA_GONE, spare_gone, box=both, limit=2)
+        self.assertEqual({meter: line.get("remains") for meter, line in by.items()}, {"m1": None, "m2": [0.0, 0.0]}, "two of the three lines are shown, and the one of them that goes away says so")
+
     def test_a_figure_of_one_resource_that_rests_on_a_switch_and_on_a_charge_that_goes_away_says_what_each_part_rests_on_and_what_nobody_checked(self):
+        # The last sentence said "switched to that price, or whether it has what this resource needs": a price has nothing. What is checked for is what the price is for, the tier or size that it belongs to.
         self.assertEqual(self.basis(self.BASE_TO_LITE, self.EXTRA_GONE),
                          "At the rate of the last 7 days this resource costs about $410 a month for what the change would shrink. One of its 2 charges would be switched to another price. "
                          "Meternaut took that price from the price list and compared it with the bill like for like. For the other charge, the AI says that it would go away in full, and Meternaut did not check that. "
-                         "Meternaut did not check whether this resource can be switched to that price, or whether it has what this resource needs.")
+                         "Meternaut did not check whether this resource can be switched to what that price is for, or whether that has what this resource needs.")
         self.assertIn("this gateway costs about $410 a month", self.basis(self.BASE_TO_LITE, self.EXTRA_GONE, noun="gateway"))
-        self.assertIn("whether this gateway can be switched to that price, or whether it has what this gateway needs.", self.basis(self.BASE_TO_LITE, self.EXTRA_GONE, noun="gateway"))
+        self.assertIn("whether this gateway can be switched to what that price is for, or whether that has what this gateway needs.", self.basis(self.BASE_TO_LITE, self.EXTRA_GONE, noun="gateway"))
 
     def test_the_words_follow_how_many_charges_are_switched_how_many_are_left_and_what_the_ai_says_of_them(self):
         both = self.box(retail={"m1": 0.29, "m2": 0.14}, offers={"m1": {"p1"}, "m2": {"p2"}}, spare=True)
-        plural = ("Meternaut took those prices from the price list and compared each with the bill like for like.", "Meternaut did not check whether this resource can be switched to those prices, or whether they have what this resource needs.")
+        plural = ("Meternaut took those prices from the price list and compared each with the bill like for like.",
+                  "Meternaut did not check whether this resource can be switched to what those prices are for, or whether those have what this resource needs.")
         two = self.basis(self.BASE_TO_LITE, self.EXTRA_TO_LITE, box=both)
         self.assertIn("Each of its 2 charges would be switched to another price. " + plural[0] + " " + plural[1], two, "nothing is left over, and nothing is said of the AI's word")
         self.assertNotIn("the AI", two)
@@ -1434,6 +1470,21 @@ class TheSwitchThatDropsACharge(unittest.TestCase):
                       "they would go away in full, and Meternaut did not check that.", self.basis(self.BASE_TO_LITE, self.EXTRA_GONE, spare_gone, box=both))
         self.assertIn("For the other charge, the AI assumes how much would go away,", self.basis(self.BASE_TO_LITE, effect("r1", ("m2",), {"form": "assumed", "low": 0.0, "high": 0.4})),
                       "a share of nothing to 0.4 that remains is not all of it going away")
+
+    def test_a_group_of_one_priced_resource_keeps_how_many_lines_the_ai_says_go_away_and_a_group_of_two_sums_them(self):
+        change, found = self.priced(self.BASE_TO_LITE, self.EXTRA_GONE)
+        digest = pricing.digest(change, found, "r1")
+        alone = pricing.combine([digest], 3)  # a group of three resources, one of which has a figure
+        self.assertEqual({key: alone["price"][key] for key in ("form", "resources", "members", "switched", "gone")}, {"form": "mixed", "resources": 1, "members": 3, "switched": 1, "gone": 1})
+        self.assertIn("For the other charge, the AI says that it would go away in full, and Meternaut did not check that.", pricing.saved({pricing.KEY: alone}).basis,
+                      "the group that has one figure says what its one resource says: it said that the AI assumes how much would go away")
+        two = pricing.combine([digest, digest], 2)
+        self.assertEqual((two["price"]["switched"], two["price"]["gone"]), (2, 2), "a sum, as the lines that rest on an alternative are")
+        self.assertIn(" Each part of it has its own rule for what would remain.", pricing.saved({pricing.KEY: two}).basis, "the figure of many resources keeps its words")
+        old = {**digest, "price": {key: value for key, value in digest["price"].items() if key != "gone"}}  # a digest made before the count
+        self.assertNotIn("gone", pricing.combine([old], 3)["price"])
+        self.assertEqual(pricing.combine([old, digest], 2)["price"]["gone"], 1, "the digests that hold the count are the ones that are counted")
+        self.assertIn("For the other charge, the AI assumes how much would go away,", pricing.saved({pricing.KEY: pricing.combine([old], 3)}).basis)
 
     def test_a_mix_of_one_resource_with_no_switch_in_it_keeps_its_words(self):
         change = pricing.parse(block("reduce", effect("r1", ("m1",), {"form": "quantity", "from": 720, "to": 360}), effect("r1", ("m2",), {"form": "assumed", "low": 0.2, "high": 0.4})))
