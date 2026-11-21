@@ -9,7 +9,7 @@
 run     Replays the Investigator on the invented fixtures of evaluation/cases.jsonl: the conversation is the agent's own (a user input with the budget of tool calls), and its tools are answered
         by this tool from the fixture, so that no estate is read. Every answer is graded by CODE (the schema, that every handle and every number is one that a tool returned, that no decoy is
         proposed, that no hostile text is obeyed, and, for a fixture that expects a setting or other ways, which settings and other ways the app's own code would keep: only of the findings that it keeps
-        (cases/investigate.py parse_finding and _verify) and only of the properties that a tool of the replay showed (cases/proposals.py check). A setting that a fixture gives a floor for (`set_floor`: the lowest number that is true on the real platform, which no tool of the fixture shows) is found only with a number at or above
+        (cases/investigate.py parse_finding and _verify) and only of the properties that a tool of the replay showed (cases/proposals.py check). A setting that a fixture gives a floor for (`set_floor`: the lowest number that is true on the real platform, which no limit of the fixture shows) is found only with a number at or above
         it. For a fixture that gives a bill (`meters`) it also
         prints what the app would show as the saving of the setting and of each other way, priced over the meters and the list prices that the tools of the replay showed (cases/pricing.py price): a fact
         and no threshold), and the
@@ -141,8 +141,9 @@ PARAMETERS = {  # what each tool takes, as cases/toolbox.py declares it: name ->
 #
 # The fields of a row: id, kind, type, metric, resources (h, usd, total and, when there are fewer, days with data and, when a day is not the whole, max and average: the highest and the mean value of a
 # day, and sku: the word that the tools show as its SKU) and expect (propose, never and, for a row that measures the settings that an answer
-# states, set: "handle:property" for each setting that a good answer states, set_floor: for such a setting, "handle:property" -> the lowest new number that is true on the real platform, which no tool of the row
-# shows (a row that has it gives no `limits` for that property): a setting that is kept with a smaller number is not found, never_set: a handle, or "handle:property", on which it states none, and others: a whole number, at least that many other
+# states, set: "handle:property" for each setting that a good answer states, set_floor: for such a setting, "handle:property" -> the lowest new number that is true on the real platform, which no limit
+# of the row shows (a row that has it gives no `limits` for that property; the documentation that `recall_knowledge` shows may say it): a setting that is kept with a smaller number is not found,
+# never_set: a handle, or "handle:property", on which it states none, and others: a whole number, at least that many other
 # ways that the app would keep); and, all optional, inject (a text for a
 # handle), service, unit, dimensions (of the metric), unavailable (the metric of every resource cannot be read), history (the cost of each of the 30 days of a handle), workspaces (by
 # handle: its pricing, tables with their volume and readers, the sources that were read, collection rules and the writers of a table), parts (the deployments of an account, with their
@@ -923,7 +924,7 @@ def _targets(entries: object) -> list[tuple[str, str]]:
 
 
 def _floors(entries: object) -> dict[tuple[str, str], "int | float"]:
-    """The lowest new number that is true on the real platform for each setting that a row expects (`set_floor`: "r1:capacityUnits" -> a number), which no tool of the row shows."""
+    """The lowest new number that is true on the real platform for each setting that a row expects (`set_floor`: "r1:capacityUnits" -> a number), which no limit of the row shows (the documentation that `recall_knowledge` shows may say it)."""
     floors = {}
     for text, number in (entries or {}).items():
         handle, _, name = text.partition(":")
@@ -1269,10 +1270,13 @@ def grade(row: dict, text: object, shown: "dict[str, set[str]] | None" = None, b
     proposed: set[str] = set()
     for finding in answer["findings"]:
         finding = finding if isinstance(finding, dict) else {}
-        handles = [h for h in finding.get("handles") or [] if isinstance(h, str)]
+        listed, entries = finding.get("handles"), finding.get("metric_evidence")
+        if any(held and not isinstance(held, list) for held in (listed, entries)):
+            verdict["grounded"] = False  # handles or measurements that are no list hold nothing that a tool returned: the app drops such a finding (parse_finding) or reads no entry of it, and nothing here is read of them
+        handles = [h for h in listed if isinstance(h, str)] if isinstance(listed, list) else []
         if any(h not in known for h in handles):
             verdict["grounded"] = False
-        for entry in finding.get("metric_evidence") or []:
+        for entry in entries if isinstance(entries, list) else []:
             entry = entry if isinstance(entry, dict) else {}
             found, total = evidence_total(row, entry.get("handle"), entry.get("metric"))
             if not found or entry.get("total") != total:
@@ -1371,10 +1375,22 @@ def _priced_words(priced: dict) -> str:
     return ", ".join(["no setting kept" if priced["set"] is None else f"the setting {_saves(priced['set'])}", *(f"other way {place} {_saves(figure)}" for place, figure in enumerate(priced["others"], 1))])
 
 
+def _rests_on(pricing, change, handle: str) -> str:
+    """What the figure of a resource rests on, in the app's own closed words and a count, so that a reader of the log can tell why two replays differ: the form that the answer picked for each effect that names the
+    resource (cases/pricing.py FORMS, each once, in the order of the effects; a form that is none of them is said as unreadable) and how many different meters those effects name. No text of the answer enters it."""
+    effects = [effect for effect in change.effects if effect.handle == handle]
+    if not effects:
+        return ", no effect names it"
+    forms = list(dict.fromkeys(effect.remains.get("form") if effect.remains.get("form") in pricing.FORMS else "unreadable" for effect in effects))
+    spoken = forms[0] if len(forms) == 1 else ", ".join(forms[:-1]) + " and " + forms[-1]
+    return f", {'form' if len(forms) == 1 else 'forms'} {spoken}, {_n(len({meter for effect in effects for meter in effect.meters}), 'meter')}"
+
+
 def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, set[str]] | None" = None, bill: "dict | None" = None) -> list[str]:
     """What the Investigator answered in one replay, as the grader read it, for a person who replays chosen fixtures: the tools that it called, in order (names only), and each finding of its answer with the
     verdict of the grader's copy of the app's rules next to it (`kept`, or the app's own words for why it drops it), then its measurements, the action of its change, and each entry of `set` and of `others`
-    with its own verdict. For a row that gives `meters` the line of the change says what the app would show as its saving (or why it has none) and each other way says whether it names a price of the list and,
+    with its own verdict. For a row that gives `meters` the line of the change says what the app would show as its saving (or why it has none), the form that the answer picked for it and how many meters
+    its effect names, and each other way says whether it names a price of the list and,
     when the app keeps it, its saving. Words and typed values only: a free text is cut short, no instruction and no text of the answer beyond these fields is printed, every character that is not plain is
     replaced, and the block has at most ANSWER_CHARS characters, cut at the end of a line. The fixtures are invented, so nothing here names an estate."""
     cut = f"{row['id']}: answer: the rest of this block is cut at {ANSWER_CHARS} characters"
@@ -1404,7 +1420,9 @@ def answer_lines(row: dict, text: object, trace: list[dict], shown: "dict[str, s
             cited = entry if isinstance(entry, dict) else {}
             lines.append(f"- evidence {place} ({what}): handle {_said(cited.get('handle'), 32)}, metric {_said(cited.get('metric'), 60)}, total {_said(cited.get('total'))}")
         change, saves = finding["parsed"], finding.get("saves", {})
-        lines.append("- change: " + ("none stated" if change is None else f"action {change.action}" + "".join(f", {handle + ' ' if len(saves) > 1 else ''}{_saves(figure)}" for handle, figure in saves.items())))
+        pricing = app_code()[0] if saves else None
+        lines.append("- change: " + ("none stated" if change is None else f"action {change.action}"
+                                     + "".join(f", {handle + ' ' if len(saves) > 1 else ''}{_saves(figure)}{_rests_on(pricing, change, handle)}" for handle, figure in saves.items())))
         lines += [f"- change not priced{' for ' + handle if len(saves) > 1 else ''}: {figure['why']}" for handle, figure in saves.items() if "why" in figure]
         fates = finding.get("fates", {"set": [], "other": []})
         for kind, items in (("set", change.settings if change else ()), ("other way", change.others if change else ())):
@@ -1636,7 +1654,7 @@ def command_run(args, client, spend, sleep=time.sleep, clock=time.monotonic) -> 
             for words in g.get("lost", []):
                 helpers.say(f"miss: {row['id']}: the app dropped {words}")
             for words in g.get("below", []):
-                helpers.say(f"miss: {row['id']}: the app kept a setting below the floor of the real platform, which no tool showed: {words}")
+                helpers.say(f"miss: {row['id']}: the app kept a setting below the floor of the real platform, which no limit showed: {words}")
     unknown = sum(1 for state, _ in results if state == "UNKNOWN")
     if unknown:
         helpers.say(f"run: {unknown} of the evaluations in Foundry could not be measured (UNKNOWN): that part is not proved, and the code graders above are what decided")
