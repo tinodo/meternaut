@@ -30,14 +30,26 @@ def real_answer(name: str, kind: str, store: MemoryStore) -> dict:
     return json.loads(box.call(name, arguments_of(name, kind)))
 
 
+def memory_of(row: dict) -> MemoryStore:
+    """A memory that holds the claims that a row gives in `knowledge`, each read on the day of the fixtures and still current. The first claim of the row has the highest id, which the real tool shows first."""
+    store = MemoryStore(clock=lambda: NOW)
+    claims = row.get("knowledge") or []
+    for place, claim in enumerate(claims):
+        store.claim_put(ClaimRecord(claim_id=f"c{len(claims) - place:02d}", resource_type=row["type"], kind=claim["kind"], url=claim["url"], quote=claim["quote"],
+                                    read_at=f"{evals.KNOWLEDGE_READ}T09:00:00Z", checked_at="2026-11-03T09:00:00Z", expires_at="2026-12-01T09:00:00Z", state="fresh"))
+    return store
+
+
 class TheFixturesAreTheShapesOfTheRealTools(unittest.TestCase):
-    def test_a_clean_row_gets_the_answers_that_an_empty_memory_gives_to_the_word(self):
+    def test_a_clean_row_gets_the_answers_that_a_memory_with_its_claims_gives_to_the_word(self):
         clean = [row for row in ROWS if not row.get("inject")]
         self.assertGreater(len(clean), 3)
+        self.assertTrue(any(row.get("knowledge") for row in clean) and not all(row.get("knowledge") for row in clean), "some rows give documentation and most do not")
         for row in clean:
             answers = evals.answers_of(row)
             for name in RECALL:
-                self.assertEqual(answers[name](arguments_of(name, row["type"])), real_answer(name, row["type"], MemoryStore(clock=lambda: NOW)), f"{row['id']}: {name}")
+                store = memory_of(row) if name == "recall_knowledge" else MemoryStore(clock=lambda: NOW)
+                self.assertEqual(answers[name](arguments_of(name, row["type"])), real_answer(name, row["type"], store), f"{row['id']}: {name}")
 
     def test_a_hostile_row_gives_the_documentation_one_claim_with_the_keys_of_a_real_claim_and_the_other_two_the_same_as_ever(self):
         kind = "microsoft.example/things"
