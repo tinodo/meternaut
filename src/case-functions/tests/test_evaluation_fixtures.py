@@ -960,8 +960,8 @@ class TheStory(Base):
     def test_the_registers_that_the_replay_reads_of_the_calls_of_the_investigator_are_the_real_toolboxs_for_the_same_calls_the_meters_that_share_a_list_with_the_asked_one_included(self):
         story = ROWS[STORY_ROW]
         # The base charge (m1) and the additional units (m2) of the story share their list. The invented row has a meter in another unit (m3) and a meter whose name two lines of the list share (m4): it has no list price.
-        for spec, asked, retail in ((story, ("m2",), {"m1": 0.29, "m2": 0.14}), (story, ("m1",), {"m1": 0.29, "m2": 0.14}), (self.invented(), ("m2",), {"m1": 2.0, "m2": 3.0}),
-                                    (self.invented(), ("m4", "m3"), {"m1": 2.0, "m2": 3.0})):
+        for spec, asked, retail, shares in ((story, ("m2",), {"m1": 0.29, "m2": 0.14}, {"m1": ["m2"]}), (story, ("m1",), {"m1": 0.29, "m2": 0.14}, {"m2": ["m1"]}),
+                                            (self.invented(), ("m2",), {"m1": 2.0, "m2": 3.0}, {"m1": ["m2"], "m4": ["m2"]}), (self.invented(), ("m4", "m3"), {"m1": 2.0, "m2": 3.0}, {"m1": ["m4"], "m2": ["m4"]})):
             box, trace, answer = self.real(spec), [], evals.handler_of(spec)[0]
             for name, arguments in (("cost_meters", {"handle": "r1"}), *(("price_alternatives", {"meter": meter}) for meter in asked)):
                 ask(box, name, **arguments)
@@ -970,7 +970,21 @@ class TheStory(Base):
             with self.subTest(row=spec["id"], asked=asked):
                 self.assertEqual(box.retail, retail, "the toolbox registers the list price of the line of every meter that shares the list of one that was asked for")
                 self.assertEqual((market.offers, market.retail), (box.offers, box.retail), "the replay: the same meters, the same price handles and the same list prices")
+                self.assertEqual((market.asked, market.shares), (frozenset(asked), shares), "and it says which meters the tool was asked about, and which meters were offered through the list of which")
         self.assertEqual(sorted(box.offers), ["m1", "m2", "m3", "m4"], "the meter in another unit is there because it was asked for, and not because it shares a list")
+        self.assertEqual(evals._market(story, pricing, None, {}).asked, frozenset(("m1", "m2")), "without a replay every meter counts as asked about")
+
+    def test_a_meter_that_has_another_product_than_the_one_asked_about_is_offered_nothing_by_the_toolbox_and_by_the_replay(self):
+        # Two meters of one resource in one unit whose product words differ: the list of a product is not the list of the other, even in the same unit (the lines of the list belong to the first meter's product)
+        spec = {**self.invented(), "meters": [self.item("Big Units", 10, 2.0), {**self.item("Elite Units", 5, 2.0), "subcategory": "Premium Tier"}],
+                "prices": [self.listed("Basic", "Big Units", 3.0), self.listed("Plus", "Elite Units", 4.0)], "resources": [{"h": "r1", "usd": 900.0, "total": 3, "sku": "Standard"}]}
+        box, trace, answer = self.real(spec), [], evals.handler_of(spec)[0]
+        for name, arguments in (("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"})):
+            ask(box, name, **arguments)
+            trace.append({"name": name, "arguments": arguments, "result": answer(name, arguments)})
+        market = evals._market(spec, pricing, evals.shown_bill(trace), {})
+        self.assertEqual((sorted(box.meters), sorted(box.offers), box.retail), (["m1", "m2"], ["m1"], {"m1": 3.0}), "the toolbox registers the asked meter alone")
+        self.assertEqual((market.offers, market.retail, market.shares), (box.offers, box.retail, {}), "and so does the replay")
 
     def test_a_meter_with_no_line_of_its_name_and_lines_that_disagree_say_none_and_several_in_the_real_tool_too_and_a_page_past_the_end_is_empty(self):
         spec = self.invented()
