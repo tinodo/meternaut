@@ -73,8 +73,13 @@ class TheActionIsOfferedInTheOrderOfARelease(unittest.TestCase):
                       "the same container script and the same tool as cases-run", "It needs operator and cases first", "counts and plain words only", "its name, its version",
                       "the first 12 hex digits of the lock's digest of its definition", "made or existing", "the reason word and what to check", "no line arrived in 10 minutes",
                       f"it says what comes next: {NEXT}", "The order of a release is cases, agents-ready, foundry-evals on the exact version, cases-run",
-                      "It calls no model, reads nothing of the estate and changes nothing in it", "a version that exists is not a promoted one, because a run uses the latest version of each agent"):
+                      "It calls no model, reads nothing of the estate and changes nothing in it", "a version that exists is not a promoted one, because a run uses the latest version of each agent",
+                      "A stored definition that differs from the lock pulls the switch investigation and sends one letter to the owner, exactly as a real run does, and while that switch or the switch all is pulled this action refuses every agent with the word switch",
+                      "The order protects a real run that a person starts: a timer uses the latest version from the moment cases publishes, replayed or not, and the replay covers the Investigator only",
+                      "A timer that runs at the same moment as this action can make a second version with the same definition, which is known, harmless and not prevented",
+                      "A rollback is the old code and the old lock reverted together in one commit, then cases, then this action: the lock alone cannot be put back, and this action then refuses with lock-differs"):
             self.assertIn(words, sentence, words)
+        self.assertNotIn("put back in the lock", sentence, "the lock alone cannot be rolled back: the code that is deployed is held against it")
         self.assertNotIn('"', sentence, "the description is one quoted value on one line")
         self.assertIn(" cases-run: start one Watch through the control queue", description(), "the sentence of cases-run is where it was")
 
@@ -190,13 +195,20 @@ class TheSummariesSayWhatWasDoneAndWhatIsNotProved(unittest.TestCase):
                       "this runner put nothing in the queue and read no telemetry.", "\\`operator\\` has to be run first", "the app does not know the job", "run \\`cases\\`",
                       "\\`switch\\` means that a switch stops the agents", "\\`lock-differs\\` means that the definition that the app's code and settings give is not the one in the lock, so nothing was made from it",
                       "\\`definition\\` means that the stored definition differs from the lock (\\`agents-drift\\` says which control)", "\\`service\\` means that the Foundry project gave no answer or refused",
+                      "\\`version-moved\\` means that a newer version appeared while the job ran, which a timer at the same moment can cause: run \\`agents-ready\\` again",
+                      "so the switch investigation is pulled and one letter was sent, exactly as in a real run, and a person resumes it on the Operations page",
                       "Nothing in the estate was changed", "Running \\`agents-ready\\` again is safe."):
             self.assertIn(words, failed, words)
         for words in ("The Operator, from inside the network, put the control message of the job ready in the queue and read the telemetry, with its own identity and no key; this runner put nothing in the queue",
                       "That proves that the versions are stored and equal the lock, and nothing about how they answer", "a version that exists is not a promoted one, because a run uses the latest version of each agent and nothing splits the traffic",
                       "The job called no model, read nothing of the estate and changed nothing in it.", "What comes next is \\`foundry-evals\\` on this version, and then \\`cases-run\\`.",
-                      "A rollback is the old definition put back in the lock and this action run again, which makes a new version with the old definition; a real run that already used a bad version cannot be taken back."):
+                      "The replay covers the Investigator only: after a change to the Skeptic, \\`cases-run\\` is the first test of it, and after a change to the Scholar, \\`study-run\\` is.",
+                      "This order protects a real run that a person starts: a timer that is due uses the latest version from the moment \\`cases\\` published, replayed or not, and pausing the investigation holds the timers "
+                      "but makes this action and the real runs (\\`cases-run\\` and \\`study-run\\`) refuse, so it is paused after this action and resumed before the real run.",
+                      "A rollback is the old code and the old lock reverted together in one commit, then \\`cases\\`, then this action, which makes a new version with the old definition "
+                      "(the lock alone cannot be put back: this action then refuses with \\`lock-differs\\`); a real run that already used a bad version cannot be taken back."):
             self.assertIn(words, finished, words)
+        self.assertNotIn("put back in the lock", block, "the lock alone cannot be rolled back: the code that is deployed is held against it")
         self.assertEqual(len(re.findall(r"(?m)^\s+agents-ready\) echo ", block)), 2)
         cases = re.findall(r"(?m)^\s+cases\) echo \"(.*?)\" ;;$", block)[1]
         self.assertTrue(cases.endswith("The stored versions of the three agents are made from the lock by the action \\`agents-ready\\`, which a release runs next, before \\`foundry-evals\\` and \\`cases-run\\`."), cases[-200:])

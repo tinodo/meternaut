@@ -1129,8 +1129,10 @@ class TheReady(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         for text in (f"Request {ID}:", "meternaut-investigator: version 18, made (definition 3f9a1c0b7e2d).", "meternaut-skeptic: version 4, existing (definition 91d0aa4c2b77).",
                      "meternaut-scholar: version 3, existing (definition c7e5b1029f3a).", "The job ended after 3 seconds: 1 made, 2 existing, 0 refused, 0 failed. It called no model and read nothing of the estate.",
-                     "All three agents are ready: passed.", "nothing about how they answer", "What comes next: run foundry-evals on this version, then cases-run."):
+                     "All three agents are ready: passed.", "nothing about how they answer", "What comes next: run foundry-evals on this version, then cases-run.",
+                     "The replay covers the Investigator only: after a change to the Skeptic, cases-run is the first test of it, and after a change to the Scholar, study-run is."):
             self.assertIn(text, out)
+        self.assertTrue(out.rstrip().endswith("after a change to the Scholar, study-run is."), "it is the last thing that the pass says: what comes next, and what the replay does not cover")
         self.assertNotIn(SECRET, out)
         args = asked[0]
         self.assertEqual(args[args.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")

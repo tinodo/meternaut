@@ -609,7 +609,7 @@ def ready_lines(request_id: str, events: list[dict], minutes: float) -> tuple[li
         reasons.append(why)
     if end.get("ok") is True and not why and not reasons:
         lines.append("  All three agents are ready: passed. That proves that the versions are stored and equal the lock, and nothing about how they answer.")
-        lines.append("  What comes next: run foundry-evals on this version, then cases-run.")
+        lines.append("  What comes next: run foundry-evals on this version, then cases-run. The replay covers the Investigator only: after a change to the Skeptic, cases-run is the first test of it, and after a change to the Scholar, study-run is.")
         return lines, False
     lines.append("  The agents were not made ready: the check did not pass.")
     lines.extend(f"  What to check: {READY_ADVICE[reason]}" for reason in dict.fromkeys(reasons))
