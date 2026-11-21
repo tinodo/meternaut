@@ -1207,6 +1207,21 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
         both = evals.shown_properties(called(("describe", {"handle": "r1"}), ("list_resources", listing)))
         self.assertEqual(both["r1"], {"capacityUnits", "retentionDays"})
 
+    def test_the_two_rows_of_the_file_are_graded_by_what_the_app_keeps_of_the_five_answers_that_it_drops_and_of_the_one_that_it_keeps(self):
+        rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
+        idle, busy = rows["idle-bastion-with-four-units"], rows["busy-bastion-with-four-units"]
+        good = self.finding(handles=["r1"], basis="oversized", **{"change": stated("r1", "scaleUnits", 4, 2, as_finding=True)["change"]})
+        self.assertEqual(evals.grade(idle, self.said(good))["set_found"], 1.0)
+        for why, flawed in (("no basis, no confidence", {k: v for k, v in good.items() if k not in ("basis", "confidence")}), ("a basis that is on no list", {**good, "basis": "banana"}),
+                            ("a confidence that is a word", {**good, "confidence": "high"}),
+                            ("a claim of no usage without a measurement", {**good, "basis": "no-usage", "metric_evidence": []}),
+                            ("a claim of no usage that cites the sessions of the host that is in use", {**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 5200}]})):
+            with self.subTest(why=why):
+                self.assertEqual(evals.grade(idle, self.said(flawed))["set_found"], 0.0)
+                self.assertEqual(evals.grade(busy, self.said(flawed))["decoys"], 0, "the app drops it, so it is no decoy")
+        self.assertEqual(evals.grade(idle, self.said({**good, "basis": "no-usage", "metric_evidence": [{"handle": "r1", "metric": "sessions", "total": 0}]}))["set_found"], 1.0)
+        self.assertEqual(evals.grade(busy, self.said(good))["decoys"], 1, "a finding that the app keeps, on the host that is in use, is a decoy")
+
     def test_a_setting_counts_only_when_a_tool_of_the_replay_showed_the_property_of_the_resource(self):
         self.assertEqual(evals.grade(self.GATEWAYS, stated(), {"r1": {"capacityUnits"}})["set_found"], 1.0)
         self.assertEqual(evals.grade(self.GATEWAYS, stated(), None)["set_found"], 1.0, "without the replay's trace the properties of the fixture count")
