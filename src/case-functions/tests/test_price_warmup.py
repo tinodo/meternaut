@@ -11,6 +11,7 @@ from support import NOW
 import test_investigate as ti
 from cases import prices
 from cases import toolbox as tb
+from cases.config import DEFAULT_INVESTIGATE_EVERY_DAYS
 from cases.memory_store import MemoryStore, stamp
 from cases.models import PriceBookRecord
 from test_price_book import table_store
@@ -68,6 +69,15 @@ def put(store, product, region, days):
     store.book_put(PriceBookRecord(SERVICE, region, product, stamp(NOW - dt.timedelta(days=days)), prices.pack(lines), 1))
 
 
+def saying(estate, box, clock, status, wait=None, took=0.3):
+    """The list answers every call with `status`, and with the wait that it asks for in the header that the real list uses when there is one; `box.starts` has the time of each call."""
+    def hook(found, url, timeout):
+        box.starts.append(clock.now)
+        clock.advance(took)
+        return status, {"x-ms-ratelimit-retailprices-retry-after": str(wait)} if wait is not None else {}, b"{}"
+    estate.hook = hook
+
+
 class TheProducts(unittest.TestCase):
     def test_the_twelve_dearest_meters_give_the_products_that_are_read_in_the_order_of_their_cost_each_in_the_region_of_its_resource(self):
         estate, box, store, tables, clock = warmed()
@@ -122,6 +132,14 @@ class TheBook(unittest.TestCase):
         self.assertNotIn(("Tier 5", "swedencentral"), asked(estate))
         self.assertIn(("Tier 3", "swedencentral"), asked(estate))
         self.assertEqual((store.book_get(SERVICE, "swedencentral", "Tier 3").read_at, store.book_get(SERVICE, "westeurope", "Tier 2").read_at), (stamp(NOW), stamp(NOW - dt.timedelta(days=1))))
+
+    def test_what_the_last_weekly_run_read_is_still_fresh_at_the_next_one_and_every_run_does_not_pay_for_the_warm_up_again(self):
+        # The investigation runs every 7 days (INVESTIGATE_EVERY_DAYS): a copy that is fresh for 3 days was always stale by then.
+        self.assertGreater(prices.FRESH_DAYS, DEFAULT_INVESTIGATE_EVERY_DAYS)
+        estate, box, store, tables, clock = warmed()
+        for n in range(1, 13):
+            put(store, f"Tier {n}", "westeurope" if n <= 2 else "swedencentral", DEFAULT_INVESTIGATE_EVERY_DAYS)
+        self.assertEqual((box.warm_prices(), estate.price_calls, box.slept), ((0, 12, 0), [], []))
 
     def test_a_book_that_holds_all_twelve_makes_no_call_to_the_list_at_all(self):
         estate, box, store, tables, clock = warmed()
@@ -182,18 +200,81 @@ class TheTime(unittest.TestCase):
         self.assertEqual(box.warm_prices(), (12, 0, 0))
         self.assertEqual((60.0 in box.slept, len(estate.price_calls)), (True, 13))
 
-    def test_a_wait_that_is_longer_than_the_warm_up_takes_is_not_taken_but_the_next_read_waits_for_it_to_pass(self):
+    def test_a_wait_that_is_longer_than_the_warm_up_takes_is_not_taken_and_ends_the_warm_up_at_once_and_the_list_is_held_for_the_run(self):
+        # It was not the end: the next read waited for the time to pass and tried again, and a list that always asked for a minute cost 121 seconds and gave nothing.
         estate, box, store, tables, clock = warmed()
-        answer = estate.hook
-        asks = iter([61])
-
-        def busy(found, url, timeout):
-            wait = next(asks, None)
-            return (429, {"x-ms-ratelimit-retailprices-retry-after": str(wait)}, b"{}") if wait else answer(found, url, timeout)
-        estate.hook = busy
-        self.assertEqual(box.warm_prices(), (11, 0, 1), "the first product was not read, and the other eleven were")
-        self.assertIn(61.0, [round(seconds, 1) for seconds in box.slept], "the next read waited until the time that the list asked for had passed")
+        saying(estate, box, clock, 429, 61)
+        self.assertEqual(box.warm_prices(), (0, 0, 12), "the first product was not read, and the others were not asked for")
+        self.assertEqual((box.slept, len(estate.price_calls), round(box._hold.until - clock.now)), ([], 1, 61))
         self.assertEqual([note for note in box.notes if note.startswith("the price book")], ["the price book: the price list could not be read (the price list asked to wait 61 seconds (429))"])
+
+    def test_a_list_that_says_no_again_after_the_wait_that_it_asked_for_ends_the_warm_up_at_that_product(self):
+        estate, box, store, tables, clock = warmed()
+        saying(estate, box, clock, 429, 60)
+        self.assertEqual(box.warm_prices(), (0, 0, 12))
+        self.assertEqual((box.slept, len(estate.price_calls), round(clock.now)), ([60.0], 2, 61), "a try, the wait that it asked for and a try: it was 4 tries and 121 seconds, and nothing read")
+
+    def test_a_list_that_says_429_and_gives_no_time_is_tried_again_a_gap_after_the_first_try_and_ends_the_warm_up_when_it_says_it_again(self):
+        # It was 24 requests in 91 seconds: the second try of a read came 1 or 2 seconds after the first, and the list allows about ten in a minute.
+        estate, box, store, tables, clock = warmed()
+        saying(estate, box, clock, 429)
+        self.assertEqual(box.warm_prices(), (0, 0, 12))
+        self.assertEqual((len(estate.price_calls), box.slept, [later - earlier >= tb.WARM_GAP for earlier, later in zip(box.starts, box.starts[1:])]), (2, [tb.WARM_GAP], [True]))
+
+    def test_a_list_that_asked_to_wait_before_the_warm_up_is_waited_for_when_the_warm_up_has_the_time_and_is_not_asked_when_it_has_not(self):
+        estate, box, store, tables, clock = warmed()
+        box._hold.until = 30.0
+        self.assertEqual((box.warm_prices(), box.slept[:2]), ((12, 0, 0), [30.0, tb.WARM_GAP]), "the first read waited for the time that the list asked for to pass")
+        estate, box, store, tables, clock = warmed()
+        box._hold.until = 500.0
+        self.assertEqual((box.warm_prices(), estate.price_calls, box.slept), ((0, 0, 12), [], []), "500 seconds are more than the warm-up has")
+
+    def test_a_list_that_says_429_once_and_then_answers_is_read_from_and_the_warm_up_goes_on(self):
+        estate, box, store, tables, clock = warmed()
+        answer, said = estate.hook, []
+
+        def hook(found, url, timeout):
+            if not said:
+                said.append(url)
+                box.starts.append(clock.now)
+                clock.advance(0.3)
+                return 429, {}, b"{}"
+            return answer(found, url, timeout)
+        estate.hook = hook
+        self.assertEqual(box.warm_prices(), (12, 0, 0))
+        self.assertEqual(len(estate.price_calls), 13)
+
+    def test_a_list_that_says_no_to_the_second_page_of_a_product_ends_the_warm_up_too_and_the_pages_are_a_gap_apart(self):
+        estate, box, store, tables, clock = warmed()
+        estate.lines.append(line("Basic", "Global Units", 0.1, product="Tier 1", region="Global"))  # a product of two pages, when a page holds one line
+        estate.page_size = 1
+        answer = estate.hook
+
+        def hook(found, url, timeout):
+            if "$skip=" not in url:
+                return answer(found, url, timeout)
+            box.starts.append(clock.now)
+            clock.advance(0.3)
+            return 429, {}, b"{}"
+        estate.hook = hook
+        self.assertEqual(box.warm_prices(), (0, 0, 12), "the first page was read, the second was refused twice, and a product that was cut short is not read")
+        self.assertEqual((len(estate.price_calls), box.slept, store.book_get(SERVICE, "westeurope", "Tier 1")), (3, [tb.WARM_GAP, tb.WARM_GAP], None))
+
+    def test_two_requests_that_reach_the_list_are_never_less_than_the_gap_apart_whatever_the_list_says(self):
+        estate, box, store, tables, clock = warmed()
+        answer, script = estate.hook, iter([500, 500, 200, 500])  # a product that fails twice, one that is read, one that fails once and is read at the second try, and all the rest
+
+        def hook(found, url, timeout):
+            step = next(script, 200)
+            if step == 200:
+                return answer(found, url, timeout)
+            box.starts.append(clock.now)
+            clock.advance(0.3)
+            return step, {}, b"{}"
+        estate.hook = hook
+        self.assertEqual(box.warm_prices(), (11, 0, 1), "a failure that is no 429 and no silence ends nothing: the next product is read")
+        gaps = [later - earlier for earlier, later in zip(box.starts, box.starts[1:])]
+        self.assertEqual((len(box.starts), min(gaps) >= tb.WARM_GAP), (14, True), "two tries of the first product, one of the second, two of the third and a try for each of the nine others")
 
     def test_a_list_that_gives_no_answer_ends_the_warm_up_at_the_first_read_and_is_no_error_and_not_a_host_that_is_down_for_the_run(self):
         estate, box, store, tables, clock = warmed()
@@ -247,10 +328,11 @@ class WhatTheInvestigationDoesWithIt(unittest.TestCase):
     class Toolbox(ti.FakeToolbox):
         def __init__(self, order, outcome):
             super().__init__()
-            self.order, self.outcome, self.emit = order, outcome, None
+            self.order, self.outcome, self.emit, self.seconds = order, outcome, None, None
 
-        def warm_prices(self):
+        def warm_prices(self, seconds=None):
             self.order.append("warm")
+            self.seconds = seconds
             if isinstance(self.outcome, Exception):
                 raise self.outcome
             return self.outcome
@@ -290,6 +372,15 @@ class WhatTheInvestigationDoesWithIt(unittest.TestCase):
         h.go()
         self.assertEqual([note for note in h.notes if "price book" in note], [])
         self.assertTrue(h.result.ran)
+
+    def test_the_warm_up_gets_at_most_an_eighth_of_the_time_of_the_investigation_like_a_call_of_a_tool_and_never_more_than_its_own_limit(self):
+        # It was given WARM_SECONDS (180) whatever the time of the investigation: 3 minutes of a run of 30 seconds.
+        for budget, seconds in ((30, 3.75), (90, 11.25), (600, 75.0), (1440, tb.WARM_SECONDS), (1500, tb.WARM_SECONDS)):
+            with self.subTest(budget=budget):
+                box = self.Toolbox([], (0, 0, 0))
+                ti.Harness(toolbox=box, settings=ti.make_settings(investigate_max_seconds=budget)).go()
+                self.assertEqual(box.seconds, seconds)
+        self.assertEqual((tb.WARM_SECONDS, 1440 / 8), (180.0, 180.0), "the default time of an investigation is 1,440 seconds: its eighth is the limit of the warm-up")
 
 
 if __name__ == "__main__":

@@ -123,6 +123,84 @@ class TheWait(unittest.TestCase):
             self.read()
         self.assertEqual((self.slept, len(self.estate.price_calls)), ([], 1), "0.5 of the 24 seconds were left")
 
+    def test_a_wait_that_is_no_number_to_wait_for_is_read_as_no_wait_asked_and_does_not_hold_the_list_for_ever(self):
+        # The client reads "inf" and "1e999" as infinity: a wait of infinity made the words of a failure fail (OverflowError) and held the list for ever.
+        for header in (float("inf"), "1e999", prices.MAX_ASKED + 1, 1e12):
+            with self.subTest(header=header):
+                self.setUp()
+                hold = prices.Hold()
+                scripted(self.estate, self.clock, (429, header), (429, header))
+                with self.assertRaises(HttpError) as raised:
+                    self.read(hold)
+                failure = raised.exception
+                self.assertEqual((str(failure), failure.status, failure.code, failure.retry_after), ("the price list answered 429 and gave no time to wait", 429, "429", None))
+                self.assertEqual((self.slept, len(self.estate.price_calls), hold.until, hold.paused), ([1.5], 2, 0.0, set()), "the pause of a list that said nothing: 1 second and its jitter; the list is not held")
+                scripted(self.estate, self.clock)
+                self.assertTrue(self.read(hold).complete, "a later call to the list is a call to the list, and not a failure for ever")
+
+    def test_a_wait_that_the_client_would_not_make_of_a_header_is_read_the_same_way(self):
+        class Refusing:
+            """A client whose every request is a 429 with the wait `wait`: a number below nothing, or one that is no number, as a client other than the one of the app might give."""
+
+            def __init__(self, wait, sleep):
+                self.wait, self.sleep, self.calls = wait, sleep, 0
+
+            def jitter(self):
+                return 0.5
+
+            def request(self, *arguments, **more):
+                self.calls += 1
+                raise HttpError(429, "busy", self.wait)
+
+        for wait in (float("nan"), float("-inf"), -5.0, 10 ** 400):
+            with self.subTest(wait=wait):
+                self.setUp()
+                hold, client = prices.Hold(), Refusing(wait, self.sleep)
+                with self.assertRaises(HttpError) as raised:
+                    prices.read(client, SERVICE, "swedencentral", PRODUCT, self.clock, hold=hold)
+                self.assertEqual((str(raised.exception), raised.exception.retry_after, client.calls, self.slept, hold.until), ("the price list answered 429 and gave no time to wait", None, 2, [1.5], 0.0))
+
+    def test_a_wait_that_a_run_can_take_is_a_number_from_nothing_up_to_a_day(self):
+        for header, asked in ((0, 0.0), (0.5, 0.5), (60, 60.0), (prices.MAX_ASKED, prices.MAX_ASKED)):
+            self.assertEqual(prices._asked(HttpError(429, "busy", header)), asked, header)
+        for header in (None, float("inf"), float("-inf"), float("nan"), -1.0, -0.001, prices.MAX_ASKED + 0.001, 10 ** 400):
+            self.assertIsNone(prices._asked(HttpError(429, "busy", header)), header)
+        self.assertIsNone(prices._asked(HttpError(503, "busy", 30.0)), "only a 429 asks for a wait")
+
+    def test_a_list_that_asks_for_no_time_at_all_is_asked_again_at_once_and_that_is_the_one_wait_of_its_address(self):
+        scripted(self.estate, self.clock, (429, 0), (429, 0))
+        hold = prices.Hold()
+        with self.assertRaises(HttpError) as raised:
+            self.read(hold)
+        self.assertEqual((str(raised.exception), self.slept, len(self.estate.price_calls), len(hold.paused)), ("the price list asked to wait 0 seconds (429)", [0.0], 2, 1))
+
+    def test_the_gap_is_the_least_pause_before_a_second_try_whatever_the_list_asked_or_did_not_ask(self):
+        for step, slept in (((429, None), [6.0]), (500, [6.0]), ((429, 2), [6.0]), ((429, 12), [12.0]), ((429, 6), [6.0])):
+            with self.subTest(step=step):
+                self.setUp()
+                scripted(self.estate, self.clock, step)
+                self.assertTrue(self.read(gap=6.0).complete)
+                self.assertEqual(self.slept, slept)
+        self.setUp()
+        scripted(self.estate, self.clock, (429, None))
+        self.assertTrue(self.read().complete)
+        self.assertEqual(self.slept, [1.5], "without a gap the pause is the one that the client chose")
+
+    def test_the_gap_is_kept_before_the_next_page_too_and_a_read_that_has_no_time_for_it_ends_there(self):
+        self.estate.page_size = 2
+        starts = []
+        self.estate.hook = lambda found, url, timeout: (starts.append(self.clock.now), found.price_answer(url))[1]
+        self.assertTrue(self.read(gap=6.0).complete)
+        self.assertEqual((starts, self.slept), ([0.0, 6.0, 12.0], [6.0, 6.0]), "three pages of the list, a gap apart")
+        self.setUp()
+        self.estate.page_size = 2
+        self.assertTrue(self.read().complete)
+        self.assertEqual(self.slept, [], "no gap: the pages follow at once, as they did")
+        self.setUp()
+        self.estate.page_size = 2
+        book = self.read(gap=6.0, seconds=6.5)
+        self.assertEqual((book.complete, len(book.lines), self.slept, len(self.estate.price_calls)), (False, 2, [], 1), "6.5 seconds hold the first page and not a gap and another page")
+
     def test_the_longest_wait_and_the_read_fit_in_the_time_of_a_call_of_the_toolbox(self):
         self.assertEqual((prices.SECONDS, prices.WAIT), (24.0, 20.0))
         self.assertLessEqual(prices.SECONDS + prices.WAIT, 45.0, "a call may take 45 seconds: 24 for the read and one wait of 20")
@@ -169,6 +247,18 @@ class ThePriceToolInARun(unittest.TestCase):
         scripted(estate, clock, (429, 60))
         ask(box, "price_alternatives", meter="m1")
         self.assertIsNone(box._prices_down, "a host that answered 429 answered: only one that gives no answer at all is not asked again")
+
+    def test_a_wait_of_infinity_is_a_429_that_asks_for_nothing_and_the_next_ask_for_other_prices_reaches_the_list(self):
+        estate, box, clock = self.clocked()
+        seen = []
+        box.emit = lambda kind, **fields: seen.append(fields)
+        scripted(estate, clock, (429, float("inf")), (429, float("inf")))
+        self.assertEqual(ask(box, "price_alternatives", meter="m1"), {"error": "unavailable", "code": "429"}, "it was an error of the app (OverflowError) that said failed, and held the list for ever")
+        self.assertEqual((box._hold.until, len(estate.price_calls)), (0.0, 2))
+        self.assertEqual([note for note in box.notes if note.startswith("price_alternatives")], ["price_alternatives: the price list could not be read (the price list answered 429 and gave no time to wait)"])
+        self.assertEqual([("status", "retryAfter" in fields) for fields in seen if fields["status"] == 429], [("status", False)] * 2, "no wait that is not a number is written into a line of the History")
+        scripted(estate, clock)
+        self.assertEqual(ask(box, "price_alternatives", meter="m1", within="service")["match"], "found")
 
     def test_trials_of_code_that_the_list_asked_to_wait_for_do_not_end_the_trials_of_the_run_and_are_made_again_when_the_time_has_passed(self):
         estate, box, clock = self.clocked()

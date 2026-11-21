@@ -49,7 +49,7 @@ from .memory_store import parse, stamp
 from .models import ADVISE, AUTOMATED, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
+from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, WARM_SECONDS, Resource, Toolbox, meter_word
 
 if TYPE_CHECKING:
     from .run import Services
@@ -886,11 +886,12 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if remembered is None:
         note(activity.UNREADABLE)
     # The price book is filled before the first question: the list is read for the products of the dearest meters that it does not hold fresh, with no model call and no call of a tool of the run
-    # (Toolbox.warm_prices). It never fails the run, and it has no effect when the store has no book.
+    # (Toolbox.warm_prices), in at most an eighth of the investigation's time, like a call of a tool, and in no more than WARM_SECONDS. It never fails the run, and it has no effect when the store has
+    # no book.
     warm = getattr(toolbox, "warm_prices", None)
     if warm is not None:
         try:
-            warmed_up = warm()
+            warmed_up = warm(min(WARM_SECONDS, budget / 8))
         except Exception as error:  # noqa: BLE001 (a warm-up never fails the run)
             note(f"the price book could not be warmed ({type(error).__name__})")
         else:

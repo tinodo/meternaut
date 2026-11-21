@@ -68,6 +68,9 @@ What the investigation may rely on after a run (it reads these and changes none)
                         list price has steps or that several lines with its words disagree (which takes it away). No list price, no switch is priced.
   Toolbox.offers[m]     the price handles that price_alternatives showed for the meter handle m in this run (the rows of the pages that it showed and its current line, never a price with steps or of nothing). The
                         form `alternative` of cases/pricing.py takes a price handle only from here, so that a price that no tool showed for that meter (and so for its service and region) is never priced.
+  Toolbox.ages[h]       how many whole days old the copy of the price book was that last showed the handle h, a meter handle m (for its `retail`) or a price handle p (for its line), when it was a copy of at least
+                        a day: a handle that a read of the list showed, or a copy of today, has no entry. The code that prices a switch (cases/pricing.py) says it to the owner with the figure, so that a list price
+                        that may be weeks old is never shown as if it were today's.
   Toolbox.log           one dict for each call: {"name", "arguments", "ok", "chars"}. Toolbox.call never raises.
 
 neighbors, profile and changes. neighbors reads the references that the resources of the estate hold to one another once for a run (cases/neighbors.py), and shows what one resource refers to and what
@@ -1042,6 +1045,7 @@ class Toolbox:
         self.prices: dict[str, prices.Line] = {}  # every line of the price list that price_alternatives has shown, by its handle (p1, p2, ...): the same line has the same handle all through the run; only a line with one price has a handle
         self.retail: dict[str, float] = {}  # meter handle -> the list price of one unit of the line that the words of the meter name, as price_alternatives showed it (a line with one price, above nothing); only an ask that finds that the line has steps, or that lines disagree, takes it away
         self.offers: dict[str, set[str]] = {}  # meter handle -> the price handles that price_alternatives showed for it in this run: the rows of the pages that it showed, and its current line
+        self.ages: dict[str, int] = {}  # meter handle or price handle -> how many whole days old the copy of the price book was that last showed it, when it was a copy of at least a day: a read of the list, or a copy of today, leaves none
         self._price_keys: dict[tuple, str] = {}
         self._books: "dict[tuple, prices.Book | Failed]" = {}  # (service, region, product or None) -> the prices read for it (or a copy of the price book), or the failure: a price list is read once in a run
         self._prices_down: Failed | None = None  # the failure of the first read of the price list that got no answer at all: the host is not asked again in the run
@@ -2774,9 +2778,10 @@ class Toolbox:
                 row[0] = self._meter_handle(line)
         return answer
 
-    def _price_handle(self, line: prices.Line) -> str | None:
+    def _price_handle(self, line: prices.Line, old: int | None = None) -> str | None:
         """The handle of a line of the price list that has one price: the same one whenever the line is shown again in the run, and None when the handles are used up. A line with price steps has none, so
-        that no code can take the price of its first step for the price of a quantity."""
+        that no code can take the price of its first step for the price of a quantity. `old` is how many days old the copy was that showed it (`Book.aged`): it is kept with the handle, and a later ask that
+        showed the line from a read of the list or from a copy of today takes it away."""
         if line.tiers > 1:
             return None
         key = (line.service, line.product, line.sku, line.meter, line.unit, line.region)
@@ -2784,8 +2789,17 @@ class Toolbox:
             if len(self._price_keys) >= HANDLE_LIMIT:
                 return None
             self._price_keys[key] = f"p{len(self._price_keys) + 1}"
-        self.prices[self._price_keys[key]] = line
-        return self._price_keys[key]
+        handle = self._price_keys[key]
+        self.prices[handle] = line
+        self._dated(handle, old)
+        return handle
+
+    def _dated(self, handle: str, old: int | None) -> None:
+        """Keeps how old the copy was that showed a handle, or forgets it when the handle was shown from a read of the list or from a copy of today (`old` is None)."""
+        if old is not None:
+            self.ages[handle] = old
+        else:
+            self.ages.pop(handle, None)
 
     @staticmethod
     def _ended(book: prices.Book) -> dict:
@@ -2795,12 +2809,10 @@ class Toolbox:
         code = token_word(getattr(book.error, "code", None), 40)
         return {"ended": "unavailable", **({"code": code} if code else {})}
 
-    def _moment(self) -> dt.datetime:
-        return self.now if self.now.tzinfo else self.now.replace(tzinfo=dt.timezone.utc)
-
     def _copy(self, key: tuple, fresh: bool) -> "prices.Book | None":
         """The price book's copy of a read of the list for `key` (service, region, product or None), and the run keeps it: None when the store has no book (the Table store has one, the memory store of the
-        tests has none), has no copy, has one that is broken or not complete, or has one that is not younger than FRESH_DAYS (`fresh`) or STALE_DAYS. It never raises."""
+        tests has none), has no copy, has one that is broken or not complete, has one that is not younger than FRESH_DAYS (`fresh`) or STALE_DAYS, or has one that was written more than a day ahead of
+        the clock of the run (a copy of the future would count as fresh for ever, and a day between two clocks is no reason to refuse one). It never raises."""
         get = getattr(self.memory, "book_get", None)
         if get is None:
             return None
@@ -2812,7 +2824,7 @@ class Toolbox:
             age, lines = self._moment() - parse(record.read_at), prices.unpack(service, record.lines, record.count)
         except Exception:  # noqa: BLE001 (the book never costs a call its answer)
             return None
-        if not lines or age >= dt.timedelta(days=prices.FRESH_DAYS if fresh else prices.STALE_DAYS):
+        if not lines or not (-dt.timedelta(days=1) <= age < dt.timedelta(days=prices.FRESH_DAYS if fresh else prices.STALE_DAYS)):
             return None
         book = prices.Book(lines, True, None, "book", max(0, age.days))
         if not self.trial or len(lines) <= TRIAL_LINES:
@@ -2839,11 +2851,11 @@ class Toolbox:
             except Exception:  # noqa: BLE001 (a line of the History never costs a call its answer)
                 pass
 
-    def _read_list(self, key: tuple, seconds: float, room: float) -> "prices.Book | Failed":
-        """One read of the price list, for a call of a tool and for the warm-up: it waits as the Hold of the run allows (`room` is the longest wait that the caller can afford), tells the History of each
-        try, and writes a complete read to the price book."""
+    def _read_list(self, key: tuple, seconds: float, room: float, gap: float = 0.0) -> "prices.Book | Failed":
+        """One read of the price list, for a call of a tool and for the warm-up: it waits as the Hold of the run allows (`room` is the longest wait that the caller can afford, `gap` the least pause between
+        two of its requests), tells the History of each try, and writes a complete read to the price book."""
         service, region, scope = key
-        book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, seconds, self._hold, room, lambda *tried: self._tried(key, *tried)))
+        book = self._guard(lambda: prices.read(self.arm.client, service, region, scope, self.monotonic, seconds, self._hold, room, lambda *tried: self._tried(key, *tried), gap))
         if isinstance(book, prices.Book):
             self._keep(key, book)
         return book
@@ -2877,9 +2889,10 @@ class Toolbox:
 
     def warm_prices(self, seconds: float = WARM_SECONDS) -> tuple[int, int, int] | None:
         """For code (cases/investigate.py), before the first beat, and never for an agent: reads the public price list for the products of the dearest meters of the estate (`_warm_keys`) that the price book
-        does not hold fresh, one read at a time with WARM_GAP seconds between two, so that the book has them when the questions come. A list that asks to wait is waited for up to WARM_WAIT seconds, and
-        the whole of it, the reads for the products included, ends after `seconds`. It makes no call of a tool of a run and no model call, and never raises. (products read, products that the book held fresh,
-        products not read: the list could not be read or the time ran out), or None when the store has no book."""
+        does not hold fresh, one read at a time with WARM_GAP seconds between two requests, so that the book has them when the questions come. A list that asks to wait is waited for up to WARM_WAIT
+        seconds, and the whole of it, the reads for the products included, ends after `seconds`. It ends at once when the list says no: no answer at all, or a 429 that a wait did not change or that
+        asked for more than the warm-up may wait (the list is not asked again, and the questions of the run read it as they need). It makes no call of a tool of a run and no model call, and never raises.
+        (products read, products that the book held fresh, products not read: the list could not be read or the time ran out), or None when the store has no book."""
         if getattr(self.memory, "book_get", None) is None or getattr(self.memory, "book_put", None) is None:
             return None
         client = self.arm.client
@@ -2902,14 +2915,14 @@ class Toolbox:
                     if pause > 0:
                         client.sleep(pause)
                     spare = min(prices.SECONDS, left / 2)
-                    book = self._read_list(key, spare, min(WARM_WAIT, left - spare))
+                    book = self._read_list(key, spare, min(WARM_WAIT, left - spare), WARM_GAP)
                     made += 1
                     if isinstance(book, prices.Book):
                         read += int(book.complete and bool(book.lines))  # a list with no line for these words gives the book nothing
                     else:
                         self._fail("the price book", "the price list", book)
-                        if getattr(book.error, "status", None) == 0:
-                            break  # no answer at all: the list is not asked again
+                    if getattr(book.error, "status", None) in (0, 429):
+                        break  # no answer at all, or the list says no: after the wait that it asked for, or for a wait that is more than the warm-up takes
         except Exception as error:  # noqa: BLE001 (a warm-up never fails the run)
             self.notes.append(f"the price book could not be warmed ({type(error).__name__})")
         finally:
@@ -2978,19 +2991,22 @@ class Toolbox:
             answer["current"] = {"line": PLACEHOLDER_PRICE, "retail": _measure(current.usd), **({"paid": _measure(paid)} if paid is not None else {}), "rate_ratio": ratio,
                                  **({"steps": current.tiers} if current.tiers > 1 else {})}
         _page(answer, table, offset, len(same))
+        aged = book.aged  # how old the copy is that shows these prices, when it is at least a day: kept with the handles, for the owner
         offered = self.offers.setdefault(name, set())
         for row, line in zip(table, window):
-            row[0] = self._price_handle(line)
+            row[0] = self._price_handle(line, aged)
             if row[0] is not None:
                 offered.add(row[0])
         if current is not None:
-            answer["current"]["line"] = self._price_handle(current)
+            answer["current"]["line"] = self._price_handle(current, aged)
             if answer["current"]["line"] is not None:
                 offered.add(answer["current"]["line"])
         if current is not None and current.tiers == 1:
             self.retail[name] = current.usd
+            self._dated(name, aged)
         elif how != "none":  # this ask found the line and it has steps, or found lines that disagree: the list says that the meter has no one list price. A line that this ask did not find says nothing (a cap may have cut the read before it)
             self.retail.pop(name, None)
+            self.ages.pop(name, None)
         return answer
 
     # -- what a resource refers to and what refers to it ----------------------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """price_alternatives and cases/prices.py, against a fake estate and an INVENTED price list that answer at the level of the transport: every call also passes the real client and the Watch's list of
 calls. Every service, product, SKU, meter, unit and price in it is invented."""
+import ast
 import datetime as dt
 import json
 import re
@@ -871,6 +872,13 @@ class TheSource(unittest.TestCase):
         self.assertEqual(re.findall(r"microsoft\.[a-z]+/[a-z]+", source.lower()), [])
         self.assertEqual(sorted(re.findall(r"^(?:from|import) ([\w.]+)", source, re.M)), [".http", "__future__", "base64", "dataclasses", "json", "math", "re", "time", "typing", "urllib.parse", "zlib"],
                          "base64, json and zlib are the standard library: the text that the price book keeps (pack, unpack) is made here")
+
+    def test_no_method_of_the_toolbox_is_defined_twice(self):
+        # A second `def` of a name in a class replaces the first without a word: `_moment` was written twice, the same both times.
+        tree = ast.parse((support.APP_ROOT / "cases" / "toolbox.py").read_text(encoding="utf-8"))
+        toolbox_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Toolbox")
+        names = [node.name for node in toolbox_class.body if isinstance(node, ast.FunctionDef)]
+        self.assertEqual(sorted(name for name in set(names) if names.count(name) > 1), [])
 
 
 if __name__ == "__main__":
