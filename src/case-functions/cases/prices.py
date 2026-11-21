@@ -4,19 +4,24 @@ The one call is a GET of the list with no token (http.PRICE_CALL). Its address i
 passed a check before it got here, and never a name, a tag or an id of an estate. What comes back is read into typed numbers and short words: a text of the list is kept only when it is no longer than
 a word of the platform, and the tool shows it through the same check as every other word of a meter. Only pay-as-you-go prices are read, in US dollars, and a price that has several steps is marked so
 and is never taken for the price of the whole quantity. A price that holds in every region the list writes with the region Global or with no region: both are Global here. A read has a cap of pages, of
-lines, of the length of a page and of time (a try of a page takes at most ATTEMPT seconds and never more than the time that is left), and says when a cap or a failure ended it. Standard library only: the
+lines, of the length of a page and of time (a try of a page takes at most ATTEMPT seconds and never more than the time that is left), and says when a cap or a failure ended it. The list
+limits the requests of one address (it says so in its headers: ten in a window of 60 seconds was what it showed), so a read waits once for as long as the list asks when a call can afford it, and
+the Hold of a run keeps what it asked for that was not waited for. What a read of the whole list gave can be kept by the store (the book: pack and unpack make its text). Standard library only: the
 client is the one of the Watch.
 """
 from __future__ import annotations
 
+import base64
+import json
 import math
 import re
 import time
-from dataclasses import dataclass
+import zlib
+from dataclasses import dataclass, field
 from typing import Callable, Sequence
 from urllib.parse import quote, urlsplit
 
-from .http import PRICES_HOST, PRICES_PATH, Client, HttpError
+from .http import PRICES_HOST, PRICES_PATH, RETRY_STATUSES, Client, HttpError, Response
 
 API_VERSION = "2023-01-01-preview"
 CURRENCY = "USD"
@@ -27,11 +32,24 @@ MAX_HELD = 20000  # prices that the reads of one run keep in all
 MAX_TEXT = 100  # characters of a text of the list that are kept: a longer one is no word of the platform
 MAX_PAGE_LENGTH = 3_000_000  # the longest answer for a page that is read, as it comes: a page of 1,000 lines is about 600,000 long
 ATTEMPT = 8.0  # seconds that one try of one page may take
-SECONDS = 24.0  # what one read may take in all (a call of the toolbox may take 45)
-PAUSE = 5.0  # the longest that a list that says to wait is waited for
+SECONDS = 24.0  # what one read may take in all, not counting a wait that the list asked for (a call of the toolbox may take 45)
+WAIT = 20.0  # the longest wait that a call takes when the list asks for one: the 24 seconds of a read and one such wait are 44, which fit in the 45 of a call. The list asked for 60 in the one answer that was read: a call does not wait so long
+MAX_UNPACKED = 4_000_000  # the most that a copy of the book may unpack to, in characters: 6,000 lines are about 600,000
+FRESH_DAYS = 10  # a copy of a read in the price book answers like a read of the list while it is younger than this. The investigation runs every INVESTIGATE_EVERY_DAYS (7: cases/config.py), so a copy of 3 days is always stale at the next run and every run would pay for the warm-up; a list price changes rarely, and the limit of the list is for the reads that cannot be spared
+STALE_DAYS = 45  # when the list cannot be read, a copy younger than this is shown with its age: a list price that may have moved since, and never what the bill paid (that is `rate_ratio`, from the bill)
+MAX_ASKED = 86_400.0  # the longest wait that a list can be taken to ask for, a day: a Retry-After that is no number, is not finite, is below nothing or is above this asks for nothing that a run can take or hold, and is read as no wait asked
 USER_AGENT = "Meternaut-Watch/1 (reads the public price list)"
 WORDS = re.compile(r"[A-Za-z0-9.&()/:+-]+(?: [A-Za-z0-9.&()/:+-]+){0,9}")
 REGION = re.compile(r"[a-z0-9]{1,24}")
+
+
+@dataclass
+class Hold:
+    """What a run has learned of the limit of the list, kept for one run by whoever holds the run's state (the toolbox): `until` is the time, on the clock of the reads, before which the list is not asked
+    again because it asked to wait and the wait was not taken, and `paused` the addresses (the first page of a read) that a wait was taken for: a read waits once for an address and never twice."""
+
+    until: float = 0.0
+    paused: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -54,6 +72,14 @@ class Book:
     lines: tuple[Line, ...]
     complete: bool  # False when a cap of pages, of lines or of time, or a failure, ended the read
     error: HttpError | None = None  # the failure that ended the read after a page that was read: the lines are those of the pages before it
+    source: str = "list"  # `list` for a read of the price list, `book` for a copy that the store kept of an earlier read
+    age: int | None = None  # for a copy: how many whole days old it is
+
+    @property
+    def aged(self) -> int | None:
+        """How many whole days old a copy of the book is when it is at least a day old, which is what the owner is told of a price that may have moved since; None for a read of the list (it has no age) and
+        for a copy of today."""
+        return self.age if self.age is not None and self.age >= 1 else None
 
 
 def region_of(word: object) -> str | None:
@@ -108,24 +134,83 @@ def _keep(found: dict, item: object, service: str, regions: frozenset) -> None:
         found.setdefault(texts, {}).setdefault(tier, set()).add(price)
 
 
-def read(client: Client, service: str, region: str, product: str | None, monotonic: Callable[[], float] = time.monotonic, seconds: float = SECONDS) -> Book:
+def _seconds(wait: float) -> str:
+    seconds = math.ceil(wait)
+    return f"{seconds} second{'' if seconds == 1 else 's'}"
+
+
+def _asked(failure: HttpError) -> float | None:
+    """The wait that a 429 asks for, in seconds, or None when it asks for none. A number that is not finite (inf, nan: the comparison is false for both), below nothing or above MAX_ASKED is read as no wait
+    asked, so that it is never slept for, never held for and never said."""
+    wait = failure.retry_after if failure.status == 429 else None
+    return float(wait) if isinstance(wait, (int, float)) and 0 <= wait <= MAX_ASKED else None
+
+
+def _said(failure: HttpError, asked: float | None) -> HttpError:
+    """A failure of a try as the run says it: a 429 says what the list asked for (`asked`: _asked), with the code 429 when the body has no code word of its own, and never the address or a header; any
+    other failure is as the client made it."""
+    if failure.status != 429:
+        return failure
+    words = f"asked to wait {_seconds(asked)} (429)" if asked is not None else "answered 429 and gave no time to wait"
+    return HttpError(429, f"the price list {words}", asked, code=failure.code or "429")
+
+
+def read(client: Client, service: str, region: str, product: str | None, monotonic: Callable[[], float] = time.monotonic, seconds: float = SECONDS, hold: Hold | None = None,
+         room: float = WAIT, tell: Callable[[int, float, float | None], None] | None = None, gap: float = 0.0) -> Book:
     """The prices of a service in a region, and of one product of it when there is one, read a page at a time up to the caps and never for longer than `seconds`: a try takes at most ATTEMPT seconds
     (the timeout of one socket operation, so a host that sends one byte at a time can take longer: the time is checked between pages) and at most the time that is left, a host that gives no answer is
-    tried once, and a second try (for a list that is busy or fails) is made only when the time that is left holds it. The transport reads at most MAX_PAGE_LENGTH + 1 of a page, so a page cannot fill
-    the memory, and a longer one is refused with the code word TooLarge. Raises HttpError when the first page cannot be read: a call that failed, an answer that is not the list, a page that is too large
-    or a next page somewhere else. A failure after a page that was read ends the read there: the book holds what was read, is not complete and has the failure. A price that the list gives twice with
-    two values is left out, and so is a price of nothing: it is no price of any alternative."""
+    tried once, and a second try of a page (for a list that is busy or fails) is made only when the time that is left holds it. A list that answers 429 with the seconds to wait is waited for once, when
+    that is at most `room` (the longest wait that the caller can afford: WAIT for a call of the toolbox): the wait is not a part of `seconds`, and a read waits once for its address in a run, whatever
+    its pages say (`hold.paused`). A wait that is not taken ends the read, says what the list asked for, and holds the list for that time in `hold`: no read of the run goes to it before. `tell` is
+    given the status (0 for no answer), the seconds and the wait that the list asked for, of each try that reaches the list. `gap` is the least pause between two requests of the read, a second try
+    and the next page, whatever the list asked or did not ask (the warm-up keeps the pace that the list showed). The transport reads at most MAX_PAGE_LENGTH + 1 of a page, so a page
+    cannot fill the memory, and a longer one is refused with the code word TooLarge. Raises HttpError when the first page cannot be read: a call that failed, an answer that is not the list, a page
+    that is too large or a next page somewhere else. A failure after a page that was read ends the read there: the book holds what was read, is not complete and has the failure. A price that the list
+    gives twice with two values is left out, and so is a price of nothing: it is no price of any alternative."""
     found: dict = {}
-    url: str | None = address(service, region, product)
+    first = url = address(service, region, product)
+    hold = Hold() if hold is None else hold
     regions = frozenset((GLOBAL,) if region == GLOBAL else (region, GLOBAL))
     stop, pages, error = monotonic() + seconds, 0, None
+
+    def get(page: str, now: float) -> Response:
+        nonlocal stop
+        tried = False
+        while True:
+            if not tried and hold.until > now:
+                raise HttpError(429, f"the price list asked to wait, and {_seconds(hold.until - now)} of it are left (429)", hold.until - now, code="429")
+            try:
+                response = client.request("GET", page, headers={"User-Agent": USER_AGENT}, timeout=min(ATTEMPT, stop - now), retries=0, retry_network=False, limit=MAX_PAGE_LENGTH + 1)
+            except HttpError as failure:
+                asked = _asked(failure)
+                if tell:
+                    tell(failure.status, monotonic() - now, asked)
+                pause = max(gap, asked if asked is not None else 1.0 + client.jitter())
+                left = stop - monotonic() - (0.0 if asked is not None else pause)
+                if tried or failure.status not in RETRY_STATUSES or first in hold.paused or left < 1.0 or (asked is not None and asked > room):
+                    if asked is not None:
+                        hold.until = max(hold.until, monotonic() + asked)
+                    raise _said(failure, asked) from None
+                client.sleep(pause)
+                if asked is not None:
+                    stop += pause
+                    hold.paused.add(first)
+                tried, now = True, monotonic()
+                continue
+            if tell:
+                tell(response.status, monotonic() - now, None)
+            return response
+
     while url and pages < MAX_PAGES and len(found) < MAX_LINES:
-        left = stop - monotonic()
-        if left < 1.0:
+        now = monotonic()
+        pause = gap if pages else 0.0
+        if stop - now - pause < 1.0:
             break
+        if pause:
+            client.sleep(pause)
+            now = monotonic()
         try:
-            response = client.request("GET", url, headers={"User-Agent": USER_AGENT}, timeout=min(ATTEMPT, left), retries=1 if left >= 2 * ATTEMPT + PAUSE else 0, retry_after_max=PAUSE,
-                                      retry_network=False, limit=MAX_PAGE_LENGTH + 1)
+            response = get(url, now)
             if len(response.body) > MAX_PAGE_LENGTH:
                 raise _bad("gave a page that is too large to read", "TooLarge")
             data = response.json()
@@ -144,6 +229,30 @@ def read(client: Client, service: str, region: str, product: str | None, monoton
         url = following
     lines = tuple(Line(service, *texts[:4], price, texts[4], len(steps)) for texts, steps in found.items() if 0 in steps and len(steps[0]) == 1 and (price := next(iter(steps[0]))) > 0)
     return Book(lines[:MAX_LINES], url is None and len(lines) <= MAX_LINES, error)
+
+
+def pack(lines: Sequence[Line]) -> str:
+    """The lines of a read as the text that the book keeps: the compact JSON of what differs from line to line (the service is the key of the copy), deflated and written in base64. A product of some
+    dozens of lines is some hundreds of characters, and the store keeps a record of 30,000 characters at most."""
+    rows = [[line.product, line.sku, line.meter, line.unit, line.usd, line.region, line.tiers] for line in lines]
+    return base64.b64encode(zlib.compress(json.dumps(rows, separators=(",", ":")).encode("utf-8"), 9)).decode("ascii")
+
+
+def _valid(line: Line) -> bool:
+    return (all(isinstance(word, str) and 0 < len(word) <= MAX_TEXT for word in (line.product, line.sku, line.meter, line.unit)) and isinstance(line.region, str)
+            and (REGION.fullmatch(line.region) is not None or line.region == GLOBAL) and (_number(line.usd) or 0) > 0 and type(line.tiers) is int and line.tiers > 0)
+
+
+def unpack(service: str, text: str, count: int) -> tuple[Line, ...] | None:
+    """The lines that `pack` made `text` of, for `service`: None for a text that is not that (not base64, not deflate or too large when unpacked, not JSON, a row that is not a line of the list, a price that
+    is no price, or another number of lines than `count`), so that a broken record is no copy."""
+    try:
+        undone = zlib.decompressobj()
+        raw = undone.decompress(base64.b64decode(text, validate=True), MAX_UNPACKED)
+        lines = tuple(Line(service, *row) for row in json.loads(raw)) if not undone.unconsumed_tail else ()
+    except (ValueError, TypeError, zlib.error):
+        return None
+    return lines if len(lines) == count and all(map(_valid, lines)) else None
 
 
 def match(lines: Sequence[Line], product: str, meter: str, unit: str, region: str) -> tuple[Line | None, str]:

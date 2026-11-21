@@ -436,6 +436,12 @@ class Arm:
             found.setdefault(tuple(values[:-1]), set()).add(values[-1].lower())
         return {meter: len(resources - {""}) for meter, resources in found.items()}
 
+    def meter_totals(self, subscription: str, start: dt.date, end: dt.date, resource_ids: tuple[str, ...]) -> list[tuple[str, str, str, float, str]]:
+        """What the resources (by id) were billed for from start to end (both days included), by the category and the subcategory of the meter: one query for all of them, with no days. (resource id in
+        lower case, category, subcategory, cost, currency). Learn, "Query - Usage"."""
+        rows = self._cost_rows(subscription, start, end, ("ResourceId", "MeterCategory", "MeterSubCategory"), where=("ResourceId", resource_ids))
+        return [(resource.lower(), category, subcategory, amount, code) for (resource, category, subcategory), amount, code in rows]
+
     def _pages(self, subscription: str, url: str, service: str, headers: dict[str, str] | None = None) -> list[dict]:
         found: list[dict] = []
         link: str | None = url

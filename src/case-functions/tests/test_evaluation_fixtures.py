@@ -18,11 +18,13 @@ from support import NOW, REPO_ROOT
 from cases import agents, brief, deeper, investigate, library, models, toolbox as tb
 from cases.memory_store import MemoryStore, stamp
 from cases.models import ClaimRecord
+from cases.ranges import Range
 from cases.toolbox import Toolbox
 from deep_estate import ACCOUNT, AI, COLLECTION, MACHINE, RULES, SUB, VM, WORKSPACE, WS, deep, deployment
 from test_prices import priced
 from test_toolbox import DISK, Estate, ask, definition, point, row, standard, toolbox
 from test_toolbox_depth import DepthEstate, profiled
+from test_toolbox_limits import Fake
 from test_toolbox_meters import FIXED, WIDGET, at, billed, day, widgets
 
 METRIC = "Processed Prompt Tokens"
@@ -763,6 +765,79 @@ class TheKnowledge(Base):
     def test_the_constants_that_the_tool_repeats_of_the_study_are_the_apps_own(self):
         self.assertEqual(evals.KNOWLEDGE_SHOWN, library.SHOWN)
         self.assertEqual(dt.date.fromisoformat(evals.KNOWLEDGE_READ).isoformat(), evals.KNOWLEDGE_READ, "a day, as the real tool gives it")
+
+
+class TheLimits(Base):
+    """The limits that a row gives its resources (`limits`): the lowest and the highest number that Microsoft's reference page of the type documents for a property. The tools of the fixtures show them
+    where and as the real toolbox shows them for the same properties (cases/toolbox.py `_limits_of`): for a count or a size that is a number, once for a listing and in each part of a profile. Every kind,
+    property and number is INVENTED, except that the row of the lightly used host has the numbers that the reference page gives for its one property."""
+
+    PROPS = {"r1": {"scaleUnits": 4, "provisioningState": "Succeeded", "sku.capacity": 2, "numberOfWorkers": 3, "zoneRedundant": False, "retentionDays": 30},
+             "r2": {"scaleUnits": 2, "provisioningState": "Succeeded", "sku.capacity": 1, "numberOfWorkers": 3, "zoneRedundant": False, "retentionDays": 30}}
+    LIMITS = {"r1": {"scaleUnits": {"lowest": 2, "highest": 50}, "sku.capacity": {"lowest": 1}, "numberOfWorkers": {"highest": 30}, "retentionDays": {"lowest": 7, "highest": 90},
+                     "zoneRedundant": {"lowest": 0, "highest": 1}}}
+    LIMITS["r2"] = LIMITS["r1"]
+    INVENTED = {"id": "invented", "kind": "clean", "type": WIDGET, "metric": "Day Metric", "service": "Example Service", "resources": [{"h": "r1", "usd": 99.0, "total": 3}, {"h": "r2", "usd": 98.0, "total": 3}],
+                "props": PROPS, "limits": LIMITS, "expect": {"propose": [], "never": []}}
+
+    @staticmethod
+    def real(spec):
+        """The real toolbox on the estate of the row, with a reader that gives each leaf the range that the row gives it, the same for the whole type, as a page does."""
+        box = real_of(spec)
+        found = {path.rsplit(".", 1)[-1]: Range(bounds.get("lowest"), bounds.get("highest")) for handle in (spec.get("limits") or {}).values() for path, bounds in handle.items()}
+        box.ranges = Fake({spec["type"]: found})
+        return box
+
+    def test_the_limits_of_a_row_are_shown_by_describe_by_profile_and_by_the_listing_as_the_real_toolbox_shows_them(self):
+        for spec in (ROWS["lightly-used-bastion-with-four-units"], self.INVENTED):
+            with self.subTest(row=spec["id"]):
+                box, handles = self.real(spec), [r["h"] for r in spec["resources"]]
+                for handle in handles:
+                    real, fake = ask(box, "describe", handle=handle), self.fixture(spec, "describe", handle=handle)
+                    self.assertTrue(real["limits"], "the real tool shows the limits of a resource that has them")
+                    self.assertEqual(real["limits"], fake["limits"])
+                    self.assertEqual(list(real["limits"]), list(fake["limits"]), "in the order of the properties")
+                self.assertEqual([part["limits"] for part in ask(box, "profile", handles=handles)["profiles"]], [part["limits"] for part in self.fixture(spec, "profile", handles=handles)["profiles"]])
+                real_list, fake_list = ask(box, "list_resources", type=spec["type"]), self.fixture(spec, "list_resources", type=spec["type"])
+                self.assertEqual(real_list["limits"], fake_list["limits"], "one mapping for the whole listing")
+                self.same_shape(real_list, fake_list)
+                self.assertEqual(list(fake_list).index("limits"), list(fake_list).index("cols") - 1, "it comes after the fields that every row shares, before the columns")
+
+    def test_only_a_count_or_a_size_that_is_a_number_has_limits_whatever_the_row_gives_for_a_word_a_flag_or_a_period(self):
+        shown = self.fixture(self.INVENTED, "describe", handle="r1")
+        self.assertEqual(set(shown["limits"]), {"scaleUnits", "sku.capacity", "numberOfWorkers"})
+        for name in ("retentionDays", "zoneRedundant", "provisioningState"):
+            self.assertIn(name, shown["properties"], "the property is shown")
+        self.assertEqual(set(ask(self.real(self.INVENTED), "describe", handle="r1")["limits"]), set(shown["limits"]))
+
+    def test_a_row_without_limits_and_a_limit_for_a_property_that_the_row_does_not_show_show_none_as_the_real_toolbox_does(self):
+        without = {key: value for key, value in self.INVENTED.items() if key != "limits"}
+        for answer in (self.fixture(without, "describe", handle="r1"), self.fixture(without, "list_resources", type=without["type"]), *self.fixture(without, "profile", handles=["r1"])["profiles"]):
+            self.assertNotIn("limits", answer)
+        elsewhere = {**self.INVENTED, "limits": {"r1": {"notShown": {"lowest": 1}}}}
+        self.assertNotIn("limits", self.fixture(elsewhere, "describe", handle="r1"))
+        self.assertNotIn("limits", self.fixture({**self.INVENTED, "limits": {"r2": {"scaleUnits": {"lowest": 2}}}}, "describe", handle="r1"), "the limits of another handle are not this one's")
+        self.assertNotIn("limits", self.fixture(ROWS[DISK_ROW], "describe", handle="r1"))
+        bare = ROWS["lightly-used-bastion-without-limits"]
+        for answer in (self.fixture(bare, "describe", handle="r1"), self.fixture(bare, "list_resources", type=bare["type"]), *self.fixture(bare, "profile", handles=["r1"])["profiles"]):
+            self.assertNotIn("limits", answer, "the row of the same host with no limits shows none, as a toolbox whose reader read no page does")
+            self.assertIn("scaleUnits", json.dumps(answer), "and it shows the property that a setting would lower")
+
+    def test_every_limit_of_every_row_is_a_range_of_a_whole_number_of_a_property_that_the_row_shows(self):
+        for spec in ROWS.values():
+            for handle, held in (spec.get("limits") or {}).items():
+                with self.subTest(row=spec["id"], handle=handle):
+                    self.assertIn(handle, (spec.get("props") or {}))
+                    shown = self.fixture(spec, "describe", handle=handle)
+                    self.assertEqual(set(held), set(shown["limits"]), "a limit that a row gives is one that a tool shows: a count or a size that is a number among its properties")
+                    for bounds in held.values():
+                        self.assertTrue(bounds and set(bounds) <= {"lowest", "highest"})
+                        self.assertTrue(all(isinstance(number, int) and not isinstance(number, bool) for number in bounds.values()))
+                        self.assertLessEqual(bounds.get("lowest", 0), bounds.get("highest", 10 ** 9))
+            for path in {path for held in (spec.get("limits") or {}).values() for path in held}:
+                self.assertEqual(len({json.dumps(held[path], sort_keys=True) for held in (spec.get("limits") or {}).values() if path in held}), 1, "a page is the page of a type: one range for a name")
+        self.assertEqual(ROWS["lightly-used-bastion-with-four-units"]["limits"], {"r1": {"scaleUnits": {"lowest": 2, "highest": 50}}}, "what the reference page of the type says of its property")
+        self.assertEqual([r["id"] for r in ROWS.values() if r.get("limits")], ["lightly-used-bastion-with-four-units"])
 
 
 class TheChecksOfAFinding(unittest.TestCase):

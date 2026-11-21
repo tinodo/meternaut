@@ -13,7 +13,8 @@ forms that code can check against what the tools showed in the same run:
   assumed        a share that the AI assumes, as a low and a high, always said to be the AI's own (Scenario)
   alternative    a switch of one billed meter to a price of the same service that the tool for alternatives showed for it, in the same unit: what remains is the alternative's list price over what the bill
                  pays for a unit now, with the rate that the bill pays against list carried over and, for the other end of a range, at list prices alone (Scenario). The digest keeps the plain name of
-                 each end (`now`, `to`), and a switch whose alternative cannot be named in plain words is not priced
+                 each end (`now`, `to`) and, when the list prices came from a copy of the price book that is at least a day old, how many days old it is (`listAge`: the sentence of the figure says it), and
+                 a switch whose alternative cannot be named in plain words is not priced
 
 A ratio on a property is right only when the meter follows that property, which code cannot know: a meter that bills the units above those that are included is not halved when the units are. The
 quantity of a meter is what the bill measures, so it is checked against the meter itself. The quantity of an alternative is the same quantity at the same monthly rate as the cost that it replaces, so the
@@ -38,6 +39,8 @@ from .meters import FEWEST, MONTH, WEEK, Meter, Rates, rates, shape
 from .roles import MAX_CITED_NAME, clean_text
 
 KEY = "change"  # the key of the facts of a case
+LIST_AGE = "listAge"  # the key of a digest that says how many days old the copy of the price book was that the list prices of a switch came from (only a copy of at least a day)
+MAX_LIST_AGE = 366  # the days of a copy that a digest may say: a number above it is not an age that the app keeps (a copy is shown for 45 days at most)
 ACTIONS = ("remove", "reduce", "switch", "schedule", "commit", "none")
 FORMS = ("none", "quantity", "ratio", "share_of_days", "assumed", "alternative")
 ALLOWED = {"remove": ("none",), "reduce": ("quantity", "ratio", "assumed"), "schedule": ("share_of_days", "quantity", "assumed"), "switch": ("alternative", "assumed"), "commit": ("assumed",)}
@@ -57,6 +60,7 @@ WHY = {
     "none": "No saving was worked out, because the AI did not say which charges on the bill the change would shrink.",
     "lines": f"No saving was worked out. The charges that the AI named were not found for this resource, or they have less than {FEWEST} days of cost to work from.",
     "remains": "No saving was worked out, because the AI did not say what would remain of those charges in a form that Meternaut can check.",
+    "range": "No saving was worked out, because the number that the AI proposes is outside the range that Microsoft's reference page gives for the setting.",
     "currency": "No saving was worked out, because the cost is not in US dollars.",
     "nothing": f"No saving was worked out, because the charges that the AI named cost nothing in the last {WEEK} days.",
     "credit": "No saving was worked out, because what the resource gets back on its bill is as much as the charges that the AI named cost.",
@@ -148,6 +152,12 @@ def _whole(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _days(value: object) -> int:
+    """The age of a list in whole days, from a register of the toolbox or from a digest: a whole number from 1 up to MAX_LIST_AGE, else 0, which says nothing."""
+    days = _whole(value)
+    return days if days is not None and 1 <= days <= MAX_LIST_AGE else 0
+
+
 def _listed(value: object) -> tuple:
     """The entries of a list that the answer states, as stated, at most MAX_EFFECTS: what is wrong with them is for cases/proposals.py to say."""
     return tuple(value[:MAX_EFFECTS]) if isinstance(value, list) else ()
@@ -182,6 +192,23 @@ def _cited(block: Mapping, name: object, said: float) -> bool:
     return any(number is not None and math.isclose(said, number, rel_tol=1e-6, abs_tol=0.0) for number in map(_number, found))
 
 
+def bounds_of(block: object, name: object) -> dict[str, int]:
+    """The documented range that the tools showed for a property of a resource (the `limits` of its evidence block, from the reference page of its type: cases/ranges.py), as {"lowest": N, "highest": M}:
+    a bound that is no whole number, and one that the page does not give, is left out."""
+    limits = block.get("limits") if isinstance(block, Mapping) else None
+    found = limits.get(name) if isinstance(limits, Mapping) else None
+    return {side: bound for side in ("lowest", "highest") if isinstance(found, Mapping) and (bound := _whole(found.get(side))) is not None}
+
+
+def outside(block: object, name: object, number: float) -> tuple[str, int] | None:
+    """The side of the documented range that a number lies beyond, and that bound: ("lowest", N) or ("highest", M). None when the number is inside the range, and when the tools showed none for the
+    property."""
+    found = bounds_of(block, name)
+    if "lowest" in found and number < found["lowest"]:
+        return "lowest", found["lowest"]
+    return ("highest", found["highest"]) if "highest" in found and number > found["highest"] else None
+
+
 def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, float, dict] | str:
     """(the form, the smallest and the largest share that remains, the numbers that the AI stated) or the word of WHY."""
     form = said.get("form")
@@ -199,7 +226,9 @@ def _remains(said: Mapping, action: str, block: Mapping) -> tuple[str, float, fl
         start, target, name = _number(said.get("from")), _number(said.get("to")), said.get("on")
         if start is None or target is None or not 0 <= target < start or not _cited(block, name, start) or not NAME.fullmatch(str(name)):
             return "remains"
-        return form, target / start, target / start, {"from": start, "to": target, "on": name}
+        if outside(block, name, target) is not None:
+            return "range"
+        return form, target / start, target / start, {"from": start, "to": target, "on": name, **bounds_of(block, name)}
     if form == "share_of_days":
         days, span = _whole(said.get("days")), _whole(said.get("of"))
         if days is None or span is None or not 1 <= days < span <= 31:
@@ -237,12 +266,13 @@ class Part(NamedTuple):
 
 
 class Market(NamedTuple):
-    """What the run showed of the price list (the registers `prices`, `retail` and `offers` of cases/toolbox.py): the lines by price handle, the list price of the line of each meter, and the price
-    handles that were shown for each meter. Read, never written."""
+    """What the run showed of the price list (the registers `prices`, `retail`, `offers` and `ages` of cases/toolbox.py): the lines by price handle, the list price of the line of each meter, the price
+    handles that were shown for each meter, and how many days old the copy of the price book was that showed a meter or a price, when it was a copy of at least a day. Read, never written."""
 
     prices: Mapping
     retail: Mapping
     offers: Mapping
+    ages: Mapping = {}
 
 
 def _name(text: object, word: Callable[[object], str | None] | None) -> str:
@@ -282,7 +312,8 @@ def _switch(effect: Effect, offer: str, used: Sequence[tuple[str, Rates, Meter]]
     if not target:
         return "alternative"
     ratio = round(paid / retail, 4)
-    named = {"to": target, **({"now": meter.words[2]} if _name(meter.words[2], word) else {})}
+    old = max(_days(market.ages.get(key)) for key in (name, offer))  # the older of the two lists that the figure rests on: the meter's own line and the alternative's
+    named = {"to": target, **({"now": meter.words[2]} if _name(meter.words[2], word) else {}), **({LIST_AGE: old} if old else {})}
     return least, most, {"offer": offer, "list": usd, "ratio": ratio, **named}, ({"meter": name, "words": words, "list": usd, "ratio": ratio, "remains": (least, most)},)
 
 
@@ -376,6 +407,8 @@ def _row(handle: str, parts: list[Part], cost: float | None, failed: int, own: t
     alike = len({_rule(part) for part in parts}) == 1
     form = parts[0].form if alike else "mixed"
     said = {key: value for key, value in parts[0].said.items() if not (form == "alternative" and key in ("ratio", "now", "to") and len({part.said.get(key) for part in parts}) > 1)} if alike else {}
+    if alike and (oldest := max(part.said.get(LIST_AGE, 0) for part in parts)):
+        said[LIST_AGE] = oldest  # the parts of a resource may rest on copies of different ages: the figure says the oldest
     away = (round(1 - max(part.most for part in parts), 4), round(1 - min(part.least for part in parts), 4)) if alike else None
     return Row(handle, round(low, 2), round(high, 2), round(math.fsum(part.high for part in parts), 2), sum(len(part.names) for part in parts), form, said, away,
                failed + sum(part.skipped for part in parts), tuple(name for part in parts for name in part.names), round(week, 2), None if since is None else round(since, 2), life,
@@ -397,13 +430,14 @@ def _plain(text: object, word: Callable[[object], str | None]) -> str:
 def price(change: Change | None, handles: Collection[str], toolbox: object, costs: Mapping[str, float | None], blocked: Mapping[str, str] | None = None,
           word: Callable[[object], str | None] | None = None) -> Priced:
     """The rows of a change for the resources `handles` of a finding. `toolbox` holds the meters (`meters`) and the evidence of the run, and the prices of the list that the tool for alternatives showed
-    (`prices`, `retail`, `offers`), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources that have no figure from outside, by the word of WHY (a cost that is not
-    in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept, and no switch is priced, because its alternative cannot be named)."""
+    (`prices`, `retail`, `offers`, and `ages` for the copies of the price book that were at least a day old), `costs` the 30-day cost of each resource (None when it was not read), `blocked` the resources
+    that have no figure from outside, by the word of WHY (a cost that is not in US dollars), and `word` the check that the tools make of a word of a meter (none: a unit is not kept, and no switch is priced,
+    because its alternative cannot be named)."""
     out = Priced(change.action if change is not None else "")
     if change is None:
         return out
     registry, evidence = _held(toolbox, "meters"), _held(toolbox, "evidence")
-    market = Market(_held(toolbox, "prices"), _held(toolbox, "retail"), _held(toolbox, "offers"))
+    market = Market(_held(toolbox, "prices"), _held(toolbox, "retail"), _held(toolbox, "offers"), _held(toolbox, "ages"))
     owned: dict[str, list[Meter]] = {}
     for meter in registry.values():
         if isinstance(meter, Meter):
@@ -481,6 +515,8 @@ def combine(digests: Sequence[object], members: int) -> dict | None:
     for key in ("ratio", "now", "to"):  # what each resource carries of its own is kept only when it is the same for all
         if alike and key in prices[0] and len({str(item.get(key)) for item in prices}) == 1:
             price[key] = prices[0][key]
+    if alike and (oldest := max(_days(item.get(LIST_AGE)) for item in prices)):
+        price[LIST_AGE] = oldest  # the resources of a group may rest on copies of different ages: the figure says the oldest
     if price["form"] == "mixed" and (switched := sum(_switched(item) for item in prices)):
         price["switched"] = switched
     skipped = sum(price.get("skipped") or 0 for price in prices)
@@ -569,7 +605,8 @@ def _gone(share: float) -> str:
 def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun: str = "resource") -> str:
     """What a figure rests on, as whole sentences: what the resource costs a month and at which rate (`base`), what the bill shows and what the AI says that the change would do to it, which number
     Meternaut checked against the bill and which it did not, the range when there is one, and what the figure leaves out. A figure of many resources says it of all of them: a quantity as the sum, and a
-    number or a share of days of each. A switch names both ends when the digest holds their names."""
+    number or a share of days of each. A switch names both ends when the digest holds their names, and says how old its list prices are when the digest holds the age of the copy of the price book that
+    they came from (`listAge`)."""
     from .proposals import label  # the shape of what a finding proposes reads this module too, so it is imported where it is used and not at the top
 
     many, members = _whole(found.get("resources")) or 1, _whole(found.get("members"))
@@ -593,6 +630,10 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
         text = paid + (f" The tools read {name or ('one of its numbers' if many == 1 else 'one of their numbers')} as {start:g}{each}, and Meternaut checked that. The AI says the change would lower it to {target:g}{each}, "
                        f"which takes away {_gone(1 - target / start)}. Meternaut did not check that. Nor did it check that the charge falls in step with {name or ('it' if many == 1 else 'them')}."
                        if numbers else " The AI proposes a change, and Meternaut did not check it.")
+        lowest, highest = _whole(found.get("lowest")), _whole(found.get("highest"))
+        if numbers and many == 1 and (lowest is not None or highest is not None):
+            gives = " and ".join(f"{bound:,} as the {side}" for bound, side in ((lowest, "lowest"), (highest, "highest")) if bound is not None)
+            text += f" Microsoft's reference page gives {gives} number for {name or 'it'}, and Meternaut checked that {target:g} is inside that range."
     elif form == "share_of_days":
         text = paid + (f" The AI says {one} is needed {days} days of every {span}, so the change would turn {one} off on {span - days} of every {span} days, which takes away {_gone(1 - days / span)}. "
                        "Those days are the AI's own, and Meternaut did not check them." if _whole(days) and _whole(span) else f" The AI says {one} is needed only on some days, and Meternaut did not check that.")
@@ -608,10 +649,16 @@ def _basis(found: Mapping, form: str, low: float, high: float, base: float, noun
         # difference of the two amounts that the sentence shows, so that its three amounts add up to the dollar (or the cent) as printed, and the saving is the figure that the page states above it.
         left = round(_shown(base) - _shown(low), 2)
         cost = f"would cost about {money(left)} a month for the same use, so it " if after is not None and abs(base - after - low) < 0.02 and 0 < left == _shown(left) else ""
-        text = paid + f" {'At list prices, a' if listed else 'A'} switch to {goal} {cost}would save about {money(low)} a month."
+        # How old the list is, when the prices came from a copy of the price book that is at least a day old: one fact, said once, and for a figure of many resources the oldest of their lists. A read of the list
+        # and a copy of today say nothing, and neither does a digest made before it.
+        old = _days(found.get(LIST_AGE))
+        was = f"{'up to ' if many > 1 else ''}{_count(old, 'day')} ago" if old else ""
+        at_list = "At list prices" + (f" as they were {was}" if was else "") + ", a"
+        text = paid + f" {at_list if listed else 'A'} switch to {goal} {cost}would save about {money(low)} a month."
         if not listed:
-            text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
-                           if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays.")
+            text += " " + (f"Your bill pays about {pct} percent of the list price" + (f" of {now}" if now else "") + (f" as it was {was}" if was else "")
+                           + f". Meternaut prices {to or 'it'} both at its list price and at {pct} percent of it."
+                           if pct else f"Meternaut prices {to or 'it'} both at list prices and at the same share of the list prices that your bill pays" + (f", as they were {was}" if was else "") + ".")
         text += " Meternaut did not check whether " + (f"this {noun} can be switched to it, or whether it has what this {noun} needs." if many == 1
                                                       else "these resources can be switched to it, or whether it has what they need.")
     elif form == "mixed":

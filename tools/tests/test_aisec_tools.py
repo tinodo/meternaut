@@ -362,6 +362,17 @@ class TheEvaluationFiles(unittest.TestCase):
                           ("other", "Any changes to scale units will disrupt active Bastion connections.")])
         self.assertEqual({claim["url"] for claim in light["knowledge"]}, {"https://learn.microsoft.com/en-us/azure/bastion/configure-host-scaling"})
 
+    def test_the_fourth_row_of_the_bastion_is_the_lightly_used_host_with_no_limits_shown_and_expects_what_the_row_with_limits_expects(self):
+        rows = {row["id"]: row for row in self.rows()}
+        light, bare = rows["lightly-used-bastion-with-four-units"], rows["lightly-used-bastion-without-limits"]
+        self.assertEqual(bare["kind"], "clean")
+        self.assertEqual(bare["expect"], light["expect"], "a host that is used is shrunk, never removed, with or without the limits")
+        self.assertEqual(bare["knowledge"], light["knowledge"])
+        self.assertEqual(bare["resources"], light["resources"])
+        self.assertEqual(bare["props"], light["props"])
+        self.assertIn("limits", light)
+        self.assertNotIn("limits", bare, "the common path: the page was not read or bounds nothing, and no tool shows a limit")
+
     def test_what_a_row_expects_of_a_setting_is_a_property_that_the_row_shows_and_that_the_app_would_keep(self):
         from cases import proposals, toolbox
 
@@ -883,7 +894,8 @@ class TheEvaluations(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertRegex(out, r"PASS settingFoundRate 1\.00 \(at least 0\.5\)")
         self.assertRegex(out, r"PASS expectedFoundRate 1\.00 ")
-        self.assertIn("run: settings kept 1, other ways kept 0, in 2 fixtures that ask for a setting", out)
+        # Two rows of the host that a few use (with and without the limits that the page gives) ask for a setting, and the row of the host in use asks for none: three rows that ask, two settings kept.
+        self.assertIn("run: settings kept 2, other ways kept 0, in 3 fixtures that ask for a setting", out)
         self.assertNotIn("miss:", out)
 
     def test_an_agent_that_states_no_setting_fails_the_rate_and_the_miss_line_says_that_it_missed_the_set(self):
@@ -1136,6 +1148,59 @@ class TheSettingsOfTheInvestigator(unittest.TestCase):
                 got = evals.grade(self.GATEWAYS, answer)
                 self.assertEqual((got["set_found"], got["settings"]), (0.0, 0))
                 self.assertIn(why, got["dropped"])
+
+    LIMITED = {**GATEWAYS, "limits": {"r1": {"capacityUnits": {"lowest": 2, "highest": 50}, "retentionDays": {"lowest": 7}}, "r2": {"capacityUnits": {"lowest": 2}}}}
+    BELOW = "a new value below 2, the lowest that Microsoft's reference page gives for the setting"
+
+    def test_a_setting_below_the_lowest_number_that_the_row_gives_is_not_found_and_the_apps_own_words_name_the_number(self):
+        for to, found in ((1, 0.0), (0, 0.0), (2, 1.0), (3, 1.0)):
+            with self.subTest(to=to):
+                got = evals.grade(self.LIMITED, stated(to=to))
+                self.assertEqual((got["set_found"], got["settings"]), (found, int(found)))
+                self.assertEqual(self.BELOW in got.get("dropped", ""), found == 0.0)
+        self.assertIn(f"(a new value below 2, the lowest that Microsoft's reference page gives for the setting: 1)", evals.grade(self.LIMITED, stated(to=1))["dropped"])
+        self.assertEqual(evals.grade(self.GATEWAYS, stated(to=1))["set_found"], 1.0, "a row that gives no limits is graded as it always was")
+
+    def test_a_setting_above_the_highest_number_that_the_row_gives_is_not_found_either(self):
+        row = {**self.LIMITED, "props": {"r1": {"capacityUnits": 60}}, "resources": [{"h": "r1", "usd": 100.0, "total": 0}]}
+        got = evals.grade(row, stated(now=60, to=55))
+        self.assertEqual((got["set_found"], got["settings"]), (0.0, 0))
+        self.assertIn("a new value above 50, the highest that Microsoft's reference page gives for the setting", got["dropped"])
+        self.assertEqual(evals.grade(row, stated(now=60, to=50))["set_found"], 1.0)
+
+    def test_the_limits_count_only_where_a_tool_of_the_replay_showed_the_property_and_so_its_limits(self):
+        handle, _ = evals.handler_of(self.LIMITED)
+        called = [{"name": "describe", "arguments": {"handle": "r1"}, "result": handle("describe", {"handle": "r1"})}]
+        shown = evals.shown_properties(called)
+        self.assertEqual(evals.grade(self.LIMITED, stated(to=1), shown)["set_found"], 0.0)
+        self.assertEqual(evals.grade(self.LIMITED, stated(to=2), shown)["set_found"], 1.0)
+        nothing = evals.shown_properties([])
+        got = evals.grade(self.LIMITED, stated(to=2), nothing)
+        self.assertEqual((got["set_found"], got["settings"]), (0.0, 0), "no tool of the replay showed the property: the app drops the setting for that, as it did")
+        self.assertIn("a property that no tool showed", got["dropped"])
+
+    def test_the_verdict_of_each_entry_is_the_apps_own_words_with_the_number_that_the_page_gives(self):
+        row = evals.read_answer(self.LIMITED, json.loads(stated(to=1))["findings"], explain=True)
+        self.assertEqual(row["read"][0]["fates"]["set"], [self.BELOW])
+        self.assertEqual(evals.read_answer(self.LIMITED, json.loads(stated(to=2))["findings"], explain=True)["read"][0]["fates"]["set"], ["kept"])
+
+    def test_the_row_of_the_lightly_used_host_no_longer_finds_the_answer_that_states_one_unit_and_finds_the_one_that_states_the_lowest_number_of_the_page(self):
+        rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
+        light = rows["lightly-used-bastion-with-four-units"]
+        for to, found in ((1, 0.0), (2, 1.0), (3, 1.0)):
+            got = evals.grade(light, stated("r1", "scaleUnits", 4, to))
+            self.assertEqual(got["set_found"], found, f"to {to}")
+        self.assertIn("the lowest that Microsoft's reference page gives for the setting", evals.grade(light, stated("r1", "scaleUnits", 4, 1))["dropped"])
+
+    def test_the_row_of_the_same_host_without_limits_finds_any_smaller_number_because_the_grader_cannot_refuse_one_there(self):
+        rows = {row["id"]: row for row in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40)}
+        light, bare = rows["lightly-used-bastion-with-four-units"], rows["lightly-used-bastion-without-limits"]
+        self.assertEqual({key for key in set(light) | set(bare) if light.get(key) != bare.get(key)}, {"id", "limits"}, "the same host, use, documentation and expectation: only the limits are not shown")
+        self.assertNotIn("limits", bare)
+        for to in (1, 2, 3):
+            got = evals.grade(bare, stated("r1", "scaleUnits", 4, to))
+            self.assertEqual((got["set_found"], got["settings"]), (1.0, 1), f"to {to}")
+            self.assertNotIn("dropped", got)
 
     def test_a_setting_that_disagrees_with_the_ratio_that_the_change_states_on_the_same_property_is_dropped(self):
         answer = json.loads(stated())

@@ -253,6 +253,33 @@ class WhatRemainsAndHowItIsChecked(unittest.TestCase):
                 found = priced(block("reduce", effect("r1", ("m1",), remains)))
                 self.assertEqual((found.rows, found.why), ({}, {"r1": "remains"}))
 
+    def test_a_ratio_to_a_number_outside_the_range_that_the_tools_showed_for_the_property_makes_no_figure_and_says_why(self):
+        box = shown(evidence={"r1": {"properties": {"units": 12}, "limits": {"units": {"lowest": 5, "highest": 40}}}, "r2": {"properties": {"units": 4}}})
+
+        def ratio(handle, target, start=12):
+            return pricing.price(pricing.parse(block("reduce", effect(handle, ("m1" if handle == "r1" else "m3",), {"form": "ratio", "on": "units", "from": start, "to": target}))), (handle,), box,
+                                 COSTS, None)
+
+        for target in (4, 0):
+            with self.subTest(target=target):
+                found = ratio("r1", target)
+                self.assertEqual((found.rows, found.why), ({}, {"r1": "range"}), "the saving of a number below the lowest that the platform takes is not worked out")
+        self.assertEqual(ratio("r1", 5).rows["r1"].low, 35.0, "the lowest number itself is a number that the platform takes")
+        self.assertEqual(ratio("r1", 6).rows["r1"].said, {"from": 12.0, "to": 6.0, "on": "units", "lowest": 5, "highest": 40}, "the range that the tools showed is kept with the numbers that the figure rests on")
+        self.assertEqual(ratio("r1", 6).rows["r1"].digest()["highest"], 40)
+        box.evidence["r1"]["properties"]["units"] = 60
+        self.assertEqual(ratio("r1", 45, 60).why, {"r1": "range"}, "above the highest")
+        self.assertEqual(ratio("r1", 40, 60).rows["r1"].form, "ratio")
+        self.assertEqual(ratio("r2", 1, 4).rows["r2"].form, "ratio", "a resource whose range was not shown is priced as it was")
+        box.evidence["r1"]["limits"] = {"tier": {"lowest": 99}, "units": {"lowest": True, "highest": 1.5}}
+        self.assertEqual(ratio("r1", 4, 60).rows["r1"].form, "ratio", "a range that is not in the shape bounds nothing")
+        self.assertEqual(ratio("r1", 4, 60).rows["r1"].said, {"from": 60.0, "to": 4.0, "on": "units"}, "and is not kept")
+        box.evidence["r1"]["limits"] = {"units": {"lowest": 5}}
+        self.assertEqual(ratio("r1", 6, 60).rows["r1"].said, {"from": 60.0, "to": 6.0, "on": "units", "lowest": 5}, "a bound that the page does not give is not kept")
+        self.assertTrue(pricing.WHY["range"].startswith("No saving was worked out") and pricing.WHY["range"].endswith("."))
+        refused = {pricing.KEY: {"action": "reduce", "missing": "range"}}
+        self.assertEqual((pricing.missing(refused), pricing.refused(refused)), (pricing.WHY["range"], True))
+
     def test_a_ratio_of_numbers_that_are_not_a_reduction_makes_no_figure(self):
         for start, target in ((12, 12), (12, 13), (12, -1), (0, 0), (True, 4), (12, True), ("12", 4), (12, "4"), (12, None), (float("nan"), 4), (12, float("inf")), (10 ** 400, 4)):
             with self.subTest(start=start, target=target):
@@ -907,9 +934,12 @@ class TheAlternative(unittest.TestCase):
         row = self.priced(box=box, costs={"r1": 5.0}).rows["r1"]
         self.assertEqual((row.low, row.high), (21.43, 21.43), "22.50 to 30 a month is more than 5 in 30 days allows for a meter of a week: 5 x 30 / 7")
 
-    def facts(self, retail=0.125, price="p1"):
+    def facts(self, retail=0.125, price="p1", ages=None):
         change = pricing.parse(switch(price))
-        found = pricing.price(change, ("r1",), self.box(retail=retail), {"r1": 60.0}, None, lambda text: text)
+        box = self.box(retail=retail)
+        if ages is not None:
+            box.ages = ages
+        found = pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda text: text)
         return {pricing.KEY: pricing.digest(change, found, "r1")}
 
     def test_the_digest_holds_numbers_and_closed_words_only_and_the_figure_is_a_scenario_that_counts_its_low_end(self):
@@ -995,15 +1025,81 @@ class TheAlternative(unittest.TestCase):
         return effect(f"r{number}", (f"m{number}",), {"form": "alternative", "price": price})
 
     @staticmethod
-    def together(effects, usds):
+    def together(effects, usds, ages=None):
         """The resources r1, r2, ... with one meter each (600 hours that cost `usds`, the line of the meter listed at 0.125 an hour), a finding that states `effects` for them, what code made of it and the
-        price of the digest of the group."""
+        price of the digest of the group. `ages` is the register of how old the copy of the price book was that showed each meter or price, when it was a copy of at least a day."""
         meters = {f"m{n}": billed_units(usd=usd, quantity=600.0, scope=f"r{n}", words=COMPUTE) for n, usd in enumerate(usds, 1)}
-        box = shown(meters=meters, prices=LISTED, retail={name: 0.125 for name in meters}, offers={name: {"p1", "p10"} for name in meters})
+        box = shown(meters=meters, prices=LISTED, retail={name: 0.125 for name in meters}, offers={name: {"p1", "p10"} for name in meters}, ages=ages or {})
         handles = tuple(f"r{n}" for n in range(1, len(usds) + 1))
         change = pricing.parse(block("switch", *effects))
         found = pricing.price(change, handles, box, dict(zip(handles, usds)), None, lambda text: text)
         return found, pricing.combine([pricing.digest(change, found, handle) for handle in handles], len(handles))["price"]
+
+    def test_the_age_of_the_list_is_the_older_of_the_two_lists_that_the_figure_rests_on_and_only_a_whole_number_of_days_from_one_up_is_an_age(self):
+        # The meter's own line (`retail`) and the line of the alternative (`prices`) may come from two reads: the figure rests on both, and says the older.
+        for ages, said in (({"m1": 10}, 10), ({"p1": 12}, 12), ({"m1": 3, "p1": 12}, 12), ({"m1": 12, "p1": 3}, 12), ({"m1": 1}, 1), ({"m1": 366}, 366), ({}, None), ({"m2": 10, "p2": 10, "p10": 10}, None),
+                           ({"m1": 0}, None), ({"m1": -3}, None), ({"m1": True}, None), ({"m1": 2.5}, None), ({"m1": "10"}, None), ({"m1": None}, None), ({"m1": 367}, None), ({"m1": 10 ** 20}, None)):
+            with self.subTest(ages=ages):
+                box = self.box()
+                box.ages = ages
+                row = self.priced(box=box).rows["r1"]
+                self.assertEqual(row.said.get("listAge"), said)
+                self.assertEqual({key: value for key, value in row.said.items() if key != "listAge"}, {"offer": "p1", "list": 0.0625, "ratio": 0.8, "to": "Small", "now": "Fixed Hours"}, "nothing else of the digest changes")
+        self.assertNotIn("listAge", self.priced(box=shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE)}, prices=LISTED, retail={"m1": 0.125}, offers={"m1": {"p1"}})).rows["r1"].said,
+                         "a toolbox that has no such register")
+
+    def test_the_basis_of_a_switch_says_how_old_the_list_is_in_one_fact_and_a_figure_from_a_read_or_a_copy_of_today_says_nothing_of_it(self):
+        head = "At the rate of the last 7 days this resource costs about $60.00 a month for Fixed Hours. "
+        tail = ("Meternaut did not check whether this resource can be switched to it, or whether it has what this resource needs. "
+                "The saving could be anywhere from $22.50 to $30.00 a month, and Meternaut counts the low end.")
+        self.assertEqual(pricing.saved(self.facts(ages={"m1": 10})).basis,
+                         head + "A switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. "
+                         "Your bill pays about 80 percent of the list price of Fixed Hours as it was 10 days ago. Meternaut prices Small both at its list price and at 80 percent of it. " + tail)
+        self.assertEqual(pricing.saved(self.facts()).basis, pricing.saved(self.facts(ages={})).basis, "a read of the list, or a copy of today, says nothing")
+        self.assertNotIn(" ago", pricing.saved(self.facts()).basis)
+        self.assertIn("as it was 1 day ago.", pricing.saved(self.facts(ages={"m1": 1})).basis, "one day, in the singular")
+        # The bill pays list prices: there is no share to say, and the list is dated all the same.
+        self.assertIn("At list prices as they were 10 days ago, a switch to Small would cost about $37.50 a month for the same use, so it would save about $22.50 a month. ",
+                      pricing.saved(self.facts(retail=0.1, ages={"p1": 10})).basis)
+        self.assertIn("At list prices, a switch to Small would cost", pricing.saved(self.facts(retail=0.1)).basis)
+        # A digest that holds no share says no one share, and still how old the list is.
+        good = self.facts(ages={"m1": 10})[pricing.KEY]
+        without = {key: value for key, value in good["price"].items() if key != "ratio"}
+        self.assertIn("Meternaut prices Small both at list prices and at the same share of the list prices that your bill pays, as they were 10 days ago. ", pricing.saved({pricing.KEY: {**good, "price": without}}).basis)
+
+    def test_a_digest_that_holds_an_age_that_is_no_age_or_that_a_digest_made_before_it_does_not_hold_says_nothing_of_how_old_the_list_is(self):
+        good = self.facts(ages={"m1": 10})[pricing.KEY]
+        plain = pricing.saved({pricing.KEY: {**good, "price": {key: value for key, value in good["price"].items() if key != "listAge"}}}).basis
+        self.assertNotIn(" ago", plain)
+        for bad in (0, -1, True, "10", 2.5, None, 367, float("nan"), [10], {"days": 10}):
+            with self.subTest(bad=bad):
+                self.assertEqual(pricing.saved({pricing.KEY: {**good, "price": {**good["price"], "listAge": bad}}}).basis, plain)
+
+    def test_the_resources_of_a_group_say_the_oldest_of_their_lists_and_that_it_is_up_to_so_many_days_and_a_resource_with_two_parts_says_the_oldest_of_them(self):
+        found, joined = self.together([self.switched(n) for n in (1, 2, 3)], (60.0, 60.24, 67.5), ages={"m1": 10, "m2": 3})
+        self.assertEqual([found.rows[handle].said.get("listAge") for handle in ("r1", "r2", "r3")], [10, 3, None])
+        self.assertEqual((joined["form"], joined["listAge"]), ("alternative", 10))
+        self.assertIn("Meternaut prices Small both at list prices and at the same share of the list prices that your bill pays, as they were up to 10 days ago. ", pricing.saved({pricing.KEY: {"action": "switch", "price": joined}}).basis)
+        for ages in ({}, {"m1": 0}):
+            self.assertNotIn("listAge", self.together([self.switched(n) for n in (1, 2)], (60.0, 60.0), ages=ages)[1])
+        _, same = self.together([self.switched(n) for n in (1, 2)], (60.0, 60.0), ages={"m1": 10, "m2": 10})
+        self.assertEqual((same["ratio"], same["listAge"]), (0.8, 10))
+        self.assertIn("Your bill pays about 80 percent of the list price of Fixed Hours as it was up to 10 days ago. ", pricing.saved({pricing.KEY: {"action": "switch", "price": same}}).basis)
+        _, mixed = self.together([self.switched(1), self.switched(2, "p10")], (60.0, 60.0), ages={"m1": 10})
+        self.assertNotIn("listAge", mixed, "a figure of several rules says nothing of one list")
+        other = (*COMPUTE[:2], "Other Hours", *COMPUTE[3:])
+        box = shown(meters={"m1": billed_units(usd=60.0, quantity=600.0, words=COMPUTE), "m2": billed_units(usd=60.0, quantity=600.0, words=other)}, prices=LISTED, retail={"m1": 0.125, "m2": 0.125},
+                    offers={"m1": {"p1"}, "m2": {"p1"}}, ages={"m1": 3, "m2": 10})
+        change = pricing.parse(block("switch", effect("r1", ("m1",), {"form": "alternative", "price": "p1"}), effect("r1", ("m2",), {"form": "alternative", "price": "p1"})))
+        self.assertEqual(pricing.price(change, ("r1",), box, {"r1": 120.0}, None, lambda text: text).rows["r1"].said["listAge"], 10)
+
+    def test_the_age_of_the_list_reaches_the_card_and_the_letter_whole_in_the_sentence_of_the_page(self):
+        note = pricing.saved(self.facts(ages={"m1": 10})).basis
+        said = "Your bill pays about 80 percent of the list price of Fixed Hours as it was 10 days ago."
+        shown_to_a_person = stake.stake_of_figure(Figure("save", "Could save", 22.5, "Scenario", note))
+        self.assertIn(said, note)
+        self.assertIn(said, cards.md(shown_to_a_person.note, stake.NOTE_CHARS))
+        self.assertIn(said, letters._data(shown_to_a_person.note, stake.LINE_CHARS))
 
     def test_a_group_that_switches_to_the_same_alternative_at_bill_rates_that_differ_keeps_the_rule_and_says_no_one_rate_and_still_that_features_were_not_checked(self):
         found, joined = self.together([self.switched(n) for n in (1, 2, 3)], (60.0, 60.24, 67.5))
@@ -1656,6 +1752,16 @@ class WhenAnInvestigationPricesAChange(unittest.TestCase):
         h.go()
         self.assertEqual(self.figures(h), {"thing-1": None, "thing-2": None})
         self.assertEqual(self.facts(h)["thing-1"]["missing"], "currency")
+
+    def test_a_cost_that_is_not_in_dollars_keeps_its_own_word_when_a_setting_was_refused_for_its_range_too(self):
+        change = {**block("reduce", effect("r1", ("m1",), {"form": "assumed", "low": 0.3, "high": 0.5})), "set": [{"handle": "r1", "property": "units", "from": 12, "to": 1}]}
+        evidence = {"r1": {**metrics(MetricA=0), "properties": {"units": 12}, "limits": {"units": {"lowest": 2}}}, "r2": metrics(MetricA=0)}
+        h = self.go(change, holding(evidence=evidence), proposal="change", basis="oversized", handles=("r1",))
+        self.assertEqual((self.figures(h)["thing-1"], self.facts(h)["thing-1"]["missing"]), (None, "range"), "the resource whose setting the range refused has no figure, whatever the form")
+        h = Harness(FakeFoundry(answer(finding(change=change, proposal="change", basis="oversized", handles=["r1"]))), holding(evidence=evidence, costs=(None, None)), with_store=True)
+        h.contexts = {SUBSCRIPTION: Context(locks=[], recent=set(), managed_groups=set(), costs={resource(1).resource_id.lower(): 5.0}, currency="EUR")}
+        h.go()
+        self.assertEqual(self.facts(h)["thing-1"]["missing"], "currency", "the cost that is not in dollars is the first reason, as it was")
 
     def test_the_skeptic_is_shown_the_model_in_typed_form_and_neither_the_words_of_the_ai_for_a_person_nor_a_name(self):
         seen = {}

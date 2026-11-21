@@ -34,7 +34,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable, Mapping
 
-from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, roles, upkeep, wiring
+from . import activity, agents, beats, capability, decide, guards, impact, learning, pricing, proposals, ranges, roles, upkeep, wiring
 from . import costs as cost_words
 from . import estimate as estimates
 from .approvals import is_fixture
@@ -49,7 +49,7 @@ from .memory_store import parse, stamp
 from .models import ADVISE, AUTOMATED, GROUP_FACT, CaseRecord, StoreError
 from .ownership import NOT_COMPLETE, NOT_IN_WINDOW, NOT_VISIBLE, UNAVAILABLE, OwnerReader, owner_hints
 from .roles import DetectiveAnswer, RoleError, SkepticAnswer, clean_text
-from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, Resource, Toolbox, meter_word
+from .toolbox import MAX_CALLS, OWNER_READS, OWNER_SECONDS, SUBSCRIPTION_SECONDS, WARM_SECONDS, Resource, Toolbox, meter_word
 
 if TYPE_CHECKING:
     from .run import Services
@@ -848,6 +848,9 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
     if toolbox is None:
         toolbox = Toolbox(s.arm, st.subscriptions, s.clock(), [])
         toolbox.memory = s.extras.store if s.extras is not None else None  # what the tools that recall read: the lessons, the claims and the open questions of the store of the loop
+        if getattr(s, "docs", None) is not None:
+            s.docs.deadline = deadline
+            toolbox.ranges = ranges.Reader(s.docs, s.monotonic)  # the limits that the tools show for a count or a size: the reference page of a kind of resource, read once in the run
         # One call may take at most an eighth of the investigation's time, or the default, for reading the subscriptions, so that a call over a large estate cannot use the time that the
         # Investigator needs for its answer and the Skeptic for its verdicts.
         toolbox.read_seconds = min(SUBSCRIPTION_SECONDS, max(5.0, budget / 8))
@@ -856,6 +859,7 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         out.owners = out.owners or OwnerReader(s.arm, s.clock())
         toolbox.owners = out.owners.sharing(max_reads=OWNER_READS * len(plan), seconds=OWNER_SECONDS * len(plan))
     toolbox.window, toolbox.backfill = looked, assumed
+    toolbox.emit = h.emit  # a line of the History for each try that reaches the price list (events.PRICE_KINDS)
     out.toolbox = toolbox
     try:
         # The harness (cases/harness.py) stands between the run and the agents: it holds the code and the stored definitions against the lock, reads the switches, and makes the agent only from
@@ -884,6 +888,18 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
            **({"beats": len(plan)} if focused else {}))
     if remembered is None:
         note(activity.UNREADABLE)
+    # The price book is filled before the first question: the list is read for the products of the dearest meters that it does not hold fresh, with no model call and no call of a tool of the run
+    # (Toolbox.warm_prices), in at most an eighth of the investigation's time, like a call of a tool, and in no more than WARM_SECONDS. It never fails the run, and it has no effect when the store has
+    # no book.
+    warm = getattr(toolbox, "warm_prices", None)
+    if warm is not None:
+        try:
+            warmed_up = warm(min(WARM_SECONDS, budget / 8))
+        except Exception as error:  # noqa: BLE001 (a warm-up never fails the run)
+            note(f"the price book could not be warmed ({type(error).__name__})")
+        else:
+            if warmed_up is not None:
+                note(f"the price book: {warmed_up[0]} products read from the price list, {warmed_up[1]} already in the book, {warmed_up[2]} not read")
 
     def finished(ok: bool, **fields: object) -> None:
         out.seconds = int(s.monotonic() - began)
@@ -893,6 +909,8 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
                 note(activity.looked_note(*counts, assumed))
                 notes.insert(0, notes.pop())  # first, so that the cap on the notes that a run keeps never takes it
             fields.update(zip(("profiled", "firstTime", "inWindow"), counts[:1] if remembered is None or assumed else counts))
+        if (unread := getattr(toolbox, "limits_note", None)) is not None and (said := unread()):
+            note(said)  # one note for the run, however many kinds of resource had no documented limits read (cases/ranges.py)
         h.emit("investigation.finished", ok=ok, toolCalls=out.tool_calls, tokens=out.tokens, seconds=out.seconds, **({"beats": len(out.beats)} if focused else {}), **fields)
 
     def step(name: str, model: str, started: float, ok: bool, tokens: tuple[int, int] | None, text: str | None) -> dict:
@@ -1153,9 +1171,11 @@ def _investigate(s: "Services", contexts: Mapping[str, Context], notes: list[str
         costs = {handle: _cost(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower())) for handle in finding.handles}
         states = {handle: _cost_state(toolbox.handles[handle], contexts.get(toolbox.handles[handle].subscription_id.lower()), costs[handle]) for handle in finding.handles}
         blocked = {h: "currency" for h, state in states.items() if state == cost_words.CURRENCY}
-        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, blocked, meter_word)
         finding.ways = proposals.check(finding.change, finding.proposal, finding.handles, toolbox.evidence,
                                        lambda option: pricing.price(option, finding.handles, toolbox, costs, blocked, meter_word))
+        # A resource whose setting the documented range refused has no figure either: its number is one that the platform does not take, and the figure that the AI states for it may rest on the same number.
+        blocked |= {handle: "range" for handle in finding.ways.ranged if handle not in blocked}
+        finding.priced = pricing.price(finding.change, finding.handles, toolbox, costs, blocked, meter_word)
         for handle in sorted(finding.handles, key=lambda handle: -(costs[handle] or 0.0)):
             resource = toolbox.handles[handle]
             facts = _facts(finding, finding.cited[handle], costs[handle], _aggregates(toolbox.evidence, handle), len(finding.listed[handle]) if handle in finding.listed else None)

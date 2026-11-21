@@ -958,6 +958,21 @@ class TheFoundryOfTheRun(unittest.TestCase):
         self.assertTrue(callable(token) and callable(redact))
         self.assertEqual(len(fake.runs), 2)
 
+    def test_the_investigation_is_given_a_client_of_the_pages_of_the_documentation_only_and_not_the_one_of_the_watch(self):
+        seen = []
+        real = investigate.investigate
+
+        def spy(s, *args, **kwargs):
+            seen.append((s.client, s.docs))
+            return real(s, *args, **kwargs)
+
+        with mock.patch.object(investigate, "investigate", spy), mock.patch.object(investigate, "Toolbox", lambda *a: FakeToolbox()):
+            run_watch(estate_with_leads(), env=INVESTIGATING, foundry=FakeFoundry())
+        ((client, docs),) = seen
+        self.assertIsInstance(docs, http.Client)
+        self.assertIsNot(docs, client, "the list of the Watch holds no page of documentation")
+        self.assertEqual(docs.allowed, http.docs_calls(), "the pages of Microsoft's documentation and nothing else: a GET with no token")
+
     def test_the_client_that_the_run_makes_always_has_a_harness_around_its_agents_and_a_client_that_is_handed_in_has_none_of_its_own(self):
         built = []
         real = run.harness_module.build

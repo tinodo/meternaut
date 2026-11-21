@@ -18,7 +18,7 @@ from urllib.parse import quote
 from .http import Client, HttpError, Refused
 from .memory_store import parse, stamp, utc_now
 from .models import (ActionRecord, CapabilityRecord, CaseRecord, CheckRecord, ClaimRecord, DecisionRecord, EscalationRecord, InvestigationRecord, KEPT_INVESTIGATIONS, LessonRecord, MailRecord, NoteRecord,
-                     PlanRecord, Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
+                     PlanRecord, PriceBookRecord, Record, RunRecord, SettingsRecord, StoreError, SwitchRecord, SWITCH_NAMES, TIME_FORMAT, TwoPeopleRule, can_replace)
 
 RESOURCE = "https://storage.azure.com/"
 VERSION = "2020-12-06"
@@ -40,10 +40,12 @@ INVESTIGATIONS = "mninvestigations"
 # request, in the partition TOLD + the object id of the person (Store.told_get).
 ESCALATIONS = "mnescalations"
 TOLD = "told-"
+# What a complete read of the public price list gave (cases/prices.py): one row for each service, region and product, kept by the Table store only (the tests of the investigation use the memory store, which has no book).
+PRICEBOOK = "mnpricebook"
 # The lists of plans that the ladder, the pages, the letters and the Watch depend on: the filter that reads each, and the states that belong to it. Inside `reading()` each is read once.
 PLAN_LISTS = {"open": ("(state eq 'open' or state eq 'approved')", lambda state: state in ("open", "approved")), "held": ("state eq 'held'", lambda state: state == "held"),
               "recent": ("state ne 'held'", lambda state: state != "held"), "expired": ("state eq 'expired'", lambda state: state == "expired")}
-TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS, ESCALATIONS)
+TABLES = (RUNS, CASES, PLANS, DECISIONS, ACTIONS, SWITCHES, SETTINGS, NOTES, NONCES, MAILS, LESSONS, CLAIMS, PROFILES, CHECKS, INVESTIGATIONS, ESCALATIONS, PRICEBOOK)
 
 KEY = r"[A-Za-z0-9_.-]{1,120}"
 VALUE = re.compile(r"^[A-Za-z0-9_.@:-]{0,200}$")
@@ -526,6 +528,18 @@ class TableStore:
     def profile_latest(self) -> CapabilityRecord | None:
         rows = self._query(PROFILES, "PartitionKey eq 'p'", 1)
         return self._records(rows, CapabilityRecord)[0] if rows else None
+
+    @staticmethod
+    def _book_key(service: str, region: str, product: str) -> str:
+        """The row of a read of the price list: the words of a platform name hold spaces and marks that a key may not, so the row is the hash of the three words, and the record holds them."""
+        return hashlib.sha256(f"{service}|{region}|{product}".encode("utf-8")).hexdigest()[:32]
+
+    def book_put(self, record: PriceBookRecord) -> None:
+        self._upsert(PRICEBOOK, "b", self._book_key(record.service, record.region, record.product), record)
+
+    def book_get(self, service: str, region: str, product: str) -> PriceBookRecord | None:
+        row, _ = self._get(PRICEBOOK, "b", self._book_key(service, region, product))
+        return None if row is None else self._records([row], PriceBookRecord)[0]
 
     def investigation_put(self, record: InvestigationRecord) -> None:
         self._upsert(INVESTIGATIONS, "i", f"{reverse_key(parse(record.at))}_{record.run_id}", record)

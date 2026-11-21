@@ -31,6 +31,14 @@ def properties(**more) -> dict:
     return {UNITS: 4, "tier": "Lite", "zoneRedundant": True, "maxReplicas": 8, **more}
 
 
+LIMITS = {UNITS: {"lowest": 2, "highest": 50}}
+
+
+def limited(limits=LIMITS, **more) -> dict:
+    """The evidence of an invented gateway as `checked` takes it, with the limits that the tools showed for its properties: the units may be 2 to 50."""
+    return {"r1": {"properties": properties(**more), "limits": limits}}
+
+
 def invented(*numbers, **more) -> FakeToolbox:
     """The invented gateways that the tools showed, each with one bill line of 200 dollars over its 30 days and `properties`."""
     handles = [f"r{n}" for n in numbers]
@@ -256,6 +264,152 @@ class WhatCodeKeepsOfTheSettings(unittest.TestCase):
         self.assertEqual(proposals.check(None, "change", ["r1"], {}, lambda option: pricing.Priced("")), proposals.Checked({}, Counter(), (0, 0)))
         for text in ("capacityUnits", 4, {"handle": "r1"}, None):
             self.assertEqual(checked(reduce(set=text)), proposals.Checked({}, Counter(), (0, 0)))
+
+
+class WhatCodeKeepsWithTheDocumentedRange(unittest.TestCase):
+    """The limits that the tools showed for a property (the `limits` of its evidence: the lowest and highest number that Microsoft's reference page of the type gives, cases/ranges.py): a new number that lies
+    outside them is a number that the platform refuses, so the setting is dropped like any other that fails a rule, with the words that name the number, and the finding stays."""
+
+    LOWER = {**GOOD, "to": 1}
+
+    def test_a_new_number_below_the_lowest_that_the_page_gives_is_dropped_by_itself_and_the_finding_and_the_other_entries_stay(self):
+        other = {"handle": "r1", "property": "maxReplicas", "from": 8, "to": 4}
+        found = checked(reduce(to=1, set=[self.LOWER, other]), evidence=limited())
+        self.assertEqual(found.ways["r1"]["set"], [{"path": "maxReplicas", "from": 8, "to": 4}])
+        self.assertEqual((found.dropped, found.said), (Counter({("set", "lowest 2"): 1}), (2, 0)))
+
+    def test_a_new_number_above_the_highest_that_the_page_gives_is_dropped_the_same_way(self):
+        found = checked(reduce(start=60, to=55, set=[{**GOOD, "from": 60, "to": 55}]), evidence=limited(**{UNITS: 60}))
+        self.assertEqual((found.ways, found.dropped), ({}, Counter({("set", "highest 50"): 1})))
+
+    def test_a_number_at_the_lowest_or_the_highest_or_inside_the_range_is_kept(self):
+        for start, to in ((4, 2), (4, 3), (50, 50 - 1), (60, 50)):
+            with self.subTest(start=start, to=to):
+                found = checked(reduce(start=start, to=to, set=[{**GOOD, "from": start, "to": to}]), evidence=limited(**{UNITS: start}))
+                self.assertEqual((found.ways["r1"]["set"], found.dropped), ([{"path": UNITS, "from": start, "to": to}], Counter()))
+
+    def test_a_bound_that_the_page_does_not_give_bounds_nothing(self):
+        self.assertEqual(checked(reduce(to=1, set=[self.LOWER]), evidence=limited({UNITS: {"lowest": 2}})).dropped, Counter({("set", "lowest 2"): 1}))
+        self.assertEqual(checked(reduce(to=1, set=[self.LOWER]), evidence=limited({UNITS: {"highest": 50}})).dropped, Counter(), "a highest says nothing of a number below it")
+        self.assertEqual(checked(reduce(to=2, set=[{**GOOD, "to": 2}]), evidence=limited({UNITS: {"lowest": 2}})).dropped, Counter())
+        self.assertEqual(checked(reduce(start=60, to=55, set=[{**GOOD, "from": 60, "to": 55}]), evidence=limited({UNITS: {"lowest": 2}}, **{UNITS: 60})).dropped, Counter())
+
+    def test_with_no_limits_for_the_property_nothing_changes_and_a_limit_of_another_property_does_not_bound_this_one(self):
+        for label, evidence in (("none at all", {"r1": {"properties": properties()}}), ("an empty one", limited({})), ("another property", limited({"maxReplicas": {"lowest": 5}})),
+                                ("the key of another case", limited({UNITS.upper(): {"lowest": 2}}))):
+            with self.subTest(label):
+                found = checked(reduce(to=1, set=[self.LOWER]), evidence=evidence)
+                self.assertEqual((found.ways["r1"]["set"], found.dropped), ([{"path": UNITS, "from": 4, "to": 1}], Counter()))
+
+    def test_the_limits_are_those_of_the_handle_and_a_resource_with_none_is_not_bounded_by_those_of_another(self):
+        evidence = {"r1": {"properties": properties(), "limits": LIMITS}, "r2": {"properties": properties()}}
+        found = checked({"action": "reduce", "effects": [], "set": [self.LOWER, {**self.LOWER, "handle": "r2"}]}, handles=("r1", "r2"), evidence=evidence)
+        self.assertEqual((found.ways, found.dropped), ({"r2": {"set": [{"path": UNITS, "from": 4, "to": 1}]}}, Counter({("set", "lowest 2"): 1})))
+
+    def test_limits_that_are_not_in_the_shape_never_raise_and_bound_nothing(self):
+        for junk in ("x", 5, [], None, {UNITS: "x"}, {UNITS: 5}, {UNITS: []}, {UNITS: {"lowest": True, "highest": float("nan")}}, {UNITS: {"lowest": "2"}}, {UNITS: {"lowest": 2.5}},
+                     {UNITS: {"lowest": None, "highest": None}}):
+            with self.subTest(repr(junk)[:30]):
+                found = checked(reduce(to=1, set=[self.LOWER]), evidence={"r1": {"properties": properties(), "limits": junk}})
+                self.assertEqual((found.ways["r1"]["set"], found.dropped), ([{"path": UNITS, "from": 4, "to": 1}], Counter()))
+
+    def test_the_rule_that_a_number_is_smaller_than_the_old_one_is_read_before_the_range(self):
+        found = checked(reduce(set=[{**GOOD, "to": 6}]), evidence=limited())
+        self.assertEqual(found.dropped, Counter({("set", "to"): 1}))
+
+    def test_a_setting_is_never_repaired_to_the_lowest_number_that_the_page_gives(self):
+        found = checked(reduce(to=1, set=[self.LOWER]), evidence=limited())
+        self.assertEqual(found.ways, {}, "no entry with the number 2 is made of the one with the number 1")
+
+    def test_the_notes_say_in_plain_words_which_number_the_page_gives(self):
+        low = checked(reduce(to=1, set=[self.LOWER]), evidence=limited())
+        self.assertEqual(proposals.note_of(low), "code dropped 1 of 1 setting (a new value below 2, the lowest that Microsoft's reference page gives for the setting: 1)")
+        high = checked(reduce(start=60, to=55, set=[{**GOOD, "from": 60, "to": 55}]), evidence=limited(**{UNITS: 60}))
+        self.assertEqual(proposals.note_of(high), "code dropped 1 of 1 setting (a new value above 50, the highest that Microsoft's reference page gives for the setting: 1)")
+        both = checked(reduce(set=[self.LOWER, {"handle": "r1", "property": "maxReplicas", "from": 8, "to": 0}]),
+                       evidence={"r1": {"properties": properties(), "limits": {**LIMITS, "maxReplicas": {"lowest": 1}}}})
+        self.assertEqual(proposals.note_of(both), "code dropped 2 of 2 settings (a new value below 2, the lowest that Microsoft's reference page gives for the setting: 1, "
+                                                  "a new value below 1, the lowest that Microsoft's reference page gives for the setting: 1)")
+
+    def test_the_words_of_a_rule_with_no_number_are_those_of_the_table_and_a_rule_with_one_names_it(self):
+        self.assertEqual(proposals.reason("set", "count"), proposals.WHY["set"]["count"])
+        self.assertEqual(proposals.reason("other", "title"), proposals.WHY["other"]["title"])
+        self.assertEqual(proposals.reason("set", "lowest 2"), "a new value below 2, the lowest that Microsoft's reference page gives for the setting")
+        self.assertEqual(proposals.reason("set", "highest 1000"), "a new value above 1,000, the highest that Microsoft's reference page gives for the setting")
+        self.assertEqual(proposals.reason("set", "lowest -1"), "a new value below -1, the lowest that Microsoft's reference page gives for the setting")
+
+    def test_a_finding_that_states_a_number_below_the_lowest_keeps_its_case_with_no_setting_and_no_figure_and_says_why_in_the_notes(self):
+        box = invented(1)
+        box.evidence["r1"]["limits"] = LIMITS
+        h = run(asked(reduce(to=1, set=[self.LOWER])), box)
+        self.assertEqual((h.result.cases, ways_of(h)), (1, None))
+        (note,) = [e for e in h.notes if "dropped" in e]
+        self.assertEqual(note, "finding 1: code dropped 1 of 1 setting (a new value below 2, the lowest that Microsoft's reference page gives for the setting: 1)")
+        change = facts_of(h)["change"]
+        self.assertEqual((change.get("missing"), "price" in change), ("range", False), "the saving of a number that the platform refuses is not worked out either")
+        self.assertIn("range", pricing.WHY)
+
+    def test_the_same_finding_with_the_lowest_number_is_kept_with_its_setting_and_its_figure(self):
+        box = invented(1)
+        box.evidence["r1"]["limits"] = LIMITS
+        h = run(asked(reduce(to=2, set=[GOOD])), box)
+        self.assertEqual(ways_of(h)["set"], [{"path": UNITS, "from": 4, "to": 2}])
+        self.assertEqual(facts_of(h)["change"]["price"]["form"], "ratio")
+        self.assertEqual([e for e in h.notes if "dropped" in e], [])
+
+    # The forms that name no property: only the setting can be held to the range, and the figure of the resource is held back with it.
+    FORMS = {"assumed": {"form": "assumed", "low": 0.3, "high": 0.5}, "quantity": {"form": "quantity", "from": 720, "to": 360}}
+
+    def stated(self, form, to):
+        return {"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": self.FORMS[form]}], "how": f"Lower the units from 4 to {to}.", "set": [{**GOOD, "to": to}]}
+
+    def test_a_resource_whose_setting_the_range_refused_has_no_figure_whatever_the_form_and_the_finding_says_so(self):
+        for form in self.FORMS:
+            with self.subTest(form):
+                box = invented(1)
+                box.evidence["r1"]["limits"] = LIMITS
+                h = run(asked(self.stated(form, 1)), box)
+                self.assertEqual(h.result.cases, 1, "the finding stays and its case is opened")
+                self.assertIsNone(ways_of(h))
+                change = facts_of(h)["change"]
+                self.assertEqual((change.get("missing"), "price" in change), ("range", False), "the figure of the resource may rest on the number that the platform refuses")
+                self.assertEqual(pricing.missing(facts_of(h)), pricing.WHY["range"])
+                self.assertEqual([e for e in h.notes if "dropped" in e], ["finding 1: code dropped 1 of 1 setting (a new value below 2, the lowest that Microsoft's reference page gives for the setting: 1)"])
+
+    def test_the_words_of_how_are_the_ais_own_and_nothing_reads_them_for_a_number(self):
+        box = invented(1)
+        box.evidence["r1"]["limits"] = LIMITS
+        h = run(asked(self.stated("quantity", 1)), box)
+        self.assertEqual(facts_of(h)["change"]["how"], "Lower the units from 4 to 1.", "kept as the AI wrote it, with the number that the platform refuses in it")
+        h = run(asked({**reduce(to=3), "how": "Lower the units from 4 to 1.", "effects": [{"handle": "r1", "meters": ["m1"], "remains": self.FORMS["assumed"]}]}), box)
+        self.assertEqual((facts_of(h)["change"]["price"]["form"], facts_of(h)["change"]["how"]), ("assumed", "Lower the units from 4 to 1."), "no setting, so nothing to hold to the range")
+
+    def test_the_same_finding_with_a_number_inside_the_range_or_with_no_range_shown_keeps_its_figure_whatever_the_form(self):
+        for form in self.FORMS:
+            for label, to, limits in (("inside", 2, LIMITS), ("no range shown", 1, None)):
+                with self.subTest(form=form, case=label):
+                    box = invented(1)
+                    if limits is not None:
+                        box.evidence["r1"]["limits"] = limits
+                    h = run(asked(self.stated(form, to)), box)
+                    self.assertEqual(facts_of(h)["change"]["price"]["form"], form)
+                    self.assertEqual(ways_of(h)["set"], [{"path": UNITS, "from": 4, "to": to}])
+
+    def test_the_handles_whose_setting_was_refused_for_the_range_are_named_and_no_others(self):
+        evidence = {"r1": {"properties": properties(), "limits": LIMITS}, "r2": {"properties": properties(), "limits": LIMITS}, "r3": {"properties": properties()}}
+        change = {"action": "reduce", "effects": [], "set": [self.LOWER, {**self.LOWER, "handle": "r2", "to": 3}, {**self.LOWER, "handle": "r3"}]}
+        found = checked(change, handles=("r1", "r2", "r3"), evidence=evidence)
+        self.assertEqual(found.ranged, frozenset({"r1"}), "r2 is inside the range and r3 has none shown")
+        self.assertEqual(sorted(found.ways), ["r2", "r3"])
+        self.assertEqual(checked(change, handles=("r2", "r3"), evidence=evidence).ranged, frozenset(), "a setting of a resource that is not the finding's is no one's")
+
+    def test_a_setting_refused_for_another_reason_or_not_asked_for_does_not_name_its_handle(self):
+        for label, bad in (("an old value that no tool showed", {**GOOD, "from": 5, "to": 1}), ("a number that is not smaller", {**GOOD, "to": 6}), ("a property that is no count", {**GOOD, "property": "tier", "to": 1}),
+                           ("a resource that is not the finding's", {**GOOD, "handle": "r9", "to": 1})):
+            with self.subTest(label):
+                self.assertEqual(checked(reduce(set=[bad]), evidence=limited()).ranged, frozenset())
+        self.assertEqual(checked(reduce(to=1, set=[self.LOWER]), proposal="investigate", evidence=limited()).ranged, frozenset(), "a finding that is not a change keeps no setting, and holds no figure back")
+        self.assertEqual(checked(None).ranged, frozenset())
 
 
 class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
@@ -498,6 +652,17 @@ class WhatTheSkepticIsShown(unittest.TestCase):
         self.assertNotIn("set", one)
         self.assertNotIn("others", one)
 
+    def test_a_resource_whose_setting_the_range_refused_is_shown_with_the_word_that_says_why_it_has_no_figure(self):
+        box = invented(1)
+        box.evidence["r1"]["limits"] = LIMITS
+        assumed = [{"handle": "r1", "meters": ["m1"], "remains": {"form": "assumed", "low": 0.3, "high": 0.5}}]
+        one = self.seen(run(asked({**reduce(to=1, set=[{**GOOD, "to": 1}]), "effects": assumed}), box))
+        self.assertEqual(one["change"]["effects"], [{"handle": "r1", "unpriced": "range"}])
+        self.assertNotIn("set", one, "and the setting that was dropped is not shown as one")
+        inside = self.seen(run(asked({**reduce(to=2, set=[GOOD]), "effects": assumed}), box))
+        self.assertEqual(inside["change"]["effects"][0]["handle"], "r1")
+        self.assertNotIn("unpriced", inside["change"]["effects"][0], "inside the range it has the figure that the bill gives")
+
     def test_a_verdict_of_disagree_makes_the_finding_weaker_as_ever(self):
         h = Harness(FakeFoundry(answer(asked(reduce(set=[GOOD]))), verdicts(("disagree", ("The smaller number may not carry the peak.",), "No."))), invented(1), with_store=True)
         h.go()
@@ -543,6 +708,17 @@ class WhatTheInstructionsSay(unittest.TestCase):
                          "as the documentation says that it can be altered where it is or must be made again, else left out"):
             self.assertIn(sentence, " ".join(text.split()), sentence)
         self.assertEqual(banned_in(text), [], "it names no kind of resource, no property, no limit and no option of any service")
+
+    def test_the_investigator_is_told_that_a_number_lies_within_the_limits_that_an_answer_shows_and_may_still_state_a_setting_where_none_is_shown(self):
+        text = " ".join(agents.INVESTIGATOR_INSTRUCTIONS.split())
+        for sentence in ("A number in a setting lies within the limits that an answer shows for that property.",
+                         "Where none are shown you may still state the setting, and then say in how that no tool showed the lowest number that the platform takes, and nothing more about it."):
+            self.assertIn(sentence, text)
+        self.assertLess(text.index("name nothing in it that your tools did not show"), text.index("A number in a setting lies within the limits"))
+        self.assertLess(text.index("and nothing more about it"), text.index("For a finding of one resource"), "the two sentences belong to the paragraph about set")
+        for old in ("must be one that the platform takes", "is not known to you", "do not claim that the smaller number is allowed"):
+            self.assertNotIn(old, text, "where no limits are shown the Investigator is not told that it knows nothing, which would read as no limits and no setting")
+        self.assertEqual(banned_in(text), [], "no kind, property, limit or option is named")
 
     def test_the_marks_that_the_instruction_allows_in_a_title_are_the_marks_that_code_keeps(self):
         listed = re.search(r"the marks (.+?) only", agents.INVESTIGATOR_INSTRUCTIONS).group(1).split()

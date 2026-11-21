@@ -28,6 +28,9 @@ STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
 # of Microsoft Entra, the error code word of Teams (letters alone), one word for why not and, for a refusal, `detail`: Teams' message, only when it is plain words (cases/teamsbot.DETAIL: no digit, slash or at-sign;
 # a name or a host name in letters can still pass). Private History only: tools/teams-check.py never prints it, and real cards write no such line.
 TEAMS_KINDS = ("teams.test.step", "teams.test.finished")
+# One line for each try that reaches the public price list (cases/toolbox.py, cases/prices.py): the service, the product and the region as the platform names them, the HTTP status (0 when no answer came), the
+# milliseconds that the try took and, for a 429 that said how long to wait, `retryAfter` in seconds. No address, id or name of an estate; the pass rate of the list is the share of the tries with status 200.
+PRICE_KINDS = ("prices.read",)
 
 LOGGER = logging.getLogger("meternaut.history")
 
@@ -78,7 +81,7 @@ class History:
         self.told: set[str] = set()  # the notes that came more than once and whose count was written at the end
 
     def emit(self, kind: str, **fields: object) -> dict:
-        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + TEAMS_KINDS:
+        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + TEAMS_KINDS + PRICE_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
         if kind == "run.note" and isinstance(fields.get("note"), str):

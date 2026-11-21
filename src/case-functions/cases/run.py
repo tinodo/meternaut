@@ -28,7 +28,7 @@ from .detectors import DETECTOR_NAMES, Context, Estate, Lead
 from .events import History, collapse
 from .evidence import EvidenceError
 from .foundry import Foundry
-from .http import Client, HttpError, allowed_calls, default_transport
+from .http import Client, HttpError, allowed_calls, default_transport, docs_calls
 from .identity import Identity
 from .memory_store import parse, stamp
 from .modelcalls import ModelError, Models
@@ -65,6 +65,7 @@ class Services:
     # What surrounds the agents (cases/harness.py). The client of the Foundry project that run_watch makes always has one; a test that plays the agents gives none, or its own.
     harness: "harness_module.Harness | None" = None
     trigger: str = ""  # what started the run (execute sets it): cases/activity.py
+    docs: "Client | None" = None  # the public documentation pages and nothing else (http.docs_calls): the investigation reads the reference page of a kind of resource with it (cases/ranges.py)
 
 
 @dataclass
@@ -791,7 +792,7 @@ def run_watch(trigger: str, request_id: str | None, env: Mapping[str, str] | Non
             foundry = Foundry(settings.foundry_endpoint, client, identity.token, redact)
             harness = harness_module.build(settings, foundry, extras, env=env, clock=clock, monotonic=monotonic, redact=redact)
         services = Services(settings, client, Arm(client, identity.token), Models(settings, client, identity.token, redact), history, redact, clock, monotonic, extras,
-                            foundry, harness)
+                            foundry, harness, docs=Client(docs_calls(), redact, transport=transport, sleep=sleep, monotonic=monotonic))
         with extras.store.reading() if extras is not None and hasattr(extras.store, "reading") else contextlib.nullcontext():  # each list of plans is read once for the whole run
             return execute(services, trigger)
     except Exception as error:  # noqa: BLE001 (the History must say how every run ended)

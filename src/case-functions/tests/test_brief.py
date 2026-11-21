@@ -528,6 +528,19 @@ class TheFigureThatCodeWorkedOutFromTheBillLines(unittest.TestCase):
         self.assertIn("Meternaut did not check whether this thing can be switched to it, or whether it has what this thing needs.", b.saving.basis)
         self.assertEqual(b.how, "Take the basic tier.")
 
+    def test_the_age_of_the_list_that_a_switch_rests_on_is_in_the_basis_that_the_page_the_letter_and_the_card_show(self):
+        start = dt.date(2026, 10, 5)
+        meter = Meter("r1", None, pricing_words(1), 600.0, 60.0, {start + dt.timedelta(days=n): 2.0 for n in range(30)}, None, start, 30)
+        change = pricing.parse({"action": "switch", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "alternative", "price": "p1"}}], "how": "Take the basic tier."})
+        said = {}
+        for name, ages in (("a copy of 10 days", {"m1": 10}), ("a read of the list", {})):
+            box = SimpleNamespace(meters={"m1": meter}, evidence={"r1": {"properties": {}}}, prices={"p1": Listed("Example Compute", "Basic Tier", "Small", "Meter 1", "1 Hour", 0.0625, "swedencentral", 1)},
+                                  retail={"m1": 0.125}, offers={"m1": {"p1"}}, ages=ages)
+            facts = {"basis": "oversized", "proposal": "change", "metrics": {}, pricing.KEY: pricing.digest(change, pricing.price(change, ("r1",), box, {"r1": 60.0}, None, lambda text: text), "r1")}
+            said[name] = brief_of(priced_case(facts=facts, cost_usd_30d=60.0), priced_plan(saving_usd_month=None, waiting_costs_usd_day=None)).saving.basis
+        self.assertIn("Your bill pays about 80 percent of the list price of Meter 1 as it was 10 days ago. Meternaut prices Small both at its list price and at 80 percent of it.", said["a copy of 10 days"])
+        self.assertNotIn(" ago", said["a read of the list"])
+
     def test_a_removal_follows_from_the_bill_alone_and_is_expected_and_the_figure_is_the_case_s_as_it_stands_now_and_not_the_older_one_of_its_plan(self):
         remove = {"action": "remove", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "none"}}]}
         b = brief_of(priced_case(remove), priced_plan(saving_usd_month=99.0, waiting_costs_usd_day=3.3))
