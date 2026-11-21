@@ -291,7 +291,7 @@ def command_run(args, client, spend) -> int:
         raise Problem(f"the Scholar could not be read ({status} {helpers.error_words(document)}): nothing was run")
     differences = [d for d in lockfile.compare(entry, lockfile.facts_of(latest["definition"], lock.ignored)) if d.certain]
     if differences:
-        raise Problem("the stored Scholar is not what the lock says (" + ", ".join(sorted({d.control for d in differences})) + "): nothing was run")
+        raise Problem("the stored Scholar is not what the lock says (" + ", ".join(sorted({d.control for d in differences})) + "): nothing was run. Run the Hub action agents-ready first: it makes the version from the lock and calls no model")
     reference = {"type": "agent_reference", "name": SCHOLAR, "version": str(latest["version"])}
     rows = helpers.read_jsonl(find("study-cases.jsonl"), spend.limits["maxRows"])
     spend.take(rows=len(rows))

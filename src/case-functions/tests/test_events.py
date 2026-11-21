@@ -46,6 +46,16 @@ class Lines(unittest.TestCase):
         with self.assertRaises(ValueError):
             history().emit("investigation.exploded")
 
+    def test_the_lines_of_the_job_ready_are_two_kinds_of_their_own_and_the_tools_that_read_a_run_know_the_kinds_of_a_run_only(self):
+        self.assertEqual(events.READY_KINDS, ("agents.ready", "agents.ready.finished"), "one line for each agent and its end (cases/ready.py): typed values only, so no name of an estate is in either")
+        self.assertFalse(set(events.READY_KINDS) & set(KINDS + events.LOOP_KINDS + events.INVESTIGATION_KINDS + events.STUDY_KINDS + events.TEAMS_KINDS + events.PRICE_KINDS))
+        with LogCapture() as capture:
+            for kind in events.READY_KINDS:
+                history().emit(kind, agent="meternaut-skeptic")
+        self.assertEqual([e["type"] for e in capture.events()], list(events.READY_KINDS))
+        with self.assertRaises(ValueError):
+            history().emit("agents.ready.exploded")
+
     def test_a_request_id_of_none_is_null(self):
         with LogCapture() as capture:
             History("r" * 32, None, fixed_clock, Redactor()).emit("run.note", note="x")

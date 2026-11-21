@@ -24,6 +24,8 @@ LOOP_KINDS = ("plan.created", "signin.started", "signin.stepup", "signin.failed"
 INVESTIGATION_KINDS = ("investigation.started", "investigation.beat", "investigation.call", "investigation.finding", "investigation.finished")
 # The lines of the Study (cases\study.py): its start, a note, one line for each claim that code kept and its end.
 STUDY_KINDS = ("study.started", "study.note", "study.claim", "study.finished")
+# The lines of the job `ready` (cases\ready.py): one for each agent and its end. Typed values only: one of the three agent names, a version number, 12 hex digits of the lock and words of closed lists.
+READY_KINDS = ("agents.ready", "agents.ready.finished")
 # The lines of the test of the way to Teams (cases/offers.card_test): one for each step (token, create, send, update) and one at the end: the step, whether it worked, the HTTP status, the number of an error
 # of Microsoft Entra, the error code word of Teams (letters alone), one word for why not and, for a refusal, `detail`: Teams' message, only when it is plain words (cases/teamsbot.DETAIL: no digit, slash or at-sign;
 # a name or a host name in letters can still pass). Private History only: tools/teams-check.py never prints it, and real cards write no such line.
@@ -81,7 +83,7 @@ class History:
         self.told: set[str] = set()  # the notes that came more than once and whose count was written at the end
 
     def emit(self, kind: str, **fields: object) -> dict:
-        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + TEAMS_KINDS + PRICE_KINDS:
+        if kind not in KINDS + LOOP_KINDS + INVESTIGATION_KINDS + STUDY_KINDS + READY_KINDS + TEAMS_KINDS + PRICE_KINDS:
             raise ValueError(f"{kind} is not a kind of History line")
         event = {"v": VERSION, "ts": self.clock().strftime("%Y-%m-%dT%H:%M:%SZ"), "runId": self.run_id, "requestId": self.request_id, "type": kind, **fields}
         if kind == "run.note" and isinstance(fields.get("note"), str):

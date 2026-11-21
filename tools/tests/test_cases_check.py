@@ -1081,6 +1081,213 @@ class TheStudy(unittest.TestCase):
         self.assertEqual(cc.public("model gpt-5.5 on learn.microsoft.com"), "model gpt-5.5 on learn.microsoft.com")
 
 
+def a_ready(**finished):
+    """The lines that the job ready writes (cases/ready.py), with the fields that the check reads: the Investigator made, the other two found."""
+    return [
+        event("agents.ready", agent="meternaut-investigator", version=18, definition="3f9a1c0b7e2d", outcome="made"),
+        event("agents.ready", agent="meternaut-skeptic", version=4, definition="91d0aa4c2b77", outcome="existing"),
+        event("agents.ready", agent="meternaut-scholar", version=3, definition="c7e5b1029f3a", outcome="existing"),
+        event("agents.ready.finished", **{"ok": True, "made": 1, "existing": 2, "refused": 0, "failed": 0, "why": "", "seconds": 3, **finished}),
+    ]
+
+
+class TheReady(unittest.TestCase):
+    """The action agents-ready: the Operator puts the control message of the job ready in the queue and reads the lines of that request from the telemetry, and the public log gets counts and plain words."""
+
+    def go(self, answers, *extra, post_status=201, env=ENV, extra_args=("--insights", INSIGHTS)):
+        """Runs the check. `answers` are the answers of the telemetry, one for each query, the last one repeated. `posted` says what was put in the queue."""
+        asked, posted = [], []
+        queue = list(answers)
+
+        def runner(args):
+            if args[:2] == ["account", "get-access-token"]:
+                return 0, SECRET + "\n", ""
+            asked.append(args)
+            answer = queue.pop(0) if len(queue) > 1 else queue[0]
+            if answer is Exception:
+                return 1, "", "ERROR: Forbidden\nmore"
+            return 0, json.dumps(answer), ""
+
+        def post(url, headers, body):
+            posted.append((url, body))
+            return post_status, b""
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(cc.uuid, "uuid4", return_value=mock.Mock(hex=ID)), redirect_stdout(out), redirect_stderr(err):
+            code = cc.main(["ready", "--storage-account", ACCOUNT, *extra_args, *extra], azure(runner, post))
+        return code, out.getvalue(), err.getvalue(), asked, posted
+
+    def test_the_message_names_the_job_ready_and_the_request_and_nothing_else_and_goes_to_the_control_queue(self):
+        _, _, _, _, posted = self.go([telemetry(a_ready())])
+        ((url, body),) = posted
+        self.assertEqual(url, f"https://{ACCOUNT}.queue.core.windows.net/cases-control/messages?messagettl=3600&timeout=30")
+        text = re.search(rb"<MessageText>([^<]+)</MessageText>", body).group(1)
+        self.assertEqual(json.loads(base64.b64decode(text, validate=True)), {"job": "ready", "requestId": ID})
+
+    def test_a_good_job_passes_and_says_for_each_agent_its_version_and_whether_it_was_made_and_what_comes_next(self):
+        code, out, err, asked, _ = self.go([telemetry(a_ready())])
+        self.assertEqual((code, err), (0, ""))
+        for text in (f"Request {ID}:", "meternaut-investigator: version 18, made (definition 3f9a1c0b7e2d).", "meternaut-skeptic: version 4, existing (definition 91d0aa4c2b77).",
+                     "meternaut-scholar: version 3, existing (definition c7e5b1029f3a).", "The job ended after 3 seconds: 1 made, 2 existing, 0 refused, 0 failed. It called no model and read nothing of the estate.",
+                     "All three agents are ready: passed.", "nothing about how they answer", "What comes next: run foundry-evals on this version, then cases-run.",
+                     "The replay covers the Investigator only: after a change to the Skeptic, cases-run is the first test of it, and after a change to the Scholar, study-run is."):
+            self.assertIn(text, out)
+        self.assertTrue(out.rstrip().endswith("after a change to the Scholar, study-run is."), "it is the last thing that the pass says: what comes next, and what the replay does not cover")
+        self.assertNotIn(SECRET, out)
+        args = asked[0]
+        self.assertEqual(args[args.index("--url") + 1], f"https://management.azure.com{INSIGHTS}/query?api-version=2018-04-20")
+        query = json.loads(args[args.index("--body") + 1])["query"]
+        self.assertIn(ID, query)
+        self.assertRegex(query, r"^traces \| where timestamp > ago\(3h\)")
+
+    def test_it_waits_for_the_agent_lines_that_the_end_counts_and_after_the_deadline_says_which_did_not_arrive(self):
+        everything = a_ready()
+        early = [e for e in everything if e["type"] != "agents.ready"][:1] + everything[:1]
+        code, out, _, asked, _ = self.go([telemetry(early), telemetry(everything)])
+        self.assertEqual((code, len(asked)), (0, 2))
+        self.assertIn("meternaut-scholar: version 3, existing", out)
+        code, out, _, _, _ = self.go([telemetry(everything[:1] + everything[3:])], "--minutes", "1")
+        self.assertEqual(code, 0, "the end says that all three are ready; what the telemetry lost is said, not hidden")
+        self.assertIn("the telemetry has not delivered: agents.ready: 1 of 3", out)
+        self.assertIn("meternaut-skeptic: no line arrived (the end of the job counts it).", out)
+
+    def test_an_agent_that_was_refused_fails_the_check_with_its_reason_word_and_what_to_check(self):
+        for reason, advice in (("lock", "The app cannot use the lock of the agents"), ("no-store", "no store for its switches"), ("switch", "A switch stops the agents"),
+                               ("lock-differs", "is not the one in the lock, so nothing was made from it"), ("stored-unreadable", "could not be read back"),
+                               ("stored-missing", "was not in the project after it was made"), ("version-moved", "A newer version appeared"), ("definition", "The stored definition differs from the lock"),
+                               ("service", "The Foundry project gave no answer, or refused"), ("other", "a word that this check does not know")):
+            events = a_ready(ok=False, made=0, existing=2, refused=1)
+            events[0] = event("agents.ready", agent="meternaut-investigator", version=None, definition="3f9a1c0b7e2d", outcome="failed" if reason == "service" else "refused", reason=reason, **({"status": 403} if reason == "service" else {}))
+            code, out, _, _, _ = self.go([telemetry(events)])
+            self.assertEqual(code, 1, reason)
+            self.assertIn(f"meternaut-investigator: {'failed' if reason == 'service' else 'refused'} ({reason}" + (", HTTP 403)." if reason == "service" else ")."), out, reason)
+            self.assertIn(f"What to check: ", out)
+            self.assertIn(advice, out, reason)
+            self.assertIn("The agents were not made ready: the check did not pass.", out)
+            self.assertNotIn("What comes next", out, "nothing is promised after a refusal")
+
+    def test_a_job_that_could_not_begin_fails_and_says_why(self):
+        for why, advice in (("no-endpoint", "The app has no Foundry project: run foundry and then cases."), ("setup", "a setting or the loop is not valid"), ("error", "The job broke where nobody foresaw")):
+            events = [event("agents.ready.finished", ok=False, made=0, existing=0, refused=0, failed=0, why=why, seconds=0)]
+            code, out, _, _, _ = self.go([telemetry(events)])
+            self.assertEqual(code, 1, why)
+            self.assertIn(f"The job could not begin: {why}.", out)
+            self.assertIn(advice, out)
+            self.assertIn("meternaut-investigator: no line arrived.", out)
+
+    def test_every_word_of_the_job_has_its_words_for_what_to_check(self):
+        import sys
+        app = str(ROOT / "src" / "case-functions")
+        sys.path.insert(0, app)
+        try:
+            from cases import control, events as writer, ready as the_app
+        finally:
+            sys.path.remove(app)
+        self.assertEqual(set(cc.READY_ADVICE), set(the_app.REASONS) | set(the_app.WHY), "each word that the app writes has its advice, and each advice is for a word that it writes")
+        self.assertEqual((cc.READY_JOB, cc.AGENTS), (control.READY_JOB, the_app.NAMES))
+        self.assertIn(cc.READY_ENDS[0], writer.READY_KINDS)
+        self.assertIn(cc.READY_ENDS[1], writer.KINDS)
+        self.assertIn("agents.ready", writer.READY_KINDS)
+        source = (ROOT / "src" / "case-functions" / "cases" / "ready.py").read_text(encoding="utf-8")
+        for name in ("agent", "version", "definition", "outcome", "ok", "why", "seconds"):
+            self.assertRegex(source, rf"(?<![A-Za-z_]){name}=", name)
+        for name in ("reason", "status", "made", "existing", "refused", "failed"):
+            self.assertIn(f'"{name}"', source, name)
+
+    def test_nothing_of_a_line_that_is_not_a_name_of_the_three_agents_a_number_or_a_word_of_code_is_printed(self):
+        hostile = f"rg-secret /subscriptions/{GUID_IN_A_NOTE}/resourceGroups/rg-secret ::error::x `tick` \x1b[31m"
+        events = [event("agents.ready", agent=hostile, version=hostile, definition=hostile, outcome=hostile, reason=hostile, status=hostile),
+                  event("agents.ready", agent="meternaut-skeptic", version=GUID_IN_A_NOTE, definition=GUID_IN_A_NOTE, outcome="refused", reason=hostile, status=True),
+                  event("agents.ready", agent="meternaut-scholar", version=True, definition="G" * 12, outcome="made"),
+                  event("agents.ready.finished", ok=hostile, made=hostile, existing=-1, refused=2.5, failed=None, why=hostile, seconds="::error::x")]
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 1)
+        for secret in ("rg-secret", GUID_IN_A_NOTE, "::error::x", "tick", "\x1b", "G" * 12, "subscriptions"):
+            self.assertNotIn(secret, out, secret)
+        self.assertIn("meternaut-skeptic: refused (other).", out)
+        self.assertIn("meternaut-scholar: version unknown, made.", out)
+        self.assertIn("meternaut-investigator: no line arrived.", out)
+        self.assertIn("after unknown seconds: unknown made, unknown existing, unknown refused, unknown failed.", out)
+        for printed in out.splitlines():
+            self.assertFalse(printed.lstrip().startswith("::"), printed)
+            self.assertLessEqual(len(printed), 400, printed[:80])
+
+    def test_an_app_that_refuses_the_message_is_said_with_what_to_do(self):
+        for reason, advice in (("the control message names a job that the app does not know: ready", "the app is older than this change: run cases"),
+                               ("stale control message", "the app read the message too late"), ("something else", "the reason above says why")):
+            code, out, _, _, _ = self.go([telemetry([event("run.failed", reason=reason)])])
+            self.assertEqual(code, 1, reason)
+            self.assertIn(f"The app refused the message: {reason}.", out)
+            self.assertIn(advice, out)
+
+    def test_a_job_that_never_arrived_fails_after_the_wait_and_says_what_to_check_and_asks_for_no_warning_of_the_app(self):
+        code, out, _, asked, _ = self.go([{"tables": [{"rows": []}]}], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("No line of the job arrived in the telemetry within 1 minutes.", out)
+        for text in ("that the cases app is running and has the code of this job (run cases)", "that its telemetry reaches its Application Insights", "The agents were not made ready"):
+            self.assertIn(text, out)
+        self.assertTrue(all("/query?" in " ".join(args) for args in asked), "only the History is asked for: the warnings of the app are not printed in a public log")
+        code, out, _, _, _ = self.go([telemetry(a_ready()[:2])], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("2 lines of the job arrived in the telemetry within 1 minutes, and its end did not.", out)
+        self.assertNotIn("passed", out)
+
+    def test_a_message_that_the_host_handed_over_again_leaves_two_lines_for_an_agent_and_the_last_one_counts(self):
+        events = [event("agents.ready", agent="meternaut-investigator", version=18, definition="3f9a1c0b7e2d", outcome="made")] + a_ready(made=0, existing=3)
+        events[1:2] = [event("agents.ready", agent="meternaut-investigator", version=18, definition="3f9a1c0b7e2d", outcome="existing")]
+        code, out, _, _, _ = self.go([telemetry(events)])
+        self.assertEqual(code, 0)
+        self.assertIn("meternaut-investigator: version 18, existing (definition 3f9a1c0b7e2d).", out)
+        self.assertNotIn("meternaut-investigator: version 18, made", out)
+
+    def test_an_end_that_says_not_ok_without_a_line_that_says_why_still_fails(self):
+        code, out, _, _, _ = self.go([telemetry(a_ready(ok=False))])
+        self.assertEqual(code, 1)
+        self.assertIn("the end of the job does not say that all three agents are ready", out)
+
+    def test_a_telemetry_that_cannot_be_read_yet_is_waited_for_and_what_azure_said_is_not_printed(self):
+        code, out, _, _, _ = self.go([Exception, telemetry(a_ready())])
+        self.assertEqual(code, 0)
+        self.assertIn("The telemetry could not be read yet (what Azure said is not shown in a public log); waiting.", out)
+        self.assertNotIn("Forbidden", out)
+
+    def test_a_line_of_another_request_is_not_this_jobs(self):
+        other = [{**e, "requestId": "d" * 32} for e in a_ready()]
+        code, out, _, _, _ = self.go([telemetry(other)], "--minutes", "1")
+        self.assertEqual(code, 1)
+        self.assertIn("No line of the job arrived", out)
+
+    def test_a_refused_message_stops_before_anything_is_waited_for_and_only_a_github_actions_run_may_send_one(self):
+        code, _, err, asked, _ = self.go([telemetry([])], post_status=403)
+        self.assertEqual((code, asked), (1, []))
+        self.assertIn("403", err)
+        code, _, err, asked, posted = self.go([telemetry([])], env={"GITHUB_ACTIONS": ""})
+        self.assertEqual((code, asked, posted), (1, [], []))
+        self.assertIn("only a GitHub Actions run may do that", err)
+
+    def test_bad_names_are_refused_before_anything_is_sent_and_the_public_log_has_no_other_mode(self):
+        for extra_args in (("--insights", "/subscriptions/x"), ("--insights", INSIGHTS, "--counts-only"), ("--insights", INSIGHTS, "--namespace", "x")):
+            with redirect_stderr(io.StringIO()):
+                try:
+                    code, _, _, _, posted = self.go([telemetry([])], extra_args=extra_args)
+                except SystemExit as stop:
+                    code, posted = stop.code, []
+            self.assertNotEqual(code, 0, extra_args)
+            self.assertEqual(posted, [], extra_args)
+
+    def test_the_summary_file_gets_the_same_lines_under_its_own_title(self):
+        with TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            code, out, _, _, _ = self.go([telemetry(a_ready())], "--summary", str(summary))
+            text = summary.read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertIn(cc.READY_TITLE, text)
+        self.assertNotIn(text.split("\n")[0], (cc.SECTION_TITLE, cc.STUDY_TITLE))
+        for printed in out.splitlines():
+            if "version 18, made" in printed:
+                self.assertIn(printed, text)
+
+
 class TheCheckerAsksForNoKeyAndCallsNothingElse(unittest.TestCase):
     def test_no_call_to_the_estate_and_no_key(self):
         source = (ROOT / "tools" / "cases-check.py").read_text(encoding="utf-8")

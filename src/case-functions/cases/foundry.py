@@ -222,6 +222,10 @@ class Salvageable(str):
     """A reason for a `stop` check to end a run that leaves room for the last request that `salvage` allows (the tokens of a beat); any other reason ends it as it always did."""
 
 
+class Made(str):
+    """The reference `name:version` that `ensure_agent` gives when it made the version (a new agent or a new version of it); a version that was stored already gives the same text as a plain string."""
+
+
 # (tool name, arguments) -> the result as a JSON string that holds typed values only. It never raises.
 ToolHandler = Callable[[str, dict], str]
 
@@ -304,7 +308,7 @@ class Foundry:
         self._model: str | None = None  # the model of the agent that the calls in hand are for
 
     def ensure_agent(self, spec: AgentSpec) -> str:
-        """Creates the agent when it is not there and a new version when its definition differs. Returns "name:version".
+        """Creates the agent when it is not there and a new version when its definition differs. Returns "name:version", as a `Made` when this call made the version.
 
         The definition is compared by its hash, which the version keeps in its metadata: an agent holds 1,000 versions at most, and the service may add defaults to
         what it stores, so the stored definition itself is not compared. It takes one GET when nothing changed. A 409 on the creation (another run made the agent a
@@ -328,7 +332,7 @@ class Foundry:
             else:
                 version = self._version(created, spec.name, "create agent", of_agent=True)["version"]
                 LOG.info("Foundry agent %s: made, version %s", spec.name, version)
-                return f"{spec.name}:{version}"
+                return Made(f"{spec.name}:{version}")
             # Another run made the agent a moment ago. It is read now and compared like any agent: it is the same, or it gets a new version.
             saved = self._call("GET", f"/agents/{spec.name}?{API}", purpose="read agent", gone_ok=True)
             if saved is None:
@@ -341,7 +345,7 @@ class Foundry:
         made = self._call("POST", f"/agents/{spec.name}/versions?{API}", {**payload, "metadata": metadata}, purpose="new version", once=True)
         version = self._version(made, spec.name, "new version", of_agent=False)["version"]
         LOG.info("Foundry agent %s: new version %s", spec.name, version)
-        return f"{spec.name}:{version}"
+        return Made(f"{spec.name}:{version}")
 
     def read_agent(self, name: str) -> dict | None:
         """The latest version of an agent as the service stores it: {name, version, metadata, definition, ...}, or None when there is no agent of that name. It is one read, and the
