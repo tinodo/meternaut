@@ -1483,7 +1483,8 @@ def _places(places: list[int]) -> str:
 
 def _shared_meters(option, handles: list, blocked: "dict | None") -> str:
     """When a meter handle is named by more than one effect for the same resource that the app reads, the words that say it, as handles and numbers, else nothing: the app counts a bill line once for a change
-    (cases/pricing.py `price` keeps `seen` across the effects, and `_part` adds a line to it before a switch can fail), so what an effect says alone is not what the change counts."""
+    (cases/pricing.py `price` keeps `seen` across the effects, and `_part` adds a line to it before a switch can fail), so what an effect says alone may differ from what the change counts: an effect that fails before it
+    takes the line leaves it to the next one, and an effect that takes the line and then fails keeps the next one from it."""
     named: dict[tuple[str, str], list[int]] = {}
     for place, effect in enumerate(option.effects, 1):
         if effect.handle in handles and not (blocked and effect.handle in blocked):
@@ -1491,7 +1492,7 @@ def _shared_meters(option, handles: list, blocked: "dict | None") -> str:
                 if HANDLE_SHAPES["meter"].fullmatch(name):
                     named.setdefault((effect.handle, name), []).append(place)
     shared = [f"meter {name} is named by effects {_places(places)}" for (_, name), places in named.items() if len(places) > 1]
-    return ", ".join(shared) + ": the app counts a bill line once" if shared else ""
+    return ", ".join(shared) + ": the app counts a bill line once, so what each effect says alone may differ from what the change counts" if shared else ""
 
 
 def _effect_lines(pricing, market, costs: dict, known: dict, where: str, option, handles: list, blocked: "dict | None") -> list[str]:
