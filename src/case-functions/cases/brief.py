@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
+RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: a reason (at most 100), two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
+ASKED_CHARS = 480  # the room that a card and a letter have for the question ("You are asked whether to let Meternaut scale down the virtual machine scale set x in resource group g by lowering ..."): a name of 80 characters, a group of 90 and three settings need about 360
 MAX_NAME = 120
 MAX_GROUP_NAMES = 12  # the names of the other resources that a case which stands for many resources keeps (cases/investigate.py keeps the same number)
 MAX_GROUP = 100000  # the most resources that the digest of such a case may count and still be believed
@@ -1030,11 +1032,14 @@ def acting_risk(case: CaseRecord | None) -> Risk:
 
 def use_words(case: CaseRecord) -> str:
     """What was measured of the use of the resource, one sentence for each measurement (at most two), each with what a measurement cannot show: "The Sessions metric was 0 in 30 days, which does not
-    show what depends on it." The second says "either" and does not say it again. Nothing measured says that, and what a read of Azure cannot see. A finding about many resources says that the first
-    measurement is the first resource's."""
+    show what depends on it." The second says "either" and does not say it again. A finding that no metric was cited for and that no check of what depends on it looked at says that nothing was
+    measured, and what a read of Azure cannot see; when that check ran (its traffic and its reads of Resource Graph are in the block "Impact") nothing is said here, because "nothing was measured" would
+    be false. A finding about many resources says that the first measurement is the first resource's."""
     facts = _metric_facts(case)
     many = group_of(case) is not None
     if not facts:
+        if _impact_digest(case.facts) is not None:
+            return ""
         return NOT_MEASURED_USE.replace(" its use", " their use").replace("on it", "on them") if many else NOT_MEASURED_USE
     sentences = []
     for place, fact in enumerate(facts):
@@ -2216,7 +2221,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
         undo = Undo(False, text_of(plan.undo, 300)) if irreversible else Undo(True, text_of(plan.undo, 300))
-        risk = Risk("high" if irreversible else "medium", text_of(plan.could_go_wrong, 240) or "The risk is not recorded.")
+        risk = Risk("high" if irreversible else "medium", plain_sentences(plan.could_go_wrong, RISK_CHARS) or "The risk is not recorded.")  # cut only at the end of a sentence, and the room is the most that code makes
     elif kind == "advice":
         (change, who), rechecked, undo, risk = advice_words(case, plan), "", Undo(True, ""), acting_risk(case)
     else:

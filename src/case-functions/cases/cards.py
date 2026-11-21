@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from . import cardcheck, cardlinks
-from .brief import (ADVISOR_SHORT, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, others_line, parse_time, plain,
+from .brief import (ADVISOR_SHORT, ASKED_CHARS, CHECK_FIRST_SHORT, HEADS_UP, MONTH_NAMES, PAUSED_ADVICE, PAUSED_CHANGES, RISK_CHARS, TWO_PEOPLE, WHY_APPROVER, Brief, called_of, footer_line, others_line, parse_time, plain,
                     plain_sentences, shown_facts)
 from .stake import NOTE_CHARS, chips_of, place_of, stake_of, title_text
 
@@ -124,7 +124,7 @@ def _chips(brief: Brief) -> dict:
 
 def _asked(brief: Brief) -> list[dict]:
     """What the person is asked about advice that waits, in the words that the page and the letters say (brief.asked)."""
-    return [_block("asked", md(brief.asked, 320))] if brief.asked else []
+    return [_block("asked", md(brief.asked, ASKED_CHARS))] if brief.asked else []
 
 
 def _learned(brief: Brief) -> list[dict]:
@@ -144,7 +144,7 @@ def _facts(brief: Brief) -> list[dict]:
 
 def _others(brief: Brief) -> list[dict]:
     """One line about the other ways to save that the finding proposes: how many the AI named. The page has them, with what each saves and gives up, and they are information: no button."""
-    return [_block("others", md(others_line(brief), 200))] if brief.others else []
+    return [_block("others", md(others_line(brief), 300))] if brief.others else []
 
 
 def _advisor(brief: Brief) -> list[dict]:
@@ -174,7 +174,7 @@ def _decision_lines(brief: Brief) -> list[dict]:
     Azure and, when acting has a risk, what it is: one block each."""
     owner = _block("owner", f"**Whose is it:** {md(brief.owner.text, 200)}")
     if brief.kind == "advice":
-        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, 300)}")] if brief.risk.acting else []), owner]
+        return [_block("change", f"**If you answer:** {md(brief.change, 300)} {md(brief.who_acts, 300)}"), *([_block("risk", f"**What could go wrong:** {md(brief.risk.text, RISK_CHARS)}")] if brief.risk.acting else []), owner]
     two = brief.second.line if brief.second is not None else TWO_PEOPLE if brief.two_people else ""
     said = brief.change_short or brief.change  # a family that has short words for a card keeps in them the sentence that says that nothing else is promised: it is never the one that a cut drops
     change = md(plain_sentences(said, 300), 300) + ("" if "own permissions" in said else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
