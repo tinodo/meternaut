@@ -1212,8 +1212,8 @@ def _left_out(priced, handle: str) -> dict:
 
 def _fates(proposals, change, finding: dict, evidence: dict, price) -> dict[str, list[str]]:
     """The verdict of each entry of `set` and of `others` of a finding that the app keeps: `kept`, or the app's own words for why cases/proposals.py drops it (its WHY). `check` takes the entries one after the
-    other, so the verdict of the n-th is what the first n entries drop more than the first n - 1 do. The word of WHY that dropped each (the rule, as the app names it) is kept in `finding["rules"]`, None for an
-    entry that is kept."""
+    other, so the verdict of the n-th is what the first n entries drop more than the first n - 1 do, and `price` is the one that `check` was given: a way that the app's price shows to cost as much or more is
+    dropped (`dearer`) only where there is a price to show it. The word of WHY that dropped each (the rule, as the app names it) is kept in `finding["rules"]`, None for an entry that is kept."""
     fates: dict[str, list[str]] = {"set": [], "other": []}
     finding["rules"] = {"set": [], "other": []}
     if change is None:
@@ -1235,8 +1235,9 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
     """What the app's own code would make of the findings of an answer. `read`: every finding that the app reads (_read_findings), with `parsed`, the change that cases/pricing.py `parse` reads of it, and, for
     a finding that the app keeps and when `explain`, `fates` (the verdict of each entry of `set` and of `others`). `kept`: the (handle, property) of each setting that cases/proposals.py `check` keeps, with
     the properties that the tools showed as the evidence of each handle (those of the fixture, or only those that `shown` says the tools of the replay showed). `ways`: how many other ways it keeps. `told`: its
-    own words for what it drops. A row that gives no `meters` has no bill, so no price is worked out and a way that is kept has no figure. A row that does is priced as investigate.py prices a finding: the
-    app's own `price` over the meters and the list prices that the tools of the replay showed (`bill`, shown_bill: without it all of them count). Each kept finding then has `saves`, the figure of its change for each
+    own words for what it drops. A row that gives no `meters` has no bill, so no price is worked out, a way that is kept has no figure and none is dropped for costing more. A row that does is priced as investigate.py
+    prices a finding: the app's own `price` over the meters and the list prices that the tools of the replay showed (`bill`, shown_bill: without it all of them count), and a way that this price shows to cost as
+    much or more than the charge is dropped (`dearer`), so it is no part of `ways`, `others_priced` or `others_keys`. Each kept finding then has `saves`, the figure of its change for each
     of its resources, and, when it keeps other ways, `others_priced`, the figure of each in order: a figure is {"low", "high"} in US dollars a month (an other way adds `estimate` when its saving rests on a share
     that the AI states) or {"why"}, the app's own words for why it has none. `priced` is the figure of the first setting that is kept and of each other way that is kept. `to` is the new number of each setting
     that is kept, by (handle, property). `market` and `costs` are what the app's `price` was given, and each kept finding of a row that gives a bill also has `blocked` (the resources whose figure is held back for
@@ -1252,6 +1253,9 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
     def nothing(option):
         return pricing.Priced(option.action)
 
+    def quote(option, finding):
+        return pricing.price(option, finding["handles"], market, costs, None, meter_word) if market is not None else nothing(option)
+
     read = _read_findings(row, findings)
     kept: set[tuple[str, str]] = set()
     to: dict[tuple[str, str], object] = {}
@@ -1263,8 +1267,10 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
         tried: list = []
 
         def price(option, finding=finding, tried=tried):
-            tried.append(pricing.price(option, finding["handles"], market, costs, None, meter_word) if market is not None else nothing(option))
-            return tried[-1]
+            got = quote(option, finding)
+            if not proposals.no_saving(got, finding["handles"][0]):  # `check` drops a way that is no saving: its price goes with it, so `tried` holds the ways that are kept
+                tried.append(got)
+            return got
 
         checked = proposals.check(finding["parsed"], finding["proposal"], finding["handles"], evidence, price)
         if market is not None and finding["parsed"] is not None:
@@ -1287,7 +1293,7 @@ def read_answer(row: dict, findings: list, shown: "dict[str, set[str]] | None" =
         if said := proposals.note_of(checked):
             told.append(said)
         if explain:
-            finding["fates"] = _fates(proposals, finding["parsed"], finding, evidence, nothing)
+            finding["fates"] = _fates(proposals, finding["parsed"], finding, evidence, lambda option, finding=finding: quote(option, finding))
     return {"read": read, "kept": kept, "to": to, "ways": ways, "told": "; ".join(told), "priced": priced, "market": market, "costs": costs}
 
 
