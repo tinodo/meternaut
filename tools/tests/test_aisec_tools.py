@@ -2339,7 +2339,7 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
 
 
 class TheWayThatSavesNothing(unittest.TestCase):
-    """A way that the app's own price shows to cost as much or more than what the bill shows now is dropped by `check` (the rule `dearer`, cases/proposals.py). The replay says it as an entry that the app dropped,
+    """A way that the app's own price shows to cost as much or more than the charges that it replaces is dropped by `check` (the rule `dearer`, cases/proposals.py). The replay says it as an entry that the app dropped,
     with the app's words and its key, counts it for nothing, and does not mistake its price for the price of a way that is kept. Hand-made answers on the row of the whole story, whose list has a tier above
     each of its two charges."""
 
