@@ -719,7 +719,7 @@ class TheRequestThatWasClosed(unittest.TestCase):
         self.assertEqual((learning.sync(self.world.store, self.world.now + DAY), self.world.store.lessons_recent(10)), (0, [lesson]), "once")
         past = learning.past_of([lesson], lesson.resource_type, "advise")
         self.assertEqual((past.answered, past.approved, past.unanswered), (0, 0, 1), "nobody answered it: it adds to no answer and to no approval")
-        self.assertEqual(brief.past_line(learning.digest_of(past)), "There is no history of cases like this yet.")
+        self.assertEqual(brief.past_line(learning.digest_of(past)), "", "nobody answered it, so there is no history to say, and nothing is said")
 
     def test_a_request_that_was_taken_back_for_another_reason_still_writes_no_lesson(self):
         world = World()

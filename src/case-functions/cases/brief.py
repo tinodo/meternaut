@@ -21,7 +21,8 @@ from . import costs as cost_words
 from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
-from .families.words import TYPE_WORDS, also_changed, called_of, kinds, shown, type_noun, type_of, words_of  # called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
+from .families import words as family_words  # the words of the family that lowers a number: its level of risk is the one that advice about the same act uses
+from .families.words import TYPE_WORDS, also_changed, called_of, days_text, figure as _figure, kinds, measured_value, number_text, quantity as _quantity, shown, type_noun, type_of, words_of  # the measurement helpers are the words' own, which a plan of a change says its measurements with too; called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
                      CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 
 MAX_FACTS = 5
 MAX_REASON = 240  # the most characters of what an AI wrote that a brief shows
-RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: a reason (at most 100), two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
+RISK_CHARS = 800  # the most characters of "What could go wrong" that code can make: two measurements (at most 215 and 185) and what the second AI doubts (22 and MAX_REASON): a card and a letter have room for all of it, and a text of a change is cut only at the end of a sentence
 ASKED_CHARS = 480  # the room that a card and a letter have for the question ("You are asked whether to let Meternaut scale down the virtual machine scale set x in resource group g by lowering ..."): a name of 80 characters, a group of 90 and three settings need about 360
 UNDO_CHARS = 260  # the room that a card and a letter have for an undo: the longest that was measured is 257 characters (the undo of a disk plan with the longest tier name), a gateway of a hub gives up to 195; the brief holds at most 300 of a plan's
 MAX_NAME = 120
@@ -197,7 +198,7 @@ DISK_TYPES = {"standard_lrs": "Standard HDD (LRS)", "standardssd_lrs": "Standard
 # The words of each family (what changes, what is read again, what could go wrong, and whether it can be undone) are the family's own, in cases/families/words.py, which holds no way to
 # reach Azure: the families feed this brief, so that a page, a letter and a card show a new family without a line of its own here. Who acts is the same for every family, and a page says it
 # once, in these words: no button and no line of an approval repeats that the person signs in to Azure (the person does, when Azure asks).
-WHO_ACTS = ("You do it, with your own permissions. When you approve, Azure checks your rights, starts the change right then and may need a few minutes to finish it. "
+WHO_ACTS = ("Meternaut makes the change, with your own permissions. When you approve, Azure checks your rights, starts the change right then and may need a few minutes to finish it. "
             "Meternaut holds no right of its own to change anything.")
 TWO_PEOPLE = "Two people approve this. One confirms the request, and then another approves it."
 # What a request that needs two people says, by where it stands for the person who reads it (cases/twopeople.py). A letter has no reader that it knows, so it says TWO_PEOPLE only.
@@ -211,7 +212,6 @@ SECOND_WORDS = {
 }
 ADVICE_CHANGE = "Meternaut changes nothing in Azure. Your answer is recorded with your name."
 ADVICE_WHO = "If you act, you do it yourself in Azure with your own rights."
-NO_HISTORY = "There is no history of cases like this yet."  # what the page and the card say when too few like it were answered; a letter, which is read once, leaves it out
 ADVICE_UNDO = "Nothing is changed, so there is nothing to undo."  # what the plan of an advice keeps in its record: no page, letter or card shows it, because advice changes nothing
 # What an answer does to advice that the investigation made, for the kind of change that it is: the finding proposes a setting and Meternaut cannot make that change (its reason is a sentence of
 # proposals.CANNOT); it is a reduction of a count and the AI named no setting that Meternaut could check (it named none, or code dropped what it named), so there is nothing for Meternaut to change, or it
@@ -305,6 +305,7 @@ class Risk:
     level: str  # low, medium or high
     text: str
     acting: bool = False  # the risk of doing what a request suggests, not of answering it (the chip then says "if you act")
+    short: str = ""  # what a card and a letter say of it when the family that makes the change has short words that keep what was measured: they never cut a sentence that carries a fact of the request
 
 
 @dataclass(frozen=True)
@@ -555,75 +556,16 @@ def _utc(moment: dt.datetime) -> dt.datetime:
     return moment.replace(tzinfo=dt.timezone.utc) if moment.tzinfo is None else moment.astimezone(dt.timezone.utc)
 
 
-def _figure(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return None
-    return float(value)
-
-
-def number_text(value: object) -> str:
-    """A number for a person: thousands separated, at most two decimals, no trailing zeros. Empty for what is not a finite number."""
-    number = _figure(value)
-    if number is None:
-        return ""
-    if number.is_integer():
-        return f"{int(number):,}"
-    return f"{number:,.2f}".rstrip("0").rstrip(".")
-
-
 def usd_text(value: object) -> str:
     """Money as every page, letter and card writes it (cost_words.money): whole dollars from 100 up ($1,682) and cents below ($41.20). Empty for what is not a finite number."""
     number = _figure(value)
     return "" if number is None else cost_words.money(number)
 
 
-def _bytes(value: float) -> str:
-    size, unit = abs(value), "bytes"
-    for step in ("KB", "MB", "GB", "TB"):
-        if size < 1024:
-            break
-        size, unit = size / 1024, step
-    sign = "-" if value < 0 else ""
-    return f"{sign}{number_text(round(size, 2))} {unit}"
-
-
 def quantity(total: object, unit: object) -> str:
-    """A total of a measurement with its unit in words: bytes as KB to TB, a percentage, seconds, a count as the bare number. A unit that has no words here is kept as the
-    tools gave it. Empty when the total is not a number."""
-    number = _figure(total)
-    if number is None:
-        return ""
-    word = str(unit or "").strip()
-    key = word.lower()
-    if key in ("", "count", "unspecified"):
-        return number_text(number)
-    if key == "bytes":
-        return _bytes(number)
-    if key == "percent":
-        return f"{number_text(number)}%"
-    if key == "seconds":
-        return f"{number_text(number)} seconds"
-    if key == "milliseconds":
-        return f"{number_text(number)} ms"
-    if key == "countpersecond":
-        return f"{number_text(number)} per second"
-    if key == "bytespersecond":
-        return f"{_bytes(number)} per second"
-    return f"{number_text(number)} {text_of(word, 24)}"
-
-
-def days_text(days: object) -> str:
-    if isinstance(days, int) and not isinstance(days, bool) and days > 0:
-        return "1 day" if days == 1 else f"{days} days"
-    return ""
-
-
-COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
-
-
-def covered(value: str) -> str:
-    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
-    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+    """A total of a measurement with its unit in words (the one function of cases/families/words.py, which a plan of a change says its measurements with too). A unit that has no words there is text of the
+    tools: it is cleaned and cut here, before it is said."""
+    return _quantity(total, text_of(unit, 24) if unit else "")
 
 
 def waited_text(days: int) -> str:
@@ -1023,12 +965,25 @@ def acting_risk(case: CaseRecord | None) -> Risk:
     removes = verb in (VERBS["delete"], CHANGE_VERBS["remove"], LOOK)  # a title that deletes, removes or asks whether the resource is used: the use of the resource is what is at stake
     level = "high" if others and not proven else "medium"
     if case.detector == INVESTIGATION:
-        doubt = doubt_of(case)
-        noun = kind_words(case.resource_type, case.resource_id)[1]
-        reason = f"Other resources can depend on {'them' if group is not None else f'a {noun}'}." if level == "high" else ""  # the reason for the chip: the kind is one that others share, and no measurement shows that nothing uses it
-        return Risk(level, " ".join(part for part in (reason, use_words(case), f'The second AI says: "{doubt}"' if doubt else "") if part), True)
+        from . import proposals
+
+        if group is None and proposals.settings(case.facts):
+            level = family_words.setting_level()  # a finding that carries a setting is the act that the family lowering a number makes: it has that family's level, so the risk does not change with the owner's gate
+        # What could go wrong is said from the facts of the finding: what was measured of the use, and what the second AI doubts. No sentence made from the kind of the resource alone: it would read the same for every request about it.
+        return Risk(level, " ".join(part for part in (use_words(case), doubt_said(doubt_of(case))) if part), True)
     parts = ([UNPROVEN] if removes and _idle(case) and not proven else []) + ([SHARED_RISK] if others else [])
     return Risk(level, " ".join(parts or [RARE_USE if proven and removes else CHANGE_RISK]), True)
+
+
+def doubt_said(doubt: str) -> str:
+    """What the second AI doubts, as one sentence that marks the words as its own: `The second AI says: "..."`. The same sentence in the risk of advice, on the card and in the letter of a change; empty when it raised none."""
+    return f'The second AI says: "{doubt}"' if doubt else ""
+
+
+def doubt_line(brief: "Brief") -> str:
+    """The sentence of what the second AI doubts that a card and a letter of a change add under "What could go wrong": the words of the family that makes the change say what Meternaut does not know, and
+    nothing of what this second AI doubted, which "The second AI agreed, with a caution." says that there is. Empty when it raised no objection, and for advice, whose risk says it already."""
+    return doubt_said(brief.doubt) if brief.doubt and brief.doubt not in brief.risk.text else ""
 
 
 def use_words(case: CaseRecord) -> str:
@@ -1045,7 +1000,7 @@ def use_words(case: CaseRecord) -> str:
     sentences = []
     for place, fact in enumerate(facts):
         shows = "it either" if place else f"what depends on {'them' if many else 'it'}"
-        sentences.append(f"the {fact.label} metric was {covered(fact.value)}, which does not show {shows}.")
+        sentences.append(f"the {fact.label} metric was {fact.value}, which does not show {shows}.")
     first = f"For the first of them, {sentences[0]}" if many else f"{sentences[0][:1].upper()}{sentences[0][1:]}"
     return " ".join([first, *(f"{said[:1].upper()}{said[1:]}" for said in sentences[1:])])
 
@@ -1233,14 +1188,14 @@ def _metrics(case: CaseRecord) -> dict:
 def past_line(digest: object) -> str:
     """The one line of a brief about how past requests like this were answered: "Of 4 past cases like this, 3 were approved. Savings came in at 92 percent of the estimate." The digest is what
     cases/learning.py keeps in `CaseRecord.learned["past"]`: n (the requests that a person answered), approved, `enough` (n is at least the smallest sample), ratio (what the cost lines
-    showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough it says that there is no history yet; for a case that has no record of its
-    past at all (it was found before there was one) there is no line."""
+    showed as a share of what was predicted, when enough changes have both) and boomerangs. Without enough there is no line: with no history there is nothing to say, and nothing is said (no
+    "there is no history" for a page, a card or a letter to carry). For a case that has no record of its past at all (it was found before there was one) there is no line either."""
     if not isinstance(digest, dict):
         return ""
     answered, approved = digest.get("n"), digest.get("approved")
     whole = isinstance(answered, int) and isinstance(approved, int) and not isinstance(answered, bool) and not isinstance(approved, bool)
     if digest.get("enough") is not True or not whole or not 0 <= approved <= answered:
-        return NO_HISTORY
+        return ""
     text = f"Of {answered} past case{'' if answered == 1 else 's'} like this, {approved} {'was' if approved == 1 else 'were'} approved."
     ratio = _figure(digest.get("ratio"))
     if ratio is not None and ratio >= 0:
@@ -1774,10 +1729,8 @@ def _metric_facts(case: CaseRecord) -> list[Fact]:
     rows: list[Fact] = []
     for name, total in sorted(found, key=lambda item: (item[1] != 0, item[0]))[:2]:
         days = spans.get(name)
-        amount = quantity(total, units.get(name))
-        value = f"{amount} in {days_text(days)}" if days_text(days) else f"{amount} in the period measured"
-        if days_text(days) and isinstance(seen.get(name), int) and not isinstance(seen.get(name), bool):
-            value += f", with a value on {seen[name]} of those days"
+        unit = units.get(name)
+        value = measured_value(total, text_of(unit, 24) if unit else "", days, seen.get(name))  # the one wording of a measurement: the sentence of a change that Meternaut makes says it the same way
         rows.append(Fact(text_of(name, 60), value, f"{MONITOR}, {days_text(days)}" if days_text(days) else MONITOR))
     return rows
 
@@ -2217,7 +2170,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
     if said is not None:
         change, who, rechecked = said.change, WHO_ACTS, said.rechecked
-        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk)
+        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk, short=said.short_risk)
     elif kind == "change":
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
