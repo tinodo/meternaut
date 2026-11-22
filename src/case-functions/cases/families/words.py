@@ -9,6 +9,7 @@ in Azure is in the modules next to this one. A family that has no entry in `SHOW
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -29,6 +30,7 @@ RESOURCE_TYPE = re.compile(r"microsoft\.[a-z0-9]{2,30}/[a-z0-9]{2,40}")
 # The key path of a setting that `change-setting` changes (dotted words, the platform's own spelling, no list), and the name of a measurement that its plan cites (cases/investigate.py METRIC_NAME).
 SETTING_PATH = re.compile(r"[A-Za-z][A-Za-z0-9]{0,59}(?:\.[A-Za-z][A-Za-z0-9]{0,59}){0,5}")
 METRIC_WORDS = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/%()-]{0,98}")
+UNIT_WORDS = re.compile(r"[A-Za-z]{1,24}")  # the unit of a measurement as Azure Monitor names it ("Count", "Percent", "Bytes"): one plain word
 API_VERSION = re.compile(r"\d{4}-\d{2}-\d{2}", re.A)  # an api-version that is not a preview
 MEASURED_DAYS = 30  # the most days that a cited measurement covers: the toolbox looks back at most that far
 
@@ -48,6 +50,7 @@ class Words:
     confirm: bool = False  # the change asks once more before the sign-in, although it can be undone: it changes a real resource
     ask: str = ""  # what the person is asked to let Meternaut do, as the end of "You are asked whether to let Meternaut ...": empty when the headline in lower case says it
     short_change: str = ""  # what changes, for a card and a letter, in whole short sentences that keep the caveat that nothing else is promised: empty when `change` may be cut by sentences as it is
+    short_risk: str = ""  # what could go wrong, for a card and a letter: the sentences that say what is not known and what was measured, which a cut by length never drops; empty when `risk` may be cut as it is
 
 
 @dataclass(frozen=True)
@@ -349,17 +352,124 @@ def changes_text(target: dict, how: str = "change") -> str:
     return _list([say(*item) for item in sets]) if sets else "a number"
 
 
+def figure(value: object) -> float | None:
+    """A number that can be said: a finite number, and never a bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def number_text(value: object) -> str:
+    """A number for a person: thousands separated, at most two decimals, no trailing zeros. Empty for what is not a finite number."""
+    number = figure(value)
+    if number is None:
+        return ""
+    if number.is_integer():
+        return f"{int(number):,}"
+    return f"{number:,.2f}".rstrip("0").rstrip(".")
+
+
+def _bytes(value: float) -> str:
+    size, unit = abs(value), "bytes"
+    for step in ("KB", "MB", "GB", "TB"):
+        if size < 1024:
+            break
+        size, unit = size / 1024, step
+    sign = "-" if value < 0 else ""
+    return f"{sign}{number_text(round(size, 2))} {unit}"
+
+
+def quantity(total: object, unit: object) -> str:
+    """A total of a measurement with its unit in words: bytes as KB to TB, a percentage, seconds, a count as the bare number. A unit that has no words here is kept as the tools gave it (the brief cleans
+    and cuts a unit that is text of the tools before it asks, and a plan keeps only a plain word). Empty when the total is not a number."""
+    number = figure(total)
+    if number is None:
+        return ""
+    word = str(unit or "").strip()
+    key = word.lower()
+    if key in ("", "count", "unspecified"):
+        return number_text(number)
+    if key == "bytes":
+        return _bytes(number)
+    if key == "percent":
+        return f"{number_text(number)}%"
+    if key == "seconds":
+        return f"{number_text(number)} seconds"
+    if key == "milliseconds":
+        return f"{number_text(number)} ms"
+    if key == "countpersecond":
+        return f"{number_text(number)} per second"
+    if key == "bytespersecond":
+        return f"{_bytes(number)} per second"
+    return f"{number_text(number)} {word}"
+
+
+def days_text(days: object) -> str:
+    if isinstance(days, int) and not isinstance(days, bool) and days > 0:
+        return "1 day" if days == 1 else f"{days} days"
+    return ""
+
+
+COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
+
+
+def covered(value: str) -> str:
+    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
+    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+
+
+def measured_value(total: object, unit: object, days: object, seen: object) -> str:
+    """A measurement as every page, card and letter says it: "3% in 30 days", and "3% in 30 days, 27 of them with a value" when fewer days than the window had a value. The row of the facts of the page, the
+    sentence about what could go wrong in advice and the sentence of a change that Meternaut makes all ask this one function, so that one fact reads one way."""
+    amount = quantity(total, unit)
+    value = f"{amount} in {days_text(days)}" if days_text(days) else f"{amount} in the period measured"
+    if days_text(days) and isinstance(seen, int) and not isinstance(seen, bool):
+        value += f", with a value on {seen} of those days"
+    return covered(value)
+
+
+@dataclass(frozen=True)
+class Measure:
+    """A measurement that a plan of `change-setting` cites: the name, the total over `days` days, the unit that the tools gave and the days of the window that had a value (None when the plan holds none)."""
+
+    name: str
+    total: int | float
+    days: int
+    unit: str = ""
+    seen: int | None = None
+
+    def said(self) -> str:
+        return measured_value(self.total, self.unit, self.days, self.seen)
+
+
+def measures(pre: dict) -> list[Measure]:
+    """The measurements that a plan of `change-setting` cites, from its preconditions: a plain metric name, a total that is not below nothing and a window of 1 to MEASURED_DAYS days, at most three, and,
+    when the plan holds them, the unit (one plain word) and the days that had a value (0 to the window). A plan made before it kept the unit and the days with a value holds neither, and reads as a bare
+    number over its window. Nothing that is not as it should be is read, and nothing raises."""
+    items = pre.get("measured") if isinstance(pre, dict) and isinstance(pre.get("measured"), list) else []
+    found = []
+    for i in items:
+        if not (isinstance(i, dict) and isinstance(i.get("name"), str) and METRIC_WORDS.fullmatch(i["name"]) and figure(i.get("total")) is not None and i["total"] >= 0
+                and isinstance(i.get("days"), int) and not isinstance(i.get("days"), bool) and 0 < i["days"] <= MEASURED_DAYS):
+            continue
+        unit, seen = i.get("unit"), i.get("daysWithData")
+        found.append(Measure(i["name"], i["total"], i["days"], unit if isinstance(unit, str) and UNIT_WORDS.fullmatch(unit) else "",
+                             seen if isinstance(seen, int) and not isinstance(seen, bool) and 0 <= seen <= i["days"] else None))
+    return found[:3]
+
+
 def measured(pre: dict) -> list[tuple[str, int | float, int]]:
-    """The measurements that a plan of `change-setting` cites, from its preconditions, as (name, total, days): a plain metric name, a total that is not below nothing and a window of 1 to MEASURED_DAYS days,
-    at most three."""
-    items = pre.get("measured") if isinstance(pre.get("measured"), list) else []
-    return [(i["name"], i["total"], i["days"]) for i in items if isinstance(i, dict) and isinstance(i.get("name"), str) and METRIC_WORDS.fullmatch(i["name"])
-            and isinstance(i.get("total"), (int, float)) and not isinstance(i.get("total"), bool) and i["total"] >= 0 and isinstance(i.get("days"), int) and 0 < i["days"] <= MEASURED_DAYS][:3]
+    """The measurements that a plan of `change-setting` cites, from its preconditions, as (name, total, days): the ones that `measures` reads."""
+    return [(m.name, m.total, m.days) for m in measures(pre)]
 
 
 def measured_text(pre: dict) -> str:
-    """The measurements that a plan cites, as a clause: "Azure Monitor shows Sessions at 0 over 30 days"; empty when it cites none."""
-    return f"Azure Monitor shows {_list([f'{name} at {value(total)} over {days} days' for name, total, days in measured(pre)])}" if measured(pre) else ""
+    """The measurements that a plan cites, as a clause that says each one as the page does: "Azure Monitor shows Sessions at 12 in 30 days", "Azure Monitor shows CpuPercentage at 3% in 30 days, 27 of them
+    with a value"; empty when it cites none."""
+    said = [f"{m.name} at {m.said()}" for m in measures(pre)]
+    if not said:
+        return ""
+    return f"Azure Monitor shows {'; '.join(said) if any(',' in part for part in said) else _list(said)}"
 
 
 def compared_text(check: object) -> str:
@@ -403,6 +513,8 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
     sent = f"Meternaut sends the {kind} back to Azure as it was read, with this change, {said}."
     if len(sent) > 120:  # a letter has room for 200 characters: the sentence that says that nothing else is promised is always kept, and this one is made shorter
         sent = f"Meternaut sends the {kind} back to Azure as it was read, with the numbers lowered."
+    unknown = f"Meternaut does not know what a lower number takes away from what uses the {kind}."
+    looked = f"{cited}, and Meternaut checked that no lock is on the {kind}." if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}."  # what a card and a letter keep of the risk: the two sentences that carry the facts of this request
     return Words(
         headline=f"Scale down the {kind} {thing} in resource group {group}: {said}",
         change=(f"When you approve, Meternaut sends the {kind} {thing} in resource group {group} back to Azure as it was read, with this change, {said}. It uses your own permissions. "
@@ -410,10 +522,9 @@ def setting_words(kind: str, thing: str, group: str, target: dict, pre: dict) ->
                 "the number, and that every other number and flag that it sent is still what it sent. It does not compare texts, such as a tier or a name."),
         rechecked=(f"Right before it acts, Meternaut reads the {kind} again. It stops unless the {kind} still shows the old numbers, its last operation worked, it has no lock and no do-not-touch "
                    f"note, and it is in a resource group on the owner's list for real changes.{again}"),
-        risk=(f"Meternaut does not know what a lower number takes away from what uses the {kind}. "
-              + (f"{cited}, and Meternaut checked that no lock is on the {kind}. " if cited else f"No measurement of its use is cited. It checked that no lock is on the {kind}. ")
-              + f"Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
+        risk=(f"{unknown} {looked} Azure carries out the update in the background and may need minutes: Meternaut follows it for half a minute, and a later check reads the {kind} again. "
               f"If your account may not change the {kind}, Azure refuses and nothing changes."),
+        short_risk=f"{unknown} {looked}",
         level=setting_level(),
         undo=(f"Set {back} again: on the page of the {kind} in the Azure portal, or with {command}. That update takes minutes too and needs the same right. "
               "Setting it back does not bring back what the lower number cut off meanwhile."),

@@ -180,7 +180,8 @@ def _decision_lines(brief: Brief) -> list[dict]:
     said = brief.change_short or brief.change  # a family that has short words for a card keeps in them the sentence that says that nothing else is promised: it is never the one that a cut drops
     change = md(plain_sentences(said, 300), 300) + ("" if "own permissions" in said else " It runs with your own permissions.") + (f" {md(two, 320)}" if two else "")
     doubt = doubt_line(brief)  # what the second AI doubts, which "The second AI agreed, with a caution." of the confidence says that there is: as advice says it, under what could go wrong
-    risk = md(plain_sentences(brief.risk.text, 240), 240) + (f" {md(doubt, RISK_CHARS)}" if doubt else "")
+    said_risk = md(brief.risk.short, RISK_CHARS) if brief.risk.short else md(plain_sentences(brief.risk.text, 240), 240)  # a family that has short words keeps in them what was measured: a cut by length never drops it
+    risk = said_risk + (f" {md(doubt, RISK_CHARS)}" if doubt else "")
     return [_block("change", f"**If you approve:** {change}"), _undo(brief), _block("risk", f"**What could go wrong:** {risk}"), owner]
 
 
@@ -353,8 +354,9 @@ def probe_card(closed: bool = False, why: str = "The owner of Meternaut started 
     })
 
 
-def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You are on my list of people.") -> dict:
-    """What Meternaut says before its first card to a person, in four sentences, with the one link to the start page of the web page."""
+def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You are on my list of people.", change: bool = False) -> dict:
+    """What Meternaut says before its first card to a person, in four sentences, with the one link to the start page of the web page. `change` says that the request that follows is one that Meternaut
+    makes the change of after the person approves it: "I change nothing myself" is true of advice, and of a change it would say the opposite of the page."""
     base = (base_url or "").strip().rstrip("/")
     if not PAGE_BASE.fullmatch(base):
         raise CardError("the address of the web page is not like https://host")
@@ -363,7 +365,7 @@ def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = ()
         "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ An AI wrote this.",
         "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
                  _block("hello", f"Hello {md(name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you."),
-                 _block("rules", "I change nothing myself. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
+                 _block("rules", f"{'I make a change only after you approve it' if change else 'I change nothing myself'}. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
                                  "and a change to Azure runs with your own Azure rights."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
                  _page_set("Open the web page", CardContext(page_url=f"{base}/")),

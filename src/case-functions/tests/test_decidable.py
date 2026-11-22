@@ -31,6 +31,7 @@ from test_web_support import NOW, SUB, TINO, VM, Console, at, make_advice, make_
 
 from cases import brief as brief_mod
 from cases import cards, detectors, letters, pricing
+from cases.families import words as family_words
 from cases.models import GROUP_FACT, DecisionRecord
 from test_words import (BASE, CONTACTS, PERSON, Block, Rendered, _ai_account, _ai_plan, _firewall, _group_finding, _letter, _machine_plan, _page, _priced_machine, _stop_machine,
                         blocks_of_card, blocks_of_html)
@@ -472,13 +473,13 @@ RATE_AND_NO_SETTING = "the figure says which rate the cost is, and what an answe
 NOT_KNOWN_FIRST = "what could go wrong says what was measured of the use of the resource and that it does not show what depends on it"
 RATE_AND_ONLY_COUNT = "the figure says which rate the cost is, and what an answer does says that Meternaut cannot make a commitment because it only lowers a count of units"
 GREW = {  # the kinds whose letter is longer than it was on main, by how many words, and for which sentence that a person needs to decide
-    "advice, a switch with names": (14, "the figure says which rate the cost is, what could go wrong says that other resources can depend on a firewall and that nothing was measured of its use, and what an answer does says that Meternaut cannot make a switch because it only lowers a count of units"),
+    "advice, a switch with names": (7, "the figure says which rate the cost is, what could go wrong says that nothing was measured of its use, and what an answer does says that Meternaut cannot make a switch because it only lowers a count of units"),
     "advice, reduce (an assumed share)": (11, f"{RATE_AND_NO_SETTING}, and {NOT_KNOWN_FIRST}"),
     "advice, reduce (a number that a tool read)": (44, f"the figure says what the bill shows, what the AI says that the change does to it and which number Meternaut checked, and which kind of resource it is about; what an answer does says that the AI named no setting that Meternaut could check, and {NOT_KNOWN_FIRST}"),
     "advice, remove": (7, f"the title and the question say that part of it is removed, what an answer does says that Meternaut cannot make a removal because it only lowers a count of units, and {NOT_KNOWN_FIRST}"),
     "advice, schedule": (41, f"the figure says which kind of resource it is about, which rate the cost is, on how many days of how many the change turns the resource off and which numbers are the AI's; what an answer does says that Meternaut cannot make a schedule because it only lowers a count of units, and {NOT_KNOWN_FIRST}"),
     "advice, commit": (4, RATE_AND_ONLY_COUNT),
-    "advice, a group of many resources": (24, "the row that says why the finding is a lead, which rate the cost is, and what could go wrong says why the risk is high and that nothing was measured of their use"),
+    "advice, a group of many resources": (18, "the row that says why the finding is a lead, which rate the cost is, and what could go wrong says that nothing was measured of their use"),
     "change, stop-vm": (15, f"{ASKS_WHAT_IT_DOES}, and the Undo row says all of the undo of the family (a start can fail when the region has no room for the size), which it cut in the middle of a word"), "change, resize-vm": (6, ASKS_WHAT_IT_DOES), "change, change-disk-tier": (7, ASKS_WHAT_IT_DOES), "change, delete-disk": (7, ASKS_WHAT_IT_DOES),
     "change, delete-public-ip": (9, ASKS_WHAT_IT_DOES), "change, two people, first stage": (9, ASKS_WHAT_IT_DOES),
     "change, two people, second stage": (9, ASKS_WHAT_IT_DOES), "change, two people, mine stage": (9, ASKS_WHAT_IT_DOES), "change, two people, stale stage": (9, ASKS_WHAT_IT_DOES),
@@ -502,7 +503,7 @@ class AMeasurementSaysOnHowManyDaysItHadAValueOnlyWhenNotEveryDayDid(unittest.Te
         self.assertEqual(self.row(20), "Total Calls: 0 in 30 days, 20 of them with a value")
 
     def test_a_fact_that_always_leaves_them_out_says_a_zero_of_30_days_for_a_zero_of_20(self):
-        with mock.patch.object(brief_mod, "covered", lambda value: value.partition(", with a value")[0]):  # what it said before
+        with mock.patch.object(family_words, "covered", lambda value: value.partition(", with a value")[0]):  # what it said before: the one wording of a measurement is the words' own
             self.assertEqual(self.row(20), "Total Calls: 0 in 30 days")
 
     def test_one_measurement_reads_one_way_on_the_page_the_card_the_letter_and_the_sentence_about_what_could_go_wrong(self):

@@ -137,7 +137,7 @@ def hooks(env: Mapping[str, str], settings: LoopSettings, store: Store, people: 
                 if person is None or not person.mail or quiet_now(person):
                     continue
                 if due(person, "first_contact") and not card_goes_first(person, "first-contact-card", plan.created_at):
-                    mailer.send(person, letters.first_contact_letter(person, base, now, contacts(), plan.plan_id), "first_contact")
+                    mailer.send(person, letters.first_contact_letter(person, base, now, contacts(), plan.plan_id, change=True), "first_contact")  # advice returned above: this request is one that Meternaut makes the change of
                 if due(person, "approval", plan.plan_id) and not card_goes_first(person, "approval-card", plan.created_at, plan.plan_id):
                     mailer.send(person, letters.approval_letter(plan, case, person, base, now, contacts()), "approval", plan.plan_id)
         safely("the letter about a plan", work)

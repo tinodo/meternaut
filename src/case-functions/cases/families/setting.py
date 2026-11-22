@@ -257,10 +257,13 @@ def read_total(env: Env, located: Located, name: str, days: int) -> float:
 
 
 def cited(facts: object) -> list[dict]:
-    """The measurements that the case cites, as typed values (name, total, days), at most three: the ones that Azure Monitor can be asked for again by name."""
-    metrics, days = (facts.get("metrics"), facts.get("metricDays")) if isinstance(facts, dict) else (None, None)
-    rows = [{"name": name, "total": total, "days": days[name]} for name, total in (metrics.items() if isinstance(metrics, dict) else []) if isinstance(days, dict) and name in days]
-    return [{"name": name, "total": total, "days": window} for name, total, window in words.measured({"measured": rows})]
+    """The measurements that the case cites, as typed values (name, total, days, and the unit and the days that had a value when the finding holds them), at most three: the ones that Azure Monitor can be
+    asked for again by name. The plan keeps them so that its words say a measurement as the page does."""
+    facts = facts if isinstance(facts, dict) else {}
+    metrics, days, units, seen = (facts.get(key) if isinstance(facts.get(key), dict) else {} for key in ("metrics", "metricDays", "metricUnits", "metricDaysWithData"))
+    rows = [{"name": name, "total": total, "days": days[name], "unit": units.get(name), "daysWithData": seen.get(name)} for name, total in metrics.items() if name in days]
+    return [{"name": m.name, "total": m.total, "days": m.days, **({"unit": m.unit} if m.unit else {}), **({"daysWithData": m.seen} if m.seen is not None else {})}
+            for m in words.measures({"measured": rows})]
 
 
 class ChangeSetting(Family):

@@ -1013,7 +1013,7 @@ class WhatTheModuleIs(unittest.TestCase):
                 self.assertTrue(node.level == 1 and node.module == "models" or node.level == 0 and node.module in ("__future__", "dataclasses", "typing"), (node.level, node.module))
 
     def test_the_words_of_the_families_import_only_the_standard_library_and_the_records_and_read_nothing(self):
-        allowed = {"__future__", "re", "dataclasses", "typing"}
+        allowed = {"__future__", "re", "dataclasses", "typing", "math"}  # math: whether a measurement is a finite number, in the wording of a measurement that the page and the sentence of a change share
         for node in ast.walk(ast.parse(self.words_source)):
             if isinstance(node, ast.Import):
                 self.assertLessEqual({a.name.split(".")[0] for a in node.names}, allowed)

@@ -268,17 +268,19 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
     undo = (("Undo", _data(brief.undo.short or brief.undo.how, brief_mod.UNDO_CHARS)),) if brief.undo.reversible else ()  # a change that cannot be undone says so in its chips; a command is never cut in half, and no undo of a family is cut at all
     said = brief.change_short or brief.change  # the short words of a family keep the sentence that says that nothing else is promised
     doubt = brief_mod.doubt_line(brief)  # what the second AI doubts, said as advice says it, under what could go wrong
+    risk = _data(brief.risk.short, brief_mod.RISK_CHARS) if brief.risk.short else _data(plain_sentences(brief.risk.text, 200), 200)  # a family that has short words keeps in them what was measured: a cut by length never drops it
     return (owner, ("If you approve", _data(plain_sentences(said, 200), 200) + ("" if "own permissions" in said else " It runs with your own permissions.") + two), *undo,
-            ("What could go wrong", _data(plain_sentences(brief.risk.text, 200), 200) + (f" {_data(doubt, brief_mod.RISK_CHARS)}" if doubt else "")))
+            ("What could go wrong", risk + (f" {_data(doubt, brief_mod.RISK_CHARS)}" if doubt else "")))
 
 
-def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
+def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None, change: bool = False) -> Letter:
     """The first letter to a person, in four sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
-    of the first request that waits for the person (the start page when it is not sent for one)."""
+    of the first request that waits for the person (the start page when it is not sent for one). `change` says that the request is one that Meternaut makes the change of after the person approves it:
+    "I change nothing myself" is true of advice, and of a change it would say the opposite of the page, which says that Meternaut makes it, with the approver's own permissions."""
     base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
     doc.paragraph(f"Hello {_data(person.name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
-    doc.paragraph("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph(f"{'I make a change only after you approve it' if change else 'I change nothing myself'}. You decide on a web page, and a change runs with your own Azure rights.")
     doc.paragraph("You can pause or stop my letters under Settings on that page.")
     doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
     doc.footer(f"You are on my list of people{_as(person)}.", contacts, person)

@@ -453,6 +453,16 @@ class TheFirstContactCard(unittest.TestCase):
         with self.assertRaises(CardError):
             cards.first_contact_card("Maya", "http://meternaut.example")
 
+    def test_for_a_request_that_meternaut_makes_the_change_of_it_does_not_say_that_it_changes_nothing(self):
+        # "I change nothing myself" is true of advice. Of a change it said the opposite of the page, which says that Meternaut makes the change, with the approver's own permissions.
+        advice, change = cards.first_contact_card("Maya", BASE, CONTACTS), cards.first_contact_card("Maya", BASE, CONTACTS, change=True)
+        self.assertEqual(cardcheck.check(change), [])
+        self.assertEqual(by_id(change)["rules"]["text"], "I make a change only after you approve it. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
+                                                         "and a change to Azure runs with your own Azure rights.")
+        self.assertNotIn("I change nothing myself", json.dumps(change))
+        self.assertIn("I change nothing myself", json.dumps(advice), "the card before advice says it as it did")
+        self.assertEqual(json.dumps(change).replace("I make a change only after you approve it", "I change nothing myself"), json.dumps(advice), "only that sentence differs")
+
 
 class TheFooterThatTheLintAsksOfTheTemplatesIsTheFooterOfTheCards(unittest.TestCase):
     """tools/cardlint.py checks the card templates of the design for the footer and the fallback text that the real cards have."""

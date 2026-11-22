@@ -502,6 +502,7 @@ class TheIntroduction(unittest.TestCase):
         self.assertEqual(second["title"], "[Meternaut] A decision waits for you")
         self.assertEqual(link_of(first["card"])["url"], f"{cs.BASE}/")
         self.assertIn("You chose Teams, and you are on my list of people.", json.dumps(first["card"]))
+        self.assertIn("I change nothing myself.", json.dumps(first["card"]), "the request is advice: Meternaut makes no change for it")
         for message in (first, second):
             self.assertEqual((message["to"], cardcheck.check(message["card"])), ("maya@example.com", []))
         self.assertEqual([(m.kind, m.status, m.plan_id) for m in self.world.tries()], [("first-contact-card", "sent", None), ("advice-card", "sent", cs.PLAN_ID)])
@@ -552,6 +553,18 @@ class TheIntroduction(unittest.TestCase):
                                             finished_at="2026-11-05T10:10:00Z", result="Deleted.", correlation_id="x"))
         self.assertEqual(world.run(), 2)
         self.assertEqual([m.kind for m in world.tries()], ["first-contact-card", "notice-card"])
+        self.assertIn("I make a change only after you approve it.", json.dumps(world.queue_fake.messages()[0]["card"]))
+
+    def test_before_the_card_of_a_change_that_waits_it_does_not_say_that_meternaut_changes_nothing_and_before_advice_it_does(self):
+        # "I change nothing myself" is true of advice; of a change that Meternaut makes after the approval it said the opposite of the card that follows.
+        world = cs.World()
+        world.open_plan(cs.change_plan())
+        world.channel(cs.MAYA)
+        self.assertEqual(world.run(), 2)
+        first, second = world.queue_fake.messages()
+        self.assertEqual(second["title"], "[Meternaut] A change to Azure waits for your OK")
+        self.assertIn("I make a change only after you approve it.", json.dumps(first["card"]))
+        self.assertNotIn("I change nothing myself", json.dumps(first["card"]))
 
 
 class TheCardsAboutAChange(unittest.TestCase):

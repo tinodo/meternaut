@@ -462,11 +462,13 @@ class WhatHappensIfYouAnswer(unittest.TestCase):
             self.assertEqual(brief_of(case, plan).risk.level, "medium", "the level follows the rule that says whether others share the kind")
 
     def test_a_change_says_what_the_second_ai_doubts_on_its_card_and_in_its_letter_as_advice_does_and_nothing_says_it_twice(self):
-        # The card of a change said "The second AI agreed, with a caution." and never what the caution was; the letter of a change said nothing of it, and the page had it only in a quote lower down.
+        # The card of a change said "The second AI agreed, with a caution." and never what the caution was; the letter of a change said nothing of it, and the page had it only in a quote lower down. The real
+        # families (change-setting and the ones of the planted waste) are held in test_families_setting and test_families_briefs; here a plan of a family that has no words of its own (a request that was made by
+        # a family that is not in the registry any more) and advice, and the guard that a doubt that the words already say is not said twice.
         said = f'The second AI says: "{DOUBT}"'
         case, plan = a_change()
         already = dataclasses.replace(plan, could_go_wrong=f"Connections that need more than 2 units are refused. {said}")  # words of a plan that say it themselves
-        for kind, (case, plan) in {"a change": (case, plan), "a change whose words say it already": (case, already), "advice": gateway(SETTING)}.items():
+        for kind, (case, plan) in {"a change that has the words of its plan": (case, plan), "a change whose words say it already": (case, already), "advice": gateway(SETTING)}.items():
             b = brief_of(case, plan)
             self.assertEqual(b.doubt, DOUBT)
             self.assertIn("The second AI agreed, with a caution.", b.confidence.because, kind)

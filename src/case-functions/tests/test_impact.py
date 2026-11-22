@@ -352,6 +352,16 @@ class TheCheckOfAPrivateEndpoint(unittest.TestCase):
         self.assertEqual(found["facts"]["traffic"], "unmeasured", "one metric without data is not a zero of the endpoint")
         self.assertTrue({row[0]: row[1] for row in found["rows"]}["Traffic in the 30 days before it was read"].startswith("Not measured"))
 
+    def test_the_row_of_the_traffic_says_on_how_many_days_it_had_a_value_only_when_that_is_not_every_day_of_the_window(self):
+        # It said "0 bytes in and 0 bytes out, with a value on 30 of 30 days" next to a fact of the page that says "0 bytes in 30 days": the same rule as the facts of the page now.
+        for label, points, expected in (("every day, nil", days(0, 30), "0 bytes in and 0 bytes out"), ("27 days, nil", days(0, 27), "0 bytes in and 0 bytes out, with a value on 27 of 30 days"),
+                                        ("every day, some", days(1024, 30), "30 KB in and 30 KB out"), ("3 days, some", days(1024, 3), "3 KB in and 3 KB out, on 3 of 30 days")):
+            with self.subTest(case=label):
+                azure = Azure()
+                azure.points = {"PEBytesIn": points, "PEBytesOut": points}
+                found, _ = check(azure)
+                self.assertEqual({row[0]: row[1] for row in found["rows"]}["Traffic in the 30 days before it was read"], expected)
+
     def test_the_best_connection_counts_and_a_connection_that_names_no_service_that_can_be_read_is_not_checked(self):
         azure = Azure()
         azure.rows[PE]["properties"]["privateLinkServiceConnections"] = [connection("Approved")]

@@ -108,6 +108,8 @@ class AboutAPlan(unittest.TestCase):
         self.assertIn("Ops (ops@example.com) answers for Meternaut.", first["body"]["content"])
         self.assertNotIn("Talk to a person", first["body"]["content"])
         self.assertNotIn("mailto:", first["body"]["content"])
+        self.assertIn("I make a change only after you approve it.", first["body"]["content"], "the plan is one that Meternaut makes the change of (advice gets no letter): the first letter does not say that it changes nothing")
+        self.assertNotIn("I change nothing myself", first["body"]["content"])
 
     def test_the_subject_holds_no_resource_name_and_the_link_is_the_console(self):
         made = plan()

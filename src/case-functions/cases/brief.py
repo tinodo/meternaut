@@ -22,7 +22,7 @@ from . import estimate as estimates
 from . import pricing
 from .twopeople import confirmations, counts, needs, standing
 from .families import words as family_words  # the words of the family that lowers a number: its level of risk is the one that advice about the same act uses
-from .families.words import TYPE_WORDS, also_changed, called_of, kinds, shown, type_noun, type_of, words_of  # called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
+from .families.words import TYPE_WORDS, also_changed, called_of, days_text, figure as _figure, kinds, measured_value, number_text, quantity as _quantity, shown, type_noun, type_of, words_of  # the measurement helpers are the words' own, which a plan of a change says its measurements with too; called_of, also_changed and kinds are also read by the pages, which know the brief and the records and nothing else
 from .models import (ADVICE_OPEN_HARD, ADVICE_OPEN_MAX, ADVISE, ADVISOR, AUTOMATED, COST_AT_ASK, COST_SEEN, GROUP_FACT, HELD, INVESTIGATION, REFUSED, TIME_FORMAT, TWO_PEOPLE_CLASS, ActionRecord,
                      CaseRecord, DecisionRecord, PlanRecord, Readiness, started)
 
@@ -305,6 +305,7 @@ class Risk:
     level: str  # low, medium or high
     text: str
     acting: bool = False  # the risk of doing what a request suggests, not of answering it (the chip then says "if you act")
+    short: str = ""  # what a card and a letter say of it when the family that makes the change has short words that keep what was measured: they never cut a sentence that carries a fact of the request
 
 
 @dataclass(frozen=True)
@@ -555,75 +556,16 @@ def _utc(moment: dt.datetime) -> dt.datetime:
     return moment.replace(tzinfo=dt.timezone.utc) if moment.tzinfo is None else moment.astimezone(dt.timezone.utc)
 
 
-def _figure(value: object) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return None
-    return float(value)
-
-
-def number_text(value: object) -> str:
-    """A number for a person: thousands separated, at most two decimals, no trailing zeros. Empty for what is not a finite number."""
-    number = _figure(value)
-    if number is None:
-        return ""
-    if number.is_integer():
-        return f"{int(number):,}"
-    return f"{number:,.2f}".rstrip("0").rstrip(".")
-
-
 def usd_text(value: object) -> str:
     """Money as every page, letter and card writes it (cost_words.money): whole dollars from 100 up ($1,682) and cents below ($41.20). Empty for what is not a finite number."""
     number = _figure(value)
     return "" if number is None else cost_words.money(number)
 
 
-def _bytes(value: float) -> str:
-    size, unit = abs(value), "bytes"
-    for step in ("KB", "MB", "GB", "TB"):
-        if size < 1024:
-            break
-        size, unit = size / 1024, step
-    sign = "-" if value < 0 else ""
-    return f"{sign}{number_text(round(size, 2))} {unit}"
-
-
 def quantity(total: object, unit: object) -> str:
-    """A total of a measurement with its unit in words: bytes as KB to TB, a percentage, seconds, a count as the bare number. A unit that has no words here is kept as the
-    tools gave it. Empty when the total is not a number."""
-    number = _figure(total)
-    if number is None:
-        return ""
-    word = str(unit or "").strip()
-    key = word.lower()
-    if key in ("", "count", "unspecified"):
-        return number_text(number)
-    if key == "bytes":
-        return _bytes(number)
-    if key == "percent":
-        return f"{number_text(number)}%"
-    if key == "seconds":
-        return f"{number_text(number)} seconds"
-    if key == "milliseconds":
-        return f"{number_text(number)} ms"
-    if key == "countpersecond":
-        return f"{number_text(number)} per second"
-    if key == "bytespersecond":
-        return f"{_bytes(number)} per second"
-    return f"{number_text(number)} {text_of(word, 24)}"
-
-
-def days_text(days: object) -> str:
-    if isinstance(days, int) and not isinstance(days, bool) and days > 0:
-        return "1 day" if days == 1 else f"{days} days"
-    return ""
-
-
-COVERED = re.compile(r"( in (\d+) days?), with a value on (\d+) of those days")
-
-
-def covered(value: str) -> str:
-    """A measurement says on how many of its days it had a value only when that is not every one of them: a zero over 30 days may be a zero of 20."""
-    return COVERED.sub(lambda found: found.group(1) if found.group(2) == found.group(3) else f"{found.group(1)}, {found.group(3)} of them with a value", value)
+    """A total of a measurement with its unit in words (the one function of cases/families/words.py, which a plan of a change says its measurements with too). A unit that has no words there is text of the
+    tools: it is cleaned and cut here, before it is said."""
+    return _quantity(total, text_of(unit, 24) if unit else "")
 
 
 def waited_text(days: int) -> str:
@@ -1787,12 +1729,9 @@ def _metric_facts(case: CaseRecord) -> list[Fact]:
     rows: list[Fact] = []
     for name, total in sorted(found, key=lambda item: (item[1] != 0, item[0]))[:2]:
         days = spans.get(name)
-        amount = quantity(total, units.get(name))
-        value = f"{amount} in {days_text(days)}" if days_text(days) else f"{amount} in the period measured"
-        if days_text(days) and isinstance(seen.get(name), int) and not isinstance(seen.get(name), bool):
-            value += f", with a value on {seen[name]} of those days"
-        # The days that had a value are said only when they are not every day of the window (covered): this is the one place that makes the value, so the page, the card, the letter and the sentence about what could go wrong read it one way.
-        rows.append(Fact(text_of(name, 60), covered(value), f"{MONITOR}, {days_text(days)}" if days_text(days) else MONITOR))
+        unit = units.get(name)
+        value = measured_value(total, text_of(unit, 24) if unit else "", days, seen.get(name))  # the one wording of a measurement: the sentence of a change that Meternaut makes says it the same way
+        rows.append(Fact(text_of(name, 60), value, f"{MONITOR}, {days_text(days)}" if days_text(days) else MONITOR))
     return rows
 
 
@@ -2231,7 +2170,7 @@ def build_brief(case: CaseRecord | None, plan: PlanRecord | None, action: Action
     said = words_of(family, plan, rtype, text_of(name, MAX_NAME), text_of(group, 90)) if kind == "change" and plan is not None else None
     if said is not None:
         change, who, rechecked = said.change, WHO_ACTS, said.rechecked
-        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk)
+        undo, risk = Undo(said.reversible, said.undo, said.short_undo), Risk(said.level, said.risk, short=said.short_risk)
     elif kind == "change":
         change, who, rechecked = text_of(plan.what_changes, 300) or "The change is described in the request.", WHO_ACTS, ""
         irreversible = family.startswith("delete") or not plan.undo.strip()
