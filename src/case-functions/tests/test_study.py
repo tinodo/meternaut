@@ -30,6 +30,8 @@ WIDGETS, GADGETS, GIZMOS = "microsoft.example/widgets", "microsoft.example/gadge
 REFERENCE = {kind: BASE + "templates/" + kind for kind in (WIDGETS, GADGETS, GIZMOS)}
 PRICING = BASE + "example-widgets/pricing"
 LIMITS = BASE + "example-gadgets/limits"
+TIERS = BASE + "example-gadgets/tiers"
+VIEW = "?view=examplegadgets"
 BILLED = "A provisioned widget unit is billed per hour from the time that it is created until the time that it is removed."
 RETIRES = "The Basic tier of Example Widgets retires on 30 September 2027, and the Standard tier replaces it."
 LIMIT = "The Gadget service allows 50 gadgets for each account in one region."
@@ -40,6 +42,7 @@ PAGES = {
                              f"<p>{LIMIT}</p></main>"),
     REFERENCE[GIZMOS]: html("<main><p>Gizmos are a thing.</p></main>"),
 }
+SENT = {TIERS: (301, {"location": "/en-us/azure/example-gadgets/tiers" + VIEW}, b""), TIERS + VIEW: html(f"<main><p>{LIMIT}</p></main>")}  # a page that Learn answers with a redirect to its view
 ROWS = [{"type": WIDGETS, "n": 7, "subscriptionId": "s"}, {"type": GADGETS, "n": 3, "subscriptionId": "s"}, {"type": GIZMOS, "n": 1, "subscriptionId": "s"},
         {"type": "microsoft.example/widgets", "n": 2, "subscriptionId": "t"}]
 SUB_A, SUB_B, SUB_C = "11111111-2222-3333-4444-555555555555", "22222222-3333-4444-5555-666666666666", "33333333-4444-5555-6666-777777777777"
@@ -370,6 +373,14 @@ class WhatCodeKeepsOfTheAnswer(unittest.TestCase):
         kept, thrown = self.accept(["text", 5, None, ["a"], {}])
         self.assertEqual((kept, dict(thrown)), ([], {"shape": 4, "type": 1}))
 
+    def test_a_claim_for_a_page_that_learn_sent_to_its_view_is_kept_with_the_address_that_the_scholar_named_and_a_claim_for_a_view_that_nobody_read_is_not(self):
+        lib = library.Library(Client(http.docs_calls(), lambda text: text, transport=Web(SENT), sleep=lambda s: None, monotonic=lambda: 0.0), max_pages=8, max_chars=100_000)
+        lib.read(TIERS)
+        raw = [self.item(type=GADGETS, kind="quota-limit", url=address, quote=LIMIT) for address in (TIERS, TIERS + VIEW, TIERS + VIEW + "&x=1", TIERS + "?view=Examplegadgets")]
+        kept, thrown = study.accept(raw, self.TYPES, lib, NOW)
+        self.assertEqual([(found.url, found.quote) for found in kept], [(TIERS, LIMIT)])
+        self.assertEqual(dict(thrown), {"url": 3}, "the view that Learn chose is not an address that the Scholar read, and the other three are no address that may be read")
+
     def test_a_claim_that_is_there_twice_is_kept_once_and_the_caps_hold(self):
         kept, thrown = self.accept([self.item(), self.item(quote="  " + BILLED + "  "), self.item(kind="retires-on-date", quote=RETIRES), self.item(kind="other", quote=BILLED[:60]),
                                     self.item(kind="quota-limit", quote=RETIRES[:60]), self.item(kind="sku-successor", quote=RETIRES[20:90])])
@@ -572,10 +583,30 @@ class TheRun(unittest.TestCase):
         self.assertEqual((world.of("study.finished")[0]["pages"], world.summary.state), (1, "ran"))
         self.assertEqual(world.summary.state, "ran")
 
+    def test_a_page_that_learn_sends_to_its_view_is_read_by_a_run_and_its_claim_is_kept_with_the_address_that_the_scholar_named(self):
+        foundry = ScholarFoundry(reads=[(REFERENCE[GADGETS], 0), (TIERS, 0)], answer=self.answer_with((GADGETS, "quota-limit", TIERS, LIMIT), studied=(GADGETS,)))
+        world = World(foundry=foundry, web=Web({**PAGES, **SENT}))
+        summary = world.go()
+        self.assertEqual((summary.state, summary.kept, summary.rejected), ("ran", 1, 0))
+        (found,) = [stored for stored in world.store.claims_recent() if stored.kind != STUDIED]
+        self.assertEqual((found.url, found.quote), (TIERS, LIMIT))
+        self.assertEqual([call[1] for call in world.web.calls], [REFERENCE[GADGETS], TIERS, TIERS + VIEW], "the page was asked for once, and Learn sent it to its view")
+        (event,) = world.of("study.claim")
+        self.assertEqual(event["url"], TIERS)
+        self.assertEqual(world.of("study.finished")[0]["pages"], 2)
+
 
 class WhenClaimsAreDue(unittest.TestCase):
     def due(self, **changes):
         return claim(checked_at=stamp(NOW - dt.timedelta(days=8)), **changes)
+
+    def test_a_claim_for_a_page_that_learn_sends_to_its_view_is_read_again_through_the_view_and_stays_fresh(self):
+        store = MemoryStore(clock=fixed_clock)
+        store.claim_put(self.due(resource_type=GADGETS, url=TIERS, quote=LIMIT))
+        world = World(foundry=ScholarFoundry(answer=lambda given, reads: claims_answer(studied=())), store=store, web=Web(SENT))
+        world.go()
+        self.assertEqual((store.claims_of(GADGETS)[0].state, world.summary.rechecked, world.summary.stale), ("fresh", 1, 0))
+        self.assertEqual([call[1] for call in world.web.calls][:2], [TIERS, TIERS + VIEW])
 
     def test_a_claim_that_was_checked_more_than_a_week_ago_is_read_again_before_anything_else_and_stays_fresh_for_a_month_when_its_quote_is_there(self):
         store = MemoryStore(clock=fixed_clock)
