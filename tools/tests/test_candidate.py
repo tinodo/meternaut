@@ -795,11 +795,11 @@ class TheRecordOfTheCandidates(unittest.TestCase):
     SECTION = re.search(r"(?ms)^## Trying a change of the instructions before it is made.*?(?=^## )", PROPOSAL).group(0)
 
     def test_the_order_of_a_promotion_is_the_order_of_rule_40_after_one_commit_that_changes_the_instructions_and_the_lock(self):
-        item = self.SECTION[self.SECTION.index("5. When the candidate is better"):]
+        item = self.SECTION[self.SECTION.index("5. When the candidate passes the test of the held-out rows"):]
         places = [item.index(words) for words in ("`INVESTIGATOR_INSTRUCTIONS` and the lock in one commit", "the order of rule 40", "`cases`", "`agents-ready`", "`foundry-evals` with no candidate", "a real run that a person starts")]
         self.assertEqual(places, sorted(places))
         self.assertLess(self.SECTION.index("1. Write the candidate"), self.SECTION.index("3. Start the Hub action `foundry-evals`"), "the candidate is written, and replayed, before anything of the release")
-        self.assertLess(self.SECTION.index("3. Start the Hub action `foundry-evals`"), self.SECTION.index("5. When the candidate is better"))
+        self.assertLess(self.SECTION.index("3. Start the Hub action `foundry-evals`"), self.SECTION.index("5. When the candidate passes the test of the held-out rows"))
 
     def test_it_says_that_a_candidate_run_is_not_the_test_of_a_release_and_that_the_candidate_file_is_rewritten_or_dropped_after_a_promotion(self):
         for words in ("**A candidate run is not the test of a release.**", "with `evals_candidate` empty", "exits 0 with the same PASS lines", "It must never be taken for the test of a release",
@@ -807,14 +807,25 @@ class TheRecordOfTheCandidates(unittest.TestCase):
             self.assertIn(words, self.SECTION)
 
     def test_it_says_plainly_that_the_held_out_set_is_small_and_names_its_four_rows_and_that_only_the_replay_tool_promotes_nothing(self):
-        # Until the four held-out rows were written (2026-11-21) this said that there is none: that sentence is false now, and what is true is the limit of four rows of three kinds, which it says as plainly.
+        # Until the four held-out rows were written (2026-11-22) this said that there is none: that sentence is false now, and what is true is the limit of four rows of three kinds, which it says as plainly.
         self.assertIn("The held-out set is small. Four rows of three kinds that no candidate was tuned on decide a release together with the rest", self.SECTION)
         self.assertIn("a better score on them alone is weak evidence", self.SECTION)
         self.assertNotIn("There is no held-out set", self.SECTION)
         item = self.SECTION[self.SECTION.index("**The held-out rows.**"):]
-        for words in ("`heldout-firewall`, `heldout-appgw-mincap`, `heldout-sql-vcores` and `heldout-sql-busy`", "the candidate is no worse on them than production and better on at least one", "**no candidate was tuned on them**",
-                      "**What they do not prove:**", "No replay has used these rows yet."):
+        for words in ("`heldout-firewall`, `heldout-appgw-mincap`, `heldout-sql-vcores` and `heldout-sql-busy`", "**no candidate was tuned on them**", "**What they do not prove:**", "No replay has used these rows yet."):
             self.assertIn(words, item)
+        # The rule as it goes into rule 41, word for word, and the conditions that make it applicable (a run passes when no miss line is printed for the row, and how often each side is replayed): a rule that says
+        # "no worse" and "better" and cannot be applied was the finding of the review of 2026-11-22.
+        self.assertIn("A candidate is judged on the story rows that it was written against and on four held-out rows of other kinds (`heldout-*` in evaluation/cases.jsonl, written on 2026-11-22 from Learn and the price list and not tuned on): "
+                      "it is promoted only when, replayed twice, it passes each held-out row as often as production does and one row more often, and the older rows still pass. "
+                      "A held-out row stops being held out when a candidate is changed because of its result.", item)
+        for words in ("passes a run when the replay prints no `miss:` line for it", "The busy database passes when its answer has no deletion and no lowered setting", "a way is not judged by code",
+                      "at least twice with the candidate and at least twice with production", "(i) for each row the candidate passes in at least as many of its runs as production does in its own",
+                      "(ii) for at least one row it passes in more", "(iii) the older rows still pass once with the candidate", "reading a held-out result and then editing the candidate is changing it because of that result",
+                      "About 0.45 US dollar a row", "so it takes two days", "so a replay for a release names its rows with `evals_only`"):
+            self.assertIn(words, item)
+        for words in ("one run each", "no worse on them than production", "better on at least one", "expects no proposal"):
+            self.assertNotIn(words, item, "the rule that nobody could apply, which the review of 2026-11-22 found: no run count, no meaning of worse and better")
         self.assertIn("A replay tool may suggest, test and measure. It never promotes.", self.SECTION)
         self.assertIn("**Nothing is promoted by the replay tool.** No replay tool writes the production agent, the lock or the instructions, or decides a release", self.SECTION)
         self.assertNotIn("A tool may suggest", self.SECTION, "agents-lock writes the lock and the instructions, and agents-ready makes versions: it is the replay tool that promotes nothing")
