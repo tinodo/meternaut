@@ -170,6 +170,19 @@ class TheCandidateFiles(unittest.TestCase):
         start, removed, added = difference(self.PRODUCTION_TEXT, (FOLDER / f"{FIRST}.txt").read_text(encoding="utf-8").replace("Quiet resources", "Quiet things"))
         self.assertNotEqual((removed, added), ("", ADDED + " "), "an accidental change elsewhere is seen")
 
+    def test_the_fourth_candidate_is_the_third_with_the_one_paragraph_of_item_4_that_asks_for_the_ways_that_make_the_bill_smaller_and_leaves_out_one_that_costs_as_much_or_more(self):
+        third, fourth = ((FOLDER / f"{name}.txt").read_text(encoding="utf-8") for name in ("others-all-options", "others-cheaper-only"))
+        opening, closing = "A smaller number of units is only one way to save", "Say in examined when you looked and found none."
+        before, after = third.index(opening), third.index(closing) + len(closing)
+        tail = len(third) - after
+        self.assertEqual((fourth[:before], fourth[len(fourth) - tail:]), (third[:before], third[after:]), "nothing outside the paragraph differs from the third candidate")
+        paragraph = fourth[before:len(fourth) - tail]
+        self.assertIn("State in others each one that would make the bill smaller", paragraph)
+        self.assertIn("and leave out one that costs as much as what the bill shows now, or more.", paragraph)
+        self.assertNotIn("whether or not it can be priced", fourth, "the third candidate asked for an option whether or not it could be priced: a way that code cannot price is kept with no figure, and the fourth asks for no such way")
+        self.assertIn("whether or not it can be priced", third)
+        self.assertIn("the action switch for a meter that the other option has no counterpart for", fourth, "the sentence on the forms is the third candidate's")
+
 
 # -- the tool --------------------------------------------------------------------------------------------------------------------------------------
 

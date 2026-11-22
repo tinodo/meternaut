@@ -2306,9 +2306,12 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
         both = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"}), ("price_alternatives", {"meter": "m2"}))
         # m1 and m2 share a list and both were asked about, so neither is offered the price through the other: the line says plain yes, and not "it shares the list of m1" for the second
         second = switching("Use the Basic tier", [{"meters": ["m2"], "remains": {"form": "alternative", "price": "p2"}}])
-        self.assertEqual(self.of(self.block(lowering(others=[second]), both), "other way 1"), [
-            "- other way 1 not priced, app key: dearer",
+        # The Basic price is above what the additional units cost, so the app finds the way to be no saving and drops it (it used to keep it with no figure, and the block said `not priced, app key: dearer`). The
+        # line of its effect still says that the tool offered the price for m2 itself, and that alone it is not priced for that reason.
+        block = self.block(lowering(others=[second]), both)
+        self.assertEqual(self.of(block, "other way 1"), [
             f"- other way 1 effect 1: r1, meter m2, form alternative p2; offered for m2 yes; price list read for m1, m2; {self.ALL_OK}; not priced alone, key dearer"])
+        self.assertIn("- other way 1 dropped, rule key: dearer", block)
         pair = switching("Use the Basic tier", [{"meters": ["m1", "m2"], "remains": {"form": "alternative", "price": "p2"}}])
         self.assertEqual(self.of(self.block(lowering(others=[pair]), both), "other way 1"), [
             "- other way 1 not priced, app key: remains",
@@ -2333,6 +2336,65 @@ class ThePrintedShapeOfAWay(unittest.TestCase):
         light = next(r for r in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40) if r["id"] == "lightly-used-bastion-with-four-units")
         block = evals.answer_lines(light, said(lowering(others=[BASIC, FREE])), [], None)
         self.assertFalse(any(" effect" in line or "app key" in line for line in block), block)
+
+
+class TheWayThatSavesNothing(unittest.TestCase):
+    """A way that the app's own price shows to cost as much or more than what the bill shows now is dropped by `check` (the rule `dearer`, cases/proposals.py). The replay says it as an entry that the app dropped,
+    with the app's words and its key, counts it for nothing, and does not mistake its price for the price of a way that is kept. Hand-made answers on the row of the whole story, whose list has a tier above
+    each of its two charges."""
+
+    ALL_OK = "one meter ok, price ok, tiers ok, service ok, unit ok, name ok"
+
+    def setUp(self):
+        self.row, self.proposals = the_story(), evals.app_code()[1]
+        self.calls = traced(self.row, ("describe", {"handle": "r1"}), ("cost_meters", {"handle": "r1"}), ("price_alternatives", {"meter": "m1"}))
+        self.premium = switching("Use the Premium tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p5"}}])
+        self.basic = switching("Use the Basic tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p2"}}])
+
+    def block(self, *ways):
+        return [line[len(f"{STORY}: "):] for line in evals.answer_lines(self.row, said(lowering(others=list(ways))), self.calls, evals.shown_properties(self.calls), evals.shown_bill(self.calls))]
+
+    @staticmethod
+    def fates(block):
+        return [found.group(1) for line in block if (found := re.match(r"- other way \d+ \((.*?)\): title ", line))]
+
+    def test_a_higher_tier_that_the_app_prices_as_no_saving_is_dropped_with_the_apps_words_and_key_and_the_way_beside_it_that_saves_is_kept_with_its_figure(self):
+        block = self.block(self.premium, self.basic)
+        self.assertEqual(self.fates(block), ["the new price is not below what the charge costs now", "kept"])
+        self.assertEqual(self.fates(block)[0], self.proposals.reason("other", "dearer"))
+        self.assertEqual([line for line in block if " dropped, rule key: " in line], ["- other way 1 dropped, rule key: dearer"])
+        self.assertIn("saves 72 USD a month", next(line for line in block if line.startswith("- other way 2 (kept)")))
+        self.assertIn("answer: 1 finding, 1 kept by the app copy, which keeps 1 setting and 1 other way", block)
+        self.assertEqual([line for line in block if re.match(r"- other way \d+ not priced[:,]", line)], [], "a way that is dropped is no way that is kept with no figure")
+        self.assertIn(f"- other way 1 effect 1: r1, meter m1, form alternative p5; offered for m1 yes; price list read for m1; {self.ALL_OK}; not priced alone, key dearer", block,
+                      "the effect of a dropped way is still printed, with the key that stopped its figure")
+
+    def test_the_figure_that_a_way_that_is_kept_has_is_its_own_whatever_stands_before_it(self):
+        unnamed = switching("Use another tier", [{"meters": ["m1"], "remains": {"form": "alternative", "price": "p99"}}])
+        block = self.block(self.premium, unnamed)
+        self.assertEqual(self.fates(block), [self.proposals.reason("other", "dearer"), "kept"])
+        self.assertEqual([line for line in block if line.startswith("- other way 2 not priced")],
+                         ["- other way 2 not priced: " + evals.app_code()[0].WHY["alternative"], "- other way 2 not priced, app key: alternative"], "the key of the way that was dropped is not the key of this one")
+
+    def test_the_limit_of_ways_that_the_replay_says_counts_the_ways_that_are_kept_only(self):
+        third = switching("Use the third tier", [{"meters": ["m1"], "remains": {"form": "assumed", "low": 0.5, "high": 0.5}}])
+        fourth = switching("Use the fourth tier", [{"meters": ["m1"], "remains": {"form": "assumed", "low": 0.6, "high": 0.6}}])
+        block = self.block(self.premium, self.basic, FREE, third, fourth)
+        self.assertEqual(self.fates(block), [self.proposals.reason("other", "dearer"), "kept", "kept", "kept", self.proposals.reason("other", "limit")])
+        self.assertEqual([line for line in block if " dropped, rule key: " in line], ["- other way 1 dropped, rule key: dearer", "- other way 5 dropped, rule key: limit"])
+        self.assertIn("which keeps 1 setting and 3 other ways", next(line for line in block if line.startswith("answer: ")))
+
+    def test_the_grader_counts_no_way_that_the_app_drops_for_costing_more_and_says_so_in_the_words_of_the_notes(self):
+        got = evals.grade(self.row, said(lowering(others=[self.premium])))
+        self.assertEqual((got["ways"], got["others_found"]), (0, 0.0))
+        self.assertEqual(got["dropped"], "code dropped 1 of 1 other way (the new price is not below what the charge costs now: 1)")
+        both = evals.grade(self.row, said(lowering(others=[self.premium, FREE])))
+        self.assertEqual((both["ways"], both["others_found"], len(both["priced"]["others"])), (1, 1.0, 1), "only the way that is kept has a figure")
+
+    def test_a_row_that_gives_no_bill_cannot_show_a_way_to_cost_more_and_keeps_it_as_before(self):
+        light = next(r for r in helpers.read_jsonl(ROOT / "evaluation" / "cases.jsonl", 40) if r["id"] == "lightly-used-bastion-with-four-units")
+        got = evals.grade(light, said(lowering(others=[self.premium])))
+        self.assertEqual((got["ways"], "dropped" in got), (1, False))
 
 
 class TheFloorOfASetting(unittest.TestCase):

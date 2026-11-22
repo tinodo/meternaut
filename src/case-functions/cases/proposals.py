@@ -40,7 +40,7 @@ WHY = {
             "lowest": "a new value below {}, the lowest that Microsoft's reference page gives for the setting",
             "highest": "a new value above {}, the highest that Microsoft's reference page gives for the setting"},
     "other": {"group": "a finding of several resources", "shape": "not an entry of the form", "title": "a title that is not plain words", "action": "no action that code can read",
-              "duplicate": "a repeat of the change or of a way", "limit": "over the limit"},
+              "duplicate": "a repeat of the change or of a way", "dearer": "the new price is not below what the charge costs now", "limit": "over the limit"},
 }
 # Why Meternaut cannot make a change that a finding proposes. The family `change-setting` stores one key in the preconditions of the request that it makes instead (`cannotChange`), and the pages,
 # cards and letters say its sentence. The sentences are whole, plain and about this one request.
@@ -260,11 +260,17 @@ def _other(item: object, taken: list, titles: set) -> tuple[dict, pricing.Change
             **({"inPlace": place} if isinstance(place, bool) else {})}, option
 
 
+def no_saving(priced: pricing.Priced, handle: str) -> bool:
+    """Whether code priced a way for a resource and found that it saves nothing: the new price is not below what the charge costs now (the reason `dearer` of cases/pricing.py WHY)."""
+    return priced.why.get(handle) == "dearer"
+
+
 def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], evidence: Mapping, price: Callable[[pricing.Change], pricing.Priced]) -> Checked:
     """What code keeps of the settings and the other ways that the change of a finding states. `proposal` is the finding's, `handles` the resources that it covers, `evidence` what the tools showed
     for each handle (Toolbox.evidence) and `price` the price of a change from the bill (cases/pricing.py price, for those handles). An entry that fails a rule is dropped by itself and counted, and
     the finding is never dropped for it. Settings are kept only for a finding that proposes a change by the action reduce, and other ways only for a finding of one resource. A way that cannot be
-    priced is kept with no figure, and no way ever becomes a setting. A resource that had a setting dropped for lying outside the documented range is in `ranged`: the caller holds back its figure."""
+    priced is kept with no figure, and no way ever becomes a setting. A way that code did price and found to be no saving (`no_saving`) is dropped: it is no way that was kept, so it takes no place
+    of the limit, and neither its change nor its title stops a later way. A resource that had a setting dropped for lying outside the documented range is in `ranged`: the caller holds back its figure."""
     dropped: Counter = Counter()
     ways: dict[str, dict] = {}
     ranged: set[str] = set()
@@ -293,7 +299,11 @@ def check(change: pricing.Change | None, proposal: str, handles: Sequence[str], 
                 dropped["other", found if isinstance(found, str) else "limit"] += 1
                 continue
             entry, option = found
-            row = price(option).rows.get(handles[0])
+            priced = price(option)
+            if no_saving(priced, handles[0]):
+                dropped["other", "dearer"] += 1
+                continue
+            row = priced.rows.get(handles[0])
             if row is not None:
                 entry |= {"lowUsd": row.low, "highUsd": row.high, **({"estimate": True} if row.form in ("assumed", "mixed") else {})}  # these forms rest on a share that only the AI states
             kept.append(entry)

@@ -14,6 +14,7 @@ from test_investigate import (FakeFoundry, FakeToolbox, Harness, Moving, Scripte
                               verdicts)
 
 from cases import agents, brief, investigate, models, pricing, proposals
+from cases.prices import Line as Listed
 from cases.toolbox import meter_word
 
 GATEWAYS = "microsoft.example/gateways"
@@ -84,6 +85,34 @@ def priced_as(form: str):
     """A price that gives the resource one figure of this form of change, 20 to 40 dollars a month: the shape of a row of the bill with invented numbers."""
     row = pricing.Row("r1", 20.0, 40.0, 200.0, 1, form, {}, None, 0, ("m1",), 200.0, None, None, 0, None)
     return lambda option: pricing.Priced(option.action, {"r1": row})
+
+
+def via(title: str, meter: str, price: str | None = None) -> dict:
+    """Another way to save on r1: a switch of the bill line `meter` to a price of the list (by default the one that has the number of that meter), with the words that the Investigator gives it."""
+    return {"title": title, "gives_up": "Fewer units.", "in_place": False,
+            "change": {"action": "switch", "effects": [{"handle": "r1", "meters": [meter], "remains": {"form": "alternative", "price": price or f"p{meter[1:]}"}}], "how": "Make it again."}}
+
+
+def stopped_at(reasons: dict):
+    """A price that gives a way the figure of a row (20 to 40 dollars) unless `reasons` names the bill line of its effect: then it gives no figure and the word of cases/pricing.py WHY that `reasons` holds."""
+    row = pricing.Row("r1", 20.0, 40.0, 200.0, 1, "alternative", {}, None, 0, ("m1",), 200.0, None, None, 0, None)
+
+    def price(option):
+        meter = option.effects[0].meters[0]
+        return pricing.Priced(option.action, {} if meter in reasons else {"r1": row}, {"r1": reasons[meter]} if meter in reasons else {})
+
+    return price
+
+
+LIST = {"p1": Listed("Example Compute", "Basic Tier", "Small", "Light Hours", "1 Hour", 0.10, "swedencentral", 1),
+        "p2": Listed("Example Compute", "Premium Tier", "Large", "Heavy Hours", "1 Hour", 0.50, "swedencentral", 1)}
+
+
+def with_list(box: FakeToolbox) -> FakeToolbox:
+    """The invented gateways of a run that also hold the list that the tool for alternatives showed for the bill line m1: the bill pays 0.28 an hour for it and the list has 0.30 for it, 0.10 for a Small
+    price and 0.50 for a Large one."""
+    box.prices, box.retail, box.offers = LIST, {"m1": 0.30}, {"m1": {"p1", "p2"}}
+    return box
 
 
 class TheKeyOfTheFacts(unittest.TestCase):
@@ -527,6 +556,112 @@ class WhatCodeKeepsOfTheOtherWays(unittest.TestCase):
     def test_nothing_is_kept_of_an_others_that_is_no_list(self):
         for text in ("Use the Lite tier", 4, {"title": "x"}, None):
             self.assertEqual(checked(reduce(others=text)), proposals.Checked({}, Counter(), (0, 0)))
+
+
+class WhenAWayCostsAsMuchOrMore(unittest.TestCase):
+    """A way that code priced and found to be no saving (the new price is not below what the charge costs now: the word `dearer` of cases/pricing.py WHY) is dropped by its own rule. A way that code could
+    not price for any other reason is kept with no figure, as it always was. The prices of the first tests are made by hand, and the last tests run a whole investigation over an invented price list."""
+
+    LARGE, SMALL = via("Use the Large tier", "m2"), via("Use the Small tier", "m3")
+
+    def test_a_way_that_code_priced_as_no_saving_is_dropped_by_its_own_rule_counted_and_said_in_the_notes_and_the_way_that_saves_keeps_its_figure(self):
+        price = stopped_at({"m2": "dearer"})
+        found = checked(reduce(others=[self.LARGE, self.SMALL]), price=price)
+        (kept,) = found.ways["r1"]["others"]
+        self.assertEqual((kept["title"], kept["lowUsd"], kept["highUsd"]), ("Use the Small tier", 20.0, 40.0))
+        self.assertEqual((found.dropped, found.said), (Counter({("other", "dearer"): 1}), (0, 2)))
+        self.assertEqual(proposals.note_of(found), "code dropped 1 of 2 other ways (the new price is not below what the charge costs now: 1)")
+        alone = checked(reduce(others=[self.LARGE]), price=price)
+        self.assertEqual((alone.ways, alone.dropped, alone.said), ({}, Counter({("other", "dearer"): 1}), (0, 1)), "nothing of the way is kept, not even a title")
+
+    def test_the_words_of_the_rule_are_one_plain_clause_that_the_notes_and_the_replay_both_say(self):
+        words = "the new price is not below what the charge costs now"
+        self.assertEqual((proposals.WHY["other"]["dearer"], proposals.reason("other", "dearer")), (words, words))
+        self.assertEqual(proposals.note_of(checked(reduce(others=[self.LARGE]), price=stopped_at({"m2": "dearer"}))), f"code dropped 1 of 1 other way ({words}: 1)")
+
+    def test_a_way_that_code_could_not_price_for_any_other_reason_is_kept_with_no_figure_whatever_the_reason(self):
+        self.assertIn("dearer", pricing.WHY, "the key that the rule reads is still the app's own")
+        for why in (why for why in pricing.WHY if why != "dearer"):
+            with self.subTest(why=why):
+                found = checked(reduce(others=[self.LARGE]), price=stopped_at({"m2": why}))
+                self.assertEqual(found.ways["r1"]["others"], [{"title": "Use the Large tier", "givesUp": "Fewer units.", "action": "switch", "inPlace": False}])
+                self.assertEqual(found.dropped, Counter())
+
+    def test_a_way_that_no_bill_could_price_is_kept_with_no_figure_and_so_is_one_that_the_price_says_nothing_of(self):
+        for label, price in (("a price that gives nothing, as when no bill was read", None), ("a price that has neither a row nor a reason", lambda option: pricing.Priced(option.action))):
+            with self.subTest(label):
+                found = checked(reduce(others=[self.LARGE]), price=price)
+                self.assertEqual(([item["title"] for item in found.ways["r1"]["others"]], found.dropped), (["Use the Large tier"], Counter()))
+        bare = checked(reduce(others=[self.LARGE]), price=lambda option: pricing.price(option, ["r1"], FakeToolbox([]), COSTS, None, meter_word))
+        self.assertEqual(([item["title"] for item in bare.ways["r1"]["others"]], bare.dropped), (["Use the Large tier"], Counter()), "the real pricing with no meter shown is no refusal of the way")
+
+    def test_a_way_that_costs_more_is_dropped_wherever_it_stands_among_the_ways_that_save_and_they_keep_their_order(self):
+        ways = [self.LARGE, self.SMALL, via("Use the Medium tier", "m4"), via("Use the Large tier too", "m5")]
+        found = checked(reduce(others=ways), price=stopped_at({"m2": "dearer", "m5": "dearer"}))
+        self.assertEqual([item["title"] for item in found.ways["r1"]["others"]], ["Use the Small tier", "Use the Medium tier"])
+        self.assertEqual(found.dropped, Counter({("other", "dearer"): 2}))
+
+    def test_the_limit_counts_only_the_ways_that_are_kept_and_a_way_that_is_over_it_is_over_the_limit_whatever_it_costs(self):
+        larges = [via(f"Large {n}", f"m{n}") for n in (2, 3)]
+        smalls = [via(f"Small {n}", f"m{n}") for n in range(10, 11 + proposals.MAX_OTHERS)]
+        found = checked(reduce(others=[larges[0], smalls[0], larges[1], *smalls[1:]]), price=stopped_at({"m2": "dearer", "m3": "dearer"}))
+        self.assertEqual([item["title"] for item in found.ways["r1"]["others"]], [f"Small {n}" for n in range(10, 10 + proposals.MAX_OTHERS)], "the ways that cost more did not take a place")
+        self.assertEqual(found.dropped, Counter({("other", "dearer"): 2, ("other", "limit"): 1}))
+        late = checked(reduce(others=[*smalls[:proposals.MAX_OTHERS], larges[0]]), price=stopped_at({"m2": "dearer"}))
+        self.assertEqual(late.dropped, Counter({("other", "limit"): 1}), "it is over the limit before it is priced")
+
+    def test_a_way_that_was_dropped_is_no_way_that_was_kept_so_its_repeat_is_priced_again_and_its_title_stays_free(self):
+        again = {**self.LARGE, "title": "Use the Large tier once more"}
+        found = checked(reduce(others=[self.LARGE, again, {**self.SMALL, "title": "use THE large TIER"}]), price=stopped_at({"m2": "dearer"}))
+        self.assertEqual(found.dropped, Counter({("other", "dearer"): 2}), "the repeat is as dear as the first, and is no repeat of a way that was kept")
+        self.assertEqual([item["title"] for item in found.ways["r1"]["others"]], ["use THE large TIER"], "the title of a way that was dropped is free for another way")
+
+    def test_a_way_that_costs_more_in_a_finding_of_several_resources_is_a_way_of_a_group_and_is_dropped_for_that_reason(self):
+        found = checked(reduce(others=[self.LARGE, self.SMALL]), handles=("r1", "r2"), price=stopped_at({"m2": "dearer"}))
+        self.assertEqual((found.ways, found.dropped), ({}, Counter({("other", "group"): 2})), "a group's ways are never priced")
+
+    def test_the_real_pricing_over_an_invented_list_says_dearer_for_a_price_that_is_not_below_what_the_bill_pays_and_the_way_is_dropped(self):
+        box = with_list(invented(1))
+        price = lambda option: pricing.price(option, ["r1"], box, COSTS, None, meter_word)
+        large, small = via("Use the Large tier", "m1", "p2"), via("Use the Small tier", "m1", "p1")
+        self.assertEqual(price(pricing.parse(large["change"])).why, {"r1": "dearer"}, "0.50 an hour against the 0.28 that the bill pays and the 0.30 of the list")
+        self.assertIn("r1", price(pricing.parse(small["change"])).rows)
+        found = checked(reduce(others=[large, small]), price=price)
+        self.assertEqual(([item["title"] for item in found.ways["r1"]["others"]], found.dropped), (["Use the Small tier"], Counter({("other", "dearer"): 1})))
+        self.assertGreater(found.ways["r1"]["others"][0]["lowUsd"], 0)
+        # 0.29 is below the list price of the line (0.30), so it saves like for like, and above what the bill pays (0.28): at list prices alone it costs more, and either end is enough
+        box.prices, box.offers = {**LIST, "p3": Listed("Example Compute", "Basic Tier", "Medium", "Mid Hours", "1 Hour", 0.29, "swedencentral", 1)}, {"m1": {"p1", "p2", "p3"}}
+        middle = via("Use the Medium tier", "m1", "p3")
+        self.assertEqual(price(pricing.parse(middle["change"])).why, {"r1": "dearer"})
+        self.assertEqual(checked(reduce(others=[middle]), price=price).dropped, Counter({("other", "dearer"): 1}))
+
+
+class WhenAnInvestigationMeetsAWayThatCostsMore(unittest.TestCase):
+    SMALL, LARGE = via("Use the Small tier", "m1", "p1"), via("Use the Large tier", "m1", "p2")
+
+    def test_the_case_keeps_the_way_that_saves_with_its_figure_and_the_notes_say_what_was_dropped_and_why(self):
+        h = run(asked(reduce(others=[self.LARGE, self.SMALL])), with_list(invented(1)))
+        self.assertEqual(h.result.cases, 1, "the finding stays whatever its ways cost")
+        (kept,) = ways_of(h)["others"]
+        small = pricing.price(pricing.parse(self.SMALL["change"]), ["r1"], with_list(invented(1)), COSTS, None, meter_word).rows["r1"]
+        self.assertEqual((kept["title"], kept["lowUsd"], kept["highUsd"]), ("Use the Small tier", small.low, small.high))
+        self.assertEqual([e for e in h.notes if "dropped" in e], ["finding 1: code dropped 1 of 2 other ways (the new price is not below what the charge costs now: 1)"])
+
+    def test_the_skeptic_is_shown_the_way_that_saves_and_not_the_one_that_code_found_to_cost_more(self):
+        h = run(asked(reduce(others=[self.LARGE, self.SMALL])), with_list(invented(1)))
+        (one,) = json.loads(h.foundry.inputs()[1])["findings"]
+        self.assertEqual([way["title"] for way in one["others"]], ["Use the Small tier"])
+
+    def test_a_finding_whose_only_way_costs_more_opens_its_case_with_no_way_at_all(self):
+        h = run(asked(reduce(others=[self.LARGE])), with_list(invented(1)))
+        self.assertEqual((h.result.cases, ways_of(h)), (1, None))
+        self.assertEqual([e for e in h.notes if "dropped" in e], ["finding 1: code dropped 1 of 1 other way (the new price is not below what the charge costs now: 1)"])
+
+    def test_with_no_list_shown_nothing_can_be_found_to_cost_more_and_the_way_is_kept_with_no_figure_as_before(self):
+        h = run(asked(reduce(others=[self.LARGE])), invented(1))
+        (kept,) = ways_of(h)["others"]
+        self.assertEqual((kept["title"], "lowUsd" in kept), ("Use the Large tier", False))
+        self.assertEqual([e for e in h.notes if "dropped" in e], [])
 
 
 class WhatTheCaseKeepsAndTheNotesSay(unittest.TestCase):
