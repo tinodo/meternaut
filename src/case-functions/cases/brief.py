@@ -2199,7 +2199,7 @@ def others_line(brief: Brief) -> str:
 
 
 def way_note(other: proposals.Other) -> str:
-    """What is missing from the figure of one way, as a whole sentence of its own (under the figure in its cell on the page): why it has no figure, or how many of the charges that the AI named its figure
+    """What is missing from the figure of one way, as a whole sentence of its own (under the figure in its cell on the page): why it has no figure, or how many of the things that the AI named its figure
     does not count. Nothing for a way whose figure counts them all, and for a way that was kept before code kept these."""
     from . import proposals
 
@@ -2210,7 +2210,7 @@ def way_note(other: proposals.Other) -> str:
 
 def ways_notes(others: Sequence[proposals.Other]) -> str:
     """What a card and a letter, which have no table, say under the line about the ways of what the cells of the page say of each: why the ways that are not priced have no figure (when every one of them has a
-    reason that code kept: once when they share it, and that they differ when they do not, which the page says for each) and how many of the charges that the AI named the figures leave out. Nothing when
+    reason that code kept: once when they share it, and that they differ when they do not, which the page says for each) and how many of the things that the AI named the figures leave out. Nothing when
     there is nothing to say."""
     from . import proposals
 

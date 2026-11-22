@@ -322,7 +322,7 @@ def approval_letter(plan: PlanRecord, case: CaseRecord | None, person: Person, b
     if brief.others:
         doc.paragraph(brief_mod.others_line(brief))
         if notes := brief_mod.ways_notes(brief.others):
-            doc.paragraph(notes)  # why a way has no figure and how many charges a figure leaves out: a letter has no table, and these are the words of its cells
+            doc.paragraph(notes)  # why a way has no figure and how many things a figure leaves out: a letter has no table, and these are the words of its cells
     if brief.heads_up:
         doc.paragraph(_heads_up(brief))
     for line in (brief.past if brief.past != brief_mod.NO_HISTORY else "", brief.access):

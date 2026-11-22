@@ -43,7 +43,7 @@ class ReadersTest(unittest.TestCase):
         (one,) = proposals.others({proposals.KEY: {"others": [way]}})
         self.assertIs(one.estimate, False)
 
-    def test_why_a_way_has_no_figure_and_how_many_charges_its_figure_leaves_out_are_read_as_typed_values_and_a_way_kept_before_has_neither(self):
+    def test_why_a_way_has_no_figure_and_how_many_things_its_figure_leaves_out_are_read_as_typed_values_and_a_way_kept_before_has_neither(self):
         way = {"title": "Use the small tier", "givesUp": "Less.", "action": "switch"}
         (old,) = proposals.others({proposals.KEY: {"others": [way]}})
         self.assertEqual((old.why, old.skipped), ("", 0), "a way that was kept before code kept these still reads")
@@ -66,10 +66,7 @@ class ReadersTest(unittest.TestCase):
         (read,) = proposals.others({proposals.KEY: {"others": [{**way, "skipped": 1}]}})
         self.assertEqual(read.skipped, 1)
 
-    def test_the_words_for_why_a_way_has_no_figure_are_a_table_of_the_apps_own_keys_and_dearer_is_not_in_it_because_such_a_way_is_dropped(self):
-        from cases import pricing
-
-        self.assertEqual(set(proposals.NOT_PRICED), set(pricing.WHY) - {"dearer"}, "a reason that the pricing gains has to get its words here: a way that has it would be said to be not priced and no more")
+    def test_the_words_for_why_a_way_has_no_figure_are_clauses_that_follow_because_and_make_one_short_sentence_and_dearer_has_none_because_such_a_way_is_dropped(self):
         for why, clause in proposals.NOT_PRICED.items():
             with self.subTest(why):
                 self.assertFalse(clause.endswith("."), "a clause: it follows the word because, and is a sentence of its own with a capital and a full stop")
@@ -79,10 +76,10 @@ class ReadersTest(unittest.TestCase):
                 self.assertLessEqual(len(sentence.split()), 30, "a short sentence: it is said in a cell, on a card and in a letter")
         self.assertEqual((proposals.not_priced("nope"), proposals.not_priced(None), proposals.not_priced("dearer")), ("", "", ""))
 
-    def test_how_many_charges_a_figure_leaves_out_is_said_in_a_whole_sentence_for_one_and_for_many(self):
-        self.assertEqual(proposals.left_out(1), "One charge that the AI named is not counted in this figure.")
-        self.assertEqual(proposals.left_out(3), "3 charges that the AI named are not counted in this figure.")
-        self.assertEqual(proposals.left_out(12), "12 charges that the AI named are not counted in this figure.")
+    def test_how_many_things_a_figure_leaves_out_is_said_in_a_whole_sentence_for_one_and_for_many(self):
+        self.assertEqual(proposals.left_out(1), "One thing that the AI named is not counted in this figure.")
+        self.assertEqual(proposals.left_out(3), "3 things that the AI named are not counted in this figure.")
+        self.assertEqual(proposals.left_out(12), "12 things that the AI named are not counted in this figure.")
 
     def test_only_a_property_whose_last_key_names_a_count_or_a_size_is_countlike(self):
         for path in ("scaleUnits", "sku.capacity", "properties.sku.capacity", "instanceCount", "maxReplicas", "numberOfWorkers", "maximumNumberOfWorkers", "agentPoolProfiles.count", "workerCount",

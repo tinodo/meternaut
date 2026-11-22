@@ -210,7 +210,7 @@ def _others(brief: Brief) -> Safe:
 
 def _saves(other) -> object:
     """What another way (an `Other` of the brief) saves a month, as the page says other figures: a range, one amount, or that nothing priced it. A way whose saving rests on a share that the AI
-    assumed says so in the cell. Under the figure, a line of its own says what is missing from it when code knows: why a way has no figure, or how many of the charges that the AI named the figure does
+    assumed says so in the cell. Under the figure, a line of its own says what is missing from it when code knows: why a way has no figure, or how many of the things that the AI named the figure does
     not count (brief.way_note). A way that was kept before code kept these says what it said."""
     if other.low is None:
         figure = "Not priced"
