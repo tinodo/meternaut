@@ -92,13 +92,13 @@ BASIC_WAY = {"title": "Use the Basic tier", "givesUp": "No native client and no 
 SENTENCES = {
     "alternative": "Meternaut has no usable list price for the alternative that the AI names, or cannot name it in plain words.",
     "units": "The alternative that the AI names does not have the same unit as the charge that it replaces, so Meternaut cannot compare the two prices.",
-    "listed": "Meternaut does not know the list price of the charge that the alternative would replace.",
-    "quantity": "The charge that the alternative would replace has no quantity on the bill, so Meternaut cannot work out what one unit of it costs.",
+    "listed": "Meternaut has no list price above nothing for the charge that the alternative would replace.",
+    "quantity": "The charge that the alternative would replace has no cost per unit above nothing on the bill, so Meternaut cannot compare the new price with it.",
     "remains": "Meternaut could not work out what would remain of the charges that the AI named from what the AI said about them.",
     "none": "The AI named no charge on the bill to change.",
     "lines": "Meternaut could not use the charges that the AI named: a charge was not found for this resource, or its cost cannot be read over enough days.",
     "nothing": "Meternaut works out a saving of nothing from the charges that the AI named and what the AI said would remain of them.",
-    "credit": "At the low end of its cost, what the resource gets back on its bill is at least what its charges cost.",
+    "credit": "Once what the resource gets back on its bill is taken off, the cost that Meternaut can read for it is nothing or less at the low end.",
     "range": "The new number that the AI proposes is outside the range that Microsoft's reference page gives for the property that it sets.",
     "currency": "The cost of this resource is not in US dollars.",
 }
@@ -877,6 +877,22 @@ class WhyAWayHasNoFigureAndWhatItLeavesOut(unittest.TestCase):
                 for surface in ("card", "letter"):
                     self.assertIn(f"The one that is not priced has no figure because {proposals.NOT_PRICED['remains']}.", read(shown[surface]))
                 self.assertNotIn("did not say", " ".join(read(one) for one in shown.values()), "the AI did say: what is said is that Meternaut could not work out what would remain from it")
+
+    def test_a_remove_way_of_two_effects_of_which_the_first_names_no_charge_and_the_second_names_one_is_not_said_to_name_none(self):
+        box = SimpleNamespace(meters={"m1": _meter(EXTRA_UNITS, 1440.0, 201.6), "m2": _meter(BASE_GATEWAY, 720.0, 209.4)}, evidence={"r1": {"properties": {"capacityUnits": 4}}})
+        effects = [{"handle": "r1", "meters": [], "remains": {"form": "none"}}, {"handle": "r1", "meters": ["m9"], "remains": {"form": "none"}}]
+        several = {"title": "Remove the gateway", "gives_up": "Everything that connects through it stops.", "in_place": False, "change": {"action": "remove", "effects": effects, "how": "Delete it."}}
+        change = pricing.parse({"action": "reduce", "effects": [{"handle": "r1", "meters": ["m1"], "remains": {"form": "quantity", "from": 1440, "to": 0}}], "how": HOW, "others": [several]})
+        found = proposals.check(change, "change", ["r1"], box.evidence, lambda option: pricing.price(option, ("r1",), box, {"r1": 411.0}, None, lambda text: text))
+        (entry,) = found.ways["r1"]["others"]
+        self.assertNotIn("why", entry)
+        case, plan = gateway({"set": SET, "others": [entry, BASIC_WAY]})
+        shown = surfaces(case, plan)
+        cells = [block.text for block in shown["page"].blocks if block.kind == "cell" and not block.details]
+        self.assertEqual(cells[cells.index("Saves a month") + 3], "Not priced", "what it always said: one reason is not the reason of a way of several effects")
+        for surface, one in shown.items():
+            self.assertNotIn(SENTENCES["none"], read(one), surface)
+            self.assertNotIn("has no figure because", read(one), surface)
 
 
 class NoTextOfACardOrALetterIsCutShort(unittest.TestCase):

@@ -3,6 +3,7 @@
 Every kind of resource, property and word here is invented. An entry is kept only when code can compare it with what the tools showed in the same run; one that fails is dropped by itself and
 counted, and the finding stays. The Skeptic is shown what was kept, and the facts of a case keep it as typed data (the words of the pages are another piece of work).
 """
+import datetime as dt
 import json
 import re
 import unittest
@@ -699,6 +700,23 @@ class WhatAWayKeepsOfWhatCodeCouldNotPrice(unittest.TestCase):
         self.assertEqual([(entry["title"], entry["why"]) for entry in found.ways["r1"]["others"]], [("Use the Lite tier", "lines"), ("Use the Medium tier", "alternative")])
         self.assertEqual(found.dropped, Counter())
 
+    def test_a_way_of_several_effects_keeps_no_reason_because_the_pricing_keeps_the_first_reason_only_and_a_sentence_that_is_true_of_one_effect_may_be_false_of_the_way(self):
+        box = with_list(invented(1))
+        effect = lambda meters: {"handle": "r1", "meters": meters, "remains": {"form": "none"}}
+        way_of = lambda *effects: {**REMOVE, "change": {"action": "remove", "effects": list(effects), "how": "Delete it."}}
+        no_charge_then_one_that_no_tool_showed = way_of(effect([]), effect(["m9"]))
+        priced = priced_by_the_bill(box)(pricing.parse({"action": "remove", "effects": no_charge_then_one_that_no_tool_showed["change"]["effects"]}))
+        self.assertEqual(priced.why, {"r1": "none"}, "the pricing says `none` for the first effect, though the second names a charge")
+        (several,) = checked(reduce(others=[no_charge_then_one_that_no_tool_showed]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+        self.assertNotIn("why", several, "`The AI named no charge` is false of this way: it names one in its second effect")
+        (alone,) = checked(reduce(others=[way_of(effect([]))]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+        self.assertEqual(alone["why"], "none", "a way of one effect keeps it")
+        for name, effects in (("two effects that fail alike", [effect(["m9"]), effect(["m8"])]), ("two that fail differently", [effect(["m9"]), effect([])])):
+            with self.subTest(name):
+                (entry,) = checked(reduce(others=[way_of(*effects)]), price=priced_by_the_bill(box)).ways["r1"]["others"]
+                self.assertNotIn("why", entry)
+                self.assertEqual(sorted(entry), ["action", "givesUp", "inPlace", "title"], "it is kept, with no figure and no reason: the page says what it always said")
+
     def test_a_way_whose_effects_name_no_charge_of_this_resource_gets_no_reason_from_the_price_and_so_keeps_none(self):
         elsewhere = {**LITE, "change": {**LITE["change"], "effects": [{"handle": "r2", "meters": ["m2"], "remains": {"form": "none"}}], "action": "remove"}}
         (entry,) = checked(reduce(others=[elsewhere]), price=priced_by_the_bill()).ways["r1"]["others"]
@@ -785,6 +803,8 @@ class WhatEachWordOfTheReasonsStandsFor(unittest.TestCase):
         price = lambda handle: {"form": "alternative", "price": handle}
         line = lambda unit="1 Hour", usd=0.05, service="Example Compute", sku="Small", meter="Light Hours", tiers=1: Listed(service, "Basic Tier", sku, meter, unit, usd, "swedencentral", tiers)
         assumed = {"form": "assumed", "low": 0.3, "high": 0.5}
+        full = meter_line("r1", 200.0)
+        refunded = full._replace(usd=-55.0, daily={full.start + dt.timedelta(days=n): (-200.0 if n == 0 else 5.0) for n in range(30)})  # a refund on the first day: the cost nets to less than nothing, the last week costs
         causes = (
             ("alternative", "the AI named no price", {"effects": self.on({"form": "alternative"})}),
             ("alternative", "the price that it named is one that no tool showed", {"effects": self.on(price("p99"))}),
@@ -794,7 +814,9 @@ class WhatEachWordOfTheReasonsStandsFor(unittest.TestCase):
             ("alternative", "a cheaper price that has no plain name", {"effects": self.on(price("p3")), "lines": {"p3": line(sku="Small-One", meter="Light-Hours")}}),
             ("units", "a price in another unit", {"effects": self.on(price("p3")), "lines": {"p3": line(unit="1 GB")}}),
             ("listed", "no list price for the charge that it replaces", {"effects": self.on(price("p1")), "retail": None}),
+            ("listed", "a list price of nothing for the charge that it replaces", {"effects": self.on(price("p1")), "retail": 0.0}),
             ("quantity", "a charge with no quantity", {"effects": self.on(price("p1")), "meters": {"m1": meter_line("r1", 200.0)._replace(quantity=0.0)}}),
+            ("quantity", "a quantity, and a cost that nets to nothing over the days", {"effects": self.on(price("p1")), "meters": {"m1": refunded}}),
             ("remains", "a form that the action does not take", {"effects": self.on({"form": "ratio", "on": UNITS, "from": 4, "to": 2}), "action": "remove"}),
             ("remains", "one price for two charges", {"effects": self.on(price("p1"), ("m1", "m2")), "meters": {"m2": other("Second Hours", 50.0)}}),
             ("remains", "a quantity a little off the bill", {"effects": self.on({"form": "quantity", "from": 721, "to": 0}), "action": "reduce"}),
