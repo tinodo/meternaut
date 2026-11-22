@@ -380,10 +380,10 @@ class ChangeSetting(Family):
             stopped = judge(resource, aims)
             if stopped is not None:
                 raise Stop(stopped[1])
-            for name, total, days in words.measured(pre):
-                now = read_total(env, located, name, days)
-                if now > total:
-                    raise Stop(f"{name} is {proposals.shown(round(now, 2))} over the last {days} days, above the {proposals.shown(total)} that the request was made with, so something may use the resource")
+            for m in words.measures(pre):
+                now = read_total(env, located, m.name, m.days)
+                if now > m.total:
+                    raise Stop(f"{m.name} is {words.quantity(now, m.unit)} in {words.days_text(m.days)}, above the {words.quantity(m.total, m.unit)} that the request was made with, so something may use the resource")
         return located, resource
 
     def already(self, plan: PlanRecord, resource: dict) -> str:

@@ -576,7 +576,7 @@ class TheChecksRightBeforeTheChange(unittest.TestCase):
         world = Real()
         plan = world.plan()
         world.arm.totals["ActiveSessions"] = [0.0, 3.0]
-        self.stopped(world, plan, "ActiveSessions is 3 over the last 30 days, above the 0 that the request was made with")
+        self.stopped(world, plan, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with")  # as every measured sentence says it: no "over the last", and the unit when the plan holds one
         world = Real()
         plan = world.plan()
         world.arm.totals["ActiveSessions"] = []
@@ -590,6 +590,41 @@ class TheChecksRightBeforeTheChange(unittest.TestCase):
         world.arm.totals["ActiveSessions"] = [0.0, 0.0, None]
         done = world.run(plan)
         self.assertEqual(done.kind, "ran", "a reading that is still nothing lets the change go on")
+
+    def test_a_cited_measurement_that_rose_is_said_with_its_unit_and_its_days_as_the_page_says_a_measurement(self):
+        # It said "ActiveSessions is 3 over the last 30 days, above the 0 that the request was made with": no unit for a percentage or a size, and "over the last" where the page says "in 30 days".
+        for name, unit, was, now, said in (("ActiveSessions", "Count", 0, 3, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with"),
+                                           ("CpuPercentage", "Percent", 3, 5, "CpuPercentage is 5% in 30 days, above the 3% that the request was made with"),
+                                           ("BytesOut", "Bytes", 1024, 3072, "BytesOut is 3 KB in 30 days, above the 1 KB that the request was made with")):
+            with self.subTest(name=name):
+                world = Real()
+                plan = world.plan(facts={**FACTS, "metrics": {name: was}, "metricDays": {name: 30}, "metricUnits": {name: unit}, "metricDaysWithData": {name: 30}})
+                world.arm.totals[name] = [now / 2, now / 2]
+                self.stopped(world, plan, f"{said}, so something may use the resource")
+        world = Real()
+        old = world.plan()
+        self.assertEqual(old.preconditions["measured"], [{"name": "ActiveSessions", "total": 0, "days": 30}], "a plan made before the unit was kept")
+        world.arm.totals["ActiveSessions"] = [3.0, 0.0]
+        self.stopped(world, old, "ActiveSessions is 3 in 30 days, above the 0 that the request was made with, so something may use the resource")
+
+    def test_a_measurement_too_large_to_be_a_number_is_left_out_and_nothing_raises(self):
+        # math.isfinite raised OverflowError for a whole number above 1.8e308, in the plan, the page, the card, the letter and the re-check.
+        huge = 10 ** 400
+        facts = {**FACTS, "metrics": {"ActiveSessions": huge, "Other": 5}, "metricDays": {"ActiveSessions": 30, "Other": 30}, "metricUnits": {"ActiveSessions": "Count", "Other": "Count"}}
+        self.assertEqual((words.figure(huge), words.figure(-huge), words.figure(float("inf")), words.figure(True), words.figure(2)), (None, None, None, None, 2.0))
+        self.assertEqual((words.number_text(huge), words.quantity(huge, "Bytes")), ("", ""))
+        self.assertEqual([m.name for m in words.measures({"measured": [{"name": "ActiveSessions", "total": huge, "days": 30}, {"name": "Other", "total": 5, "days": 30}]})], ["Other"])
+        self.assertEqual([row["name"] for row in setting_module.cited(facts)], ["Other"])
+        self.assertEqual([row.label for row in brief_mod.facts_of(make_advice_case(facts=facts)) if row.label in ("ActiveSessions", "Other")], ["Other"], "the page leaves the value out")
+        world = Real()
+        plan = world.plan(facts=facts)
+        self.assertEqual([m["name"] for m in plan.preconditions["measured"]], ["Other"])
+        b = shown(world, plan)
+        self.assertEqual(card_of(b)["type"], "AdaptiveCard")
+        self.assertIn("What could go wrong", letters.approval_letter(plan, world.store.case_get(plan.case_id), PERSON, BASE, NOW, CONTACTS).text)
+        recorded = replace(plan, preconditions={**plan.preconditions, "measured": [{"name": "ActiveSessions", "total": huge, "days": 30}]})
+        self.assertEqual(words.measured_text(recorded.preconditions), "")
+        self.assertIn("No measurement of its use is cited.", words.change_setting(recorded, TYPE, NAME, REAL_GROUP).risk)
 
     def test_a_refusal_of_azure_to_read_with_the_persons_token_is_a_failure_and_a_claims_challenge_is_asked_for_once(self):
         world = Real()

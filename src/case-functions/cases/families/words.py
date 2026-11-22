@@ -353,10 +353,14 @@ def changes_text(target: dict, how: str = "change") -> str:
 
 
 def figure(value: object) -> float | None:
-    """A number that can be said: a finite number, and never a bool."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    """A number that can be said: a finite number, and never a bool. A whole number too large for a float is no number that can be said either (its conversion raises OverflowError), and is left out."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def number_text(value: object) -> str:

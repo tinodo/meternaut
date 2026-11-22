@@ -273,14 +273,14 @@ def _decision_rows(brief: Brief) -> tuple[tuple[str, str], ...]:
             ("What could go wrong", risk + (f" {_data(doubt, brief_mod.RISK_CHARS)}" if doubt else "")))
 
 
-def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None, change: bool = False) -> Letter:
+def first_contact_letter(person: Person, base_url: str, now: dt.datetime, contacts: Sequence[str] = (), plan_id: str | None = None) -> Letter:
     """The first letter to a person, in four sentences: who writes and what for, what I do and do not do, and where to pause or stop the letters. Its one link is the page
-    of the first request that waits for the person (the start page when it is not sent for one). `change` says that the request is one that Meternaut makes the change of after the person approves it:
-    "I change nothing myself" is true of advice, and of a change it would say the opposite of the page, which says that Meternaut makes it, with the approver's own permissions."""
+    of the first request that waits for the person (the start page when it is not sent for one). It is said once, at the first request, which may be advice or a change that Meternaut makes after the
+    person approves it, so what it says of changes is true of both: nothing is changed on Meternaut's own, and a change runs with the person's own Azure rights."""
     base = _base(base_url)
     doc = _Doc("An AI assistant for Azure costs will write to you")
     doc.paragraph(f"Hello {_data(person.name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you.")
-    doc.paragraph(f"{'I make a change only after you approve it' if change else 'I change nothing myself'}. You decide on a web page, and a change runs with your own Azure rights.")
+    doc.paragraph("I never change anything on my own. You decide on a web page, and a change runs with your own Azure rights.")
     doc.paragraph("You can pause or stop my letters under Settings on that page.")
     doc.button("See the first decision" if plan_id else "Open the web page", _plan_url(base, plan_id) if plan_id else f"{base}/")
     doc.footer(f"You are on my list of people{_as(person)}.", contacts, person)

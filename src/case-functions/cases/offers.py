@@ -193,10 +193,9 @@ class Offers:
                 return f"The weekly budget of {settings.weekly_budget} messages is reached ({len(sent)} sent since Monday)."
         return None
 
-    def _introduce(self, person: Person, now: dt.datetime, change: bool = False) -> tuple[int, bool]:
+    def _introduce(self, person: Person, now: dt.datetime) -> tuple[int, bool]:
         """The card that says who writes, before the first card of a request goes to a person who chose Teams. Returns (the tries made, whether the card of the request may go now): it may when the person
-        was told already (by this card or by the letter) or when the tries of this card are used up (the card of the request tells them itself), and not before the next try. `change` says that the request
-        is one that Meternaut makes the change of after the person approves it, or the news of one that it made."""
+        was told already (by this card or by the letter) or when the tries of this card are used up (the card of the request tells them itself), and not before the next try."""
         told = any(m.status == "sent" and m.kind in (FIRST_CONTACT, "first_contact") for m in self.store.mails_since(person.oid, EPOCH))
         if told or _spent(self._tries(person, FIRST_CONTACT, None)):
             return 0, True
@@ -204,7 +203,7 @@ class Offers:
             return 0, False
 
         def card() -> dict:
-            return cards.first_contact_card(person.name, self.base_url, contacts_of(self.people, person.oid), why=WHY_TEAMS, change=change)
+            return cards.first_contact_card(person.name, self.base_url, contacts_of(self.people, person.oid), why=WHY_TEAMS)
         return 1, self._deliver(person, FIRST_CONTACT, None, now, card) == "sent"
 
     # -- one card ------------------------------------------------------------------------------------------------------------------------------
@@ -240,7 +239,7 @@ class Offers:
         held = self._hold(person, settings, kind, now)  # type: ignore[arg-type]
         if held is not None:
             return self._record(person, kind, plan.plan_id, now, "held", held)  # type: ignore[arg-type]
-        tries, told = self._introduce(person, now, plan.family != ADVISE)  # type: ignore[arg-type]
+        tries, told = self._introduce(person, now)  # type: ignore[arg-type]
         if not told:
             return tries
 
@@ -274,7 +273,7 @@ class Offers:
             if held is not None:
                 total += self._record(person, kind, plan.plan_id, now, "held", held)  # type: ignore[arg-type]
                 continue
-            tries, told = self._introduce(person, now, True)  # type: ignore[arg-type]
+            tries, told = self._introduce(person, now)  # type: ignore[arg-type]
             total += tries
             if not told:
                 continue

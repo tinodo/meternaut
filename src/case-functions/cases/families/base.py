@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..costs import money
 from ..http import HttpError, Refused, Response
 from ..models import CaseRecord, PlanRecord
 from ..roles import clean_text
@@ -138,8 +139,8 @@ def per_day_check(before_30d: float | None, after_total: float, days_after: int,
     before_day, after_day = before_30d / 30, after_total / days_after
     if after_day < before_day:
         saved = round((before_day - after_day) * 30, 2)
-        return True, f"Confirmed: the cost lines of {what} after the day of the change are lower: {round(after_day, 2)} a day against {round(before_day, 2)} before.", saved
-    return False, f"Not confirmed: the cost lines of {what} after the day of the change are {round(after_day, 2)} a day against {round(before_day, 2)} before.", None
+        return True, f"Confirmed: the cost lines of {what} after the day of the change are lower: {money(after_day)} a day against {money(before_day)} before.", saved
+    return False, f"Not confirmed: the cost lines of {what} after the day of the change are {money(after_day)} a day against {money(before_day)} before.", None
 
 
 def evidence_text(lead: object, observed: str) -> str:
@@ -323,7 +324,7 @@ class Family:
         The default is that of a change that stops a cost altogether (a delete, a stop): no cost line is left."""
         if after_total == 0:
             return True, "Confirmed: no cost lines for this resource after the day of the change.", None
-        return False, f"Not confirmed: cost lines of {after_total} still exist after the day of the change.", None
+        return False, f"Not confirmed: cost lines of {money(after_total)} still exist after the day of the change.", None
 
 
 def refusal(error: HttpError, what: str) -> str:

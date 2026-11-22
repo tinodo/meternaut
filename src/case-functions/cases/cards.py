@@ -354,9 +354,9 @@ def probe_card(closed: bool = False, why: str = "The owner of Meternaut started 
     })
 
 
-def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You are on my list of people.", change: bool = False) -> dict:
-    """What Meternaut says before its first card to a person, in four sentences, with the one link to the start page of the web page. `change` says that the request that follows is one that Meternaut
-    makes the change of after the person approves it: "I change nothing myself" is true of advice, and of a change it would say the opposite of the page."""
+def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = (), why: str = "You are on my list of people.") -> dict:
+    """What Meternaut says before its first card to a person, in four sentences, with the one link to the start page of the web page. It is said once, before the first request, which may be advice or a change
+    that Meternaut makes after the person approves it, so what it says of changes is true of both: nothing is changed on Meternaut's own, and a change runs with the person's own Azure rights."""
     base = (base_url or "").strip().rstrip("/")
     if not PAGE_BASE.fullmatch(base):
         raise CardError("the address of the web page is not like https://host")
@@ -365,7 +365,7 @@ def first_contact_card(name: object, base_url: str, contacts: Sequence[str] = ()
         "fallbackText": f"{SENDER}: an AI assistant for Azure costs will write to you. Open the web page: {base}/ An AI wrote this.",
         "body": [_header("first_contact"), _block("headline", "An AI assistant for Azure costs will write to you", size="Large", weight="Bolder"),
                  _block("hello", f"Hello {md(name, 80)}. I am Meternaut, an AI that looks for Azure resources that cost money and are not used. I write to you when a decision waits for you."),
-                 _block("rules", f"{'I make a change only after you approve it' if change else 'I change nothing myself'}. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
+                 _block("rules", "I never change anything on my own. You answer a request with the buttons on its card. A button opens a page that sends your answer, "
                                  "and a change to Azure runs with your own Azure rights."),
                  _block("settings", "You can pause or stop my messages under Settings on the web page."),
                  _page_set("Open the web page", CardContext(page_url=f"{base}/")),

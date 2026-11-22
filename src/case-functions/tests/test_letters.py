@@ -340,18 +340,10 @@ class FirstContact(unittest.TestCase):
     def test_it_says_who_writes_what_for_what_it_does_not_do_and_where_to_pause_or_stop_the_letters(self):
         text = self.letter.text
         self.assertIn("I am Meternaut, an AI that looks for Azure resources that cost money and are not used.", text)
-        self.assertIn("I change nothing myself. You decide on a web page, and a change runs with your own Azure rights.", text)
+        self.assertIn("I never change anything on my own. You decide on a web page, and a change runs with your own Azure rights.", text, "said once, at the first request, which may be advice or a change that Meternaut makes after the approval: true of both")
+        self.assertNotIn("I change nothing myself", text)
         self.assertIn("You can pause or stop my letters under Settings on that page.", text)
         self.assertIn("You are on my list of people, as approver and owner.", text)
-
-    def test_for_a_request_that_meternaut_makes_the_change_of_it_does_not_say_that_it_changes_nothing(self):
-        # "I change nothing myself" is true of advice. Of a change it said the opposite of the page and the card, which say that Meternaut makes the change, with the approver's own permissions.
-        change = letters.first_contact_letter(PERSON, BASE, NOW, CONTACTS, "p1a2b3c4d5", change=True)
-        self.assertIn("I make a change only after you approve it. You decide on a web page, and a change runs with your own Azure rights.", change.text)
-        self.assertNotIn("I change nothing myself", change.text + change.html)
-        self.assertEqual(change.text.replace("I make a change only after you approve it", "I change nothing myself"), self.letter.text, "only that sentence differs")
-        self.assertLessEqual(word_count(change), MOST_WORDS["first contact"])
-        self.assertIn("I change nothing myself", self.letter.text, "the letter of advice says it as it did")
 
     def test_its_one_link_is_the_first_request_or_the_start_page(self):
         self.assertEqual(hrefs(self.letter), [f"{BASE}/ok/p1a2b3c4d5"])

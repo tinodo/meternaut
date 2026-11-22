@@ -215,7 +215,7 @@ class TheCountIsAskedFor(unittest.TestCase):
         self.assertIsNone(nobody(5, 0.0))
         self.assertIn("4 of the last 7 days", nobody(4, 0.0))
         self.assertIn("at least 5 days", nobody(0, 0.0))
-        self.assertEqual(nobody(7, 12.0), "users were connected to the gateway in the last 7 days (up to 12 at one time)")
+        self.assertEqual(nobody(7, 12.0), "users were connected to the gateway in the last 7 days (up to 12 connections at one time)")
 
 
 class TheRecheckRightBeforeTheChange(unittest.TestCase):
@@ -246,7 +246,7 @@ class TheRecheckRightBeforeTheChange(unittest.TestCase):
     def test_users_who_connected_after_the_plan_stop_the_change_with_the_number(self):
         world, resource, plan = approved()
         world.arm.connections[KEY] = [0, 0, 0, 0, 2, 0, 0]
-        self.stopped(world, plan, "users were connected to the gateway in the last 7 days (up to 2 at one time)")
+        self.stopped(world, plan, "users were connected to the gateway in the last 7 days (up to 2 connections at one time)")
         self.assertEqual((len(gateway_reads(world)), len(metric_reads(world))), (2, 2), "the plan read them, and the re-check read them again")
 
     def test_a_count_with_too_few_days_now_stops_the_change(self):
@@ -457,6 +457,8 @@ class WhatIsCheckedAfterwards(unittest.TestCase):
         confirmed, text, saved = FAMILY.cost_check(60.0, 3.0, 2)
         self.assertEqual((confirmed, saved), (True, 15.0), "1.50 a day after against 2.00 a day before")
         self.assertIn("lower", text)
+        self.assertEqual(text, "Confirmed: the cost lines of the gateway after the day of the change are lower: $1.50 a day against $2.00 before.", "an amount of money says its dollars")
+        self.assertEqual(FAMILY.cost_check(60.0, 27.5, 2)[1], "Not confirmed: the cost lines of the gateway after the day of the change are $13.75 a day against $2.00 before.")
         self.assertEqual(FAMILY.cost_check(60.0, 27.5, 2)[0], False, "13.75 a day is not lower than 2.00")
         self.assertEqual(FAMILY.cost_check(60.0, 0, 2)[0], False)
         self.assertEqual(FAMILY.cost_check(None, 10.0, 2)[0], False)
